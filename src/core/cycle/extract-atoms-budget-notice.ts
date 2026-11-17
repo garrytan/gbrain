@@ -1,5 +1,5 @@
 /**
- * #6425: the notice a `budget`-stopped atom drain carries (`gbrain dream --drain --json`):
+ * #6425: the notice a `budget`-stopped atom drain carries (`foresights dream --drain --json`):
  * what the attempt spent, its per-run cap, the pages left, and the paid fix that raises the cap.
  */
 import { cliRenderContext, renderNotice, type RenderedNotice } from '../agent-output.ts';

@@ -188,7 +188,7 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   });
 
   test('reverse alias rescues v0.31.6-shipped broken Sonnet 4.6 ID (regression)', () => {
-    // gbrain v0.31.6 shipped 'claude-sonnet-4-6-20250929' as a hardcoded
+    // foresights v0.31.6 shipped 'claude-sonnet-4-6-20250929' as a hardcoded
     // default, which 404s on the Anthropic API (Sonnet 4.6 is dateless).
     // The reverse alias rewrites broken → canonical so any user with a
     // stale `models.dream.synthesize` / `facts.extraction_model` config
@@ -452,7 +452,7 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
   });
 
   test('anthropic cacheControl survives provider_chat_options merging', async () => {
-    // gbrain#2490: this call-level cacheControl is real (not a no-op) —
+    // foresights#2490: this call-level cacheControl is real (not a no-op) —
     // @ai-sdk/anthropic serializes it as the Anthropic API's documented
     // top-level "auto-cache the last cacheable block" shorthand. It's kept
     // alongside the fix (an explicit breakpoint on the system message's own

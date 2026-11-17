@@ -37,5 +37,5 @@ export function dateLabelLine(rows: unknown): string | null {
     if (hit.length > 0) parts.push(`${hit.join('/')} = ${l.label}`);
   }
   if ([...present].some(src => !LABELS.some(l => l.sources.includes(src)))) parts.push(`no source = ${effectiveDateLabel(null)}`);
-  return `[gbrain dates] effective_date by effective_date_source: ${parts.join('; ')}. Never a contract's effective or validity date (read the text).`;
+  return `[foresights dates] effective_date by effective_date_source: ${parts.join('; ')}. Never a contract's effective or validity date (read the text).`;
 }

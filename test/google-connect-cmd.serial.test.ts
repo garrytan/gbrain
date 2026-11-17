@@ -1,7 +1,7 @@
 /**
- * gbrain google connect (src/commands/google.ts:runGoogleConnect) —
+ * foresights google connect (src/commands/google.ts:runGoogleConnect) —
  * command-layer orchestration of the BYO two-step paste flow, the relay
- * gates, and the connect funnel heartbeats — plus gbrain google calendars
+ * gates, and the connect funnel heartbeats — plus foresights google calendars
  * (runGoogleCalendars): account resolution, the --json envelope, and the
  * human listing.
  *
@@ -273,7 +273,7 @@ describe('runGoogleConnect — needs_client_credentials (non-TTY, no creds anywh
       const r = await captured(() => runGoogleConnect([]));
       expect(r.out).toContain('[SHOW USER]');
       expect(r.out).toContain('Desktop app');
-      expect(r.out).toContain('gbrain google connect --client-json');
+      expect(r.out).toContain('foresights google connect --client-json');
       expect(r.verdict).toBe(2);
     });
   });
@@ -348,7 +348,7 @@ describe('runGoogleConnect — two-step paste flow', () => {
       // The step-1 grant is the truth: gmail-only + base, never the defaults.
       expect(env.scopes).toEqual(['openid', 'email', GMAIL_SCOPE]);
       expect(env.client_ref).toBe('byo');
-      expect(env.next_action.command).toContain('gbrain sources add');
+      expect(env.next_action.command).toContain('foresights sources add');
       expect(env.next_action.command).toContain('--kind google --account a@example.com');
       expect(r.verdict).toBe(0);
 
@@ -564,7 +564,7 @@ describe('runGoogleCalendars', () => {
     ];
   });
 
-  test('no connected Google account → exit 2 pointing at `gbrain google connect`, no API call', async () => {
+  test('no connected Google account → exit 2 pointing at `foresights google connect`, no API call', async () => {
     const home = freshHome();
     await withEnv(connectEnv(home), async () => {
       writeVault(home, [googleClient()]); // client on file, zero accounts
@@ -574,7 +574,7 @@ describe('runGoogleCalendars', () => {
       });
       expect(r?.exitCalled).toBe(2);
       expect(errs).toContain('No connected Google account');
-      expect(errs).toContain('gbrain google connect');
+      expect(errs).toContain('foresights google connect');
       expect(r?.out).toBe('');
       expect(fetchCalls).toHaveLength(0);
     });
@@ -611,7 +611,7 @@ describe('runGoogleCalendars', () => {
       const err = thrown as CredentialError;
       expect(err.code).toBe('not_connected');
       expect(err.problem).toContain('nobody@example.com');
-      expect(err.problem).toContain('gbrain google connect --account nobody@example.com');
+      expect(err.problem).toContain('foresights google connect --account nobody@example.com');
       expect(fetchCalls).toHaveLength(0);
     });
   });
@@ -636,7 +636,7 @@ describe('runGoogleCalendars', () => {
       expect(env.calendars.filter((c) => c.primary)).toHaveLength(1);
       // The follow-on command rides in next_action so an agent needs no
       // human-text parsing to learn how to ingest a secondary calendar.
-      expect(env.next_action?.command).toContain('gbrain sources add');
+      expect(env.next_action?.command).toContain('foresights sources add');
       expect(env.next_action?.command).toContain('--account a@example.com');
       expect(env.next_action?.command).toContain('--calendar-id');
       // One calendarList round-trip; the cached token means no refresh call.
@@ -659,7 +659,7 @@ describe('runGoogleCalendars', () => {
       expect(r.out).toContain('access: reader');
       expect(r.out).toContain('(* = primary');
       expect(r.out).toContain(
-        'gbrain sources add <id> --kind google --account a@example.com --services calendar --calendar-id "<id>"',
+        'foresights sources add <id> --kind google --account a@example.com --services calendar --calendar-id "<id>"',
       );
       expect(() => JSON.parse(r.out)).toThrow(); // human mode is not JSON
     });

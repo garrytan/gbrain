@@ -1,5 +1,5 @@
 /**
- * GBRA-250: an untyped throw inside `gbrain sources refresh` (a statement error,
+ * GBRA-250: an untyped throw inside `foresights sources refresh` (a statement error,
  * a TypeError) escaped runSourcesRefresh to the CLI fatal seam as a bare
  * internal_error with no stack and no refresh state, so a one-off failure left
  * nothing to diagnose. It is now a typed internal_error refusal whose `why`
@@ -75,7 +75,7 @@ test('sources refresh prints an untyped throw as a refused document carrying the
   expect(doc.code).toBe('internal_error');
   expect(doc.cause).toContain('Error (57014): canceling statement due to user request');
   expect(doc.why).toContain(asRedacted(statement.stack!.split('\n')[1]!.trim()));
-  expect(doc.fix).toContain('gbrain sources refresh source-a');
+  expect(doc.fix).toContain('foresights sources refresh source-a');
 });
 
 test('a database access error the classifier recognizes is rethrown unchanged, keeping its own repair fix', async () => {
@@ -105,7 +105,7 @@ test('an unexpected throw under --abandon repeats --abandon in its fix, never a 
   const fake = { kind: 'postgres', getConfig: async () => { throw statement; }, executeRaw: async () => { throw statement; } } as unknown as BrainEngine;
   const failure = await withEnv({ GBRAIN_REFRESH_SYNC_BUDGET_MS: undefined }, () => refreshWorktree(fake, 'source-a', { abandon: true }).then(() => null, error => error));
   expect(failure.code).toBe('internal_error');
-  expect(failure.suggestion).toContain('Run gbrain sources refresh source-a --abandon again');
+  expect(failure.suggestion).toContain('Run foresights sources refresh source-a --abandon again');
 });
 
 test('an unexpected throw under --dry-run repeats --dry-run in its fix, never a refresh that would move the checkout', async () => {
@@ -113,14 +113,14 @@ test('an unexpected throw under --dry-run repeats --dry-run in its fix, never a 
   const fake = { kind: 'postgres', getConfig: async () => { throw statement; }, executeRaw: async () => { throw statement; } } as unknown as BrainEngine;
   const failure = await withEnv({ GBRAIN_REFRESH_SYNC_BUDGET_MS: undefined }, () => refreshWorktree(fake, 'source-a', { dryRun: true }).then(() => null, error => error));
   expect(failure.code).toBe('internal_error');
-  expect(failure.suggestion).toContain('Run gbrain sources refresh source-a --dry-run again');
+  expect(failure.suggestion).toContain('Run foresights sources refresh source-a --dry-run again');
 });
 
 test('an unexpected throw repeats --wait-drain and --fetch-timeout-ms in its fix', async () => {
   const statement = Object.assign(new Error('canceling statement due to user request'), { code: '57014' });
   const fake = { kind: 'postgres', getConfig: async () => { throw statement; }, executeRaw: async () => { throw statement; } } as unknown as BrainEngine;
   const failure = await withEnv({ GBRAIN_REFRESH_SYNC_BUDGET_MS: undefined }, () => refreshWorktree(fake, 'source-a', { waitDrainMs: 120_000, fetchTimeoutMs: 5_000 }).then(() => null, error => error));
-  expect(failure.suggestion).toContain('Run gbrain sources refresh source-a --wait-drain 120 --fetch-timeout-ms 5000 again');
+  expect(failure.suggestion).toContain('Run foresights sources refresh source-a --wait-drain 120 --fetch-timeout-ms 5000 again');
 });
 
 test('a refresh-row lookup that never answers still yields the refusal, and the stalled read is bounded and cancelled', async () => {
@@ -304,7 +304,7 @@ test.skipIf(!process.env.DATABASE_URL)('a lock timeout after the drain whose hol
   expect(failure.code).toBe('refresh_lock_timeout');
   const [row] = await f.refreshRows();
   expect(row!.state).toBe('draining');
-  expect(failure.message).toContain(`Refresh ${row!.id} stays draining, and the next gbrain sources refresh ${f.alpha} resumes it.`);
+  expect(failure.message).toContain(`Refresh ${row!.id} stays draining, and the next foresights sources refresh ${f.alpha} resumes it.`);
   expect(f.head()).toBe(before);
   expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
   expect(await f.lastCommit(f.alpha)).toBe(target);

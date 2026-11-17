@@ -12,7 +12,7 @@
  *    unreadable gate blocks, an unparsable stamp blocks, the 7-day window ends between day 6 and day 8, and the gate is
  *    read once per TTL (work counter) while doctor reads through. A failed read of the switch or `pages.max_bytes` keeps
  *    it off (never "unset", which is on). Doctor reports a hold left only by this host's pre-upgrade writes as
- *    information once this build has made the same kind of write after them; an older gbrain still writing on this host
+ *    information once this build has made the same kind of write after them; an older foresights still writing on this host
  *    (a cron import, an npx sync, an older managed admitter) keeps the upgrade warning. (The floor's derivation: segmented-writer-floor.test.ts.)
  * 2. Fails when: the default stays off, the gate ignores old or unstamped writers, an explicit `on` overrides the
  *    gate, a cleared gate keeps writes inline, export sizes stored segmented pages by the write limit, a writer without
@@ -287,7 +287,7 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO persistence_consumers (host_id, pid, nonce, kind, mode, host_json_path, persistence_home, version, segment_reader, renewed_at)
         VALUES ($1::uuid, 4242, 'self-old-serve', 'serve', 'full', '/tmp/host.json', '/tmp', $2, true, now() - interval '10 minutes')`, [self, older]);
       expect(await segmentedNow()).toBe(false);
-      // Until this host writes with a build that passes the gate, the rows cannot be told from an older gbrain still
+      // Until this host writes with a build that passes the gate, the rows cannot be told from an older foresights still
       // writing here: the upgrade warning stays.
       expect(await segmentedStorageCheck(engine)).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'upgrade'] } });
       await engine.logIngest({ source_type: 'sync', source_ref: 'self-after-upgrade', pages_updated: [], summary: 'this build' });
@@ -305,7 +305,7 @@ for (const kind of testBackends()) {
       const clears = listed.map(b => b.clears_at).sort().at(-1)!;
       expect(own.message).toContain(self);
       expect(own.message).toContain(clears);
-      expect(own.message).not.toContain('gbrain upgrade');
+      expect(own.message).not.toContain('foresights upgrade');
 
       // An older serve on this host that is still renewing its heartbeat is a process to restart: still a warning.
       await engine.executeRaw("UPDATE persistence_consumers SET renewed_at=now() WHERE nonce='self-old-serve'");
@@ -321,7 +321,7 @@ for (const kind of testBackends()) {
       expect(both.message).toContain(other);
     }), 120_000);
 
-    test('doctor: an older gbrain still writing on this host (a cron import, an npx run) keeps the upgrade warning even after this build wrote', async () => inHome(async () => {
+    test('doctor: an older foresights still writing on this host (a cron import, an npx run) keeps the upgrade warning even after this build wrote', async () => inHome(async () => {
       await engine.setConfig('pages.segmented_storage', 'on');
       const self = localHostId();
       const older = '0.60.290.0';
@@ -330,7 +330,7 @@ for (const kind of testBackends()) {
       const newRun = (type: string, ref: string, ago: string) => engine.executeRaw(`INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary, writer_version, writer_host_id, writer_segment_reader, created_at)
         VALUES ('default', $1, $2, '[]'::jsonb, 'run', $3, $4::uuid, true, now() - $5::interval)`, [type, ref, VERSION, self, ago]);
       const verdict = async () => { const c = await segmentedStorageCheck(engine); return [c.status, c.fix?.argv?.join(' ') ?? null]; };
-      const warn = ['warn', 'gbrain upgrade'];
+      const warn = ['warn', 'foresights upgrade'];
 
       // A cron or npx gbrain on this host that imports, while this build only syncs: nothing this build wrote matches it.
       await oldRun('import', 'cron-import', '2 hours');

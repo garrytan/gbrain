@@ -42,7 +42,7 @@ for (const backend of testBackends()) {
     }, 120_000);
     afterAll(async () => { if (backend === 'pglite') await rebuildEngine.disconnect(); });
 
-    /** A fresh brain of the same engine that imports one committed file the way `gbrain import` / sync of the repository does. */
+    /** A fresh brain of the same engine that imports one committed file the way `foresights import` / sync of the repository does. */
     const rebuildFrom = async (root: string, slug: string) => {
       const fresh = backend === 'postgres' ? await isolatedPersistencePostgres(databaseUrl!)
         : (await resetPgliteState(rebuildEngine), { engine: rebuildEngine, close: async () => {} });

@@ -3,7 +3,7 @@
   "name": "reference-pack",
   "version": "0.1.0",
   "description": "(edit me) one-line description of the reference-pack skillpack",
-  "author": "gbrain maintainers",
+  "author": "foresights maintainers",
   "license": "MIT",
   "homepage": "https://github.com/garrytan/gbrain/tree/master/examples/skillpack-reference",
   "gbrain_min_version": "0.36.0",

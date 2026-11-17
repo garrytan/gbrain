@@ -77,7 +77,7 @@ export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: 
       if (surface !== undefined) (patch as GrantPatch).surfaceSetBy = surface === null ? null : surfaceSetBy ?? 'operator';
       if (sourceId !== undefined) {
         const found = await sql`SELECT id FROM sources WHERE id = ${sourceId}`;
-        if (!found.length) throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
+        if (!found.length) throw new Error(`Source "${sourceId}" does not exist. Create it first: foresights sources add ${sourceId} ...`);
       }
       const result = await rescopeClientGrantInTransaction(sql, clientId, patch, { expectedRevision, actor: actor ?? 'operator', repair, dryRun });
       return { clientId, clientName: result.after.clientName, sourceId: result.after.sourceId ?? '',
@@ -86,7 +86,7 @@ export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: 
         ...(surface !== undefined ? { surface: result.after.surface, surfaceOld: result.before.surface } : {}) };
     }
     if (Object.entries(opts).some(([key, value]) => !['sourceId', 'federatedRead', 'boundSlugPrefixes', 'surface', 'surfaceSetBy'].includes(key) && value !== undefined)) {
-      throw new Error('Client grant changes require an up-to-date OAuth schema; run gbrain apply-migrations --yes');
+      throw new Error('Client grant changes require an up-to-date OAuth schema; run foresights apply-migrations --yes');
     }
     let rows: Record<string, unknown>[];
     // WP4: when the surface axis is being touched, capture the OLD value
@@ -152,12 +152,12 @@ export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: 
         isUndefinedColumnError(err, 'surface') ||
         isUndefinedColumnError(err, 'surface_set_by')
       ) {
-        throw new Error('rescope-client requires an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
+        throw new Error('rescope-client requires an up-to-date OAuth schema; run `foresights apply-migrations --yes` and retry.');
       }
       // FK oauth_clients.source_id → sources(id): translate the raw 23503
       // into an actionable message.
       if ((err as { code?: string })?.code === '23503') {
-        throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
+        throw new Error(`Source "${sourceId}" does not exist. Create it first: foresights sources add ${sourceId} ...`);
       }
       throw err;
     }

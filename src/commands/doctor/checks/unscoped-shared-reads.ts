@@ -37,7 +37,7 @@ async function runUnscopedSharedReads(ctx: DoctorContext): Promise<Check[]> {
         + `${pending.map(c => `${c.connection} (${c.state}${c.refuses_at ? ` until ${c.refuses_at}` : ''})`).join(', ')}. `
         + (found.serves.enforce ? 'Their reads are refused with requester_scope_required once the grace ends.' : 'Enforcement is off (access.requester_scope_enforce false), so they read every page no rule restricts, for whoever is asking.')
         + optedLine,
-      fix: agentFix(first.argv, `Binds ${first.connection} to the person it serves. Ask the user which member it is (gbrain access member list); a team that shares everything may use --reads-unscoped --yes instead.`, NAME,
+      fix: agentFix(first.argv, `Binds ${first.connection} to the person it serves. Ask the user which member it is (foresights access member list); a team that shares everything may use --reads-unscoped --yes instead.`, NAME,
         { ask_user: true, docs: 'docs/guides/write-refusals.md#requester_scope_required' }) });
   } catch (error) {
     checks.push(checkError(NAME, `run ${NAME}`, error));

@@ -5,13 +5,13 @@
  * optimized against its own benchmark may regress on real user workflows.
  * F11 adds an OPTIONAL independent signal:
  *
- *  1. Capture infrastructure: opt-in via `gbrain config set
+ *  1. Capture infrastructure: opt-in via `foresights config set
  *     skillopt.capture_enabled true`. Real production rollouts of the
  *     skill get appended as JSONL rows to
  *     `~/.gbrain/skillopt-captures/<skill>/<run>.jsonl`.
  *
  *  2. Held-out validation gate: when `--held-out <path>` is passed to
- *     `gbrain skillopt`, the orchestrator runs the candidate skill
+ *     `foresights skillopt`, the orchestrator runs the candidate skill
  *     against the held-out set BEFORE committing the mutation. If the
  *     candidate's held-out score is BELOW baseline, the mutation is
  *     refused (returns 'no_improvement' even if D_sel was happy).

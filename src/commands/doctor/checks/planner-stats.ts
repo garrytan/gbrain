@@ -15,7 +15,7 @@
  * finds absent (projection-statistics.ts, the test the write-pass skip and the
  * search guard use): after pg_upgrade or a deleted pg_statistic autovacuum
  * never collects them, and search plans as nested loops (50-60 s at 5,000
- * pages). The fix runs the same refresh through `gbrain repair planner-stats
+ * pages). The fix runs the same refresh through `foresights repair planner-stats
  * --apply`; a role that may not ANALYZE gets it as a host-operator step. A role that cannot inspect the projection
  * statistic (Postgres shows expression statistics only to the owner) is told so instead of hearing it is fresh.
  *
@@ -45,7 +45,7 @@ async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
     const tables = await readPlannerTableStates(engine);
     if (!tables) {
       checks.push({ name: 'planner_stats_stale', status: 'ok',
-        message: 'Planner statistics accounting is not installed yet (schema migration pending). Run: gbrain apply-migrations --yes' });
+        message: 'Planner statistics accounting is not installed yet (schema migration pending). Run: foresights apply-migrations --yes' });
       return checks;
     }
     const autoAnalyze = engine.kind === 'pglite' ? await plannerAutoAnalyzeEnabled(engine) : null;
@@ -60,7 +60,7 @@ async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
     const expression = [expressionIndexText(gaps, engine.kind, autoAnalyze), starvationText(starved)].filter(Boolean).join(' ');
     if (stale.length === 0 && missing.length === 0 && gaps.length === 0 && starved.length === 0) {
       checks.push({ name: 'planner_stats_stale', status: 'ok', message: `Planner statistics are fresh on ${tables.length} hot tables.${hidden
-        ? ' This role cannot inspect the projection statistic; run gbrain doctor as the owner of pages to check it.' : ''}`, details });
+        ? ' This role cannot inspect the projection statistic; run foresights doctor as the owner of pages to check it.' : ''}`, details });
       return checks;
     }
     if (missing.length > 0) {
@@ -90,13 +90,13 @@ async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
       ? 'PGLite has no autovacuum, so search and graph reads may plan as slow nested loops until these tables are analyzed.'
       : 'Autovacuum has not analyzed them in the last hour, so search and graph reads may plan against stale row counts.';
     const off = autoAnalyze === false
-      ? ' Automatic ANALYZE is off (planner.auto_analyze=false or GBRAIN_PLANNER_AUTO_ANALYZE=0); to turn it back on: gbrain config set planner.auto_analyze true.'
+      ? ' Automatic ANALYZE is off (planner.auto_analyze=false or GBRAIN_PLANNER_AUTO_ANALYZE=0); to turn it back on: foresights config set planner.auto_analyze true.'
       : '';
     checks.push({ name: 'planner_stats_stale', status: 'warn',
       message: `Stale planner statistics: ${listed}. ${why}${expression ? ` Also: ${expression}` : ''} Fix on the brain host: ${PLANNER_STATS_REPAIR_COMMAND}.${off}`, details });
   } catch (err) {
     checks.push({ name: 'planner_stats_stale', status: 'warn',
-      message: `Planner statistics could not be read: ${err instanceof Error ? err.message : String(err)}. Freshness is unknown; preview the repair with: gbrain repair planner-stats` });
+      message: `Planner statistics could not be read: ${err instanceof Error ? err.message : String(err)}. Freshness is unknown; preview the repair with: foresights repair planner-stats` });
   }
   return checks;
 }
@@ -107,7 +107,7 @@ function starvationText(starved: VacuumStarvation[]): string {
   const listed = starved.map(s => `${s.table} (${s.dead_rows} dead rows, vacuum threshold ${s.threshold}, last completed vacuum ${s.vacuumed_at ?? 'never recorded'}${s.vacuum_running ? ', an autovacuum is running now' : ''})`).join(', ');
   return `Autovacuum is starved: ${listed}. No vacuum completed on ${starved.length === 1 ? 'it' : 'them'} in ${VACUUM_STARVATION_HOURS} h although the dead rows passed the threshold, `
     + 'so something keeps cancelling it: Postgres cancels an autovacuum whenever another session waits a second for its lock (an ANALYZE, an index build, a LOCK). '
-    + 'Dead rows stay in every index until a vacuum finishes, and the autovacuum\'s analyze never runs. gbrain\'s own ANALYZE no longer waits on a vacuum; '
+    + 'Dead rows stay in every index until a vacuum finishes, and the autovacuum\'s analyze never runs. foresights\'s own ANALYZE no longer waits on a vacuum; '
     + 'look for "canceling autovacuum task" in the server log and the statement logged beside it. Once nothing cancels it, autovacuum finishes on its own, '
     + 'or the database operator runs VACUUM (VERBOSE) on the table in a quiet window.';
 }

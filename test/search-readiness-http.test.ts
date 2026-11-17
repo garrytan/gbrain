@@ -184,7 +184,7 @@ describe('search projection readiness over legacy bearer HTTP MCP', () => {
     const response = await search('http-readiness-no-match');
     // Body + F2's keyword count line + empty-retrieval block + F3's degraded_recall notice (agent contract v1) + the GBRA-200 stamp.
     expect(response.content).toHaveLength(5);
-    expect(response.content[1]!.text).toStartWith('[gbrain search] Rows are a ranked top-K');
+    expect(response.content[1]!.text).toStartWith('[foresights search] Rows are a ranked top-K');
     expect(response.content[3]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     expect(response.content[3]!.text).toContain('projection_pending');
     expect(response.content[4]!.text).toStartWith('[gbrain degraded: projection_pending, safe_index_pending]');
@@ -198,8 +198,8 @@ describe('search projection readiness over legacy bearer HTTP MCP', () => {
     const response = await search(MATCH);
     // Body + F2's keyword count line + F4's row-date line + F3's degraded_recall notice (recall-affecting stage present) + the GBRA-200 stamp.
     expect(response.content).toHaveLength(5);
-    expect(response.content[1]!.text).toStartWith('[gbrain search] Rows are a ranked top-K');
-    expect(response.content[2]!.text).toStartWith('[gbrain dates] ');
+    expect(response.content[1]!.text).toStartWith('[foresights search] Rows are a ranked top-K');
+    expect(response.content[2]!.text).toStartWith('[foresights dates] ');
     expect(response.content[3]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     // The exact top hit sets could_affect.pending_projection to 0, so only safe_index_pending stamps.
     expect(response.content[4]!.text).toStartWith('[gbrain degraded: safe_index_pending]');

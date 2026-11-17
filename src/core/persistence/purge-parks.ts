@@ -10,10 +10,10 @@
  * doctor `purge_parked_pages` names it. A park leaves when the page is purged
  * or its tombstone changes, when its source's writer comes back after being
  * seen not active (rearm), or by one more attempt through
- * `gbrain pages purge-deleted --retry-parked`. Rows are exempt from the
+ * `foresights pages purge-deleted --retry-parked`. Rows are exempt from the
  * op_checkpoints TTL sweep.
  *
- * A park records the gbrain version that wrote it, as a global-maintenance
+ * A park records the foresights version that wrote it, as a global-maintenance
  * phase streak does: only a park the running version wrote is parked
  * (`isParked`). One another version wrote, or one from before parks recorded
  * a version, gets one automatic attempt (the refusal behind it may be fixed);
@@ -27,10 +27,10 @@ export const PURGE_PARK_OP = 'purge-deleted-park';
 export const PURGE_PARK_LIMIT = 5;
 
 export interface PurgePark { source_id: string; slug: string; deleted_us: string; failures: number; code: string | null; reason: string; failed_at: string; inactive_seen?: true;
-  /** The gbrain version that recorded the last failure; absent on a park written before parks recorded one. */
+  /** The foresights version that recorded the last failure; absent on a park written before parks recorded one. */
   version?: string }
 
-/** Parked: PURGE_PARK_LIMIT failures, the last one recorded by the running gbrain version. */
+/** Parked: PURGE_PARK_LIMIT failures, the last one recorded by the running foresights version. */
 export function isParked(park: PurgePark | undefined): park is PurgePark {
   return park !== undefined && park.failures >= PURGE_PARK_LIMIT && park.version === VERSION;
 }

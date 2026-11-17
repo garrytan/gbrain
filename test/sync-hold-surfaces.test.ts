@@ -117,11 +117,11 @@ describe('sources status and retry-held on Git sources', () => {
     const text = await captured(() => runSources(engine, ['status', 'notes-git']));
     expect(text).toContain('notes-git: 2 held file(s): not imported, and they do not block sync.');
     expect(text).toContain('read-only for put_page until the file is repaired');
-    expect(text).toMatch(/Held notes\/stale\.md: invalid_frontmatter \(needs_interpretation\) at line 2, key "title"; .* Next: gbrain repair frontmatter --source notes-git --include-ambiguous/);
-    expect(text).toMatch(/Held notes\/huge\.md: file_too_large; its page is missing until the file imports\. Next: gbrain config get sync\.exclude/);
+    expect(text).toMatch(/Held notes\/stale\.md: invalid_frontmatter \(needs_interpretation\) at line 2, key "title"; .* Next: (?:foresights|gbrain) repair frontmatter --source notes-git --include-ambiguous/);
+    expect(text).toMatch(/Held notes\/huge\.md: file_too_large; its page is missing until the file imports\. Next: (?:foresights|gbrain) config get sync\.exclude/);
     expect(text).toContain('Most holds re-screen on the next sync by themselves');
-    expect(text).toContain('gbrain sync --source notes-git');
-    expect(text).toContain('gbrain sources retry-held notes-git');
+    expect(text).toContain('foresights sync --source notes-git');
+    expect(text).toContain('foresights sources retry-held notes-git');
     expect(text).not.toContain('other-git');
   });
 
@@ -166,8 +166,8 @@ describe('sources status and retry-held on Git sources', () => {
     expect(text).toContain('notes/stale.md (invalid_frontmatter, needs_interpretation): retry_scheduled');
     expect(text).toContain('2 held file(s) scheduled for a re-screen; none has run yet.');
     expect(text).toContain('Most holds re-screen on the next sync by themselves');
-    expect(text).toContain('Run it now with: gbrain sync --source notes-git,');
-    expect(text).toContain('gbrain repair frontmatter --source notes-git');
+    expect(text).toContain('Run it now with: foresights sync --source notes-git,');
+    expect(text).toContain('foresights repair frontmatter --source notes-git');
     expect((await readGitHoldRetryPaths(engine, 'notes-git', await incarnationOf(engine, 'notes-git'))).sort()).toEqual(['notes/huge.md', 'notes/stale.md']);
 
     const json = JSON.parse(await captured(() => runRetryHeld(engine, ['notes-git', '--json'])));
@@ -177,7 +177,7 @@ describe('sources status and retry-held on Git sources', () => {
   });
 });
 
-describe('gbrain sync --retry-held', () => {
+describe('foresights sync --retry-held', () => {
   test('is refused with a typed error pointing at sources retry-held', () => {
     expect(CLI_FLAG_REGISTRY.sync).toContain('--retry-held');
     let error: any;
@@ -185,7 +185,7 @@ describe('gbrain sync --retry-held', () => {
     expect(error).toMatchObject({ code: 'invalid_params', fix: { argv: ['gbrain', 'sources', 'retry-held', 'notes-git'],
       verify: { argv: ['gbrain', 'sources', 'status', 'notes-git', '--json'] } } });
     expect(error.message).toContain('no --retry-held flag');
-    expect(error.suggestion).toContain('gbrain sources retry-held notes-git');
+    expect(error.suggestion).toContain('foresights sources retry-held notes-git');
     try { parseSyncFlags(['--retry-held']); } catch (e) { error = e; }
     expect(error.fix.argv).toEqual(['gbrain', 'sources', 'retry-held', '<source-id>']);
     expect(error.fix.inputs).toEqual([expect.objectContaining({ name: 'source-id' })]);
@@ -222,7 +222,7 @@ describe('a page whose file is held refuses put_page naming the hold', () => {
     const { snapshot, file, row } = await seed('notes/held');
     writeFileSync(file, readFileSync(file, 'utf8').replace(/^title:.*$/m, 'title: Broken\n  continued tweet text'));
     await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ detail: 'file_database_drift',
-      suggestion: expect.stringContaining('gbrain sources reconcile') });
+      suggestion: expect.stringContaining('foresights sources reconcile') });
     await writeGitHold(engine, hold(sourceId, await incarnationOf(engine, sourceId), 'notes/held.md', { page_id: Number(snapshot.page.id) }));
     let error: any;
     try { await prepareFileTarget(engine, row, snapshot, 'Replacement'); } catch (e) { error = e; }
@@ -260,11 +260,11 @@ describe('a page whose file is held refuses put_page naming the hold', () => {
 
   test('receipts keep only the location-free message; the diagnostic maps it to the same reasons with the repair command', () => {
     expect(writeFailureDiagnostic('source_changed', heldFileMessage('drift', 'invalid_frontmatter'))).toMatchObject({ reason: 'file_database_drift',
-      message: heldFileMessage('drift', 'invalid_frontmatter'), suggestion: expect.stringContaining('gbrain repair frontmatter --source <source>') });
+      message: heldFileMessage('drift', 'invalid_frontmatter'), suggestion: expect.stringContaining('foresights repair frontmatter --source <source>') });
     const occupied = writeFailureDiagnostic('source_changed', heldFileMessage('occupied', 'file_too_large'));
     expect(occupied.reason).toBe('canonical_path_occupied');
     expect(occupied.suggestion).toContain('refuses put_page until the file is repaired');
-    expect(writeFailureDiagnostic('source_changed', 'The canonical file contains an uncoordinated local edit.').suggestion).toContain('gbrain sources reconcile');
+    expect(writeFailureDiagnostic('source_changed', 'The canonical file contains an uncoordinated local edit.').suggestion).toContain('foresights sources reconcile');
   });
 });
 
@@ -290,7 +290,7 @@ describe('Git holds and writer mode changes (X14)', () => {
       content: '---\ntype: note\ntitle: notes/held\n---\n\nAgent edit.\n' } }).then(() => null, (e: unknown) => e as Record<string, any>);
     expect(refused).not.toBeNull();
     const suggestion = String(refused!.suggestion);
-    expect(suggestion).toContain('gbrain repair frontmatter --source default');
+    expect(suggestion).toContain('foresights repair frontmatter --source default');
     expect(suggestion).toContain('retrying this write refuses the same way');
     expect(refused).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter', { sourceId: 'default', incarnation }) });
     expect(JSON.stringify(refused)).not.toContain('sources reconcile');
@@ -360,8 +360,8 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
 
   const expectRoute = (text: string, kind: 'fences' | 'frontmatter' | 'mixed', sourceId: string) => {
     // #6377: the source-level route for fence (and slug-conflict) holds is the content lane; a fence hold's own fix still names `repair fences --only`.
-    if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair content --source ${sourceId}`);
-    if (kind !== 'fences') expect(text).toContain(`gbrain repair frontmatter --source ${sourceId}`);
+    if (kind !== 'frontmatter') expect(text).toContain(`foresights repair content --source ${sourceId}`);
+    if (kind !== 'fences') expect(text).toContain(`foresights repair frontmatter --source ${sourceId}`);
     if (kind === 'fences') expect(text).not.toContain('repair frontmatter');
     if (kind === 'frontmatter') expect(text).not.toContain('repair content');
     for (const secret of SECRETS) expect(text).not.toContain(secret);
@@ -376,7 +376,7 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
         else expect(item.fix.argv.slice(0, 3)).toEqual(['gbrain', 'repair', 'frontmatter']);
       }
       const text = await captured(() => runSources(engine, ['status', sourceId]));
-      if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair fences --source ${sourceId} --only`);
+      if (kind !== 'frontmatter') expect(text).toContain(`foresights repair fences --source ${sourceId} --only`);
       if (kind === 'fences') expect(text).not.toContain('repair frontmatter');
       expectRoute((await retryHeld(engine, sourceId, { dryRun: false })).next_action, kind, sourceId);
       const doctor = await gitHeldFilesCheck(engine, [sourceId]);
@@ -396,7 +396,7 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
       expectRoute(`${notice.argv!.join(' ')} ${notice.why}`, kind, sourceId);
       expectRoute(heldFilesNotice(coverage, true)!.fix!.user_message!, kind, sourceId);
     }
-    expect(heldFileDiagnostic(heldFileMessage('drift', 'invalid_fence'), 'fences-only')!.suggestion).toContain('gbrain repair fences --source fences-only');
+    expect(heldFileDiagnostic(heldFileMessage('drift', 'invalid_fence'), 'fences-only')!.suggestion).toContain('foresights repair fences --source fences-only');
   });
 
   test('a fence hold\'s rendered next follows its state on CLI and HTTP, with the maintenance run inactive and active (D17, E35)', async () => {
@@ -421,7 +421,7 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
       expect(active['people/held-a.md']!.fix.then).toBeUndefined();
       expect(active['people/held-a.md']!.fence).toMatchObject({ auto_retry: true });
       expect(renderAction(active['people/held-a.md']!.fix, cli).next).toBe('run');
-      expect(active['people/held-b.md']!.fix.why).toContain('gbrain will not guess this repair');
+      expect(active['people/held-b.md']!.fix.why).toContain('foresights will not guess this repair');
       // Model repair off: a Tier 3 hold waits on a paid setting, which the CLI renders as ask_user.
       await engine.setConfig('fences.repair.llm', 'false');
       await writeGitHold(engine, fenceHold('fences-only', await incarnationOf(engine, 'fences-only'), 'people/held-d.md', null, {
@@ -431,7 +431,7 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
       expect(renderAction(paid.fix, http).next).toBe('tell_user_to_run');
       const text = await captured(() => runSources(engine, ['status', 'fences-only']));
       expect(text).toContain('No action needed: the next maintenance run repairs it.');
-      expect(text).toContain('Ask the user first, then: gbrain config set fences.repair.llm true');
+      expect(text).toContain('Ask the user first, then: foresights config set fences.repair.llm true');
     } finally {
       await engine.executeRaw("DELETE FROM minion_jobs WHERE name='autopilot-global-maintenance'");
       await engine.unsetConfig('fences.repair.llm');

@@ -1,12 +1,12 @@
 /**
  * Shared harness for the Lane H agent journeys (docs/designs/AGENT_OPERATOR_WAVE.md
  * "Lane H"): the real CLI as a subprocess and real stdio MCP sessions against a
- * keyless PGLite brain in a hermetic HOME, the way an agent harness drives gbrain.
+ * keyless PGLite brain in a hermetic HOME, the way an agent harness drives foresights.
  *
  * - `gb()` runs `bun --no-env-file run src/cli.ts …` with stdin either closed
  *   (`</dev/null`) or an open pipe that never writes (a harness that forgot to
  *   close stdin), under a hard SIGKILL timeout, and times the run.
- * - `mcp()` opens a real `gbrain serve` over stdio with the MCP SDK client.
+ * - `mcp()` opens a real `foresights serve` over stdio with the MCP SDK client.
  * - `journeyGolden()` freezes a normalised wire value under
  *   test/fixtures/agent-contract/v1/journey/ (paths, pids, ids and times become
  *   placeholders; `next` is never stored, like the A0 goldens). The protocol
@@ -67,7 +67,7 @@ export async function gb(home: string, args: string[], opts: { stdin?: StdinMode
   try {
     const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     const res = { exitCode, stdout, stderr, ms: Math.round(performance.now() - t0), killed };
-    expect(killed, `gbrain ${args.join(' ')} hung (stdin ${opts.stdin ?? 'devnull'}) and was killed:\n${stderr.slice(-2000)}`).toBe(false);
+    expect(killed, `foresights ${args.join(' ')} hung (stdin ${opts.stdin ?? 'devnull'}) and was killed:\n${stderr.slice(-2000)}`).toBe(false);
     return res;
   } finally {
     clearTimeout(killer);
@@ -94,7 +94,7 @@ export interface McpSession {
   close: () => Promise<void>;
 }
 
-/** A real `gbrain serve` on stdio, initialised (handshake done) with the SDK client. */
+/** A real `foresights serve` on stdio, initialised (handshake done) with the SDK client. */
 export async function mcp(home: string, serveArgs: string[] = [], opts: { cwd?: string; env?: Record<string, string | undefined> } = {}): Promise<McpSession> {
   const transport = new StdioClientTransport({
     command: 'bun', args: ['--no-env-file', 'run', CLI, 'serve', ...serveArgs],
@@ -154,7 +154,7 @@ export async function waitFor(pred: () => Promise<boolean> | boolean, ms = 30_00
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 const ISO = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?/g;
-const DOCS = /https:\/\/github\.com\/garrytan\/gbrain\/blob\/[^/\s"]+/g;
+const DOCS = /https:\/\/github\.com\/garrytan\/(?:foresights|gbrain)\/blob\/[^/\s"]+/g;
 const VOLATILE_KEYS = new Set(['duration_s', 'root_identity', 'plan_hash', 'doctor_run_id']);
 
 export interface GoldenVars { home: string; pids?: number[] }

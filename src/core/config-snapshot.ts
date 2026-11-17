@@ -8,13 +8,13 @@
  * one network round trip per key.
  *
  * On PGLite each read costs microseconds, so the pattern stayed invisible for
- * a long time. On a hosted Postgres it is the wall clock: `gbrain stats`
+ * a long time. On a hosted Postgres it is the wall clock: `foresights stats`
  * against a Supabase brain spent over 3 seconds on config reads that
  * pg_stat_statements showed the server answering in under 3ms total.
  *
  * The config table is a handful of rows, so read it once and answer every key
  * from memory. The snapshot lives for one resolution pass, not for the life of
- * the process, so a `gbrain config set` from another process is picked up by
+ * the process, so a `foresights config set` from another process is picked up by
  * the next command exactly as before.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI guard (#1647 / #171 / #5190): every plpgsql function gbrain defines MUST
+# CI guard (#1647 / #171 / #5190): every plpgsql function foresights defines MUST
 # pin `SET search_path`. Without it, an unqualified reference inside the
 # function body resolves through the caller's search_path, so a same-named
 # object in a user-controlled schema could shadow it. Migrations v120 and the

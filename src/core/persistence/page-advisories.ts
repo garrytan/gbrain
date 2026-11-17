@@ -89,7 +89,7 @@ export function timelineRowsRemovedAdvisory(row: WriteRequest, removed: Timeline
 
 export function remoteLinkHint(row: WriteRequest): Record<string, unknown> {
   return row.authority.remote && !row.authority.autoLinkTrusted ? { auto_links: { skipped: 'remote',
-    hint: 'Body wikilinks are saved as text but NOT reconciled into the graph inline. With mention_links: queued, a post-commit `links` effect (listed by get_write_request) adds plain mention edges to existing pages this connection can read; typed and frontmatter edges are not added. A stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` (delegates to a live serve over IPC), use trusted local capture/put_page for inline link extraction, or add_link for edges needed now.' } } : {};
+    hint: 'Body wikilinks are saved as text but NOT reconciled into the graph inline. With mention_links: queued, a post-commit `links` effect (listed by get_write_request) adds plain mention edges to existing pages this connection can read; typed and frontmatter edges are not added. A stdio `foresights serve` sweeps them at startup + on idle; `foresights serve --http` does not self-sweep — run `foresights sweep --once` (delegates to a live serve over IPC), use trusted local capture/put_page for inline link extraction, or add_link for edges needed now.' } } : {};
 }
 export function pageNoopAdvisories(row: WriteRequest): Record<string, unknown> {
   return { ...remoteLinkHint(row), ...(['put_page', 'capture', 'edit_page', 'append_page'].includes(row.operation) ? { facts_backstop: { skipped: 'not_imported' } } : {}) };

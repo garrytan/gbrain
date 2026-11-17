@@ -1,10 +1,10 @@
 /**
  * v0.37.x — doctor --remediate checkpoint (A4 amended).
  *
- * When `gbrain doctor --remediate --max-cost N` blows past the cap mid-run
+ * When `foresights doctor --remediate --max-cost N` blows past the cap mid-run
  * (BudgetTracker throws BudgetExhausted via the gateway-layer
  * AsyncLocalStorage), the runRemediate orchestrator persists what's been
- * completed so the user can continue with `gbrain doctor --remediate --resume`.
+ * completed so the user can continue with `foresights doctor --remediate --resume`.
  *
  * Checkpoint file: `~/.gbrain/remediation/<plan_hash>.json`
  *   - plan_hash = sha256(JSON.stringify(sorted recommendation ids)).slice(0,16)

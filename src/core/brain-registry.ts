@@ -69,15 +69,15 @@ export interface MountEntry {
   database_path?: string;
   /** Default true. Disabled mounts are not loaded. */
   enabled?: boolean;
-  /** Managed by `gbrain mounts sync` (PR 1). */
+  /** Managed by `foresights mounts sync` (PR 1). */
   expected_sha?: string;
-  /** Managed by `gbrain mounts sync` (PR 1). */
+  /** Managed by `foresights mounts sync` (PR 1). */
   last_synced_at?: string;
   /**
    * v0.40.3.0: per-mount frontmatter-override trust gate (D15). Default
    * FALSE — mounts must explicitly opt into honoring frontmatter
    * `contextual_retrieval_mode` overrides via
-   * `gbrain mounts trust-frontmatter <id>`. The host source (id='default')
+   * `foresights mounts trust-frontmatter <id>`. The host source (id='default')
    * is always trusted regardless of this field. Set/cleared via the
    * dedicated `trust-frontmatter` / `untrust-frontmatter` verbs (D4).
    */
@@ -109,7 +109,7 @@ export class DuplicateMountPathError extends GBrainError {
       `Duplicate mount path: "${path}"`,
       `Mount "${existingId}" already uses this path. Cannot register "${attemptedId}" at the same location.`,
       'Use a different local clone path, or remove the existing mount first: ' +
-        `gbrain mounts remove ${existingId}`,
+        `foresights mounts remove ${existingId}`,
     );
   }
 }
@@ -121,7 +121,7 @@ export class UnknownBrainError extends GBrainError {
     super(
       `Unknown brain: "${id}"`,
       `No enabled mount with id "${id}" found. Available brain ids: ${list}`,
-      `Run 'gbrain mounts list' to see registered mounts. Add a new mount with 'gbrain mounts add ${id} --path <path> --db-url <url>'.`,
+      `Run 'foresights mounts list' to see registered mounts. Add a new mount with 'foresights mounts add ${id} --path <path> --db-url <url>'.`,
     );
   }
 }
@@ -177,7 +177,7 @@ export function loadMounts(mountsPath: string = getMountsPath()): MountEntry[] {
     throw new GBrainError(
       `Malformed mounts.json`,
       e instanceof Error ? e.message : String(e),
-      `Fix the JSON syntax at ${mountsPath} or remove it and re-add mounts via 'gbrain mounts add'`,
+      `Fix the JSON syntax at ${mountsPath} or remove it and re-add mounts via 'foresights mounts add'`,
     );
   }
 
@@ -193,8 +193,8 @@ export function loadMounts(mountsPath: string = getMountsPath()): MountEntry[] {
   if (file.version !== 1) {
     throw new GBrainError(
       `Unsupported mounts.json version: ${file.version}`,
-      `This gbrain binary supports version 1`,
-      `Upgrade gbrain or regenerate mounts.json`,
+      `This foresights binary supports version 1`,
+      `Upgrade foresights or regenerate mounts.json`,
     );
   }
 
@@ -398,7 +398,7 @@ export class BrainRegistry {
       throw new GBrainError(
         'No host brain configured',
         '~/.gbrain/config.json is missing and GBRAIN_DATABASE_URL is unset',
-        "Run 'gbrain init' to configure the host brain",
+        "Run 'foresights init' to configure the host brain",
       );
     }
     const { createEngine } = await import('./engine-factory.ts');

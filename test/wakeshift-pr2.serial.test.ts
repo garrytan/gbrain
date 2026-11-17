@@ -243,7 +243,7 @@ describe('gbrain.cron.finished', () => {
     const e = emits()[0]!.body;
     expect(e.payload).toMatchObject({ name: 'nightly-digest', status: 'failed', next: 'watch_cron nightly-digest to hear about its next run' });
     expect(e.payload.finished_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(e.id).toMatch(/^gbrain\.cron\.finished:nightly-digest:\d+:failed:\d+:[0-9a-f]{12}$/);
+    expect(e.id).toMatch(/^(?:foresights|gbrain)\.cron\.finished:nightly-digest:\d+:failed:\d+:[0-9a-f]{12}$/);
     const listed = await cli(['cron', 'list', '--json']);
     expect(JSON.parse(listed.out).crons).toMatchObject([{ name: 'nightly-digest', last_status: 'failed' }]);
   });
@@ -274,7 +274,7 @@ describe('gbrain.cron.finished', () => {
 
   test('an unregistered emit is recorded with a stderr hint, and doctor names it', async () => {
     const r = await cli(['emit', 'cron.finished', '--name', 'typo-cron', '--status', 'ok']);
-    expect(r.err).toContain('gbrain wakeshift cron add typo-cron');
+    expect(r.err).toContain('foresights wakeshift cron add typo-cron');
     const checks = await doctorChecks();
     expect(checks[0]).toMatchObject({ status: 'warn', details: { unregistered_crons_7d: ['typo-cron'] } });
   });
@@ -497,7 +497,7 @@ describe('status, doctor and the gate', () => {
     writeConfig({ enabled: true, url: fake.url, manifest_hash: wakeshiftManifestHash() });
     const on = await run() as Array<{ status: string; message: string }>;
     expect(on[0]).toMatchObject({ status: 'warn' });
-    expect(on[0]!.message).toContain('gbrain apply-migrations --yes');
+    expect(on[0]!.message).toContain('foresights apply-migrations --yes');
   });
 
   test('status and doctor say when the published manifest is older than this build', async () => {
@@ -506,7 +506,7 @@ describe('status, doctor and the gate', () => {
     expect(st.manifest).toEqual({ current: false, fix: 'gbrain wakeshift enable' });
     const checks = await doctorChecks();
     expect(checks[0]).toMatchObject({ status: 'warn', details: { manifest_current: false } });
-    expect(checks[0]!.message).toContain('gbrain wakeshift enable');
+    expect(checks[0]!.message).toContain('foresights wakeshift enable');
     writeConfig({ enabled: true, url: fake.url, manifest_hash: wakeshiftManifestHash() });
     expect(JSON.parse((await cli(['status', '--json'])).out).manifest).toEqual({ current: true });
   });
@@ -521,12 +521,12 @@ describe('status, doctor and the gate', () => {
     await engine.executeRaw("INSERT INTO wake_forgets (wake_user, state, last_error) VALUES ('0123456789abcdef0123456789abcdef', 'dead', 'bad_request')");
     const dead = await doctorChecks();
     expect(dead[0]).toMatchObject({ status: 'warn', details: { dead_forgets_30d: 1 } });
-    expect(dead[0]!.message).toContain('gbrain wakeshift test');
+    expect(dead[0]!.message).toContain('foresights wakeshift test');
     await engine.executeRaw("INSERT INTO wake_forgets (wake_user) VALUES ('fedcba9876543210fedcba9876543210')");
     writeConfig({ enabled: false, url: fake.url });
     const off = await doctorChecks();
     expect(off[0]).toMatchObject({ status: 'warn', details: { enabled: false, pending_forgets: 1 } });
-    expect(off[0]!.message).toContain('gbrain wakeshift enable');
+    expect(off[0]!.message).toContain('foresights wakeshift enable');
   });
 
   test('the manifest carries both new events, personal and deleted on delivery', () => {

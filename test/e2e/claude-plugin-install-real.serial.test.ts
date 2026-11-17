@@ -1,5 +1,5 @@
 /**
- * REAL-binary door test — the gbrain CLAUDE CODE PLUGIN (the codex door's
+ * REAL-binary door test — the foresights CLAUDE CODE PLUGIN (the codex door's
  * sibling; see codex-plugin-install-real.serial.test.ts for the full contract
  * map). Stages a CLEAN tree via `git archive HEAD`, then:
  *
@@ -9,9 +9,9 @@
  *      CLAUDE_CONFIG_DIR settings (the exact shape claudePluginProvidesName
  *      scans) and uninstall clears it.
  *
- *   2. SMOKE (live `claude -p` turn): the session's gbrain MCP server comes
+ *   2. SMOKE (live `claude -p` turn): the session's foresights MCP server comes
  *      from the PLUGIN (inline mcpServers via ${CLAUDE_PLUGIN_ROOT} launcher);
- *      GBRAIN_* rides the parent env into the launcher. Asserts a gbrain MCP
+ *      GBRAIN_* rides the parent env into the launcher. Asserts a foresights MCP
  *      tool call in the stream AND the seeded fact in the final text.
  *
  * Hermetic per test; self-skips without a plugin-capable claude binary; the
@@ -152,7 +152,7 @@ describe.skipIf(!PLUGIN_CAPABLE || !hasClaudeAuth())('claude plugin door — SMO
       const gbrainBin = gbrainBinForTests(binDir);
 
       const prompt =
-        `You have a gbrain MCP tool connected to a knowledge brain (provided by the gbrain plugin). ` +
+        `You have a foresights MCP tool connected to a knowledge brain (provided by the foresights plugin). ` +
         `Using ONLY that brain (do not guess, do not use general knowledge), answer: ` +
         `${seeded.query} Report exactly what the brain says.`;
 
@@ -173,7 +173,7 @@ describe.skipIf(!PLUGIN_CAPABLE || !hasClaudeAuth())('claude plugin door — SMO
         // Plugin-provided servers are plugin-namespaced (observed live:
         // `mcp__plugin_gbrain_gbrain__search`); a bootstrap-lane server would
         // be `mcp__gbrain__…`. Match both shapes.
-        const usedMcp = turn.toolCalls.some((c) => /^mcp__.*gbrain.*__/.test(c));
+        const usedMcp = turn.toolCalls.some((c) => /^mcp__.*(?:foresights|gbrain).*__/.test(c));
         const gotFact = turn.finalText.toLowerCase().includes(fact);
         lastEvidence =
           `[claude plugin smoke attempt ${attempt}/${maxAttempts}] exit=${turn.exitCode} ` +

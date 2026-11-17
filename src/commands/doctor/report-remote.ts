@@ -155,7 +155,7 @@ export async function doctorReportRemote(
         message:
           `idx_timeline_dedup is ${idx.indexPresent ? `(${idx.columns.join(', ')})` : 'absent'}, ` +
           `expected (page_id, date, md5(summary), source) — timeline writes are failing (#2038/#3737). ` +
-          `Run \`gbrain apply-migrations --force-schema\` to heal it.`,
+          `Run \`foresights apply-migrations --force-schema\` to heal it.`,
       });
     }
   } catch {
@@ -195,7 +195,7 @@ export async function doctorReportRemote(
             status: 'warn',
             message:
               `${n} timeline projection(s) point to soft-deleted event pages ` +
-              '(hidden at read time; clean up with `gbrain integrity auto`).',
+              '(hidden at read time; clean up with `foresights integrity auto`).',
           },
     );
   } catch {
@@ -251,7 +251,7 @@ export async function doctorReportRemote(
     const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION).pending.filter(v =>
       (newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry');
     if (wedged.length > 0) {
-      const cmd = wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ');
+      const cmd = wedged.map(v => `foresights apply-migrations --force-retry ${v}`).join(' && ');
       checks.push({
         name: 'minions_migration',
         status: 'fail',
@@ -261,13 +261,13 @@ export async function doctorReportRemote(
       checks.push({
         name: 'minions_migration',
         status: 'fail',
-        message: `MINIONS HALF-INSTALLED on brain host: ${stuck.join(', ')}. Run on the host: gbrain apply-migrations --yes`,
+        message: `MINIONS HALF-INSTALLED on brain host: ${stuck.join(', ')}. Run on the host: foresights apply-migrations --yes`,
       });
     } else if (pending.length > 0) {
       checks.push({
         name: 'minions_migration',
         status: 'warn',
-        message: `${pending.length} host migration(s) not run yet on brain host: ${pending.join(', ')}. Run on the host: gbrain apply-migrations --yes`,
+        message: `${pending.length} host migration(s) not run yet on brain host: ${pending.join(', ')}. Run on the host: foresights apply-migrations --yes`,
         details: { pending },
       });
     } else {
@@ -349,7 +349,7 @@ export async function doctorReportRemote(
   // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
   // The subagent loop requires native tool-calling. If models.subagent,
   // models.tier.subagent, or models.default resolves to a limited provider, warn here
-  // so the user sees it at the next `gbrain doctor` run instead of at the
+  // so the user sees it at the next `foresights doctor` run instead of at the
   // next subagent job submission. (Layers 1+2 also enforce — this is the
   // surfacing layer.)
   checks.push(await checkSubagentCapability(engine));
@@ -450,7 +450,7 @@ export async function doctorReportRemote(
 
   // 11a. issue #972 link_resolution_opportunity — same check the local
   // doctor runs at the equivalent slot in buildChecks. Mirrored for
-  // thin-client parity so `gbrain remote doctor` sees the same hint.
+  // thin-client parity so `foresights remote doctor` sees the same hint.
   checks.push(await checkLinkResolutionOpportunity(engine, undefined, { sourceIds: opts.sourceIds }));
 
   // 12. v0.40.5.0 Federated Sync v2 (T12) — federation_health:

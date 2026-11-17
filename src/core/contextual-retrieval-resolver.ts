@@ -63,7 +63,7 @@ export interface ResolveContextualRetrievalModeResult {
    * True when the page frontmatter HAD a `contextual_retrieval` key BUT
    * was rejected because the source is a mount without
    * `trust_frontmatter_overrides`. Lets the doctor surface a hint pointing
-   * at `gbrain mounts trust-frontmatter <source>`.
+   * at `foresights mounts trust-frontmatter <source>`.
    */
   frontmatter_rejected_untrusted_mount?: boolean;
 }

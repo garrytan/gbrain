@@ -67,7 +67,7 @@ export interface BriefSession {
 }
 
 export interface SearchedScope {
-  /** What retrieved the sessions, in words (e.g. "gbrain c5fb0201 hybrid search, top 5 sessions, reranker on"). */
+  /** What retrieved the sessions, in words (e.g. "foresights c5fb0201 hybrid search, top 5 sessions, reranker on"). */
   retrieval: string;
   /** Readiness of the searched index for this request, when the caller knows it. */
   readiness?: string;

@@ -1,6 +1,6 @@
 /**
- * #7245: doctor `runtime_build_skew`. Each long-running gbrain process keeps
- * the code it loaded at start, while `gbrain jobs run-child` spawns a fresh
+ * #7245: doctor `runtime_build_skew`. Each long-running foresights process keeps
+ * the code it loaded at start, while `foresights jobs run-child` spawns a fresh
  * process from the install on disk for every job, so after a checkout reset or
  * an upgrade on disk one host can run several builds at once: serve on one, the
  * supervisor and worker parents on another (in memory), job children on a third
@@ -13,7 +13,7 @@
  *   can prove dead (GST-2688: an old serve stopped on SIGTERM can leave its row
  *   renewed for 30 s);
  * - the jobs supervisor: lines 4-5 of its PID file (`readSupervisorBuild`);
- * - worker parents (`gbrain jobs work`, autopilot-spawned ones included): the
+ * - worker parents (`foresights jobs work`, autopilot-spawned ones included): the
  *   `version` and `install_root` of their worker-registry entries;
  * - job children: the `job_build_skew:` history entry a child writes when its
  *   build differs from its worker's (`jobChildBuildVerdict`), on the newest 500
@@ -21,7 +21,7 @@
  *
  * Read-only. Two or more builds among the running processes (and their recent
  * job children) fail the check (GBRA-175); one process older than its install
- * alone warns. The fix asks the user, then runs `gbrain upgrade --restart-only`,
+ * alone warns. The fix asks the user, then runs `foresights upgrade --restart-only`,
  * which restarts every process onto the installed build and verifies one build
  * runs; the message also names the first manual restart (serve first, then the
  * supervisor, then a worker). Nothing restarts automatically. Output carries
@@ -118,8 +118,8 @@ export async function runtimeBuildSkewCheck(engine: BrainEngine, hostId: string,
     const unknownNote = unknown.length ? ` ${unknown.map(p => `${p.role} pid ${p.pid}`).join('; ')} started before builds were recorded; restart it to report one.` : '';
     if (!stale.length) {
       return { name: 'runtime_build_skew', status: 'ok', details,
-        message: (processes.length ? `Every long-running gbrain process on this host that records its build runs ${newest ? `v${newest}` : 'an unrecorded build'} (${processes.map(p => `${p.role} pid ${p.pid}`).join('; ')}).`
-          : 'No long-running gbrain process (serve, jobs supervisor, worker) is running on this host.') + unknownNote };
+        message: (processes.length ? `Every long-running foresights process on this host that records its build runs ${newest ? `v${newest}` : 'an unrecorded build'} (${processes.map(p => `${p.role} pid ${p.pid}`).join('; ')}).`
+          : 'No long-running foresights process (serve, jobs supervisor, worker) is running on this host.') + unknownNote };
     }
     const target = stale[0]!;
     const argv = restartFor(target, service);
@@ -127,20 +127,20 @@ export async function runtimeBuildSkewCheck(engine: BrainEngine, hostId: string,
       const jobs = liveChildren.filter(o => o.worker_pid === c.worker_pid && o.child_version === c.child_version && o.refused === c.refused).map(o => `#${o.job_id}`);
       return `job children of worker pid ${c.worker_pid} ${c.refused ? 'refused to run' : 'ran'} v${c.child_version} (jobs ${jobs.slice(0, 5).join(', ')}${jobs.length > 5 ? `, +${jobs.length - 5} more` : ''})`;
     });
-    const restartHow = target.role === 'supervisor' ? ' and start it again with `gbrain jobs supervisor start --detach` (it respawns its worker from the install on disk)'
+    const restartHow = target.role === 'supervisor' ? ' and start it again with `foresights jobs supervisor start --detach` (it respawns its worker from the install on disk)'
       : argv[0] === 'kill' ? ' (SIGTERM: it drains its jobs; a supervisor respawns a worker from the install on disk) and start it again the way it was launched if nothing supervises it' : '';
     const running = processes.filter(p => p.version).map(label).join('; ');
     return { name: 'runtime_build_skew', status: versions.size > 1 ? 'fail' : 'warn', details,
-      message: `runtime_build_skew: ${versions.size > 1 ? `${versions.size} gbrain builds are running on this host` : 'a gbrain process runs an older build than its install'} (newest v${newest}): `
+      message: `runtime_build_skew: ${versions.size > 1 ? `${versions.size} foresights builds are running on this host` : 'a foresights process runs an older build than its install'} (newest v${newest}): `
         + `${running}${childLines.length ? `; ${childLines.join('; ')}` : ''}. `
         + 'A process keeps the build it started with, and every job child it spawns runs the build its install holds on disk now. '
-        + `\`gbrain upgrade --restart-only\` restarts every listed process onto the installed build and verifies one build runs (it refuses, naming the step, for a process it cannot restart). `
+        + `\`foresights upgrade --restart-only\` restarts every listed process onto the installed build and verifies one build runs (it refuses, naming the step, for a process it cannot restart). `
         + `By hand: restart with \`${argv.join(' ')}\`${restartHow}, then restart each other process listed on an older build. Nothing restarts automatically.${unknownNote}`,
       fix: { ask_user: true, argv: RESTART_ARGV, consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('runtime_build_skew'), docs: DOCS,
-        why: `Restarts every gbrain process on this host that is not on the installed build (first ${label(target)}), drain-first, then verifies they all report one build and the warm CLI socket accepts it.`,
-        user_message: `gbrain processes on this host run different builds (${running}). Restart them onto the installed build with \`gbrain upgrade --restart-only\`? Serve and the jobs worker drain and come back within a minute.` } };
+        why: `Restarts every foresights process on this host that is not on the installed build (first ${label(target)}), drain-first, then verifies they all report one build and the warm CLI socket accepts it.`,
+        user_message: `foresights processes on this host run different builds (${running}). Restart them onto the installed build with \`foresights upgrade --restart-only\`? Serve and the jobs worker drain and come back within a minute.` } };
   } catch (error) {
-    return checkError('runtime_build_skew', 'read the builds of this host\'s gbrain processes', error, { details: { count: 'unknown', health: 'unknown', docs: DOCS } });
+    return checkError('runtime_build_skew', 'read the builds of this host\'s foresights processes', error, { details: { count: 'unknown', health: 'unknown', docs: DOCS } });
   }
 }
 

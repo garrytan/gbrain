@@ -17,7 +17,7 @@ gain across all questions. The sufficiency signal adds no benefit for Gemma 27B
 on Musique in the reported comparison. Fine-tuning for abstention can also
 reduce correct answers.
 
-For GBrain, this motivates separate labels for missing evidence, reading
+For Foresights, this motivates separate labels for missing evidence, reading
 failure and unsupported guessing. It does not authorize silently withholding
 more answers to make accuracy look better. Private conversational facts also
 need evidence; successful guesses from general world knowledge are a different

@@ -132,7 +132,7 @@ export function onboardGaps(c: OnboardCounts): Record<OnboardClass, boolean> {
 
 // ── cache ───────────────────────────────────────────────────────────────────
 
-/** A pitchable `gbrain features` recommendation (the fields the auto-fix notice reads). */
+/** A pitchable `foresights features` recommendation (the fields the auto-fix notice reads). */
 export interface CachedFeature { id: string; priority: 1 | 2; title: string; pitch: string; command: string; auto_fixable: boolean }
 
 interface OnboardSnapshot {
@@ -196,7 +196,7 @@ export async function mcpFirstRunNotices(engine: BrainEngine): Promise<Notice[]>
 }
 
 /**
- * Doctor and `gbrain onboard --check`: first-run decisions that are still
+ * Doctor and `foresights onboard --check`: first-run decisions that are still
  * open while the user muted `first_run_decisions`, with the unmute command.
  */
 export async function mutedFirstRunDecisionsNotice(engine: BrainEngine): Promise<Notice | null> {
@@ -207,7 +207,7 @@ export async function mutedFirstRunDecisionsNotice(engine: BrainEngine): Promise
   return {
     code: 'first_run_decisions_muted', kind: 'info',
     why: `First-run decisions are still open (${open.join(', ')}), but first_run_decisions is muted, so agents no longer relay them.`,
-    user_message: `Some gbrain setup choices are still open (${open.join(', ')}) and their reminder is muted. Want to see them again?`,
+    user_message: `Some foresights setup choices are still open (${open.join(', ')}) and their reminder is muted. Want to see them again?`,
     fix: {
       argv: ['gbrain', 'notices', 'unmute', 'first_run_decisions'], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Shows the first-run decisions to agents again; the user muted them, so unmuting is their call.',
@@ -278,14 +278,14 @@ function previewFix(): Action {
   return {
     argv: ['gbrain', 'onboard', '--check'], mcp: { tool: 'get_health', arguments: {} },
     consent: [], actor: 'agent', requires_exclusive: false,
-    why: 'Read-only: shows the brain\'s coverage numbers (gbrain onboard --check also lists each remedy with its command).',
+    why: 'Read-only: shows the brain\'s coverage numbers (foresights onboard --check also lists each remedy with its command).',
   };
 }
 
 function dismissal(code: string, render: RenderContext): string {
   return render.isCallable('mute_notice')
     ? ` To stop this notice, call mute_notice {"code":"${code}"}.`
-    : ` To stop this notice, the user runs \`gbrain notices mute ${code}\`.`;
+    : ` To stop this notice, the user runs \`foresights notices mute ${code}\`.`;
 }
 
 const pct = (v: number | null) => `${Math.round((v ?? 0) * 100)}%`;
@@ -297,24 +297,24 @@ function classNotice(cls: OnboardClass, s: OnboardSnapshot, render: RenderContex
   const parts: Record<OnboardClass, { why: string; user_message: string }> = {
     stale_chunks: {
       why: `${c.staleChunks} chunk(s) in this brain have no embedding, so the semantic part of this search cannot match them. `
-        + `Remedy: an embedding backfill (\`gbrain embed --stale\`${s.stale_usd !== null ? `, estimated $${s.stale_usd.toFixed(2)}` : ''}); `
+        + `Remedy: an embedding backfill (\`foresights embed --stale\`${s.stale_usd !== null ? `, estimated $${s.stale_usd.toFixed(2)}` : ''}); `
         + 'it sends page text to the embedding provider and costs money, so ask the user first.',
       user_message: `${c.staleChunks} piece(s) of your notes are not indexed for meaning-based search, so searches can miss them. `
         + `Indexing them sends the text to your embedding provider${s.stale_usd !== null ? ` and costs about $${s.stale_usd.toFixed(2)}` : ' and costs a little money'}. Want me to run it after this session?`,
     },
     link_coverage: {
       why: `Only ${pct(c.linkCoverage)} of this brain's ${c.entities} people/company pages have an incoming link, so backlinks and graph answers come back thin. `
-        + 'Remedy: link extraction (`gbrain extract links`, local, no paid calls).',
-      user_message: 'Many of your people and company pages are not linked to the notes that mention them, so "who is connected to X" answers are thin. Want me to run gbrain\'s link extraction (free, local) after this session?',
+        + 'Remedy: link extraction (`foresights extract links`, local, no paid calls).',
+      user_message: 'Many of your people and company pages are not linked to the notes that mention them, so "who is connected to X" answers are thin. Want me to run foresights\'s link extraction (free, local) after this session?',
     },
     timeline_coverage: {
       why: `Only ${pct(c.timelineCoverage)} of this brain's ${c.entities} people/company pages have timeline entries, so "when did X happen" answers come back thin. `
-        + 'Remedy: timeline extraction (`gbrain extract timeline`, local, no paid calls).',
-      user_message: 'Many of your people and company pages have no dated timeline entries, so "when did X happen" answers are thin. Want me to run gbrain\'s timeline extraction (free, local) after this session?',
+        + 'Remedy: timeline extraction (`foresights extract timeline`, local, no paid calls).',
+      user_message: 'Many of your people and company pages have no dated timeline entries, so "when did X happen" answers are thin. Want me to run foresights\'s timeline extraction (free, local) after this session?',
     },
     no_takes: {
       why: 'This brain holds no takes (the user\'s recorded opinions and judgments), so think and recall cannot cite the user\'s own views. '
-        + 'Remedy: record takes as they come up (`gbrain takes add`), or extract them from existing pages (`gbrain takes extract --from-pages`, which calls the chat model and costs money, so ask the user first).',
+        + 'Remedy: record takes as they come up (`foresights takes add`), or extract them from existing pages (`foresights takes extract --from-pages`, which calls the chat model and costs money, so ask the user first).',
       user_message: 'Your brain has no recorded opinions yet, so I cannot cite your own views. Want me to extract them from your existing notes (uses the AI model, small cost) after this session?',
     },
   };

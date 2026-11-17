@@ -215,7 +215,7 @@ export interface ExpansionTouchpoint {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   /**
-   * Recipe-level timeout fallback for `gbrain models doctor`'s expansion
+   * Recipe-level timeout fallback for `foresights models doctor`'s expansion
    * reachability probe. Mirrors `RerankerTouchpoint.default_timeout_ms`: lets
    * a slow-start provider (e.g. a subprocess-dispatched CLI with real cold-start
    * latency) declare the headroom it needs instead of the probe's flat 5000ms
@@ -312,7 +312,7 @@ export interface ChatTouchpoint {
    * the same headroom as thinking-by-default Claude 5 / OpenAI reasoning
    * models. Boolean for recipe-wide behavior; predicate when only some routed
    * model ids think by default. Distinct from "can be asked to think" —
-   * default-off reasoning modes should NOT set this (gbrain#4172).
+   * default-off reasoning modes should NOT set this (foresights#4172).
    */
   thinking_by_default?: boolean | ((modelId: string) => boolean);
   /**
@@ -333,7 +333,7 @@ export interface ChatTouchpoint {
   cost_per_1m_output_usd?: number;
   price_last_verified?: string;
   /**
-   * Recipe-level timeout fallback for `gbrain models doctor`'s chat
+   * Recipe-level timeout fallback for `foresights models doctor`'s chat
    * reachability probe. Mirrors `RerankerTouchpoint.default_timeout_ms`: lets
    * a slow-start provider (e.g. a subprocess-dispatched CLI with real cold-start
    * latency) declare the headroom it needs instead of the probe's flat 5000ms
@@ -360,10 +360,10 @@ export interface Recipe {
    */
   billing?: 'subscription';
   /**
-   * Model ids this recipe lists in a touchpoint that gbrain ships no price
+   * Model ids this recipe lists in a touchpoint that foresights ships no price
    * for. They run under a default cost cap with a warning; a cap the user
    * set refuses them with the no_pricing guidance until the operator
-   * registers a rate (`gbrain pricing set`). `bun run check:recipe-pricing`
+   * registers a rate (`foresights pricing set`). `bun run check:recipe-pricing`
    * requires every listed model to be priced or named here, and fails on a
    * stale entry (now priced, or no longer listed).
    */

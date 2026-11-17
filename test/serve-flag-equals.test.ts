@@ -1,5 +1,5 @@
 /**
- * #7619 (real failure path): `gbrain serve` safety flags (and the other
+ * #7619 (real failure path): `foresights serve` safety flags (and the other
  * commands below: auth, consent, schema, agent run) in the `--flag=value`
  * form over a real CLI process on a hermetic PGLite brain. Before the fix the
  * entry accepted these tokens and serve never read them: `--access=read-only`
@@ -68,7 +68,7 @@ describe('serve --flag=value', () => {
     const r = cli(['serve', '--http', '--port', '0', '--access=read-only']);
     expect(r.status).not.toBe(0);
     expect(r.status).not.toBeNull();
-    expect(r.stderr).toContain('gbrain auth rescope-token <name> --operations');
+    expect(r.stderr).toContain('foresights auth rescope-token <name> --operations');
   });
 
   test('--source-guard=true exits 2 naming the bare spelling, before serving', () => {
@@ -136,7 +136,7 @@ describe('serve --flag=value', () => {
     const r = cli(['serve', '--http', '--port', '0', '--', '--access=read-only']);
     expect(r.status).not.toBe(0);
     expect(r.status).not.toBeNull();
-    expect(r.stderr).toContain('gbrain auth rescope-token <name> --operations');
+    expect(r.stderr).toContain('foresights auth rescope-token <name> --operations');
   });
 
   // Value: protects=--help and a bare -- never let a write run with an = token the gate refuses; fails_when=the gate is skipped on help or stops at -- on a sub that reads past it; why_new=only serve (which prints help) was covered; seam=none; no_claim=other self-help handlers (one representative)
@@ -185,7 +185,7 @@ describe('serve --flag=value', () => {
   test('--help still answers when an = token would refuse', () => {
     const r = cli(['serve', '--source-guard=true', '--help']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('gbrain serve');
+    expect(r.stdout).toContain('foresights serve');
   });
 
   // Value: protects=schema add-type's own parser accepting --json=true also prints the JSON document; fails_when=the output mode reads only the exact --json token; why_new=the parser pin never checked the output; seam=none; no_claim=other own parsers

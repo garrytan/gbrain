@@ -252,7 +252,7 @@ describe('runDoctor — stale_mentions check', () => {
     // The operator has to learn two things from this message or it is useless:
     // that re-running the scan will NOT fix it, and what to do instead.
     expect(check!.message).toContain('will NOT remove them');
-    expect(check!.message).toContain('gbrain unlink');
+    expect(check!.message).toContain('foresights unlink');
     expect(check!.message).toContain('notes/meeting -> companies/acme-example');
     // Read-only: no repair is offered, because none exists yet (#3674).
     expect(check!.remediation ?? []).toEqual([]);

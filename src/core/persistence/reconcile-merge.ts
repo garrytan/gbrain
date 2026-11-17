@@ -90,7 +90,7 @@ export function mergeReconcile(file: ParsedPage, database: ParsedPage, decisions
   const extractionStatus = file.frontmatter.provenance === 'auto-extracted' || database.frontmatter.provenance === 'auto-extracted';
   if (extractionStatus && [...chosen.keys()].some(path => path === '/frontmatter/status' || path.startsWith('/frontmatter/status/'))) {
     throw opError('permission_denied', 'Extraction review status requires the scoped review workflow.',
-      "Drop the /frontmatter/status decision: an auto-extracted page's review status changes only through extraction review. The command in fix lists pending stubs; gbrain extraction-review promotes or rejects them.",
+      "Drop the /frontmatter/status decision: an auto-extracted page's review status changes only through extraction review. The command in fix lists pending stubs; foresights extraction-review promotes or rejects them.",
       { fix: readFix('Lists the unverified auto-extracted stubs awaiting review, with their slugs.', { argv: ['gbrain', 'extraction-pending'] }) });
   }
   const used = new Set<string>(), conflicts: ReconcileConflict[] = [], protectedPaths: string[] = [], scanPaths: string[] = [];

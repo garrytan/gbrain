@@ -1,7 +1,7 @@
 /**
  * v0.31.2 walker hardening regression tests.
  *
- * Closes the bug class where `gbrain sync --strategy code` could hang on
+ * Closes the bug class where `foresights sync --strategy code` could hang on
  * repos with self-referencing symlinks (the gstack `.claude/skills/gstack
  * -> repo-root` dev pattern was the trigger). Pins:
  *

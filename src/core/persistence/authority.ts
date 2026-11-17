@@ -124,7 +124,7 @@ export function storedAuthorizationReads(engine: SqlEngine, rows: readonly Write
   return [...sources.map(id => () => sourceMembership(engine, id, lock)), ...writers.map(id => () => localWriterRow(engine, id, lock))];
 }
 /**
- * #5994: a failed write replayed by `gbrain repair failed-writes` keeps its
+ * #5994: a failed write replayed by `foresights repair failed-writes` keeps its
  * original authority ceiling instead of the replay context's: the same
  * principal, delegation, scopes, holders and autoLinkTrusted, for the same
  * source incarnation, re-authorized against the live grant (a revoked or

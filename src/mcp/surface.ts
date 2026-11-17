@@ -20,7 +20,7 @@
  * Resolution: stdio GBRAIN_SURFACE > --surface flag > config `mcp_surface` >
  * 'full' (resolveStdioSurface); `serve --http` ignores GBRAIN_SURFACE. Why
  * default full: a bare `serve` keeps existing advanced tooling, and the
- * registrations gbrain writes pin `REGISTRATION_SURFACE`
+ * registrations foresights writes pin `REGISTRATION_SURFACE`
  * (src/core/mcp-registration.ts) unless the user passes `--surface`.
  *
  * WP4 (D2 CEILING): on the OAuth HTTP transport the server-resolved surface is
@@ -157,7 +157,7 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
 
 /**
  * `--advertise`: the surface tools/list shows, narrower than what is callable.
- * Registrations gbrain writes pass `--advertise verbs` (REGISTRATION_ADVERTISE);
+ * Registrations foresights writes pass `--advertise verbs` (REGISTRATION_ADVERTISE);
  * absent, `mcp.advertised_surface` decides.
  */
 export function parseAdvertiseFlag(args: string[]): McpSurface | null {
@@ -166,8 +166,8 @@ export function parseAdvertiseFlag(args: string[]): McpSurface | null {
   if (inline === undefined && idx < 0) return null;
   const raw = inline !== undefined ? inline.slice('--advertise='.length) : args[idx + 1];
   if (raw === undefined || raw.startsWith('--') || !isMcpSurface(raw)) {
-    throw opError('invalid_params', `gbrain serve --advertise takes verbs, starter or full${raw === undefined || raw.startsWith('--') ? '' : ` (got "${raw}")`}`,
-      'Run gbrain serve --advertise verbs (list the 7 memory verbs and request_tools), gbrain serve --advertise starter or gbrain serve --advertise full. Every tool the surface allows stays callable.');
+    throw opError('invalid_params', `foresights serve --advertise takes verbs, starter or full${raw === undefined || raw.startsWith('--') ? '' : ` (got "${raw}")`}`,
+      'Run foresights serve --advertise verbs (list the 7 memory verbs and request_tools), foresights serve --advertise starter or foresights serve --advertise full. Every tool the surface allows stays callable.');
   }
   return raw;
 }
@@ -328,7 +328,7 @@ export function resolveClientRowSurface(
   if (!warnedUnknownRowSurface.has(clientId)) {
     if (warnedUnknownRowSurface.size >= WARNED_CLIENTS_CAP) warnedUnknownRowSurface.clear();
     warnedUnknownRowSurface.add(clientId);
-    warn(`[mcp] client ${clientId} carries unrecognized oauth_clients.surface value; ignoring it and falling back to the server/config surface (rescope with: gbrain auth rescope-client ${clientId} --surface verbs|starter|full|clear)`);
+    warn(`[mcp] client ${clientId} carries unrecognized oauth_clients.surface value; ignoring it and falling back to the server/config surface (rescope with: foresights auth rescope-client ${clientId} --surface verbs|starter|full|clear)`);
   }
   return null;
 }
@@ -337,7 +337,7 @@ export function resolveClientRowSurface(
  * Dual-plane resolution for `mcp.default_surface_dcr` — the surface applied
  * to clients whose row surface is NULL (oauth_clients carries no DCR-origin
  * marker, so the default applies to ALL null-surface OAuth clients; operators
- * pre-seed important clients with `gbrain auth rescope-client <id> --surface
+ * pre-seed important clients with `foresights auth rescope-client <id> --surface
  * full`). Legacy bearer tokens have no client row and keep the server ceiling
  * (#9266). DB plane wins, file plane falls back, absent/unparseable on both =
  * null (caller falls back to the server ceiling — pre-WP4 behavior). A
@@ -383,7 +383,7 @@ export async function resolveAdvertisedSurface(engine: BrainEngine | null, confi
 
 /**
  * `oauth_clients.surface_set_by` for a surface an install default wrote (the
- * `gbrain agent register` presets and the harness grant profiles), not an
+ * `foresights agent register` presets and the harness grant profiles), not an
  * operator: the client calls that surface but lists only the memory verbs and
  * `request_tools`, like a stdio registration with `--advertise verbs`.
  */
@@ -533,6 +533,6 @@ export function surfaceEnvInvalidNotice(raw: string, served: McpSurface, source:
   return {
     code: 'surface_env_invalid', kind: 'info',
     why: `GBRAIN_SURFACE="${raw}" is not a tool surface (use verbs, starter or full), so this server ignored it and serves '${served}' (source: ${SURFACE_SOURCE_LABEL[source]}).`,
-    user_message: `The gbrain MCP server's GBRAIN_SURFACE setting ("${raw}") is not valid; it takes verbs, starter or full. Can you fix it in the env of your agent app's MCP server entry for gbrain?`,
+    user_message: `The foresights MCP server's GBRAIN_SURFACE setting ("${raw}") is not valid; it takes verbs, starter or full. Can you fix it in the env of your agent app's MCP server entry for foresights?`,
   };
 }

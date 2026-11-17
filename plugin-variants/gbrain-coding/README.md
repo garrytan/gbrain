@@ -3,10 +3,10 @@
 
 Brain-first coding agent working inside a repo: retrieval, routing, ingest discipline, correction hygiene. Default persona for the claude-code harness bridge; also published as the gbrain-coding marketplace variant.
 
-21 skills curated from the gbrain plugin lane (persona
+21 skills curated from the foresights plugin lane (persona
 `coding-agent` in `skills/plugin-lanes.json#personas`, one recorded
-reason per skill). Install exactly ONE gbrain plugin per machine — every
-variant serves the same `gbrain` MCP server name, so two installed variants
+reason per skill). Install exactly ONE foresights plugin per machine — every
+variant serves the same `foresights` MCP server name, so two installed variants
 would double-serve. The full-lane plugin's README carries the MCP surface
 note; it applies verbatim here.
 

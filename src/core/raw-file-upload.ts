@@ -1,8 +1,8 @@
 /**
  * #5963 Part A: raw files are not coordinated on managed brains yet. A
- * git-storage `gbrain files upload-raw` whose destination lies in a managed
+ * git-storage `foresights files upload-raw` whose destination lies in a managed
  * canonical worktree is refused before anything is created; a configured
- * storage backend (`gbrain files upload`) is the working path.
+ * storage backend (`foresights files upload`) is the working path.
  */
 import type { BrainEngine } from './engine.ts';
 import { opError, type OperationError } from './ops/contract.ts';
@@ -12,8 +12,8 @@ export function managedRawUploadRefusal(dest: string, filePath: string, pageSlug
   const managed = managedFilesystemRootFor(dest);
   if (!managed) return null;
   const error = opError('writer_coordinator_required',
-    `gbrain files upload-raw cannot bank ${filePath} next to ${pageSlug}: that path is in the managed canonical worktree ${managed.root}${managed.sourceId ? ` (source ${managed.sourceId})` : ''}. Nothing was created.`,
-    'Store the file in a configured storage backend instead: configure `storage` (supabase | s3 | local) in the gbrain config, then run the command in fix. Starting a gbrain serve owner does not help.',
+    `foresights files upload-raw cannot bank ${filePath} next to ${pageSlug}: that path is in the managed canonical worktree ${managed.root}${managed.sourceId ? ` (source ${managed.sourceId})` : ''}. Nothing was created.`,
+    'Store the file in a configured storage backend instead: configure `storage` (supabase | s3 | local) in the foresights config, then run the command in fix. Starting a foresights serve owner does not help.',
     { why: 'Raw file uploads are not supported on a managed brain in this release: the persistence coordinator does not publish raw files yet, so the managed worktree refuses writes from outside it.',
       docs: 'docs/guides/write-refusals.md#managed_raw_upload',
       fix: { argv: ['gbrain', 'files', 'upload', filePath, '--page', pageSlug], consent: [], actor: 'agent', requires_exclusive: false,
@@ -29,7 +29,7 @@ export function managedPointerRefusal(filePath: string, pageSlug: string, fileTy
   const managed = managedFilesystemRootFor(pointerPath);
   if (!managed) return null;
   const error = opError('writer_coordinator_required',
-    `gbrain files upload-raw cannot write the pointer ${pointerPath}: that path is in the managed canonical worktree ${managed.root}${managed.sourceId ? ` (source ${managed.sourceId})` : ''}. Nothing was uploaded.`,
+    `foresights files upload-raw cannot write the pointer ${pointerPath}: that path is in the managed canonical worktree ${managed.root}${managed.sourceId ? ` (source ${managed.sourceId})` : ''}. Nothing was uploaded.`,
     'Upload without the pointer file: the command in fix stores the file in the configured backend and links it to the page in the database.',
     { why: 'The persistence coordinator does not publish raw files or pointer files yet, so the managed worktree refuses writes from outside it.',
       docs: 'docs/guides/write-refusals.md#managed_raw_upload',

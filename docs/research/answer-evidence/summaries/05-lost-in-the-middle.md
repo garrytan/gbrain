@@ -17,10 +17,10 @@ performance for GPT-3.5-Turbo and 1% for Claude-1.3 (§1).
 
 The benchmark uses English Wikipedia/NaturalQuestions, fixed-answer QA, and older
 model/API versions; it does not test personalized conversational evidence, source trust,
-or current models. The operational implication for GBrain is to test placement and
+or current models. The operational implication for Foresights is to test placement and
 distractor load independently from retrieval recall, preserve provenance, and avoid
 assuming that a larger retrieved set is better. This paper studies model behavior under
-raw input arrangement; it does not validate GBrain’s lexical round selector or any
+raw input arrangement; it does not validate Foresights’s lexical round selector or any
 learned compression method.
 
 [Citation and verified support](../sources/05-lost-in-the-middle.md) ·

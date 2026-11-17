@@ -52,7 +52,7 @@ export interface RateMeasure {
 export interface ExcusedStall { ms: number; first_page: number; last_page: number }
 
 /**
- * Per-file wall and CPU milliseconds from `gbrain import --progress-json --progress-interval 0`
+ * Per-file wall and CPU milliseconds from `foresights import --progress-json --progress-interval 0`
  * stderr: one `import.files` tick per file, each with cumulative `elapsed_ms` and `cpu_ms`.
  * A file without a tick, or a tick without a field, yields NaN for the caller to reject.
  */
@@ -247,7 +247,7 @@ export function evaluateScaleGates(report: ScaleReport, policy: GatePolicy): Gat
 
   const { hot_table_stat_rows: statRows, hot_table_rows: tableRows, probed_after: probedAfter } = report.planner;
   const missing = HOT_TABLES.filter(t => tableRows[t]! > PLANNER_STATS_MIN_ROWS && !(statRows[t]! > 0));
-  // Postgres statistics belong to autovacuum, whose timing gbrain does not control (F4b is PGLite-only):
+  // Postgres statistics belong to autovacuum, whose timing foresights does not control (F4b is PGLite-only):
   // missing pg_stats rows there are reported, never a failure.
   add('planner_stats', missing.length === 0, policy.enforcePlanner && report.engine === 'pglite',
     missing.length === 0 ? `planner stats: every hot table above ${PLANNER_STATS_MIN_ROWS} rows has pg_stats rows after ${probedAfter}`
@@ -255,7 +255,7 @@ export function evaluateScaleGates(report: ScaleReport, policy: GatePolicy): Gat
         + 'the planner is guessing row counts on these tables. '
         + (report.engine === 'pglite'
           ? 'Import and the first planner-sensitive read must leave statistics behind (F4b); '
-            + `check \`gbrain doctor\` planner_stats_stale and run \`gbrain repair planner-stats --apply\` to confirm. Reproduce: ${repro}`
+            + `check \`foresights doctor\` planner_stats_stale and run \`foresights repair planner-stats --apply\` to confirm. Reproduce: ${repro}`
           : `Postgres autovacuum collects them on its own schedule, so this is report-only there. Reproduce: ${repro}`));
 
   const loopsLimit = LOOPS_PER_PAGE_MAX * report.pages;

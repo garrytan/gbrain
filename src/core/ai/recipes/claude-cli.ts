@@ -43,7 +43,7 @@ export const claudeCli: Recipe = {
     // `isAvailable('expansion')` in gateway.ts returns false for every
     // claude-cli model, so `expandQuery()` in src/core/search/expansion.ts
     // returns [query] before any model call — query expansion silently
-    // disappears with no error and no log line, and `gbrain models doctor`
+    // disappears with no error and no log line, and `foresights models doctor`
     // still reports the touchpoint green because its probe calls `chat()`
     // with an explicit `model:` override and never consults the recipe.
     // A brain whose tier.utility points at claude-cli therefore lost the
@@ -117,7 +117,7 @@ export const claudeCli: Recipe = {
       price_last_verified: '2026-06-17',
       // The gateway dispatches via a `claude -p (print mode)` subprocess (CLI cold
       // start + user-level CLAUDE.md load), which routinely takes 5-6s even
-      // when the CLI and subscription are perfectly healthy. `gbrain models
+      // when the CLI and subscription are perfectly healthy. `foresights models
       // doctor`'s chat probe used to hardcode a flat 5000ms abort, so this
       // recipe always false-failed the doctor check ('unknown — claude-cli
       // adapter aborted') despite `chat()` succeeding fine at normal call

@@ -3,7 +3,7 @@
  * could not be confirmed (sync-rename-identity.ts). Each old page keeps its facts, links and aliases on its soft-deleted
  * slug, and the purge leaves it alone until the pair gets a disposition (restored, remedied or closed without merging);
  * there is no time window. The finding names every open pair with its remedy; its fix is the first pair's
- * `gbrain repair rename-identity` apply (preview first, bound to the plan hash, destructive consent, behind ask_user;
+ * `foresights repair rename-identity` apply (preview first, bound to the plan hash, destructive consent, behind ask_user;
  * `--close` on a managed brain). Restoring the old page is the alternative its text names wherever the source admits a
  * restore (`restore_available`); details list the sources that do not. With no open record the check is ok.
  */

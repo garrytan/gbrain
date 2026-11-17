@@ -18,7 +18,7 @@ describe('fetchReleases', () => {
       { tag_name: 'stable', published_at: '2026-11-14T08:00:00Z', draft: false, prerelease: false },
     ];
     const impl = (async () => new Response(JSON.stringify(rows), { status: 200 })) as unknown as typeof fetch;
-    const out = await fetchReleases('garrytan/gbrain', () => true, impl);
+    const out = await fetchReleases('aimonk2025/gbrain', () => true, impl);
     expect(out.map(r => r.version)).toEqual(['0.60.722.0', '0.60.717.0']);
   });
 });

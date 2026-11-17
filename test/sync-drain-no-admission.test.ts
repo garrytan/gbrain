@@ -11,7 +11,7 @@ import { drainNext, formatDrainSummary, runDrain, type StallProbe } from '../src
 import { noteDrainSql, readDrainStep, stampDrainStep } from '../src/core/persistence/drain-step.ts';
 import type { SyncResult } from '../src/commands/sync.ts';
 
-const RESUME = 'gbrain sync --source s --no-pull';
+const RESUME = 'foresights sync --source s --no-pull';
 const empty: StallProbe = { blockedHead: async () => null, fingerprint: async () => null, head: async () => null };
 
 describe('in-pass governor: a pass that admits nothing', () => {
@@ -28,7 +28,7 @@ describe('in-pass governor: a pass that admits nothing', () => {
     expect(summary).toContain('cause=no_progress');
     expect(summary).not.toContain('no_admission');
     const next = drainNext(result, RESUME, 's')!;
-    expect(next).toMatchObject({ command: 'gbrain sources writer status s', safe_to_loop: false, code: 'drain_stalled', cause: 'no_progress' });
+    expect(next).toMatchObject({ command: 'foresights sources writer status s', safe_to_loop: false, code: 'drain_stalled', cause: 'no_progress' });
     expect(next.why).toContain('stuck at step waiver_run');
   });
 

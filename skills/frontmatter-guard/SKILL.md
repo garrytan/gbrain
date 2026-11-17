@@ -6,7 +6,7 @@ description: |
   pages before they enter the brain (missing closing ---, nested quotes, slug
   mismatches, null bytes, empty frontmatter, YAML parse failures), explains
   files sync holds instead of importing, and drives the previewed
-  `gbrain repair frontmatter` fix. Wraps the `gbrain frontmatter` CLI for
+  `foresights repair frontmatter` fix. Wraps the `foresights frontmatter` CLI for
   agent-driven workflows.
 triggers:
   - "validate frontmatter"
@@ -30,8 +30,8 @@ mutating: true
 This skill guarantees:
 - Every brain page is scanned against the eight canonical frontmatter validation classes
 - Mechanical errors (nested quotes, missing closing `---`, null bytes, slug mismatch) are auto-repairable on demand with `.bak` backups
-- Validation logic is shared with `gbrain doctor`'s `frontmatter_integrity` subcheck — single source of truth
-- Reports per source (gbrain is multi-source since v0.18.0); never silently audits the wrong root
+- Validation logic is shared with `foresights doctor`'s `frontmatter_integrity` subcheck — single source of truth
+- Reports per source (foresights is multi-source since v0.18.0); never silently audits the wrong root
 - Files sync holds are explained from their hold record (code, reason, key, line, fix) and fixed only through a previewed, hash-bound repair the user approved
 
 ## Why This Exists
@@ -43,31 +43,31 @@ Brain pages pile up over months. Agents write them with malformed frontmatter:
 - Null bytes (binary corruption from copy-paste accidents)
 - Nested double quotes in titles (`title: "Alice "Ace" Example"`)
 
-Without a guard, these accumulate silently until `gbrain sync` chokes or search returns garbage. The guard makes the failure visible at audit time and trivially fixable.
+Without a guard, these accumulate silently until `foresights sync` chokes or search returns garbage. The guard makes the failure visible at audit time and trivially fixable.
 
 ## Write brain files safely (do this first)
 
-- Write pages through `put_page` / `capture` (MCP or `gbrain put`). gbrain serializes frontmatter itself, so the file on disk is always valid YAML.
+- Write pages through `put_page` / `capture` (MCP or `foresights put`). foresights serializes frontmatter itself, so the file on disk is always valid YAML.
 - A script or agent that writes Markdown files directly must build frontmatter with a YAML serializer (`yaml.dump`, js-yaml `dump`), never by string interpolation. `title: ${title}` breaks as soon as a title contains `: `, `#`, quotes or a newline.
 - Check generated content before writing it, without touching disk:
 
   ```bash
-  printf '%s' "$content" | gbrain frontmatter validate --stdin --path notes/2026-10-04-digest.md
+  printf '%s' "$content" | foresights frontmatter validate --stdin --path notes/2026-10-04-digest.md
   ```
 
-  Exit 1 means fix it first. The default is the strict producer rule: YAML gbrain could still import by quoting a value fails too, because other tools reject it. `--importable` answers the narrower question "would sync hold it?".
-- Never write a key gbrain reads for access or identity (`visibility`, `derived_from`, `slug`, `type`, `id`, `source_id`) from untrusted text.
+  Exit 1 means fix it first. The default is the strict producer rule: YAML foresights could still import by quoting a value fails too, because other tools reject it. `--importable` answers the narrower question "would sync hold it?".
+- Never write a key foresights reads for access or identity (`visibility`, `derived_from`, `slug`, `type`, `id`, `source_id`) from untrusted text.
 - Write no `visibility`, `access`, `confidentiality` or `readable_by` unless the page needs it ([page privacy](../conventions/page-privacy.md)).
 
 ## Held files: read them, then fix them
 
-A file sync cannot import without guessing is **held**: the rest of the source still syncs, a new file has no page yet, and an existing page keeps its last good revision and refuses `put_page` until the file is repaired (do not retry the write). Where holds show up: sync output (`Held <path>: <code> … Next: <command>`), `gbrain sources status <id>` (`--json`: `git_holds.items[]`), doctor `git_held_files`, `get_page` `file_held`, and search hits marked `stale`.
+A file sync cannot import without guessing is **held**: the rest of the source still syncs, a new file has no page yet, and an existing page keeps its last good revision and refuses `put_page` until the file is repaired (do not retry the write). Where holds show up: sync output (`Held <path>: <code> … Next: <command>`), `foresights sources status <id>` (`--json`: `git_holds.items[]`), doctor `git_held_files`, `get_page` `file_held`, and search hits marked `stale`.
 
 Each hold record carries `code`, `reason`, `key`, `line`, `message` (location only, never the value), `fix` (exact argv) and `docs`. Act on `reason`:
 
 | Hold | What to do |
 |------|-----------|
-| `invalid_frontmatter` / `yaml_parse` | Preview `gbrain repair frontmatter --source <id>`; usually `needs_review` with the exact line to fix by hand. |
+| `invalid_frontmatter` / `yaml_parse` | Preview `foresights repair frontmatter --source <id>`; usually `needs_review` with the exact line to fix by hand. |
 | `invalid_frontmatter` / `needs_interpretation` | Preview with `--include-ambiguous`, show the user each per-file diff, apply only what they approve. |
 | `invalid_frontmatter` / `ambiguous_identity_key` or `ambiguous_protected_key`; `visibility_noncanonical` | Never guess. Show the user the line; they decide the one value (`visibility` decides who can read the page; page privacy reads only `visibility: private`, lowercase on its own line). |
 | `frontmatter_slug_conflict` | Remove the `slug:` line or move the file; the repair proposes removing it under `--include-ambiguous`. |
@@ -77,15 +77,15 @@ Each hold record carries `code`, `reason`, `key`, `line`, `message` (location on
 The fix flow (walkthrough with real output: `docs/guides/repair.md#held-files`):
 
 ```bash
-gbrain sources status <id>                                  # what is held and why
-gbrain repair frontmatter --source <id>                     # pass 1: safe quoting only; writes nothing
-gbrain repair frontmatter --source <id> --include-ambiguous --diff   # pass 2: every interpretation
-gbrain repair frontmatter --source <id> --include-ambiguous --only <path> --apply --expect <hash> --yes
+foresights sources status <id>                                  # what is held and why
+foresights repair frontmatter --source <id>                     # pass 1: safe quoting only; writes nothing
+foresights repair frontmatter --source <id> --include-ambiguous --diff   # pass 2: every interpretation
+foresights repair frontmatter --source <id> --include-ambiguous --only <path> --apply --expect <hash> --yes
 ```
 
-**Ask the user before** every `--apply` (it rewrites their files) and before any `--include-ambiguous` apply: each interpretation (folding lines into a title, keeping the later duplicate) is a guess only the user can confirm. Show the diff, then apply exactly the previewed hash. Safe-class changes only quote a value exactly as gbrain already reads it, but they still rewrite files, so they need the same agreement.
+**Ask the user before** every `--apply` (it rewrites their files) and before any `--include-ambiguous` apply: each interpretation (folding lines into a title, keeping the later duplicate) is a guess only the user can confirm. Show the diff, then apply exactly the previewed hash. Safe-class changes only quote a value exactly as foresights already reads it, but they still rewrite files, so they need the same agreement.
 
-A source that a broken file blocked before the upgrade recovers on its next sync; to do it now run `gbrain sync --source <id> --no-pull`.
+A source that a broken file blocked before the upgrade recovers on its next sync; to do it now run `foresights sync --source <id> --no-pull`.
 
 ## Validation classes
 
@@ -107,7 +107,7 @@ A source that a broken file blocked before the upgrade recovers on its next sync
 Run a read-only scan across all registered sources (or one with `--source <id>`).
 
 ```bash
-gbrain frontmatter audit --json
+foresights frontmatter audit --json
 ```
 
 Reports:
@@ -123,7 +123,7 @@ Output is JSON; agents parse `errors_by_code` and `per_source` to decide next st
 Validate a single file or directory (does not require source registration):
 
 ```bash
-gbrain frontmatter validate <path> --json
+foresights frontmatter validate <path> --json
 ```
 
 Exit code 0 = clean; 1 = errors found. Use this in CI pipelines or pre-commit hooks.
@@ -133,24 +133,24 @@ Exit code 0 = clean; 1 = errors found. Use this in CI pipelines or pre-commit ho
 When issues are found:
 
 ```bash
-gbrain frontmatter validate <path> --fix
+foresights frontmatter validate <path> --fix
 ```
 
-`--fix` backs up every modified file under `~/.gbrain/backups/frontmatter/` before mutating, quotes YAML gbrain reads by quoting (only those lines change), re-validates, and exits 1 when errors remain. Restage fixed files in git (`git add`). `--include-ambiguous` adds interpretations; preview them with `--dry-run` first.
+`--fix` backs up every modified file under `~/.gbrain/backups/frontmatter/` before mutating, quotes YAML foresights reads by quoting (only those lines change), re-validates, and exits 1 when errors remain. Restage fixed files in git (`git add`). `--include-ambiguous` adds interpretations; preview them with `--dry-run` first.
 
 `--dry-run` previews without writing. Use this before applying fixes in batch.
 
-On a managed brain `--fix` in place is refused: use `gbrain repair frontmatter --source <id>` (above), which publishes each repaired file through the coordinated writer.
+On a managed brain `--fix` in place is refused: use `foresights repair frontmatter --source <id>` (above), which publishes each repaired file through the coordinated writer.
 
 ### Phase 4: Pre-commit hook (optional)
 
 For brain repos that ARE git repos, install the pre-commit hook to block malformed pages from being committed in the first place:
 
 ```bash
-gbrain frontmatter install-hook [--source <id>]
+foresights frontmatter install-hook [--source <id>]
 ```
 
-The hook runs one `gbrain frontmatter validate --staged` process over the staged content of `.md`/`.mdx` files (what will be committed, not the working copy). Bypass with `git commit --no-verify`. Installing writes into the user's repository, so ask first. When doctor `frontmatter_hook` reports an older hook, refresh it with `gbrain frontmatter install-hook --force`.
+The hook runs one `foresights frontmatter validate --staged` process over the staged content of `.md`/`.mdx` files (what will be committed, not the working copy). Bypass with `git commit --no-verify`. Installing writes into the user's repository, so ask first. When doctor `frontmatter_hook` reports an older hook, refresh it with `foresights frontmatter install-hook --force`.
 
 ## Trigger words
 
@@ -163,17 +163,17 @@ When the user says any of these, route here:
 
 ## Output rules
 
-- Always run `gbrain frontmatter audit --json` first; never assume a brain is clean.
+- Always run `foresights frontmatter audit --json` first; never assume a brain is clean.
 - Surface counts to the user in plain language; do not dump raw JSON.
 - For `--fix` operations: state how many files will be modified BEFORE running, then confirm.
-- `SLUG_MISMATCH` fixes remove the frontmatter `slug:` field — gbrain derives slug from path. Mention this when the user's title is intentionally renamed.
+- `SLUG_MISMATCH` fixes remove the frontmatter `slug:` field — foresights derives slug from path. Mention this when the user's title is intentionally renamed.
 - Never auto-fix `MISSING_OPEN` or `EMPTY_FRONTMATTER` without explicit user input — these usually mean a human author started a page and didn't finish.
 
 ## Chains with
 
-- `gbrain doctor` — the `frontmatter_integrity` subcheck reports the same counts as `audit`; `frontmatter_repairable` counts files `gbrain repair frontmatter` can fix and `git_held_files` lists held files.
+- `foresights doctor` — the `frontmatter_integrity` subcheck reports the same counts as `audit`; `frontmatter_repairable` counts files `foresights repair frontmatter` can fix and `git_held_files` lists held files.
 - `skills/maintain/SKILL.md` — broader brain health audit; chain after this skill if other classes of issue are suspected.
-- `gbrain lint` — overlapping rules for skill-file lint (a CLI command, not a skill); the `frontmatter-*` rule names in lint output come from this skill's validation surface.
+- `foresights lint` — overlapping rules for skill-file lint (a CLI command, not a skill); the `frontmatter-*` rule names in lint output come from this skill's validation surface.
 
 ## Output Format
 
@@ -192,7 +192,7 @@ Frontmatter audit — 17 issue(s) across 1 source(s)
     companies/acme.md — NESTED_QUOTES
     (+ 12 more)
 
-Fix with: gbrain frontmatter validate /Users/me/brain --fix
+Fix with: foresights frontmatter validate /Users/me/brain --fix
 ```
 
 JSON envelope (when `--json` is passed):
@@ -215,7 +215,7 @@ JSON envelope (when `--json` is passed):
 }
 ```
 
-`gbrain frontmatter validate <path> --json` returns a similar envelope keyed on per-file results instead of per-source.
+`foresights frontmatter validate <path> --json` returns a similar envelope keyed on per-file results instead of per-source.
 
 ## Prevention — Writing Valid Frontmatter
 
@@ -224,7 +224,7 @@ JSON envelope (when `--json` is passed):
 ### YAML arrays (the historical #1 error source)
 
 ```yaml
-# Correct: single-quoted YAML flow (canonical form gbrain emits)
+# Correct: single-quoted YAML flow (canonical form foresights emits)
 tags: ['yc', 'w2025', 'ai']
 
 # Correct: unquoted scalars (fine when values have no special chars)
@@ -244,7 +244,7 @@ tags: [{"name": "sports"}, "posterous"]
 
 **Why this used to break:** before v0.37.5.0, the validator counted unescaped `"` characters and flagged any line with 3+. A flow sequence like `tags: ["yc", "w2025"]` has 4 unescaped `"` by design — it's valid YAML, but the dumb counter flagged it anyway. One brain saw 6,981 of these on a single doctor run. v0.37.5.0 parses suspicious values with `js-yaml.safeLoad` before flagging, so JSON-style arrays no longer trigger NESTED_QUOTES.
 
-**Why you should still write the canonical form:** the auto-fix engine (`gbrain frontmatter validate --fix`) and the inferred-frontmatter serializer both emit single-quoted YAML for `tags:` / `aliases:`. Writing the canonical form in new content keeps the source files stylistically consistent and makes diffs against `--fix` runs empty.
+**Why you should still write the canonical form:** the auto-fix engine (`foresights frontmatter validate --fix`) and the inferred-frontmatter serializer both emit single-quoted YAML for `tags:` / `aliases:`. Writing the canonical form in new content keeps the source files stylistically consistent and makes diffs against `--fix` runs empty.
 
 **The classic LLM trap:** code like `tags: [${items.map(t => JSON.stringify(t)).join(', ')}]` produces `tags: ["yc", "w2025"]`. Use single quotes with an apostrophe fallback: `tags: [${items.map(t => t.includes("'") ? JSON.stringify(t) : "'" + t + "'").join(', ')}]`. Or use a YAML library that knows how to emit canonical YAML.
 
@@ -270,21 +270,21 @@ title: "My "Quoted" Title"
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain frontmatter validate` exits 1: errors were found (that is the result, not a crash). Parse `errors_by_code` and report counts per source.
+- `foresights frontmatter validate` exits 1: errors were found (that is the result, not a crash). Parse `errors_by_code` and report counts per source.
 - Before a fix pass, state how many files will change and get the user's agreement; the fix writes `.bak` backups, and YAML_PARSE errors are not always auto-repairable.
-- `gbrain sync` holds a file (`invalid_frontmatter`, `frontmatter_slug_conflict`, `file_too_large`, `content_rejected`, `visibility_noncanonical`): the sync still succeeded. Read the hold (`gbrain sources status <id>`) and follow "Held files" above.
+- `foresights sync` holds a file (`invalid_frontmatter`, `frontmatter_slug_conflict`, `file_too_large`, `content_rejected`, `visibility_noncanonical`): the sync still succeeded. Read the hold (`foresights sources status <id>`) and follow "Held files" above.
 - `put_page` refuses a page whose newer file is held: repair the file; retrying the write refuses again.
 
 ## Anti-Patterns
 
 **Don't auto-fix `MISSING_OPEN` or `EMPTY_FRONTMATTER` without user input.** These usually mean a human author started a page and didn't finish — silently inserting `---` markers around an unfinished draft is wrong.
 
-**Don't use `--fix` to "make doctor green" without reading the audit first.** SLUG_MISMATCH cases are surfaced for manual review specifically because gbrain derives the slug from path. A mismatch usually means the user renamed a file intentionally; auto-removing the slug field is the right outcome only when you've confirmed the rename was deliberate.
+**Don't use `--fix` to "make doctor green" without reading the audit first.** SLUG_MISMATCH cases are surfaced for manual review specifically because foresights derives the slug from path. A mismatch usually means the user renamed a file intentionally; auto-removing the slug field is the right outcome only when you've confirmed the rename was deliberate.
 
 **Don't skip the `.bak` backups.** The `.bak` is the safety contract for non-git brain repos. If `.bak` files accumulate after a fix run, that's a feature, not a bug — the user can review the diffs and delete the backups when satisfied.
 
-**Don't run `audit` on a brain where sources aren't registered.** The CLI returns "no registered sources to audit" gracefully, but the migration emits a `skipped: no_sources` phase result. Don't paper over this with a manual path-walk; the right fix is to register the source via `gbrain sources add`.
+**Don't run `audit` on a brain where sources aren't registered.** The CLI returns "no registered sources to audit" gracefully, but the migration emits a `skipped: no_sources` phase result. Don't paper over this with a manual path-walk; the right fix is to register the source via `foresights sources add`.
 
 **Don't install the pre-commit hook on brain dirs outside any git repo.** The install-hook command skips them automatically with a one-line note (a brain that is a subdirectory of a host repo is fine — the hook installs at the host root, scoped to that subdirectory). If you see "skipped, not a git repo" and want validation at write time anyway, use the `audit` command on a cron schedule.

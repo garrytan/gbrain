@@ -28,7 +28,7 @@ const ALICE = ['member:alice-example'];
 function docsRecipe(role: string): string {
   // test-reads-source-ok[structural]: the operator recipe is applied verbatim, so the documented policies are the tested ones.
   const doc = readFileSync(new URL('../docs/ENGINES.md', import.meta.url), 'utf8');
-  const block = /<!-- gbrain:access-rls-recipe:begin[^>]*-->\s*```sql\n([\s\S]*?)```\s*<!-- gbrain:access-rls-recipe:end -->/.exec(doc);
+  const block = /<!-- (?:foresights|gbrain):access-rls-recipe:begin[^>]*-->\s*```sql\n([\s\S]*?)```\s*<!-- (?:foresights|gbrain):access-rls-recipe:end -->/.exec(doc);
   if (!block) throw new Error('docs/ENGINES.md has no access-rls-recipe block');
   return block[1]!.replaceAll('<writer-role>', role);
 }

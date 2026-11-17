@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Runs the agent-voice recipe's vitest unit suite (recipes/agent-voice/tests/unit).
 #
-# The recipe is copied into an operator's host agent repo and is not a gbrain
+# The recipe is copied into an operator's host agent repo and is not a foresights
 # runtime dependency, so its tests run under node + vitest, not bun test, and
-# no gbrain lane collected them. This installs exact pins of the two packages
+# no foresights lane collected them. This installs exact pins of the two packages
 # the unit tests load (vitest, ws) into a temporary prefix, links it as the
 # recipe's node_modules for the run, and removes both afterwards. The e2e
 # voice tests (puppeteer + a live server) and the paid evals stay manual.

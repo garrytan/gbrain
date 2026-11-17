@@ -13,7 +13,7 @@
  * entity anchoring.
  *
  * The policy lives in code, not in a schema pack field, so a pack that
- * declares one of these types loads on any gbrain. Contract:
+ * declares one of these types loads on any foresights. Contract:
  * docs/guides/temporal-edges.md ("Amendments: the amends link").
  */
 

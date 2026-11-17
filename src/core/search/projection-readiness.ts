@@ -112,14 +112,14 @@ async function probeUncached(
     if (rows[0].pending) {
       return {
         status: 'projection_pending', ready: false,
-        hint: 'Current text projections are pending in the visible scope; results may be incomplete. Run `gbrain doctor` locally to inspect recovery. This read does not repair or embed content.',
+        hint: 'Current text projections are pending in the visible scope; results may be incomplete. Run `foresights doctor` locally to inspect recovery. This read does not repair or embed content.',
       };
     }
     return { status: rows[0].by_design ? 'by_design' : 'ready', ready: true };
   } catch {
     return {
       status: 'unknown', ready: false,
-      hint: 'Projection readiness could not be checked; do not treat these results as proof of a complete index. Run `gbrain doctor` locally to diagnose.',
+      hint: 'Projection readiness could not be checked; do not treat these results as proof of a complete index. Run `foresights doctor` locally to diagnose.',
     };
   }
 }

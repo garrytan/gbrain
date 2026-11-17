@@ -5,7 +5,7 @@
  *   1. jobs.ts registers 'loops_extract' via registerBuiltinJob AND lists it
  *      in GATEWAY_REFRESH_JOB_NAMES (the #3387 stale-gateway class: the
  *      extractor's judge is a gateway chat call, so a worker booted before
- *      `gbrain config set` must refresh before running it).
+ *      `foresights config set` must refresh before running it).
  *   2. The kill switch key 'loops.extraction_enabled' is a known config key.
  *   3. The relational vocabulary knows the two edge verbs the extractor
  *      writes ('owes_to', 'awaiting_reply_from') — both in KNOWN_LINK_TYPES

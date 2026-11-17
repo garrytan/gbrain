@@ -20,7 +20,7 @@ import { withEnv } from './helpers/with-env.ts';
 // #6696 C2: a managed source keeps every failed-receipt and ignored-file guard, so `--skip-failed` and
 // `--include-gitignored` are refused. They used to pass parse, get forwarded to a resident serve and fail inside
 // its job with a message naming neither flag. Now the refusal is `managed_sync_flag_refused`, names the flag,
-// and comes before anything runs: at parse in `gbrain sync`, before the socket call in the delegation ladder,
+// and comes before anything runs: at parse in `foresights sync`, before the socket call in the delegation ladder,
 // and in the managed-sync guard every other caller (jobs, MCP, the cycle) reaches.
 //
 // Regression guarded: the parse-time check removed (the job runs and fails), the ladder forwarding the flag to
@@ -60,7 +60,7 @@ const quiet = async <T>(fn: () => Promise<T>): Promise<T> => {
   try { return await fn(); } finally { console.error = origError; console.log = origLog; process.stderr.write = origWrite; }
 };
 
-test.each(['--skip-failed', '--include-gitignored'])('gbrain sync %s on a managed source is refused at parse, naming the flag, with a runnable fix', async flag => withEnv(env, async () => {
+test.each(['--skip-failed', '--include-gitignored'])('foresights sync %s on a managed source is refused at parse, naming the flag, with a runnable fix', async flag => withEnv(env, async () => {
   const id = await fixture();
   const error = await quiet(() => runSync(engine, ['--source', id, '--no-pull', '--no-embed', flag])).then(() => null, (e: unknown) => e);
   expect(error).toBeInstanceOf(OperationError);
@@ -74,7 +74,7 @@ test.each(['--skip-failed', '--include-gitignored'])('gbrain sync %s on a manage
   await untouched(id);
 }), 120_000);
 
-test('gbrain sync --all --skip-failed on a managed brain is refused before any source runs', async () => withEnv(env, async () => {
+test('foresights sync --all --skip-failed on a managed brain is refused before any source runs', async () => withEnv(env, async () => {
   const id = await fixture();
   const error = await quiet(() => runSync(engine, ['--all', '--no-pull', '--no-embed', '--skip-failed'])).then(() => null, (e: unknown) => e);
   expect(error).toMatchObject({ code: 'managed_sync_flag_refused', detail: '--skip-failed' });
@@ -104,6 +104,6 @@ test('every other managed caller (jobs, MCP, the cycle) gets the same named refu
   await untouched(id);
 }), 120_000);
 
-test('gbrain errors managed_sync_flag_refused resolves offline', () => {
+test('foresights errors managed_sync_flag_refused resolves offline', () => {
   expect(errorCodeRow('managed_sync_flag_refused')).toMatchObject({ code: 'managed_sync_flag_refused', class: 'caller', docs: 'docs/guides/write-refusals.md#managed_sync_flag_refused' });
 });

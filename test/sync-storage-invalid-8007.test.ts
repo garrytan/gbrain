@@ -6,9 +6,9 @@
  * managed brain (PGLite, and Postgres through the E2E wrapper), this protects:
  * - the frozen discovery manifest drops every deletion and names it in storageInvalidKept;
  * - a managed sync, incremental and full, deletes nothing: each missing-file page is held (file_drift, reason
- *   storage_invalid, fix `gbrain storage status`) and stays live, and the retention purge removes none of them;
- * - `gbrain repair file-drift --held --prefer file` previews none of these held pages as a soft delete;
- * - `sync.apply_held_deletions` deletes none of them, even from a hold an older gbrain wrote with no reason;
+ *   storage_invalid, fix `foresights storage status`) and stays live, and the retention purge removes none of them;
+ * - `foresights repair file-drift --held --prefer file` previews none of these held pages as a soft delete;
+ * - `sync.apply_held_deletions` deletes none of them, even from a hold an older foresights wrote with no reason;
  * - the same holds on a strict (canonical: git) source, where Git's verdict would otherwise delete a committed-then-removed file;
  * - once gbrain.yml is valid again (a one-line flow list, which the parser now reads), the next syncs keep the db_only
  *   pages, delete the removed page outside db_only, and release the storage_invalid holds.
@@ -133,7 +133,7 @@ for (const backend of testBackends()) describe(`[${backend}] #8007: an invalid g
     invalidateAndUntrack(root, INVALID[0][1]);
     await performManagedSync(engine, OPTS);
     expect(await storageHolds(engine)).toEqual(REMOVED);
-    // An older gbrain wrote file_gone holds with no reason, and those never re-screen.
+    // An older foresights wrote file_gone holds with no reason, and those never re-screen.
     await engine.executeRaw("UPDATE op_checkpoints SET completed_keys = jsonb_set(completed_keys, '{0,meta}', (completed_keys->0->'meta') - 'reason') WHERE op='sync-hold'");
     await engine.setConfig('sync.apply_held_deletions', 'true');
     await performManagedSync(engine, OPTS);

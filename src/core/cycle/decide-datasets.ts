@@ -1,5 +1,5 @@
 /**
- * Dataset adapters and `gbrain decide dataset --from` builders for the
+ * Dataset adapters and `foresights decide dataset --from` builders for the
  * dream-cycle decide slots. Adapters rebuild the production request shape
  * (S7: one request per turn window, transcript value = max window; S8: one
  * request per claim unit over its selected source windows) so calibration,

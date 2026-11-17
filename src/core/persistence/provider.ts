@@ -54,7 +54,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       || (verified.remote && !operationScopesAllowed(verified.grant.scopes, operation))
       || (verified.grant.operations !== null && !verified.grant.operations.includes(operation.name))) {
       throw opError('permission_denied', 'The local writer grant excludes this operation.',
-        `This CLI's writer grant does not cover ${request.operation}. Review the grant; widening it with gbrain auth local-writer register --replace is a credentials change the user approves.`,
+        `This CLI's writer grant does not cover ${request.operation}. Review the grant; widening it with foresights auth local-writer register --replace is a credentials change the user approves.`,
         { fix: localWritersFix });
     }
     const sourceId = await resolveSourceId(engine, request.routing.source, request.routing.cwd, { skipLocalSignals: true });
@@ -72,7 +72,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       allowedSources: unrestricted ? undefined : verified.grant.sourceIds };
     const params = !unrestricted && request.operation === 'get_page' && request.params.source_id === undefined
       ? { ...request.params, source_id: sourceId } : request.params;
-    // `gbrain transcripts recent` through the live owner: the verified local CLI reads the host's transcript
+    // `foresights transcripts recent` through the live owner: the verified local CLI reads the host's transcript
     // files directly, as it does without a serve (localOnly ops never dispatch off the stdio pipe).
     if (request.operation === 'get_recent_transcripts') {
       if (verified.remote || verified.principal.kind !== 'local_cli') throw trustedCliRequired('Raw transcripts are read only by this host\'s trusted CLI.');

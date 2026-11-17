@@ -105,7 +105,7 @@ export async function withHnswBuildMemory<T>(
     const budgetMb = PGLITE_HNSW_GRAPH_BUDGET_BYTES / (1024 * 1024);
     throw opError('pglite_vector_index_too_large',
       `The vector index on ${table}.${column} needs about ${mb} MB to build and PGLite can give it ${budgetMb} MB; nothing was built.`,
-      'Vector search still works here with exact scans. Preview a move to Postgres, which builds this index without the limit: gbrain migrate --to postgres --plan --json',
+      'Vector search still works here with exact scans. Preview a move to Postgres, which builds this index without the limit: foresights migrate --to postgres --plan --json',
       {
         why: `PGLite runs Postgres inside WebAssembly with a 2 GiB memory ceiling, and pgvector holds the whole HNSW graph in memory while it builds: ${shape.rows} vectors of ${shape.dims} dimensions do not fit.`,
         fix: {
@@ -168,7 +168,7 @@ export interface ActiveBuildInfo {
 /**
  * Probe pg_stat_activity for an active CREATE INDEX on this index name.
  * Used as a pre-op guard so dropAndRebuild doesn't compete with a build
- * already in flight (Supabase auto-maintenance + parallel gbrain procs).
+ * already in flight (Supabase auto-maintenance + parallel foresights procs).
  */
 export async function checkActiveBuild(
   engine: BrainEngine,
@@ -347,7 +347,7 @@ export async function monitorBuild(
 
 /**
  * Detect whether a CREATE INDEX query in pg_stat_activity is from Supabase
- * auto-maintenance (vs. our gbrain process). Used by dropAndRebuild to
+ * auto-maintenance (vs. our foresights process). Used by dropAndRebuild to
  * back off when auto-maintenance is doing the rebuild for us.
  */
 export function isSupabaseAutoMaintenance(active: ActiveBuildInfo): boolean {

@@ -1,6 +1,6 @@
 /**
  * subagent-audit tests. Exercises filename rotation, best-effort writes, and
- * the readback path used by `gbrain agent logs`. No real engine; purely
+ * the readback path used by `foresights agent logs`. No real engine; purely
  * filesystem.
  */
 

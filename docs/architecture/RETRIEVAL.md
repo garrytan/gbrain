@@ -1,6 +1,6 @@
 # Why the hybrid + graph stack works
 
-Vector search alone underdelivers on real personal-knowledge queries. This doc explains why gbrain layers four strategies together and how they compound.
+Vector search alone underdelivers on real personal-knowledge queries. This doc explains why foresights layers four strategies together and how they compound.
 
 ## The four strategies in concert
 
@@ -17,13 +17,13 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 
 **Graph only.** Excellent at "neighbors of Alice" but blind to anything not yet linked. Sparse on fresh pages until backlinks accumulate.
 
-**Hybrid (vector + keyword + RRF), no graph.** Can retrieve relationships stated in text, but may miss answers that require joining several records. Typed graph traversal offers a separate recall path for those cases; this is not an exclusivity claim about GBrain or a guarantee that every graph answer is correct.
+**Hybrid (vector + keyword + RRF), no graph.** Can retrieve relationships stated in text, but may miss answers that require joining several records. Typed graph traversal offers a separate recall path for those cases; this is not an exclusivity claim about Foresights or a guarantee that every graph answer is correct.
 
 ## The benchmark
 
-BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus. (This is the retrieval-ranking benchmark; the in-repo `gbrain eval brainbench` suite — [`docs/eval/BRAINBENCH.md`](../eval/BRAINBENCH.md) — gates the memory behaviors *above* retrieval: unprompted context push, write-back fidelity, cross-session continuity.)
+BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus. (This is the retrieval-ranking benchmark; the in-repo `foresights eval brainbench` suite — [`docs/eval/BRAINBENCH.md`](../eval/BRAINBENCH.md) — gates the memory behaviors *above* retrieval: unprompted context push, write-back fidelity, cross-session continuity.)
 
-The [September 9, 2026 refresh](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md) (gbrain v0.48.4.0, three ingestion
+The [September 9, 2026 refresh](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md) (foresights v0.48.4.0, three ingestion
 orders, fixed-denominator P@5) measured the 145 relationship questions two ways.
 
 **The production pipeline.** One switch, `search.relational_retrieval`, over a
@@ -58,7 +58,7 @@ Trusted local `put_page` runs inline link extraction on the markdown body.
 Remote `put_page` deliberately skips it at the trust boundary. Stdio serving
 sweeps eligible pages at startup and idle; HTTP serving does not self-sweep.
 For HTTP-written pages, a trusted operator can run
-`gbrain extract links --source db` (select the intended source with
+`foresights extract links --source db` (select the intended source with
 `--source-id <id>`), or a permitted client can create explicit links through
 `add_link`. Extraction recognizes:
 
@@ -74,19 +74,19 @@ Heuristic link-type inference (`attended`, `works_at`, `invested_in`, `founded`,
 
 ## Cross-encoder reranker: 60% top-1 reshuffle
 
-The reranker is on for the `balanced` and `tokenmax` mode bundles, off for `conservative`. The mode-bundle default is Voyage `rerank-3-lite` (`DEFAULT_RERANKER_MODEL`, same `VOYAGE_API_KEY` as the embedding default); a brain with no `search.reranker.model` row reranks with it, and a brain with one keeps its own model. It replaced `rerank-2.5` after gbrain-evals #148 (v0.10.93) measured 60% lower rerank cost at 50 candidates × 1,400 tokens with quality within noise; `gbrain config set search.reranker.model voyage:rerank-2.5` switches a brain back. Without the key, search fails open in RRF order: the gateway skips the HTTP call (`RerankError('no_key')`), writes ONE audit row per process, prints nothing, and stamps `reranker_skipped (no_key)` on the search meta — `gbrain search --explain` shows it, `gbrain search modes` prints a `Reranker:` readiness line, and `gbrain doctor`'s `reranker_health` names the fix (`export VOYAGE_API_KEY=…` or `gbrain config set search.reranker.enabled false`). Keyed installs without a Voyage key get reranking explicitly disabled at init. The retained query-cache key includes `reranker_model`; persisted result reuse is disabled until every response dependency can be verified. On a real-corpus benchmark across 20 queries, the cross-encoder reshuffled **60% of top-1 results** after the hybrid + RRF + graph stack (historical measurement on the retired hosted reranker, not Voyage; original identifiers are preserved at Git revision `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`, retained on 2026-09-23). The Voyage default's paired LongMemEval numbers live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).
+The reranker is on for the `balanced` and `tokenmax` mode bundles, off for `conservative`. The mode-bundle default is Voyage `rerank-3-lite` (`DEFAULT_RERANKER_MODEL`, same `VOYAGE_API_KEY` as the embedding default); a brain with no `search.reranker.model` row reranks with it, and a brain with one keeps its own model. It replaced `rerank-2.5` after gbrain-evals #148 (v0.10.93) measured 60% lower rerank cost at 50 candidates × 1,400 tokens with quality within noise; `foresights config set search.reranker.model voyage:rerank-2.5` switches a brain back. Without the key, search fails open in RRF order: the gateway skips the HTTP call (`RerankError('no_key')`), writes ONE audit row per process, prints nothing, and stamps `reranker_skipped (no_key)` on the search meta — `foresights search --explain` shows it, `foresights search modes` prints a `Reranker:` readiness line, and `foresights doctor`'s `reranker_health` names the fix (`export VOYAGE_API_KEY=…` or `foresights config set search.reranker.enabled false`). Keyed installs without a Voyage key get reranking explicitly disabled at init. The retained query-cache key includes `reranker_model`; persisted result reuse is disabled until every response dependency can be verified. On a real-corpus benchmark across 20 queries, the cross-encoder reshuffled **60% of top-1 results** after the hybrid + RRF + graph stack (historical measurement on the retired hosted reranker, not Voyage; original identifiers are preserved at Git revision `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`, retained on 2026-09-23). The Voyage default's paired LongMemEval numbers live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).
 
 The mechanical reason: hybrid ranking is locally optimal per strategy but globally suboptimal. A cross-encoder reranker reads the query + each candidate document jointly, with full attention. It catches the cases where the vector + keyword + graph signals all agreed on a document that's semantically related but topically wrong.
 
-The cost: +150ms p50 latency, ~$0.025–0.05/M tokens depending on the reranker. Disabled with `gbrain config set search.reranker.enabled false`. For agent loops that do downstream LLM work after retrieval, the latency is invisible.
+The cost: +150ms p50 latency, ~$0.025–0.05/M tokens depending on the reranker. Disabled with `foresights config set search.reranker.enabled false`. For agent loops that do downstream LLM work after retrieval, the latency is invisible.
 
 ## Source-aware ranking
 
 Hybrid search applies a source-factor CASE expression at the SQL layer (lives in `src/core/search/sql-ranking.ts`). Curated content like `originals/`, `concepts/`, `writing/` outranks bulk content like `your-openclaw/chat/`, `daily/`, `media/x/`. Hard-exclude prefixes (`test/`, `attachments/`, `.raw/`) filter at retrieval, not post-rank.
 
-`archive/` is deliberately NOT hard-excluded: it holds high-signal historical content users expect to find, so it is demoted (`0.5x` in `DEFAULT_SOURCE_BOOSTS`), not hidden. The demote is a prior applied in the outer SQL re-rank; the cross-encoder reranker (balanced/tokenmax modes) can still PROMOTE an archive page that survives the demote into the rerank candidate window — it is not an unconditional suppression. `gbrain doctor`'s `hidden_by_search_policy` check reports how many chunked pages remain hidden by the surviving exclude prefixes.
+`archive/` is deliberately NOT hard-excluded: it holds high-signal historical content users expect to find, so it is demoted (`0.5x` in `DEFAULT_SOURCE_BOOSTS`), not hidden. The demote is a prior applied in the outer SQL re-rank; the cross-encoder reranker (balanced/tokenmax modes) can still PROMOTE an archive page that survives the demote into the rerank candidate window — it is not an unconditional suppression. `foresights doctor`'s `hidden_by_search_policy` check reports how many chunked pages remain hidden by the surviving exclude prefixes.
 
-The defaults fit one vault layout, so each brain can carry its own map: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"` overrides or extends the defaults per prefix, and a `none` entry (`"none,wiki/:1.3"`) drops them entirely. The `GBRAIN_SOURCE_BOOST` env var (same format) wins over the brain config for one process. Hard exclusions are separate: the exclusion set is defaults ∪ `GBRAIN_SEARCH_EXCLUDE` (env, comma-separated prefixes) ∪ per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
+The defaults fit one vault layout, so each brain can carry its own map: `foresights config set search.source_boosts "wiki/:1.3,daily/:1.0"` overrides or extends the defaults per prefix, and a `none` entry (`"none,wiki/:1.3"`) drops them entirely. The `GBRAIN_SOURCE_BOOST` env var (same format) wins over the brain config for one process. Hard exclusions are separate: the exclusion set is defaults ∪ `GBRAIN_SEARCH_EXCLUDE` (env, comma-separated prefixes) ∪ per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
 
 ## Named-thing retrieval (per-page pool + title + alias + evidence)
 
@@ -137,7 +137,7 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   consulted at query time: a full normalized-query match injects/boosts the
   canonical page (`applyAliasHop`). The only layer that bridges true synonyms
   with zero surface overlap ("the Sun Room" → the Helios page). Backfill
-  existing pages with `gbrain reindex --aliases`. Opt-in
+  existing pages with `foresights reindex --aliases`. Opt-in
   `search.qualified_aliases` (off by default) also matches a 3-6 word
   sub-phrase with 3+ content words inside a query of up to 14 words: when
   exactly one page the caller can read claims it, that page leads, stamped
@@ -145,7 +145,7 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   row past autocut and the remote page cap but never sets evidence
   `alias_hit`, and the rerank gate does not grade it. A common three-word
   alias can lead a query about something else, so confirm on your own eval
-  before turning it on: `gbrain config set search.qualified_aliases true`
+  before turning it on: `foresights config set search.qualified_aliases true`
   (`false` turns it back off).
 - **Evidence contract** — every result carries `evidence`
   (`alias_hit | exact_title_match | high_vector_match | keyword_exact |
@@ -155,7 +155,7 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   the result's real query↔chunk cosine (`SearchResult.cosine` at/above
   `search.evidence_cosine_floor`, default 0.80) — never the blended score, so a
   keyword+boost pile-up can't read as semantic support; keyless runs have no
-  cosine and degrade to honest keyword-based labels. `gbrain search --explain`
+  cosine and degrade to honest keyword-based labels. `foresights search --explain`
   prints each result's raw cosine next to its blended score.
 
 **Extraction quarantine lane:** pages carrying the unverified
@@ -164,7 +164,7 @@ auto-extracted markers (frontmatter `provenance: auto-extracted` +
 content — they are skipped by the compiled-truth fusion boost and by the
 `people/`/`companies/` namespace source-boost, and every search result from
 such a page carries `unverified: true` so agents can label the provenance.
-Promote or reject them via `gbrain extraction-pending` / `gbrain
+Promote or reject them via `foresights extraction-pending` / `foresights
 extraction-review`.
 
 The `search` MCP/CLI op is **cheap-hybrid** (vector + keyword + RRF + pool +
@@ -173,8 +173,8 @@ concept / landscape / "all-of-X" questions to `query` — expansion recovers
 synonym-phrased matches `search` can miss, and a populated `search` result set
 is not proof of coverage (both are top-K; exhaustive enumeration belongs to
 `list_pages`). NamedThingBench
-(`gbrain eval retrieval-quality`) gates these families on every PR. Diagnose a
-specific miss with `gbrain search diagnose "<q>" --target <slug>`.
+(`foresights eval retrieval-quality`) gates these families on every PR. Diagnose a
+specific miss with `foresights search diagnose "<q>" --target <slug>`.
 
 ## Intent-aware query rewriting
 
@@ -200,7 +200,7 @@ strict `recall_all@5` while hybrid plus equal-weight expansion scores 54.89%
 (paired +3 / -183 questions). Variant lists with the original's weight can
 outvote it on small-k retrieval.
 
-Budget-normalized weighted RRF, composed in `src/core/search/fusion-lists.ts`. Every vector list is a role-tagged arm (`original` | `variant` | `clause` | `image`) — tagged objects, never a positional convention, so a failed arm or a fell-open image branch can't mis-tag a list. The `original` arm always fuses at weight 1; the non-empty `variant`/`clause` arms share ONE total weight budget, `search.expansion_variant_budget` (`weight_i = b / n_voting_arms`, each row scored `weight / (k + rank)`), so total expansion influence is exactly `b` however many variants the LLM produced. `null`, the default in all three mode bundles, is equal-weight fusion (every list weight 1). A budget in (0, 4] is set with `gbrain config set search.expansion_variant_budget <b>`, per call via `HybridSearchOpts.expansionVariantBudget`, or pinned per eval arm with `gbrain eval longmemeval --expansion-variant-budget <b>` (sweep it against frozen `--expansion-replay` variants so cells differ only in `b`). Arithmetic: two variants agreeing on a distractor at rank 0 tie the original's rank-0 vote exactly at `b = 1.0`; equal weighting with two variants is ≈ `b = 2.0`; `b = 0.5` subordinates them. The knob is a no-op when expansion is off and folds into the query-cache key (`evb=`). Measured 2026-09-06 with recorded Haiku variants replayed at every budget: the mechanism is real — strict `recall_all@5` rises from 255/470 at equal weighting to 394/470 at budget 0.25 — but its pre-registered rule (≥ plain hybrid − 2 on the 430-question decision set, no type losing > 1) failed at every budget (0.25: −43; plain hybrid 439/470), so every bundle sets `expansion_variant_budget: null` and the knob is an operator lever. The receipts point at a trigger rather than a weight (expand only when the original query's evidence is weak) as the next mechanism to pre-register.
+Budget-normalized weighted RRF, composed in `src/core/search/fusion-lists.ts`. Every vector list is a role-tagged arm (`original` | `variant` | `clause` | `image`) — tagged objects, never a positional convention, so a failed arm or a fell-open image branch can't mis-tag a list. The `original` arm always fuses at weight 1; the non-empty `variant`/`clause` arms share ONE total weight budget, `search.expansion_variant_budget` (`weight_i = b / n_voting_arms`, each row scored `weight / (k + rank)`), so total expansion influence is exactly `b` however many variants the LLM produced. `null`, the default in all three mode bundles, is equal-weight fusion (every list weight 1). A budget in (0, 4] is set with `foresights config set search.expansion_variant_budget <b>`, per call via `HybridSearchOpts.expansionVariantBudget`, or pinned per eval arm with `foresights eval longmemeval --expansion-variant-budget <b>` (sweep it against frozen `--expansion-replay` variants so cells differ only in `b`). Arithmetic: two variants agreeing on a distractor at rank 0 tie the original's rank-0 vote exactly at `b = 1.0`; equal weighting with two variants is ≈ `b = 2.0`; `b = 0.5` subordinates them. The knob is a no-op when expansion is off and folds into the query-cache key (`evb=`). Measured 2026-09-06 with recorded Haiku variants replayed at every budget: the mechanism is real — strict `recall_all@5` rises from 255/470 at equal weighting to 394/470 at budget 0.25 — but its pre-registered rule (≥ plain hybrid − 2 on the 430-question decision set, no type losing > 1) failed at every budget (0.25: −43; plain hybrid 439/470), so every bundle sets `expansion_variant_budget: null` and the knob is an operator lever. The receipts point at a trigger rather than a weight (expand only when the original query's evidence is weak) as the next mechanism to pre-register.
 
 The mode bundles carry an `expansion` default, false in all three (`tokenmax`
 turned it off after the 2026-10-14 expansion-latency eval: `query` p50 fell
@@ -211,7 +211,7 @@ unset unless the caller passes `expand`, so `query` does not expand by default;
 skips it. `search` never expands; `search.expansion` overrides the mode default for `query` only. Keyless and image-only paths
 skip expansion, and `expansion_applied` reports actual variant use. The
 [search-mode guide](../guides/search-modes.md) is the authoritative rule for
-defaults, overrides and provider costs; `gbrain search modes` prints the
+defaults, overrides and provider costs; `foresights search modes` prints the
 operation-level exception before the retained bundle knobs.
 
 ## Putting it together
@@ -461,12 +461,12 @@ keeps them and leaves them out of its cliff math (text rows are cut as
 usual). The evidence slot runs afterwards as the page-1 guarantee for pin 0 /
 fail-open runs. The pin trusts the arm: a false-positive arm puts as many edge
 pages at the top as the pin allows, where an unpinned run would place one at
-`limit`. Turn it off per brain with `gbrain config set search.relational_rerank_pin off`.
+`limit`. Turn it off per brain with `foresights config set search.relational_rerank_pin off`.
 The knob folds into the query-cache key (`rrp=`).
 
 ### Breadth-first graph walks
 
-Since v0.60.294.0 every graph walk (`traverse_graph`, `gbrain graph`, the graph
+Since v0.60.294.0 every graph walk (`traverse_graph`, `foresights graph`, the graph
 context `think` gathers) is breadth-first. Each page is visited once, at its
 shortest distance from the start page, and each edge comes back once, one hop
 past its shallower walked endpoint. The old walk followed every possible route,
@@ -484,7 +484,7 @@ What that changes for you:
   visited pages (20,000, shallowest first), so a walk reaches every page within
   its depth unless the brain itself is that large.
 - **Cleaner output.** No repeated pages or edges at deeper depths, so an
-  agent's context holds each relationship once and `gbrain graph` prints each
+  agent's context holds each relationship once and `foresights graph` prints each
   edge once.
 - **Same safety.** Soft delete, private pages and private link origins, source
   scope, link type and temporal policy still apply at every hop: a page the
@@ -527,7 +527,7 @@ contributor passes the read policy before scoring. Path weight is the product
 of hub weights of the intermediate pages (`hubWeight`,
 `src/core/search/hub-dampening.ts`; degree saturates at 300 link rows);
 ties order by source and slug. The same executor serves `traverse_graph`
-`hops` and `gbrain graph-query --hop`.
+`hops` and `foresights graph-query --hop`.
 
 Chain evidence is page-level through fusion: whichever chunk of a page
 survives carries the page's `relational` field. Only answers count toward the
@@ -580,7 +580,7 @@ sweep {0.10 … 0.80} within two questions of "off" on either seeded half
 (0.80 still lost 9, all knowledge-update). Any-hit stayed ≥ 99.4% throughout:
 autocut keeps the best session and drops the rest, which is a token saving
 (mean returned window 3256 → 1633 estimated tokens at 0.35) paid for with the
-questions that need more than one session. `gbrain config set search.autocut
+questions that need more than one session. `foresights config set search.autocut
 true` re-enables it with the knobs below; a session-aware cut (never below k
 distinct sessions) is a filed follow-up. `applyAutocut`
 (`src/core/search/autocut.ts`) cuts the ranked set at the largest
@@ -596,7 +596,7 @@ per-call `SearchOpts.autocut` → `search.autocut` / `search.autocut_jump` /
 captured for offline floor replay: `hybridSearch` exposes an eval-only
 `onRerankPool` hook that fires with the exact pool `applyAutocut` is about to
 cut (post-rerank, post alias-hop / exact-lookup, unscored injections included),
-`gbrain eval longmemeval --capture-pool` records it per row as `rerank_pool`,
+`foresights eval longmemeval --capture-pool` records it per row as `rerank_pool`,
 and `scripts/replay-autocut-floor.ts` replays every floor — including `off` —
 from that single capture, validating byte-for-byte against the live decisions
 before any other cell is read.
@@ -637,19 +637,19 @@ excerpt selector that failed its evaluation is recorded in
 # Reproduce the public LongMemEval receipt (cleaned S split, k=5) like-for-like:
 # --by-type prints strict recall_all@5 (headline) and recall_any@5 (diagnostic);
 # the like-for-like row pins the reranker and autocut off.
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+foresights eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --retrieval-only --top-k 5 --by-type --no-trajectory --mode balanced --reranker off --autocut off
 # The shipped default path (what balanced/tokenmax run): --reranker on --autocut off
 
 # Capture your own queries and replay against retrieval changes
 export GBRAIN_CONTRIBUTOR_MODE=1
-# ... use gbrain normally ...
-gbrain eval export > before.ndjson
+# ... use foresights normally ...
+foresights eval export > before.ndjson
 # ... change something ...
-gbrain eval replay --against before.ndjson
+foresights eval replay --against before.ndjson
 
 # A/B retrieval strategies on a labeled fixture
-gbrain eval --qrels qrels.json --config-a baseline.json --config-b balanced.json
+foresights eval --qrels qrels.json --config-a baseline.json --config-b balanced.json
 ```
 
 The current measured LongMemEval result (95.53% session-level `recall_all@5` on the release default path, 449/470, and 93.40% with the reranker off, 439/470; cleaned S split, 470 scored questions, k=5, measured 2026-09-06 by the in-repo harness), its per-type table, every measured ranker arm and the judged answer-accuracy row live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).
@@ -683,9 +683,9 @@ index by design: nothing is pending and no repair applies.
 The CLI names these states; `--json` retains its result-array format and sends
 incompleteness notices to stderr. MCP carries them in `_meta.retrieval`.
 
-A resident `gbrain serve` drains queued Markdown and code rebuilds
+A resident `foresights serve` drains queued Markdown and code rebuilds
 without provider calls. Code repair can also run through the current owner:
-`gbrain reindex-code --force --no-embed`. Rebuilds preserve only exact,
+`foresights reindex-code --force --no-embed`. Rebuilds preserve only exact,
 provenance-compatible vectors: each vector records the embedding input it was
 built from (`content_chunks.embedding_input_hash`: column, model, dimensions,
 wrapping tier and wrapped text), and a rebuild keeps it only when the current
@@ -698,7 +698,7 @@ inherited a title-wrapped vector, so a rebuild clears unstamped vectors there,
 and switching from title or synopsis to `none` clears active text vectors
 immediately. Genuine old raw vectors on explicit `none` pages may need a
 one-time re-embed; it never starts automatically. Remaining NULL vectors
-still need an explicitly authorized `gbrain embed --stale` run. A text-ready
+still need an explicitly authorized `foresights embed --stale` run. A text-ready
 index is not a promise that every page has a vector. Diagnostics do not
 disclose private or foreign-source pending pages and never start repair
 themselves.
@@ -708,22 +708,22 @@ splitting text. For remote reads, all existing chunks of every page kind are
 withheld until a successful rebuild records the current chunker version. Public
 pages require this rebuild too; trusted local chunk reads remain available. Body or
 chunk changes invalidate that record until the next successful rebuild. Re-importing
-unchanged content (`gbrain sync --full`, `gbrain import`) re-seals such a page
+unchanged content (`foresights sync --full`, `foresights import`) re-seals such a page
 without a page write or journal admission. While pages are withheld, remote
 `search` / `query` report `degraded: [safe_index_pending]` on empty and partial
 results alike (the MCP empty-result block names it) instead of a clean or complete
-answer, and `gbrain doctor` counts the withheld markdown and code pages and points
-at `gbrain repair safe-chunks`, which re-seals them on any brain, managed included.
+answer, and `foresights doctor` counts the withheld markdown and code pages and points
+at `foresights repair safe-chunks`, which re-seals them on any brain, managed included.
 Direct page reads continue to use current source and visibility policy plus body
 sanitization.
 
 Run rebuild commands from a local installation on the brain host; thin clients
 cannot rebuild the host's indexes.
-`gbrain reindex --markdown --dry-run --no-embed` previews the existing rebuild.
-`gbrain reindex --markdown --no-embed` rebuilds without embedding calls, replacing
-previous vectors; use `gbrain embed --stale` later to restore semantic retrieval
+`foresights reindex --markdown --dry-run --no-embed` previews the existing rebuild.
+`foresights reindex --markdown --no-embed` rebuilds without embedding calls, replacing
+previous vectors; use `foresights embed --stale` later to restore semantic retrieval
 when provider usage is authorized. The regular reindex path rebuilds and embeds.
-Code pages use `gbrain reindex-code --force --no-embed`. Existing image indexes
+Code pages use `foresights reindex-code --force --no-embed`. Existing image indexes
 require reimporting the source files; images whose OCR contains protected
 sections remain unavailable to remote chunk retrieval. Schema migrations 160
 and 161 install projection statistics and the pending-projection lookup index;

@@ -73,11 +73,11 @@ export function resolveWhoknowsFixturePath(
 /**
  * v0.33: whoknows_health — verify the eval fixture is present at the
  * documented path. Lightweight; just checks file existence and row count,
- * not the eval gate outcome (that runs via `gbrain eval whoknows`).
+ * not the eval gate outcome (that runs via `foresights eval whoknows`).
  *
  * Surface is intentionally narrow: a missing fixture means the eval
  * cannot run at all, which is the highest-leverage signal. Hit-rate
- * regression detection lives in `gbrain eval whoknows --json` and is
+ * regression detection lives in `foresights eval whoknows --json` and is
  * the job of the eval command, not the doctor sweep.
  */
 export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> {
@@ -122,7 +122,7 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
     return {
       name: 'whoknows_health',
       status: 'ok',
-      message: `whoknows eval fixture present (${rows.length} queries). Run \`gbrain eval whoknows test/fixtures/whoknows-eval.jsonl\` to grade.`,
+      message: `whoknows eval fixture present (${rows.length} queries). Run \`foresights eval whoknows test/fixtures/whoknows-eval.jsonl\` to grade.`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -183,7 +183,7 @@ export async function pagesUpsertArbiterCheck(engine: BrainEngine): Promise<Chec
       message:
         `pages is missing the UNIQUE(source_id, slug) arbiter — every page write fails with ` +
         `"no unique or exclusion constraint" (#550).${dupNote} ` +
-        `Run \`gbrain apply-migrations --yes\` to heal it.`,
+        `Run \`foresights apply-migrations --yes\` to heal it.`,
     };
   } catch {
     return checkError('pages_upsert_arbiter', 'check the pages upsert arbiter');
@@ -211,7 +211,7 @@ export async function linkSourceCheckConstraintCheck(engine: BrainEngine): Promi
         message: s.tablePresent ? 'links_link_source_check has the v114 kebab-case gate' : 'no links table yet',
       };
     }
-    const heal = 'Run `gbrain apply-migrations --yes` to heal it (#4613).';
+    const heal = 'Run `foresights apply-migrations --yes` to heal it (#4613).';
     if (s.drift === 'wrong_def') {
       return {
         name,
@@ -287,7 +287,7 @@ export async function jsonbIntegrityCheck(
     return {
       name: 'jsonb_integrity',
       status: 'warn',
-      message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+      message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: foresights repair-jsonb`,
     };
   } catch {
     return checkError('jsonb_integrity', 'check JSONB integrity');
@@ -426,14 +426,14 @@ export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> 
       return {
         name: 'takes_weight_grid',
         status: 'fail',
-        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: gbrain apply-migrations --yes`,
+        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: foresights apply-migrations --yes`,
       };
     }
     if (ratio > 0.01) {
       return {
         name: 'takes_weight_grid',
         status: 'warn',
-        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: gbrain apply-migrations --yes`,
+        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: foresights apply-migrations --yes`,
       };
     }
     return {
@@ -463,7 +463,7 @@ export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> 
  * All ten FK-to-pages tables declare `ON DELETE CASCADE` in the live schema
  * (verified via `pg_constraint` snapshot in the issue body), so finding any
  * orphan row is by definition unexpected. The check names
- * `gbrain repair orphan-children` (the target list lives there).
+ * `foresights repair orphan-children` (the target list lives there).
  *
  * Excluded: `files.page_id` and `links.origin_page_id` — both declared as
  * `ON DELETE SET NULL`, so a NULL value is a valid state (file/link survives
@@ -515,7 +515,7 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
     status: 'warn',
     message:
       `${totalOrphans} orphan row(s) in FK-child tables (${breakdown.join(', ')}). ` +
-      `Preview: gbrain repair orphan-children — apply: gbrain repair orphan-children --apply. See ${docs}.`,
+      `Preview: foresights repair orphan-children — apply: foresights repair orphan-children --apply. See ${docs}.`,
     details: {
       code: 'child_table_orphans', cause: `child rows reference ${totalOrphans} missing page row(s), usually after storage damage`,
       fix: { kind: 'run_command', argv: ['gbrain', 'repair', 'orphan-children'] }, docs, repair: 'orphan-children', orphans: breakdown,
@@ -592,7 +592,7 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
  * that grows a layer on every read→write cycle. Any row where
  * `jsonb_typeof(config) <> 'object'` is corrupted — federation and ACL settings
  * on that source are read off a string instead of the settings object. Surface
- * the affected sources with the repair path. The `gbrain sources` writers that
+ * the affected sources with the repair path. The `foresights sources` writers that
  * rewrite the `config` COLUMN (federate/unfederate, webhook set/rotate/clear,
  * tracked-branch) normalize before write and so self-heal the row (the app
  * unwraps up to 10 nested layers); writers of other columns (set-cr-mode,
@@ -620,8 +620,8 @@ export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check
         `instead of an object (the #2829 re-wrapping bug): ${affected}. ` +
         `Federation and ACL settings on these sources won't be read correctly. ` +
         `Repair with this SQL: ${REPAIR_SOURCE_CONFIG_SQL} — or re-assert the source's ` +
-        `current federation state with 'gbrain sources federate <id>' / 'unfederate <id>' ` +
-        `(see 'gbrain sources list'; federate on an isolated source also flips it into ` +
+        `current federation state with 'foresights sources federate <id>' / 'unfederate <id>' ` +
+        `(see 'foresights sources list'; federate on an isolated source also flips it into ` +
         `default search), which rewrites the config column and self-heals nested strings / ` +
         `recoverable arrays. Commands that write other columns ('set-cr-mode', 'rename', ` +
         `'set-path') do not repair it.`,
@@ -653,7 +653,7 @@ export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check
  *     OS + Bun versions on #223.
  *
  * COST GATE: a PGLite cold start is 5–20s on loaded machines, so this never
- * runs on a routine `gbrain doctor`. It runs only when (a) the real PGLite
+ * runs on a routine `foresights doctor`. It runs only when (a) the real PGLite
  * engine actually failed to open (engine=null, not --fast, configured engine
  * is pglite) AND the disk diagnosis didn't already fully explain the failure
  * (a live lock / missing dir needs no runtime probe), or (b) the operator
@@ -693,8 +693,8 @@ export async function checkPgliteScratchProbe(opts: {
             `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
             `so the runtime is healthy and YOUR STORE is damaged — not the WASM runtime. ` +
             `Your markdown is unaffected: the DB holds derived data (chunks, embeddings, links, facts) that a re-sync rebuilds. ` +
-            `Recover: \`gbrain pglite-repair --dry-run\` diagnoses it and prints the plan-bound in-place WAL repair command (data preserved) to run once the user approves; ` +
-            `if that can't fix it, restore a backup of the store directory or run \`gbrain reinit-pglite\` (wipes + re-inits + re-syncs; ` +
+            `Recover: \`foresights pglite-repair --dry-run\` diagnoses it and prints the plan-bound in-place WAL repair command (data preserved) to run once the user approves; ` +
+            `if that can't fix it, restore a backup of the store directory or run \`foresights reinit-pglite\` (wipes + re-inits + re-syncs; ` +
             `defaults embedding flags from your config file).`,
           details: { scratch_ok: true, duration_ms: r.duration_ms },
         };
@@ -710,7 +710,7 @@ export async function checkPgliteScratchProbe(opts: {
             `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
             `so the WASM runtime is healthy — the failure opening your brain is specific to your store, ` +
             `its lock, or its configuration. See the \`pglite_data_dir\` check for the on-disk diagnosis; ` +
-            `\`gbrain pglite-repair --dry-run\` diagnoses without mutating anything.`,
+            `\`foresights pglite-repair --dry-run\` diagnoses without mutating anything.`,
           details: { scratch_ok: true, duration_ms: r.duration_ms },
         };
       }

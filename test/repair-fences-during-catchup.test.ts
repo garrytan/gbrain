@@ -1,5 +1,5 @@
 /**
- * #6278 R2: `gbrain repair fences --apply` during a live managed catch-up.
+ * #6278 R2: `foresights repair fences --apply` during a live managed catch-up.
  *
  * Protects: a source whose sync is running is no longer skipped as a whole.
  * #6712 PR 4b: a non-company source syncs by the live pass, which keeps no

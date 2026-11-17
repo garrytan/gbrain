@@ -77,10 +77,10 @@ describe('fast-path output', () => {
   test('--version and help print what the dispatcher printed, exit 0', () => {
     const version = spawnSync(process.execPath, ['--no-env-file', join(REPO, 'src/cli.ts'), '--version'], { cwd: REPO, encoding: 'utf8', timeout: 60_000 });
     expect(version.status).toBe(0);
-    expect(version.stdout).toBe(`gbrain ${VERSION}\n`);
+    expect(version.stdout).toBe(`foresights ${VERSION}\n`);
     const help = spawnSync(process.execPath, ['--no-env-file', join(REPO, 'src/cli.ts'), '--help'], { cwd: REPO, encoding: 'utf8', timeout: 60_000 });
     expect(help.status).toBe(0);
-    expect(help.stdout.startsWith(`gbrain ${VERSION} -- personal knowledge brain\n`)).toBe(true);
-    expect(help.stdout).toContain('Run gbrain <command> --help for command-specific help.');
+    expect(help.stdout.startsWith(`foresights ${VERSION} -- personal knowledge brain\n`)).toBe(true);
+    expect(help.stdout).toContain('Run foresights <command> --help for command-specific help.');
   });
 });

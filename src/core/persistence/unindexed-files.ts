@@ -1,6 +1,6 @@
 /**
  * #6865: files of a managed Git source that are committed, eligible for sync,
- * and neither indexed nor held. An older gbrain refused some files before
+ * and neither indexed nor held. An older foresights refused some files before
  * refusals became holds (a stray frontmatter `slug:` line, unreadable YAML);
  * incremental discovery never visits an unchanged file with no page and no
  * hold, so those files stay absent from search and nothing reports them.

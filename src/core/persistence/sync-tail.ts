@@ -4,7 +4,7 @@
  * tail never holds the source or reads as a stalled pass. The checkpoint's own transaction records the obligation
  * (`recordSyncTail`), so a process that dies between the checkpoint commit and the tail leaves it for the next tail on the
  * source; the tail is bounded, and work it leaves undone stays durable (the obligation, and every unextracted page stays
- * stale for `gbrain extract --stale`). A failed or truncated tail attaches one degraded notice with its fix; the run's
+ * stale for `foresights extract --stale`). A failed or truncated tail attaches one degraded notice with its fix; the run's
  * outcome stays synced.
  */
 import type { BrainEngine } from '../engine.ts';

@@ -1,5 +1,5 @@
 /**
- * `gbrain trust` owner subcommands (#5575: CEO-2, CEO-9, DX-2, DX-3, DX-7,
+ * `foresights trust` owner subcommands (#5575: CEO-2, CEO-9, DX-2, DX-3, DX-7,
  * DX-10, DX-13, DX-14, DX-15, ENG-15): review, confirm, release, drop,
  * revert, explain, allow, disable. `backfill` lives in the dispatch module
  * (src/cli/commands/trust.ts).
@@ -8,7 +8,7 @@
  * interactive terminal when the action raises trust (trust/confirm.ts; piped
  * input, agents and --yes never confirm), then applies it bound to the
  * previewed state. The backend is the local engine, or, while a resident
- * `gbrain serve` holds a PGLite brain, that owner's 0600 administration
+ * `foresights serve` holds a PGLite brain, that owner's 0600 administration
  * socket (trust/owner-ipc.ts): the prompt still happens here, in the
  * invoking terminal, and the owner re-validates the binding.
  */
@@ -36,7 +36,7 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 
 export const TRUST_OWNER_USAGE = [
-  'Usage: gbrain trust <review|confirm|release|drop|revert|explain|allow|disable|backfill|scan> [options]',
+  'Usage: foresights trust <review|confirm|release|drop|revert|explain|allow|disable|backfill|scan> [options]',
   '  review [--from <source>] [--kind <kind>] [--since <7d|date>] [--json]',
   '      Everything waiting for you: trust proposals (tp<id>), pages an agent edit lowered, unconfirmed standing',
   '      preferences (f<id>), held writes (h<id>), agent pages flagged as instructions (p:<source>/<slug>) and your',
@@ -93,7 +93,7 @@ function flag(args: string[], name: string): string | undefined {
   const at = args.indexOf(name);
   if (at < 0) return undefined;
   const value = args[at + 1];
-  if (value === undefined || value.startsWith('--')) throw opError('invalid_params', `${name} needs a value.`, `Pass ${name} <value>; gbrain trust --help shows the forms.`);
+  if (value === undefined || value.startsWith('--')) throw opError('invalid_params', `${name} needs a value.`, `Pass ${name} <value>; foresights trust --help shows the forms.`);
   return value;
 }
 const VALUE_FLAGS = ['--from', '--kind', '--since', '--source', '--version', '--uri-prefix', '--reason-family', '--reason', '--remove'];
@@ -122,12 +122,12 @@ function actionInput(sub: string, args: string[]): OwnerActionInput {
     return { action: 'allow', source, uri_prefix: flag(args, '--uri-prefix') ?? null, reason_family: flag(args, '--reason-family') ?? null, reason: flag(args, '--reason') ?? null };
   }
   if (sub === 'disable') {
-    if (!args.includes('--all')) throw opError('invalid_params', 'trust disable needs --all.', 'Run gbrain trust disable --all (or --all --undo to turn the protections back on).');
+    if (!args.includes('--all')) throw opError('invalid_params', 'trust disable needs --all.', 'Run foresights trust disable --all (or --all --undo to turn the protections back on).');
     return { action: args.includes('--undo') ? 'enable' : 'disable' };
   }
-  if (!ref) throw opError('invalid_params', `trust ${sub} needs a ref.`, 'Pass a ref such as f12, h4, tp7 or p:default/notes/alice-example; gbrain trust review lists them.');
+  if (!ref) throw opError('invalid_params', `trust ${sub} needs a ref.`, 'Pass a ref such as f12, h4, tp7 or p:default/notes/alice-example; foresights trust review lists them.');
   const version = flag(args, '--version');
-  if (version !== undefined && !/^\d{1,18}$/.test(version)) throw opError('invalid_params', '--version takes a version id.', 'gbrain history with the page slug lists its version ids.');
+  if (version !== undefined && !/^\d{1,18}$/.test(version)) throw opError('invalid_params', '--version takes a version id.', 'foresights history with the page slug lists its version ids.');
   return { action: sub as OwnerActionInput['action'], ref, source, ...(version ? { version: Number(version) } : {}) };
 }
 
@@ -160,13 +160,13 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
   const filter = reviewFilter(args);
   if (!filter.sourceId && !filter.kind && !filter.since) {
     throw opError('invalid_params', 'review --accept-all needs at least one filter: --from <source>, --kind <kind> or --since <when>.',
-      'Narrow it first, e.g. gbrain trust review --accept-all --from default --since 7d; run gbrain trust review to see what would match.');
+      'Narrow it first, e.g. foresights trust review --accept-all --from default --since 7d; run foresights trust review to see what would match.');
   }
   const review = await backend.review(filter);
   // A contradiction has no single accept: each of its commands decides it differently, so --accept-all leaves it for the owner.
   const contradictions = review.items.filter(item => item.kind === 'contradiction')
-    .map(item => ({ ref: item.ref, reason: 'contradiction', next: 'Decide it with one of its commands: gbrain trust review --kind contradiction' }));
-  const flagged = review.items.filter(item => item.kind === 'flagged_page' || item.flagged).map(item => ({ ref: item.ref, reason: 'confirm_on_its_own', next: `gbrain trust confirm ${item.ref}` }));
+    .map(item => ({ ref: item.ref, reason: 'contradiction', next: 'Decide it with one of its commands: foresights trust review --kind contradiction' }));
+  const flagged = review.items.filter(item => item.kind === 'flagged_page' || item.flagged).map(item => ({ ref: item.ref, reason: 'confirm_on_its_own', next: `foresights trust confirm ${item.ref}` }));
   const inputs = review.items.filter(item => item.kind !== 'contradiction' && item.kind !== 'flagged_page' && !item.flagged)
     .map(item => ({ action: item.kind === 'hold' ? 'release' : 'confirm', ref: item.ref, source: item.source_id } as OwnerActionInput));
   const skipLines = () => { for (const s of contradictions) console.log(`${s.ref}: skipped (a contradiction; ${s.next})`); };
@@ -176,7 +176,7 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
   }
   const settled = await Promise.allSettled(inputs.map(input => backend.preview(input)));
   const skipped = [...flagged, ...settled.flatMap((s, i) => {
-    const next = `gbrain trust ${inputs[i]!.action} ${inputs[i]!.ref}`;
+    const next = `foresights trust ${inputs[i]!.action} ${inputs[i]!.ref}`;
     if (s.status === 'rejected') return [{ ref: inputs[i]!.ref!, reason: 'preview_failed', error: s.reason instanceof OperationError ? s.reason.toJSON() : String(s.reason), next }];
     return s.value.summary.length > ACCEPT_ALL_ITEM_MAX ? [{ ref: inputs[i]!.ref!, reason: 'summary_too_long', next }] : [];
   })];
@@ -286,7 +286,7 @@ export async function maybeDelegateTrust(hostConfig: GBrainConfig | null, args: 
 }
 
 /**
- * DX-7 / CEO-9 for `gbrain decide proposals accept`: an S9 proposal whose new
+ * DX-7 / CEO-9 for `foresights decide proposals accept`: an S9 proposal whose new
  * fact is less trusted than the fact it supersedes raises trust over the old
  * row, so accepting it needs the owner's typed confirmation (one prompt for a
  * batch). Proposals that cross no tier return without a prompt and keep
@@ -302,7 +302,7 @@ export async function confirmTierCrossingAccepts(engine: BrainEngine, ids: reado
   const crossing = rows.filter(r => compareTrust(storedTrustTier(r.new_tier), storedTrustTier(r.old_tier)) < 0);
   if (crossing.length === 0) return [];
   const refs = crossing.map(r => `#${Number(r.id)}`);
-  console.error(`[decide] accepting ${refs.join(', ')} lets a less trusted fact supersede a more trusted one; the same check as gbrain trust confirm applies (gbrain trust review lists every trust decision).`);
+  console.error(`[decide] accepting ${refs.join(', ')} lets a less trusted fact supersede a more trusted one; the same check as foresights trust confirm applies (foresights trust review lists every trust decision).`);
   const token = crossing.length === 1 ? `s9-${Number(crossing[0]!.id)}` : `s9-${createHash('sha256').update(refs.join(',')).digest('hex').slice(0, 8)}`;
   await requireOwnerConfirmation(LOCAL_CTX, {
     ref: refs.join(', '), token, command: command.filter(a => a !== '--yes' && a !== '--json'),

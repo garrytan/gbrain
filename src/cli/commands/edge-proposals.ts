@@ -1,5 +1,5 @@
 /**
- * `gbrain edge-proposals`: post-connect dispatch (relationship-contradiction
+ * `foresights edge-proposals`: post-connect dispatch (relationship-contradiction
  * proposals from the edge_contradictions dream phase). The record lives in
  * src/cli/command-table.ts.
  */

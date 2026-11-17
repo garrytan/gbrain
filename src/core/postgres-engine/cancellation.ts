@@ -8,8 +8,8 @@ export function postgresCancellationUnavailable(): LocalConfigurationError {
   return new LocalConfigurationError(
     'postgres_cancellation_unavailable',
     'The installed Postgres driver lacks safe cancellation support (discard). ' +
-    'Repair this installation, then restart the worker: reinstall the current GBrain package ' +
-    '(global: bun install -g github:garrytan/gbrain; checkout: bun install; compiled: replace with the current release). ' +
+    'Repair this installation, then restart the worker: reinstall the current Foresights package ' +
+    '(global: bun install -g github:aimonk2025/gbrain; checkout: bun install; compiled: replace with the current release). ' +
     'See docs/guides/minions-fix.md#postgres-cancellation-unavailable.',
   );
 }

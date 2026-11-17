@@ -72,7 +72,7 @@ export interface DiscoverOpts {
    */
   excludeDirs?: string[];
   /**
-   * #5413: session ids of gbrain's own claude-cli subprocess sessions
+   * #5413: session ids of foresights's own claude-cli subprocess sessions
    * (`claudeCliSelfSessionIds`). A `.txt` corpus file of one of these
    * sessions (`corpusFileSessionId`) is a self-capture and is skipped.
    */
@@ -141,7 +141,7 @@ export function isLsdOutput(content: string): boolean {
   return LSD_OUTPUT_MARKER_RE.test(content);
 }
 
-/** True iff this content carries the brainstorm frontmatter marker (saved by `gbrain brainstorm --save`). */
+/** True iff this content carries the brainstorm frontmatter marker (saved by `foresights brainstorm --save`). */
 export function isBrainstormOutput(content: string): boolean {
   return BRAINSTORM_OUTPUT_MARKER_RE.test(content);
 }
@@ -304,7 +304,7 @@ function listTextFiles(dir: string): string[] {
  *  - aren't `.txt`
  *  - have a date (basename prefix, else frontmatter `date`, #7267) outside the requested window
  *  - have content shorter than `minChars`
- *  - are gbrain claude-cli self-captures (`selfCaptureSessionIds`) or sit under a
+ *  - are foresights claude-cli self-captures (`selfCaptureSessionIds`) or sit under a
  *    dream output directory (`excludeDirs`); each class is counted in one stderr line
  *  - carry the `dream_generated: true` self-consumption marker (unless `bypassGuard`)
  *  - match any compiled exclude pattern (case-insensitive word-boundary by default);
@@ -380,7 +380,7 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
 
   tally.report();
   if (selfCaptureSkips > 0) {
-    process.stderr.write(`[dream] skipped ${selfCaptureSkips} corpus file(s) captured from gbrain's own claude-cli sessions\n`);
+    process.stderr.write(`[dream] skipped ${selfCaptureSkips} corpus file(s) captured from foresights's own claude-cli sessions\n`);
   }
   if (outputSkips > 0) {
     process.stderr.write(`[dream] skipped ${outputSkips} file(s) under dream output directories (self-consumption guard)\n`);
@@ -389,7 +389,7 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
 }
 
 /**
- * Read a single ad-hoc transcript file (`gbrain dream --input <file>`).
+ * Read a single ad-hoc transcript file (`foresights dream --input <file>`).
  * Bypasses the corpus-dir scan and date filters but still applies
  * minChars + exclude_patterns when provided. The self-consumption guard
  * also still fires unless `bypassGuard` is set explicitly.
@@ -481,7 +481,7 @@ function transcriptSpeaker(filePath: string): { speaker?: string } {
  * Dream's synthesize phase discovers imported `type: conversation`
  * pages from the database, beside the filesystem corpus walk.
  *
- * `gbrain transcripts ingest` (and the chat connectors) already parse,
+ * `foresights transcripts ingest` (and the chat connectors) already parse,
  * role-filter, redact and render each session as a conversation page; this
  * section hands those page bodies to synthesis as transcripts so a native
  * import needs no parallel `.txt` exporter. Discovery is scoped to the
@@ -502,7 +502,7 @@ export interface ConversationPageDiscoverOpts {
   from?: string;
   to?: string;
   bypassGuard?: boolean;
-  /** #5413: gbrain's own claude-cli session ids; their imported pages are self-captures. */
+  /** #5413: foresights's own claude-cli session ids; their imported pages are self-captures. */
   selfCaptureSessionIds?: ReadonlySet<string>;
 }
 
@@ -574,7 +574,7 @@ export async function discoverConversationPages(
     process.stderr.write(`[dream] excluded ${excluded} conversation page(s) matching exclude_patterns; set dream.synthesize.exclude_patterns to change\n`);
   }
   if (guarded > 0) {
-    process.stderr.write(`[dream] skipped ${guarded} conversation page(s): dream output or gbrain's own sessions (self-consumption guard)\n`);
+    process.stderr.write(`[dream] skipped ${guarded} conversation page(s): dream output or foresights's own sessions (self-consumption guard)\n`);
   }
   return out;
 }
@@ -621,7 +621,7 @@ export async function conversationPagesNotConsumed(engine: BrainEngine, sourceId
   if (await conversationPagesSetting(engine)) return null;
   const n = await countConversationPages(engine, sourceId);
   if (n === 0) return null;
-  const fix = 'gbrain config set dream.synthesize.conversation_pages true';
+  const fix = 'foresights config set dream.synthesize.conversation_pages true';
   return {
     phase: 'synthesize',
     status: 'warn',

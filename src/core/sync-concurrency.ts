@@ -27,7 +27,7 @@ export const DEFAULT_PARALLEL_WORKERS = 4;
 
 /**
  * v0.40.3.0 — default number of sources synced concurrently under
- * `gbrain sync --all`. Sibling of `DEFAULT_PARALLEL_WORKERS`; the two
+ * `foresights sync --all`. Sibling of `DEFAULT_PARALLEL_WORKERS`; the two
  * are deliberately separate constants because they cover different axes:
  *
  *   total live Postgres connections per fan-out wave
@@ -124,7 +124,7 @@ export function parseWorkers(s: string | undefined): number | undefined {
 /**
  * v0.41.13.0 — parse a duration argument in seconds for `--timeout` and
  * `--max-age`. Same shape as the existing duration parsers used elsewhere
- * in gbrain (e.g. `gbrain eval prune --older-than`):
+ * in foresights (e.g. `foresights eval prune --older-than`):
  *
  *   "60"   → 60      (bare integer, treated as seconds)
  *   "60s"  → 60
@@ -235,7 +235,7 @@ export interface WorkersWithClampResult {
  * Module-scoped memo so `resolveWorkersWithClamp` emits the PGLite
  * clamp warning at most once per (command, requested) pair within a
  * single CLI process. Without it, every per-source loop iteration
- * inside a fan-out command (`gbrain sync --all` + per-source workers)
+ * inside a fan-out command (`foresights sync --all` + per-source workers)
  * would print the same warning N times. Pure module-state — tests can
  * reset via `_resetWorkersClampWarningsForTest()`.
  */

@@ -111,7 +111,7 @@ test('#5740: a GitHub item failing 3 runs is held, the watermark advances past i
       // Run 4 skips the held item, so the sweep completes and the cursor moves past it.
       const fourth = await run();
       expect(fourth.status).not.toBe('partial');
-      expect(fourth.connectorHolds).toEqual({ held: 1, newly_held: 0, retry_command: `gbrain sources retry-held ${f.id}`, status_command: `gbrain sources status ${f.id}` });
+      expect(fourth.connectorHolds).toEqual({ held: 1, newly_held: 0, retry_command: `foresights sources retry-held ${f.id}`, status_command: `foresights sources status ${f.id}` });
       await disposePersistenceConsumer(engine);
       fx.since.length = 0;
       await run();
@@ -168,14 +168,14 @@ test('Gmail holds (managed and unmanaged): held after 3 runs, the floor passes i
     expect(status.held.map(h => h.key)).toEqual(['a1b2c3d4e5f60202']);
     const lines = connectorStatusLines(f.id, status).join('\n');
     expect(lines).toContain('1 held item(s)');
-    expect(lines).toContain(`gbrain sources retry-held ${f.id}`);
+    expect(lines).toContain(`foresights sources retry-held ${f.id}`);
     const doctor = await connectorHeldItemsCheck(engine);
     expect(doctor).toMatchObject({ name: 'connector_held_items', status: 'warn' });
     expect(doctor.details?.sources).toEqual(expect.arrayContaining([expect.objectContaining({ source_id: f.id, held: 1 })]));
     // Unknown upstream date counts as inside the window: coverage is partial, and the empty answer says so.
     const answer = await waiting(engine, f.id);
     expect(answer.completeness).toBe('partial');
-    expect(answer.held).toEqual([expect.objectContaining({ key: thread('0202'), retry_command: `gbrain sources retry-held ${f.id}` })]);
+    expect(answer.held).toEqual([expect.objectContaining({ key: thread('0202'), retry_command: `foresights sources retry-held ${f.id}` })]);
     expect(answer.text).toContain('No open loops found, but coverage is partial: 1 held item(s)');
     expect(answer.text).not.toContain('You are clean');
     // retry-held: --dry-run changes nothing; the real request survives until the next sync, which re-attempts and clears it.
@@ -381,7 +381,7 @@ test(`connector_holds_exhausted: a run that would hold a ${HOLD_CAP + 1}st item 
     const errors = spyOn(console, 'error').mockImplementation(() => {});
     try {
       await expect(runGitHubSync(engine, f.id, f.cfg, options, githubHoldsFetch(fx))).rejects.toMatchObject({ code: 'connector_holds_exhausted',
-        suggestion: expect.stringContaining(`gbrain sources retry-held ${f.id}`) });
+        suggestion: expect.stringContaining(`foresights sources retry-held ${f.id}`) });
     } finally { errors.mockRestore(); }
     expect(readFileSync(gitHubStateFile(f.dir), 'utf8')).toBe(before);
   }
@@ -478,7 +478,7 @@ test('a facts fence below the timeline sentinel of a connector page refuses the 
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     fx.issues[0] = { ...fx.issues[0], body: 'Body 1 edited upstream', updated_at: issueAt(4) };
     await expect(run()).rejects.toMatchObject({ code: 'connector_fence_below_timeline',
-      suggestion: expect.stringContaining(`gbrain repair connector-fences --source ${f.id}`) });
+      suggestion: expect.stringContaining(`foresights repair connector-fences --source ${f.id}`) });
     await disposePersistenceConsumer(engine);
     const [stored] = await engine.executeRaw<{ timeline: string; compiled_truth: string }>(`SELECT timeline,compiled_truth FROM pages WHERE source_id=$1 AND slug='gh/acme-example/app/1'`, [f.id]);
     expect(stored.timeline).toContain('Ships weekly');

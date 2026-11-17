@@ -8,7 +8,7 @@
  * The value is read at pin, inside every group's admission transaction, and by the destructive kinds at publication, so
  * a change takes effect at the next group. An unrecognized stored value reads as `classify_only` (fail closed).
  *
- * `set_at`: the config table has no timestamp, so local `gbrain config set` (`writeSyncAdmission`) records the value
+ * `set_at`: the config table has no timestamp, so local `foresights config set` (`writeSyncAdmission`) records the value
  * and the database's clock in an `op_checkpoints` row (`op='sync-admission'`, fingerprint `brain`) in the same
  * transaction as the config row. The row dates the stored value only while it names that value: a value written any
  * other way (or a row the checkpoint GC dropped) reads `set_at: null`. `syncAdmissionStatus` turns `effective` once

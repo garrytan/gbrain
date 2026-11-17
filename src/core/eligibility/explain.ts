@@ -1,5 +1,5 @@
 /**
- * DX-10 `gbrain trust explain` data API: why a memory is (or is not) used.
+ * DX-10 `foresights trust explain` data API: why a memory is (or is not) used.
  * For one typed ref it returns the stored tier and origin, the write-gate
  * verdict and receipts, and the activation decision on every registered
  * proactive surface plus explicit reads. Deterministic, read-only, zero

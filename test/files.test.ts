@@ -541,11 +541,11 @@ describe('files verify git lane (per-source root resolution)', () => {
 describe('storage precondition — the silent-no-op class (#4022)', () => {
   test('refusal message names the subcommand and why it refuses', () => {
     const msg = noStorageBackendMessage('upload');
-    expect(msg).toContain('gbrain files upload');
+    expect(msg).toContain('foresights files upload');
     // The two facts a user needs: nothing was stored, and metadata-only is why.
     expect(msg).toContain('refusing to continue');
     expect(msg).toMatch(/metadata only|no blob column/);
-    expect(noStorageBackendMessage('redirect')).toContain('gbrain files redirect');
+    expect(noStorageBackendMessage('redirect')).toContain('foresights files redirect');
   });
 
   /**

@@ -84,7 +84,7 @@ describe('cold-home re-init over an embedded PGLite brain', () => {
     expect(cfg).toMatchObject({ embedding_model: 'voyage:voyage-4', embedding_dimensions: 1024 });
     expect(init.stdout).toContain("kept this database's voyage:voyage-4 (1024d)");
     expect(init.stdout).toContain('VOYAGE_API_KEY');
-    expect(init.stdout).toContain('gbrain embed --stale');
+    expect(init.stdout).toContain('foresights embed --stale');
     const doctor = await runCli(['doctor', '--only', 'embedding_plane_disagreement', '--json'], home);
     expect(doctorCheck(doctor.stdout).status).toBe('ok');
   }, 150_000);

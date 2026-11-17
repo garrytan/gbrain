@@ -3,7 +3,7 @@
  * brain (wave 9 follow-ups, item 1), batched across pages (Decision 9:
  * batching, no migration).
  *
- * `gbrain extract-conversation-facts` replaces a page's
+ * `foresights extract-conversation-facts` replaces a page's
  * `cli:extract-conversation-facts*` rows with a fresh batch: the facts the
  * model extracted plus the page outcome (EXTRACTION_COMPLETE or
  * EXTRACTION_NOT_APPLICABLE). On a managed brain each page's batch is frozen
@@ -304,7 +304,7 @@ export async function assertConversationAdmissionHeadroom(engine: BrainEngine, a
   if (outstanding >= Math.max(1, Math.floor(limits.principalOutstanding * OUTSTANDING_ADMISSION_SHARE))) {
     throw catalogueError('maintenance_backpressure',
       `Conversation fact extraction stopped admitting: ${outstanding} of this writer's ${limits.principalOutstanding} outstanding requests are still pending.`,
-      `Let the pending requests settle (gbrain sources writer status --source ${sourceId} --json shows them; a resident gbrain serve or the next CLI run publishes them), then rerun the same command. Pages already published keep their facts.`);
+      `Let the pending requests settle (foresights sources writer status --source ${sourceId} --json shows them; a resident foresights serve or the next CLI run publishes them), then rerun the same command. Pages already published keep their facts.`);
   }
   // #6696 (A5): the cumulative caps follow the background pause, with the host-only, resource-specific fix: waiting frees no request id.
   const pause = await readBackgroundPauseShare(engine);
@@ -321,7 +321,7 @@ export async function assertConversationAdmissionHeadroom(engine: BrainEngine, a
     throw backgroundPaused(key, r.resource, r.used, limit, pause, journalLimitKey(r.setting),
       await oneYearCapacity(engine, key, r.resource === 'lifetime_ids' ? 'LifetimeIds' : 'TerminalBytes', r.used, limit), {
         what: `Conversation fact extraction stopped before admitting ${needed > 1 ? `${needed} planned` : 'the next'} request(s)`,
-        alternative: room > 0 ? `A smaller batch fits: gbrain extract-conversation-facts --source-id ${authority.writer.sourceId} --limit ${room}.` : undefined });
+        alternative: room > 0 ? `A smaller batch fits: foresights extract-conversation-facts --source-id ${authority.writer.sourceId} --limit ${room}.` : undefined });
   }
 }
 
@@ -394,14 +394,14 @@ export async function submitConversationPages(engine: BrainEngine, authority: Ma
 
 function invalid(row: WriteRequest, cause: string): OperationError {
   return opError('invalid_params', 'The conversation facts request is malformed.',
-    `Request ${row.request_id} in source ${row.source_id} ${cause}, so nothing changed. Run gbrain extract-conversation-facts --source-id ${row.source_id} again; its pages submit fresh batches.`,
+    `Request ${row.request_id} in source ${row.source_id} ${cause}, so nothing changed. Run foresights extract-conversation-facts --source-id ${row.source_id} again; its pages submit fresh batches.`,
     { fix: receiptFix(row.request_id) });
 }
 
 /** The batch envelope; a malformed envelope fails the whole request (deterministic). */
 function validateIntent(row: WriteRequest): ConversationFactsIntent {
   const p = row.intent as ConversationFactsIntent | null;
-  if (!p || p.kind !== CONVERSATION_FACTS_INTENT || p.protocol !== CONVERSATION_FACTS_PROTOCOL) throw invalid(row, 'carries a protocol this gbrain version does not publish (likely queued by another release)');
+  if (!p || p.kind !== CONVERSATION_FACTS_INTENT || p.protocol !== CONVERSATION_FACTS_PROTOCOL) throw invalid(row, 'carries a protocol this foresights version does not publish (likely queued by another release)');
   if (row.slug !== ANCHOR_SLUG || row.page_id !== null || !Array.isArray(p.pages) || !p.pages.length) throw invalid(row, 'does not carry a batch of pages');
   const slugs = p.pages.map(entry => entry?.slug);
   if (slugs.some(slug => typeof slug !== 'string' || !slug || slug === ANCHOR_SLUG) || new Set(slugs).size !== slugs.length) throw invalid(row, 'names a page twice or names no page');
@@ -583,15 +583,15 @@ async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: 
   return { inserted, ids, purged };
 }
 
-/** Context marker `gbrain repair conversation-labels` appends to the rows it retires. */
+/** Context marker `foresights repair conversation-labels` appends to the rows it retires. */
 export const LABEL_RETIRED_MARKER = 'retired: conversation-labels';
 
 /**
  * Clears a page's prior extractor batch before a replacement, keeping the
  * history other records depend on: a row an open loop (`open_loops.fact_id`,
  * no FK) or another fact's `superseded_by` references is expired, never
- * deleted, and rows `gbrain repair conversation-labels` retired stay expired.
- * A row `gbrain facts relink --conversation` linked is expired too, so the
+ * deleted, and rows `foresights repair conversation-labels` retired stay expired.
+ * A row `foresights facts relink --conversation` linked is expired too, so the
  * replacement inherits its entity (conversation-relink-carry.ts); the previous
  * clear's expired relinked rows go first. Every other extractor row of the
  * page is deleted. Returns the rows removed from the active batch.
@@ -839,7 +839,7 @@ export async function startManagedPage(state: ManagedRunState, snapshot: PageSna
   if (deterministic || history.failed.length >= MAX_GENERATION_ATTEMPTS) {
     const last = deterministic ?? history.failed.at(-1)!;
     state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
-    log(`SKIP ${page.slug}: ${deterministic ? `its batch request ${last.requestId} failed (${last.code})` : `${MAX_GENERATION_ATTEMPTS} batch requests holding it failed`} at this page version, so no model call runs again until the page changes. Read the receipt: gbrain write-request -- ${last.requestId}`);
+    log(`SKIP ${page.slug}: ${deterministic ? `its batch request ${last.requestId} failed (${last.code})` : `${MAX_GENERATION_ATTEMPTS} batch requests holding it failed`} at this page version, so no model call runs again until the page changes. Read the receipt: foresights write-request -- ${last.requestId}`);
     return done;
   }
   const attempt = history.failed.length ? Math.max(...history.failed.map(f => f.attempt)) + 1 : 0;

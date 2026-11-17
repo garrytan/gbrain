@@ -486,11 +486,11 @@ describe('x_handle_to_tweet resolver', () => {
     process.env.X_API_BEARER_TOKEN = 'fake';
     globalThis.fetch = (async () => new Response(JSON.stringify({
       data: [
-        { id: '123', text: 'talking about building gbrain today', created_at: '2026-04-18T00:00:00Z' },
+        { id: '123', text: 'talking about building foresights today', created_at: '2026-04-18T00:00:00Z' },
       ],
     }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const r = await xHandleToTweetResolver.resolve({
-      input: { handle: 'garrytan', keywords: 'building gbrain' },
+      input: { handle: 'garrytan', keywords: 'building foresights' },
       context: makeCtx(),
     });
     expect(r.confidence).toBeGreaterThanOrEqual(0.8);
@@ -504,7 +504,7 @@ describe('x_handle_to_tweet resolver', () => {
       data: [{ id: '1', text: 'something unrelated entirely', created_at: '2026-04-18T00:00:00Z' }],
     }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const r = await xHandleToTweetResolver.resolve({
-      input: { handle: 'garrytan', keywords: 'gbrain knowledge runtime specific terms' },
+      input: { handle: 'garrytan', keywords: 'foresights knowledge runtime specific terms' },
       context: makeCtx(),
     });
     expect(r.confidence).toBeGreaterThanOrEqual(0.5);

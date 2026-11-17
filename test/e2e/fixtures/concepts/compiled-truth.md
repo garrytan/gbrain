@@ -8,7 +8,7 @@ tags:
 
 # Compiled Truth
 
-The two-layer page pattern used throughout GBrain. Every page has two distinct
+The two-layer page pattern used throughout Foresights. Every page has two distinct
 sections separated by a horizontal rule (`---`):
 
 1. **Compiled truth** (above the line) — The current, canonical understanding of the
@@ -44,7 +44,7 @@ evolved and verify claims against primary observations.
 
 ## Relationship to RAG
 
-GBrain uses retrieval-augmented generation (RAG) to surface relevant pages during
+Foresights uses retrieval-augmented generation (RAG) to surface relevant pages during
 queries. The compiled truth pattern means retrieved pages contain pre-synthesized
 knowledge rather than raw fragments. This produces higher quality answers because the
 LLM receives curated context rather than scattered notes.
@@ -65,7 +65,7 @@ current understanding and the evidence trail.
 
 ### 2025-03-01 — Applied to All Page Types
 
-Extended the pattern to all GBrain page types: people, companies, deals, meetings,
+Extended the pattern to all Foresights page types: people, companies, deals, meetings,
 concepts, projects, and sources. Each type uses the same two-layer structure with
 type-specific frontmatter fields. This consistency enables uniform search and
 retrieval across all knowledge categories.

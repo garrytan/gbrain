@@ -1,5 +1,5 @@
 /**
- * `gbrain reindex`: post-connect dispatch, run by handleCliOnly with the
+ * `foresights reindex`: post-connect dispatch, run by handleCliOnly with the
  * engine connectEngine() opened. Moved verbatim from the src/cli.ts
  * handleCliOnly switch (refactor wave 1, W4 cli); the record lives in
  * src/cli/command-table.ts.
@@ -15,7 +15,7 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   // the --limit refusal keeps its legacy `--json` key (`error: "invalid --limit: …"`).
   if (scopeError) {
     const legacy = scopeError.startsWith('invalid --limit') ? { legacy: { error: scopeError } } : {};
-    setCliExitVerdict(writeCliError(usageError(`[reindex] ${scopeError}`, 'Run `gbrain reindex --help` for the modes and their flags, e.g. gbrain reindex --multimodal --limit 100.'), 'reindex', legacy));
+    setCliExitVerdict(writeCliError(usageError(`[reindex] ${scopeError}`, 'Run `foresights reindex --help` for the modes and their flags, e.g. foresights reindex --multimodal --limit 100.'), 'reindex', legacy));
     return;
   }
   if (args.includes('--multimodal')) {

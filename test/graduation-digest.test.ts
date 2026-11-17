@@ -4,7 +4,7 @@
  * Protects: identical content gives identical per-batch and root digests on
  * PGLite (C collation) and on a Postgres database created with en_US.utf8,
  * including text keys that differ only by case, '-' versus '_', spaces and
- * non-ASCII; every column type gbrain uses renders canonically (jsonb,
+ * non-ASCII; every column type foresights uses renders canonically (jsonb,
  * vector/halfvec, timestamptz in UTC ISO, bytea hex, arrays, tsvector,
  * numeric, floats, generated columns); the root does not depend on batch size;
  * transforms change only the source side and never a key column; row filters

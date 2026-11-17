@@ -1,9 +1,9 @@
 /**
- * The versioned harness x transport capability table behind `gbrain setup`.
+ * The versioned harness x transport capability table behind `foresights setup`.
  *
  * Data, not prose: one row per harness and transport, saying whether setup
  * wires it, which context it can read (pull through MCP tools) and whether
- * gbrain context reaches a native session without being asked (push). A push
+ * foresights context reaches a native session without being asked (push). A push
  * row stays `native-pending` until an observed event injects a randomized item
  * into a fresh native session; nothing in this table is claimed from docs or
  * from a shell probe alone. Bump `SETUP_CAPABILITY_TABLE_VERSION` when a row's
@@ -20,7 +20,7 @@ export type SetupTransport = 'local-stdio' | 'local-context-engine' | 'thin-clie
 export interface SetupCapabilityRow {
   harness: SetupHarness;
   transport: SetupTransport;
-  /** `supported`: `gbrain setup <harness>` wires it; `unsupported`: coded refusal with `docs`. */
+  /** `supported`: `foresights setup <harness>` wires it; `unsupported`: coded refusal with `docs`. */
   setup: 'supported' | 'unsupported';
   /** Pull: memory tools the session can call. `connection-verified` means setup's smoke proves it. */
   pull: 'connection-verified' | 'manual';
@@ -39,7 +39,7 @@ export const SETUP_CAPABILITIES: readonly SetupCapabilityRow[] = [
   { harness: 'claude-code', transport: 'local-stdio', setup: 'supported', pull: 'connection-verified', push: 'native-pending',
     read_events: ['SessionStart', 'UserPromptSubmit'], capture_events: ['Stop', 'SessionEnd'], docs: 'docs/mcp/CLAUDE_CODE.md' },
   { harness: 'codex', transport: 'local-stdio', setup: 'supported', pull: 'connection-verified', push: 'native-verified',
-    push_evidence: 'codex-cli 0.162.1, 2026-10-12: after a fresh `gbrain setup codex`, the UserPromptSubmit hook injected a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3/3 installs); a --no-hooks control answered NONE',
+    push_evidence: 'codex-cli 0.162.1, 2026-10-12: after a fresh `foresights setup codex`, the UserPromptSubmit hook injected a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3/3 installs); a --no-hooks control answered NONE',
     read_events: ['SessionStart', 'UserPromptSubmit'], capture_events: ['SessionEnd'], docs: 'docs/mcp/CODEX.md' },
   { harness: 'openclaw', transport: 'local-context-engine', setup: 'unsupported', pull: 'manual', push: 'native-pending',
     read_events: [], capture_events: [], docs: 'docs/mcp/OPENCLAW.md' },

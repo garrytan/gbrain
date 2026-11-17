@@ -1,6 +1,6 @@
 /**
  * Unattended upkeep (GBRA-438): the free, never-purging maintenance a brain
- * runs with nobody watching, and the runner core `gbrain maintain --safe`
+ * runs with nobody watching, and the runner core `foresights maintain --safe`
  * shares its step list with.
  *
  * One run is a list of work items: one global item (the brain-wide free
@@ -9,8 +9,8 @@
  * then the embedding catch-up step on a brain with an embedding key, under a
  * daily dollar cap (`maintenance.embed_daily_usd`, default $1, 0 turns it
  * off). Nothing here purges a page or calls a chat model; the page purge
- * stays preview-first (`gbrain maintain --purge`), and every other paid phase
- * stays with `gbrain dream` or an installed autopilot.
+ * stays preview-first (`foresights maintain --purge`), and every other paid phase
+ * stays with `foresights dream` or an installed autopilot.
  *
  * Cycles run with `stamp: 'none'`, so upkeep never writes
  * `last_full_cycle_at` or `last_source_cycle_at`. Its own record is
@@ -50,7 +50,7 @@ export const UPKEEP_BACKOFF_FAILURES = 3;
 export const UPKEEP_BACKOFF_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * A budgeted (serve) run parks an item that its budget stopped this many times in one round: the round settles without
- * it and budgeted runs skip it until the next round, an unbudgeted run (`gbrain maintain --unattended`, the schedule) or
+ * it and budgeted runs skip it until the next round, an unbudgeted run (`foresights maintain --unattended`, the schedule) or
  * a serve's first idle run (`retryParked`) runs it again. A foreground request's abort never counts as a slice.
  */
 export const UPKEEP_PARK_AFTER_SLICES = 30;
@@ -61,8 +61,8 @@ export const AUTOPILOT_OWNS_WITHIN_MS = 48 * 60 * 60 * 1000;
 
 /**
  * The cycle phases `--safe` may run: free, and never hard-deleting. The page
- * purge and every phase that calls a model stay with `gbrain dream` and
- * `gbrain pages purge-deleted`.
+ * purge and every phase that calls a model stay with `foresights dream` and
+ * `foresights pages purge-deleted`.
  */
 export const MAINTAIN_SAFE_PHASES: readonly CyclePhase[] = [
   'lint', 'backlinks', 'sync', 'fence_repair', 'content_repair', 'unindexed_files',
@@ -130,7 +130,7 @@ export function unattendedPlan(providers: SafePhaseProviders): UpkeepPlan {
   };
 }
 
-/** Paid-tier phases: what upkeep leaves for the person (`gbrain dream`, autopilot). */
+/** Paid-tier phases: what upkeep leaves for the person (`foresights dream`, autopilot). */
 export const PAID_PHASES: readonly CyclePhase[] = ALL_PHASES.filter((phase) => MANAGED_PHASE_TABLE[phase].tier === 'paid');
 
 export type UpkeepStepStatus = 'ok' | 'warn' | 'fail' | 'skipped';

@@ -4,7 +4,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
-// #7379: `gbrain facts relink --conversation` and doctor `unlinked_facts` re-arm an
+// #7379: `foresights facts relink --conversation` and doctor `unlinked_facts` re-arm an
 // unmemoized miss when a live page was created in the fact's source after the
 // attempt (facts/conversation-memo.ts conversationTriedSql:
 // `EXISTS (SELECT 1 FROM pages np WHERE np.source_id = f.source_id AND

@@ -2,7 +2,7 @@
  * The explicit-budget packing surface of evidence delivery
  * (docs/evidence-delivery.md, "Explicit budgets"): the `search.auto_packing`
  * values, the documented minimum budget, and their validation. Kept apart
- * from the assembler so `gbrain config set` can validate a value without
+ * from the assembler so `foresights config set` can validate a value without
  * loading it.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -34,7 +34,7 @@ export function parseAutoPacking(raw: unknown): AutoPacking | undefined {
     `Pass auto_packing: "${DEFAULT_AUTO_PACKING}" (or set ${AUTO_PACKING_CONFIG_KEY}).`);
 }
 
-/** The value `gbrain config set search.auto_packing` refuses, as a message, or null. */
+/** The value `foresights config set search.auto_packing` refuses, as a message, or null. */
 export function autoPackingValueProblem(value: string): string | null {
   return (AUTO_PACKINGS as readonly string[]).includes(value) ? null
     : `${AUTO_PACKING_CONFIG_KEY} must be one of ${AUTO_PACKINGS.join(', ')} (got "${value.slice(0, 40)}"). Nothing was written.`;

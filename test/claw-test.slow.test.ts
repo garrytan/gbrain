@@ -1,11 +1,11 @@
 /**
- * gbrain claw-test scripted-mode E2E.
+ * foresights claw-test scripted-mode E2E.
  *
  * Invokes the harness via `bun run src/cli.ts` (NOT a compiled binary —
  * `bun build --compile` doesn't bundle PGLite's runtime assets like
- * pglite.data, so a compiled gbrain can't init a fresh PGLite brain).
+ * pglite.data, so a compiled foresights can't init a fresh PGLite brain).
  * Uses a tiny shim script that the harness can spawn as if it were the
- * gbrain binary.
+ * foresights binary.
  *
  * Asserts:
  *   - exit code 0 on a clean tree
@@ -41,7 +41,7 @@ beforeAll(() => {
   chmodSync(BIN_PATH, 0o755);
 }, 30_000);
 
-describe('gbrain claw-test --scenario fresh-install (scripted)', () => {
+describe('foresights claw-test --scenario fresh-install (scripted)', () => {
   test('runs end-to-end clean and produces zero error/blocker friction', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-fresh-'));
     try {
@@ -89,12 +89,12 @@ describe('gbrain claw-test --scenario fresh-install (scripted)', () => {
   }, 180_000);
 
   test('break path: an invented command produces an error friction entry and exits non-zero', () => {
-    // We do this by setting GBRAIN_BIN_OVERRIDE to a script that pretends to be gbrain
+    // We do this by setting GBRAIN_BIN_OVERRIDE to a script that pretends to be foresights
     // and rejects the `import` subcommand specifically.
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-break-'));
     const fakeBin = join(tmp, 'fake-gbrain');
     try {
-      // Write a shim that delegates to real gbrain but rejects 'import' to simulate breakage.
+      // Write a shim that delegates to real foresights but rejects 'import' to simulate breakage.
       const shimContent = `#!/bin/sh\nif [ "$1" = "import" ]; then echo "fake import error" >&2; exit 17; fi\nexec "${BIN_PATH}" "$@"\n`;
       const { writeFileSync, chmodSync } = require('fs');
       writeFileSync(fakeBin, shimContent, 'utf-8');
@@ -126,7 +126,7 @@ describe('gbrain claw-test --scenario fresh-install (scripted)', () => {
   }, 90_000);
 });
 
-describe('gbrain claw-test --list-agents', () => {
+describe('foresights claw-test --list-agents', () => {
   test('reports all four built-in runners (available or not — both valid states)', () => {
     // *_BIN vars point at a nonexistent path so the output shape is
     // deterministic regardless of what's installed on the box (detect
@@ -156,7 +156,7 @@ describe('gbrain claw-test --list-agents', () => {
   }, 60_000);
 });
 
-describe('gbrain claw-test --live (shim agents; no real agent binary, no tokens)', () => {
+describe('foresights claw-test --live (shim agents; no real agent binary, no tokens)', () => {
   // The OpenClaw runner honors an absolute $OPENCLAW_BIN pointing at any
   // executable, so these tests drive live mode with tiny sh shims. That
   // exercises the REAL live path: staging, the PATH shim, the agent turn,
@@ -216,9 +216,9 @@ describe('gbrain claw-test --live (shim agents; no real agent binary, no tokens)
     const shim = [
       '#!/bin/sh',
       'set -e',
-      'gbrain import ./brain --no-embed',
-      'gbrain skillpack scaffold query --workspace "$PWD"',
-      'gbrain friction log --phase agent-side --severity nit --message "child entry survives cleanup"',
+      'foresights import ./brain --no-embed',
+      'foresights skillpack scaffold query --workspace "$PWD"',
+      'foresights friction log --phase agent-side --severity nit --message "child entry survives cleanup"',
       '',
     ].join('\n');
     const { tmp, result, entries } = runLiveWithShim(shim, 'fresh-install');
@@ -257,7 +257,7 @@ describe('gbrain claw-test --live (shim agents; no real agent binary, no tokens)
       expected_phases: [],
       seed: 'seed',
     }), 'utf-8');
-    writeFileSync(join(scenDir, 'BRIEF.md'), '# Upgrade brief\n\nRun `gbrain doctor --json` to walk the migration chain forward.\n', 'utf-8');
+    writeFileSync(join(scenDir, 'BRIEF.md'), '# Upgrade brief\n\nRun `foresights doctor --json` to walk the migration chain forward.\n', 'utf-8');
     writeFileSync(join(scenDir, 'seed', 'dump.sql'), [
       "CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);",
       "INSERT INTO config (key, value) VALUES ('version', '1');",
@@ -281,12 +281,12 @@ describe('gbrain claw-test --live (shim agents; no real agent binary, no tokens)
   }, 180_000);
 });
 
-describe('gbrain claw-test — adversarial-gate regression pins', () => {
-  test('P1: without GBRAIN_BIN_OVERRIDE the harness synthesizes a bun launcher (children run gbrain, not bun)', () => {
+describe('foresights claw-test — adversarial-gate regression pins', () => {
+  test('P1: without GBRAIN_BIN_OVERRIDE the harness synthesizes a bun launcher (children run foresights, not bun)', () => {
     // Under `bun run src/cli.ts`, process.execPath is the Bun runtime; the
     // pre-fix fallback handed children `bun init …`, which scaffolds a Bun
     // project and fails the rest of the run. Exit 0 proves the synthesized
-    // launcher resolved children to real gbrain.
+    // launcher resolved children to real foresights.
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-noovr-'));
     try {
       const env: Record<string, string | undefined> = {
@@ -348,7 +348,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
     }
   }, 60_000);
 
-  test('phase timeout: a hung gbrain child is killed at GBRAIN_CLAW_PHASE_TIMEOUT_MS instead of wedging the run', () => {
+  test('phase timeout: a hung foresights child is killed at GBRAIN_CLAW_PHASE_TIMEOUT_MS instead of wedging the run', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-hang-'));
     const hangBin = join(tmp, 'hang-gbrain');
     try {
@@ -387,7 +387,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
       await Bun.sleep(50);
     }
   };
-  /** A fake gbrain whose every invocation leaves a grandchild that ignores TERM and INT, records its pid, and waits. */
+  /** A fake foresights whose every invocation leaves a grandchild that ignores TERM and INT, records its pid, and waits. */
   const writeHangingGbrain = (tmp: string, kidFile: string) => {
     const fake = join(tmp, 'hang-group-gbrain');
     writeFileSync(fake, '#!/bin/sh\nsh -c \'trap "" TERM INT; echo $$ > "' + kidFile + '"; exec sleep 60\' &\nwait\n', 'utf-8');
@@ -454,7 +454,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
   }
 
   test('fail-closed doctor oracle: doctor exiting 0 with unparsable output FAILS the live run', () => {
-    // A wrapper gbrain that answers `doctor` with a non-JSON banner and exit 0
+    // A wrapper foresights that answers `doctor` with a non-JSON banner and exit 0
     // — the pre-fix oracle only rejected literal "unhealthy" and passed this.
     const scratch = mkdtempSync(join(tmpdir(), 'claw-test-e2e-docgarb-'));
     const wrapper = join(scratch, 'doctor-garbage-gbrain');
@@ -463,8 +463,8 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
     const workShim = [
       '#!/bin/sh',
       'set -e',
-      'gbrain import ./brain --no-embed',
-      'gbrain skillpack scaffold query --workspace "$PWD"',
+      'foresights import ./brain --no-embed',
+      'foresights skillpack scaffold query --workspace "$PWD"',
       '',
     ].join('\n');
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-live-docgarb-'));
@@ -501,7 +501,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
   }, 180_000);
 });
 
-describe('gbrain friction render integration', () => {
+describe('foresights friction render integration', () => {
   test('render produces a markdown report with the redact placeholder', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-render-'));
     try {

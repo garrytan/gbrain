@@ -13,6 +13,6 @@ import { GRANDFATHER_RETIRED } from './publication-failure.ts';
  */
 export async function prepareGrandfatherMutation(_engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   throw opError('revision_conflict', 'Grandfathering is retired; the page was left unchanged.',
-    `${row.slug} in ${row.source_id} was queued for the retired v0.13.1 validate: false stamp by an older gbrain; `
+    `${row.slug} in ${row.source_id} was queued for the retired v0.13.1 validate: false stamp by an older foresights; `
     + 'upgrades no longer rewrite pages (#7814), so nothing changed and nothing else is needed.', { detail: GRANDFATHER_RETIRED });
 }

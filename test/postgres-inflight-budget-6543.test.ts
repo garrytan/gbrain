@@ -4,7 +4,7 @@
  * vendored driver from the statements it sends (so it holds behind a
  * transaction-mode pooler that never applies a session SET).
  *
- * The guard below fails CI when gbrain code raises (or lifts) a statement
+ * The guard below fails CI when foresights code raises (or lifts) a statement
  * timeout in a form the driver cannot read: that statement would keep the
  * pool's budget and be retired as stuck while its own timeout still runs.
  * Regression that fails it on master: `Connection.statementTimeoutChanges`
@@ -111,7 +111,7 @@ function unreadable(literal: string): string | null {
   return null;
 }
 
-describe('guard: every statement_timeout change in gbrain reaches the driver budget', () => {
+describe('guard: every statement_timeout change in foresights reaches the driver budget', () => {
   test('the guard itself flags a change the driver cannot read', () => {
     expect(unreadable(sqlLiteral(`await tx.executeRaw("SELECT set_config('statement_timeout', current_setting('app.t'), true)");`))).not.toBeNull();
     expect(unreadable(sqlLiteral(`await tx.executeRaw("SET LOCAL statement_timeout = 'later'");`))).not.toBeNull();

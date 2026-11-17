@@ -182,7 +182,7 @@ describe('unexpected faults', () => {
       for (let i = 0; i < 400 && !b.exits.length; i++) await Bun.sleep(5);
       const unknown = b.logs.filter(l => l.includes('code=write_outcome_unknown'));
       expect(unknown).toHaveLength(1);
-      expect(unknown[0]).toMatch(/tool=put_page submission_status=unknown request_id=[0-9a-f-]{36} fix="gbrain write-request -- [0-9a-f-]{36}"/);
+      expect(unknown[0]).toMatch(/tool=put_page submission_status=unknown request_id=[0-9a-f-]{36} fix="(?:foresights|gbrain) write-request -- [0-9a-f-]{36}"/);
       expect(b.exits[0]).toBe(1);
     } finally { await b.close(); }
   });

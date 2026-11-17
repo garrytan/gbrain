@@ -1,6 +1,6 @@
 /**
  * Coverage reads and repairs of the belief ledger (docs/designs/BELIEF_LEDGER.md
- * sections 5.3, 7.1 and 7.3), shared by `gbrain beliefs`, the doctor check
+ * sections 5.3, 7.1 and 7.3), shared by `foresights beliefs`, the doctor check
  * `belief_ledger_coverage` and the cycle's extract phase.
  *
  * - `coverageIntervals`: one interval per activation run of the source's
@@ -320,7 +320,7 @@ export async function orphanLifetimes(engine: BrainEngine, sourceId: string, lim
 /**
  * Committed publications of the source with no commit mark (a crash before the post-commit mark). The routine scan
  * (cycle, doctor, status) reads events recorded in the last UNMARKED_WINDOW_DAYS through the recorded_at index; `deep`
- * (`gbrain beliefs reconcile`, `doctor --tier deep`) reads the whole source.
+ * (`foresights beliefs reconcile`, `doctor --tier deep`) reads the whole source.
  */
 export async function unmarkedPublications(engine: BrainEngine, sourceId: string, limit = 1000, opts: { deep?: boolean } = {}): Promise<string[]> {
   const rows = await engine.executeRaw<{ publication_id: string }>(`SELECT DISTINCT e.publication_id::text AS publication_id FROM belief_events e

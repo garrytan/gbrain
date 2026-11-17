@@ -51,7 +51,7 @@ describe('buildScopeCheck', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('admin scope MISSING');
     // The pinpoint remediation must name the exact CLI invocation.
-    expect(check.message).toContain('gbrain auth register-client');
+    expect(check.message).toContain('foresights auth register-client');
     expect(check.message).toContain('read,write,admin');
     expect(check.detail?.read_ok).toBe(true);
     expect(check.detail?.admin_ok).toBe(false);

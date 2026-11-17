@@ -35,7 +35,7 @@ export interface StorageStatusResult {
   config: StorageConfig | null;
   repoPath: string | null;
   /**
-   * The source `gbrain export --restore-only` restores for this repo; the
+   * The source `foresights export --restore-only` restores for this repo; the
    * counts cover only its pages. Null when no restore target was resolved.
    */
   restoreSource: string | null;
@@ -50,17 +50,17 @@ export interface StorageStatusResult {
 
 // ── Dispatcher ────────────────────────────────────────────
 
-// #3686: real usage, reachable via `gbrain storage --help` (the generic
+// #3686: real usage, reachable via `foresights storage --help` (the generic
 // one-line CLI_ONLY stub used to shadow this surface entirely).
-const STORAGE_HELP = `gbrain storage — storage tiers of the brain repo, and the storage shelf
+const STORAGE_HELP = `foresights storage — storage tiers of the brain repo, and the storage shelf
 
 USAGE
-  gbrain storage [status] [--repo <path>] [--json]
-  gbrain storage init [--dir <path>] [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]
-  gbrain storage adopt [--source <id>] [--from-prefix <prefix>] [--drop-field <dotted.name>]...
+  foresights storage [status] [--repo <path>] [--json]
+  foresights storage init [--dir <path>] [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]
+  foresights storage adopt [--source <id>] [--from-prefix <prefix>] [--drop-field <dotted.name>]...
                        [--apply --expect <plan_hash> | --finalize [--expect <plan_hash>]] [--json]
-  gbrain storage export --jsonl [--out <file>]
-  gbrain storage import --jsonl <file> [--apply --expect <plan_hash>] [--json]
+  foresights storage export --jsonl [--out <file>]
+  foresights storage import --jsonl <file> [--apply --expect <plan_hash>] [--json]
 
 SUBCOMMANDS
   status            (default) Report page counts and disk usage per storage
@@ -91,11 +91,11 @@ SUBCOMMANDS
                     cards (origin import) and never overwrites a differing one.
 
 THE STORAGE SHELF (separate commands)
-  gbrain storage-find "<phrase>"     Find a card; closest cards when none match
-  gbrain storage-get <id>            One card: copies, restore form, revision
-  gbrain storage-list                Cards, filtered by --store / --status
-  gbrain storage-register --card <json>        Register a verified archive (local only)
-  gbrain storage-update <id> --expected-revision <rev> [--patch <json>] [--restored-to <path>]
+  foresights storage-find "<phrase>"     Find a card; closest cards when none match
+  foresights storage-get <id>            One card: copies, restore form, revision
+  foresights storage-list                Cards, filtered by --store / --status
+  foresights storage-register --card <json>        Register a verified archive (local only)
+  foresights storage-update <id> --expected-revision <rev> [--patch <json>] [--restored-to <path>]
 
 OPTIONS
   --repo <path>     Brain repo to walk (default: resolved from the storage
@@ -129,7 +129,7 @@ export async function runStorage(engine: BrainEngine, args: string[]): Promise<v
     return;
   }
   if (['find', 'get', 'list', 'register', 'update'].includes(subcommand)) {
-    console.error(`The storage manifest verbs are their own commands: run gbrain storage-${subcommand} (see gbrain storage-${subcommand} --help).`);
+    console.error(`The storage manifest verbs are their own commands: run foresights storage-${subcommand} (see foresights storage-${subcommand} --help).`);
     process.exit(1);
   }
   console.error(`Unknown storage subcommand: ${subcommand}`);
@@ -184,7 +184,7 @@ async function runStorageStatus(engine: BrainEngine, args: string[]): Promise<vo
 
 /**
  * D4: storage tiering on PGLite is a partial feature. The "DB" the pages
- * live in IS the local file gbrain uses for everything else, so "db_only"
+ * live in IS the local file foresights uses for everything else, so "db_only"
  * has no real offload effect. The .gitignore management still helps
  * (keeps bulk content out of git history), so we warn but proceed.
  *
@@ -200,7 +200,7 @@ function warnIfPGLite(engine: BrainEngine): void {
     `Note: storage tiering has limited effect on PGLite — pages live in your ` +
       `local database file regardless of tier. The .gitignore management still ` +
       `keeps bulk content out of git history. To get full tiering, migrate to ` +
-      `Postgres with \`gbrain migrate --to postgres --plan\`.`,
+      `Postgres with \`foresights migrate --to postgres --plan\`.`,
   );
 }
 
@@ -218,7 +218,7 @@ export function __resetPGLiteWarn(): void {
  * so the repo walk cannot answer for it.
  */
 function gitScopePrefix(repoPath: string): string {
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- repoPath is the local operator's --repo arg, a registered source path or the default source path on the trusted `gbrain storage status` CLI (never MCP/remote); this only absolutizes it
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- repoPath is the local operator's --repo arg, a registered source path or the default source path on the trusted `foresights storage status` CLI (never MCP/remote); this only absolutizes it
   const repo = resolve(repoPath);
   for (let cursor = repo; ; cursor = dirname(cursor)) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- read-only existence probe walking up from that operator-supplied repo path
@@ -437,7 +437,7 @@ export function formatStorageStatusHuman(result: StorageStatusResult): string {
       const source = result.restoreSource ? ` --source ${result.restoreSource}` : '';
       // Shell-quoted: the line is meant to be pasted, and a repo path may hold
       // quotes, `$(...)` or backticks.
-      lines.push(`Use: gbrain export --restore-only${source} --repo ${shellQuote(result.repoPath ?? '')}`);
+      lines.push(`Use: foresights export --restore-only${source} --repo ${shellQuote(result.repoPath ?? '')}`);
     }
   }
 
@@ -539,7 +539,7 @@ async function runStorageAdopt(engine: BrainEngine, args: string[]): Promise<voi
   try {
     const preview = [...adopt.adoptArgv(opts), ...(finalize ? ['--finalize'] : [])];
     if (opts.prefix === '/') throw opError('invalid_params', '--from-prefix needs a slug prefix such as storage-manifest/.', 'Pass the folder the interim pages live under, or omit --from-prefix for storage-manifest/.');
-    if (apply && finalize) throw opError('invalid_params', '--apply and --finalize are separate steps.', 'Apply the adopt first; finalize afterwards with gbrain storage adopt --finalize, then its --expect value.');
+    if (apply && finalize) throw opError('invalid_params', '--apply and --finalize are separate steps.', 'Apply the adopt first; finalize afterwards with foresights storage adopt --finalize, then its --expect value.');
     if ((apply && !expect) || (expect && !apply && !finalize)) {
       throw opError('invalid_params', 'An apply needs both --apply and the --expect value its preview printed.', 'Preview without --apply, then run the apply command the preview prints after the user agrees.',
         { fix: readFix('Prints the plan and its plan_hash; changes nothing.', { argv: [...preview, '--json'] }) });
@@ -568,7 +568,7 @@ async function runStorageAdopt(engine: BrainEngine, args: string[]): Promise<voi
       if (result.finalize) console.log(`Originals are kept. Preview deleting them: ${argvText(result.finalize)}`);
       return;
     }
-    console.log(`Soft-deleted ${result.deleted.length} original(s) (restorable for 72 hours with gbrain restore).`);
+    console.log(`Soft-deleted ${result.deleted.length} original(s) (restorable for 72 hours with foresights restore).`);
     printOutcome(result);
   } catch (error) {
     await shelfRefusal(error, json);
@@ -580,8 +580,8 @@ async function runStorageJsonl(engine: BrainEngine, subcommand: 'export' | 'impo
   const jsonl = await import('../core/storage-manifest/jsonl.ts');
   const { readFileSync, writeFileSync } = await import('fs');
   try {
-    if (!args.includes('--jsonl')) throw opError('invalid_params', `gbrain storage ${subcommand} reads and writes JSONL only, so it needs --jsonl.`,
-      subcommand === 'export' ? 'Run gbrain storage export --jsonl, adding --out with a new file path to write a file.' : 'Run gbrain storage import --jsonl with the path of an export file.');
+    if (!args.includes('--jsonl')) throw opError('invalid_params', `foresights storage ${subcommand} reads and writes JSONL only, so it needs --jsonl.`,
+      subcommand === 'export' ? 'Run foresights storage export --jsonl, adding --out with a new file path to write a file.' : 'Run foresights storage import --jsonl with the path of an export file.');
     if (subcommand === 'export') {
       const out = flagValue(args, '--out');
       if (out && existsSync(out)) throw opError('invalid_params', `${out} already exists; export never overwrites a file.`, 'Pass --out with a path that does not exist yet, or omit --out to write to stdout.');
@@ -590,12 +590,12 @@ async function runStorageJsonl(engine: BrainEngine, subcommand: 'export' | 'impo
       if (!out) { process.stdout.write(text); }
       else { writeFileSync(out, text, { flag: 'wx' }); console.error(`Wrote ${lines.length} card(s) to ${out}.`); }
       if (skipped.length) console.error(`Skipped ${skipped.length} page(s) on the shelf that hold no card: ${skipped.join(', ')}`);
-      if (invalid.length) console.error(`Skipped ${invalid.length} card(s) that fail the card rules (gbrain doctor --only storage_manifest names why): ${invalid.join(', ')}`);
+      if (invalid.length) console.error(`Skipped ${invalid.length} card(s) that fail the card rules (foresights doctor --only storage_manifest names why): ${invalid.join(', ')}`);
       return;
     }
     const file = flagValue(args, '--jsonl');
-    if (!file || file.startsWith('--')) throw opError('invalid_params', 'gbrain storage import needs the JSONL file after --jsonl.', 'Run gbrain storage import --jsonl with the path of a file gbrain storage export wrote.');
-    if (!existsSync(file)) throw opError('invalid_params', `No file at ${file}.`, 'Pass --jsonl with the path of a file gbrain storage export wrote.');
+    if (!file || file.startsWith('--')) throw opError('invalid_params', 'foresights storage import needs the JSONL file after --jsonl.', 'Run foresights storage import --jsonl with the path of a file foresights storage export wrote.');
+    if (!existsSync(file)) throw opError('invalid_params', `No file at ${file}.`, 'Pass --jsonl with the path of a file foresights storage export wrote.');
     const text = readFileSync(file, 'utf8');
     const expect = flagValue(args, '--expect');
     if (args.includes('--apply') !== (expect !== undefined)) throw opError('invalid_params', 'An import apply needs both --apply and the --expect value its preview printed.',

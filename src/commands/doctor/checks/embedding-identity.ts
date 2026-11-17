@@ -2,10 +2,10 @@
  * Doctor `embedding_identity_unqualified` (#6113): the brain's DB `config`
  * row `embedding_model` holds a model name with no provider prefix (a row
  * from an older install). The managed facts resolver reads only that row, so
- * facts-absorb stops with `embedding_configuration` while `gbrain config get
+ * facts-absorb stops with `embedding_configuration` while `foresights config get
  * embedding_model` shows a valid `provider:model` from the file plane, and
  * `config set` cannot change the row. The supported rewrite is
- * `gbrain migrate embeddings --to <provider:model>`; the fix is its read-only
+ * `foresights migrate embeddings --to <provider:model>`; the fix is its read-only
  * `--dry-run` preview, filled from the configured model (an `inputs` entry
  * only when none is configured). Applying it re-embeds active facts, so it is
  * the user's paid decision.
@@ -50,7 +50,7 @@ async function runEmbeddingIdentity(ctx: DoctorContext): Promise<Check[]> {
     const differs = !fix.inputs && !target.endsWith(`:${stored}`);
     checks.push({
       name: 'embedding_identity_unqualified', status: 'warn',
-      message: `The brain's embedding_model row is ${JSON.stringify(stored)} with no provider prefix (a row from an older install), so managed fact extraction stops with embedding_configuration; gbrain config set cannot change it. `
+      message: `The brain's embedding_model row is ${JSON.stringify(stored)} with no provider prefix (a row from an older install), so managed fact extraction stops with embedding_configuration; foresights config set cannot change it. `
         + `Preview the rewrite: ${argv.join(' ')}${differs ? ` (the configured model ${target} is not ${stored}, so applying it switches models)` : ''}. Applying it re-embeds active facts and needs the user's paid authorization.`,
       details: { code: NAME, stored_model: stored, configured_model: configured, target_model: fix.inputs ? null : target, target_differs: differs },
       fix,

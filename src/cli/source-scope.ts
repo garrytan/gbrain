@@ -40,12 +40,12 @@ export function checkHostHonoredParams(op: Operation, params: Record<string, unk
   const scope = ignored.filter((name) => SCOPE_WIRE_PARAMS.includes(name) && params[name] !== undefined);
   if (scope.length > 0) {
     throw new Error(
-      `the brain host does not support ${scope.join(', ')} on ${op.name}; upgrade the host (gbrain upgrade on the brain host)`,
+      `the brain host does not support ${scope.join(', ')} on ${op.name}; upgrade the host (foresights upgrade on the brain host)`,
     );
   }
   for (const name of ignored) {
     if (!(name in op.params)) continue;
-    process.stderr.write(`[gbrain] warning: the brain host ignored parameter "${name}" on ${op.name}; upgrade the host to use it.\n`);
+    process.stderr.write(`[foresights] warning: the brain host ignored parameter "${name}" on ${op.name}; upgrade the host to use it.\n`);
   }
 }
 
@@ -60,7 +60,7 @@ export function hintAmbientNarrowing(op: Operation, params: Record<string, unkno
   const cliName = op.cliHints?.name || op.name;
   const positional = (op.cliHints?.positional ?? []).map((key) => String(params[key] ?? `<${key}>`)).join(' ');
   process.stderr.write(
-    `[gbrain] ${cliName}: no results within source ${ambient.sourceId} (set by ${ambient.via}). ` +
-    `To read every source you can see: gbrain ${cliName}${positional ? ` ${positional}` : ''} --all-sources\n`,
+    `[foresights] ${cliName}: no results within source ${ambient.sourceId} (set by ${ambient.via}). ` +
+    `To read every source you can see: foresights ${cliName}${positional ? ` ${positional}` : ''} --all-sources\n`,
   );
 }

@@ -1,5 +1,5 @@
 /**
- * #7143: `gbrain doctor --only sync_failures` run on its own must connect the
+ * #7143: `foresights doctor --only sync_failures` run on its own must connect the
  * brain. The check is emitted by a pre-gate entry (stub_guard_24h), and
  * `onlyNeedsEngine` only connects for names past the DB-checks gate or names
  * declared in `engineChecks`, so the standalone run read the local ledger with

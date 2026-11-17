@@ -97,7 +97,7 @@ describe('terminal write failures: doctor warning to verified clear', () => {
     // History never warns: the pre-fix knock-ons and the superseded refusal are counted apart from the blocker.
     expect(warned.details.historical_rows).toBe(21);
     expect(warned.fix.next).toBe('run');
-    expect(warned.fix.command).toBe(`gbrain sync --source ${SOURCE} --no-pull --json --brain host`);
+    expect(warned.fix.command).toBe(`foresights sync --source ${SOURCE} --no-pull --json --brain host`);
 
     const fixed = await gb(home, argvOf(warned.fix.command), { timeoutMs: 120_000 });
     expect(fixed.exitCode).toBe(0);

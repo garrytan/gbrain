@@ -5,7 +5,7 @@
  *  - OpenAI text-embedding-3-* accepts arbitrary truncation via Matryoshka,
  *    bounded by the model's native size (1536 for -small, 3072 for -large)
  *  - dimsProviderOptions throws AIConfigError for out-of-range dims
- *  - Error message includes a paste-ready `gbrain config set` fix
+ *  - Error message includes a paste-ready `foresights config set` fix
  *  - Plumbing reaches BOTH the native-openai path (line 97) AND the
  *    openai-compatible path (line 167) — Azure-OpenAI hosts text-3 via the
  *    compat adapter, same validation contract there.
@@ -101,7 +101,7 @@ describe('dimsProviderOptions — OpenAI native path', () => {
       expect(msg).toContain('3072');
       // Paste-ready fix appears in the `fix` property of AIConfigError.
       const fix = (err as AIConfigError).fix ?? '';
-      expect(fix).toContain('gbrain migrate embeddings --to openai:text-embedding-3-large --dim 1024 --dry-run');
+      expect(fix).toContain('foresights migrate embeddings --to openai:text-embedding-3-large --dim 1024 --dry-run');
       expect(fix).not.toContain('config set embedding_dimensions');
     }
   });

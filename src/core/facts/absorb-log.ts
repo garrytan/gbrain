@@ -130,7 +130,7 @@ export async function writeFactsAbsorbLog(
   } catch (e) {
     // v0.39.3.0 WARN-4 + CQ1 — typed access via instanceof + .problem field
     // (NOT string-match on e.message). The 'No database connection' class
-    // fires after every `gbrain capture` invocation because the facts
+    // fires after every `foresights capture` invocation because the facts
     // subsystem opens its own engine handle that isn't connected in the
     // CLI capture path. Per-capture noise is suppressed; CV13 prints
     // ONE first-occurrence stack trace so the next user reporting it

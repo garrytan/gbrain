@@ -148,7 +148,7 @@ for (const managed of [false, true]) describe(`${managed ? 'managed' : 'unmanage
         source_id: cycle.id,
         corpus_source_other: { [other.id]: 2 },
         held: { corpus_legacy_unstamped: 1, corpus_source_unresolved: 1 },
-        fix: [`gbrain dream --source ${other.id} --phase synthesize`, 'gbrain sweep --assign-corpus <source>'],
+        fix: [`foresights dream --source ${other.id} --phase synthesize`, 'foresights sweep --assign-corpus <source>'],
       });
       expect(first.summary).toContain(`2 corpus file(s) belong to other sources (${other.id}: 2)`);
       expect(existsSync(join(other.root, 'wiki'))).toBe(false);

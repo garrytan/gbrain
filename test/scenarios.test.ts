@@ -125,7 +125,7 @@ describe('loadScenario — oracle validation', () => {
     expect(() => loadScenario('o-empty')).toThrow(/oracle\.query must be a non-empty string/);
     scaffoldScenario('o-num', base('{"query":7}'));
     expect(() => loadScenario('o-num')).toThrow(/oracle\.query must be a non-empty string/);
-    // The query lands in gbrain argv — a dash-leading value would parse as a flag.
+    // The query lands in foresights argv — a dash-leading value would parse as a flag.
     scaffoldScenario('o-dash', base('{"query":"--json"}'));
     expect(() => loadScenario('o-dash')).toThrow(/must not start with a dash/);
   });

@@ -1,4 +1,4 @@
-# Auto-improve a skill with `gbrain skillopt`
+# Auto-improve a skill with `foresights skillopt`
 
 You have a `SKILL.md`. Sometimes the agent following it does a great job, sometimes
 it forgets a step or pads the output. This tutorial takes you from that skill to a
@@ -26,7 +26,7 @@ You don't start from a blank file. One command reads the SKILL.md and writes a
 full starter benchmark for you:
 
 ```bash
-gbrain skillopt meeting-prep --bootstrap-from-skill
+foresights skillopt meeting-prep --bootstrap-from-skill
 ```
 
 It infers what the skill produces, writes ~15 tasks (each with rule judges) to
@@ -36,11 +36,11 @@ Then you **review and strengthen the judges** (the generated checks are weak
 drafts), delete the sentinel line, and run:
 
 ```bash
-gbrain skillopt meeting-prep --bootstrap-reviewed --split 1:1:1
+foresights skillopt meeting-prep --bootstrap-reviewed --split 1:1:1
 ```
 
 If you run an agent over this brain (OpenClaw, Claude Code, Cursor, any MCP client
-with the gbrain skills installed), it does this for you: just say "improve my
+with the foresights skills installed), it does this for you: just say "improve my
 meeting-prep skill." It runs `--bootstrap-from-skill`, strengthens the judges,
 dry-runs for cost, runs the optimizer, and reports the diff + score delta back.
 You keep or discard.
@@ -51,9 +51,9 @@ the outcome, and where the output lands.
 
 ## What you'll need
 
-- `gbrain` installed and a brain initialized (`gbrain --version` works).
+- `gbrain` installed and a brain initialized (`foresights --version` works).
 - One embedding/chat provider configured. SkillOpt makes real LLM calls.
-  `gbrain models doctor` should show at least one reachable chat model.
+  `foresights models doctor` should show at least one reachable chat model.
 - A skill you want to improve, living at `skills/<name>/SKILL.md`. This tutorial
   uses a skill called `meeting-prep` — substitute your own name everywhere.
 - A clean git working tree for that skill file (SkillOpt refuses to run over
@@ -62,7 +62,7 @@ the outcome, and where the output lands.
 If you don't have a skill yet, scaffold one first:
 
 ```bash
-gbrain skillify scaffold meeting-prep
+foresights skillify scaffold meeting-prep
 ```
 
 ## Step 1: Get a benchmark — generated or hand-written
@@ -72,7 +72,7 @@ a task plus a way to score the agent's answer. It's the crux: the benchmark IS
 your definition of "better."
 
 **The recommended way is to generate a starter** (the section above):
-`gbrain skillopt meeting-prep --bootstrap-from-skill` writes the file for you, then
+`foresights skillopt meeting-prep --bootstrap-from-skill` writes the file for you, then
 you strengthen the judges. The format below is exactly what it produces, so this
 section doubles as your guide to reviewing and sharpening a generated draft.
 
@@ -140,7 +140,7 @@ floor exactly.
 
 ```bash
 # 15 tasks + --split 1:1:1  →  5 train / 5 sel / 5 test
-gbrain skillopt meeting-prep --split 1:1:1
+foresights skillopt meeting-prep --split 1:1:1
 ```
 
 If you ever see `D_sel has N task(s) after split (need >=5)`, you either added
@@ -156,7 +156,7 @@ fewer than 15 tasks or used a split whose middle number is too small a share.
 Before spending anything, see what the run will cost:
 
 ```bash
-gbrain skillopt meeting-prep --split 1:1:1 --dry-run
+foresights skillopt meeting-prep --split 1:1:1 --dry-run
 ```
 
 This makes **zero LLM calls**. It prints the models banner, the strict-mode
@@ -170,13 +170,13 @@ $0.70–$1.00. The preflight refuses to start a real run whose estimate exceeds
 
 > `--dry-run` exits **0**. It exits 1 only when strict mode is on
 > (`--models-strict` / `skillopt.models_strict`) and some model was not
-> explicitly configured. The abort lists a `gbrain config set` line for each
+> explicitly configured. The abort lists a `foresights config set` line for each
 > offending touchpoint.
 
 ## Step 3: Run it for real
 
 ```bash
-gbrain skillopt meeting-prep --split 1:1:1
+foresights skillopt meeting-prep --split 1:1:1
 ```
 
 You'll watch it work: a baseline eval to set the bar, one forward pass over a
@@ -244,7 +244,7 @@ log at `~/.gbrain/audit/skillopt-YYYY-Www.jsonl`.
 `SKILL.md` in place. It's already a git diff — review it, then `git commit` to
 keep it or `git checkout` to throw it away. Nothing is committed for you.
 
-**For a skill that ships with gbrain** (anything under the gbrain repo's own
+**For a skill that ships with foresights** (anything under the foresights repo's own
 `skills/`): SkillOpt refuses to overwrite it by default and writes the winner to
 `skills/<name>/skillopt/proposed.md` instead (while keeping `best.md` as the
 optimizer's current-best pointer), so an optimization pass can never silently
@@ -252,11 +252,11 @@ mutate a skill other people depend on. Two ways to handle that:
 
 ```bash
 # See the proposed improvement without touching SKILL.md (works for ANY skill):
-gbrain skillopt meeting-prep --split 1:1:1 --no-mutate
+foresights skillopt meeting-prep --split 1:1:1 --no-mutate
 # → writes skills/meeting-prep/skillopt/proposed.md, updates best.md, and prints the proposal path.
 
 # Actually rewrite a bundled skill (explicit opt-in + an independent held-out set):
-gbrain skillopt brain-ops --split 1:1:1 --allow-mutate-bundled \
+foresights skillopt brain-ops --split 1:1:1 --allow-mutate-bundled \
   --held-out skills/brain-ops/held-out.jsonl
 ```
 
@@ -292,20 +292,20 @@ letting the optimizer chase it.
 You wrote a benchmark that encodes what "good" means for one skill, previewed the
 cost, ran the optimizer, and either accepted a measurably better skill or learned
 your benchmark needs sharpening. Same loop scales to every skill you own — and
-`gbrain skillopt --all` runs it across every skill that has a benchmark, under a
+`foresights skillopt --all` runs it across every skill that has a benchmark, under a
 brain-wide cost cap.
 
 ## Where to go next
 
 - **Full flag + exit-code reference, cost model, safety guards:**
   [`docs/guides/skillopt.md`](../guides/skillopt.md)
-- **Every flag inline:** `gbrain skillopt --help`
+- **Every flag inline:** `foresights skillopt --help`
 - **Batch + fleet + background runs** (`--all`, `--target-models`, `--background`),
   **LLM and qrels judges**, **held-out test sets**, and **resume after a crash**
   (`--resume <run-id>`): all in the reference guide above.
 - **Generate a starter benchmark from the SKILL.md** (the recommended way to start):
-  `gbrain skillopt <name> --bootstrap-from-skill` → review + strengthen the judges →
+  `foresights skillopt <name> --bootstrap-from-skill` → review + strengthen the judges →
   delete the sentinel → `--bootstrap-reviewed --split 1:1:1`. Tune the count with
   `--bootstrap-tasks N` (max 50).
-- **Bootstrap from existing routing fixtures** instead: `gbrain skillopt <name>
+- **Bootstrap from existing routing fixtures** instead: `foresights skillopt <name>
   --bootstrap-from-routing` (routing tasks test dispatch, not quality — tighten them).

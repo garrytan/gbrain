@@ -2,7 +2,7 @@
  * GST-363: every install route prints the unscoped_multi_user_token warning
  * when the serve is likely multi-user, and stays quiet otherwise. Spawns the
  * CLI against a temp HOME / GBRAIN_HOME; the brain routes run on a keyless
- * PGLite brain with no repository (gbrain init --pglite --no-embedding).
+ * PGLite brain with no repository (foresights init --pglite --no-embedding).
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

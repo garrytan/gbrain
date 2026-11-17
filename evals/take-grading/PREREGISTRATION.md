@@ -37,7 +37,7 @@ The $0 check (`bun evals/take-grading/harness.ts --check`, also the keyless test
 
 ## The arms
 
-Per the gbrain project rule on eval models (2026-10-07): the newest frontier model of each family, no Fable in counted runs, no gpt-5.4-mini, no older generation. No earlier take-grading result exists, so no link model is needed.
+Per the foresights project rule on eval models (2026-10-07): the newest frontier model of each family, no Fable in counted runs, no gpt-5.4-mini, no older generation. No earlier take-grading result exists, so no link model is needed.
 
 | Model | Why it runs |
 |---|---|
@@ -49,11 +49,11 @@ One run per model over the 790 counted fixtures: 2,370 verdicts. Per-model caps 
 
 ## The procedure
 
-`bun evals/take-grading/harness.ts --model <id> --split counted --out <file> --max-usd <cap> --concurrency 4 --preregistration <commit>`, Bun 1.4.x, per model, where `<commit>` is the gbrain commit that froze this file:
+`bun evals/take-grading/harness.ts --model <id> --split counted --out <file> --max-usd <cap> --concurrency 4 --preregistration <commit>`, Bun 1.4.x, per model, where `<commit>` is the foresights commit that froze this file:
 
 1. Each fixture becomes the production take row and the production evidence block (`formatEvidenceBlock`); the fields the judge must not see (`decisive`, `about`) are stripped first.
 2. The verdict comes from `defaultJudge` in `grade-takes.ts`: the production prompt (`GRADE_TAKES_PROMPT_VERSION` `hybrid-evidence-v2`), one gateway `chat` call with the production options, and the production parser (`parseJudgeOutput`). The harness wraps the chat call only to read token usage. A parse failure stands as no answer (production retries it on the next cycle); a provider error is retried up to twice after a pause.
-3. Each row records the verdict, confidence, whether the rule applies it and whether it is wrong, tokens, USD from gbrain's own price table, wall time, the judge's reasoning, and the raw answer on a parse failure. The run's `.meta.json` records the gbrain commit, this preregistration commit, the prompt version and hash, the threshold, and the fixture and harness hashes.
+3. Each row records the verdict, confidence, whether the rule applies it and whether it is wrong, tokens, USD from foresights's own price table, wall time, the judge's reasoning, and the raw answer on a parse failure. The run's `.meta.json` records the foresights commit, this preregistration commit, the prompt version and hash, the threshold, and the fixture and harness hashes.
 4. A run that hits its cap stops, is reported as incomplete, and its model does not qualify. No counted run is repeated or extended.
 
 Evidence retrieval is not measured: the hits are given, so this measures the judge on the evidence it would see, not whether the retriever finds it.
@@ -71,7 +71,7 @@ Evidence retrieval is not measured: the hits are given, so this measures the jud
 
 A model **qualifies** when it applied at least one verdict and the one-sided 95% Clopper-Pearson upper bound on wrong / applied is **at most 1%** (`MAX_WRONG_UPPER` in `score.ts`). That needs at least 299 applied verdicts with none wrong, or 473 with one wrong. Abstention and coverage do not enter the rule except through the applied count.
 
-`GRADE_TAKES_MEASURED_MODELS` (`src/core/cycle/grade-takes-measured.ts`) lists the qualifying models, **best first by coverage, ties to the cheaper model** (lower USD per verdict). If no model qualifies, the constant stays empty and the report says so. Qualifying does not turn auto-resolve on: in this release the list only marks, in `gbrain takes grades`, which cached verdicts a measured judge gave. Whether auto-resolve is ever wired, and on what real-sample check, is a separate decision.
+`GRADE_TAKES_MEASURED_MODELS` (`src/core/cycle/grade-takes-measured.ts`) lists the qualifying models, **best first by coverage, ties to the cheaper model** (lower USD per verdict). If no model qualifies, the constant stays empty and the report says so. Qualifying does not turn auto-resolve on: in this release the list only marks, in `foresights takes grades`, which cached verdicts a measured judge gave. Whether auto-resolve is ever wired, and on what real-sample check, is a separate decision.
 
 A model at 100% coverage and abstention is reported as a ceiling. Models are reported in rank order.
 

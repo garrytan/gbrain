@@ -2,7 +2,7 @@
  * v0.21.0 Cathedral II Layer 13 — orchestrator contract tests.
  *
  * Validates the Migration registry wiring + phase shape without running
- * the destructive `gbrain init --migrate-only` child. Schema-level DDL
+ * the destructive `foresights init --migrate-only` child. Schema-level DDL
  * assertions live in test/migrations-v0_21_0.test.ts (pinned the v27
  * migration's SQL shape from Layer 1).
  */

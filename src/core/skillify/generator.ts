@@ -1,5 +1,5 @@
 /**
- * skillify/generator.ts — pure file-tree generator for `gbrain skillify scaffold`.
+ * skillify/generator.ts — pure file-tree generator for `foresights skillify scaffold`.
  *
  * Takes a scaffold spec + target skillsDir and returns the list of
  * files that would be written (dry-run) or writes them (apply).

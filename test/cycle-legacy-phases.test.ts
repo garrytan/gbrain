@@ -114,7 +114,7 @@ describe('runPhaseLint — result-mapping', () => {
   });
 });
 
-// #6134: the cycle and the minion lint handlers honor cycle.lint_exclude (basenames, like `gbrain lint --exclude`).
+// #6134: the cycle and the minion lint handlers honor cycle.lint_exclude (basenames, like `foresights lint --exclude`).
 describe('cycle.lint_exclude (#6134)', () => {
   const README = 'Attachments for the deck, not a brain page.\n';
   function seedAttachments(): void {

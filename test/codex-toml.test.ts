@@ -155,7 +155,7 @@ describe('writeCodexHttpServerBlock', () => {
   });
 
   test('legacy bearer_token managed block is upgraded in place to http_headers (#4574)', () => {
-    // Machines wired by older gbrain carry the pre-#4574 block that bricks
+    // Machines wired by older foresights carry the pre-#4574 block that bricks
     // codex-cli >=0.149 — the next write must replace it wholesale.
     const path = tmpConfig();
     const legacy = [

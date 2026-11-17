@@ -1,5 +1,5 @@
 /**
- * #8615: `gbrain repair file-drift` with a held-selection option (--held, --side, --state, --cursor, --provenance) and no
+ * #8615: `foresights repair file-drift` with a held-selection option (--held, --side, --state, --cursor, --provenance) and no
  * --prefer never silently runs the all-drifted survey, which counts a different set of pages (drift conflicts, not held
  * files) with nothing saying the options were ignored. GST-2568: a valid held selection without --prefer compares the
  * selected holds and writes nothing; a narrowing option without --held is still refused.

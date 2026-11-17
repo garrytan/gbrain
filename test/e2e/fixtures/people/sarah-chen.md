@@ -38,7 +38,7 @@ the agent-native enterprise stack replacing SaaS dashboards.
 
 - Revisit her thoughts on agent memory architecture. She hinted at something novel during the 1:1 after Demo Day but we ran out of time.
 - She is looking for design partners in procurement and supply chain. Could intro to relevant YC alumni.
-- Follow up on potential collab between NovaMind agent infra and GBrain knowledge layer.
+- Follow up on potential collab between NovaMind agent infra and Foresights knowledge layer.
 
 ---
 

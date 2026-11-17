@@ -14,8 +14,8 @@ const handlerFor = (result: ReembedPageResult) => makeContextualReindexHandler({
 describe('contextual_reindex_per_chunk: a synopsis blocked by a pending purge sweep', () => {
   test('is not ok, and next names the sweep check and the continue command', async () => {
     const out = await handlerFor({ kind: 'skipped', reason: 'purge_sweep_pending' })(job) as Record<string, any>;
-    expect({ ok: out.ok, skip: out.skip_reason, check: String(out.next).includes('gbrain doctor --only derivation_purge_sweeps'),
-      command: String(out.next).includes('gbrain forget --purge --status --request-id <request_id> --continue'), cap: String(out.next).includes('max_usd_per_page') })
+    expect({ ok: out.ok, skip: out.skip_reason, check: String(out.next).includes('foresights doctor --only derivation_purge_sweeps'),
+      command: String(out.next).includes('foresights forget --purge --status --request-id <request_id> --continue'), cap: String(out.next).includes('max_usd_per_page') })
       .toEqual({ ok: false, skip: 'purge_sweep_pending', check: true, command: true, cap: false });
   });
 

@@ -2,10 +2,10 @@
 # gbrain — cloud environment setup script.
 # Paste this into your cloud environment's setup script (it runs as root
 # before the session starts; what it writes to disk is snapshot-cached and
-# reused by later sessions). Printed by: gbrain bootstrap cloud-setup-script
+# reused by later sessions). Printed by: foresights bootstrap cloud-setup-script
 set -eu
 
-# 1. Bun runtime, at least GBrain's minimum (1.4.4; older Bun is refused).
+# 1. Bun runtime, at least Foresights's minimum (1.4.4; older Bun is refused).
 #    Installed VIA npm — bun's own package fetching is proxy-incompatible in
 #    cloud sandboxes; npm's is not. A preinstalled older Bun stays untouched.
 bun_ok() { "$1" -e 'process.exit(Bun.semver.satisfies(Bun.version, ">=1.4.4") ? 0 : 1)'; }
@@ -13,12 +13,12 @@ GBRAIN_BUN=$(command -v bun || true)
 if [ -z "$GBRAIN_BUN" ] || ! bun_ok "$GBRAIN_BUN"; then
   npm install -g bun
   GBRAIN_BUN="$(npm prefix -g)/bin/bun"
-  # `gbrain --version` below answers on any Bun, so check the floor here.
+  # `foresights --version` below answers on any Bun, so check the floor here.
   bun_ok "$GBRAIN_BUN" || { echo "gbrain: the Bun npm installed ($GBRAIN_BUN) did not report 1.4.4 or newer" >&2; exit 1; }
 fi
 export PATH="$(dirname "$GBRAIN_BUN"):$PATH"
 
-# 2. gbrain from the canonical GitHub source. NEVER `npm install -g gbrain`:
+# 2. foresights from the canonical GitHub source. NEVER `npm install -g gbrain`:
 #    the npm registry package with that name is unrelated squatter code.
 GBRAIN_DIR=/opt/gbrain
 # Pinned to stable — the SAME ref the canonical local install uses.
@@ -45,6 +45,6 @@ chmod +x /usr/local/bin/gbrain
 gbrain --version
 
 # After the session starts, finish wiring INSIDE the session:
-#   gbrain bootstrap status --json     # confirms execution_environment: cloud-sandbox
-#   gbrain bootstrap attach            # adopt the brain repo this session is opened on
-#   gbrain bootstrap hooks --harness claude-code   # committed-carrier hooks (next session picks them up)
+#   foresights bootstrap status --json     # confirms execution_environment: cloud-sandbox
+#   foresights bootstrap attach            # adopt the brain repo this session is opened on
+#   foresights bootstrap hooks --harness claude-code   # committed-carrier hooks (next session picks them up)

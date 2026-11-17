@@ -229,7 +229,7 @@ function parseFacts(raw: unknown, actorId: string): Array<Record<string, unknown
       throw invalid(`${at}.provenance must be 1 to ${MEMORY_WRITE_PROVENANCE_MAX} characters.`, 'Pass where the fact came from, for example "slack:C0123/p1700000000".');
     }
     if (CONTROL_RE.test(f.provenance as string) || /^qm:/i.test(provenance)) {
-      throw invalid(`${at}.provenance must be one line of text that does not start with qm:.`, 'gbrain adds qm:<actor id> itself; pass only where the fact came from, without line breaks or control characters.');
+      throw invalid(`${at}.provenance must be one line of text that does not start with qm:.`, 'foresights adds qm:<actor id> itself; pass only where the fact came from, without line breaks or control characters.');
     }
     if (f.kind !== undefined && !(MEMORY_WRITE_KINDS as readonly unknown[]).includes(f.kind)) {
       throw invalid(`${at}.kind is not a fact kind.`, `Use one of: ${MEMORY_WRITE_KINDS.join(', ')}, or omit it (fact).`);

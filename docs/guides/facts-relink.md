@@ -6,15 +6,15 @@ company or project it is about. Facts saved without that pin (an agent called
 are invisible to entity recall, never show on the entity's page, and the
 System One conflict sweep skips them as `no_entity`.
 
-GBrain now prevents most of them at write time and repairs the backlog with
-`gbrain facts relink`.
+Foresights now prevents most of them at write time and repairs the backlog with
+`foresights facts relink`.
 
 **Say to your agent:** *"Link my unattributed facts to the people and companies they're about."*
-The agent runs `gbrain facts relink --dry-run`, shows you the plan, then runs it.
+The agent runs `foresights facts relink --dry-run`, shows you the plan, then runs it.
 
 **Say to your agent:** *"Why is the conflict sweep finding nothing?"*
-The agent runs `gbrain decide status` and `gbrain doctor`; an `unlinked_facts`
-warning or a `no_entity` share points at `gbrain facts relink`.
+The agent runs `foresights decide status` and `foresights doctor`; an `unlinked_facts`
+warning or a `no_entity` share points at `foresights facts relink`.
 
 ## What happens at write time
 
@@ -46,8 +46,8 @@ set off by a space or punctuation.
 | `people/王小明负责项目。` | no link |
 | `王小明负责项目。` | no link |
 
-Turn write-time inference off with `gbrain config set facts.entity_inference
-off`. That does not undo earlier links, and it does not affect `gbrain facts
+Turn write-time inference off with `foresights config set facts.entity_inference
+off`. That does not undo earlier links, and it does not affect `foresights facts
 relink`.
 
 ## Repair the backlog
@@ -55,11 +55,11 @@ relink`.
 Run these on the brain host (thin clients refuse the command).
 
 ```bash
-gbrain facts relink --dry-run              # what would link; writes nothing, calls no model
-gbrain facts relink                        # free tiers, then the model tier (default cap $1.00)
-gbrain facts relink --no-llm               # free tiers only
-gbrain facts relink --max-usd 5            # raise the model-tier cap (or: off)
-gbrain facts relink --json                 # machine-readable report (schema_version 1)
+foresights facts relink --dry-run              # what would link; writes nothing, calls no model
+foresights facts relink                        # free tiers, then the model tier (default cap $1.00)
+foresights facts relink --no-llm               # free tiers only
+foresights facts relink --max-usd 5            # raise the model-tier cap (or: off)
+foresights facts relink --json                 # machine-readable report (schema_version 1)
 ```
 
 Relink finds a subject in three tiers, cheapest first: the page a fact was
@@ -84,7 +84,7 @@ Each run examines `--limit` facts (default 1000), walking by fact id. When more
 remain, the report ends with the exact command to continue:
 
 ```bash
-gbrain facts relink --after-id 48211
+foresights facts relink --after-id 48211
 ```
 
 Facts that can never link do not block the ones after them. `--since
@@ -95,7 +95,7 @@ Facts that can never link do not block the ones after them. `--since
 When the System One conflict slot is on, every linked fact is queued for the
 next sweep (`queued_for_conflict` in the report). A large backlog drains over
 several sweeps within the sweep's normal per-run quota and daily budget;
-`gbrain decide status` shows the progress. `--no-conflict-queue` skips the
+`foresights decide status` shows the progress. `--no-conflict-queue` skips the
 handoff.
 
 ### Reruns and cost
@@ -111,21 +111,21 @@ entity page and rerunning links facts that name it.
 it again with the right entity:
 
 ```bash
-gbrain forget <fact-id>
-gbrain remember "<the fact>" --provenance "<source>" --entity <slug>
+foresights forget <fact-id>
+foresights remember "<the fact>" --provenance "<source>" --entity <slug>
 ```
 
 ## Conversation facts
 
-Facts `gbrain extract-conversation-facts` stored without an entity belong to
-their conversation page, so plain `gbrain facts relink` never examines them.
+Facts `foresights extract-conversation-facts` stored without an entity belong to
+their conversation page, so plain `foresights facts relink` never examines them.
 Link them for free, with the same rule as write-time inference (exactly one
 entity page named in full, no competing name, no model call):
 
 ```bash
-gbrain facts relink --conversation --dry-run          # what would link; writes nothing
-gbrain facts relink --conversation                    # the 50 pages with the most untried unlinked facts
-gbrain facts relink --conversation --slugs a,b        # exactly these pages
+foresights facts relink --conversation --dry-run          # what would link; writes nothing
+foresights facts relink --conversation                    # the 50 pages with the most untried unlinked facts
+foresights facts relink --conversation --slugs a,b        # exactly these pages
 ```
 
 A linked fact stays on its conversation page with the entity set and the note
@@ -134,7 +134,7 @@ edit, so it needs no consent. A re-extraction of the page
 (`extract-conversation-facts --force`) keeps the link on the claim's new row
 without a second copy. A fact no entity can be proven for is recorded,
 so doctor `unlinked_facts` then offers a paid re-extraction of its page
-(`gbrain extract-conversation-facts --slugs … --force`, previewed with
+(`foresights extract-conversation-facts --slugs … --force`, previewed with
 `--dry-run`, capped with `--max-cost-usd`) instead of this relink again.
 A miss the table below does not remember (`no_page`, `no_mention`,
 `withdrawn`) is tried for free again once a new page is created in the
@@ -160,12 +160,12 @@ still finds it, and doctor `unlinked_facts` does not count it.
 | `unverified_match` | yes | The only match is a bare first name or a name that is not in the fact. Add an alias to the right entity page, then rerun. |
 | `no_mention` | no | The fact names no entity. Rerun with the model tier (drop --no-llm), or link it by hand with remember --entity. |
 | `no_page` | no | The fact names an entity that has no page. Create the entity page, then rerun. |
-| `model_unavailable` | no | The extraction model could not be reached. Configure it with gbrain config set facts.extraction_model <provider:model>. To skip the model tier, run gbrain facts relink --no-llm. |
+| `model_unavailable` | no | The extraction model could not be reached. Configure it with foresights config set facts.extraction_model <provider:model>. To skip the model tier, run foresights facts relink --no-llm. |
 | `model_unparseable` | no | The model returned output relink could not read. Rerun; if it persists, set a different facts.extraction_model. |
 | `withdrawn` | no | This claim was explicitly forgotten for that entity, so relink will not attach it there. |
 | `not_user_attributed` | no | The fact records what the assistant or a third party said, not your own claim, so relink never attaches it to an entity page. Nothing to fix: it stays saved and recall still finds it. |
-| `page_file_missing` | no | The entity page exists in the database but its file is missing from the source tree. Restore the file or run gbrain sync, then rerun. |
-| `unfenceable` | no | The source writes through to files but has no canonical owner. Bind the source (gbrain sources writer status <source> --json, then gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>), then rerun. |
+| `page_file_missing` | no | The entity page exists in the database but its file is missing from the source tree. Restore the file or run foresights sync, then rerun. |
+| `unfenceable` | no | The source writes through to files but has no canonical owner. Bind the source (foresights sources writer status <source> --json, then foresights sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>), then rerun. |
 | `fence_malformed` | no | The entity page has a ## Facts fence that cannot be normalized. Preview the fence repair of that page (`repair fences --slug <entity-slug>` on the brain host; read-only, and it names the exact edit for anything it will not repair), apply it, then rerun. |
 | `claim_unfenceable` | no | The claim text cannot be written to a fence row unchanged (for example it is wrapped in ~~). Forget it and remember a cleaned-up claim with --entity. |
 | `visibility_conflict` | no | The entity already has the same claim from the same source with the other visibility, and a page indexes only one. Forget the copy you do not want, then rerun. |
@@ -175,7 +175,7 @@ still finds it, and doctor `unlinked_facts` does not count it.
 
 ## Doctor
 
-`gbrain doctor` reports `unlinked_facts`: the share of active facts with no
+`foresights doctor` reports `unlinked_facts`: the share of active facts with no
 entity, the share among facts created in the last 7 days, the facts the model
 already judged subjectless, and how many links write-time inference and relink
 made. It warns when more than a quarter of the last week's facts are unlinked.

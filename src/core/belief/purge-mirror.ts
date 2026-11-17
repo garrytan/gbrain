@@ -11,7 +11,7 @@
  * leave an intent line with no committed line.
  *
  * A restore (PGLite: `restorePgliteBackup`; Postgres: `replayPurgesFromDatabase`,
- * the `gbrain beliefs replay-purges` step) replays every committed purge newer
+ * the `foresights beliefs replay-purges` step) replays every committed purge newer
  * than the archive for a matching source incarnation: tombstones, the restored
  * rows' removal, the standard ledger redaction, and one `fact.purged` or
  * `page.purged` with cause `restore_replay` naming the original request. Each
@@ -354,7 +354,7 @@ export async function purgeLinesFromDatabase(preRestore: Pick<BrainEngine, 'exec
 }
 
 /**
- * Postgres restores happen outside gbrain: `gbrain beliefs replay-purges` replays `lines` (a purge mirror or a pre-restore
+ * Postgres restores happen outside gbrain: `foresights beliefs replay-purges` replays `lines` (a purge mirror or a pre-restore
  * database's tombstones) into the restored database, every purge the restored database does not already hold, whatever its
  * time; `archivedAt` is the archive time `coverage.restored` names. Without `apply` the same replay runs in a transaction
  * that rolls back, so the preview is exactly what `--apply` writes.

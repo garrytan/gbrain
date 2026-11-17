@@ -9,7 +9,7 @@ requires: []
 secrets: []
 health_checks:
   - type: command
-    argv: [gbrain, doctor, --json]
+    argv: [foresights, doctor, --json]
     label: Retrieval reflex wiring (see retrieval_reflex_health)
 setup_time: 2 min
 cost_estimate: "$0 — zero-LLM deterministic layer + a prose policy skill"
@@ -17,7 +17,7 @@ cost_estimate: "$0 — zero-LLM deterministic layer + a prose policy skill"
 
 # Retrieval Reflex: teach the agent *when* and *what* to retrieve
 
-gbrain is great at **storing** knowledge and at **injecting deterministic
+foresights is great at **storing** knowledge and at **injecting deterministic
 context** every turn. It does not, by itself, teach the host agent the *policy*
 of retrieval: **when** to look something up and **what** to pull. Without it,
 the agent can discuss a person who has a rich brain page for several messages
@@ -42,13 +42,13 @@ This reflex has two halves:
 **You are the installer.** Run these steps on behalf of the user.
 
 1. Confirm the deterministic layer isn't disabled:
-   `gbrain doctor --json | jq '.checks[] | select(.name=="retrieval_reflex_health")'`
+   `foresights doctor --json | jq '.checks[] | select(.name=="retrieval_reflex_health")'`
 2. Install the policy skill into the host repo (the OpenClaw/agent repo that
    holds `skills/RESOLVER.md` or `AGENTS.md`):
-   `gbrain integrations install retrieval-reflex --target <host-repo>`
-3. Verify: re-run `gbrain doctor` and confirm `retrieval_reflex_health` is `ok`.
+   `foresights integrations install retrieval-reflex --target <host-repo>`
+3. Verify: re-run `foresights doctor` and confirm `retrieval_reflex_health` is `ok`.
 
 The deterministic layer needs no install. On a PGLite brain it resolves through
-the running `gbrain serve` (or a host-provided capability); if neither is
+the running `foresights serve` (or a host-provided capability); if neither is
 available it stays disabled and this policy skill carries the behavior — the
 doctor check reports which.

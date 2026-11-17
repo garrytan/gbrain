@@ -2,12 +2,12 @@
 /**
  * Import an envelope-v0 file (a JSON serialization of AI chat history; format
  * spec: github.com/memvelope/memvelope) into a brain repo as one Markdown page
- * per conversation, which `gbrain sync` ingests.
+ * per conversation, which `foresights sync` ingests.
  *
  * Usage:
  *   node scripts/envelope-to-gbrain.mjs <envelope.mve.json> [outDir]
  *
- * Zero dependencies. Deterministic. No network. It does NOT call gbrain — it
+ * Zero dependencies. Deterministic. No network. It does NOT call foresights — it
  * only writes Markdown files.
  *
  * All-or-nothing. Both integrity checks below run BEFORE the first write, so a
@@ -100,13 +100,13 @@
  * conversation_format_coverage check.
  *
  * ELIGIBLE IS NOT AUTOMATIC, and the difference is the whole reason to say this
- * out loud. The path that accepts these pages is `gbrain
+ * out loud. The path that accepts these pages is `foresights
  * extract-conversation-facts` (src/commands/extract-conversation-facts.ts) — a
  * command somebody starts, whether by hand, as a background job, or through a
  * `doctor` remediation. Its autopilot wrapper is the
  * `conversation_facts_backfill` cycle phase, and that phase is opt-in and OFF
  * by default (`cycle.conversation_facts_backfill.enabled`, default false —
- * src/core/cycle/conversation-facts-backfill.ts). A plain `gbrain sync` does
+ * src/core/cycle/conversation-facts-backfill.ts). A plain `foresights sync` does
  * not start either one.
  *
  * What the type buys is ADMISSION to that command, not a trigger for it, and it
@@ -129,7 +129,7 @@
  * Until 2026-08-02 the body then presented a
  * turn header — `**Assistant** (2025-11-02T14:22:51.000Z · m2):` — matching NONE
  * of the 17 built-in patterns in `src/core/conversation-parser/builtins.ts`
- * (`gbrain conversation-parser list-builtins` counts them). The
+ * (`foresights conversation-parser list-builtins` counts them). The
  * extractor parsed zero messages, incremented `pages_skipped`, and said nothing:
  * pages stored and searchable, no facts ever extracted from any of them.
  *
@@ -175,7 +175,7 @@
  * `origin:`, an absent `date: null`, an empty `messages: []` — are literals
  * under its own control, not envelope data.) Unquoted, an RFC 3339
  * scalar is read by js-yaml as a JS `Date`: microseconds truncate, a `+05:30`
- * offset is normalised away, the lexical form changes — and gbrain's own
+ * offset is normalised away, the lexical form changes — and foresights's own
  * `coerceFrontmatterString` (src/core/markdown.ts) slices a Date to its first
  * 10 characters, losing the time of day entirely. It is sticky, too: a Date
  * re-serializes unquoted and stays a Date on every later round trip.
@@ -191,7 +191,7 @@
  * `ts: null`. Coercing non-conforming types is deliberately not attempted here;
  * the behavior is pinned by test so it cannot drift unnoticed.
  *
- * The array survives a gbrain rewrite SEMANTICALLY, not textually.
+ * The array survives a foresights rewrite SEMANTICALLY, not textually.
  * `serializeMarkdown` re-emits `id: "m1"` as `id: m1` and `ts: "…"` as
  * `ts: '…'` — values and order identical, quoting style not. Anything that
  * reads this page by parsing YAML is fine; anything that reads it by scanning
@@ -258,7 +258,7 @@
  *     line by line: 18 non-blank lines per turn parses (0.0526), 19 does not
  *     (0.0499) — the H1 counts in the denominator too. So turns averaging more
  *     than ~18 non-blank lines of prose fall below the floor. That threshold
- *     lives in gbrain's parser, not here — this script cannot raise it, and
+ *     lives in foresights's parser, not here — this script cannot raise it, and
  *     long-form assistant answers sit close to it.
  *   - ★ A PASTED TRANSCRIPT CAN REPLACE THE WHOLE CONVERSATION, and nothing
  *     reports it. This is the sharpest limit here and it is not fixable from
@@ -282,7 +282,7 @@
  *     In the last row all forty real turns are gone and four fabricated
  *     speakers at fabricated times reach the fact extractor in their place —
  *     at exit 0, with `phase: regex_match`, so `pages_skipped` stays 0 and
- *     `gbrain doctor` reports `conversation_format_coverage` OK.
+ *     `foresights doctor` reports `conversation_format_coverage` OK.
  *
  *     Comparing `frontmatter.messages.length` against the parsed turn count
  *     catches three of those four rows and NOT the 4/4 one, where the counts
@@ -351,7 +351,7 @@
  *   bun test test/envelope-to-gbrain.test.ts
  *
  * STATUS:
- *   - 2026-07-03, pre-guard behavior, live-verified against gbrain v0.42.56.0:
+ *   - 2026-07-03, pre-guard behavior, live-verified against foresights v0.42.56.0:
  *     the sample fixture -> 1 page; a real 662MB Claude export -> 353
  *     conversations = 353 distinct pages (no collisions), searchable after sync
  *     with provenance and message-id citations intact.
@@ -367,15 +367,15 @@
  *   - 2026-08-02, the parser-legible format above. Measured on two throwaway
  *     HOME-redirected PGLite brains fed the SAME 13 conversations, one written
  *     the old way and one the new:
- *       `gbrain conversation-parser scan <slug>`, run once per page (it takes
+ *       `foresights conversation-parser scan <slug>`, run once per page (it takes
  *       one slug; there is no aggregate form):
  *                                          13/13 pages `no_match`, 0 messages
  *                                       -> 13/13 `imessage-slack`, 33 messages
- *       `gbrain extract-conversation-facts --dry-run`
+ *       `foresights extract-conversation-facts --dry-run`
  *                                          "Skipped 13 page(s)" (pages_skipped)
  *                                       -> 0 skipped; every page segments and
  *                                          reaches the extractor
- *       `gbrain doctor` conversation_format_coverage
+ *       `foresights doctor` conversation_format_coverage
  *                                          warn: "13/13 ... match NO built-in
  *                                          pattern"
  *                                       -> ok: "13 pages: imessage-slack=13"
@@ -421,9 +421,9 @@ const yamlJson = (v) => JSON.stringify(v === undefined ? null : v);
 /** The date a turn header is allowed to carry: exactly `YYYY-MM-DD`. */
 const HEADER_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** What `deriveDateContext()` in gbrain's conversation parser falls back to when
+/** What `deriveDateContext()` in foresights's conversation parser falls back to when
  *  a page carries no date at all. Reusing it means a dateless conversation's
- *  headers introduce no value gbrain would not have chosen for itself. */
+ *  headers introduce no value foresights would not have chosen for itself. */
 const EPOCH_DATE = '1970-01-01';
 
 /** The RFC 3339 shapes this script will read a wall clock out of.
@@ -440,7 +440,7 @@ const TS_SHAPE =
  * cannot supply one.
  *
  * 24-hour, and UTC. `imessage-slack` — the pattern these headers are written
- * for — declares `timezone_policy: 'inline_utc'`, i.e. gbrain reads the inline
+ * for — declares `timezone_policy: 'inline_utc'`, i.e. foresights reads the inline
  * clock AS UTC. So a `+05:30` timestamp must be shifted before it is written;
  * emitting the local wall clock would record every fact 5.5 hours off. A `Z`
  * timestamp, or one with no designator at all, is already taken as UTC and its
@@ -455,7 +455,7 @@ function headerClock(ts) {
   const [y, mo, d, h, mi] = [year, month, day, hour, minute].map(Number);
   // The regex counts digits; it does not know a calendar. Without this it
   // accepts `2025-99-99T99:99` — and `imessage-slack` MATCHES a header built
-  // from those digits, so gbrain stores an instant no calendar contains.
+  // from those digits, so foresights stores an instant no calendar contains.
   // `2025-02-30` is worse: it yields a VALID Date silently shifted to March 2.
   // `created_at` is already validated before it reaches a header (see
   // `pageDate`); the per-message clock is the same untrusted surface and is
@@ -630,13 +630,13 @@ function readIfPresent(path) {
  *  a different thing from "not ours" and must not be collapsed into it.
  *
  *  The id scalar is accepted in every shape a YAML round trip produces, not
- *  only the JSON this importer writes. gbrain rewrites pages it holds —
+ *  only the JSON this importer writes. foresights rewrites pages it holds —
  *  `export --dir`, the DB-only restore path, and put_page write-through all
  *  re-emit frontmatter through gray-matter, which writes a UUID as a plain
  *  unquoted scalar and an all-digit or boolean-looking id single-quoted.
  *  Recognizing only our own JSON meant every one of those rewrites turned the
  *  page "foreign" and a later refresh refused the whole envelope, advising
- *  the user to delete gbrain's own copy. */
+ *  the user to delete foresights's own copy. */
 function idScalar(rawValue) {
   if (rawValue.startsWith('"')) {
     // Our own emitted shape (JSON is valid YAML flow syntax).
@@ -793,9 +793,9 @@ for (const [i, c] of conversations.entries()) {
   // the body — which is two different names for the same missing thing, and
   // `parseMarkdown` prefers the body's H1 when frontmatter has no title.
   const title = c.title || 'Untitled conversation';
-  // gbrain reads YAML frontmatter + markdown body; keep provenance in frontmatter.
-  // Emit `type: conversation` so gbrain stores these as conversation pages rather
-  // than defaulting to the generic `concept`. gbrain is open-typed — it takes an
+  // foresights reads YAML frontmatter + markdown body; keep provenance in frontmatter.
+  // Emit `type: conversation` so foresights stores these as conversation pages rather
+  // than defaulting to the generic `concept`. foresights is open-typed — it takes an
   // explicit frontmatter `type` verbatim — and its conversation-aware features
   // (conversation-facts extraction, the conversation_format_coverage check,
   // chronicle eligibility) key off `type == 'conversation'`.
@@ -804,7 +804,7 @@ for (const [i, c] of conversations.entries()) {
     'type: conversation',
     // Every interpolated value below is quoted. An envelope is a third-party
     // file, so any string carrying a newline would otherwise close its scalar
-    // and inject arbitrary frontmatter keys into the page gbrain ingests — or
+    // and inject arbitrary frontmatter keys into the page foresights ingests — or
     // duplicate an existing key, which makes the parse throw and silently
     // strips every provenance field from the page.
     `title: ${JSON.stringify(title)}`,
@@ -824,7 +824,7 @@ for (const [i, c] of conversations.entries()) {
     ...(hasId ? [`memvelope_conversation_id: ${JSON.stringify(c.id)}`] : []),
     'origin: memvelope/envelope-v0',
     // Per-message identity. It cannot ride in the turn header: the only header
-    // shape gbrain's parser reads carries `YYYY-MM-DD HH:MM` and nothing else,
+    // shape foresights's parser reads carries `YYYY-MM-DD HH:MM` and nothing else,
     // so a message id and a full RFC 3339 timestamp have to live here or be
     // thrown away. Order is the body's order, so `messages[i]` is the i-th turn.
     //
@@ -955,7 +955,7 @@ for (const [name, page] of pages) {
   messagesWritten += page.messageCount;
 }
 
-console.log(`wrote ${pages.size} markdown page(s) (${messagesWritten} message(s)) to ${outDir} — point gbrain's sync at this directory.`);
+console.log(`wrote ${pages.size} markdown page(s) (${messagesWritten} message(s)) to ${outDir} — point foresights's sync at this directory.`);
 if (collisions) {
   // "Overwritten" would now be false whenever the tiebreak kept the earlier
   // copy: that copy is never rewritten and the later one is never written at

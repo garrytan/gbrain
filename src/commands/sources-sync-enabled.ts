@@ -1,7 +1,7 @@
 /**
- * `gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>] [--json]` (GBRA-108): sets `config.syncEnabled`,
+ * `foresights sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>] [--json]` (GBRA-108): sets `config.syncEnabled`,
  * the switch that excludes a source from automatic sync (`sync --all`, autopilot's freshness dispatcher and the full-cycle
- * fan-out; sync-policy.ts). An explicit `gbrain sync --source <id>` still runs either way. Before this verb the only way
+ * fan-out; sync-policy.ts). An explicit `foresights sync --source <id>` still runs either way. Before this verb the only way
  * to set it was a raw write to `sources.config`.
  *
  * Preview first: `--dry-run` prints the current state, the target and the exact apply command, which carries
@@ -14,7 +14,7 @@ import { OperationError, opError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 
-const USAGE = 'gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>] [--json]';
+const USAGE = 'foresights sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>] [--json]';
 type SyncSwitch = 'on' | 'off';
 const isSwitch = (value: unknown): value is SyncSwitch => value === 'on' || value === 'off';
 
@@ -40,7 +40,7 @@ export function parseSetSyncArgs(args: string[]): { sourceId: string; target: Sy
 export async function setSourceSync(engine: BrainEngine, opts: ReturnType<typeof parseSetSyncArgs>): Promise<SetSyncResult> {
   const [src] = await engine.executeRaw<{ config: unknown; archived: boolean | null }>('SELECT config, archived FROM sources WHERE id=$1', [opts.sourceId]);
   if (!src || src.archived) {
-    throw opError('invalid_params', `No active source ${opts.sourceId}.`, 'Name an active source; gbrain sources list prints them.',
+    throw opError('invalid_params', `No active source ${opts.sourceId}.`, 'Name an active source; foresights sources list prints them.',
       { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the active source ids, read-only.' } });
   }
   const current: SyncSwitch = isSyncDisabledConfig(src.config) ? 'off' : 'on';
@@ -58,7 +58,7 @@ export async function setSourceSync(engine: BrainEngine, opts: ReturnType<typeof
 }
 
 function describe(result: SetSyncResult): string {
-  const what = result.target === 'on' ? 'included in automatic sync' : 'excluded from automatic sync (an explicit gbrain sync --source still runs)';
+  const what = result.target === 'on' ? 'included in automatic sync' : 'excluded from automatic sync (an explicit foresights sync --source still runs)';
   if (result.dry_run) return `Source "${result.source_id}": automatic sync is ${result.current}; ${result.changed ? `it would be ${what}` : 'nothing would change'}.\nApply: ${result.apply!.join(' ')}`;
   return result.changed ? `Source "${result.source_id}" is now ${what} (was ${result.current}).` : `Source "${result.source_id}": automatic sync is already ${result.current}; nothing changed.`;
 }

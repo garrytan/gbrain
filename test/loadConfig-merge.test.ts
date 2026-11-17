@@ -1,7 +1,7 @@
 // Phase 4 (F3): loadConfigWithEngine() DB-merge contract.
 //
 // Verifies precedence (env > file > DB > defaults) for the new v0.27.1
-// multimodal flags so `gbrain config set embedding_multimodal true`
+// multimodal flags so `foresights config set embedding_multimodal true`
 // actually flips the runtime gate even when the file plane is silent.
 
 import { describe, expect, test } from 'bun:test';
@@ -29,7 +29,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
   test('synthesizes a minimal base when base config is null (v0.36 codex /ship #3)', async () => {
     // Pre-v0.36 this returned null and skipped DB-plane merge entirely.
     // That meant env-only Postgres installs (no file config) couldn't see
-    // DB-plane overrides set via `gbrain config set` — the documented
+    // DB-plane overrides set via `foresights config set` — the documented
     // smoke test for `search_embedding_column` would silently fail.
     // The fix synthesizes a minimal `{ engine: 'postgres' }` base so DB
     // merge still runs; downstream callers either find the DB key or
@@ -41,7 +41,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
 
   test('DB-plane embedding_columns merge works even with null base (codex /ship #3 round-trip)', async () => {
     // The whole point of the synthesized fallback: env-only installs
-    // calling `gbrain config set embedding_columns '...'` get those keys
+    // calling `foresights config set embedding_columns '...'` get those keys
     // back when the resolver re-reads config. Verifies the merge path
     // actually runs (not just that the function returns truthy).
     const engine = makeEngine({
@@ -335,7 +335,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
   });
 
   // #1475 — `eval.capture` and `eval.scrub_pii` are accepted by
-  // `gbrain config set` (KNOWN_CONFIG_KEYS) and read back by `gbrain config
+  // `foresights config set` (KNOWN_CONFIG_KEYS) and read back by `foresights config
   // get` (which queries engine.getConfig directly), but had no DB-merge
   // branch here. The runtime gate reads the MERGED config
   // (isEvalCaptureEnabled(ctx.config) in operations.ts), so the write landed,
@@ -374,7 +374,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     test('an unrecognised boolean is treated as unset, not as false', async () => {
       // The privacy-relevant case. `config set` stores whatever it is handed,
       // and the shared dbBool helper maps every non-empty non-'true' value to
-      // FALSE — so `gbrain config set eval.scrub_pii TRUE` would arrive here
+      // FALSE — so `foresights config set eval.scrub_pii TRUE` would arrive here
       // as "scrubbing off". Before this merge branch existed those values were
       // inert; adopting the loose helper would newly activate that footgun.
       for (const bad of ['TRUE', 'True', '1', 'yes', 'tru', 'off', ' true']) {
@@ -411,7 +411,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
   });
 
   // #2119-class read-side merge (also #2137/#4297): DB-plane values that
-  // `gbrain config set` accepted for years, `config get` echoed back, and
+  // `foresights config set` accepted for years, `config get` echoed back, and
   // NOTHING read. Provider credentials, chat/expansion model pins, the chat
   // fallback chain, and flat cycle.* now sparse-merge with env > file > DB
   // precedence. embedding_model/embedding_dimensions stay file-plane-only
@@ -581,7 +581,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
   });
 
   // #4702 — content_sanity.disabled_patterns is a REAL config key: without
-  // this DB-plane resolution, `gbrain config set content_sanity.disabled_patterns`
+  // this DB-plane resolution, `foresights config set content_sanity.disabled_patterns`
   // wrote a row nothing ever read while every sibling knob resolved
   // env > file > DB.
   describe('#4702 content_sanity.disabled_patterns DB-plane resolution', () => {
@@ -665,7 +665,7 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
 // #4605 — `search.adaptive_return*` are registered DB-plane keys (E5a) and the
 // 0.48.0.0 notes call them "now a real knob", but loadConfigWithEngine never
 // nested a search.* row, and hybrid.ts feeds adaptiveReturnFromConfig(cfg)
-// with THIS merged object — so `gbrain config set search.adaptive_return true`
+// with THIS merged object — so `foresights config set search.adaptive_return true`
 // was accepted, stored, echoed by `config get`, and never read. Same class and
 // same shape as the #1475 eval.* merge above (strict bool, file > DB, no
 // spurious container).

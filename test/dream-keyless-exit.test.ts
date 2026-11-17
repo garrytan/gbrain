@@ -1,9 +1,9 @@
 /**
- * Keyless `gbrain dream` exit-0 contract — TODOS.md "P2 — Keyless `gbrain
+ * Keyless `foresights dream` exit-0 contract — TODOS.md "P2 — Keyless `foresights
  * dream` contract test".
  *
  * The documented nightly cron (INSTALL_FOR_AGENTS.md Step 7 / the dream.ts
- * docstring's `0 2 * * * gbrain dream --json`) runs `gbrain dream`
+ * docstring's `0 2 * * * foresights dream --json`) runs `foresights dream`
  * unconditionally, including on `init --no-embedding` installs (keyless
  * machines). The contract: a full keyless dream MUST exit 0 with the
  * documented degraded posture — key-needing phases skip or refuse with
@@ -20,7 +20,7 @@
  *     'embedding_disabled', no provider call and no phase error;
  *   - the report status is still 'partial' on this fixture because lint
  *     and orphans warn on the one-page seed brain, never 'failed', and
- *     `gbrain dream` exits 1 only on 'failed' or a failed phase (src/commands/dream.ts).
+ *     `foresights dream` exits 1 only on 'failed' or a failed phase (src/commands/dream.ts).
  *
  * Test shape mirrors test/agent-scheduler-contract.test.ts (keyless
  * PGLite brain, real CLI spawn, exit-code assertions). Non-serial on
@@ -58,7 +58,7 @@ interface CycleReportish {
 }
 interface RunResult { exitCode: number; stdout: string; stderr: string }
 
-describe.skipIf(SKIP)('keyless `gbrain dream` exits 0 (nightly-cron contract)', () => {
+describe.skipIf(SKIP)('keyless `foresights dream` exits 0 (nightly-cron contract)', () => {
   let home = '';
   let repoDir = '';
   let env: Record<string, string>;
@@ -111,7 +111,7 @@ describe.skipIf(SKIP)('keyless `gbrain dream` exits 0 (nightly-cron contract)', 
       TMPDIR: tmpdir(),
       // Keep the startup update-check marker off: env -i children have no
       // NODE_ENV=test, and a stale cache would fire a detached, real-network
-      // `gbrain check-update --refresh-cache` per spawn + an
+      // `foresights check-update --refresh-cache` per spawn + an
       // UPGRADE_AVAILABLE stderr line that would pollute the posture pins.
       GBRAIN_SKIP_STARTUP_HOOKS: '1',
     };

@@ -1,4 +1,4 @@
-// gbrain#1861 regression — Postgres lane (DATABASE_URL-gated).
+// foresights#1861 regression — Postgres lane (DATABASE_URL-gated).
 //
 // This is the engine that actually crashed: postgres.js serialized free-text
 // `context` into a Postgres text[] literal that `array_in` rejected with

@@ -3,10 +3,10 @@ import type { Migration } from './types.ts';
 export const v073: Migration = {
   version: 73,
   name: 'think_ab_results_v0_36',
-  // v0.36.1.0 (T18 / D19) — A/B harness data for `gbrain think --ab`.
+  // v0.36.1.0 (T18 / D19) — A/B harness data for `foresights think --ab`.
   //
   // Each row records one side-by-side comparison of think with vs.
-  // without --with-calibration. After 30 days of data, `gbrain
+  // without --with-calibration. After 30 days of data, `foresights
   // calibration ab-report` aggregates win/loss across the table and
   // surfaces a calibration_net_negative doctor warning if the
   // with-calibration variant loses >55% of trials (n >= 20).

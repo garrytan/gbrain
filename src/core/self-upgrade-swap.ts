@@ -1,11 +1,11 @@
 /**
  * The autopilot self-upgrade channel's swap settlement (v0.42; #5855, #6828):
- * what `gbrain upgrade --swap-only` (run by src/commands/autopilot.ts) did.
+ * what `foresights upgrade --swap-only` (run by src/commands/autopilot.ts) did.
  * Exit 0 alone cannot tell a swap from a no-op (`bun update` on a tag whose
  * head is already installed exits 0 and changes nothing), so the swap writes a
  * receipt naming what it installed (`SWAP_RECEIPT_ENV`). A receipt from
  * another run (its `from` is not the running version) is ignored, and with no
- * usable receipt the installed version is read with `gbrain --version`.
+ * usable receipt the installed version is read with `foresights --version`.
  * Outcomes:
  *
  *   - the swap's own Bun floor re-check refused (exit 78): hold, never known-bad;
@@ -41,11 +41,11 @@ export function prepareSwapReceipt(): string {
   return path;
 }
 
-/** `gbrain --version` of the binary on PATH, or null when unreadable. */
+/** `foresights --version` of the binary on PATH, or null when unreadable. */
 function probeInstalledVersion(): string | null {
   try {
-    const v = String(execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000, env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' } }))
-      .trim().replace(/^gbrain\s*/i, '');
+    const v = String(execSync('foresights --version', { encoding: 'utf-8', timeout: 10_000, env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' } }))
+      .trim().replace(/^(?:foresights|gbrain)\s*/i, '');
     return isValidVersionString(v) ? v : null;
   } catch {
     return null;
@@ -68,7 +68,7 @@ function holdWithoutKnownBad(running: string, latestVersion: string, reason: str
   return { relaunch: false };
 }
 
-/** Settle a finished `gbrain upgrade --swap-only` (`swapError` is what it threw, or null). */
+/** Settle a finished `foresights upgrade --swap-only` (`swapError` is what it threw, or null). */
 export function settleAutopilotSwap(running: string, latestVersion: string, swapError: unknown, receiptPath: string): AutopilotSwapResult {
   const raw = readSwapReceipt(receiptPath);
   try { unlinkSync(receiptPath); } catch { /* absent */ }
@@ -76,7 +76,7 @@ export function settleAutopilotSwap(running: string, latestVersion: string, swap
   const errorText = swapError === null ? undefined : swapError instanceof Error ? swapError.message : String(swapError);
   const held = swapError !== null && (swapError as { status?: number }).status === BUN_FLOOR_EXIT_CODE;
   if (held) {
-    logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: running, latest: latestVersion, outcome: 'skipped', reason: `gbrain upgrade refused the swap: the Bun floor of ${latestVersion} is not met or unreadable. ${BUN_FLOOR_FIX}` });
+    logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: running, latest: latestVersion, outcome: 'skipped', reason: `foresights upgrade refused the swap: the Bun floor of ${latestVersion} is not met or unreadable. ${BUN_FLOOR_FIX}` });
     const fresh = loadConfig();
     if (fresh?.self_upgrade?.attempting_version) {
       delete fresh.self_upgrade.attempting_version;

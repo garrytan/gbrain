@@ -9,7 +9,7 @@ export const v112: Migration = {
   // Closes the "imported ≠ curated" root cause: extraction is the silent third
   // leg of `sync → extract → embed`, and a brain with autopilot off (the common
   // CLI / external-cron case) accumulated 0% typed-edge coverage with nothing
-  // surfacing it. This column lets `gbrain extract --stale` sweep the historical
+  // surfacing it. This column lets `foresights extract --stale` sweep the historical
   // backlog incrementally and the `links_extraction_lag` doctor check warn when
   // extraction has fallen behind.
   //
@@ -20,10 +20,10 @@ export const v112: Migration = {
   //                                                    MCP put_page / sync --no-extract)
   //
   // GRANDFATHER: no backfill. After this migration every existing page has NULL
-  // links_extracted_at, so the first `gbrain doctor` correctly surfaces the real
+  // links_extracted_at, so the first `foresights doctor` correctly surfaces the real
   // backlog (the whole point). The doctor check is warn-only by default; it only
   // hard-fails if GBRAIN_EXTRACTION_LAG_FAIL_PCT is set — so the upgrade never
-  // breaks a CI/cron pipeline that gates on `gbrain doctor` exit code.
+  // breaks a CI/cron pipeline that gates on `foresights doctor` exit code.
   //
   // Composite index (source_id, links_extracted_at) backs the source-scoped
   // staleness scans. Postgres path uses CREATE INDEX CONCURRENTLY (+ invalid-

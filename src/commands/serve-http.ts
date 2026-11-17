@@ -1,5 +1,5 @@
 /**
- * GBrain HTTP MCP server with OAuth 2.1.
+ * Foresights HTTP MCP server with OAuth 2.1.
  *
  * Combines:
  * - MCP SDK's mcpAuthRouter (OAuth endpoints: /authorize, /token, /register, /revoke)
@@ -188,7 +188,7 @@ export function waitForHttpServerLifecycle(
         let timedOut = false;
         const deadline = setTimeout(() => {
           timedOut = true;
-          log(`GBrain HTTP server: close() still waiting after ${closeTimeoutMs}ms — shutting down anyway`);
+          log(`Foresights HTTP server: close() still waiting after ${closeTimeoutMs}ms — shutting down anyway`);
           closeResolve();
         }, closeTimeoutMs);
         deadline.unref?.();
@@ -196,7 +196,7 @@ export function waitForHttpServerLifecycle(
           clearTimeout(deadline);
           if (timedOut) {
             // Settled already — a late failure must be seen, not swallowed.
-            if (error) log(`GBrain HTTP server: close() failed after the deadline: ${error.message}`);
+            if (error) log(`Foresights HTTP server: close() failed after the deadline: ${error.message}`);
             return;
           }
           if (error) closeReject(error);
@@ -327,7 +327,7 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
  *   - any other string → pass through verbatim (Express accepts named modes
  *     like 'uniquelocal', 'linklocal', and CIDR/IP lists)
  *
- * SECURITY: only set GBRAIN_HTTP_TRUST_PROXY when BOTH (a) gbrain is
+ * SECURITY: only set GBRAIN_HTTP_TRUST_PROXY when BOTH (a) foresights is
  * reachable only via a trusted reverse proxy, AND (b) the proxy strips
  * client-supplied X-Forwarded-For headers before re-emitting its own.
  * Otherwise clients can spoof their IP and defeat the pre-auth IP rate
@@ -363,14 +363,14 @@ interface ServeHttpOptions {
    * feed. Default false: payloads are summarized via dispatch.summarizeMcpParams
    * (declared keys only, no values, no attacker-controlled key names).
    *
-   * Operators running gbrain on their own laptop and debugging agent behavior
+   * Operators running foresights on their own laptop and debugging agent behavior
    * can flip this on with `--log-full-params`. The flag prints a loud warning
    * at startup so the privacy posture change is visible.
    */
   logFullParams?: boolean;
   /**
    * Network interface(s) to bind. Defaults to `127.0.0.1` (loopback only) in
-   * v0.34.1+ — gbrain's primary use case is a personal-knowledge brain on a
+   * v0.34.1+ — foresights's primary use case is a personal-knowledge brain on a
    * laptop, and the pre-v0.34 default of `0.0.0.0` made it one accidental
    * `--http` invocation away from publishing the brain to a LAN.
    *
@@ -430,7 +430,7 @@ export function skillPublishStatus(publishSkills: boolean): { bannerValue: strin
       "[serve-http] NOTE: skill publishing is OFF — connected agents can't call " +
       'list_skills / get_skill, so this brain’s skill catalog is invisible to them ' +
       '(core tools like search / query / think still work). Enable it with: ' +
-      'gbrain config set mcp.publish_skills true',
+      'foresights config set mcp.publish_skills true',
   };
 }
 
@@ -534,7 +534,7 @@ async function logServeHttpStartup(engine: BrainEngine, options: ServeHttpOption
   }
 
   // Skill-publishing status for the banner + nudge. Mirrors readMcpPublishSkills
-  // (skill-catalog.ts): the DB plane (`gbrain config set`) wins over the file
+  // (skill-catalog.ts): the DB plane (`foresights config set`) wins over the file
   // plane. When OFF, a connected coding agent can't see the host's skill
   // catalog — surface that to the operator at startup rather than letting them
   // discover it via an empty list_skills on the agent side.
@@ -606,7 +606,7 @@ async function resolveDcrTtlWindow(engine: BrainEngine, tokenTtl: number): Promi
 }
 
 /**
- * Builds the complete Express app for `gbrain serve --http`: startup checks,
+ * Builds the complete Express app for `foresights serve --http`: startup checks,
  * OAuth provider, admin auth, every route and middleware in registration
  * order. `runServeHttp` is the production caller; it owns listen, the banner,
  * the resolve-IPC binding and shutdown.
@@ -614,7 +614,7 @@ async function resolveDcrTtlWindow(engine: BrainEngine, tokenTtl: number): Promi
 export async function buildServeHttpApp(app: express.Express, engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
-  // gbrain's primary use case is a personal-knowledge brain on a laptop;
+  // foresights's primary use case is a personal-knowledge brain on a laptop;
   // the pre-v0.34 default exposed brains on every interface. Server
   // operators who need remote access pass `--bind 0.0.0.0` (or a specific
   // interface). Declaring `--public-url` without `--bind` is almost always
@@ -627,7 +627,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
 
   // Engine-aware SQL adapter. Routes through engine.executeRaw on both
   // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
-  // a postgres.js singleton, so `gbrain serve --http` works against PGLite
+  // a postgres.js singleton, so `foresights serve --http` works against PGLite
   // brains too. The narrow SqlQuery contract is scalar-binds-only; JSONB
   // writes use executeRawJsonb (see mcp_request_log INSERT sites below).
   const sql = sqlQueryForEngine(engine);
@@ -637,7 +637,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   // construction. Same outcome (no /register endpoint when --enable-dcr
   // is not passed); cleaner shape for tests and future maintainers.
   // #2179: admin-configured clamp window for DCR-requested token TTLs.
-  // DB-plane config keys (`gbrain config set oauth.dcr_ttl_min_seconds ...`).
+  // DB-plane config keys (`foresights config set oauth.dcr_ttl_min_seconds ...`).
   // FAIL-CLOSED defaults: an unset/invalid max is bounded by the operator's
   // own --token-ttl (never a fixed permissive ceiling), and an inverted
   // window collapses to the min bound — the same direction clampDcrTokenTtl
@@ -863,7 +863,7 @@ export function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
     const httpServer = await listenOrRefuse(app, port, bind, options.adoptServer);
     console.error(`
 ╔══════════════════════════════════════════════════════╗
-║  GBrain MCP Server v${VERSION.padEnd(37)}║
+║  Foresights MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Port:      ${String(port).padEnd(40)}║
 ║  Bind:      ${bind.padEnd(40)}║
@@ -886,7 +886,7 @@ ${bootstrapFromEnv
 `);
 
     // #4474: bind the resolve-IPC unix socket under --http too. This is the
-    // exact posture `gbrain bootstrap harness` targets — without the listener
+    // exact posture `foresights bootstrap harness` targets — without the listener
     // every wired lifecycle hook (SessionStart / UserPromptSubmit / PreCompact)
     // degrades to `no_serve` forever, and on a PGLite brain there is no local
     // recovery (the http serve owns the single-writer lock, so a second stdio

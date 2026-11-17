@@ -1,5 +1,5 @@
 /**
- * `gbrain decide judge-agreement` end to end with a fixture decide transport
+ * `foresights decide judge-agreement` end to end with a fixture decide transport
  * (no provider is called): one request per item on the background lane,
  * the kappa report, per question_type slices, Jev cost and latency, the
  * --out file with per-item rows, --dry-run (sends nothing) and the no-key

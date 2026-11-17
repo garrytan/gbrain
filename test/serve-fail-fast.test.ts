@@ -1,5 +1,5 @@
 /**
- * C10 (agent operator wave): `gbrain serve --fail-fast` / GBRAIN_SERVE_FAIL_FAST=1
+ * C10 (agent operator wave): `foresights serve --fail-fast` / GBRAIN_SERVE_FAIL_FAST=1
  * is for process supervisors: when serve cannot start, it exits non-zero
  * with the classified error envelope (one JSON document) on stderr instead
  * of staying up in a degraded or status-only mode.

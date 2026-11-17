@@ -34,7 +34,7 @@ export function embedBackfillWorkerSurface(
 export function embedBackfillManualDrainCommand(sourceId: string): string {
   const source = sourceId === '' ? '<source-id>' : sourceId;
   if (source !== '<source-id>') assertValidSourceId(source);
-  return `gbrain embed --stale --source ${source}`;
+  return `foresights embed --stale --source ${source}`;
 }
 
 export class InvalidEmbedBackfillSourceIdError extends Error {

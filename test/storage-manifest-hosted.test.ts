@@ -1,6 +1,6 @@
 /**
  * GST-1943: the storage shelf on a brain with a Git checkout (managed persistence, PGLite). Git stays the parent: the
- * shelf is a hosted git-canonical repository that `gbrain storage init` creates after its preview, and every card is
+ * shelf is a hosted git-canonical repository that `foresights storage init` creates after its preview, and every card is
  * committed there before the database indexes it. Protects:
  *   - register refuses storage_manifest_missing until init runs; init previews without creating anything, a stale
  *     plan_hash refuses, and the apply hosts the repository and marks the source with the storage role, not federated;

@@ -6,8 +6,8 @@
  * sees guest notes only once a guest source is on its read list. ownerCredentials lists each such credential with its
  * read list, whether it reads the guest source, the read list it would have with it, the exact grant command, and its
  * min_trust floor (a floor above external_untrusted hides every guest note, F9). grantOwnerCredentials is the one
- * writer: 'gbrain guests grant-owner-clients --yes' adds the guest source to each read list as a compare-and-set on
- * the grant revision the preview read, keeps every source already there, and never runs on its own: gbrain widens no
+ * writer: 'foresights guests grant-owner-clients --yes' adds the guest source to each read list as a compare-and-set on
+ * the grant revision the preview read, keeps every source already there, and never runs on its own: foresights widens no
  * grant on upgrade or init. The doctor check guest_source (commands/doctor/checks/guest-source.ts) reads the same list.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -27,7 +27,7 @@ export interface OwnerCredential {
   writeSource: string | null;
   readSources: string[];
   readsGuest: boolean;
-  /** The read list with the guest source added; null when there is nothing gbrain may add to (no-source grant). */
+  /** The read list with the guest source added; null when there is nothing foresights may add to (no-source grant). */
   after: string[] | null;
   /** The exact command that adds the guest source to this one grant, at the revision read. */
   command: string | null;
@@ -52,9 +52,9 @@ function credential(kind: 'client' | 'token', id: string, name: string, g: Princ
   const after = g.sources.kind === 'none' || !tokenListKept ? null : readsGuest ? reads : [...reads, guest];
   const rev = ' --if-version ' + g.revision;
   const command = readsGuest || !after ? null
-    : kind === 'token' ? 'gbrain auth rescope-token --id ' + id + ' --sources ' + after.join(',') + rev
-    : g.sources.kind === 'default' ? 'gbrain auth rescope --client ' + id + ' --sources ' + after.join(',') + rev
-    : 'gbrain auth rescope --client ' + id + ' --read-sources ' + after.join(',') + rev;
+    : kind === 'token' ? 'foresights auth rescope-token --id ' + id + ' --sources ' + after.join(',') + rev
+    : g.sources.kind === 'default' ? 'foresights auth rescope --client ' + id + ' --sources ' + after.join(',') + rev
+    : 'foresights auth rescope --client ' + id + ' --read-sources ' + after.join(',') + rev;
   const minTrust = storedMinTrust(minTrustValue) ?? null;
   return { kind, id, name, revision: g.revision, grant: g.sources.kind, writeSource: write, readSources: reads, readsGuest, after, command,
     minTrust, floorHidesGuests: minTrust !== null && compareTrust(minTrust, 'external_untrusted') > 0 };

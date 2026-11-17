@@ -3,7 +3,7 @@
  * decides on shared_buffers alone, a refusal reads nothing (no pg_prewarm call,
  * no transaction), a missing extension refuses with its own code, PGLite is
  * refused without a single statement, and the CLI wires it under
- * `gbrain embeddings prewarm`. The real-Postgres path is
+ * `foresights embeddings prewarm`. The real-Postgres path is
  * test/e2e/vector-prewarm-postgres.test.ts.
  */
 import { describe, expect, test } from 'bun:test';
@@ -117,7 +117,7 @@ describe('serve.vector_prewarm config merge', () => {
   });
 });
 
-describe('gbrain embeddings prewarm (CLI)', () => {
+describe('foresights embeddings prewarm (CLI)', () => {
   async function cli(args: string[]): Promise<{ code: number; stdout: string }> {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-prewarm-cli-'));
     try {

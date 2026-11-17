@@ -1,8 +1,8 @@
 /**
- * SKILL check: `skill_health`, the doctor face of `gbrain skillpack health`
- * (src/core/skill-health.ts). Warn-only: a skill that shows a gbrain command,
- * flag or tool this gbrain does not have warns; size, growth and frontmatter
- * findings are reported without warning; a folder gbrain does not manage, with
+ * SKILL check: `skill_health`, the doctor face of `foresights skillpack health`
+ * (src/core/skill-health.ts). Warn-only: a skill that shows a foresights command,
+ * flag or tool this foresights does not have warns; size, growth and frontmatter
+ * findings are reported without warning; a folder foresights does not manage, with
  * no copies of bundled skills, is not applicable. Reads files only, so it runs
  * the same on repo-less brains.
  */
@@ -25,9 +25,9 @@ async function runSkillHealth(ctx: DoctorContext): Promise<Check[]> {
     if (report.scope === 'not_gbrain') {
       checks.push(infoCheck('skill_health', summary, 'not_applicable'));
     } else if (report.totals.drift > 0) {
-      checks.push({ name: 'skill_health', status: 'warn', message: `${summary}. Run: gbrain skillpack health`, issues, details });
+      checks.push({ name: 'skill_health', status: 'warn', message: `${summary}. Run: foresights skillpack health`, issues, details });
     } else {
-      checks.push({ name: 'skill_health', status: 'ok', message: report.findings.length ? `${summary} (gbrain skillpack health lists them)` : summary,
+      checks.push({ name: 'skill_health', status: 'ok', message: report.findings.length ? `${summary} (foresights skillpack health lists them)` : summary,
         ...(issues.length ? { issues } : {}), details });
     }
   } catch (err) {

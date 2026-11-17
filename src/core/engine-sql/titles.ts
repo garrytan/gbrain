@@ -34,7 +34,7 @@
  * negated or phrase terms are evaluated on title lexemes only, so timeline
  * text (weight C) never changes which titles they see. Ranking uses the
  * weight-A slice (`ts_filter(..., '{a}')`). Matching follows the language
- * `search_vector` was built with; `gbrain reindex-search-vector` rebuilds it
+ * `search_vector` was built with; `foresights reindex-search-vector` rebuilds it
  * after an FTS language change. A page with a NULL `search_vector` is absent
  * from the arm (the BEFORE INSERT/UPDATE trigger keeps it non-NULL). Local
  * callers' strict query still matches and ranks the whole vector (title weight
@@ -75,7 +75,7 @@ export async function searchTitles(
   // that silently violate the caller's filter.
   if (opts?.language || opts?.symbolKind) return [];
   if (opts?.limit && opts.limit > searchLimitCap()) {
-    console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
+    console.warn(`[foresights] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
   }
   const statementFor = (chunkManifest: boolean, relaxed = false) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed });
   const statement = statementFor(true);

@@ -183,7 +183,7 @@ describe('loadBackupStatus / saveBackupStatus', () => {
   test('missing or malformed totals block -> null (renderers dereference totals un-guarded)', () => {
     const s = makeStatus();
     // Schema-valid JSON with the totals block REMOVED must read as absent,
-    // not crash `gbrain backup status`.
+    // not crash `foresights backup status`.
     const { totals: _dropped, ...withoutTotals } = s;
     writeFileSync(statusPath, JSON.stringify(withoutTotals));
     expect(loadBackupStatus()).toBeNull();
@@ -586,7 +586,7 @@ describe('maybeEmitBackupNag', () => {
     maybeEmitBackupNag('search', {}, c.write);
     // stderr is not a TTY under redirected test runs -> machine marker first.
     expect(c.lines.some((l) => l === 'BACKUP_LOCAL_ONLY 2\n')).toBe(true);
-    const human = c.lines.find((l) => l.startsWith('gbrain backup check: '));
+    const human = c.lines.find((l) => l.startsWith('foresights backup check: '));
     expect(human).toBeDefined();
     expect(human!).toContain("aren't on any git remote");
     // Recorded: nag state exists and counted one impression.

@@ -63,6 +63,6 @@ describe('checkAbandonedThreads month-precision since_date (#4041)', () => {
     // count > 0 is still 'ok' by design; 'warn' here means the query threw.
     expect(check.status).toBe('ok');
     expect(check.message).toContain('2 high-conviction take(s)');
-    expect(check.message).toContain('gbrain calibration');
+    expect(check.message).toContain('foresights calibration');
   });
 });

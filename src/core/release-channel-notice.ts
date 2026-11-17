@@ -12,7 +12,7 @@ import { jsonRequested } from './cli-force-exit.ts';
 import { resolveReleaseChannel } from './self-upgrade.ts';
 
 export const CHANNEL_NOTICE_CODE = 'release_channel';
-export const CHANNEL_NOTICE_TEXT = `[gbrain notice ${CHANNEL_NOTICE_CODE}] This install now follows the stable channel: weekly releases promoted after testing. To get every release instead, run: gbrain config set self_upgrade.channel alpha`;
+export const CHANNEL_NOTICE_TEXT = `[gbrain notice ${CHANNEL_NOTICE_CODE}] This install now follows the stable channel: weekly releases promoted after testing. To get every release instead, run: foresights config set self_upgrade.channel alpha`;
 const MCP_COMMANDS = new Set(['serve', 'mcp']);
 
 export function channelNoticePath(): string {

@@ -1,5 +1,5 @@
 /**
- * `gbrain bootstrap harness` lane of the brain-first instruction block
+ * `foresights bootstrap harness` lane of the brain-first instruction block
  * (src/core/setup/brain-first.ts): each host whose MCP entry is confirmed gets
  * the managed block in its own instruction file; removal strips only the
  * blocks this lane recorded.
@@ -10,7 +10,7 @@ import { describeTurnHookOutcome, removeTurnRuleHook } from '../setup/turn-hook.
 import { installerTurnHook, TURN_HOOK_NATIVE_INSPECT, type TurnHookVerdict } from '../setup/turn-hook-check.ts';
 import { brainFirstTargetAt, codexInstructionFile, describeBrainFirstOutcome, installerBrainFirst, readBrainFirstLedger, removeBrainFirst } from '../setup/brain-first.ts';
 
-const WRITER = 'gbrain bootstrap harness';
+const WRITER = 'gbrain bootstrap harness'; // stored in the brain-first ledger: legacy spelling kept
 
 export type BrainFirstHost = 'claude-code' | 'codex' | 'opencode';
 
@@ -58,12 +58,12 @@ export function writeHarnessTurnHooks(opts: { hosts: readonly BrainFirstHost[]; 
     const sandboxed = host === 'codex' ? opts.codexConfig !== codexConfigPath() : opts.userSettingsPath !== claudeUserSettingsPath();
     const accepted = process.env.GBRAIN_AGENT_INSTRUCTIONS !== '0' && ledger.some((e) => e.harness === host && e.writer === WRITER && e.status === 'installed');
     const { outcome, verdict } = installerTurnHook({ harness: host, accepted, gbrainBin: opts.gbrainBin, gbrainHome: process.env.GBRAIN_HOME?.trim() || undefined,
-      paths: sandboxed ? paths : undefined, rerun: `gbrain setup ${host} --instructions-only` });
+      paths: sandboxed ? paths : undefined, rerun: `foresights setup ${host} --instructions-only` });
     opts.log(describeTurnHookOutcome(outcome).trim());
     results.push({ host, action: outcome.action, detail: outcome.detail, ...(verdict ? { check: verdict } : {}) });
     if (verdict && !verdict.ok) {
       ok = false;
-      opts.logError(`turn_hook_not_loaded (${verdict.reason}): the per-turn gbrain hook for ${host} is not active: ${verdict.message}. Fix: gbrain setup ${host} --instructions-only; check: ${TURN_HOOK_NATIVE_INSPECT[host]}`);
+      opts.logError(`turn_hook_not_loaded (${verdict.reason}): the per-turn foresights hook for ${host} is not active: ${verdict.message}. Fix: foresights setup ${host} --instructions-only; check: ${TURN_HOOK_NATIVE_INSPECT[host]}`);
     }
   }
   return { ok, results };
@@ -87,5 +87,5 @@ export function harnessTurnRuleHosts(p: { off: boolean | undefined; wireClaude: 
 }
 
 export function turnRuleConsentLine(hosts: string[] | undefined): string {
-  return hosts?.length ? `The per-turn brain-first rule hook (UserPromptSubmit: one line telling the agent to check gbrain first; it reads no brain data) is wired for ${hosts.join(' and ')}. ` : '';
+  return hosts?.length ? `The per-turn brain-first rule hook (UserPromptSubmit: one line telling the agent to check foresights first; it reads no brain data) is wired for ${hosts.join(' and ')}. ` : '';
 }

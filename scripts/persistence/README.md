@@ -551,8 +551,8 @@ flag affects only the latency threshold, never validity requirements.
 
 `test/sync-convergence.serial.test.ts` (#6650, the #6712 L0 gate) is a
 real-process profile of this gate. It uses the same fault seam
-(`src/core/persistence/fault-points.ts`, preloaded into real `gbrain serve` and
-`gbrain sync` processes by `test/fixtures/convergence-fault-kill.ts`, since
+(`src/core/persistence/fault-points.ts`, preloaded into real `foresights serve` and
+`foresights sync` processes by `test/fixtures/convergence-fault-kill.ts`, since
 production never installs a hook). The preload acts once, at the nth hit of
 one point, through a registry of actions: `kill` (SIGKILL), `stall` (until the
 harness releases it), `edit` (an uncommitted worktree edit) and `throw` (an
@@ -567,9 +567,9 @@ The chaos modes, each named in failures and selectable with
 | Mode | What happens | Expected end state | On master |
 | --- | --- | --- | --- |
 | (a) client kills, (b) serve kills | A kill loop of `GBRAIN_TEST_CONVERGENCE_KILLS` change rounds, each ending in one `kill -9` at a point of the curated list (`publication:before_commit`, `publication:after_commit`, `consumer:preparing`, `lane:applied`, `sync:before_group_admission`, `sync:mid_checkpoint`, `sync:held_settled`, `sync:passed_over`, `sync:batch_entries`, `sync:tail_started`), cycling a `--no-delegate` client, a serve running a delegated catch-up, and a serve with its delegating client; a `sync:passed_over` round syncs with `--no-bulk`, so its primed edit is admitted before any re-freeze can read it (#8838) | strict convergence | runs |
-| (c) concurrent writers | During the kill loop: `gbrain put` rewrites of 5% of the notes, `remember` facts on an entity page, `gbrain extract timeline --source db` (a managed maintenance job) | strict convergence; every acknowledged write in the ledger | runs |
+| (c) concurrent writers | During the kill loop: `foresights put` rewrites of 5% of the notes, `remember` facts on an entity page, `foresights extract timeline --source db` (a managed maintenance job) | strict convergence; every acknowledged write in the ledger | runs |
 | (c-db) DB-only competitor | With `sync.write_through=false`, a DB-only `put` lands while the run is stalled on that page's frozen entry, and another on a page whose file did not change | the raced page is held `concurrent_write` (needs a person), its file keeps the committed bytes and its page the DB write; both pages are left out of disk == DB | runs |
-| (d) out-of-band Git | While a run is stalled mid-manifest: `git mv` and `git rm` of 1% of the files, committed, and deletion of 1% uncommitted | moves and removals converge strictly; each uncommitted deletion is listed by `gbrain pages ghosts` with the `gbrain repair ghost-pages` exit and left out of disk == DB | runs |
+| (d) out-of-band Git | While a run is stalled mid-manifest: `git mv` and `git rm` of 1% of the files, committed, and deletion of 1% uncommitted | moves and removals converge strictly; each uncommitted deletion is listed by `foresights pages ghosts` with the `foresights repair ghost-pages` exit and left out of disk == DB | runs |
 | (e) mid-run edit | The `sync:after_freeze` hook writes an uncommitted edit to a seeded entry after it was frozen | the run's receipt and `sync status` name `worktree_dirty`; after the editor commits, strict convergence | runs (turned on by PR 1 of #6712) |
 | (f) pooler drop | Every pooled connection drops at the proxy after 20 committed pages of a bulk run (`GBRAIN_TEST_CONVERGENCE_PGBOUNCER_CONTAINER=<name>` restarts that container instead) | no new hold; the drain resumes within the owner-kill stall bound; strict convergence | runs (turned on by PR 2 of #6712: a pass whose connection died releases its unpublished claims once the database answers, instead of holding them under the publication lease) |
 | (g) two drainers | `sync --all --no-delegate` beside a serve draining a delegated sync of the same source | strict convergence | runs |
@@ -581,7 +581,7 @@ A skipped mode stays written; naming it in `GBRAIN_TEST_CONVERGENCE_MODES` runs 
 anyway, which is how the PR that fixes it turns it on.
 
 After the chaos every scenario gets a fresh serve (what a supervisor restarts)
-and at most two plain `gbrain sync --no-pull` runs, with no operator step; only
+and at most two plain `foresights sync --no-pull` runs, with no operator step; only
 exit 0 with outcome `synced` counts, and a synced run that HEAD
 has moved past since (a queued write's Git commit landing during or after it, the
 commits named in the log) is followed by the second. Then the oracle, each check its own test
@@ -603,7 +603,7 @@ bookkeeping:
   the final state must show a write that no later acknowledged write causally
   supersedes (none started after it was acknowledged); a remembered fact must
   survive unless a page write on its entity may have been ordered after it.
-- **The status oracle.** `gbrain sync status --source <id> --json` must carry
+- **The status oracle.** `foresights sync status --source <id> --json` must carry
   every field the operator loop reads (`checkpoint_blockers` and `cursors`
   arrays, `checkpoint_blockers` empty, `terminal_failures` `ok` with no active
   blocker, `needs_human`, `holds` exactly the end state's, `last_error` and
@@ -682,7 +682,7 @@ content.
 | Mode | What happens | Expected end state |
 | --- | --- | --- |
 | (h) refresh ticks | With `persistence.refresh_barrier` on, scheduled `sources refresh` ticks pull upstream commits while foreground `put`s land inside the fence, some on notes the tick changes, and an agent writes across every tick | every tick's refresh completes and releases its fence; every write that reached the refreshing checkout is answered pending with a receipt naming the refresh, never refused, and commits after it, or ends `revision_conflict` with nothing applied when the refresh changed its file |
-| (i) foreign writers | Plain-git committers and an uncommitted-file writer beside gbrain | `doctor` `foreign_writers` names every commit gbrain did not make and none it made, and the aged uncommitted files |
+| (i) foreign writers | Plain-git committers and an uncommitted-file writer beside foresights | `doctor` `foreign_writers` names every commit foresights did not make and none it made, and the aged uncommitted files |
 | (j) legacy rows | Rows with no import record in every content-evidence direction | `sources git-gap` classifies each by its direction evidence; `both_moved` and `no_evidence` rows end held `file_drift` |
 | (k) strict conversion | `sources canonical --to git` over several adopt groups, stalled after the first (`conversion:group_committed`) while another clone pushes, door writes land and a refresh runs | the conversion ends `converted`, strict, with nothing left to plan; every door write and refresh is accepted or refused with a registered code; the other agent's commit reaches HEAD |
 | (l) segmented staging | A segmented write whose staging expires or is aborted at `segmented:manifest_staged` | the write refuses `body_staging_expired`, the page keeps its body, a resend commits and the sweep leaves no live staging |
@@ -709,7 +709,7 @@ exact sha.
 
 ## Engine graduation tests
 
-Graduation (`gbrain migrate --to postgres`) is tested against two fixtures.
+Graduation (`foresights migrate --to postgres`) is tested against two fixtures.
 `test/fixtures/graduation/legacy-brain.ts` builds a small brain by hand-written
 SQL on a fresh schema, and its expected outcomes live in `expected.json`
 beside it (`test/graduation-legacy-fixture.test.ts` proves the build matches

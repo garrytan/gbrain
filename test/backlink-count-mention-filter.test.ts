@@ -4,7 +4,7 @@
  * Codex outside-voice review on the v0.42.0.0 plan flagged that the
  * existing engine.getBacklinkCounts SQL had NO link_source filter — so
  * every link counts equally toward backlink-boost in hybridSearch.
- * Running `gbrain extract links --by-mention` would silently shift
+ * Running `foresights extract links --by-mention` would silently shift
  * search ranking globally on first run, boosting popular-mention pages
  * over intentional-backlink pages.
  *

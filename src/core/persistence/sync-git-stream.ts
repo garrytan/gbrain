@@ -499,7 +499,7 @@ const cleanProbesSavedAt = new Map<string, number>();
 const CLEAN_PROBE_SAVE_EVERY_MS = 60_000;
 const CLEAN_PROBE = /^\d+:\d+:\d+:\d+:\d+:\d+:\d+\|[0-9a-f]{40}(?:[0-9a-f]{24})?\|\d{6}\|[0-9a-f]{64}$/;
 
-/** Where `persist` keeps the vouched probes of one root and Git root (`key`): this machine's gbrain home, never the brain. */
+/** Where `persist` keeps the vouched probes of one root and Git root (`key`): this machine's foresights home, never the brain. */
 export function cleanProbeFile(key: string): string {
   return join(configDir(), 'persistence', 'clean-probes', `${sha256(key).slice(0, 32)}.json`);
 }

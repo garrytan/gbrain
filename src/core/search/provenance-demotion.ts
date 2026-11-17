@@ -1,5 +1,5 @@
 /**
- * Provenance-aware ranking: a page gbrain itself generated ranks below a
+ * Provenance-aware ranking: a page foresights itself generated ranks below a
  * primary record about the same entity that matches the same query, because a
  * summary is not evidence.
  *

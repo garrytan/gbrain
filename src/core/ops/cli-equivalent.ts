@@ -3,7 +3,7 @@
  * contract v1, F6): named when a tool is outside the caller's surface (the
  * owner's stdio hint) and in the plugin tree's per-skill surface notes.
  * Derived from the op's `cliHints.name` (generated or CLI-only command of that
- * name); a few ops have a better command; anything else is `gbrain call`.
+ * name); a few ops have a better command; anything else is `foresights call`.
  */
 import type { Operation } from './contract.ts';
 

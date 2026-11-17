@@ -1,5 +1,5 @@
 /**
- * Foundations 2 (Lane C): `gbrain repair attribution-backfill` on a managed
+ * Foundations 2 (Lane C): `foresights repair attribution-backfill` on a managed
  * brain with real journaled history (pages created, edited, deleted and
  * restored; facts remembered and forgotten), after the attribution of most
  * rows is reset to the pre-attribution state. Checks that the backfill fills

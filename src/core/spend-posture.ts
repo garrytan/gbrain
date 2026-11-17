@@ -1,6 +1,6 @@
 /**
  * Spend posture + USD-limit parsing — the single spend-control surface for
- * gbrain's cost gates (issue #2139). Two concerns live here:
+ * foresights's cost gates (issue #2139). Two concerns live here:
  *
  *  1. `spend.posture` (DB-plane config): `'gated'` (default) makes every cost
  *     gate behave as before; `'tokenmax'` makes them INFORMATIONAL — print the

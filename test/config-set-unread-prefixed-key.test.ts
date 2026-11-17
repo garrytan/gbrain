@@ -8,7 +8,7 @@
  * `search.reranker.top_n_in`) was written silently and then never read. Now
  * it is a usage error (exit 2, agent contract) naming the nearest registered
  * spelling, and nothing is written; --force still writes it (a key a newer
- * gbrain reads), with a warning. Registered keys and keys under the open
+ * foresights reads), with a warning. Registered keys and keys under the open
  * prefixes (`cycle.`, `models.`, ...) behave as before.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -65,8 +65,8 @@ describe('config set: unregistered key under an enumerated prefix', () => {
       expect(exit).toBe(2);
       expect(setCalls).toEqual([]);
       expect(errs).toContain(`Error [invalid_params]: Unknown config key "${key}". Did you mean "${registered}"? Nothing was written.`);
-      expect(errs).toContain(`Fix: gbrain config set ${registered} '<VALUE>'`);
-      expect(errs).toContain(`Why: Every ${key.split('.')[0]}.* key gbrain reads is registered, so nothing would read this one.`);
+      expect(errs).toContain(`Fix: foresights config set ${registered} '<VALUE>'`);
+      expect(errs).toContain(`Why: Every ${key.split('.')[0]}.* key foresights reads is registered, so nothing would read this one.`);
       expect(errs).not.toContain('100');
     });
   }
@@ -77,7 +77,7 @@ describe('config set: unregistered key under an enumerated prefix', () => {
     expect(exit).toBe(2);
     expect(setCalls).toEqual([]);
     expect(errs).toContain('Error [invalid_params]: Unknown config key "search.zzzzzzzzzzzz". Nothing was written.');
-    expect(errs).toContain(`Fix: gbrain config set '<KEY>' '<VALUE>'`);
+    expect(errs).toContain(`Fix: foresights config set '<KEY>' '<VALUE>'`);
     expect(errs).not.toContain('Did you mean');
   });
 
@@ -145,7 +145,7 @@ describe('config set: the qualified search switches take a boolean', () => {
       expect(exit).toBe(2);
       expect(setCalls).toEqual([]);
       expect(errs).toContain(`Error [invalid_params]: ${key} must be true or false (got 'maybe'). Nothing was written.`);
-      expect(errs).toContain(`Fix: gbrain config get ${key}`);
+      expect(errs).toContain(`Fix: foresights config get ${key}`);
       expect(searchConfigValueRefusal(key, 'maybe')?.example).toBe('true');
     });
 

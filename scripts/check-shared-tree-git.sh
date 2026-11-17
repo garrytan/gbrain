@@ -15,7 +15,7 @@
 #   any other git push (bare push; `git push --dry-run` is read-only and allowed)
 #
 # The safe replacement is `scripts/brain-commit-push.sh` or
-# `gbrain git commit-push` (docs/guides/shared-checkout-git.md).
+# `foresights git commit-push` (docs/guides/shared-checkout-git.md).
 #
 # Scanned: skills/, recipes/, templates/, docs/, plugin/, plugin-variants/
 # (*.md, *.template, *.sh) plus AGENTS.md, BOOTSTRAP_FOR_AGENTS.md and
@@ -26,7 +26,7 @@
 #   - docs/guides/error-codes.md: generated from src/core/error-registry.ts.
 #   - docs/RELEASING.md, docs/TESTING.md, docs/contributing/ (and
 #     CONTRIBUTING.md, CHANGELOG.md, TODOS.md at the root, which are outside
-#     the scanned set): they describe maintainers working in the gbrain SOURCE
+#     the scanned set): they describe maintainers working in the foresights SOURCE
 #     repository, not agents writing to a brain checkout.
 #   - historical records: docs/designs/, docs/plans/, docs/proposals/,
 #     docs/research/, docs/incidents/, docs/issues/, docs/test-audit/,

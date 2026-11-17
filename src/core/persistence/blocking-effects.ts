@@ -8,7 +8,7 @@ export interface BlockingEffect {
   request_id: string; attempts: number; next_attempt_at: string | Date | null; inspect: string;
 }
 
-const inspect = (sourceId: string) => `gbrain sources writer status ${sourceId} --json`;
+const inspect = (sourceId: string) => `foresights sources writer status ${sourceId} --json`;
 
 /** Effects in state queued or running, or holding a recovery record, oldest first. */
 export async function listBlockingEffects(engine: SqlEngine, opts: { sourceId?: string; limit?: number; recoveringOnly?: boolean } = {}): Promise<BlockingEffect[]> {
@@ -25,8 +25,8 @@ export async function listBlockingEffects(engine: SqlEngine, opts: { sourceId?: 
 export function blockingEffectHint(effect: BlockingEffect): string {
   return `${WRITER_INSPECTION_HINT} Blocking effect ${effect.effect_id} (kind ${effect.kind}, state ${effect.state}${effect.recovering ? ', recovering' : ''}) `
     + `for source ${effect.source_id}, page ${effect.slug}, request ${effect.request_id}. Inspect it with: ${effect.inspect}. `
-    + 'The resident owner drains queued and running effects; gbrain sources writer retry-effects re-authorizes failed or parked effects; '
-    + `a stuck queued or failed embedding effect is settled by gbrain repair embedding-effects --source ${effect.source_id} (preview first, then --apply).`;
+    + 'The resident owner drains queued and running effects; foresights sources writer retry-effects re-authorizes failed or parked effects; '
+    + `a stuck queued or failed embedding effect is settled by foresights repair embedding-effects --source ${effect.source_id} (preview first, then --apply).`;
 }
 
 /** `writer_not_quiesced` naming the first blocking request, else the first blocking effect. */

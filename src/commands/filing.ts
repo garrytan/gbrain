@@ -1,9 +1,9 @@
 /**
- * gbrain filing — the filing method a source follows for NEW pages.
+ * foresights filing — the filing method a source follows for NEW pages.
  *
- *   gbrain filing [show] [--source <id>] [--json]
- *   gbrain filing set <generic|para|lyt|zettelkasten> [--source <id>]
- *   gbrain filing route <type> <title> [--project <name>] [--area <name>] [--archived] [--source <id>] [--json]
+ *   foresights filing [show] [--source <id>] [--json]
+ *   foresights filing set <generic|para|lyt|zettelkasten> [--source <id>]
+ *   foresights filing route <type> <title> [--project <name>] [--area <name>] [--archived] [--source <id>] [--json]
  *
  * The mode lives in sources.config.filing_mode (absent: generic). `route`
  * suggests the slug a new page should get under the source's mode (core/filing/
@@ -15,14 +15,14 @@ import {
   DEFAULT_FILING_MODE, FILING_MODES, FILING_MODE_DESCRIPTIONS, isFilingMode, routeNewPage, type FilingMode, type FilingSuggestion,
 } from '../core/filing/modes.ts';
 
-const USAGE = `Usage: gbrain filing [show | set <mode> | route <type> <title>] [--source <id>] [--json]
+const USAGE = `Usage: foresights filing [show | set <mode> | route <type> <title>] [--source <id>] [--json]
   show                   the source's filing mode (default)
   set <mode>             file NEW pages by: ${FILING_MODES.join(', ')}; existing pages never move
   route <type> <title>   where a new page of this type and title goes
     --project <name>     para: it serves this project
     --area <name>        para: it belongs to this ongoing area
     --archived           para: it is finished or inactive
-  --source <id>          the source (default: the current source; see gbrain sources current)
+  --source <id>          the source (default: the current source; see foresights sources current)
   --json                 machine-readable output`;
 
 function flagValue(args: string[], name: string): string | undefined {
@@ -91,7 +91,7 @@ export async function runFiling(engine: BrainEngine, args: string[]): Promise<vo
   const json = args.includes('--json');
   const mode = await getFilingMode(engine, sourceId);
   if (mode === null) {
-    console.error(`No source "${sourceId}". See gbrain sources list.`);
+    console.error(`No source "${sourceId}". See foresights sources list.`);
     process.exitCode = 1;
     return;
   }
@@ -101,14 +101,14 @@ export async function runFiling(engine: BrainEngine, args: string[]): Promise<vo
     console.log(`Source ${sourceId} files new pages in ${mode} mode: ${FILING_MODE_DESCRIPTIONS[mode]}.`);
     console.log('Modes:');
     for (const m of FILING_MODES) console.log(`  ${m === mode ? '*' : ' '} ${m.padEnd(12)} ${FILING_MODE_DESCRIPTIONS[m]}`);
-    console.log(`Change it with: gbrain filing set <mode>${sourceId === 'default' ? '' : ` --source ${sourceId}`}. Existing pages never move.`);
+    console.log(`Change it with: foresights filing set <mode>${sourceId === 'default' ? '' : ` --source ${sourceId}`}. Existing pages never move.`);
     return;
   }
 
   if (sub === 'set') {
     const next = pos[1];
     if (!isFilingMode(next)) {
-      console.error(`gbrain filing set: give one of ${FILING_MODES.join(', ')}.`);
+      console.error(`foresights filing set: give one of ${FILING_MODES.join(', ')}.`);
       process.exitCode = 1;
       return;
     }
@@ -122,7 +122,7 @@ export async function runFiling(engine: BrainEngine, args: string[]): Promise<vo
     const [, type, ...titleParts] = pos;
     const title = titleParts.join(' ').trim();
     if (!type || !title) {
-      console.error('gbrain filing route: give a page type and a title, for example: gbrain filing route concept "Flywheel effect"');
+      console.error('foresights filing route: give a page type and a title, for example: foresights filing route concept "Flywheel effect"');
       process.exitCode = 1;
       return;
     }

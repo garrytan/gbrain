@@ -218,7 +218,7 @@ test('expiry sweep rechecks restored sources under the topology guard',()=>fixtu
 }),60_000);
 
 
-test('gbrain#5452 managed purge refuses missing/epoch archive stamps and still purges a real expiry',()=>fixture(async(_home,source)=>{
+test('foresights#5452 managed purge refuses missing/epoch archive stamps and still purges a real expiry',()=>fixture(async(_home,source)=>{
   await runManagedSourceLifecycle(engine,{operation:'archive',sourceId:source});
   const purge=()=>runManagedSourceLifecycle(engine,{operation:'purge',sourceId:source,confirmDestructive:true,expiredOnly:true});
   const survives=async()=>expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1',[source])).toHaveLength(1);

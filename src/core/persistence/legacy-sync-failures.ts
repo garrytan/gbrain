@@ -25,7 +25,7 @@ export function legacyLedgerNote(rows: SyncFailure[]): string {
   if (!rows.length) return '';
   const sources = [...new Set(rows.map(row => row.source_id))].sort();
   return ` ${rows.length} of these are legacy ledger row(s) recorded by the pre-managed sync (${sources.join(', ')}), which a managed sync does not retry: `
-    + `the next successful ${sources.map(id => `gbrain sync --source ${id}`).join(' / ')} settles every one whose file it imported; `
+    + `the next successful ${sources.map(id => `foresights sync --source ${id}`).join(' / ')} settles every one whose file it imported; `
     + 'the rest name files it did not index, held files, or a replaced source, and stay listed.';
 }
 

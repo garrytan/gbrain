@@ -172,7 +172,7 @@ async function runSearchMode(ctx: DoctorContext): Promise<Check[]> {
     checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));
     // v0.47 google connector: credential-vault health incl. the day-6
     // Testing-mode expiry warning (zero-network; live probes live in
-    // `gbrain google status`).
+    // `foresights google status`).
     progress.heartbeat('google_oauth');
     {
       const { computeGoogleOauthCheck } = await import('./google-oauth.ts');

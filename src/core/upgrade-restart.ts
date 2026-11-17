@@ -1,5 +1,5 @@
 /**
- * GBRA-175: one upgrade restarts every gbrain process the brain runs on this
+ * GBRA-175: one upgrade restarts every foresights process the brain runs on this
  * host, or refuses with the exact step for each process it cannot restart, and
  * then proves that every process reports one build and that the warm CLI
  * socket accepts it. A long-running process keeps the code it loaded at start
@@ -16,7 +16,7 @@
  *   Linux only processes whose GBRAIN_HOME is this brain's); the consumer
  *   heartbeat rows (Postgres), the supervisor PID file and the worker registry
  *   add the build each pid loaded, and a record whose pid the table does not
- *   list as a gbrain process is stale and dropped. Read-only.
+ *   list as a foresights process is stale and dropped. Read-only.
  * - `planRestart`: which processes are not on the installed build and how each
  *   restarts: serve and autopilot through their installed service, only when
  *   the service's own process runs them; the supervisor with `jobs supervisor
@@ -33,12 +33,13 @@
  */
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { parseGlobalFlags } from './cli-options.ts';
+import { isBrandCommand } from './brand.ts';
 
 export type ProcessRole = 'serve' | 'autopilot' | 'supervisor' | 'worker' | 'mcp' | 'sync';
 
 export interface HostProcess {
   pid: number;
-  /** The nearest gbrain process above it in the process table; null when none is. */
+  /** The nearest foresights process above it in the process table; null when none is. */
   ppid: number | null;
   role: ProcessRole;
   /** The build the process runs (in memory); null when it records none. */
@@ -47,13 +48,13 @@ export interface HostProcess {
   started_ms: number | null;
   /** Every pid above it in the process table, nearest first (which service runs it). */
   ancestors?: number[];
-  /** Its arguments after the gbrain entry point, from the process table; absent when the table did not list it. */
+  /** Its arguments after the foresights entry point, from the process table; absent when the table did not list it. */
   args?: string[];
   /** The version the install it was started from holds now; null when unknown (a compiled binary). */
   install_version?: string | null;
-  /** The package directory of the gbrain install it was started from (realpath); null when unknown (a compiled binary). */
+  /** The package directory of the foresights install it was started from (realpath); null when unknown (a compiled binary). */
   install_root?: string | null;
-  /** A worker with no gbrain process above it: the process that started it, which was not recognised as gbrain. */
+  /** A worker with no foresights process above it: the process that started it, which was not recognised as foresights. */
   unclassified_parent?: { pid: number; executable: string };
 }
 
@@ -66,9 +67,9 @@ export interface ProcessSources {
   workers: () => Array<{ pid: number; version: string | null }>;
   /** This user's processes, null when ps cannot run; `gbrain_home` is the GBRAIN_HOME (else HOME) from the process's environment, undefined when unreadable. */
   processTable: () => ProcessTableRow[] | null;
-  /** The gbrain install a command line started in `cwd` runs from: its package directory and the version it holds now (null when unknown). */
+  /** The foresights install a command line started in `cwd` runs from: its package directory and the version it holds now (null when unknown). */
   install?: (command: string, cwd?: string | null) => { root: string | null; version: string | null };
-  /** The package name at a directory, undefined when unreadable: which `src/cli.ts` entry points are gbrain. */
+  /** The package name at a directory, undefined when unreadable: which `src/cli.ts` entry points are foresights. */
   packageName?: (root: string) => string | null | undefined;
   /** This brain's GBRAIN_HOME (else HOME), resolved. */
   home: string;
@@ -77,10 +78,10 @@ export interface ProcessSources {
 }
 
 const SERVE_SUBCOMMANDS_TRANSIENT = new Set(['status', 'install', 'uninstall', 'stop', 'logs', 'help']);
-/** `gbrain autopilot` forms that report or change the service and exit; anything else is the daemon (`--repo <path>`, `start`). */
+/** `foresights autopilot` forms that report or change the service and exit; anything else is the daemon (`--repo <path>`, `start`). */
 const AUTOPILOT_TRANSIENT = new Set(['status', 'install', 'uninstall', 'pause', 'resume', 'help']);
 const INTERPRETERS = new Set(['bun', 'node']);
-/** Interpreter flags whose value is the next token (gbrain's own sanitized re-run passes them this way: cli-preflight.ts PATH_RUNTIME_FLAGS). */
+/** Interpreter flags whose value is the next token (foresights's own sanitized re-run passes them this way: cli-preflight.ts PATH_RUNTIME_FLAGS). */
 const VALUE_FLAGS = new Set(['--preload', '-r', '--require', '--import', '--config', '-c', '--env-file', '--tsconfig-override', '--cwd']);
 
 /**
@@ -89,20 +90,20 @@ const VALUE_FLAGS = new Set(['--preload', '-r', '--require', '--import', '--conf
  */
 export interface EntryLookup { cwd?: string | null; packageName?: (root: string) => string | null | undefined }
 
-/** A `src/cli.ts` entry is gbrain when the package two levels up is named gbrain; an unreadable package falls back to a gbrain path. */
+/** A `src/cli.ts` entry is foresights when the package two levels up is named foresights; an unreadable package falls back to a foresights path. */
 function isGbrainCli(path: string, packageName: EntryLookup['packageName']): boolean {
   if (!/(^|\/)src\/cli\.ts$/.test(path)) return false;
   const name = packageName?.(dirname(dirname(path)));
-  return name === undefined ? /gbrain[^\s]*\/src\/cli\.ts$/.test(path) : name === 'gbrain';
+  return name === undefined ? /(?:foresights|gbrain)[^\s]*\/src\/cli\.ts$/.test(path) : name === 'gbrain';
 }
 
 /**
- * The gbrain entry point of a command line and the arguments after it, or null when the command is not gbrain
- * itself: a wrapper that starts gbrain as its child (tini, a shell, `timeout`, `bunx`, `bun x`, `bun run <bin>`)
- * is not the gbrain process, while `bun run <file>` runs the file in its own process. The value of an interpreter
+ * The foresights entry point of a command line and the arguments after it, or null when the command is not foresights
+ * itself: a wrapper that starts foresights as its child (tini, a shell, `timeout`, `bunx`, `bun x`, `bun run <bin>`)
+ * is not the foresights process, while `bun run <file>` runs the file in its own process. The value of an interpreter
  * flag the walk does not list is skipped: after it, the entry is the next path. A relative entry is
  * returned resolved against the process's working directory; when that directory is unknown it stays relative and
- * only a gbrain path matches.
+ * only a foresights path matches.
  */
 export function gbrainEntry(command: string, lookup: EntryLookup = {}): { entry: string; args: string[] } | null {
   const tokens = command.trim().split(/\s+/);
@@ -123,11 +124,11 @@ export function gbrainEntry(command: string, lookup: EntryLookup = {}): { entry:
   if (token === undefined) return null;
   const unresolved = isPath(token) && !isAbsolute(token) && !lookup.cwd;
   const entry = isPath(token) && !isAbsolute(token) && lookup.cwd ? resolve(lookup.cwd, token) : token;
-  if (basename(entry) !== 'gbrain' && !isGbrainCli(entry, unresolved ? undefined : lookup.packageName)) return null;
+  if (!isBrandCommand(basename(entry)) && !isGbrainCli(entry, unresolved ? undefined : lookup.packageName)) return null;
   return { entry, args: tokens.slice(at + 1) };
 }
 
-/** The role of a gbrain command line, or null when it is not a long-running gbrain process. */
+/** The role of a foresights command line, or null when it is not a long-running foresights process. */
 export function classifyGbrainCommand(command: string, lookup: EntryLookup = {}): ProcessRole | null {
   const args = gbrainEntry(command, lookup)?.args;
   if (!args) return null;
@@ -147,7 +148,7 @@ const installFields = (install: { root: string | null; version: string | null } 
 
 const HEARTBEAT_ROLES: Record<string, ProcessRole> = { serve: 'serve', jobs: 'worker', autopilot: 'autopilot', mcp: 'mcp', sync: 'sync' };
 
-/** Every gbrain process this brain runs on this host, one per pid. */
+/** Every foresights process this brain runs on this host, one per pid. */
 export async function collectHostProcesses(sources: ProcessSources): Promise<HostProcess[]> {
   const byPid = new Map<number, HostProcess>();
   const excluded = new Set(sources.exclude);
@@ -209,7 +210,7 @@ export interface RestartContext {
 
 /**
  * #8776: a launcher outside launchd and systemd that starts autopilot again when it exits: this brain's own
- * gbrain cron line (the linux-cron install target), or a launcher the operator declared with
+ * foresights cron line (the linux-cron install target), or a launcher the operator declared with
  * `self_upgrade.autopilot_launcher external` (a cron entry or wrapper of their own). The restart hands autopilot to
  * it: stop the daemon, then wait `wait_ms` for the launcher to start the installed build. Only the daemon this
  * brain's autopilot lock names (`pid`) is handed over, so another brain's autopilot is never signalled on a host
@@ -218,24 +219,24 @@ export interface RestartContext {
 export interface AutopilotLauncher { kind: 'cron' | 'declared'; wait_ms: number; pid: number | null }
 
 export const launcherName = (launcher: AutopilotLauncher) => launcher.kind === 'cron'
-  ? 'this brain\'s gbrain cron line' : 'the launcher self_upgrade.autopilot_launcher declares';
+  ? 'this brain\'s foresights cron line' : 'the launcher self_upgrade.autopilot_launcher declares';
 
 /** Before the swap the installed build is not known yet: every process is stale. */
 export const PENDING_BUILD = 'pending';
 
-/** A gbrain package directory inside a Bun global install (`<BUN_INSTALL>/install/global/node_modules/gbrain`): the BUN_INSTALL it belongs to. */
+/** A foresights package directory inside a Bun global install (`<BUN_INSTALL>/install/global/node_modules/gbrain`): the BUN_INSTALL it belongs to. */
 export function bunGlobalCopyOf(pkgDir: string): { bun_install: string } | null {
   const parts = pkgDir.replace(/\/+$/, '').split('/');
   if (parts.length < 6 || parts.slice(-4).join('/') !== 'install/global/node_modules/gbrain') return null;
   return { bun_install: parts.slice(0, -4).join('/') || '/' };
 }
 
-/** The steps that move another gbrain install onto the target build, as argv, plus the sentence that names them. */
+/** The steps that move another foresights install onto the target build, as argv, plus the sentence that names them. */
 export function copyFix(root: string, holds: string | null, expected: string): { argv: string[][]; env: Record<string, string>; instruction: string } {
   const release = expected === PENDING_BUILD ? 'the release being installed' : `v${expected}`;
   const copy = bunGlobalCopyOf(root);
   if (copy) {
-    const argv = [['bun', 'remove', '-g', 'gbrain'], ['bun', 'add', '-g', `github:garrytan/gbrain#v${expected}`]];
+    const argv = [['bun', 'remove', '-g', 'gbrain'], ['bun', 'add', '-g', `github:aimonk2025/gbrain#v${expected}`]];
     const shown = argv.map(a => `BUN_INSTALL=${copy.bun_install} ${a.join(' ')}`).join(' && ');
     return { argv, env: { BUN_INSTALL: copy.bun_install }, instruction: `replace the Bun global copy at ${root} (${holds ? `v${holds}` : 'version unknown'}; a pinned copy keeps its pin through bun add alone, so remove it first): \`${shown}\`` };
   }
@@ -304,7 +305,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
       if (!copy) {
         const fix = copyFix(p.install_root, p.install_version ?? null, ctx.expected);
         manual.push({ role: p.role, pid: p.pid, version: p.version, argv: fix.argv[0]!,
-          instruction: `${label(p)} runs from another gbrain install, which this upgrade does not change, so a restart brings it back on the old build: ${fix.instruction}; then run the upgrade again.` });
+          instruction: `${label(p)} runs from another foresights install, which this upgrade does not change, so a restart brings it back on the old build: ${fix.instruction}; then run the upgrade again.` });
         continue;
       }
       const known = copies.get(p.install_root);
@@ -322,28 +323,28 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
         else if (ctx.autopilotLauncher?.pid === p.pid) kill(p, `${label(p)} is known only from its heartbeat row (the process table could not be read), so the upgrade cannot confirm it is the process to stop before handing autopilot to its launcher: stop it (\`kill ${p.pid}\`) and let the launcher start it again, then run the upgrade.`);
         else if (ctx.autopilotLauncher) kill(p, `${label(p)} is not the daemon this brain's autopilot lock names (it names ${ctx.autopilotLauncher.pid === null ? 'no running autopilot' : `pid ${ctx.autopilotLauncher.pid}`}), so the upgrade does not hand it to ${launcherName(ctx.autopilotLauncher)}: if it is this brain's autopilot, stop it (\`kill ${p.pid}\`) and let the launcher start it again, then run the upgrade; if it serves another brain, upgrade from that brain.`);
         else manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['gbrain', 'autopilot', '--install'],
-          instruction: `${label(p)} was started outside gbrain's autopilot service (by a cron entry, a wrapper or by hand), so the upgrade cannot restart it. `
-            + 'Either run `gbrain autopilot --install`, which runs autopilot under launchd, systemd or a gbrain cron line so every upgrade restarts it (retire the launcher that starts it now first, or both race for the autopilot lock), '
-            + `or, when that launcher starts autopilot again within 5 minutes of it exiting, \`gbrain config set self_upgrade.autopilot_launcher external\` lets the upgrade stop it and wait for the launcher. By hand: \`kill ${p.pid}\` and start it again the way it was launched.` });
+          instruction: `${label(p)} was started outside foresights's autopilot service (by a cron entry, a wrapper or by hand), so the upgrade cannot restart it. `
+            + 'Either run `foresights autopilot --install`, which runs autopilot under launchd, systemd or a foresights cron line so every upgrade restarts it (retire the launcher that starts it now first, or both race for the autopilot lock), '
+            + `or, when that launcher starts autopilot again within 5 minutes of it exiting, \`foresights config set self_upgrade.autopilot_launcher external\` lets the upgrade stop it and wait for the launcher. By hand: \`kill ${p.pid}\` and start it again the way it was launched.` });
         break;
       case 'supervisor':
         if (p.args) supervisors.set(p.pid, supervisors.get(p.pid) ?? []);
-        else kill(p, `${label(p)}: its launch options could not be read from the process table, so it is not restarted with defaults: stop it (\`gbrain jobs supervisor stop\`) and start it again the way it was launched.`);
+        else kill(p, `${label(p)}: its launch options could not be read from the process table, so it is not restarted with defaults: stop it (\`foresights jobs supervisor stop\`) and start it again the way it was launched.`);
         break;
       case 'worker':
         if (parent?.role === 'supervisor' && parent.args) supervisors.set(parent.pid, [...(supervisors.get(parent.pid) ?? []), p.pid]);
         else if (parent?.role === 'autopilot' && runsUnder(parent, ctx.autopilotService)) addService('autopilot', parent.pid);
         else if (parent?.role === 'autopilot' && launcherOf(parent)) addHandoff(parent, launcherOf(parent)!);
-        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${p.unclassified_parent.executable}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
+        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${p.unclassified_parent.executable}\`), is not a process this restart recognises as foresights)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`foresights jobs work\` again the way it was launched, or run workers under \`foresights jobs supervisor start --detach\`.`);
         break;
       case 'mcp':
         if (ctx.stopMcp && p.args) stops.push({ kind: 'stop', role: 'mcp', pid: p.pid, started_ms: p.started_ms });
-        else if (ctx.stopMcp) kill(p, `${label(p)} is known only from its heartbeat row (the process table could not be read), so it is not signalled: stop it yourself if it is a gbrain MCP server, and reconnect gbrain in its harness afterwards.`);
-        else kill(p, `${label(p)} is an MCP server an agent harness started: rerun with --stop-mcp to stop it during the restart and reconnect gbrain in that harness afterwards (Claude Code: /mcp, then reconnect; other harnesses: start a new session).`);
+        else if (ctx.stopMcp) kill(p, `${label(p)} is known only from its heartbeat row (the process table could not be read), so it is not signalled: stop it yourself if it is a foresights MCP server, and reconnect foresights in its harness afterwards.`);
+        else kill(p, `${label(p)} is an MCP server an agent harness started: rerun with --stop-mcp to stop it during the restart and reconnect foresights in that harness afterwards (Claude Code: /mcp, then reconnect; other harnesses: start a new session).`);
         break;
       case 'sync':
         manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['gbrain', 'sync', 'status', '--json'],
-          instruction: `${label(p)} is a running gbrain sync: let it finish (\`gbrain sync status --json\` shows its progress), then run the restart again.` });
+          instruction: `${label(p)} is a running foresights sync: let it finish (\`foresights sync status --json\` shows its progress), then run the restart again.` });
         break;
     }
   }
@@ -378,14 +379,14 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
   for (const step of plan.steps) {
     if (step.kind === 'replace_copy') {
       const env = { BUN_INSTALL: step.bun_install };
-      const probe = ['git', 'ls-remote', '--exit-code', '--tags', 'https://github.com/garrytan/gbrain', `refs/tags/v${step.to}`];
-      const add = ['bun', 'add', '-g', `github:garrytan/gbrain#v${step.to}`];
+      const probe = ['git', 'ls-remote', '--exit-code', '--tags', 'https://github.com/aimonk2025/gbrain', `refs/tags/v${step.to}`];
+      const add = ['bun', 'add', '-g', `github:aimonk2025/gbrain#v${step.to}`];
       const probed = await exec.run(probe);
       if (probed.status !== 0) { results.push({ step, ok: false, detail: `v${step.to} has no release tag, so the copy at ${step.root} was left as it is (${failed(probe, probed)})` }); continue; }
       const removed = await exec.run(['bun', 'remove', '-g', 'gbrain'], env);
       const added = removed.status === 0 ? await exec.run(add, env) : removed;
       if (added.status === 0) { results.push({ step, ok: true, detail: `replaced the Bun global copy at ${step.root} with v${step.to}` }); continue; }
-      const restored = removed.status === 0 && step.from ? (await exec.run(['bun', 'add', '-g', `github:garrytan/gbrain#v${step.from}`], env)).status === 0 : false;
+      const restored = removed.status === 0 && step.from ? (await exec.run(['bun', 'add', '-g', `github:aimonk2025/gbrain#v${step.from}`], env)).status === 0 : false;
       results.push({ step, ok: false, detail: `could not replace the copy at ${step.root} (${failed(removed.status === 0 ? add : ['bun', 'remove', '-g', 'gbrain'], added)})${restored ? `; restored v${step.from}` : ''}` });
     } else if (step.kind === 'service') {
       const r = await exec.run(step.argv);
@@ -410,7 +411,7 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
       const outcome = exec.terminate(step.pid, step.started_ms, 'mcp');
       results.push({ step, ok: outcome !== 'changed', detail: outcome === 'changed'
         ? `pid ${step.pid} is no longer the MCP server the plan saw, so it was not signalled`
-        : `stopped mcp pid ${step.pid}; reconnect gbrain in its harness` });
+        : `stopped mcp pid ${step.pid}; reconnect foresights in its harness` });
     }
   }
   return results;

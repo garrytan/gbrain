@@ -137,7 +137,7 @@ function changelogSection(heading: string): string {
 
 /** Rows of the CHANGELOG "Exit code changes by command" table this file proves on the real CLI. */
 const RENUMBERED: Record<string, { now: number; docRow: string }> = {
-  'sources remove default --json': { now: 2, docRow: '`gbrain sources remove default` / `gbrain sources archive default`' },
+  'sources remove default --json': { now: 2, docRow: '`foresights sources remove default` / `foresights sources archive default`' },
 };
 
 describe('(1) existing scripts after the upgrade', () => {
@@ -164,7 +164,7 @@ describe('(1) existing scripts after the upgrade', () => {
   test('the renumbered exits are the documented ones, on every lane that reaches them', async () => {
     const changed = changelogSection('#### Exit code changes by command');
     for (const { now, docRow } of Object.values(RENUMBERED)) expect(changed).toContain(`| ${docRow} | 3 | ${now} |`);
-    expect(changed).toContain('| `gbrain call` invalid parameters | 1 | 2 |');
+    expect(changed).toContain('| `foresights call` invalid parameters | 1 | 2 |');
 
     // Managed sources run through the persistence lane; its caller mistakes exit 2 like every other CLI lane.
     for (const args of [['sources', 'remove', 'default'], ['sources', 'archive', 'default'], ['sources', 'remove', 'default', '--json']]) {
@@ -197,7 +197,7 @@ describe('(2) scheduled jobs: cron and autopilot invocations, non-TTY', () => {
 
   test('the one listed flip: doctor --remediate with runnable work now stops for consent (exit 3, nothing submitted)', async () => {
     const table = changelogSection('### Behavior changes for scripts and agents');
-    expect(table).toContain('| `gbrain doctor --remediate` without a terminal | ran paid and mutating work');
+    expect(table).toContain('| `foresights doctor --remediate` without a terminal | ran paid and mutating work');
     const r = await run(h, ['doctor', '--remediate', '--target-score', '30', '--json']);
     expect(r.exitCode, r.stdout + r.stderr).toBe(3);
     expect(r.json).toMatchObject({ code: 'confirmation_required', fix: { next: 'ask_user' } });
@@ -214,7 +214,7 @@ describe('(2) scheduled jobs: cron and autopilot invocations, non-TTY', () => {
     { args: ['doctor', '--json'], json: true },
   ];
   for (const row of CRON) {
-    test(`gbrain ${row.args.join(' ')} still runs unattended (exit 0, no consent stop)`, async () => {
+    test(`foresights ${row.args.join(' ')} still runs unattended (exit 0, no consent stop)`, async () => {
       const r = await run(h, row.args, {}, 180_000);
       expect(r.exitCode, `${r.stdout.slice(-1500)}\n${r.stderr.slice(-1500)}`).toBe(0);
       expect(r.stdout).not.toContain('confirmation_required');
@@ -311,7 +311,7 @@ describe('(3) harness configs registered before the upgrade', () => {
     await expectWiredThenBlockFixed('codex');
   }, 120_000);
 
-  test('a bare `gbrain serve` registration still answers on a PATH that has gbrain; doctor flags it with the rewire fix', async () => {
+  test('a bare `foresights serve` registration still answers on a PATH that has foresights; doctor flags it with the rewire fix', async () => {
     clear();
     writeFileSync(join(h.home, '.claude.json'), JSON.stringify({ mcpServers: { gbrain: { command: 'gbrain', args: ['serve'] } } }));
     await registeredRecall('gbrain', ['serve'], {});
@@ -430,7 +430,7 @@ describe('(5) jobs queued before the upgrade run under the configured budget', (
   afterAll(() => { provider?.stop(true); });
 
   /**
-   * The waiting row a v0.60.37 `gbrain jobs submit embed-backfill --follow` admitted on PGLite (its only queue
+   * The waiting row a v0.60.37 `foresights jobs submit embed-backfill --follow` admitted on PGLite (its only queue
    * path there) and left behind when the process died before the inline claim: name and params only, no
    * submit-time authorization on it.
    */

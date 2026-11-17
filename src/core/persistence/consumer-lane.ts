@@ -20,7 +20,7 @@
  * detectable sign, db.ts `resolvePrepare`: port 6543 or `?prepare=false`),
  * the consumer logs one loud line at start and `status()` reports
  * `connection.pooler_mode: 'transaction'`, so an operator sees the exposure in
- * `gbrain sources writer status --json` before the first stall.
+ * `foresights sources writer status --json` before the first stall.
  *
  * `GBRAIN_CONSUMER_DIRECT_LANE=0` keeps the tick statements on the ordinary
  * pool even with a direct route (the claims, renewals and heartbeat still take
@@ -74,6 +74,6 @@ export function poolerExposureLine(route: ConsumerConnectionRoute): string | nul
   if (route.lane === 'direct' || route.pooler_mode !== 'transaction') return null;
   return '[persistence] phase=start reason=transaction_pooler message="the persistence consumer runs its statements through a transaction-mode pooler '
     + '(prepare=false, port 6543) with no direct route; a round-trip the pooler never completes cannot be ended by any server timeout"; '
-    + 'fix: set GBRAIN_DIRECT_DATABASE_URL to the session-mode (port 5432) or direct URL of the same database and restart; verify: gbrain sources writer status --json (connection.lane: direct); '
+    + 'fix: set GBRAIN_DIRECT_DATABASE_URL to the session-mode (port 5432) or direct URL of the same database and restart; verify: foresights sources writer status --json (connection.lane: direct); '
     + 'docs: docs/ENGINES.md#persistence-consumer-log';
 }

@@ -1,0 +1,4 @@
+---
+kind: action
+---
+The product is now called Foresights and its command is foresights; help, messages and documentation use the new name. The gbrain command stays installed and runs the same program, so scripts, cron jobs, hooks and services from before keep working without edits. Every GBRAIN_* setting also answers to FORESIGHTS_* (when both are set, GBRAIN_* wins). Names saved outside the program keep their old spelling: the ~/.gbrain folder, GBRAIN_* settings, markers inside notes and agent files, schema pack, plugin and skill names, MCP registration names in agent settings, and the [gbrain notice ...] and [gbrain degraded: ...] lines agents parse. Upgrade and install links point at aimonk2025/gbrain instead of the upstream project. If a script or test of yours matches the exact text of a message, update it to say foresights.

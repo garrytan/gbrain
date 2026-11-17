@@ -1,5 +1,5 @@
 /**
- * commands/connectors/status.ts — `gbrain connectors status [provider] [--json]`.
+ * commands/connectors/status.ts — `foresights connectors status [provider] [--json]`.
  *
  * Reuses the `connectors_status` op handler shape via the same helpers, but runs
  * locally (trusted). Never prints the raw cookie/token — only provenance,
@@ -29,7 +29,7 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
     const key = resolveApiToken(only);
     const row = { provider: only, credential_present: !!key, credential_source: key?.source ?? null, credential_file_mode: credentialMode(only) };
     if (json) console.log(JSON.stringify({ providers: [row] }, null, 2));
-    else console.log(key ? `${only}  credential: ${key.source}` : `${only}  no credential (gbrain connectors auth ${only} --token -)`);
+    else console.log(key ? `${only}  credential: ${key.source}` : `${only}  no credential (foresights connectors auth ${only} --token -)`);
     if (!key) setCliExitVerdict(1);
     return;
   }

@@ -17,6 +17,6 @@ export const v153: Migration = {
     const rtt = await measuredRoundTripMs(engine);
     const waiting = n - served ? `; ${n - served} (images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker) stay out of search until rebuilt` : '';
     migrationNotice(`  [153] ${n} page(s) queued for a keyless search index rebuild (no embedding calls). Search keeps answering from the index ${served} of them already had${waiting}. ` +
-      `At the ${rtt} ms round trip measured to this database the rebuild takes about ${textRebuildDuration(n, rtt)}: gbrain projections drain. Progress: gbrain doctor --only text_projection_readiness\n`);
+      `At the ${rtt} ms round trip measured to this database the rebuild takes about ${textRebuildDuration(n, rtt)}: foresights projections drain. Progress: foresights doctor --only text_projection_readiness\n`);
   },
 };

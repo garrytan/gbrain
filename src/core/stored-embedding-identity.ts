@@ -30,11 +30,11 @@ export async function readStoredEmbeddingIdentity(
         WHERE table_schema = 'public' AND table_name = 'content_chunks') AS present
     `);
     if (tables[0]?.present === false) return null;
-    throw new Error('Stored embedding column identity is unavailable. Run gbrain migrate embeddings --status before an explicit migration; the schema has not been resized.');
+    throw new Error('Stored embedding column identity is unavailable. Run foresights migrate embeddings --status before an explicit migration; the schema has not been resized.');
   }
   const dimensions = Number(rows[0].formatted?.match(/^(?:halfvec|vector)\((\d+)\)$/)?.[1]);
   if (!Number.isInteger(dimensions) || dimensions <= 0) {
-    throw new Error('Stored embedding dimensions are unknown. Run gbrain migrate embeddings --status; automatic schema resizing is refused.');
+    throw new Error('Stored embedding dimensions are unknown. Run foresights migrate embeddings --status; automatic schema resizing is refused.');
   }
   const model = await engine.getConfig('embedding_model').catch(() => null);
   return { model: model?.trim() || null, dimensions };

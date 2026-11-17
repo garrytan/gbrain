@@ -124,7 +124,7 @@ const snippet = (text: unknown, max = 80): string => {
 const trustCommand = (...args: string[]): string[] => ['gbrain', 'trust', ...args];
 
 function notFound(ref: string, what: string): Error {
-  return opError('not_found', `No ${what} ${ref}.`, 'Check the ref; gbrain trust review lists what is waiting for you.');
+  return opError('not_found', `No ${what} ${ref}.`, 'Check the ref; foresights trust review lists what is waiting for you.');
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ const defaultHoldStore: HoldStoreAdapter = {
     const held = await getWriteGateHold(tx, id);
     if (held?.kind === 'take') {
       throw opError('unavailable', `h${id} is a held take; releasing takes is not supported yet, so nothing was changed.`,
-        `Drop it with gbrain trust drop h${id}, or add the take yourself with gbrain takes add.`);
+        `Drop it with foresights trust drop h${id}, or add the take yourself with foresights takes add.`);
     }
     if (approved && held?.status === 'held' && !(await approved((await defaultHoldStore.get(tx, id))!))) {
       throw opError('preview_changed', `h${id} changed after you approved it; nothing was changed.`,
@@ -267,7 +267,7 @@ export function currentHoldStore(): HoldStoreAdapter { return holdStore; }
 // Kill switch (DX-13)
 // ---------------------------------------------------------------------------
 
-/** `gbrain trust disable --all`: the values it writes. */
+/** `foresights trust disable --all`: the values it writes. */
 export const TRUST_KILL_SWITCH_VALUES: Readonly<Record<string, string>> = Object.freeze({
   'write_gate.external_mode': 'off',
   'write_gate.agent_mode': 'off',
@@ -293,19 +293,19 @@ async function currentSwitchValues(engine: BrainEngine): Promise<Record<string, 
 // ---------------------------------------------------------------------------
 
 function requireRef(input: OwnerActionInput): TrustRef {
-  if (!input.ref) throw opError('invalid_params', `trust ${input.action} needs a ref.`, 'Pass a ref such as f12, t3, h4, tp7 or p:default/notes/alice-example; gbrain trust review lists them.');
+  if (!input.ref) throw opError('invalid_params', `trust ${input.action} needs a ref.`, 'Pass a ref such as f12, t3, h4, tp7 or p:default/notes/alice-example; foresights trust review lists them.');
   return parseTrustRef(input.ref);
 }
 
 function unsupported(action: OwnerActionName, ref: TrustRef): Error {
   return opError('invalid_params', `trust ${action} does not apply to ${formatTrustRef(ref)}.`,
-    'confirm takes a fact (f12), take (t3), page (p:default/notes/alice-example), trust proposal (tp7) or held write (h4); drop takes a trust proposal or held write; release takes a held write; revert takes an agent-edit trust proposal or a page; allow --remove takes an allow rule (a2). gbrain trust review lists the refs.');
+    'confirm takes a fact (f12), take (t3), page (p:default/notes/alice-example), trust proposal (tp7) or held write (h4); drop takes a trust proposal or held write; release takes a held write; revert takes an agent-edit trust proposal or a page; allow --remove takes an allow rule (a2). foresights trust review lists the refs.');
 }
 
 async function pendingProposal(engine: BrainEngine, id: number): Promise<TrustProposalRow> {
   const p = await getTrustProposal(engine, id);
   if (!p) throw notFound(trustProposalRef(id), 'trust proposal');
-  if (p.status !== 'pending') throw opError('invalid_params', `${trustProposalRef(id)} is already ${p.status}; there is nothing to decide.`, 'gbrain trust review lists what is still pending.');
+  if (p.status !== 'pending') throw opError('invalid_params', `${trustProposalRef(id)} is already ${p.status}; there is nothing to decide.`, 'foresights trust review lists what is still pending.');
   return p;
 }
 
@@ -340,7 +340,7 @@ async function previewConfirm(engine: BrainEngine, ref: TrustRef, input: OwnerAc
     const label = formatTrustRef(ref);
     const row = ref.kind === 'fact' ? await readFactTarget(engine, ref.id) : await readTakeTarget(engine, ref.id);
     if (!row) throw notFound(label, ref.kind);
-    if (!row.live) throw opError('invalid_params', `${label} is no longer active (expired, superseded or forgotten); there is nothing to confirm.`, 'Confirm the row that replaced it instead; gbrain trust explain shows its history.');
+    if (!row.live) throw opError('invalid_params', `${label} is no longer active (expired, superseded or forgotten); there is nothing to confirm.`, 'Confirm the row that replaced it instead; foresights trust explain shows its history.');
     const release = await suppressedFields(engine, row.table, row.id);
     return { action: 'confirm', ref: label, token: label, command: trustCommand('confirm', label), raises: row.tier !== 'user_confirmed' || release.length > 0, binding: row.binding,
       tier: row.tier, target_tier: 'user_confirmed', summary: `Raise ${ref.kind} ${label} (${JSON.stringify(snippet(row.text))}) from "${trustLabel(row.tier)}" to "confirmed by you"`
@@ -353,7 +353,7 @@ async function previewConfirm(engine: BrainEngine, ref: TrustRef, input: OwnerAc
     if (!state) throw notFound(label, 'page');
     if (isQuarantined(state.snapshot.page.frontmatter)) {
       throw opError('invalid_params', `${label} is quarantined; confirming it would not make it visible.`,
-        `Review it first; clearing the quarantine is a separate owner step: gbrain quarantine clear ${slug} --source-id ${sourceId}.`);
+        `Review it first; clearing the quarantine is a separate owner step: foresights quarantine clear ${slug} --source-id ${sourceId}.`);
     }
     return { action: 'confirm', ref: label, token: hash8(`${label}@${state.revision}`), command: trustCommand('confirm', label),
       raises: state.tier !== 'user_confirmed' || state.hasMarker, binding: state.revision, tier: state.tier, target_tier: 'user_confirmed', revision: state.revision,
@@ -387,7 +387,7 @@ async function previewHold(engine: BrainEngine, id: number, action: 'release' | 
 async function previewRevert(engine: BrainEngine, ref: TrustRef, input: OwnerActionInput): Promise<OwnerActionPreview> {
   if (ref.kind === 'proposal') {
     const p = await pendingProposal(engine, ref.id);
-    if (p.action !== 'lower_page') throw opError('invalid_params', `${trustProposalRef(p.id)} is a ${p.action} proposal; only agent-edit items (lower_page) revert.`, `Use gbrain trust confirm ${trustProposalRef(p.id)} or gbrain trust drop ${trustProposalRef(p.id)}.`);
+    if (p.action !== 'lower_page') throw opError('invalid_params', `${trustProposalRef(p.id)} is a ${p.action} proposal; only agent-edit items (lower_page) revert.`, `Use foresights trust confirm ${trustProposalRef(p.id)} or foresights trust drop ${trustProposalRef(p.id)}.`);
     const s = lowerPageState(p);
     return { action: 'revert', ref: trustProposalRef(p.id), token: trustProposalRef(p.id), command: trustCommand('revert', trustProposalRef(p.id)),
       raises: true, binding: await proposalBinding(engine, p), tier: s.edited_tier, target_tier: s.prior_tier, summary: proposalSummary(p, 'Revert') };
@@ -402,9 +402,9 @@ async function previewRevert(engine: BrainEngine, ref: TrustRef, input: OwnerAct
     const lowered = (await pendingTrustProposalsFor(engine, 'pages', state.pageId)).find(p => p.action === 'lower_page');
     versionId = (lowered ? lowerPageState(lowered).version_id : null) ?? await latestPageVersionId(engine, state.pageId);
   }
-  if (versionId === null) throw opError('not_found', `${label} has no earlier version to revert to.`, `gbrain history ${slug} lists a page's versions.`);
+  if (versionId === null) throw opError('not_found', `${label} has no earlier version to revert to.`, `foresights history ${slug} lists a page's versions.`);
   const version = await readPageVersion(engine, state.pageId, versionId);
-  if (!version) throw opError('not_found', `Version ${versionId} is not in the history of ${label}.`, `List the page's versions with gbrain history ${slug} and pass one of their ids to --version.`);
+  if (!version) throw opError('not_found', `Version ${versionId} is not in the history of ${label}.`, `List the page's versions with foresights history ${slug} and pass one of their ids to --version.`);
   const tier = versionTier(version);
   return { action: 'revert', ref: label, token: hash8(`${label}@${state.revision}#${versionId}`), command: [...trustCommand('revert', label), '--version', String(versionId)],
     raises: true, binding: bindingOf({ revision: state.revision, version: versionId }), tier: state.tier, target_tier: tier, revision: state.revision, version_id: versionId,
@@ -438,7 +438,7 @@ export async function previewOwnerAction(engine: BrainEngine, input: OwnerAction
     }
     case 'allow_remove': {
       const id = input.ref ? parseAllowRuleRef(input.ref) : null;
-      if (id === null) throw opError('invalid_params', 'trust allow --remove needs an allow rule ref a<id>.', 'gbrain trust review lists the allow rules with their refs.');
+      if (id === null) throw opError('invalid_params', 'trust allow --remove needs an allow rule ref a<id>.', 'foresights trust review lists the allow rules with their refs.');
       const rule = await getTrustAllowRule(engine, id);
       if (!rule || rule.removed_at) throw notFound(`a${id}`, 'active allow rule');
       return { action: 'allow_remove', ref: rule.ref, token: rule.ref, command: trustCommand('allow', '--remove', rule.ref), raises: false,
@@ -470,7 +470,7 @@ export function ownerActionFix(preview: OwnerActionPreview) {
 function fromDecision(action: OwnerActionName, d: TrustDecisionResult): OwnerActionResult {
   if (d.status === 'stale' || d.status === 'refused' || d.status === 'not_found') {
     throw opError('preview_changed', `${d.ref} could not be decided (${d.status}${d.reason ? `: ${d.reason}` : ''}); nothing was changed.`,
-      'Run gbrain trust review to see its current state.');
+      'Run foresights trust review to see its current state.');
   }
   return { action, ref: d.ref, status: d.status, ...(d.detail ? { detail: d.detail } : {}) };
 }
@@ -528,14 +528,14 @@ export async function applyOwnerAction(engine: BrainEngine, input: OwnerActionIn
         const released = await holdStore.publish?.(engine, ref.id, principalLabel(by), opts.config, opts.binding)
           ?? await engine.transaction(tx => holdStore.release(tx, ref.id, principalLabel(by),
             async row => holdBinding(row, (await releaseCellOf(tx, row))?.fields ?? null) === opts.binding));
-        if (!released) throw opError('preview_changed', `h${ref.id} was decided meanwhile; nothing was changed.`, 'Run gbrain trust review.');
+        if (!released) throw opError('preview_changed', `h${ref.id} was decided meanwhile; nothing was changed.`, 'Run foresights trust review.');
         return { action: 'release', ref: preview.ref, status: 'released', tier: 'user_confirmed', prior_tier: preview.tier };
       }
       throw unsupported(input.action, ref!);
     }
     case 'drop': {
       if (ref?.kind === 'hold') {
-        if (!(await engine.transaction(tx => holdStore.drop(tx, ref.id, principalLabel(by))))) throw opError('preview_changed', `h${ref.id} was decided meanwhile; nothing was changed.`, 'Run gbrain trust review.');
+        if (!(await engine.transaction(tx => holdStore.drop(tx, ref.id, principalLabel(by))))) throw opError('preview_changed', `h${ref.id} was decided meanwhile; nothing was changed.`, 'Run foresights trust review.');
         return { action: 'drop', ref: preview.ref, status: 'dropped' };
       }
       if (ref?.kind === 'proposal') return fromDecision('drop', await decideTrustProposal(engine, ref.id, 'reject', decision));
@@ -544,7 +544,7 @@ export async function applyOwnerAction(engine: BrainEngine, input: OwnerActionIn
     case 'revert': {
       if (ref?.kind === 'proposal') {
         const p = (await getTrustProposal(engine, ref.id))!;
-        if (p.status !== 'pending') throw opError('preview_changed', `${trustProposalRef(p.id)} is ${p.status}; nothing was changed.`, 'Run gbrain trust review.');
+        if (p.status !== 'pending') throw opError('preview_changed', `${trustProposalRef(p.id)} is ${p.status}; nothing was changed.`, 'Run foresights trust review.');
         return fromDecision('revert', await revertLoweredPage(engine, p, decision));
       }
       if (ref?.kind === 'page') {
@@ -559,7 +559,7 @@ export async function applyOwnerAction(engine: BrainEngine, input: OwnerActionIn
     }
     case 'allow_remove': {
       const rule = await removeTrustAllowRule(engine, parseAllowRuleRef(input.ref!)!, by);
-      if (!rule) throw opError('preview_changed', `${preview.ref} was removed meanwhile.`, 'Run gbrain trust review.');
+      if (!rule) throw opError('preview_changed', `${preview.ref} was removed meanwhile.`, 'Run foresights trust review.');
       return { action: 'allow_remove', ref: rule.ref, status: 'removed', detail: { rule: rule as TrustAllowRule } };
     }
     case 'disable': {

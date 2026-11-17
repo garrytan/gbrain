@@ -78,7 +78,7 @@ export function processTableBlind(): string | null {
   if (process.platform !== 'linux') return `this platform (${process.platform}) gives no way to list the processes that hold a file open`;
   try {
     const nspid = /^NSpid:\s*(.*)$/m.exec(readFileSync('/proc/self/status', 'utf8'))?.[1]?.trim().split(/\s+/) ?? [];
-    if (nspid.length > 1) return 'gbrain runs in a nested PID namespace (a container), so a git running outside it is invisible';
+    if (nspid.length > 1) return 'foresights runs in a nested PID namespace (a container), so a git running outside it is invisible';
     for (const line of readFileSync('/proc/self/mountinfo', 'utf8').split('\n')) {
       const [mount, options] = line.split(' - ');
       if (mount?.split(' ')[4] === '/proc' && /(^|,)hidepid=(1|2|invisible|noaccess)(,|$)/.test(options?.split(' ')[2] ?? '')) {
@@ -214,7 +214,7 @@ export function reclaimIndexLock(lock: string, checkout: string, proof: IndexLoc
   unlinkSync(aside);
   const receipt = { at: new Date().toISOString(), checkout, lock, size: proof.size, age_ms: Math.round(proof.ageMs), pid: process.pid };
   try { recordReceipt(receipt); } catch { /* the log line below still records it */ }
-  console.error(`[gbrain] reclaimed an abandoned Git index lock in ${checkout}: ${lock} (${proof.size} bytes, ${Math.round(proof.ageMs / 1000)}s old, no live process held it); retrying the Git effect`);
+  console.error(`[foresights] reclaimed an abandoned Git index lock in ${checkout}: ${lock} (${proof.size} bytes, ${Math.round(proof.ageMs / 1000)}s old, no live process held it); retrying the Git effect`);
   return receipt;
 }
 

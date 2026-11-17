@@ -1,5 +1,5 @@
 /**
- * `gbrain notices mute <code>` / `unmute <code>` / `list [--json]` (agent
+ * `foresights notices mute <code>` / `unmute <code>` / `list [--json]` (agent
  * contract v1, A6). The trusted local owner's mutes apply to every surface
  * for coaching/info notices. Engine-free.
  */
@@ -7,7 +7,7 @@ import { writeStdoutFinal, setCliExitVerdict } from '../../core/cli-force-exit.t
 import { mutedNoticeCodes, setNoticeMuted, unmuteNoticeForOwner } from '../../core/notice-ledger.ts';
 import { MUTEABLE_NOTICE_CODES } from '../../core/ops/notices.ts';
 
-const HELP = `Usage: gbrain notices <mute|unmute> <code> | gbrain notices list [--json]
+const HELP = `Usage: foresights notices <mute|unmute> <code> | foresights notices list [--json]
 
 Mute a coaching or info notice (or the first_run_decisions ask) for every
 agent connected to this brain. Unmute clears the owner's mute and the one set

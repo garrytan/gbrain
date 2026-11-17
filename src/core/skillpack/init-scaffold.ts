@@ -1,9 +1,9 @@
 /**
- * skillpack/init-scaffold.ts — `gbrain skillpack init <name>` scaffold.
+ * skillpack/init-scaffold.ts — `foresights skillpack init <name>` scaffold.
  *
  * Cathedral default per codex T4 + DX-Round-2: lands a complete 10/10
  * pack tree out of the box. Publisher edits or deletes what they don't
- * need; `gbrain skillpack doctor --quick` on a freshly-init'd pack
+ * need; `foresights skillpack doctor --quick` on a freshly-init'd pack
  * passes 10/10 immediately.
  *
  * `--minimal` flag drops test/, e2e/, evals/ for power users who
@@ -177,13 +177,13 @@ export function runInitScaffold(opts: InitScaffoldOptions): InitScaffoldResult {
     content: [
       '# Bootstrap',
       '',
-      'Post-scaffold steps. gbrain displays this but does NOT auto-execute.',
+      'Post-scaffold steps. foresights displays this but does NOT auto-execute.',
       'The agent reads it and walks per-step at its own discretion.',
       '',
       `1. show user: "${opts.name} is installed. Try one of the trigger phrases from skills/${firstSlug}/SKILL.md."`,
-      // #3697: `gbrain put_page ... --frontmatter` never resolved (CLI name is
+      // #3697: `foresights put_page ... --frontmatter` never resolved (CLI name is
       // `put`, content arrives on stdin, and no --frontmatter flag exists).
-      `2. (edit me) agent: printf -- '---\\ntype: config\\n---\\n\\nconfig body\\n' | gbrain put wiki/_${opts.name}-config`,
+      `2. (edit me) agent: printf -- '---\\ntype: config\\n---\\n\\nconfig body\\n' | foresights put wiki/_${opts.name}-config`,
       '',
     ].join('\n'),
   });
@@ -212,7 +212,7 @@ export function runInitScaffold(opts: InitScaffoldOptions): InitScaffoldResult {
       '## Install',
       '',
       '```bash',
-      `gbrain skillpack scaffold your-user/skillpack-${opts.name}`,
+      `foresights skillpack scaffold your-user/skillpack-${opts.name}`,
       '```',
       '',
       '## What it does',

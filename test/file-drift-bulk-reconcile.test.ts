@@ -1,7 +1,7 @@
 /**
  * #6696 PR C, C7: bulk file-drift reconcile.
  *
- * `gbrain repair file-drift` takes repeatable `--only` / `--skip` globs over
+ * `foresights repair file-drift` takes repeatable `--only` / `--skip` globs over
  * the canonical file path, like the other kinds' `--only` (`*` within a
  * segment, `**` across segments, an exact path matches itself), bound into the preview hash and
  * carried through the printed apply command, so executing that exact command
@@ -166,7 +166,7 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
   };
   /**
    * Three concepts drifted by an appended line, one person rewritten (another drift class); each with a conflict receipt.
-   * Each file goes back to bytes gbrain wrote for it earlier, so the database copy is the newer side and a database-wins
+   * Each file goes back to bytes foresights wrote for it earlier, so the database copy is the newer side and a database-wins
    * repair discards nothing (a file edit sync never imported is kept_newer_file instead, GST-2579).
    */
   async function driftedPages(root: string, ctx: OperationContext): Promise<void> {

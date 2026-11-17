@@ -20,12 +20,12 @@ afterEach(() => clearGatewayModelSources());
 
 describe('#5304 model_not_found names the selecting config key', () => {
   test('normalizeAIError appends the route hint to the 404 fix after the model sentence', () => {
-    const err = normalizeAIError(openai404('gpt-x'), 'chat(openai:gpt-x)', undefined, 'Selected via models.tier.reasoning. Fix: gbrain config set models.tier.reasoning <provider>:<model>');
+    const err = normalizeAIError(openai404('gpt-x'), 'chat(openai:gpt-x)', undefined, 'Selected via models.tier.reasoning. Fix: foresights config set models.tier.reasoning <provider>:<model>');
     expect(err).toBeInstanceOf(AIConfigError);
     const fix = (err as AIConfigError).fix!;
     expect(fix).toContain('the openai provider does not serve openai:gpt-x');
-    expect(fix.indexOf('`gbrain models`')).toBeLessThan(fix.indexOf('Selected via models.tier.reasoning.'));
-    expect(fix.endsWith('Fix: gbrain config set models.tier.reasoning <provider>:<model>')).toBe(true);
+    expect(fix.indexOf('`foresights models`')).toBeLessThan(fix.indexOf('Selected via models.tier.reasoning.'));
+    expect(fix.endsWith('Fix: foresights config set models.tier.reasoning <provider>:<model>')).toBe(true);
   });
 
   test('chat: a tier_config route names models.tier.reasoning and the config set command', () => {
@@ -35,13 +35,13 @@ describe('#5304 model_not_found names the selecting config key', () => {
     const fix = (err as AIConfigError).fix!;
     expect(fix).toContain('the openai provider does not serve openai:gpt-x');
     expect(fix).toContain('Selected via models.tier.reasoning.');
-    expect(fix).toContain('gbrain config set models.tier.reasoning <provider>:<model>');
+    expect(fix).toContain('foresights config set models.tier.reasoning <provider>:<model>');
   });
 
   test('chat: config_key, models_default, deprecated_key and cli_flag routes name their origin', () => {
-    expect(hint.modelRouteHint({ source: 'config_key', origin: 'models.chat' }, 'chat')).toBe('Selected via models.chat. Fix: gbrain config set models.chat <provider>:<model>');
-    expect(hint.modelRouteHint({ source: 'models_default', origin: 'models.default' }, 'chat')).toBe('Selected via models.default. Fix: gbrain config set models.default <provider>:<model>');
-    expect(hint.modelRouteHint({ source: 'deprecated_key', origin: 'chat_model' }, 'chat')).toBe('Selected via chat_model (deprecated key). Fix: gbrain config unset chat_model, then gbrain config set models.chat <provider>:<model>');
+    expect(hint.modelRouteHint({ source: 'config_key', origin: 'models.chat' }, 'chat')).toBe('Selected via models.chat. Fix: foresights config set models.chat <provider>:<model>');
+    expect(hint.modelRouteHint({ source: 'models_default', origin: 'models.default' }, 'chat')).toBe('Selected via models.default. Fix: foresights config set models.default <provider>:<model>');
+    expect(hint.modelRouteHint({ source: 'deprecated_key', origin: 'chat_model' }, 'chat')).toBe('Selected via chat_model (deprecated key). Fix: foresights config unset chat_model, then foresights config set models.chat <provider>:<model>');
     expect(hint.modelRouteHint({ source: 'cli_flag', origin: '--model' }, 'chat')).toBe('Selected via --model. Fix: pass a model the provider serves.');
   });
 
@@ -52,14 +52,14 @@ describe('#5304 model_not_found names the selecting config key', () => {
 
   test('chat: the built-in default names the tier key to set', () => {
     setGatewayModelSource('chat', 'anthropic:claude-old', { source: 'tier_default', origin: 'built-in default' });
-    expect(hint.gatewayModelNotFoundHint('chat', 'anthropic:claude-old')).toBe('Selected via the built-in default. Fix: gbrain config set models.tier.reasoning <provider>:<model>');
+    expect(hint.gatewayModelNotFoundHint('chat', 'anthropic:claude-old')).toBe('Selected via the built-in default. Fix: foresights config set models.tier.reasoning <provider>:<model>');
   });
 
   test('expansion: the utility tier and models.expansion are named for the expansion touchpoint', () => {
     setGatewayModelSource('expansion', 'openai:gpt-small', { source: 'tier_config', origin: 'models.tier.utility' });
-    expect(hint.gatewayModelNotFoundHint('expansion', 'openai:gpt-small')).toBe('Selected via models.tier.utility. Fix: gbrain config set models.tier.utility <provider>:<model>');
+    expect(hint.gatewayModelNotFoundHint('expansion', 'openai:gpt-small')).toBe('Selected via models.tier.utility. Fix: foresights config set models.tier.utility <provider>:<model>');
     setGatewayModelSource('expansion', 'openai:gpt-small', { source: 'tier_default', origin: 'built-in default' });
-    expect(hint.gatewayModelNotFoundHint('expansion', 'openai:gpt-small')).toBe('Selected via the built-in default. Fix: gbrain config set models.tier.utility <provider>:<model>');
+    expect(hint.gatewayModelNotFoundHint('expansion', 'openai:gpt-small')).toBe('Selected via the built-in default. Fix: foresights config set models.tier.utility <provider>:<model>');
     const err = normalizeAIError(openai404('gpt-small'), 'expand(openai:gpt-small)', undefined, hint.gatewayModelNotFoundHint('expansion', 'openai:gpt-small'));
     expect((err as AIConfigError).fix).toContain('models.tier.utility');
   });
@@ -67,8 +67,8 @@ describe('#5304 model_not_found names the selecting config key', () => {
   test('embed: embedding_model is named with its schema-sizing guard, never a bare config set', () => {
     const text = hint.embeddingModelNotFoundHint();
     expect(text).toContain('Selected via embedding_model.');
-    expect(text).toContain('gbrain doctor');
-    expect(text).not.toMatch(/Fix: gbrain config set embedding_model <provider>:<model>$/);
+    expect(text).toContain('foresights doctor');
+    expect(text).not.toMatch(/Fix: (?:foresights|gbrain) config set embedding_model <provider>:<model>$/);
     const err = normalizeAIError(openai404('text-embedding-old'), 'embed(openai:text-embedding-old)', undefined, text);
     expect((err as AIConfigError).fix).toContain('embedding_model');
   });
@@ -78,7 +78,7 @@ describe('#5304 model_not_found names the selecting config key', () => {
     setGatewayModelSource('chat', 'openai:gpt-x', { source: 'tier_config', origin: 'models.tier.reasoning' });
     expect(hint.gatewayModelNotFoundHint('chat', 'openai:gpt-other')).toBe('');
     const plain = normalizeAIError(openai404('gpt-x'), 'chat(openai:gpt-x)', undefined, '');
-    expect((plain as AIConfigError).fix).toContain('`gbrain models`');
+    expect((plain as AIConfigError).fix).toContain('`foresights models`');
     expect((plain as AIConfigError).fix).not.toContain('Selected via');
     const auth = normalizeAIError(Object.assign(new Error('bad key'), { statusCode: 401 }), 'chat(openai:gpt-x)', undefined, hint.gatewayModelNotFoundHint('chat', 'openai:gpt-x'));
     expect((auth as AIConfigError).fix).toBe('Check your API key is valid and has access to this model.');

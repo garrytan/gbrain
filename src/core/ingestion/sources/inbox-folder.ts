@@ -68,7 +68,7 @@ export interface InboxFolderSourceOpts {
    * unknown) in the inbox with a warning, instead of emitting and archiving
    * them: the capture handler refuses binary content, so archiving would hide
    * a file that never became a page. Dot files (.DS_Store) are skipped
-   * silently. Default false (every file is emitted). `gbrain inbox` sets it.
+   * silently. Default false (every file is emitted). `foresights inbox` sets it.
    */
   textOnly?: boolean;
   /** chokidar awaitWriteFinish stability threshold. Default 1000. */
@@ -443,7 +443,7 @@ export function listInboxFiles(inboxDir: string, archiveSubdir = '.archived'): s
 
 /**
  * Capture every file waiting in the inbox once, in order, then return: the
- * one-shot form of the watcher (`gbrain inbox run --once`). Same per-file
+ * one-shot form of the watcher (`foresights inbox run --once`). Same per-file
  * rules as the watcher (symlinks refused, archive after emit, textOnly).
  */
 export async function processInboxOnce(

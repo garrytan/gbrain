@@ -38,7 +38,7 @@ function compileForExport(page: ParsedMarkdown, sourceId: string): void {
     if (!(error instanceof OperationError) || error.canonicalCode !== 'invalid_fence') throw error;
     const argv = ['gbrain', 'repair', 'fences', '--source', sourceId, '--slug', page.slug];
     error.suggestion = `Page ${page.slug} in source ${sourceId} was not exported: the fence the message names does not parse. Preview its repair with ${argv.join(' ')} `
-      + '(read-only; it names the exact edit when gbrain will not repair it), apply the plan it prints, then preview the export again.';
+      + '(read-only; it names the exact edit when foresights will not repair it), apply the plan it prints, then preview the export again.';
     error.fix = readFix(`Previews the fence repair of ${page.slug}, read-only, with the apply command.`, { argv });
     throw error;
   }
@@ -83,7 +83,7 @@ export async function assertExportProjectionRoundtrip(engine: BrainEngine, page:
     if (take.resolvedQuality !== undefined) {
       if (!take.resolvedBy) {
         throw new OperationError('unsupported_export_data', `Canonical takes row ${take.rowNum} has a resolution without resolved_by. Restore the recorded resolver in the fence before export; no identity was inferred.`,
-          `Add the resolver to takes row ${take.rowNum}'s resolved_by column, then preview the export again; gbrain never guesses who resolved a take.`);
+          `Add the resolver to takes row ${take.rowNum}'s resolved_by column, then preview the export again; foresights never guesses who resolved a take.`);
       }
       resolution = deriveResolutionTuple({ quality: take.resolvedQuality, resolvedBy: take.resolvedBy });
     }

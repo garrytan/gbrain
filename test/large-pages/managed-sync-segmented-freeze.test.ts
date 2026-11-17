@@ -5,7 +5,7 @@
  *    the stored page read back whole, as its publication does, so a segmented page up to the single-string ceiling earns
  *    exactly the outcome its inline twin earns (here the `worktree_dirty` hold) and the run completes. A page whose
  *    stored body cannot be read (segment rows that do not tile it) is held at the freeze, naming
- *    `page_body_rows_unreadable`, while the rest of the commit imports and the run completes; `gbrain sync status` classifies
+ *    `page_body_rows_unreadable`, while the rest of the commit imports and the run completes; `foresights sync status` classifies
  *    that hold by its page-body code. A run that does stop in its freeze phase reports `request_id: null` (none admitted).
  * 2. Fails when: the freeze reads the snapshot's throwing body getter (`rowToPage.compiled_truth`, `page_body_segmented`)
  *    and the run stops `blocked` with a recorded failure, or a page-body fault blocks the run instead of holding the page.

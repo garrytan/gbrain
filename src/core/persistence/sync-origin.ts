@@ -36,7 +36,7 @@ export function sameSyncOrigin(stored: string, origin: string, context?: SyncOri
   if (nested && existsSync(join(context.root, stripped))) {
     const error = new OperationError('page_identity_changed', 'A recorded page origin could name two files in this source.',
       `Source '${context.sourceId}' records '${recorded}', which can mean the file '${stripped}' or the file '${recorded}' under the source directory. `
-      + `On the source host, rename or move one of those two files, commit, then run gbrain sync --source ${context.sourceId} --no-pull.`);
+      + `On the source host, rename or move one of those two files, commit, then run foresights sync --source ${context.sourceId} --no-pull.`);
     error.detail = 'ambiguous_source_path';
     throw error;
   }
@@ -90,7 +90,7 @@ export function selectOriginClaimant<T extends { deleted_at: unknown }>(pages: r
 
 /** The exit a shared-origin refusal names: soft-delete the page that should not own the file; the file stays for the survivor. */
 export function sharedOriginExit(sourceId: string, slugs: readonly string[]): string {
-  return `Soft-delete the page that should not own the file (gbrain delete <slug> --source-id ${sourceId} --expected-revision <rev>, one of ${slugs.join(', ')}): a page whose file another live page records is hidden without touching the file, which the surviving page keeps.`;
+  return `Soft-delete the page that should not own the file (foresights delete <slug> --source-id ${sourceId} --expected-revision <rev>, one of ${slugs.join(', ')}): a page whose file another live page records is hidden without touching the file, which the surviving page keeps.`;
 }
 
 /** `assertSyncPageOrigin`'s read (the POSIX spelling): the source's pages recording one of the candidate origins. */

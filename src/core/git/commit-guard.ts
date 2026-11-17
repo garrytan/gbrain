@@ -1,15 +1,15 @@
 /**
  * GBRA-180: the opt-in commit guard for a brain checkout several writers
  * share. A local, untracked prepare-commit-msg hook refuses every commit
- * gbrain did not make under the checkout's commit lock: a plain git commit,
+ * foresights did not make under the checkout's commit lock: a plain git commit,
  * -a, --amend, and --no-verify too (that flag skips only pre-commit and
- * commit-msg). gbrain's own commits carry GBRAIN_COMMIT_VIA naming the lock
+ * commit-msg). foresights's own commits carry GBRAIN_COMMIT_VIA naming the lock
  * they hold; its in-memory merges never run commit hooks. A merge commit, and
  * a commit that finishes a merge, cherry-pick, revert or rebase, pass: refusing
  * those would leave the operation half done in the shared tree. A refused
  * commit changes nothing (the index keeps what its writer staged). A person
  * bypasses it for one command with GBRAIN_COMMIT_GUARD=off. Off unless the
- * brain opts in with gbrain git guard --install; CLI-only.
+ * brain opts in with foresights git guard --install; CLI-only.
  */
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -29,15 +29,15 @@ export const GUARD_BYPASS_ENV = 'GBRAIN_COMMIT_GUARD';
 export const GUARD_ENFORCE_MARKER = '# mode: enforce (managed worktree: only its owner commits; cherry-pick, revert, rebase and sequencer commits are refused too)';
 export type GuardMode = 'default' | 'enforce';
 
-/** No mode: the shared-checkout guard of `gbrain git guard`. A mode: the owner-path guard of `gbrain sources guard`. */
+/** No mode: the shared-checkout guard of `foresights git guard`. A mode: the owner-path guard of `foresights sources guard`. */
 export function renderGuardHook(owner?: GuardMode): string {
   const enforce = owner === 'enforce';
   return `#!/usr/bin/env bash
 ${GUARD_BANNER}
 ${enforce ? `${GUARD_ENFORCE_MARKER}
-# LOCAL + untracked: installed by gbrain sources guard <source> --install --mode enforce, removed by --uninstall.`
-    : owner ? '# LOCAL + untracked: installed by gbrain sources guard <source> --install, removed by --uninstall.'
-    : '# LOCAL + untracked: installed by gbrain git guard --install, removed by --uninstall.'}
+# LOCAL + untracked: installed by foresights sources guard <source> --install --mode enforce, removed by --uninstall.`
+    : owner ? '# LOCAL + untracked: installed by foresights sources guard <source> --install, removed by --uninstall.'
+    : '# LOCAL + untracked: installed by foresights git guard --install, removed by --uninstall.'}
 # Refuses commits in this shared brain checkout (--no-verify included) that did not come
 # through gbrain git commit-push or gbrain's own page writes, which hold the commit lock.
 # A person can bypass it for one command: ${GUARD_BYPASS_ENV}=off git <command>
@@ -83,14 +83,14 @@ export function installGuard(repo: string): GuardStatus & { changed: boolean } {
   assertManagedFilesystemWrite(root);
   const [maj, min] = gitVersion(root);
   if (maj < 2 || (maj === 2 && min < 31)) {
-    throw opError('git_unavailable', `The commit guard needs git 2.31 or later (found ${maj}.${min}).`, 'Upgrade git on this machine, then rerun gbrain git guard --install. Nothing was changed.');
+    throw opError('git_unavailable', `The commit guard needs git 2.31 or later (found ${maj}.${min}).`, 'Upgrade git on this machine, then rerun foresights git guard --install. Nothing was changed.');
   }
   const { path, tracked } = hookFile(root);
   const script = renderGuardHook();
   const current = existsSync(path) ? readFileSync(path, 'utf8') : null;
   if (current !== null && !current.includes(GUARD_BANNER)) {
-    throw opError('git_unavailable', `${path} is another tool's ${GUARD_HOOK} hook; gbrain does not replace it.`,
-      'Move that hook aside or chain it yourself, then rerun gbrain git guard --install. Nothing was changed.', { detail: path });
+    throw opError('git_unavailable', `${path} is another tool's ${GUARD_HOOK} hook; foresights does not replace it.`,
+      'Move that hook aside or chain it yourself, then rerun foresights git guard --install. Nothing was changed.', { detail: path });
   }
   if (current === script) return { ...guardStatus(root), changed: false };
   mkdirSync(dirname(path), { recursive: true });
@@ -108,11 +108,11 @@ export function uninstallGuard(repo: string): GuardStatus & { changed: boolean }
   return { ...guardStatus(root), changed: true };
 }
 
-// ── PR B Part 5: the owner-path guard (gbrain sources guard) ───────────────
+// ── PR B Part 5: the owner-path guard (foresights sources guard) ───────────────
 
 /** The hooks directory private to one worktree; core.hooksPath points there through `git config --worktree`. */
 export const OWNER_HOOKS_DIR = 'gbrain-hooks';
-const GBRAIN_HOOK = /^# gbrain (commit guard|brain-durability post-commit hook)/m;
+const GBRAIN_HOOK = /^# (?:foresights|gbrain) (commit guard|brain-durability post-commit hook)/m;
 
 export interface OwnerGuardStatus {
   installed: boolean;
@@ -150,7 +150,7 @@ function ownerPaths(worktree: string) {
   return { root, gitDir, common, own, hook: join(own, GUARD_HOOK), effective };
 }
 
-/** Active hooks at `dir` that gbrain did not write (sample files and gbrain's own hooks are not foreign). */
+/** Active hooks at `dir` that foresights did not write (sample files and foresights's own hooks are not foreign). */
 function foreignHooks(dir: string): string[] {
   let names: string[];
   try { names = readdirSync(dir); } catch { return []; }
@@ -174,7 +174,7 @@ export function ownerGuardStatus(worktree: string): OwnerGuardStatus {
  * Point only this worktree's core.hooksPath at a hooks directory inside its own git dir and write the guard there. With
  * linked worktrees present, extensions.worktreeConfig is enabled first (moving core.bare / core.worktree into the main
  * worktree's config.worktree, as git requires), so a sibling worktree keeps its own hooks. Refuses, changing nothing, on
- * git older than 2.31 or another tool's hook at the effective hooks path. gbrain's own hooks there (the brain-durability
+ * git older than 2.31 or another tool's hook at the effective hooks path. foresights's own hooks there (the brain-durability
  * post-commit hook decides whether Git effects commit and push) are copied along, so the switch silences none of them.
  * The caller holds the worktree's writer lock.
  */
@@ -186,8 +186,8 @@ export function installOwnerGuard(worktree: string, mode: GuardMode): OwnerGuard
   }
   const before = ownerGuardStatus(p.root);
   if (before.foreign.length) {
-    throw opError('git_unavailable', `Another tool's hook(s) live at this worktree's hooks path ${p.effective}: ${before.foreign.join(', ')}; gbrain does not replace or silence them.`,
-      'Move those hooks aside or chain them yourself, then rerun the same gbrain sources guard --install command. Nothing was changed.', { detail: before.foreign.join(',') });
+    throw opError('git_unavailable', `Another tool's hook(s) live at this worktree's hooks path ${p.effective}: ${before.foreign.join(', ')}; foresights does not replace or silence them.`,
+      'Move those hooks aside or chain them yourself, then rerun the same foresights sources guard --install command. Nothing was changed.', { detail: before.foreign.join(',') });
   }
   const script = renderGuardHook(mode);
   const current = existsSync(p.hook) ? readFileSync(p.hook, 'utf8') : null;

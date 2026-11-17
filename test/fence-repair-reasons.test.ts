@@ -48,7 +48,7 @@ describe('FENCE_REASONS', () => {
     for (const reason of OWNER_CONDITIONS) {
       expect([reason, FENCE_REASONS[reason].actor, FENCE_REASONS[reason].stage, FENCE_REASONS[reason].tier]).toEqual([reason, 'host_admin', 'repair', null]);
       expect([reason, FENCE_REASONS[reason].autoRetry]).toEqual([reason, reason === 'transfer_in_progress' || reason === 'clone_in_progress']);
-      expect(FENCE_REASONS[reason].fix).toContain('gbrain sources writer status --source <source> --json');
+      expect(FENCE_REASONS[reason].fix).toContain('foresights sources writer status --source <source> --json');
     }
     expect(FENCE_REASONS.host_mismatch.fix).toContain('never copy or regenerate host.json');
   });

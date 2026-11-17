@@ -8,7 +8,7 @@ export const v038: Migration = {
   // so query results don't bypass the allow-list) lives in src/core/chunkers/takes-strip.ts.
   // Default permissions = {takes_holders: ['world']} keeps non-world takes (hunches,
   // private opinions) hidden from MCP-bound tokens until the operator explicitly
-  // grants access via `gbrain auth permissions <id> set-takes-holders`.
+  // grants access via `foresights auth permissions <id> set-takes-holders`.
   sql: `
       ALTER TABLE access_tokens
         ADD COLUMN IF NOT EXISTS permissions JSONB

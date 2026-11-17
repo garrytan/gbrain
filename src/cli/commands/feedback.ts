@@ -1,5 +1,5 @@
 /**
- * `gbrain feedback`: post-connect dispatch; the record lives in
+ * `foresights feedback`: post-connect dispatch; the record lives in
  * src/cli/command-table.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';

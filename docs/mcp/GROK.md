@@ -1,4 +1,4 @@
-# Connect GBrain to Grok Build
+# Connect Foresights to Grok Build
 
 This guide is for the **Grok Build CLI**. For the personal **Grok Bot** with its own computer, use the dedicated [Grok Bot guide](../guides/grok-bot.md).
 
@@ -8,23 +8,23 @@ This guide is for the **Grok Build CLI**. For the personal **Grok Bot** with its
 > Troubleshooting). For the full brain install — CLI, engine, skills, dream
 > cycle — follow [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md) first;
 > this page wires the finished brain into Grok Build over stdio MCP.
-> The `gbrain bootstrap` persistent-personal-agent path is **not yet
+> The `foresights bootstrap` persistent-personal-agent path is **not yet
 > supported for Grok** (Claude Code and Codex only today) — brain-only
 > install is what this page delivers.
 
-Grok Build spawns `gbrain serve` as a local stdio subprocess. No server, no
+Grok Build spawns `foresights serve` as a local stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
 
 ## Register (recommended)
 
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+grok mcp add foresights -e "GBRAIN_HOME=$HOME" -- "$(command -v foresights)" serve --surface starter --advertise verbs
 ```
 
 `--surface starter` lists the daily-driver tools: the seven memory verbs
 ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)), `search`, `query`,
 `get_page`, `put_page`, `capture`, graph reads and skills. It is the surface every
-new registration gbrain writes pins. A parameter it leaves out is still accepted,
+new registration foresights writes pins. A parameter it leaves out is still accepted,
 and `request_tools` returns full schemas or widens the session to a left-out tool. `--surface full` lists every
 operation (`put_pages`, admin and tuning ops) and is the opt-in; `--surface verbs`
 lists only the seven verbs.
@@ -45,10 +45,10 @@ Registering the MCP server only makes the tools available. Agents seldom call a
 brain nobody told them about, so finish the install with:
 
 ```bash
-gbrain setup grok-build --instructions-only
+foresights setup grok-build --instructions-only
 ```
 
-Grok Build has no instruction file gbrain writes, so this prints the block to
+Grok Build has no instruction file foresights writes, so this prints the block to
 paste into your Grok Build instructions: search the brain before reading
 sources one by one, read the best hit, fill gaps with other tools, apply your own
 access rules, then finish the task. Keep the marker lines, so a later paste
@@ -73,8 +73,8 @@ GBRAIN_HOME = "/home/alice-example"
 ```
 
 `startup_timeout_sec` defaults to 30; raise it (or export
-`GROK_MCP_STARTUP_TIMEOUT_SECS`) if gbrain runs from source via `bun run`,
-which cold-transpiles on first spawn. To remove gbrain, delete the block (or
+`GROK_MCP_STARTUP_TIMEOUT_SECS`) if foresights runs from source via `bun run`,
+which cold-transpiles on first spawn. To remove foresights, delete the block (or
 set `enabled = false` to disable without losing the config).
 
 ## Zero-config vendor fallback
@@ -83,7 +83,7 @@ Grok Build also reads MCP registrations from `~/.claude.json`, `.cursor/mcp.json
 and a project `.mcp.json` — at lower priority than its own config, and **only
 for folders you have trusted** in Grok (fresh folders report
 `folder untrusted` until you accept the trust prompt). If you already
-registered gbrain for Claude Code, Grok may pick it up with zero
+registered foresights for Claude Code, Grok may pick it up with zero
 configuration. `grok mcp doctor --json` reports every source it consulted
 and which one each server came from — check the `source` field to see which
 config won before assuming the native one did.
@@ -92,16 +92,16 @@ config won before assuming the native one did.
 
 ```bash
 grok mcp list --json        # entry: {"name":"gbrain","enabled":true,...}
-grok mcp doctor gbrain      # THE real probe: spawns the server
+grok mcp doctor foresights      # THE real probe: spawns the server
 ```
 
-`grok mcp doctor gbrain` performs the actual handshake — expect the checks
+`grok mcp doctor foresights` performs the actual handshake — expect the checks
 `command found`, `server started`, `handshake OK`, and `N tools discovered`
 (the full surface; 7 on `--surface verbs`), exit 0. A broken registration exits 1 with a failing
 check and a hint. Then one real round-trip:
 
 ```bash
-grok -p "use the gbrain recall tool to answer: what did I import most recently?"
+grok -p "use the foresights recall tool to answer: what did I import most recently?"
 ```
 
 `grok -p` (single-turn headless) prints the final answer on stdout.
@@ -110,13 +110,13 @@ grok -p "use the gbrain recall tool to answer: what did I import most recently?"
 
 Grok Build writes one `chat_history.jsonl` per session under
 `~/.grok/sessions/<url-encoded-cwd>/<uuid>/` (`GROK_HOME` relocates the
-user dir). Those dead logs import through the same `gbrain transcripts ingest`
+user dir). Those dead logs import through the same `foresights transcripts ingest`
 lane as Claude Code / Codex / OpenClaw / Hermes:
 
 ```bash
-gbrain transcripts ingest                    # discover, including ~/.grok/sessions
-gbrain transcripts ingest --all              # import every discovered harness log
-gbrain transcripts ingest ~/.grok/sessions --format grok --dry-run
+foresights transcripts ingest                    # discover, including ~/.grok/sessions
+foresights transcripts ingest --all              # import every discovered harness log
+foresights transcripts ingest ~/.grok/sessions --format grok --dry-run
 ```
 
 **Say to your agent:** *"Archive my grok session transcripts"* — *"Import my Grok Build chat history into the brain."*
@@ -155,7 +155,7 @@ system scheduler:
 
 ```bash
 # crontab: brain maintenance every 4 hours
-0 */4 * * * XAI_API_KEY=... grok -p "Run gbrain sync and report anything unusual" --output-format plain
+0 */4 * * * XAI_API_KEY=... grok -p "Run foresights sync and report anything unusual" --output-format plain
 ```
 
 See [docs/guides/cron-schedule.md](../guides/cron-schedule.md) for the full
@@ -178,11 +178,11 @@ brain maintenance protocol (sync, embed, dream cycle).
   to trust. Trust the folder in an interactive session, or register
   natively with `grok mcp add`.
 - **Doctor times out on `server started`** — raise `startup_timeout_sec`
-  (or `GROK_MCP_STARTUP_TIMEOUT_SECS=90`) if gbrain runs via `bun run`.
-- **Skills note:** `gbrain skillpack scaffold` writes `skills/<name>/SKILL.md`
+  (or `GROK_MCP_STARTUP_TIMEOUT_SECS=90`) if foresights runs via `bun run`.
+- **Skills note:** `foresights skillpack scaffold` writes `skills/<name>/SKILL.md`
   into your workspace, which Grok does **not** auto-discover as Grok skills
   (it reads `.grok/skills`, `~/.grok/skills`, `~/.agents/skills`, plugins).
-  gbrain's skills still work as reference documents the agent reads;
+  foresights's skills still work as reference documents the agent reads;
   `grok inspect` shows what Grok actually discovered.
 - **`grok inspect`** — the config-discovery audit: version, cwd trust,
   instructions, permissions, skills, agents, MCP sources.

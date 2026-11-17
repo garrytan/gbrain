@@ -1,5 +1,5 @@
 /**
- * #6317 (T1, T1b on Postgres): two processes, one brain. A real `gbrain serve
+ * #6317 (T1, T1b on Postgres): two processes, one brain. A real `foresights serve
  * --http` subprocess (a full consumer with its heartbeat row) and this
  * process's managed drain (`performSync` as the `sync` kind) share one
  * isolated Postgres, a 100-page git fixture and lanes 4.
@@ -79,7 +79,7 @@ function serveEnv(): Record<string, string> {
   Object.assign(env, { HOME: home, GBRAIN_HOME: home, GBRAIN_SKIP_STARTUP_HOOKS: '1', NO_COLOR: '1', GBRAIN_NO_RETRY_CONNECT: '1', GBRAIN_ADMIN_BOOTSTRAP_TOKEN: 'two-consumers-test-token-0123456789abcdef' });
   return env;
 }
-/** A real `gbrain serve --http` against the isolated brain; resolves once /health answers. */
+/** A real `foresights serve --http` against the isolated brain; resolves once /health answers. */
 async function spawnServe() {
   const port = await freePort();
   const child = Bun.spawn([process.execPath, '--no-env-file', join(REPO, 'src', 'cli.ts'), 'serve', '--http', '--port', String(port)], { cwd: REPO, env: serveEnv(), stdout: 'pipe', stderr: 'pipe' });

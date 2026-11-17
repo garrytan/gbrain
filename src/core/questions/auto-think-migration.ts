@@ -3,7 +3,7 @@
  * keys without creating consent the owner never gave. Every migrated pin
  * imports inactive: the auto_think phase had no caller, so a setting that
  * never spent must not start paid refreshes on upgrade. The owner activates
- * one by pinning it again with its id (`gbrain questions list` shows it).
+ * one by pinning it again with its id (`foresights questions list` shows it).
  *
  *   dream.auto_think.questions      one pin per question (source `default`, no scope)
  *   dream.auto_think.enabled=false  inactive_reason `migrated_disabled`
@@ -19,7 +19,7 @@
  * and last_completion_ts as each pin's cooldown anchor.
  *
  * Reads config and inserts rows only: no provider call, no page write (the
- * owner's next local `gbrain questions` call or cycle materializes the
+ * owner's next local `foresights questions` call or cycle materializes the
  * question pages). Re-running inserts nothing new (ON CONFLICT DO NOTHING on
  * the deterministic slug) and never overwrites a key the owner already set.
  */
@@ -32,21 +32,21 @@ export const AUTO_THINK_KEYS = [
   'dream.auto_think.model',
 ] as const;
 
-/** Where each legacy key went; `gbrain config set|get` prints it for the old key. */
+/** Where each legacy key went; `foresights config set|get` prints it for the old key. */
 export const AUTO_THINK_REPLACEMENTS: Readonly<Record<string, string>> = {
-  'dream.auto_think.enabled': 'gbrain questions pin "<question>" (CLI pins refresh; gbrain questions unpin <id> stops one)',
-  'dream.auto_think.questions': 'gbrain questions pin "<question>" / gbrain questions list',
-  'dream.auto_think.max_per_cycle': 'gbrain config set cycle.standing_questions.max_per_cycle <n>',
-  'dream.auto_think.auto_commit': 'gbrain questions pin --id <id> --publish',
-  'dream.auto_think.budget': 'gbrain config set cycle.standing_questions.budget_usd <usd>',
-  'dream.auto_think.cooldown_days': 'gbrain config set cycle.standing_questions.cooldown_days <days>',
-  'dream.auto_think.model': 'gbrain config set models.standing_questions <model>',
-  'dream.auto_think.allow_unpriced': 'gbrain config set cycle.standing_questions.allow_unpriced true',
-  'dream.auto_think.last_completion_ts': 'gbrain questions status <id> (last_refresh_at)',
-  'models.auto_think': 'gbrain config set models.standing_questions <model>',
+  'dream.auto_think.enabled': 'foresights questions pin "<question>" (CLI pins refresh; foresights questions unpin <id> stops one)',
+  'dream.auto_think.questions': 'foresights questions pin "<question>" / foresights questions list',
+  'dream.auto_think.max_per_cycle': 'foresights config set cycle.standing_questions.max_per_cycle <n>',
+  'dream.auto_think.auto_commit': 'foresights questions pin --id <id> --publish',
+  'dream.auto_think.budget': 'foresights config set cycle.standing_questions.budget_usd <usd>',
+  'dream.auto_think.cooldown_days': 'foresights config set cycle.standing_questions.cooldown_days <days>',
+  'dream.auto_think.model': 'foresights config set models.standing_questions <model>',
+  'dream.auto_think.allow_unpriced': 'foresights config set cycle.standing_questions.allow_unpriced true',
+  'dream.auto_think.last_completion_ts': 'foresights questions status <id> (last_refresh_at)',
+  'models.auto_think': 'foresights config set models.standing_questions <model>',
 };
 
-/** `gbrain config get|set` on a migrated dream.auto_think.* key names its pinned-questions replacement on stderr. */
+/** `foresights config get|set` on a migrated dream.auto_think.* key names its pinned-questions replacement on stderr. */
 export function noteAutoThinkReplacement(key: string): void {
   const replacement = AUTO_THINK_REPLACEMENTS[key];
   if (replacement) console.error(`[config] ${key} is replaced by pinned questions (docs/guides/pinned-questions.md): ${replacement}`);

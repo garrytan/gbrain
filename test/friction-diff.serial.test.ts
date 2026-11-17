@@ -1,5 +1,5 @@
 /**
- * gbrain friction diff — cross-run comparison tests (Phase E).
+ * foresights friction diff — cross-run comparison tests (Phase E).
  *
  * Zero-binary: exercises runFriction dispatch + the exported diff helpers
  * directly against a tmp GBRAIN_HOME, same conventions as friction-cli.test.ts.
@@ -270,7 +270,7 @@ describe('compatibility banner', () => {
     expect(out).toContain('upgrade-from-v0.18');
   });
 
-  test('banner carries agent, scenario, and gbrain version from the start markers', () => {
+  test('banner carries agent, scenario, and foresights version from the start markers', () => {
     startMarker('meta-a', { agent: 'hermes', scenario: 'fresh-install' });
     startMarker('meta-b', { agent: 'openclaw', scenario: 'fresh-install' });
     const { parsed } = diffJson('meta-a', 'meta-b');

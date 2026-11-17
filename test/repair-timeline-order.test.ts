@@ -1,5 +1,5 @@
 /**
- * #7247: `gbrain repair timeline-order` on real publication, PGLite and Postgres. A managed source (claimed worktree:
+ * #7247: `foresights repair timeline-order` on real publication, PGLite and Postgres. A managed source (claimed worktree:
  * the canonical file is published and the database re-projected from it) and a database-only source share one run.
  * The preview writes nothing, a stale or moved preview refuses, the apply rewrites exactly the planned pages without
  * touching a timeline row, other pages stay byte-identical, and a second preview finds nothing.
@@ -47,7 +47,7 @@ const timelineOf = async (engine: BrainEngine, sourceId: string, slug: string) =
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
-  describe(`#7247 gbrain repair timeline-order (${backend})`, () => {
+  describe(`#7247 foresights repair timeline-order (${backend})`, () => {
     test('preview writes nothing; a stale or moved preview refuses; the apply rewrites exactly the planned pages; a second preview is empty', () => managedBrain(async ({ engine, ctx, root }) => {
       await put(ctx, 'default', 'people/alice-example', doc('Alice Example', 'Alice Example is a synthetic person.', ALICE));
       await put(ctx, 'default', 'companies/acme-example', doc('Acme Example', 'A synthetic company.', ACME));
@@ -154,7 +154,7 @@ for (const backend of testBackends()) {
       const held = await runner.run('timeline-order', scope, { explicit: true, sourceFlag: 'default', slugs: ['people/dana-example'] });
       expect(held.affected).toBe(0);
       expect(held.residuals).toMatchObject({ needs_human: 1, pending_materialization: 1 });
-      expect(held.listing![0]!.detail).toContain('gbrain repair timeline --source default');
+      expect(held.listing![0]!.detail).toContain('foresights repair timeline --source default');
     }, { databaseUrl, setup: gitRoot }), 180_000);
   });
 }

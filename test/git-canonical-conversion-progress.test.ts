@@ -129,7 +129,7 @@ describe('#7644: SIGTERM during the strict pass', () => {
   env.GBRAIN_HOME = join(work, 'home');
   const cli = (...args: string[]) => {
     const result = spawnSync(process.execPath, ['--no-env-file', join(REPO, 'src', 'cli.ts'), ...args], { cwd: REPO, env, encoding: 'utf8', timeout: 180_000 });
-    if (result.status !== 0) throw new Error('gbrain ' + args.join(' ') + ' exited ' + result.status + ':\n' + result.stdout + result.stderr);
+    if (result.status !== 0) throw new Error('foresights ' + args.join(' ') + ' exited ' + result.status + ':\n' + result.stdout + result.stderr);
     return result.stdout;
   };
 
@@ -177,8 +177,8 @@ describe('#7644: GBRAIN_MEMORY_TRACE', () => {
 
   test('writes the label, memory in MB, the caller state and the most numerous heap object types', async () => {
     const line = await memoryTraceLine('sources canonical --apply', Date.now(), { phase: 'strict_pass_1', scanned: 3, total: 9 });
-    expect(line.startsWith('[gbrain memory] ')).toBe(true);
-    const value = JSON.parse(line.slice('[gbrain memory] '.length));
+    expect(line.startsWith('[foresights memory] ')).toBe(true);
+    const value = JSON.parse(line.slice('[foresights memory] '.length));
     expect(value).toMatchObject({ label: 'sources canonical --apply', state: { phase: 'strict_pass_1', scanned: 3, total: 9 } });
     for (const key of ['rss_mb', 'heap_used_mb', 'external_mb', 'array_buffers_mb']) expect(typeof value[key]).toBe('number');
     expect(Object.keys(value.types).length).toBeGreaterThan(0);

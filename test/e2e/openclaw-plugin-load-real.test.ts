@@ -175,7 +175,7 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
 
     // Install via openclaw plugins install --link into the isolated profile.
     // `--dangerously-force-unsafe-install` is required because openclaw's
-    // dangerous-code scanner flags the surrounding gbrain repo (tests use
+    // dangerous-code scanner flags the surrounding foresights repo (tests use
     // child_process etc.); the test fixture is dev-trusted, same provenance
     // as the test runner.
     const install = runOpenclaw([
@@ -222,7 +222,7 @@ describe('openclaw-plugin-load-real (Tier 2 e2e)', () => {
       // Openclaw reads these directly from the default export of our entry.
       // If we rename a field in src/openclaw-context-engine.ts, this fails.
       expect(inspect.plugin.id).toBe(PLUGIN_ID);
-      expect(inspect.plugin.name).toBe('GBrain Context Engine');
+      expect(inspect.plugin.name).toBe('Foresights Context Engine');
       expect(inspect.plugin.description).toContain('Deterministic temporal/spatial context injection');
     },
   );

@@ -6,7 +6,7 @@ export const v110: Migration = {
   // T3 of the retrieval-cathedral wave (retrieval-maxpool incident).
   //
   // Free-text alias resolution: a query like "Hall of Light" or "明堂"
-  // should surface the page titled "Mingtang". gbrain stored that mapping
+  // should surface the page titled "Mingtang". foresights stored that mapping
   // in pages.frontmatter `aliases:` JSONB but it was invisible to search.
   //
   // DELIBERATELY SEPARATE from slug_aliases (v105). They answer different

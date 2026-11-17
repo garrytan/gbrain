@@ -1,17 +1,17 @@
 /**
  * Install-time search-mode picker.
  *
- * Runs as a phase inside `gbrain init` AFTER `engine.initSchema()` so DB
+ * Runs as a phase inside `foresights init` AFTER `engine.initSchema()` so DB
  * config writes work [CDX-7]. Idempotent: if `search.mode` is already set
  * (re-init / second run), the picker is skipped entirely.
  *
  * TTY flow shows the menu. Non-TTY (CI, scripted init, --mcp-only) applies
  * the recommendation, prints the cost matrix + an [AGENT] directive to
- * confirm with the operator, and points at `gbrain config set search.mode`.
+ * confirm with the operator, and points at `foresights config set search.mode`.
  * The mode picker NEVER blocks an init run — readLineSafe caps at 60s and
  * falls back to the recommendation on timeout / EOF.
  *
- * `gbrain init --search-mode <mode>` records an operator's choice instead:
+ * `foresights init --search-mode <mode>` records an operator's choice instead:
  * no recommendation, no first-run `search_mode` ask, `search.mode_source:
  * operator`. On a brain whose mode is already set to something else it
  * refuses unless `--force`. Picker choices record `search.mode_source: auto`.
@@ -128,7 +128,7 @@ Pick the pairing intentionally.
 
 ${costMatrixLines('  ').join('\n')}
 
-GBrain's semantic result caching is temporarily disabled; budget for fresh retrieval.
+Foresights's semantic result caching is temporarily disabled; budget for fresh retrieval.
 Downstream provider prompt caching may discount input charges; it does not skip
 retrieval or downstream generation.
 
@@ -146,8 +146,8 @@ ${QUERY_EXPANSION_LINE}
 Actual expansion needs configured embedding and expansion providers; cloud
 expansion sends the query to the configured provider.
 
-You can change this any time with: gbrain config set search.mode <mode>
-Per-knob tuning + recommendation engine ships at: gbrain search tune
+You can change this any time with: foresights config set search.mode <mode>
+Per-knob tuning + recommendation engine ships at: foresights search tune
 `;
 
 /**
@@ -166,9 +166,9 @@ export function parseModeInput(raw: string): SearchMode | null {
 }
 
 export interface SearchModeChoice {
-  /** `gbrain init --search-mode <mode>`: the operator's choice. */
+  /** `foresights init --search-mode <mode>`: the operator's choice. */
   explicit?: SearchMode;
-  /** `gbrain init --force`: lets --search-mode replace an existing brain's mode. */
+  /** `foresights init --force`: lets --search-mode replace an existing brain's mode. */
   force?: boolean;
   /** How init refuses (prints, exits); the picker throws when absent. */
   refuse?: (message: string) => never;
@@ -180,7 +180,7 @@ export function searchModeChoiceFromArgs(args: string[], fail: (message: string,
   const i = args.indexOf('--search-mode');
   if (i === -1) return {};
   const value = (args[i + 1] ?? '').trim().toLowerCase();
-  if (!isSearchMode(value)) fail(`gbrain init: --search-mode must be one of ${SEARCH_MODES.join(', ')} (got: ${args[i + 1] ?? ''})`, json);
+  if (!isSearchMode(value)) fail(`foresights init: --search-mode must be one of ${SEARCH_MODES.join(', ')} (got: ${args[i + 1] ?? ''})`, json);
   return { explicit: value as SearchMode, force: args.includes('--force'), refuse: message => fail(message, json) };
 }
 
@@ -209,14 +209,14 @@ export async function runModePicker(
 
   if (opts.explicit) {
     if (existing && existing !== opts.explicit && !opts.force) {
-      const message = `This brain already has search.mode ${existing}; gbrain init --search-mode does not change an existing brain's mode. ` +
-        `Run \`gbrain config set search.mode ${opts.explicit}\`, or re-run gbrain init with --force.`;
+      const message = `This brain already has search.mode ${existing}; foresights init --search-mode does not change an existing brain's mode. ` +
+        `Run \`foresights config set search.mode ${opts.explicit}\`, or re-run foresights init with --force.`;
       if (opts.refuse) opts.refuse(message);
       throw new Error(message);
     }
     await persistMode(engine, opts.explicit, 'operator');
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ phase: 'search_mode_picker', mode: opts.explicit, reason: 'Chosen with gbrain init --search-mode.', auto: false, source: 'operator' }));
+      console.log(JSON.stringify({ phase: 'search_mode_picker', mode: opts.explicit, reason: 'Chosen with foresights init --search-mode.', auto: false, source: 'operator' }));
     } else {
       console.log(`Search mode set to: ${opts.explicit} (chosen with --search-mode)`);
     }
@@ -258,7 +258,7 @@ export async function runModePicker(
   } catch (err) {
     // Worst case: config write fails. Mode resolution falls back to balanced
     // at search-time anyway, so we don't block init.
-    console.error(`[gbrain] WARN: failed to persist search.mode (${(err as Error).message ?? 'unknown'}). Defaulting to ${picked} at search-time.`);
+    console.error(`[foresights] WARN: failed to persist search.mode (${(err as Error).message ?? 'unknown'}). Defaulting to ${picked} at search-time.`);
   }
 
   console.log(`Search mode set to: ${picked}`);

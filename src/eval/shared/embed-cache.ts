@@ -363,7 +363,7 @@ export class EmbeddingCache {
 }
 
 export interface InstallEmbedCacheOpts {
-  /** gbrain model string the cache is keyed on. Default: the gateway's
+  /** foresights model string the cache is keyed on. Default: the gateway's
    *  resolved `getEmbeddingModel()` at install time. */
   model?: string;
   /** Expected dims. Default: the gateway's `getEmbeddingDimensions()`. */
@@ -387,8 +387,8 @@ export function sideFromParams(params: Record<string, unknown>): EmbedSide {
 }
 
 /**
- * True when the SDK model object plausibly IS the resolved gbrain model.
- * gbrain model strings are `provider:modelId`; ai-sdk exposes `modelId`.
+ * True when the SDK model object plausibly IS the resolved foresights model.
+ * foresights model strings are `provider:modelId`; ai-sdk exposes `modelId`.
  * Unknown shape → trust the caller (the cache still verifies dims on put).
  */
 function modelMatches(resolved: string, sdkModel: unknown): boolean {

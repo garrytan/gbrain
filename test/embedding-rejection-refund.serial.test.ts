@@ -1,6 +1,6 @@
 /**
  * Wave-3 connector follow-up #11: an embedding request the provider rejects
- * (HTTP 400/413/422) kept its maximum debit against the `gbrain migrate
+ * (HTTP 400/413/422) kept its maximum debit against the `foresights migrate
  * embeddings --max-cost-usd` authorization, so a migration could stop early at
  * the cap. Only token-limit rejections released their reservation. A rejection
  * is now released only for providers whose documentation says rejected

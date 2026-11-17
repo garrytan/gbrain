@@ -1,5 +1,5 @@
 /**
- * `gbrain repair lost-fence-rows` brings back fact and take rows an older gbrain retired after a page rewrite dropped
+ * `foresights repair lost-fence-rows` brings back fact and take rows an older foresights retired after a page rewrite dropped
  * their section and a later write re-created the section without them. The lost state is built with page writes:
  * a section with the rows, a rewrite without it (the rows stay held), then a section holding only a new row (what
  * remember or takes_add used to write), which retires them. A row removed by an edit inside a section that stayed, or by
@@ -65,7 +65,7 @@ for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   for (const storage of ['repo-less', 'git'] as const) {
     const opts = { databaseUrl, ...(storage === 'git' ? { setup: gitSetup } : {}) };
-    describe(`gbrain repair lost-fence-rows (${backend}, ${storage})`, () => {
+    describe(`foresights repair lost-fence-rows (${backend}, ${storage})`, () => {
       test('lists the rows a re-created section retired, writes nothing on preview, and restores exactly that set on apply', () => managedBrain(async ({ engine, ctx, root }) => {
         await loseRows(ctx);
         const revision = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.revision;

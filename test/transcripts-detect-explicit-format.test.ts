@@ -4,7 +4,7 @@
  *
  * detectAdapter() refuses symlinks (lstat, never followed) and unreadable
  * paths, but the explicit-format branch used to return before that check, so
- * `gbrain transcripts ingest --format <f> <symlink>` handed the link to the
+ * `foresights transcripts ingest --format <f> <symlink>` handed the link to the
  * adapter's parse(), which opens it with a following read.
  */
 import { describe, test, expect, afterEach } from 'bun:test';

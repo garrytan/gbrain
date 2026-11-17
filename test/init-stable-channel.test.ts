@@ -1,6 +1,6 @@
 /**
- * GBRA-346: new installs follow the stable channel. A fresh `gbrain init`
- * persists `self_upgrade.channel: stable`, so the update check, `gbrain
+ * GBRA-346: new installs follow the stable channel. A fresh `foresights init`
+ * persists `self_upgrade.channel: stable`, so the update check, `foresights
  * upgrade` and the autopilot channel offer only releases promoted after the
  * production soak. An existing brain that never chose a channel keeps its
  * config untouched on re-init (its move to stable comes with a one-time notice,

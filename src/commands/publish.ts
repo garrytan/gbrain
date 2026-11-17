@@ -1,15 +1,15 @@
 /**
- * gbrain publish — Generate shareable HTML from brain markdown pages.
+ * foresights publish — Generate shareable HTML from brain markdown pages.
  *
  * Deterministic: zero LLM calls. The skill (skills/publish/SKILL.md)
  * tells the agent when and how to use this. This code does the work.
  *
  * Usage:
- *   gbrain publish <page-path>                         # local HTML file
- *   gbrain publish <page-path> --password              # auto-generated pw
- *   gbrain publish <page-path> --password "secret"     # custom pw
- *   gbrain publish <page-path> --out /tmp/share.html   # custom output
- *   gbrain publish <page-path> --title "Custom Title"  # override title
+ *   foresights publish <page-path>                         # local HTML file
+ *   foresights publish <page-path> --password              # auto-generated pw
+ *   foresights publish <page-path> --password "secret"     # custom pw
+ *   foresights publish <page-path> --out /tmp/share.html   # custom output
+ *   foresights publish <page-path> --title "Custom Title"  # override title
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -334,7 +334,7 @@ export async function runPublish(args: string[]) {
   const pwIdx = args.indexOf('--password');
 
   if (!inputPath) {
-    console.error('Usage: gbrain publish <page.md> [--password ["secret"]] [--title "Title"] [--out path]');
+    console.error('Usage: foresights publish <page.md> [--password ["secret"]] [--title "Title"] [--out path]');
     console.error('');
     console.error('  Generates a shareable HTML page from brain markdown.');
     console.error('  Strips private data (frontmatter, citations, timeline, brain links).');

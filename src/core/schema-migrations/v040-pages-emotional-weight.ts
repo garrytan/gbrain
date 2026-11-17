@@ -8,7 +8,7 @@ export const v040: Migration = {
   // Adds the `emotional_weight` column to pages. Populated by the new
   // `recompute_emotional_weight` cycle phase from tags + takes (deterministic;
   // no LLM). Default 0.0 so freshly imported pages don't pollute salience
-  // ranking before the cycle has run; users run `gbrain dream --phase
+  // ranking before the cycle has run; users run `foresights dream --phase
   // recompute_emotional_weight` once after upgrading to backfill.
   //
   // No index: the salience query orders by a computed score (emotional_weight,

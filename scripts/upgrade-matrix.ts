@@ -24,7 +24,7 @@ import { cellId, runCell, type BrainShape, type Engine, type Fault, type Keys } 
 import { CHECKS, loadKnownExceptions, summarize, type CellSummary } from './upgrade-matrix/verdict.ts';
 import { AGENT_FILED_LABEL } from './lib/gh-issue.ts';
 
-const REPO = 'garrytan/gbrain';
+const REPO = 'aimonk2025/gbrain';
 const ROOT = resolve(import.meta.dir, '..');
 const BT = '\x60';
 export { ISSUE_LABEL, ISSUE_MARKER };

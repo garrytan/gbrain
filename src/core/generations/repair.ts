@@ -1,5 +1,5 @@
 /**
- * GBRA-161 PR 1a: `gbrain repair generations`, the preview-first undo and release path of the generation ledger. `--kind`
+ * GBRA-161 PR 1a: `foresights repair generations`, the preview-first undo and release path of the generation ledger. `--kind`
  * names the ledger kind and `--mode` the operation (default restore); one selector (`--run`, `--since`, `--key`,
  * `--generation`, or `--held` for release-held) bounds the set.
  *
@@ -68,14 +68,14 @@ const usage = (message: string, suggestion: string, selection: Partial<Generatio
 export function generationsSelectionRefusal(selection: Partial<GenerationsSelection>): OperationError | null {
   const kinds = generationKinds().join(', ');
   const example = (mode: 'restore' | 'release-held' = 'restore') => generationsPreviewArgv({ kind: selection.kind && generationAdapter(selection.kind) ? selection.kind : generationKinds()[0] ?? 'atom' }, mode).slice(0, -1).join(' ');
-  if (!selection.kind) return usage('gbrain repair generations needs --kind.', `Name the ledger kind (${kinds}), e.g. ${example()}.`, selection);
+  if (!selection.kind) return usage('foresights repair generations needs --kind.', `Name the ledger kind (${kinds}), e.g. ${example()}.`, selection);
   if (!generationAdapter(selection.kind)) return usage(`--kind ${selection.kind} is not a generation kind this brain publishes (${kinds}).`, `Pass --kind ${generationKinds()[0] ?? 'atom'}.`, selection);
   if (!selection.mode || !GENERATION_MODES.includes(selection.mode)) {
     return usage(`--mode must be restore, release-held or cleanup (got "${selection.mode ?? ''}").`,
       'restore republishes the generation a key replaced; release-held publishes a held result once; cleanup lists pending members and orphan candidates.', selection);
   }
   if (!selection.run && !selection.since && !selection.key && selection.generation === undefined && !selection.held) {
-    return usage('gbrain repair generations needs a selector: --run, --since, --key, --generation or --held.', `Bound the set, e.g. ${example(selection.mode === 'release-held' ? 'release-held' : 'restore')}.`, selection);
+    return usage('foresights repair generations needs a selector: --run, --since, --key, --generation or --held.', `Bound the set, e.g. ${example(selection.mode === 'release-held' ? 'release-held' : 'restore')}.`, selection);
   }
   if (selection.held && selection.mode !== 'release-held') return usage('--held selects held results, which only --mode release-held publishes.', `Run ${example('release-held')}.`, selection);
   return null;
@@ -258,12 +258,12 @@ export const generationsRepair: RepairHandler = {
           class: entry.mode === 'cleanup' ? entry.state : entry.refused.length ? 'refused' : entry.mode, detail: describeEntry(entry) })) };
     }
     if (selection.mode === 'cleanup' && !adapter.publishesInPlace) {
-      throw new OperationError('invalid_params', `gbrain repair generations --mode cleanup only lists pending members and orphan candidates for --kind ${selection.kind}; there is nothing to apply.`,
+      throw new OperationError('invalid_params', `foresights repair generations --mode cleanup only lists pending members and orphan candidates for --kind ${selection.kind}; there is nothing to apply.`,
         `Pending members resume on the next extraction run of their source. An orphan candidate is never retired automatically: show the user ${command} and delete one only if they decide to.`,
         'docs/guides/repair.md#generations');
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair generations --apply applies only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair generations --apply applies only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, 'docs/guides/repair.md#generations');
     }
     const approved = await loadApprovedSet<Approved>(engine, { command: 'generations', hash: opts.expect, previewCommand: command,
@@ -313,7 +313,7 @@ async function applyEntry(ctx: OperationContext, adapter: GenerationAdapter<unkn
   let restored: Awaited<ReturnType<typeof restoreGeneration>>;
   if (await managedPersistenceEnabled(ctx.engine)) {
     if (!adapter.databaseOnly) {
-      return { applied: false, outcome: 'refused', reason: `${approved.owner_key}: a managed source restores retired atoms with gbrain repair atoms-restore; a generation restore here runs on unmanaged brains only` };
+      return { applied: false, outcome: 'refused', reason: `${approved.owner_key}: a managed source restores retired atoms with foresights repair atoms-restore; a generation restore here runs on unmanaged brains only` };
     }
     restored = await submitManagedRestore(ctx.engine, adapter, key, approved);
   } else {
@@ -416,7 +416,7 @@ export async function prepareGenerationRestore(engine: BrainEngine, row: WriteRe
   const adapter = p?.key ? generationAdapter(p.key.kind) : undefined;
   if (!p || p.kind !== GENERATION_RESTORE_INTENT || row.authority.remote || !adapter?.databaseOnly || !p.approved || p.key!.sourceId !== row.source_id) {
     throw opError('permission_denied', 'Unsupported generation restore request.',
-      `Request ${row.request_id} in source ${row.source_id} is not a generation restore the trusted local writer admitted, so the coordinator refused it before any change. Restores run only from gbrain repair generations on the brain host.`);
+      `Request ${row.request_id} in source ${row.source_id} is not a generation restore the trusted local writer admitted, so the coordinator refused it before any change. Restores run only from foresights repair generations on the brain host.`);
   }
   const key = p.key!;
   const approved = p.approved;

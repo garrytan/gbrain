@@ -92,7 +92,7 @@ test('#6858: a freshness sync job whose managed run is blocked ends dead with th
     // Before #6858 the handler returned the parked run (status blocked_by_failures) and the worker recorded the job completed.
     expect(thrown).toBeInstanceOf(UnrecoverableError);
     expect((thrown as Error).message).toContain(`Managed sync of source ${s.id} is blocked`);
-    expect((thrown as Error).message).toContain('Next: gbrain sync');
+    expect((thrown as Error).message).toContain('Next: foresights sync');
     expect(progress.at(-1)).toMatchObject({ blocked: true, outcome: 'blocked', next: { safe_to_loop: false } });
 
     const blocked = await readBlockedManagedSyncs(engine, [s.id]);

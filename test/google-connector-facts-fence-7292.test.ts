@@ -4,8 +4,8 @@
  * page with the bare provider render, so the fence left the file and the database and the next `extract_facts` expired
  * the facts. And a page whose database body holds the fence while its checkout file does not was refused
  * `file_database_drift` on every re-render and frozen held after three, with no command that could unfreeze it. Now the
- * unmanaged re-render carries the stored fence, a file that lacks only gbrain's own fence is replaceable (the carried
- * render writes the fence back), and a held page imports on its next attempt (`gbrain sources retry-held`). A real file
+ * unmanaged re-render carries the stored fence, a file that lacks only foresights's own fence is replaceable (the carried
+ * render writes the fence back), and a held page imports on its next attempt (`foresights sources retry-held`). A real file
  * edit is still held. Real PGLite and Postgres (when DATABASE_URL is set), the real Google importer, a fake People API.
  * Contributed report: @h6y3.
  */

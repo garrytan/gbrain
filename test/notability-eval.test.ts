@@ -14,7 +14,7 @@
  *
  * The harness runs against the public-anonymized fixture (40 cases) by
  * default. Operators with a private fixture (`~/.gbrain/eval/
- * notability-real.jsonl`, mined + hand-confirmed via `gbrain notability-
+ * notability-real.jsonl`, mined + hand-confirmed via `foresights notability-
  * eval`) can opt into the larger run by setting GBRAIN_NOTABILITY_EVAL_REAL=1.
  *
  * Sample size justification: the public fixture has 14 HIGH cases.

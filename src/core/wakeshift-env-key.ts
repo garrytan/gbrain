@@ -1,5 +1,5 @@
 /**
- * WAKESHIFT_API_KEY leaves process.env as soon as gbrain sees it (the shell's export or ~/.gbrain/.env, which
+ * WAKESHIFT_API_KEY leaves process.env as soon as foresights sees it (the shell's export or ~/.gbrain/.env, which
  * loadGbrainEnvFile fills on every config load), so jobs and other child processes never inherit the app's
  * signing key. The value lives on only in this module. No imports: gbrain-env-file.ts calls it.
  */

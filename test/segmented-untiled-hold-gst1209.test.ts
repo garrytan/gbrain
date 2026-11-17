@@ -2,9 +2,9 @@
  * GST-1209 follow-up: a managed-sync hold on a page whose stored segment rows do not cover its body.
  *
  * 1. Protects: the freeze hold naming `page_body_rows_unreadable` (the page doctor `segmented_tiling` lists) reads
- *    needs_human with safe_actions repair and a fix that previews `gbrain repair segmented-tiling --source <id> --slug <slug>`,
- *    never a `sources retry-held` that cannot succeed; `gbrain sync unblock` refuses it by name with that fix; and
- *    `gbrain sync status --json` finds it among many holds without paging: `--slug` and `--code` (the hold code or the
+ *    needs_human with safe_actions repair and a fix that previews `foresights repair segmented-tiling --source <id> --slug <slug>`,
+ *    never a `sources retry-held` that cannot succeed; `foresights sync unblock` refuses it by name with that fix; and
+ *    `foresights sync status --json` finds it among many holds without paging: `--slug` and `--code` (the hold code or the
  *    page-body fault code) filter the listing, each hold names its `fault_code`, and `holds_summary.by_fault_code` counts them.
  * 2. Fails when: the hold reads retry / no person, its fix names retry-held, unblock reports it as "not something unblock
  *    performs", a filter is ignored or its cursor replays against the unfiltered list, or the fault code is missing.
@@ -58,7 +58,7 @@ test('doctor runs segmented_tiling as its own entry, so a default run reports it
 
 test('a freeze hold on a page whose segment rows do not cover its body points to the segmented-tiling repair', () => {
   expect(holdVerdict(freezeHold('page_body_rows_unreadable'), undefined)).toMatchObject({ class: 'page', safe_actions: ['repair'], needs_human: true,
-    human_reason: expect.stringContaining('gbrain repair segmented-tiling') });
+    human_reason: expect.stringContaining('foresights repair segmented-tiling') });
   const fix = gitHoldFix(freezeHold('page_body_rows_unreadable'));
   expect(fix.argv).toEqual(['gbrain', 'repair', 'segmented-tiling', '--source', 'source-a', '--slug', SLUG]);
   expect(fix.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'segmented_tiling', '--json']);
@@ -148,7 +148,7 @@ test('sync status finds the hold among many without paging; unblock refuses it w
 
     const unblock = await unblockSync(engine, s.id, { apply: false });
     const refused = unblock.refused.find(r => r.path === FILE)!;
-    expect(refused).toMatchObject({ needs_human: true, reason: expect.stringContaining('gbrain repair segmented-tiling') });
+    expect(refused).toMatchObject({ needs_human: true, reason: expect.stringContaining('foresights repair segmented-tiling') });
     expect(refused.fix.argv).toEqual(['gbrain', 'repair', 'segmented-tiling', '--source', s.id, '--slug', SLUG]);
   }
 }), 300_000);

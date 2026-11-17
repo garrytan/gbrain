@@ -1,5 +1,5 @@
 /**
- * Admin SPA serving for `gbrain serve --http` (v0.36.x #1090): the dev
+ * Admin SPA serving for `foresights serve --http` (v0.36.x #1090): the dev
  * admin/dist directory when present next to cwd, otherwise the embedded
  * asset manifest compiled into the binary.
  */
@@ -19,7 +19,7 @@ export async function mountSpa(app: Express, ctx: ServeHttpContext): Promise<voi
   //      manifest of request-path → resolved-path keyed by every file in
   //      admin/dist at generation time. Bun's `with { type: 'file' }` ESM
   //      imports resolve correctly inside the compiled binary, so a
-  //      globally-installed `gbrain serve --http` actually serves /admin
+  //      globally-installed `foresights serve --http` actually serves /admin
   //      instead of 404. Pre-fix the cwd-relative path was the ONLY
   //      resolution path, and every fresh install of the compiled binary
   //      hit 404 on /admin (issue #1090).

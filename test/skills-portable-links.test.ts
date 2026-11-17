@@ -1,7 +1,7 @@
 /**
  * #6198 — bundled skill links survive being copied out of the repo.
  *
- * Skills are copied verbatim into host workspaces (`gbrain skillpack
+ * Skills are copied verbatim into host workspaces (`foresights skillpack
  * scaffold`), harness dirs and the generated plugin trees. Links that leave
  * `skills/` (64 of them to docs/protocol/AGENT_OPERATOR_v1.md) dangled in
  * every copy. D13: the protocol page ships inside the skills tree as a

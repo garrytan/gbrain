@@ -1,7 +1,7 @@
 /**
- * #5963 Part A: `gbrain files upload-raw` on a managed canonical worktree
+ * #5963 Part A: `foresights files upload-raw` on a managed canonical worktree
  * refuses before creating anything (no empty `.raw/` directory, no files row),
- * and names `gbrain files upload` with a storage backend; `file_upload` with no
+ * and names `foresights files upload` with a storage backend; `file_upload` with no
  * backend stops pointing at upload-raw for a managed page.
  */
 import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';

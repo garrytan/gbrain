@@ -4,7 +4,7 @@
  * Pre-fix, PostgresEngine.initSchema ran a bare `SELECT pg_advisory_lock(42)`
  * that blocks forever when a leaked pooler session holds the lock
  * (transaction-mode poolers strip session lock state across checkouts), so
- * every gbrain invocation hung at connect with no output.
+ * every foresights invocation hung at connect with no output.
  *
  * Hermetic: drives acquireInitSchemaAdvisoryLock with a fake query fn +
  * injected clock/sleep. Covers: immediate acquire, acquire-after-wait,

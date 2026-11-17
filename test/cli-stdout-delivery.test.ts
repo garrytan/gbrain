@@ -167,7 +167,7 @@ describe('installStdoutPipeDelivery (#4383)', () => {
   }, 20_000);
 
   test('interposed: a reader that closes early does not hang or crash (EPIPE swallowed)', async () => {
-    // `gbrain <cmd> --json | head -c 1000`: head closes the pipe after 1000
+    // `foresights <cmd> --json | head -c 1000`: head closes the pipe after 1000
     // bytes. The interposed blocking write gets EPIPE mid-payload; it must be
     // swallowed (partial delivery to a gone reader is not an op failure) and
     // the chain's tail must still settle so flushThenExit reaches its fence —
@@ -386,7 +386,7 @@ describe('installStdoutPipeDelivery (#4383)', () => {
       script,
       `import { installStdoutPipeDelivery } from ${JSON.stringify(HELPER)};\n` +
         `installStdoutPipeDelivery();\n` +
-        `console.log('Usage: gbrain frob [options]');\n` +
+        `console.log('Usage: foresights frob [options]');\n` +
         `console.log('');\n` +
         `console.log('  --json   emit JSON');\n` +
         `console.log('  --help   this text');\n` +
@@ -396,7 +396,7 @@ describe('installStdoutPipeDelivery (#4383)', () => {
       const proc = Bun.spawn({ cmd: [process.execPath, script], stdout: 'pipe', stderr: 'inherit' });
       const out = await new Response(proc.stdout).text();
       const code = await proc.exited;
-      expect(out).toBe('Usage: gbrain frob [options]\n\n  --json   emit JSON\n  --help   this text\n');
+      expect(out).toBe('Usage: foresights frob [options]\n\n  --json   emit JSON\n  --help   this text\n');
       expect(code).toBe(7);
     } finally {
       rmSync(dir, { recursive: true, force: true });

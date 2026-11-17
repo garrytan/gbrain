@@ -1,18 +1,18 @@
 /**
  * Sync applicability (agent-first operator wave, Lane E4).
  *
- * `gbrain init` creates a gbrain-owned content directory
+ * `foresights init` creates a gbrain-owned content directory
  * (`<GBRAIN_HOME>/.gbrain/content/<brain_id>/<source>`, or an owned
  * `--content-root`) that is not a Git checkout. Sync imports changes between
  * Git commits, so it does not apply there: performSync refuses with
  * `sync_not_applicable` (why + the import fix) before any Git probe, instead of
  * a raw `git rev-parse` failure or the legacy anchor self-heal that would
- * `git init` the directory. gbrain never initializes Git on the user's behalf;
+ * `git init` the directory. foresights never initializes Git on the user's behalf;
  * the refusal names `git init` only as something to ask the user about.
  *
  * #7630: a relative stored anchor (`sources.local_path` or `sync.repo_path`
  * such as ".") is refused `sync_anchor_relative` first, because it names
- * whatever directory gbrain runs from.
+ * whatever directory foresights runs from.
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -28,7 +28,7 @@ export interface SyncContentDirectory {
   sourceId: string;
   root: string;
   keyless: boolean;
-  /** Why gbrain owns it: the root sits inside gbrain's own content directory, or a content-setup receipt claims it. */
+  /** Why foresights owns it: the root sits inside foresights's own content directory, or a content-setup receipt claims it. */
   ownedBy: 'content_root' | 'receipt';
 }
 
@@ -79,7 +79,7 @@ export function syncNotApplicableError(dir: SyncContentDirectory): OperationErro
     `To add markdown files to this brain, import the directory that holds them. To sync this content directory from Git instead, ask the user first; if they agree, initialize Git in ${dir.root} and commit, and sync applies from then on.`,
     {
       reason: 'content_directory',
-      why: 'gbrain created this directory for content it manages itself (skills, owned pages); memory lives in the database, so there are no Git commits to sync. gbrain never initializes Git on its own.',
+      why: 'foresights created this directory for content it manages itself (skills, owned pages); memory lives in the database, so there are no Git commits to sync. foresights never initializes Git on its own.',
       fix: {
         argv: ['gbrain', 'import', '<dir>', ...(dir.keyless ? ['--no-embed'] : []), '--source', dir.sourceId],
         inputs: [{ name: 'dir', how: 'The directory of markdown files the user wants in this brain (not the gbrain-owned content directory itself).' }],
@@ -92,38 +92,38 @@ export function syncNotApplicableError(dir: SyncContentDirectory): OperationErro
 
 /**
  * #7630: the `sync_anchor_relative` refusal. A stored anchor (`sources.local_path` or `sync.repo_path`) that is a
- * relative path such as "." names whatever directory gbrain happens to run from, so it cannot say which folder is the
+ * relative path such as "." names whatever directory foresights happens to run from, so it cannot say which folder is the
  * brain: from an unrelated folder, sync would treat that folder as the brain repo (Git init, a baseline commit of
  * everything in it, an import of its markdown). Refused before any Git probe, cost estimate or import.
  */
 export function syncAnchorRelativeError(sourceId: string | undefined, anchor: string): OperationError {
   const foreign = isForeignAbsolutePath(anchor);
   const why = foreign
-    ? `The path is absolute only on another operating system (another host sharing this brain may have set it); on this host it would name a folder inside whatever directory gbrain runs from, so sync cannot use it here. Nothing was changed.`
-    : `A relative path names whatever directory gbrain runs from, not a fixed folder, so it cannot prove which folder is the brain; syncing it from an unrelated folder would Git-initialize that folder, commit everything in it and import its markdown. Nothing was changed.`;
+    ? `The path is absolute only on another operating system (another host sharing this brain may have set it); on this host it would name a folder inside whatever directory foresights runs from, so sync cannot use it here. Nothing was changed.`
+    : `A relative path names whatever directory foresights runs from, not a fixed folder, so it cannot prove which folder is the brain; syncing it from an unrelated folder would Git-initialize that folder, commit everything in it and import its markdown. Nothing was changed.`;
   if (!sourceId) {
     const named = foreign ? `sync.repo_path is "${anchor}", which is not an absolute path on this host` : `sync.repo_path is the relative path "${anchor}"`;
     return opError('sync_anchor_relative', `Sync refused: ${named}.`,
-      'Ask the user which directory holds the brain repo, then set it as an absolute path: gbrain config set sync.repo_path <absolute-directory>.',
+      'Ask the user which directory holds the brain repo, then set it as an absolute path: foresights config set sync.repo_path <absolute-directory>.',
       { why, fix: { argv: ['gbrain', 'config', 'set', 'sync.repo_path', '<dir>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
         inputs: [{ name: 'dir', how: 'The absolute path of the brain repo, from the user; never the current directory by default.' }],
-        user_message: `gbrain's brain repo setting (${named}), so sync cannot tell which folder is the brain. Which directory holds your brain repo?`,
+        user_message: `foresights's brain repo setting (${named}), so sync cannot tell which folder is the brain. Which directory holds your brain repo?`,
         why: 'Points sync.repo_path at an absolute directory; no file or page changes.', verify: { argv: ['gbrain', 'config', 'get', 'sync.repo_path'] } } });
   }
   if (foreign) {
     return opError('sync_anchor_relative', `Sync refused: source "${sourceId}" has the local_path "${anchor}", which is not an absolute path on this host.`,
-      `Ask the user which directory on this host holds this source's files and run gbrain sources set-path ${sourceId} <absolute-directory>.`,
+      `Ask the user which directory on this host holds this source's files and run foresights sources set-path ${sourceId} <absolute-directory>.`,
       { why, fix: { argv: ['gbrain', 'sources', 'set-path', sourceId, '<dir>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
         inputs: [{ name: 'dir', how: "The absolute path on this host of the directory that holds this source's files, from the user; never the current directory by default." }],
-        user_message: `Source "${sourceId}" has "${anchor}" as its directory, which is not an absolute path on this host, so sync refused. Which directory on this host holds its files? I'll point the source there (gbrain sources set-path ${sourceId} <absolute-directory>).`,
+        user_message: `Source "${sourceId}" has "${anchor}" as its directory, which is not an absolute path on this host, so sync refused. Which directory on this host holds its files? I'll point the source there (foresights sources set-path ${sourceId} <absolute-directory>).`,
         why: 'Points the source at an absolute directory on this host; it only updates the pointer, no file or page changes.',
         verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] } } });
   }
   return opError('sync_anchor_relative', `Sync refused: source "${sourceId}" has the relative local_path "${anchor}".`,
-    `Ask the user which directory holds this source's files and run gbrain sources set-path ${sourceId} <absolute-directory>, or clear the pointer with gbrain sources set-path ${sourceId} --clear.`,
+    `Ask the user which directory holds this source's files and run foresights sources set-path ${sourceId} <absolute-directory>, or clear the pointer with foresights sources set-path ${sourceId} --clear.`,
     { why, fix: { argv: ['gbrain', 'sources', 'set-path', sourceId, '<dir>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
       inputs: [{ name: 'dir', how: "The absolute path of the directory that holds this source's files, from the user; never the current directory by default." }],
-      user_message: `Source "${sourceId}" has the relative path "${anchor}" as its directory, so sync cannot tell which folder it belongs to and refused. Which directory holds its files? I'll point the source there (gbrain sources set-path ${sourceId} <absolute-directory>). If it has no directory, I can clear the pointer instead (gbrain sources set-path ${sourceId} --clear).`,
+      user_message: `Source "${sourceId}" has the relative path "${anchor}" as its directory, so sync cannot tell which folder it belongs to and refused. Which directory holds its files? I'll point the source there (foresights sources set-path ${sourceId} <absolute-directory>). If it has no directory, I can clear the pointer instead (foresights sources set-path ${sourceId} --clear).`,
       why: 'Points the source at an absolute directory; it only updates the pointer, no file or page changes. This works on a managed brain too, where --clear refuses a source with a canonical owner.',
       verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] } } });
 }

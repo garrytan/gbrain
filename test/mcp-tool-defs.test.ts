@@ -178,7 +178,7 @@ describe('buildToolDefs', () => {
   test('delete_page / restore_page descriptions disclose the on-disk file side effect (#4829)', async () => {
     // delete_page unlinks the page's markdown file from the source working tree
     // (#4022, so a sync can't resurrect it) and restore_page re-renders it.
-    // op.description is the single home for the MCP tool def, `gbrain delete
+    // op.description is the single home for the MCP tool def, `foresights delete
     // --help`, and the TOOL_CATALOG cell (first sentence only) — so the side
     // effect must be in the description AND lead it.
     const { firstSentence } = await import('../src/mcp/tool-catalog.ts');

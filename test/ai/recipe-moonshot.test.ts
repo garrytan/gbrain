@@ -1,7 +1,7 @@
 /**
  * Moonshot/Kimi local recipe smoke.
  *
- * This pins the governed production exception GBrain-Local-003: GBrain can
+ * This pins the governed production exception GBrain-Local-003: Foresights can
  * route configured Kimi chat/expansion IDs through Moonshot's OpenAI-compatible
  * endpoint without treating `moonshot` as an unknown provider.
  */

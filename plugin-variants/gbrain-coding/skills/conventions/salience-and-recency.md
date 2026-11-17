@@ -1,9 +1,9 @@
-# Salience + Recency on `gbrain query` (v0.29.1)
+# Salience + Recency on `foresights query` (v0.29.1)
 
-YOU ARE IN CHARGE of the `salience` and `recency` parameters on gbrain's
+YOU ARE IN CHARGE of the `salience` and `recency` parameters on foresights's
 `query` op. They are TWO ORTHOGONAL axes — use either, both, or neither.
 
-If you OMIT a parameter, gbrain auto-detects from query text via a
+If you OMIT a parameter, foresights auto-detects from query text via a
 regex heuristic. The default for queries that don't match any pattern
 is `'off'`. Prefer to pass values EXPLICITLY when you know what the
 user wants.
@@ -68,14 +68,14 @@ The "canonical truth" axis. The user wants the authoritative answer.
 
 > Current state → on. Canonical truth → off.
 
-If you can't classify confidently, OMIT the param and let gbrain's
+If you can't classify confidently, OMIT the param and let foresights's
 auto-detect handle it. The heuristic defaults to `off` for everything
 that doesn't clearly match a current-state pattern. The `--explain`
 output shows `_resolved.salience_source` and `_resolved.recency_source`
 ('caller' vs. 'auto_heuristic') so you can see what fired and why.
 
-You can override at any time. gbrain is smart but not infallible. You
-have context gbrain doesn't.
+You can override at any time. foresights is smart but not infallible. You
+have context foresights doesn't.
 
 ## Narrow temporal-bound exception
 
@@ -126,6 +126,6 @@ no boost.
 ## See also
 
 - `src/core/search/recency-decay.ts` — the decay implementation (config + env resolution)
-- `gbrain query --explain` — see resolved values + factor contributions
+- `foresights query --explain` — see resolved values + factor contributions
 - `get_recent_salience` op gains `recency_bias: 'flat' | 'on'` — opt
   into per-prefix decay on the dedicated salience query

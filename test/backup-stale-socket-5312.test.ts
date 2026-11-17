@@ -1,13 +1,13 @@
 /**
- * #5312 (defect 2): gbrain's IPC sockets live inside the PGLite data dir and
+ * #5312 (defect 2): foresights's IPC sockets live inside the PGLite data dir and
  * `dumpDataDir` cannot read a non-regular file, so a socket left behind by a
- * killed `gbrain serve` wedged every later `backup create` (WASI errno 28 on
+ * killed `foresights serve` wedged every later `backup create` (WASI errno 28 on
  * Linux, errno 2 on Windows) until a human deleted it by hand.
  *
  * `createPgliteBackup` now sweeps the data dir under its writer lock before
- * the dump and removes ONLY gbrain's own `.gbrain-<kind>.sock` endpoints, ONLY
+ * the dump and removes ONLY foresights's own `.gbrain-<kind>.sock` endpoints, ONLY
  * when nothing holds their bind claim or answers a probe connect. Everything
- * else at the top level (a live gbrain socket, a foreign socket or FIFO, a
+ * else at the top level (a live foresights socket, a foreign socket or FIFO, a
  * symlink) stays, and the refusal is the typed `backup_dump_failed` naming it.
  *
  * #5312 Windows half: Bun's `lstat` fails with EACCES on a stale AF_UNIX reparse point, so the sweep's
@@ -105,7 +105,7 @@ async function backupFailure(): Promise<{ code: string; message: string }> {
 
 // On Windows the socket is bound at the data-dir path itself (no shortened fallback) and afunix.sys's sun_path is 108
 // bytes; the runner's TEMP (`C:\Users\RUNNER~1\AppData\Local\Temp`) plus the old 19-character prefix put
-// `<dataDir>\.gbrain-persistence.sock` at 114 bytes, so every listen failed before the sweep ran. On POSIX gbrain keeps
+// `<dataDir>\.gbrain-persistence.sock` at 114 bytes, so every listen failed before the sweep ran. On POSIX foresights keeps
 // the data-dir socket only up to UNIX_SOCKET_PATH_MAX_BYTES and otherwise binds a shortened /tmp path the sweep never
 // sees (#6573: macOS's TMPDIR always crossed it, so the planted sockets sat where nothing looked). So the POSIX fixture
 // root is under /tmp (realpath'd: /private/tmp on macOS), and the fixture refuses up front when the path would not fit.
@@ -129,7 +129,7 @@ beforeAll(async () => {
 
 afterAll(() => { rmSync(temporary, { recursive: true, force: true }); });
 
-test.if(posix)('a stale gbrain socket from a SIGKILLed holder is removed, the dump succeeds and omitted names the removal', async () => {
+test.if(posix)('a stale foresights socket from a SIGKILLed holder is removed, the dump succeeds and omitted names the removal', async () => {
   const socket = resolveSocketPathForConfig({ engine: 'pglite', database_path: dataDir }, 'persistence')!;
   expect(socket).toBe(join(dataDir, '.gbrain-persistence.sock'));
   await leaveStaleSocket(socket);
@@ -139,10 +139,10 @@ test.if(posix)('a stale gbrain socket from a SIGKILLed holder is removed, the du
   expect(statSync(output).size).toBeGreaterThan(0);
   expect(manifest.entries.map(e => e.path)).toContain('database.tar');
   const omitted = (manifest as unknown as { omitted: string[] }).omitted;
-  expect(omitted).toContain(`Removed stale runtime socket left by an exited gbrain process: ${socket}`);
+  expect(omitted).toContain(`Removed stale runtime socket left by an exited foresights process: ${socket}`);
 });
 
-test.if(posix)('a live listener on a gbrain socket without a PGLite owner is kept and the dump refuses with backup_dump_failed', async () => {
+test.if(posix)('a live listener on a foresights socket without a PGLite owner is kept and the dump refuses with backup_dump_failed', async () => {
   const socket = join(dataDir, '.gbrain-resolve.sock');
   const server = net.createServer();
   await new Promise<void>(resolve => server.listen(socket, () => resolve()));
@@ -159,7 +159,7 @@ test.if(posix)('a live listener on a gbrain socket without a PGLite owner is kep
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test.if(posix)('a FIFO gbrain does not own is left in place and named', async () => {
+test.if(posix)('a FIFO foresights does not own is left in place and named', async () => {
   const fifo = join(dataDir, '.operator-tap.fifo');
   execFileSync('mkfifo', [fifo]);
   try {
@@ -167,13 +167,13 @@ test.if(posix)('a FIFO gbrain does not own is left in place and named', async ()
     const failure = await backupFailure();
     expect(failure.code).toBe('backup_dump_failed');
     expect(failure.message).toContain(fifo);
-    expect(failure.message).toContain('FIFO gbrain does not own');
+    expect(failure.message).toContain('FIFO foresights does not own');
     expect(lstatSync(fifo).isFIFO()).toBe(true);
     expect(dataDirFingerprint()).toBe(before);
   } finally { unlinkSync(fifo); }
 });
 
-test.if(posix)('a symlink in place of the gbrain socket is not followed: the link and its target stay', async () => {
+test.if(posix)('a symlink in place of the foresights socket is not followed: the link and its target stay', async () => {
   const elsewhere = join(temporary, 'elsewhere.sock');
   await leaveStaleSocket(elsewhere);
   const link = join(dataDir, '.gbrain-persistence.sock');
@@ -262,7 +262,7 @@ test.if(posix)('an lstat failure that is not an access or reparse-point class st
   } finally { unlinkSync(socket); }
 });
 
-test('a regular file where a gbrain socket is expected is kept as not_a_socket and never removed (every platform)', async () => {
+test('a regular file where a foresights socket is expected is kept as not_a_socket and never removed (every platform)', async () => {
   const path = join(dataDir, '.gbrain-persistence.sock');
   writeFileSync(path, 'not a socket\n');
   try {
@@ -275,7 +275,7 @@ test('a regular file where a gbrain socket is expected is kept as not_a_socket a
 
 // ---- native Windows row (test.yml windows-latest, `native_only` dispatch): the stale AF_UNIX reparse point itself ----
 
-test.if(windows)('Windows: a stale gbrain socket from a killed child is removed through the native tag check, omitted names it and the dump succeeds', async () => {
+test.if(windows)('Windows: a stale foresights socket from a killed child is removed through the native tag check, omitted names it and the dump succeeds', async () => {
   const socket = resolveSocketPathForConfig({ engine: 'pglite', database_path: dataDir }, 'persistence')!;
   await leaveStaleSocket(socket);
   expect(await accepts(socket)).toBe(false); // dead holder: the probe connect is refused
@@ -283,14 +283,14 @@ test.if(windows)('Windows: a stale gbrain socket from a killed child is removed 
   const { manifest } = await createPgliteBackup({ output, root });
   expect(statSync(output).size).toBeGreaterThan(0);
   expect(manifest.entries.map(e => e.path)).toContain('database.tar');
-  expect((manifest as unknown as { omitted: string[] }).omitted).toContain(`Removed stale runtime socket left by an exited gbrain process: ${socket}`);
+  expect((manifest as unknown as { omitted: string[] }).omitted).toContain(`Removed stale runtime socket left by an exited foresights process: ${socket}`);
   // Removed: a fresh listener can bind the same path again.
   const server = net.createServer();
   await new Promise<void>((resolve, reject) => { server.on('error', reject); server.listen(socket, () => resolve()); });
   await new Promise(resolve => server.close(resolve));
 });
 
-test.if(windows)('Windows: a live listener on a gbrain socket is kept, still accepts a connection and the dump refuses naming it', async () => {
+test.if(windows)('Windows: a live listener on a foresights socket is kept, still accepts a connection and the dump refuses naming it', async () => {
   const socket = join(dataDir, '.gbrain-resolve.sock');
   const server = net.createServer();
   await new Promise<void>(resolve => server.listen(socket, () => resolve()));
@@ -305,7 +305,7 @@ test.if(windows)('Windows: a live listener on a gbrain socket is kept, still acc
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test.if(windows)('Windows: a directory junction where a gbrain socket is expected is not an AF_UNIX socket: kept, never removed, its target intact', async () => {
+test.if(windows)('Windows: a directory junction where a foresights socket is expected is not an AF_UNIX socket: kept, never removed, its target intact', async () => {
   const target = join(temporary, 'junction-target');
   mkdirSync(target, { recursive: true });
   writeFileSync(join(target, 'keep.txt'), 'keep');

@@ -30,11 +30,11 @@ const registrationsFix = () => readFix('Lists this brain\'s local writer registr
 const doctorFix = (why: string) => readFix(why, { argv: ['gbrain', 'doctor', '--json'] });
 function invalidIdentityFile(message: string, path: string, what: string): OperationError {
   return opError('writer_identity_invalid', message,
-    `${path} is not a valid ${what} document, so gbrain cannot use it; nothing was changed. Do not delete or regenerate it to force progress: a new identity orphans the ownership and pending writes recorded for the old one. Show the user the path; restoring it from a backup is their decision.`,
+    `${path} is not a valid ${what} document, so foresights cannot use it; nothing was changed. Do not delete or regenerate it to force progress: a new identity orphans the ownership and pending writes recorded for the old one. Show the user the path; restoring it from a backup is their decision.`,
     { fix: doctorFix('Checks this installation\'s persistence identity and owner state without changing anything.') });
 }
 const credentialMismatch = (path: string, id: string, lane: string) => opError('permission_denied', 'Local writer credential does not match this registration.',
-  `The private credential in ${path} does not match registration ${id} in this brain's database (the file was copied from another brain or host, or the database was restored), so nothing was registered. Do not overwrite either side: show the user the path; moving the file aside and running gbrain auth local-writer register ${lane} for a new principal is their decision.`,
+  `The private credential in ${path} does not match registration ${id} in this brain's database (the file was copied from another brain or host, or the database was restored), so nothing was registered. Do not overwrite either side: show the user the path; moving the file aside and running foresights auth local-writer register ${lane} for a new principal is their decision.`,
   { fix: registrationsFix() });
 const defaultGrant = (): LocalGrant => ({ sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
 export function persistenceHome(): string { return join(configDir(), 'persistence'); }
@@ -203,14 +203,14 @@ function brainIdentity(engine: SqlEngine): Promise<string> {
 async function readBrainIdentity(engine: SqlEngine): Promise<string> {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   if (!brain) throw opError('writer_not_initialized', 'Persistence metadata has not been initialized.',
-    'This brain\'s database has no persistence metadata row, which the schema migrations create, so no local writer can be registered or verified; nothing changed. Run gbrain doctor --json on the brain host; if it reports pending migrations, bring the schema current with gbrain apply-migrations, then run the command again.',
+    'This brain\'s database has no persistence metadata row, which the schema migrations create, so no local writer can be registered or verified; nothing changed. Run foresights doctor --json on the brain host; if it reports pending migrations, bring the schema current with foresights apply-migrations, then run the command again.',
     { fix: doctorFix('Reports the schema version and any pending migrations of this brain, read-only.') });
   return brain.brain_id;
 }
 export async function registerLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', grant = defaultGrant(), replace = false): Promise<LocalRegistration> {
   if (isEmbeddedEngine(engine)) {
     if (replace) throw new OperationError('writer_registration_required', 'A writer given at open is not replaced here.',
-      'This engine was opened from settings, so its local writer is the value its host passed (settings.writer); gbrain never mints or rotates a credential file for it. Revoke the registration and reopen the engine with a new writer id and credential.');
+      'This engine was opened from settings, so its local writer is the value its host passed (settings.writer); foresights never mints or rotates a credential file for it. Revoke the registration and reopen the engine with a new writer id and credential.');
     const local = embeddedLocalWriter(engine, lane);
     await registerLocalWriterValue(engine, local, grant);
     return local;
@@ -379,7 +379,7 @@ function verifiedFromRow(local: LocalRegistration, row: LocalWriterRow | undefin
   const expected = Buffer.from(row?.credential_hash ?? '');
   if (!row || row.revoked_at != null || row.lane !== local.lane || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     throw opError('permission_denied', 'Local writer registration is unavailable or revoked.',
-      `Local ${local.lane} writer registration ${local.id} is missing from this brain's database, revoked, or holds a different credential, so this caller is not authorized and nothing ran. Review it with the command in fix; replacing a revoked registration (gbrain auth local-writer register ${local.lane} --replace with the complete intended grant) is the user's decision.`,
+      `Local ${local.lane} writer registration ${local.id} is missing from this brain's database, revoked, or holds a different credential, so this caller is not authorized and nothing ran. Review it with the command in fix; replacing a revoked registration (foresights auth local-writer register ${local.lane} --replace with the complete intended grant) is the user's decision.`,
       { fix: registrationsFix() });
   }
   return { principal: { kind: row.lane === 'cli' ? 'local_cli' : 'local_stdio', id: local.id }, grant: row.grant_ceiling, remote: row.lane !== 'cli' };

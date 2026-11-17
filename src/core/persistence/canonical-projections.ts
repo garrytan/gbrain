@@ -526,7 +526,7 @@ export function renderMaterializedBullet(row: { date: string; source: string; su
   // Pre-#4277 backlink receipts are graph noise the extractors deliberately skip.
   if (/^Referenced in\s+\[/i.test(tuple.summary)) return null;
   // #6184: a row carrying HTML comment markup (a junk row the citation parser filed from a section END marker)
-  // would write a second copy of that marker into the page; it stays database-side until `gbrain repair timeline-comments`.
+  // would write a second copy of that marker into the page; it stays database-side until `foresights repair timeline-comments`.
   if (TIMELINE_COMMENT_MARKUP.test(`${row.source}\n${row.summary}\n${row.detail ?? ''}`)) return null;
   const block = [materializedMarker(tuple), `- **${tuple.date}** | ${tuple.source} — ${tuple.summary}`, ...(detail ? [`  ${detail}`] : [])].join('\n');
   const extracted = [...canonicalTimeline({ compiled_truth: block, timeline: '' }, slug).values()];

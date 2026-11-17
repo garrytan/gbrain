@@ -145,7 +145,7 @@ export async function run(deps: ReleaseDeps, argv: string[]): Promise<void> {
 
 if (import.meta.main) {
   const deps = processDeps();
-  if (!deps.repo) deps.repo = 'garrytan/gbrain';
+  if (!deps.repo) deps.repo = 'aimonk2025/gbrain';
   try {
     await run(deps, process.argv.slice(2));
   } catch (e) {

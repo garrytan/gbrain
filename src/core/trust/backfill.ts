@@ -1,5 +1,5 @@
 /**
- * `gbrain trust backfill` (#5575: A8, CEO-17, DX-5): classifies rows written
+ * `foresights trust backfill` (#5575: A8, CEO-17, DX-5): classifies rows written
  * before trust tiers existed, from deterministic signals only. Rows with no
  * signal stay `unknown`; content_chunks are never touched (chunk tier is its
  * page's at read time); page_versions keep `unknown` (ENG-10).
@@ -57,7 +57,7 @@ import { TRUST_BACKFILL_COMPLETED_KEY, type TrustTable } from './schema.ts';
 import { TRUST_TIER_RANK, TRUST_TIERS, isTrustTier, trustRankSql, trustTierFromRankSql, type TrustTier } from './tier.ts';
 
 export { TRUST_BACKFILL_COMPLETED_KEY };
-export const TRUST_BACKFILL_COMMAND = 'gbrain trust backfill --resume';
+export const TRUST_BACKFILL_COMMAND = 'foresights trust backfill --resume';
 const CHECKPOINT_OP = 'trust-backfill';
 /** The claim lift's own cursor, so it never resumes (or clears) a full backfill's. */
 const CLAIM_CHECKPOINT_OP = 'trust-claim';
@@ -335,7 +335,7 @@ export async function runTrustBackfill(engine: BrainEngine, opts: TrustBackfillO
   const cols = await readColumns(engine);
   if (!cols.has('pages', 'trust_tier')) {
     throw opError('migrations_pending', 'This brain has no trust_tier columns yet, so there is nothing to backfill.',
-      'Apply the pending schema migrations on the brain host, then run the backfill. gbrain trust backfill --dry-run previews it without them.', {
+      'Apply the pending schema migrations on the brain host, then run the backfill. foresights trust backfill --dry-run previews it without them.', {
         fix: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent', requires_exclusive: true,
           why: 'Applies the pending schema migrations, including the trust tier columns.', verify: { argv: ['gbrain', 'doctor', '--json'] } },
       });

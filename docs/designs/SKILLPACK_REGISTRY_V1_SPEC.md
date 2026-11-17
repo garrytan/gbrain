@@ -8,12 +8,12 @@
 >
 > | Old spec verb | v0.36-aligned verb | What changes |
 > |---|---|---|
-> | `gbrain skillpack install <name>` | `gbrain skillpack scaffold <source>` | One-time additive copy, no managed block, refuses to overwrite. |
-> | `gbrain skillpack uninstall <name>` | (gone) | User owns files; deletes via `rm` or git. |
+> | `foresights skillpack install <name>` | `foresights skillpack scaffold <source>` | One-time additive copy, no managed block, refuses to overwrite. |
+> | `foresights skillpack uninstall <name>` | (gone) | User owns files; deletes via `rm` or git. |
 > | Auto-walk runbook | Display `bootstrap.md` post-scaffold | Already aligned with codex T1 (per-step approval) — becomes a printed checklist, not an executor. |
 > | Multi-source resolver receipt | Per-scaffold state in `~/.gbrain/skillpack-state.json` | Codex G1 was the right call; v0.36 retired the resolver-block anyway. |
 > | Auto-rename collision | Refuses-to-overwrite (v0.36's contract) | Codex was right; v0.36 already enforces it. |
-> | Update path | `gbrain skillpack reference <name> [--apply-clean-hunks]` | Diff-lens with optional auto-merge of clean hunks. |
+> | Update path | `foresights skillpack reference <name> [--apply-clean-hunks]` | Diff-lens with optional auto-merge of clean hunks. |
 >
 > What stays verbatim: registry at `garrytan/gbrain-skillpack-registry`, rubric,
 > doctor, anatomy doc, tarball determinism, TOFU + SHA pinning, endorsement
@@ -25,10 +25,10 @@
 
 ## Context
 
-After v0.36.0.0 (Hindsight Calibration), gbrain has a mature skillpack system —
+After v0.36.0.0 (Hindsight Calibration), foresights has a mature skillpack system —
 but it only knows how to install the **one** bundle declared in
-`openclaw.plugin.json` at gbrain's own repo root. Garry wants to ship a
-"hackathon-evaluation" skillpack as a standalone artifact, any gbrain user
+`openclaw.plugin.json` at foresights's own repo root. Garry wants to ship a
+"hackathon-evaluation" skillpack as a standalone artifact, any foresights user
 should be able to discover + install it, and the ecosystem should grow
 without Garry hand-curating every README. That requires five new capabilities:
 
@@ -36,7 +36,7 @@ without Garry hand-curating every README. That requires five new capabilities:
    point a git repo at and call "a skillpack."
 2. **Distribute** — a transport from one user's machine to another. Git +
    tarball, no centralized hosting infra.
-3. **Install** — extend `gbrain skillpack install` to accept a third-party
+3. **Install** — extend `foresights skillpack install` to accept a third-party
    source, with trust posture appropriate for installing markdown/SKILL.md
    files into a workspace that an agent then routes through.
 4. **Discover + curate** — a canonical catalog at
@@ -46,10 +46,10 @@ without Garry hand-curating every README. That requires five new capabilities:
    the registry is a `registry.json` manifest pointing at them.
 5. **Cross-distribute** — list in `mvanhorn/printing-press-library` as a
    sister registry, AND use Printing Press to generate an agent-native CLI
-   wrapper around gbrain's HTTP MCP so non-gbrain agents can hit a gbrain
+   wrapper around foresights's HTTP MCP so non-gbrain agents can hit a foresights
    instance remotely. Doubles the discovery surface.
 
-The intended outcome is: `gbrain skillpack install hackathon-evaluation`
+The intended outcome is: `foresights skillpack install hackathon-evaluation`
 resolves through the registry, clones the source repo (or fetches the
 pinned tarball), validates the manifest, drops the skill files into the
 workspace, and routes them via RESOLVER.md / AGENTS.md — same code paths as
@@ -69,9 +69,9 @@ in front.
   library exactly the way this plan proposes. The publish-skill pattern
   (`/printing-press-publish`) is the load-bearing UX move — no contributor
   hand-runs git. We replicate it.
-- gbrain skillpacks have a **runtime contract** (they assume `gbrain query`,
+- foresights skillpacks have a **runtime contract** (they assume `foresights query`,
   `put_page`, sources, takes, hindsight calibration). They are not portable
-  to a generic agent harness without gbrain installed. That's what justifies
+  to a generic agent harness without foresights installed. That's what justifies
   a dedicated registry instead of mirroring agentskills.io — the validation
   surface is gbrain-shaped.
 
@@ -82,7 +82,7 @@ in front.
   `excluded_from_install?[]`). Reuse + extend; do not re-invent.
 - `installer.ts:259-293` — cumulative-slugs receipt embedded in the managed
   block (`<!-- gbrain:skillpack:manifest cumulative-slugs="..." version="..." -->`).
-  Single source of truth for "what's installed from gbrain."
+  Single source of truth for "what's installed from foresights."
 - `installer.ts:376-402` — per-file byte-compare gate before install /
   uninstall (D11). Refuses to clobber user edits without `--overwrite-local`.
 - `installer.ts:180-253` — atomic lockfile with 10-min stale threshold and
@@ -104,15 +104,15 @@ A skillpack is **a git repo with `skillpack.json` at root + a `skills/`
 directory**. A `.tgz` of that same tree is an offline-transportable form
 of the same thing. Both paths land in the same installer.
 
-- `gbrain skillpack install <owner>/<repo>` — clones via existing
+- `foresights skillpack install <owner>/<repo>` — clones via existing
   `git-remote.ts` SSRF-hardened path.
-- `gbrain skillpack install <url.git>` — verbatim https URL.
-- `gbrain skillpack install <path/to/pack.tgz>` — extract to cache dir,
+- `foresights skillpack install <url.git>` — verbatim https URL.
+- `foresights skillpack install <path/to/pack.tgz>` — extract to cache dir,
   install from extracted tree. Useful inside YC orgs / corp networks that
   block direct GitHub access, or for air-gapped distribution.
-- `gbrain skillpack install <path/to/repo>` — local path (skill authors
+- `foresights skillpack install <path/to/repo>` — local path (skill authors
   testing).
-- `gbrain skillpack pack [--out <path>]` — publisher-side command that
+- `foresights skillpack pack [--out <path>]` — publisher-side command that
   validates the manifest, runs the full `pack --dry-run` pipeline, and
   emits `<name>-<version>.tgz`. SHA-256 of the tarball is recorded in the
   TOFU receipt so re-install of the same tarball is silent, but a
@@ -173,7 +173,7 @@ Two files at the registry repo root:
 **Endorsement tiers:**
 
 - `endorsed` — Garry has used it, it works, it's in his pinned set.
-  Listed first in `gbrain skillpack search` output. Manual promotion.
+  Listed first in `foresights skillpack search` output. Manual promotion.
 - `community` — passed the publish-gate validation, lives in the catalog,
   but Garry hasn't personally vetted it. Default tier on first PR.
 - `experimental` — author self-flagged as in-development. Listed last,
@@ -182,25 +182,25 @@ Two files at the registry repo root:
 **CLI integration:**
 
 ```
-gbrain skillpack search <query> [--tier endorsed|community|experimental] [--json]
-gbrain skillpack info <name>             # from registry, not from local install
-gbrain skillpack install <name>          # resolves through registry by short name
-gbrain skillpack install <url|tarball>   # still works for direct installs
-gbrain skillpack install starter-pack    # special bundle entry in registry.json
-gbrain skillpack registry [--url <url>]  # show/set the configured registry
+foresights skillpack search <query> [--tier endorsed|community|experimental] [--json]
+foresights skillpack info <name>             # from registry, not from local install
+foresights skillpack install <name>          # resolves through registry by short name
+foresights skillpack install <url|tarball>   # still works for direct installs
+foresights skillpack install starter-pack    # special bundle entry in registry.json
+foresights skillpack registry [--url <url>]  # show/set the configured registry
 ```
 
 `--url` defaults to `https://raw.githubusercontent.com/garrytan/gbrain-skillpack-registry/main/registry.json`.
 Operators inside corp networks can point at a fork. The registry URL is
 recorded in `~/.gbrain/config.json` under `skillpack.registry_url`.
 
-`gbrain skillpack install starter-pack` resolves a special `bundles` array
+`foresights skillpack install starter-pack` resolves a special `bundles` array
 in `registry.json` (a named list of skillpack names) and installs each in
 order. Garry curates the starter pack.
 
 **First-install identity confirm + anti-typosquat (codex G4):**
 
-`gbrain skillpack install <name>` on first install of a given source
+`foresights skillpack install <name>` on first install of a given source
 surfaces a confirm prompt with full identity:
 
 ```
@@ -243,7 +243,7 @@ skips later packs, and prints a summary:
   ✗ resume-roaster       — pinned commit unreachable
   ⤓ market-sizer         — skipped after failure
   ⤓ pitch-doctor         — skipped after failure
-Retry the failed pack with: gbrain skillpack install resume-roaster
+Retry the failed pack with: foresights skillpack install resume-roaster
 ```
 
 Matches the multi-source resolver design (each source independent).
@@ -255,7 +255,7 @@ a bundle do not poison the user's RESOLVER.md / AGENTS.md.
 possible (it's just JSON), but the command is the canonical path.
 
 ```
-gbrain skillpack endorse <name> [--tier endorsed|community|experimental]
+foresights skillpack endorse <name> [--tier endorsed|community|experimental]
                                 [--push] [--dry-run]
 ```
 
@@ -272,22 +272,22 @@ Run from a clone of `garrytan/gbrain-skillpack-registry`. Steps:
 Mirrors `mvanhorn/cli-printing-press`'s `/printing-press-publish` exactly.
 No contributor hand-runs git. The skill drives:
 
-1. **Local validation** (`gbrain skillpack pack --dry-run`):
+1. **Local validation** (`foresights skillpack pack --dry-run`):
    - `skillpack.json` schema check
    - SKILL.md frontmatter on every listed skill
    - File-type allow-list (no `.env`, `.ssh`, `.pem`, no executables)
    - Slug-collision sweep against the live `registry.json`
-   - `gbrain check-resolvable` clean
-   - `gbrain routing-eval` clean (structural layer)
+   - `foresights check-resolvable` clean
+   - `foresights routing-eval` clean (structural layer)
 2. **Security gates** (publish-gate v1, see decision Q3):
    - Static analysis on any embedded scripts (shellcheck for `.sh`,
      a heuristic JSON/YAML safety pass on data files)
    - Dependency declaration check — every external resource referenced
      in SKILL.md must be in a declared `external_resources:` array
-   - Trial install: extract pack into a tempdir, run `gbrain skillpack
-     install <tempdir>` against an ephemeral PGLite-backed gbrain (mirrors
+   - Trial install: extract pack into a tempdir, run `foresights skillpack
+     install <tempdir>` against an ephemeral PGLite-backed foresights (mirrors
      the `test/e2e/longmemeval` ephemeral-PGLite pattern at
-     `src/eval/longmemeval/harness.ts`), assert `gbrain check-resolvable`
+     `src/eval/longmemeval/harness.ts`), assert `foresights check-resolvable`
      stays clean and the skill rows appear in the managed block.
    - Trial install runs with `GBRAIN_SKILLPACK_SANDBOX=1`, which disables
      any operation that writes outside the workspace or hits the network.
@@ -306,7 +306,7 @@ No contributor hand-runs git. The skill drives:
      to their results. Sandbox re-runs against the stubbed gateway prove
      the pipeline runs end-to-end and the eval JSON is well-formed.
    - **Routing evals**: structural matching via the existing
-     `gbrain routing-eval` command. Asserts every `intent` in
+     `foresights routing-eval` command. Asserts every `intent` in
      `routing-eval.jsonl` resolves to the declared `expected_skill`
      given the skill's `triggers:` frontmatter.
    - **Coverage score**: published as a single percentage in the
@@ -317,9 +317,9 @@ No contributor hand-runs git. The skill drives:
    - **Failed eval / test surfaces actionable line**: each failure
      in the validation log includes the file path, the assertion, and
      a paste-ready re-run command (`bun test <file>` or
-     `gbrain routing-eval skills/<name>/routing-eval.jsonl`).
+     `foresights routing-eval skills/<name>/routing-eval.jsonl`).
 3. **Tarball + hash**:
-   - `gbrain skillpack pack --out skillpack-<name>-<version>.tgz`
+   - `foresights skillpack pack --out skillpack-<name>-<version>.tgz`
    - SHA-256 recorded for registry pin
 4. **Registry PR** (Printing Press pattern verbatim):
    - Fork `garrytan/gbrain-skillpack-registry` if not already forked
@@ -334,9 +334,9 @@ No contributor hand-runs git. The skill drives:
    - Stretch: Garry's `endorse <name>` command flips the entry to
      `endorsed` via a one-line commit on `endorsements.json`
 
-The skill file itself ships in the gbrain skillpack at
+The skill file itself ships in the foresights skillpack at
 `skills/gbrain-skillpack-publish/SKILL.md`. Invokable from any agent
-harness that loads gbrain skills.
+harness that loads foresights skills.
 
 ### Printing Press cross-distribution
 
@@ -345,23 +345,23 @@ Two-direction integration (decision Q2):
 - **Cross-list**: open a PR against `mvanhorn/printing-press-library`
   registering `garrytan/gbrain-skillpack-registry` as a sister-registry
   in their catalog (their library has a `sister_registries:` section per
-  their AGENTS.md). Their 1.4k-star audience discovers gbrain through
+  their AGENTS.md). Their 1.4k-star audience discovers foresights through
   the same search surface they already use.
-- **Generate**: run `printing-press print` against `gbrain serve --http`'s
-  OpenAPI spec (gbrain's HTTP MCP exposes a JSON-RPC surface with stable
+- **Generate**: run `printing-press print` against `foresights serve --http`'s
+  OpenAPI spec (foresights's HTTP MCP exposes a JSON-RPC surface with stable
   tool definitions). The output is a `gbrain-cli` agent-native binary
-  with SQLite mirror that any agent — not just gbrain users — can use to
-  hit a remote gbrain. Submitted back to `mvanhorn/printing-press-library`
+  with SQLite mirror that any agent — not just foresights users — can use to
+  hit a remote foresights. Submitted back to `mvanhorn/printing-press-library`
   as a published CLI, credited to Garry. Doubles distribution surface and
-  turns gbrain into something Printing Press users can route through.
+  turns foresights into something Printing Press users can route through.
 
 The cross-list is ~1 day. The generated CLI is ~1 week and produces a
 genuinely new artifact that didn't exist before: gbrain-as-a-service
-viewed from outside the gbrain runtime.
+viewed from outside the foresights runtime.
 
 ### Manifest schema: `skillpack.json` (cathedral artifact)
 
-A gbrain skillpack is a **full software package**, not just markdown.
+A foresights skillpack is a **full software package**, not just markdown.
 Same shape as npm/cargo: code, tests, evals, runbooks, changelog. This
 is the differentiation moat per the DX review: nobody else ships AI
 evals and agent-readable install/upgrade runbooks as first-class
@@ -402,7 +402,7 @@ package artifacts.
   Manifest also carries `runbook_schema_version` (default 1) +
   `eval_schema_version` (default 1). Installer accepts a configured
   range per dimension; rejects manifests declaring a newer schema
-  than the local gbrain supports with a paste-ready `gbrain upgrade`
+  than the local foresights supports with a paste-ready `foresights upgrade`
   hint. Refuses silent downgrade.
 - `gbrain_min_version` — fail-fast version gate (existing semver helper).
 - `name` — must match the directory name; unique in registry namespace.
@@ -411,7 +411,7 @@ package artifacts.
   publish gate. Pure Bun unit tests, no DB.
 - `e2e_tests[]` — glob(s) for integration tests. Run if `DATABASE_URL`
   is reachable inside the sandbox (skip-gracefully otherwise).
-- `llm_evals[]` — cross-modal eval configs in the gbrain v0.27.x format
+- `llm_evals[]` — cross-modal eval configs in the foresights v0.27.x format
   (task/output prompt with multi-model judging). Run with a **stubbed
   gateway** in the publish-gate sandbox so no real API spend; the
   publisher's machine runs real-gateway evals before submitting.
@@ -442,14 +442,14 @@ exactly what's blocking promotion.
 
 ### Install/upgrade trust model: per-step approval, not auto-walk (codex T1)
 
-The DX review's first cut had `gbrain skillpack install <name>` auto-
+The DX review's first cut had `foresights skillpack install <name>` auto-
 walk `runbooks/install.md` after dropping files. Codex pointed out
-that this runs trusted-path (`remote=false`) gbrain CLI calls against
+that this runs trusted-path (`remote=false`) foresights CLI calls against
 the user's brain on every install — a malicious community-tier pack
 mutates brain state on first install. v1 fix: **runbook executor
 defaults to per-step approval**.
 
-- `gbrain skillpack install <name>` ALWAYS drops files + updates the
+- `foresights skillpack install <name>` ALWAYS drops files + updates the
   resolver block. That part is content-only; the trust gates (TOFU
   + content-hash + endorsement tier) already cover it.
 - After file-drop, if `runbooks/install.md` exists, the install
@@ -473,7 +473,7 @@ Per-step + dry-run + endorsement is how trust gets earned.
 
 ### Agent runbook format (runbooks/install.md, uninstall.md, upgrade-*.md)
 
-Mirrors gbrain's own `skills/migrations/v0.21.0.md` pattern — markdown
+Mirrors foresights's own `skills/migrations/v0.21.0.md` pattern — markdown
 that an agent reads top-to-bottom and executes step-by-step.
 
 ```markdown
@@ -486,14 +486,14 @@ skillpack_version: 0.1.0
 
 # Install runbook: hackathon-evaluation v0.1.0
 
-1. **agent:** `gbrain put_page wiki/_skillpack-hackathon-evaluation
+1. **agent:** `foresights put_page wiki/_skillpack-hackathon-evaluation
    --frontmatter type=skillpack-config`
    - Why: bootstraps the config page this skillpack reads from.
 2. **show user:** "Hackathon evaluation is installed. Try: 'Judge this
    submission against the YC rubric.'"
 3. **ask user:** "Want a starter list of evaluation criteria added to
    your brain?"
-   - On yes: `gbrain put_page wiki/concepts/yc-rubric < seeds/rubric.md`
+   - On yes: `foresights put_page wiki/concepts/yc-rubric < seeds/rubric.md`
    - On no: skip.
 ```
 
@@ -529,7 +529,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'manifest_valid',
     description: 'skillpack.json passes the v1 schema',
     check: async (pack) => validateManifest(pack),
-    fix_hint: 'Run: gbrain skillpack init <name> to regenerate a valid stub',
+    fix_hint: 'Run: foresights skillpack init <name> to regenerate a valid stub',
     weight: 1,
   },
   {
@@ -537,7 +537,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'skills_have_skill_md',
     description: 'Every listed skill has SKILL.md with valid frontmatter (name, description, triggers, mutating, writes_pages)',
     check: async (pack) => allSkillsHaveValidSkillMd(pack),
-    fix_hint: 'Run: gbrain skillify scaffold <skill-name>',
+    fix_hint: 'Run: foresights skillify scaffold <skill-name>',
     weight: 1,
   },
   {
@@ -545,13 +545,13 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'routing_evals_present',
     description: 'Every skill has routing-eval.jsonl with >= 5 intents',
     check: async (pack) => allSkillsHaveRoutingEvals(pack, 5),
-    fix_hint: 'gbrain skillify scaffold drops 5 example intents per skill',
+    fix_hint: 'foresights skillify scaffold drops 5 example intents per skill',
     weight: 1,
   },
   {
     id: 4,
     name: 'routing_evals_clean',
-    description: 'gbrain routing-eval passes structurally for every routing-eval.jsonl',
+    description: 'foresights routing-eval passes structurally for every routing-eval.jsonl',
     check: async (pack) => runRoutingEvalStructural(pack),
     fix_hint: 'Add the missing trigger phrase to the skill\'s `triggers:` frontmatter, or move the intent to the correct skill',
     weight: 1,
@@ -559,7 +559,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
   {
     id: 5,
     name: 'check_resolvable_clean',
-    description: 'gbrain check-resolvable passes for this pack\'s resolver entries (MECE, no DRY violations, all triggers reach skills). Runs against a PACK-LOCAL fixture, not the ambient workspace.',
+    description: 'foresights check-resolvable passes for this pack\'s resolver entries (MECE, no DRY violations, all triggers reach skills). Runs against a PACK-LOCAL fixture, not the ambient workspace.',
     check: async (pack) => runCheckResolvableIsolated(pack),
     fix_hint: 'Add a resolver row for the missing skill, or remove the orphan trigger',
     weight: 1,
@@ -579,7 +579,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'unit_tests_present',
     description: 'Every skill has at least one unit test that imports it (test/**/*.test.ts)',
     check: async (pack) => everySkillHasUnitTest(pack),
-    fix_hint: 'gbrain skillify scaffold drops a passing example.test.ts you can extend',
+    fix_hint: 'foresights skillify scaffold drops a passing example.test.ts you can extend',
     weight: 1,
   },
   {
@@ -587,7 +587,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'llm_eval_present',
     description: 'At least one LLM-judge eval at evals/*.judge.json with >= 3 cases',
     check: async (pack) => hasLlmJudgeEval(pack, 3),
-    fix_hint: 'gbrain skillify scaffold-eval <skill-name>',
+    fix_hint: 'foresights skillify scaffold-eval <skill-name>',
     weight: 1,
   },
   {
@@ -595,7 +595,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'install_runbook_present',
     description: 'runbooks/install.md exists, parses, and has at least one step',
     check: async (pack) => parseRunbook(pack, 'install'),
-    fix_hint: 'gbrain skillpack init regenerates the stub; edit to taste',
+    fix_hint: 'foresights skillpack init regenerates the stub; edit to taste',
     weight: 1,
   },
   {
@@ -603,7 +603,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'uninstall_runbook_present',
     description: 'runbooks/uninstall.md exists, parses, and has at least one step',
     check: async (pack) => parseRunbook(pack, 'uninstall'),
-    fix_hint: 'gbrain skillpack init regenerates the stub',
+    fix_hint: 'foresights skillpack init regenerates the stub',
     weight: 1,
   },
   {
@@ -611,7 +611,7 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
     name: 'changelog_present_and_current',
     description: 'CHANGELOG.md present, contains a `## [<current-version>]` entry, follows Keep-a-Changelog shape',
     check: async (pack) => changelogReferencesVersion(pack),
-    fix_hint: 'Add a `## [<version>] - <YYYY-MM-DD>` entry. Use gbrain skillpack doctor --fix to auto-generate from VERSION + git log.',
+    fix_hint: 'Add a `## [<version>] - <YYYY-MM-DD>` entry. Use foresights skillpack doctor --fix to auto-generate from VERSION + git log.',
     weight: 1,
   },
 ];
@@ -622,24 +622,24 @@ export const SKILLPACK_RUBRIC_V1: RubricDimension[] = [
 - `10/10` → **endorsed-eligible** (paired with the publish-gate's >=95% test+eval pass)
 - `8-9` → **community-tier eligible**, doctor prints paste-ready fixes for the misses
 - `5-7` → **experimental-tier only**, doctor lists required fixes
-- `<5` → doctor refuses to score, prints "this isn't a skillpack yet — run `gbrain skillpack init` and try again"
+- `<5` → doctor refuses to score, prints "this isn't a skillpack yet — run `foresights skillpack init` and try again"
 
-**2. Layered doctor — `gbrain skillpack doctor`**
+**2. Layered doctor — `foresights skillpack doctor`**
 
 Two modes; the agent picks which one based on workflow phase:
 
 ```
-gbrain skillpack doctor <pack-dir|tgz> [--quick|--full] [--fix] [--json]
+foresights skillpack doctor <pack-dir|tgz> [--quick|--full] [--fix] [--json]
 ```
 
 - `--quick` (default): structural-only sweep. Walks the rubric. ~5
   seconds. No sandbox, no LLM, no DB. The right command during
   iteration — save a file, run doctor, see your new score.
-- `--full`: equivalent to `gbrain skillpack pack --dry-run` — runs the
+- `--full`: equivalent to `foresights skillpack pack --dry-run` — runs the
   sandbox, the tests, the LLM-judge evals, the routing-evals against a
   trial install, the security gates. ~minutes. The right command
   before invoking the publish skill.
-- `--fix`: auto-scaffold missing pieces. Calls `gbrain skillify
+- `--fix`: auto-scaffold missing pieces. Calls `foresights skillify
   scaffold` for missing skills, drops runbook stubs from templates,
   generates a CHANGELOG entry from VERSION + git log. **Destructive on
   the file tree**: prints `"this will create the following N files,
@@ -662,23 +662,23 @@ JSON output (the agent contract):
   "dimensions": [
     {"id": 1, "name": "manifest_valid", "score": 1, "fix_hint": null},
     {"id": 7, "name": "llm_eval_present", "score": 0,
-     "fix_hint": "gbrain skillify scaffold-eval <skill-name>",
+     "fix_hint": "foresights skillify scaffold-eval <skill-name>",
      "auto_fixable": true}
   ],
-  "next_action": "Run: gbrain skillpack doctor --fix to scaffold the 3 missing pieces, then re-run."
+  "next_action": "Run: foresights skillpack doctor --fix to scaffold the 3 missing pieces, then re-run."
 }
 ```
 
 **Agent guidance (lives in `docs/skillpack-anatomy.md` AND in
 `skills/_brain-filing-rules.md`):**
 
-- After every meaningful edit during pack development: `gbrain
+- After every meaningful edit during pack development: `foresights
   skillpack doctor --quick --json`. Target a 10/10 before ever invoking
   `pack --dry-run`.
-- Before publishing: `gbrain skillpack doctor --full` to catch what the
+- Before publishing: `foresights skillpack doctor --full` to catch what the
   structural pass can't.
 - If doctor flags `auto_fixable: true` dimensions, the agent runs
-  `gbrain skillpack doctor --fix --yes` and re-runs `--quick`.
+  `foresights skillpack doctor --fix --yes` and re-runs `--quick`.
 
 **Required core vs quality-badge dimensions (codex outside-voice T4):**
 
@@ -705,17 +705,17 @@ tier-gating, not rubric-replacement). A publisher who stubs all 5
 badges with empty fixtures gets a visible "stubbed-eval-detected"
 flag from the publish-gate's content scan (e.g., 0 unique assertion
 strings in an eval, or a passing test with no `expect()` calls).
-Cathedral scaffold from `gbrain skillpack init` still drops all 10
+Cathedral scaffold from `foresights skillpack init` still drops all 10
 dimensions by default; the floor for publish is lower.
 
 **3. Reference pack + anatomy doc**
 
 - `examples/skillpack-reference/` — a real, working **10/10 pack**
-  living in the gbrain repo. Doubles as an integration-test fixture for
+  living in the foresights repo. Doubles as an integration-test fixture for
   the doctor + publish-gate test suite. Includes 2 skills, 2
   routing-eval.jsonl files, 3 unit tests, 1 LLM-judge eval, full
   runbook set, CHANGELOG. `bun run build` includes
-  `cd examples/skillpack-reference && gbrain skillpack doctor --quick`
+  `cd examples/skillpack-reference && foresights skillpack doctor --quick`
   as a pre-commit assertion so the reference pack never regresses.
 - `docs/skillpack-anatomy.md` — one-page reference. Tree diagram +
   rubric table + paste-ready commands. Auto-generated from
@@ -725,25 +725,25 @@ dimensions by default; the floor for publish is lower.
 
 **4. Invariant: every gbrain-shipped skillpack scores 10/10**
 
-The bundled gbrain skillpack (today's `openclaw.plugin.json` set, plus
+The bundled foresights skillpack (today's `openclaw.plugin.json` set, plus
 any future bundles like `starter-pack`, `founder-pack`) MUST score
-10/10 on `gbrain skillpack doctor --quick`. This is a regression
+10/10 on `foresights skillpack doctor --quick`. This is a regression
 guard, not a target:
 
 - `scripts/check-bundled-skillpacks-rubric.sh` runs in CI and
-  `bun run verify`. Iterates every pack the gbrain repo ships and runs
-  `gbrain skillpack doctor --quick --json`, asserts every score is 10.
-- New gbrain releases that drop a bundled-pack score below 10 fail
-  CI loud. The cost of fixing is a few `gbrain skillify scaffold`
-  calls; the cost of skipping is that gbrain ships skillpacks that
-  fail the bar gbrain demands of third parties — credibility-poison.
+  `bun run verify`. Iterates every pack the foresights repo ships and runs
+  `foresights skillpack doctor --quick --json`, asserts every score is 10.
+- New foresights releases that drop a bundled-pack score below 10 fail
+  CI loud. The cost of fixing is a few `foresights skillify scaffold`
+  calls; the cost of skipping is that foresights ships skillpacks that
+  fail the bar foresights demands of third parties — credibility-poison.
 - Today's openclaw.plugin.json set is not yet at 10/10 (no per-skill
   unit tests, no LLM-judge evals, no runbooks). **Bringing it to 10/10
   is in-scope for v1 — wave W4.5** (added below).
 
-### Scaffold: `gbrain skillpack init <name>` (cathedral defaults)
+### Scaffold: `foresights skillpack init <name>` (cathedral defaults)
 
-Lands the complete tree out of the box. `gbrain skillpack pack --dry-run`
+Lands the complete tree out of the box. `foresights skillpack pack --dry-run`
 on the scaffold passes immediately; developer deletes what they don't
 need.
 
@@ -770,7 +770,7 @@ hackathon-evaluation/
 └── .gitignore                    # tarball outputs, node_modules
 ```
 
-Boil-the-lake default. Same pattern as `gbrain init` which seeds
+Boil-the-lake default. Same pattern as `foresights init` which seeds
 configuration + storage tiers + a starter source instead of asking
 the user 15 questions.
 
@@ -829,7 +829,7 @@ owned state**.
 - Mismatch between state.json and resolver-block (e.g., resolver lists
   a source not in state.json, or state.json's cumulative-slugs differs
   from the rendered rows) fails loud at install-time and refuses
-  further mutations until reconciled by `gbrain skillpack reconcile`.
+  further mutations until reconciled by `foresights skillpack reconcile`.
 - Schema: `skillpack-state.json` has `schema_version:
   "gbrain-skillpack-state-v1"` for forward-compat; mirrors the
   installer.ts cumulative-slugs receipt evolution story.
@@ -875,13 +875,13 @@ rows or D11 hash budget.
 ### CLI surface
 
 ```
-gbrain skillpack install <source> [--update] [--trust] [--allow-private-remotes] [--dry-run] [--json]
-gbrain skillpack list [--source <name>] [--json]
-gbrain skillpack uninstall <name> [--overwrite-local] [--dry-run]
-gbrain skillpack info <name>                 # NEW: show pinned commit, author, license, renames
-gbrain skillpack update [<name>] [--check]   # NEW: check for upstream commits
-gbrain skillpack init <name>                 # NEW: scaffold publisher repo
-gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
+foresights skillpack install <source> [--update] [--trust] [--allow-private-remotes] [--dry-run] [--json]
+foresights skillpack list [--source <name>] [--json]
+foresights skillpack uninstall <name> [--overwrite-local] [--dry-run]
+foresights skillpack info <name>                 # NEW: show pinned commit, author, license, renames
+foresights skillpack update [<name>] [--check]   # NEW: check for upstream commits
+foresights skillpack init <name>                 # NEW: scaffold publisher repo
+foresights skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
 ```
 
 `<source>` accepts:
@@ -893,14 +893,14 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
 
 ### Publisher workflow (the "make a skillpack" path)
 
-1. `gbrain skillpack init <name>` — scaffolds `skillpack.json` +
+1. `foresights skillpack init <name>` — scaffolds `skillpack.json` +
    `skills/` + `RESOLVER.md` (skillpack-internal) + `.gitignore`.
-2. Author writes skills using existing `gbrain skillify scaffold` patterns.
-3. `gbrain skillpack pack --dry-run` — runs the full validate pipeline:
+2. Author writes skills using existing `foresights skillify scaffold` patterns.
+3. `foresights skillpack pack --dry-run` — runs the full validate pipeline:
    - `skillpack.json` schema check
    - every listed skill has SKILL.md + valid frontmatter
-   - `gbrain check-resolvable` clean
-   - `gbrain routing-eval` clean (structural layer)
+   - `foresights check-resolvable` clean
+   - `foresights routing-eval` clean (structural layer)
    - no banned file types in any skill dir (no `.env`, `.ssh`, executables)
    - returns structured pass/fail JSON
 4. `git push` to publish. Distribution is the git remote.
@@ -949,7 +949,7 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   miss), falls back to the on-disk cache and emits a single stderr
   line per process: `[skillpack] registry fetch failed, using cache
   from <fetched_at> (N hours old)`. If cache is >7 days old, the
-  warning escalates to `cache is stale, run 'gbrain skillpack registry
+  warning escalates to `cache is stale, run 'foresights skillpack registry
   --refresh' when back online`. Hard-fail only when there is no cache
   at all (first-run + offline). `--no-cache` flag forces network and
   fails loud on miss. The cache file's `fetched_at` is wall-clock
@@ -958,7 +958,7 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   against current wall-clock for age display.
 - `src/core/skillpack/registry-schema.ts` — runtime validators for
   `registry.json` + `endorsements.json` shapes. Single source of truth
-  used by both `gbrain skillpack search` and the publish-gate skill.
+  used by both `foresights skillpack search` and the publish-gate skill.
 - `src/core/skillpack/sandbox.ts` — **subprocess-isolated** trial-install
   harness with a per-platform fallback chain.
   - **Linux**: `bwrap → unshare → docker`. Tries `bwrap` (bubblewrap)
@@ -976,7 +976,7 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
     Falls back to Docker Desktop only when `sandbox-exec` is unavailable
     (rare; Apple keeps deprecating it but hasn't pulled it). macOS
     publishers without Docker can still publish via sandbox-exec.
-  - Inside the sandbox, an ephemeral in-memory PGLite gbrain runs the
+  - Inside the sandbox, an ephemeral in-memory PGLite foresights runs the
     trial install, reuses the pattern from
     `src/eval/longmemeval/harness.ts`. Exposes
     `runTrialInstall(packPath, opts): Promise<TrialResult>` consumed
@@ -1012,25 +1012,25 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   sandbox backend is available, in order. Emits a structured
   `SandboxBackend = 'bwrap' | 'unshare' | 'sandbox-exec' | 'docker' |
   'none'` discriminator. Backend choice persists per-process (avoid
-  re-probing on every trial). `gbrain doctor` surfaces the chosen
+  re-probing on every trial). `foresights doctor` surfaces the chosen
   backend as info.
 - `src/core/skillpack/security-gates.ts` — static-analysis pipeline.
   `runShellcheck(files)` (shells out if shellcheck is installed; degrades
   to a built-in regex pass naming the offending patterns when not),
   `scanForbiddenFiletypes(tree)`, `validateExternalResources(skill)`,
   `checkFrontmatter(skill)`. Each returns structured findings.
-- `src/commands/skillpack-init.ts` — `gbrain skillpack init <name>`
+- `src/commands/skillpack-init.ts` — `foresights skillpack init <name>`
   scaffold command.
-- `src/commands/skillpack-pack.ts` — `gbrain skillpack pack` validator
+- `src/commands/skillpack-pack.ts` — `foresights skillpack pack` validator
   AND tarball emitter. Single command, `--dry-run` skips the tarball.
 - `src/commands/skillpack-info.ts` + `skillpack-update.ts`.
-- `src/commands/skillpack-search.ts` — `gbrain skillpack search <query>
+- `src/commands/skillpack-search.ts` — `foresights skillpack search <query>
   [--tier ...] [--json]` reads the registry, ranks by tier then tag
   match, prints a table.
-- `src/commands/skillpack-registry.ts` — `gbrain skillpack registry
+- `src/commands/skillpack-registry.ts` — `foresights skillpack registry
   [--url X] [--refresh]` show/set the configured registry URL,
   optionally force a fresh fetch.
-- `src/commands/skillpack-endorse.ts` — `gbrain skillpack endorse <name>
+- `src/commands/skillpack-endorse.ts` — `foresights skillpack endorse <name>
   [--tier endorsed|community|experimental] [--push] [--dry-run]`. Runs
   in a clone of the registry repo; validates `<name>` against
   `registry.json`; reads, updates, schema-validates, and writes
@@ -1047,7 +1047,7 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   runbook fixtures.
 - `src/core/skillpack/runbook-walker.ts` — executes a parsed runbook
   against a calling context. Dispatches each step kind: `agent:` runs
-  the gbrain CLI subcommand (only gbrain CLI; not arbitrary shell);
+  the foresights CLI subcommand (only foresights CLI; not arbitrary shell);
   `show user:` writes to stdout; `ask user:` blocks on a TTY confirm
   (non-TTY requires a `--yes` flag and refuses-confirmation steps
   cause failure). Returns a structured `RunbookResult` so callers can
@@ -1059,7 +1059,7 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   (e.g., v0.1 → v0.3 might walk `upgrade-0.1-to-0.2.md` then
   `upgrade-0.2-to-0.3.md`). Refuses if no path exists; refuses to
   downgrade silently; pure function.
-- `src/commands/skillpack-test.ts` — `gbrain skillpack test [pack-dir]`
+- `src/commands/skillpack-test.ts` — `foresights skillpack test [pack-dir]`
   runs the publisher-side full test+eval suite OUTSIDE the publish
   gate so a publisher can iterate fast before invoking the publish
   skill. Real gateway (publisher pays the real LLM cost on their
@@ -1078,7 +1078,7 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   {mode: 'quick' | 'full', fix: boolean, autoYes: boolean}):
   Promise<DoctorResult>`. Walks the rubric, dispatches each check,
   computes score + tier eligibility, emits paste-ready fixes. `--fix`
-  path dispatches per-dimension auto-scaffold (calls `gbrain skillify
+  path dispatches per-dimension auto-scaffold (calls `foresights skillify
   scaffold` for missing skills, writes runbook stubs from a template
   baked into the bundle, generates CHANGELOG entries from VERSION +
   `git log --since=<last-version-tag>`). Refuses to overwrite files
@@ -1096,19 +1096,19 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
 - `scripts/check-bundled-skillpacks-rubric.sh` — CI guard. Walks every
   bundled skillpack (today: `openclaw.plugin.json` set; future:
   any `examples/skillpack-*` and any bundled starter pack), runs
-  `gbrain skillpack doctor --quick --json` against each, asserts
+  `foresights skillpack doctor --quick --json` against each, asserts
   score=10. Fails the build loud on regression. Wired into
   `package.json`'s `verify` script.
 
-### New (in github.com/garrytan/gbrain repo, examples + docs)
+### New (in github.com/aimonk2025/gbrain repo, examples + docs)
 
 - `examples/skillpack-reference/` — a real, working **10/10 reference
-  skillpack** that lives in the gbrain repo. Two skills, 2
+  skillpack** that lives in the foresights repo. Two skills, 2
   routing-eval.jsonl files (5 intents each), 3 unit tests, 1
   LLM-judge eval (3 cases), full runbooks (install / uninstall /
   upgrade-template), CHANGELOG, README, LICENSE. The reference
   pack is the integration-test fixture for the doctor + the
-  publish-gate full-suite E2E test, AND it's what `gbrain skillpack
+  publish-gate full-suite E2E test, AND it's what `foresights skillpack
   doctor --quick` is regression-tested against.
 - `docs/skillpack-anatomy.md` — one-page agent + human reference.
   Contains: (a) tree diagram of the cathedral scaffold, (b) auto-
@@ -1124,14 +1124,14 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   pinned_commit, tier_when_installed, outcome, error?})` called by
   install / uninstall / update / search-resolve paths. Best-effort —
   never throws, logs stderr warning on write failure.
-  `readRecentSkillpackEvents(days)` is the readback path for `gbrain
+  `readRecentSkillpackEvents(days)` is the readback path for `foresights
   doctor`'s new `skillpack_activity` check (info-level: "installed N
   packs in the last 7 days, all from endorsed tier" or "installed 2
   community-tier packs in the last 24h — review at <audit-path>").
 - `skills/gbrain-skillpack-publish/SKILL.md` — the publish-gate skill
-  itself. Lives in the bundled skillpack so every gbrain install ships
+  itself. Lives in the bundled skillpack so every foresights install ships
   with it. Walks the contributor through:
-  1. Validate locally (`gbrain skillpack pack --dry-run`)
+  1. Validate locally (`foresights skillpack pack --dry-run`)
   2. Run security gates
   3. Pack tarball + compute SHA
   4. Fork `garrytan/gbrain-skillpack-registry` if needed (`gh repo fork`)
@@ -1270,7 +1270,7 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
   overwrite hand-edited files; confirm prompt fires on TTY;
   `--yes` skips it; non-TTY without `--yes` refuses),
   `test/e2e/skillpack-reference-is-ten.test.ts` (regression guard:
-  `gbrain skillpack doctor --quick --json examples/skillpack-reference`
+  `foresights skillpack doctor --quick --json examples/skillpack-reference`
   always scores 10/10; if a future PR drops the reference pack
   below 10, this test fails loud and CI rejects),
   `test/skillpack-anatomy-fresh.test.ts` (asserts
@@ -1301,15 +1301,15 @@ gbrain skillpack pack [--out <path>]         # NEW: validate + emit .tgz tarball
 
 End-to-end:
 
-1. **Publisher path**: `gbrain skillpack init hackathon-evaluation` in a
-   tempdir → add a synthetic skill → `gbrain skillpack pack --dry-run`
+1. **Publisher path**: `foresights skillpack init hackathon-evaluation` in a
+   tempdir → add a synthetic skill → `foresights skillpack pack --dry-run`
    → expect pass.
-2. **Install from local path**: `gbrain skillpack install <tempdir>` in
+2. **Install from local path**: `foresights skillpack install <tempdir>` in
    a fresh workspace → resolver-block shows the new source sub-block →
-   `gbrain check-resolvable` clean.
+   `foresights check-resolvable` clean.
 3. **Install from git** (E2E, optional): clone a known-good public
    sample repo → same assertions.
-4. **Multi-pack coexistence**: install the bundled gbrain set AND the
+4. **Multi-pack coexistence**: install the bundled foresights set AND the
    sample skillpack into the same workspace → both rows present in the
    managed block, neither's cumulative-slugs receipt touches the other.
 5. **Collision auto-rename**: install a second pack that ships a slug
@@ -1317,17 +1317,17 @@ End-to-end:
    `judge-submission-2`, emits a stderr line, records the rename in the
    source receipt. Triggers still match the same user phrases.
 6. **Uninstall safety**: edit one skill file in the third-party pack →
-   `gbrain skillpack uninstall hackathon-evaluation` → refuses without
+   `foresights skillpack uninstall hackathon-evaluation` → refuses without
    `--overwrite-local` (D11 contract holds across sources).
 7. **TOFU**: first-time install of a new URL prompts; second install of
    same URL + SHA does not.
-8. **Registry resolution**: `gbrain skillpack install hackathon-evaluation`
+8. **Registry resolution**: `foresights skillpack install hackathon-evaluation`
    against a localhost-served fixture `registry.json` resolves the right
    git URL, verifies the pinned commit, lands the pack. Pin mismatch
    produces a loud refusal.
-9. **Search**: `gbrain skillpack search yc --json` returns the entry,
+9. **Search**: `foresights skillpack search yc --json` returns the entry,
    `endorsed` tier sorts before `community` sorts before `experimental`.
-10. **Bundle install**: `gbrain skillpack install starter-pack` walks
+10. **Bundle install**: `foresights skillpack install starter-pack` walks
     the bundle list in order; mid-bundle failure unwinds cleanly with
     no half-installed entries in the managed block.
 11. **Publish-gate (sandbox)**: a synthetic skillpack with a forbidden
@@ -1337,7 +1337,7 @@ End-to-end:
 12. **Trial install sandbox isolation**: the ephemeral PGLite the
     publish-gate spins up does NOT touch `~/.gbrain`. Tear-down is
     clean — no file artifacts, no DB connections left behind.
-13. **Runbook execution end-to-end**: `gbrain skillpack install
+13. **Runbook execution end-to-end**: `foresights skillpack install
     hackathon-evaluation` lands the pack AND walks
     `runbooks/install.md` step-by-step. Each `agent:` step runs;
     each `show user:` step prints; each `ask user:` step blocks on
@@ -1352,7 +1352,7 @@ End-to-end:
     100% pass earns `endorsed` eligibility; same pack with one
     eval failing drops to `community`; pack with no routing evals
     drops to `experimental` regardless of other coverage.
-16. **`gbrain skillpack test`** runs against a freshly-scaffolded
+16. **`foresights skillpack test`** runs against a freshly-scaffolded
     pack and exits 0 (the scaffold's example tests pass out of the
     box, the example LLM-judge eval passes with the real gateway
     when `ANTHROPIC_API_KEY` is set, and `--no-llm` skips the
@@ -1374,11 +1374,11 @@ Tests:
   v1 declares dependencies as informational metadata only.
 - Versioning constraints richer than `gbrain_min_version` (no semver
   range matching, no `^0.36`).
-- Auto-update / background pulls. `gbrain skillpack update` is manual.
+- Auto-update / background pulls. `foresights skillpack update` is manual.
 - A central web UI (gbrain.dev/skillpacks). The registry repo's GitHub
   page IS the web UI in v1.
 - Payment / monetization. Skillpacks are free / open source by default.
-- Print-press CLI generation against gbrain HTTP MCP — explicitly IN
+- Print-press CLI generation against foresights HTTP MCP — explicitly IN
   scope per Q2 but listed here for clarity: it's a separate one-week
   effort that lives in a sibling branch, not blocking on the v1
   registry ship.
@@ -1398,23 +1398,23 @@ earlier ones from shipping value:
    the floor: Garry can hand-distribute hackathon-evaluation today.
 2. **W2: Registry catalog** — `garrytan/gbrain-skillpack-registry`
    created, `registry.json` schema + endorsements.json, registry-client
-   with stale-cache fallback, `gbrain skillpack search` + `install
-   <short-name>` + `info`. Initial catalog seeded with bundled gbrain
+   with stale-cache fallback, `foresights skillpack search` + `install
+   <short-name>` + `info`. Initial catalog seeded with bundled foresights
    skills + hackathon-evaluation + maybe one community pack.
 3. **W3: Publish-gate skill** — `/gbrain-skillpack-publish` skill,
    security-gates module, sandbox-probe, subprocess-isolated trial
    install with Docker fallback on macOS. The contributor flow goes
    from "fork + commit + hope" to "run one skill, get a PR."
 4. **W4: Audit + doctor integration** — `~/.gbrain/audit/skillpack-*`
-   JSONL, `gbrain doctor` check, `gbrain skillpack history` reader.
+   JSONL, `foresights doctor` check, `foresights skillpack history` reader.
 5. **W5: Printing Press cross-list** — open the PR against
    `mvanhorn/printing-press-library` listing
    `garrytan/gbrain-skillpack-registry` as a sister registry. ~1 day.
 6. **W6: Generated gbrain-cli (Printing Press)** — run printing-press
-   against gbrain's HTTP MCP, ship the resulting agent-native CLI to
+   against foresights's HTTP MCP, ship the resulting agent-native CLI to
    their library. Independent week of work; doesn't block W1-W5.
 
-**W4.5 — Bring bundled gbrain skillpacks to 10/10** (drops between W4
+**W4.5 — Bring bundled foresights skillpacks to 10/10** (drops between W4
 and W5, blocking on W3's doctor + rubric). The current
 `openclaw.plugin.json` set is missing per-skill unit tests (most
 have routing-eval.jsonl already from v0.19, missing LLM-judge evals
@@ -1445,7 +1445,7 @@ W4-W6 are quality layers on a working system.
 2. **macOS sandbox**: `sandbox-exec → docker`. Apple's built-in `sandbox-exec` is the primary path (~50ms, no Docker dep); Docker is the rare fallback. macOS publishers without Docker can still publish.
 3. **Bundle install atomicity**: per-pack independent (option γ). Failures inside a bundle leave earlier successful packs installed, skip later packs, print a summary with retry hint.
 4. **Deleted source repo durability**: registry CI mirrors tarballs to `tarballs/<name>-<version>.tgz` via git LFS at PR merge time. 5MB per-pack cap; larger packs flagged `source_only: true`.
-5. **Endorsement workflow**: `gbrain skillpack endorse <name> [--tier ...] [--push]` CLI command with schema validation; hand-editing remains valid.
+5. **Endorsement workflow**: `foresights skillpack endorse <name> [--tier ...] [--push]` CLI command with schema validation; hand-editing remains valid.
 
 **Eng-review findings (resolved by the 5 decisions above):**
 - A1: Linux sandbox fallback chain underspecified → locked (#1).
@@ -1477,14 +1477,14 @@ Conflict flag: Lane A and Lane C both touch the in-tree skillpack module dir. Re
 *Round 1 — artifact scope:*
 1. **Artifact scope: full cathedral.** `skillpack.json` declares `skills[]`, `unit_tests[]`, `e2e_tests[]`, `llm_evals[]`, `routing_evals[]`, `runbooks{install, uninstall, upgrades}`, `changelog`. The differentiation moat — nobody else ships AI evals + agent runbooks as first-class package artifacts.
 2. **Publish gate runs everything in the sandbox.** Unit + E2E (when DB available) + LLM-judge (stubbed gateway, zero cost) + routing-evals. Coverage score drives tier eligibility: `endorsed` requires routing + runbooks + >=95% pass; `community` requires routing + install + >=80%; `experimental` accepts structural-only.
-3. **Runbook format: agent-readable markdown** with three step kinds (`agent:`, `show user:`, `ask user:`). Separate `install.md`, `uninstall.md`, `upgrade-<from>-to-<to>.md` per version. Mirrors gbrain's own `skills/migrations/v0.21.0.md` pattern.
-4. **`gbrain skillpack init` scaffolds the cathedral by default.** Full tree (skills, tests, e2e, evals, runbooks, CHANGELOG, README, LICENSE) lands out of the box; `gbrain skillpack pack --dry-run` passes immediately. `--minimal` flag for power users opting out.
+3. **Runbook format: agent-readable markdown** with three step kinds (`agent:`, `show user:`, `ask user:`). Separate `install.md`, `uninstall.md`, `upgrade-<from>-to-<to>.md` per version. Mirrors foresights's own `skills/migrations/v0.21.0.md` pattern.
+4. **`foresights skillpack init` scaffolds the cathedral by default.** Full tree (skills, tests, e2e, evals, runbooks, CHANGELOG, README, LICENSE) lands out of the box; `foresights skillpack pack --dry-run` passes immediately. `--minimal` flag for power users opting out.
 
 *Round 2 — rubric + doctor + reference + invariant:*
-5. **Layered doctor:** `gbrain skillpack doctor --quick` (~5s structural sweep, walks the rubric, no sandbox/LLM/DB) for rapid iteration; `--full` (runs the full publish-gate suite) for ship-readiness. Two-tool design; agent picks the mode per workflow phase. The user noted: agents do the operating, so the cognitive cost of two flags is irrelevant as long as the docs teach the agent when to use which.
+5. **Layered doctor:** `foresights skillpack doctor --quick` (~5s structural sweep, walks the rubric, no sandbox/LLM/DB) for rapid iteration; `--full` (runs the full publish-gate suite) for ship-readiness. Two-tool design; agent picks the mode per workflow phase. The user noted: agents do the operating, so the cognitive cost of two flags is irrelevant as long as the docs teach the agent when to use which.
 6. **Rubric as declarative spec:** `src/core/skillpack/rubric.ts` exports `SKILLPACK_RUBRIC_V1` — 10 binary dimensions (manifest valid / SKILL.md complete / routing-evals present + clean / check-resolvable clean / unit test present / LLM-judge eval present / install + uninstall runbooks / CHANGELOG current). Single source of truth: doctor walks it, anatomy doc is auto-generated from it, tests pin each dimension.
-7. **`doctor --fix` auto-scaffold:** Calls `gbrain skillify scaffold` for missing skills, drops runbook stubs, generates CHANGELOG entries from VERSION + git log. Confirm prompt on TTY; `--yes` skips; refuses to overwrite files whose mtime is newer than `skillpack.json`'s.
-8. **Reference pack + anatomy doc + 10/10 invariant for EVERY bundled gbrain skillpack:** ship `examples/skillpack-reference/` (real working 10/10 pack) AND `docs/skillpack-anatomy.md` (one-page reference, auto-generated rubric section from `rubric.ts`). NEW INVARIANT (the user's strongest line): every gbrain-shipped skillpack must score 10/10 on `--quick`. `scripts/check-bundled-skillpacks-rubric.sh` is wired into `bun run verify` + CI. Bringing today's `openclaw.plugin.json` set to 10/10 is wave W4.5 — blocking on W3 (doctor) but required before v1.0 ship. Credibility-poison if gbrain ships skillpacks below the bar gbrain demands of third parties.
+7. **`doctor --fix` auto-scaffold:** Calls `foresights skillify scaffold` for missing skills, drops runbook stubs, generates CHANGELOG entries from VERSION + git log. Confirm prompt on TTY; `--yes` skips; refuses to overwrite files whose mtime is newer than `skillpack.json`'s.
+8. **Reference pack + anatomy doc + 10/10 invariant for EVERY bundled foresights skillpack:** ship `examples/skillpack-reference/` (real working 10/10 pack) AND `docs/skillpack-anatomy.md` (one-page reference, auto-generated rubric section from `rubric.ts`). NEW INVARIANT (the user's strongest line): every gbrain-shipped skillpack must score 10/10 on `--quick`. `scripts/check-bundled-skillpacks-rubric.sh` is wired into `bun run verify` + CI. Bringing today's `openclaw.plugin.json` set to 10/10 is wave W4.5 — blocking on W3 (doctor) but required before v1.0 ship. Credibility-poison if foresights ships skillpacks below the bar foresights demands of third parties.
 
 **DX scorecard (after both DX rounds):**
 
@@ -1501,16 +1501,16 @@ Conflict flag: Lane A and Lane C both touch the in-tree skillpack module dir. Re
 | **TTHW**           | n/a    | <5min   | **<3min** | `init` → edit → `doctor --quick` → 10/10 |
 | **Overall DX**     | 4/10   | 8.5/10  | **9.5/10** | Rubric-as-source-of-truth + `every bundled pack is 10/10` invariant is the kill move |
 
-**Magical moment** (locked from DX 0D): `gbrain skillpack install <name>` lands the pack AND walks `runbooks/install.md` AND the agent immediately knows what triggers fire, what tools the skill exposes, and how to upgrade later. Zero "where are the docs?" moment.
+**Magical moment** (locked from DX 0D): `foresights skillpack install <name>` lands the pack AND walks `runbooks/install.md` AND the agent immediately knows what triggers fire, what tools the skill exposes, and how to upgrade later. Zero "where are the docs?" moment.
 
-**Second magical moment** (Round 2): `gbrain skillpack doctor --quick --json` prints a 10/10 score with paste-ready fixes for the misses. The agent reads the JSON, runs `--fix --yes` to auto-scaffold, re-runs `--quick`, and the score climbs. The first time an agent gets from 6/10 to 10/10 in 30 seconds via three `gbrain` commands is the moment the "skillpacks are real software packages" claim becomes felt rather than asserted.
+**Second magical moment** (Round 2): `foresights skillpack doctor --quick --json` prints a 10/10 score with paste-ready fixes for the misses. The agent reads the JSON, runs `--fix --yes` to auto-scaffold, re-runs `--quick`, and the score climbs. The first time an agent gets from 6/10 to 10/10 in 30 seconds via three `gbrain` commands is the moment the "skillpacks are real software packages" claim becomes felt rather than asserted.
 
 **Lake Score:** 25/27 — every cathedral-leaning recommendation accepted across CEO + Eng + DX (both rounds) + 8 codex outside-voice questions. The 2 holds are deliberate: T2 (kept cathedral scope vs codex's minimal v1) and T3 (kept the 10/10 bundled invariant vs codex's defer-to-v1.1). Both defenses were on locked product-strategy decisions; the cathedral moat is the thing.
 
 **CODEX (outside voice) — 20 findings, 8 surfaced for decision:**
 - T1 (RUNBOOK TRUST) — adopted: per-step approval replaces auto-walk; `--runbook-apply-all` for CI; `--runbook-skip` for file-drop-only. NPM-postinstall lesson applied.
-- T2 (SCOPE) — held: cathedral is the moat; minimal v1 forfeits curation+evals+runbooks differentiation; without those gbrain skillpacks are just another agentskills.io mirror.
-- T3 (10/10 BUNDLED) — held: shipping gbrain's own packs below the bar gbrain demands is credibility-poison; W4.5 retrofit costs ~3d with --fix autoscaffold, slips v1 by a week.
+- T2 (SCOPE) — held: cathedral is the moat; minimal v1 forfeits curation+evals+runbooks differentiation; without those foresights skillpacks are just another agentskills.io mirror.
+- T3 (10/10 BUNDLED) — held: shipping foresights's own packs below the bar foresights demands is credibility-poison; W4.5 retrofit costs ~3d with --fix autoscaffold, slips v1 by a week.
 - T4 (GAMEABLE CATHEDRAL) — adopted: rubric splits into required core (5 dimensions: manifest + SKILL.md + routing-evals + check-resolvable + CHANGELOG) and quality badges (5: routing-evals-clean + unit tests + LLM-judge + install + uninstall runbook). Endorsed needs all badges; community needs 3/5; experimental needs core only. Plus stubbed-eval detection in publish-gate content scan.
 - G1 (TRUST STORE) — adopted: `~/.gbrain/skillpack-state.json` machine-owned (TOFU pins, hashes, rename maps); resolver markdown stays render-only (rows + cumulative-slugs). Mismatch fails loud.
 - G2 (ENV SCRUB) — adopted: clean env (only PATH/LANG/TZ), HOME override to empty `<tempdir>/sandbox-home`, explicit denylist (`*_API_KEY` / `*_TOKEN` / `*_SECRET` / SSH_AUTH_SOCK / GIT_* / NPM_TOKEN / BUN_INSTALL_TOKEN). Read-only mounts + masked `/proc` where bwrap supports it.

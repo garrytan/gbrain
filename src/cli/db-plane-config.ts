@@ -12,7 +12,7 @@ import type { BrainEngine } from '../core/engine.ts';
 
 export async function mergeDbPlaneConfig(engine: BrainEngine, config: GBrainConfig, MERGED_CONFIG_BY_ENGINE: WeakMap<BrainEngine, GBrainConfig>): Promise<void> {
   // v0.27.1 (F3 fix): re-merge DB-plane config now that the engine is up.
-  // Flags like `embedding_multimodal` are user-mutable via `gbrain config set`
+  // Flags like `embedding_multimodal` are user-mutable via `foresights config set`
   // (DB plane) and need to flow into the gateway after connect. Schema-sizing
   // fields (embedding_dimensions etc.) keep their pre-connect file/env values
   // — those drove initSchema and the merged config respects file/env first.

@@ -5,14 +5,14 @@
  *
  *  - access_policy_pending: prefixes still reading as nobody because a
  *    narrowing was not finished, or pages whose stamp drifted from the
- *    applied rulebook; `gbrain access resume` restamps toward the applied rules.
+ *    applied rulebook; `foresights access resume` restamps toward the applied rules.
  *  - access_policy_widening_held: a desired revision widens the applied rules
- *    and waits for `gbrain access apply` (preview, then the user's approval).
+ *    and waits for `foresights access apply` (preview, then the user's approval).
  *  - access_policy_invalid: a committed policy file that does not validate;
  *    the prefixes it names read as nobody.
  *  - access_policy_store_mismatch: the persisted store disagrees with this
  *    host's filesystem (a git store without a visible work tree, a database
- *    store whose root became a repository); `gbrain access rule migrate`.
+ *    store whose root became a repository); `foresights access rule migrate`.
  *
  * Not applicable on a brain where no source has ever had a folder rule.
  */
@@ -76,7 +76,7 @@ async function invalid(engine: BrainEngine, sources: string[]): Promise<Check> {
   const first = found[0]!;
   return { name, status: 'fail', details: { sources: found },
     message: `The folder-rule file of ${found.map(f => `${f.source} does not validate (reads as nobody: ${f.prefixes.join(', ')})`).join('; ')}. The last applied rules stay in force. Fix .gbrain/access.yml, commit it and sync the source.`,
-    fix: { ...agentFix(['gbrain', 'access', 'rule', 'list', '--source', first.source, '--json'], 'Lists each problem in the file with its line, read-only. Fix the file and commit it with gbrain git commit-push; then run gbrain sync --source <id> --no-pull.', name,
+    fix: { ...agentFix(['gbrain', 'access', 'rule', 'list', '--source', first.source, '--json'], 'Lists each problem in the file with its line, read-only. Fix the file and commit it with foresights git commit-push; then run foresights sync --source <id> --no-pull.', name,
       { docs: 'docs/guides/write-refusals.md#access_policy_invalid' }), verify: doctorVerify(name) } };
 }
 
@@ -94,7 +94,7 @@ async function storeMismatch(engine: BrainEngine, sources: string[]): Promise<Ch
   const first = found[0]!;
   return { name, status: 'warn', details: { sources: found },
     message: `${found.map(f => f.store === 'git' ? `${f.source} keeps its folder rules in git, but this host sees no git work tree at ${f.root ?? 'its root'}` : `${f.source} keeps its folder rules in the database, but its root is now a git work tree`).join('; ')}. `
-      + 'The persisted store and its applied rules stay in force; only gbrain access rule migrate moves them, and neither direction widens.',
+      + 'The persisted store and its applied rules stay in force; only foresights access rule migrate moves them, and neither direction widens.',
     fix: { argv: ['gbrain', 'access', 'rule', 'migrate', '--source', first.source, '--json'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
       why: 'Previews moving the folder rules to the store this host sees; writes nothing without --yes.', verify: doctorVerify(name), docs: 'docs/guides/error-codes.md#access_policy_store_mismatch' } };
 }
@@ -114,7 +114,7 @@ async function runFolderAccess(ctx: DoctorContext): Promise<Check[]> {
     return [
       { name: 'access_policy_pending', status: 'warn', details: { unreadable: true, docs: 'docs/ENGINES.md#folder-access-tables' },
         message: 'This database role cannot read the folder access tables (row-level security hides them), so remote reads show no page, '
-          + 'page writes are refused with writer_coordinator_required and folder-rule commands are refused. Run gbrain as their owner, or give the role '
+          + 'page writes are refused with writer_coordinator_required and folder-rule commands are refused. Run foresights as their owner, or give the role '
           + 'the policies in docs/ENGINES.md ("Folder access tables").' },
       infoCheck('access_policy_widening_held', skipped, 'unknown'),
       infoCheck('access_policy_invalid', skipped, 'unknown'),

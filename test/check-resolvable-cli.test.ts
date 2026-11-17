@@ -198,7 +198,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
   it('v0.31.7: empty cwd falls back to install-path (finds bundled skills/)', () => {
     // Temporarily chdir to a guaranteed-empty tmpdir. findRepoRoot from cwd
     // walks up and fails — but autoDetectSkillsDirReadOnly's tier-5
-    // install-path fallback then walks up from the gbrain module's own
+    // install-path fallback then walks up from the foresights module's own
     // location and finds the bundled skills/ dir. This is the v0.31.7
     // capability: doctor and check-resolvable work from anywhere.
     //
@@ -210,7 +210,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     try {
       process.chdir(empty);
       const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
-      // Install-path fallback succeeds when test runs inside the gbrain repo.
+      // Install-path fallback succeeds when test runs inside the foresights repo.
       expect(r.error).toBeNull();
       // r.dir is join()/resolve()-built, so the separator is '\' on win32.
       expect(r.dir).toMatch(/[\\/]skills$/);
@@ -222,7 +222,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
   });
 
   it('finds skills via cwd_walk_up when cwd is inside a repo (no --skills-dir)', () => {
-    // Running from this test file — we're inside the real gbrain repo.
+    // Running from this test file — we're inside the real foresights repo.
     // v0.33 added the cwd_walk_up tier ahead of repo_root, so the same
     // skills/ dir is matched via the broader (no gbrain-shape gate)
     // path. Behavior unchanged — source label updated. The repo_root
@@ -281,7 +281,7 @@ describe('check-resolvable — unit: DEFERRED', () => {
 // Integration tests: subprocess via bun src/cli.ts (cwd = repo root)
 // ---------------------------------------------------------------------------
 
-describe('gbrain check-resolvable CLI — integration', () => {
+describe('foresights check-resolvable CLI — integration', () => {
   const created: string[] = [];
   afterEach(() => {
     while (created.length) {
@@ -293,7 +293,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
   it('prints usage and exits 0 on --help', () => {
     const r = run(['--help']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('gbrain check-resolvable');
+    expect(r.stdout).toContain('foresights check-resolvable');
     expect(r.stdout).toContain('--json');
     expect(r.stdout).toContain('--fix');
     expect(r.stdout).toContain('--strict');
@@ -437,8 +437,8 @@ describe('gbrain check-resolvable CLI — integration', () => {
   });
 
   // v0.31.7 D6 regression guard: --fix must refuse install-path fallback.
-  // Without this gate, `cd ~ && gbrain check-resolvable --fix` would silently
-  // mutate SKILL.md files in the bundled gbrain repo via autoFixDryViolations.
+  // Without this gate, `cd ~ && foresights check-resolvable --fix` would silently
+  // mutate SKILL.md files in the bundled foresights repo via autoFixDryViolations.
   // Codex caught this leak in the v0.31.7 ship review.
   it('v0.31.7 D6: --fix refuses when source is install_path', () => {
     // Run from a guaranteed-empty tempdir so the install-path fallback fires.

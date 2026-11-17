@@ -25,7 +25,7 @@
  * run rewrote the snapshot first; the next run reconciles.
  *
  * Mirrors the ISO-week filename pattern from `audit-slug-fallback.ts` and
- * `minions/handlers/supervisor-audit.ts` so all gbrain audit channels share
+ * `minions/handlers/supervisor-audit.ts` so all foresights audit channels share
  * one rotation discipline.
  */
 
@@ -116,7 +116,7 @@ export function loadSnapshot(): { violators: Set<string>; present: boolean } {
       !Array.isArray(parsed.violators)
     ) {
       // Corrupt shape — once-per-process warn, treat as missing.
-      warnOnce(`[gbrain] snapshot corrupt: ${file} (unexpected shape); treating as missing`);
+      warnOnce(`[foresights] snapshot corrupt: ${file} (unexpected shape); treating as missing`);
       return { violators: new Set(), present: false };
     }
     const slugs = new Set<string>();
@@ -126,7 +126,7 @@ export function loadSnapshot(): { violators: Set<string>; present: boolean } {
     return { violators: slugs, present: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    warnOnce(`[gbrain] snapshot corrupt: ${file} (${msg}); treating as missing`);
+    warnOnce(`[foresights] snapshot corrupt: ${file} (${msg}); treating as missing`);
     return { violators: new Set(), present: false };
   }
 }
@@ -187,7 +187,7 @@ export function writeSnapshotAtomically(violators: Set<string>, now: Date = new 
     fs.renameSync(tmpPath, finalPath);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] snapshot write failed (${msg}); doctor continues\n`);
+    process.stderr.write(`[foresights] snapshot write failed (${msg}); doctor continues\n`);
     // Best-effort cleanup of the tmpfile if rename failed mid-flight.
     try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
   }
@@ -220,7 +220,7 @@ export function logBrainFirstEvent(
     fs.appendFileSync(file, JSON.stringify(event) + '\n', { encoding: 'utf8' });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] brain-first audit write failed (${msg}); doctor continues\n`);
+    process.stderr.write(`[foresights] brain-first audit write failed (${msg}); doctor continues\n`);
   }
 }
 

@@ -1,5 +1,5 @@
 /**
- * gbrain brainstorm — bisociation-style idea generation grounded in your
+ * foresights brainstorm — bisociation-style idea generation grounded in your
  * own notes.
  *
  * v0.37.0 wave (D14 + D6 + D11 + D12). Pulls a small close-set via
@@ -150,7 +150,7 @@ export function parseBrainstormArgs(args: string[]): BrainstormCliArgs {
   return out;
 }
 
-const BRAINSTORM_HELP = `Usage: gbrain brainstorm <question> [options]
+const BRAINSTORM_HELP = `Usage: foresights brainstorm <question> [options]
 
 Bisociation idea generator grounded in your own notes. Pulls a close-set
 via hybrid search and a far-set via prefix-stratified domain-bank, crosses
@@ -167,7 +167,7 @@ Options:
                                   --max-cost is the legacy spelling). off runs
                                   uncapped. A model with no price runs under the
                                   default with a warning; an explicit cap refuses
-                                  it until you register its rate (gbrain pricing set)
+                                  it until you register its rate (foresights pricing set)
   --max-far-set N                 Cap domain bank prefix sampling (default 50)
   --strict-budget                 Abort if running cost exceeds 5× the estimate
   --judge-model MODEL             Override the judge LLM (larger-context for big runs)
@@ -178,19 +178,19 @@ Options:
   --help, -h                      Show this help
 
 Examples:
-  gbrain brainstorm "why are AI coding tools converging on the same UX?"
-  gbrain brainstorm "what's the real bottleneck on lab automation" --json
+  foresights brainstorm "why are AI coding tools converging on the same UX?"
+  foresights brainstorm "what's the real bottleneck on lab automation" --json
 
 Cost: ~$0.05-0.15 per run. Set GBRAIN_NO_BRAINSTORM_PREVIEW=1 or pass --yes
 to skip the TTY grace window in scripted callers.
 
-See also: gbrain lsd — Lateral Synaptic Drift, the inverted-judge variant
+See also: foresights lsd — Lateral Synaptic Drift, the inverted-judge variant
 that prefers forgotten pages and rejects ideas that are "too obvious."
 `;
 
-const LSD_HELP = `Usage: gbrain lsd <question> [options]
+const LSD_HELP = `Usage: foresights lsd <question> [options]
 
-LSD = Lateral Synaptic Drift. Same bisociation engine as \`gbrain brainstorm\`
+LSD = Lateral Synaptic Drift. Same bisociation engine as \`foresights brainstorm\`
 with the distance dial maxed: bigger far-bank (12 pages), smaller close-set
 (2 pages), forgotten pages preferred via the stale-bias signal, inverted
 judge that REJECTS ideas scoring too high on coherence ("too obvious — you'd
@@ -206,7 +206,7 @@ Options:
                                   --max-cost is the legacy spelling). off runs
                                   uncapped. A model with no price runs under the
                                   default with a warning; an explicit cap refuses
-                                  it until you register its rate (gbrain pricing set)
+                                  it until you register its rate (foresights pricing set)
   --max-far-set N                 Cap domain bank prefix sampling (default 50)
   --strict-budget                 Abort if running cost exceeds 5× the estimate
   --judge-model MODEL             Override the judge LLM (larger-context for big runs)
@@ -217,12 +217,12 @@ Options:
   --help, -h                      Show this help
 
 Examples:
-  gbrain lsd "why are AI coding tools converging on the same UX?"
-  gbrain lsd "the unspoken assumption in venture pricing" --save
+  foresights lsd "why are AI coding tools converging on the same UX?"
+  foresights lsd "the unspoken assumption in venture pricing" --save
 
 Cost: ~$0.20-0.40 per run.
 
-See also: gbrain brainstorm — the sober, cite-heavy default variant.
+See also: foresights brainstorm — the sober, cite-heavy default variant.
 `;
 
 /** Shared body: brainstorm.ts → runBrainstormCli(BRAINSTORM_PROFILE); lsd.ts → runBrainstormCli(LSD_PROFILE). */
@@ -238,7 +238,7 @@ async function runBrainstormCli(
     return;
   }
   if (parsed.error) {
-    console.error(`gbrain ${profile.label}: ${parsed.error}`);
+    console.error(`foresights ${profile.label}: ${parsed.error}`);
     console.error(help);
     process.exit(2);
     return;
@@ -262,7 +262,7 @@ async function runBrainstormCli(
     return;
   }
   if (!parsed.question || parsed.question.trim().length === 0) {
-    console.error(`gbrain ${profile.label}: question required`);
+    console.error(`foresights ${profile.label}: question required`);
     console.error(help);
     process.exit(2);
     return;
@@ -340,7 +340,7 @@ async function runBrainstormCli(
     const slug = result.idea_slug ?? freshSlug;
     const title = `${profile.label === 'lsd' ? 'LSD' : 'Brainstorm'}: ${parsed.question.slice(0, 100)}`;
     // Build ONE frontmatter object and render via the canonical serializer so
-    // the saved file round-trips through `gbrain sync` byte-for-byte. Include
+    // the saved file round-trips through `foresights sync` byte-for-byte. Include
     // filtered ideas (onlyPassed:false) so a judge-failed run still shows every
     // idea; `--resume <run_id>` re-scores and overwrites this same page.
     const fmObj = { ...buildBrainstormFrontmatterObject(result), source_kind: profile.label };
@@ -383,7 +383,7 @@ export interface SaveMessage {
  * (chunks + tags + content_hash + source_path, but `noEmbed` so we don't pay
  * embedding cost at save time) writes the DB row, then the shared
  * `writePageThrough` helper renders that row to disk. Rendering from the row
- * means the two sinks cannot diverge, and the row matches what `gbrain sync`
+ * means the two sinks cannot diverge, and the row matches what `foresights sync`
  * would produce — so a later sync doesn't churn it (the CLI puts `source_kind`
  * in the content's frontmatter, so the row and the rendered file agree). The
  * file is only attempted when the DB write landed (it's rendered from the row).
@@ -454,7 +454,7 @@ export async function persistSavedIdea(
  * Render an honest save message from the outcome. Every branch names the real
  * state; the only nonzero exit is the total-failure case (nothing persisted),
  * so scripts can't read a failed `--save` as success. A file-write failure when
- * the DB row landed stays exit 0 — the row is durable and `gbrain sync`
+ * the DB row landed stays exit 0 — the row is durable and `foresights sync`
  * reconciles the disk file on the next run.
  */
 export function formatSaveOutcome(
@@ -464,7 +464,7 @@ export function formatSaveOutcome(
   const { dbSaved, dbError, writeThrough } = outcome;
   const stderr: string[] = [];
   if (outcome.held) {
-    stderr.push(`gbrain ${ctx.profileLabel}: save refused: ${outcome.held}. Rerun with --resume <run_id> once the page and its file agree.`);
+    stderr.push(`foresights ${ctx.profileLabel}: save refused: ${outcome.held}. Rerun with --resume <run_id> once the page and its file agree.`);
     return { stderr, exitCode: 1 };
   }
   if (outcome.pending) {
@@ -474,9 +474,9 @@ export function formatSaveOutcome(
       exitCode: outcome.pending.acceptPending ? 0 : PENDING_WRITE_EXIT_CODE,
     };
   }
-  if (dbError) stderr.push(`gbrain ${ctx.profileLabel}: DB save failed: ${dbError}`);
+  if (dbError) stderr.push(`foresights ${ctx.profileLabel}: DB save failed: ${dbError}`);
   if (writeThrough.error) {
-    stderr.push(`gbrain ${ctx.profileLabel}: file write failed: ${writeThrough.error}`);
+    stderr.push(`foresights ${ctx.profileLabel}: file write failed: ${writeThrough.error}`);
   }
 
   if (dbSaved && writeThrough.written) {
@@ -502,21 +502,21 @@ export function formatSaveOutcome(
   }
   if (dbSaved && writeThrough.skipped === 'file_changed') {
     return {
-      stdout: `\n_Saved to DB page \`${ctx.slug}\` (its file changed during the save and was kept, not rewritten: file_changed; \`gbrain sync\` imports that edit, and page history keeps this save)._`,
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (its file changed during the save and was kept, not rewritten: file_changed; \`foresights sync\` imports that edit, and page history keeps this save)._`,
       stderr,
       exitCode: 0,
     };
   }
   if (dbSaved && writeThrough.skipped === 'mirror_read_only') {
     return {
-      stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source is a read-only mirror, \`gbrain sources mirror-readonly\` — kept database-only)._`,
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source is a read-only mirror, \`foresights sources mirror-readonly\` — kept database-only)._`,
       stderr,
       exitCode: 0,
     };
   }
   if (dbSaved && writeThrough.skipped === 'url_clone') {
     return {
-      stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source is a clone gbrain pulls from upstream — kept database-only)._`,
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source is a clone foresights pulls from upstream — kept database-only)._`,
       stderr,
       exitCode: 0,
     };
@@ -524,14 +524,14 @@ export function formatSaveOutcome(
   if (dbSaved) {
     // File write attempted but errored (already on stderr). Row is durable.
     return {
-      stdout: `\n_Saved to DB page \`${ctx.slug}\` (file NOT written — see error above; \`gbrain sync\` will reconcile)._`,
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (file NOT written — see error above; \`foresights sync\` will reconcile)._`,
       stderr,
       exitCode: 0,
     };
   }
   // Nothing persisted — the silent-false-success bug class. Exit nonzero.
   stderr.push(
-    `gbrain ${ctx.profileLabel}: save FAILED — neither DB page nor file was written. The idea is NOT persisted.`,
+    `foresights ${ctx.profileLabel}: save FAILED — neither DB page nor file was written. The idea is NOT persisted.`,
   );
   return { stderr, exitCode: 1 };
 }
@@ -560,12 +560,12 @@ export function buildIdeaSlug(
   return `wiki/ideas/${date}-${label}-${stem || 'untitled'}-${suffix}`;
 }
 
-/** CLI entry: `gbrain brainstorm`. */
+/** CLI entry: `foresights brainstorm`. */
 export async function runBrainstormCommand(engine: BrainEngine, args: string[]): Promise<void> {
   return runBrainstormCli(engine, args, BRAINSTORM_PROFILE, BRAINSTORM_HELP);
 }
 
-/** CLI entry: `gbrain lsd`. */
+/** CLI entry: `foresights lsd`. */
 export async function runLsdCommand(engine: BrainEngine, args: string[]): Promise<void> {
   return runBrainstormCli(engine, args, LSD_PROFILE, LSD_HELP);
 }

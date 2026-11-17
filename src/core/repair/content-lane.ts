@@ -2,9 +2,9 @@
  * The content-repair lane (#6377): the repair kinds that clear managed-sync
  * content holds, run as one bounded pass under one paid-model allowance.
  *
- * `CONTENT_REPAIR_KINDS` is the lane in dependency order; `gbrain repair
+ * `CONTENT_REPAIR_KINDS` is the lane in dependency order; `foresights repair
  * content`, the `content_repair` maintenance phase (src/core/cycle/
- * content-repair.ts) and `gbrain sync unblock --apply` all read it, so a new
+ * content-repair.ts) and `foresights sync unblock --apply` all read it, so a new
  * kind plugs in with one entry here. Today it holds `fences`; the GBRA-72
  * integration appends `slug-conflicts` (Lane B, src/core/repair/
  * slug-conflicts.ts). `CONTENT_REPAIR_HOLD_KINDS` maps a hold code to the kind
@@ -22,7 +22,7 @@
  * per kind in lane order, so the operator's approval binds both concrete plans
  * (Codex #10). There is no combined hash. A bare apply (the cycle, `sync
  * unblock`, `--apply` alone) applies each kind's current plan the way
- * `gbrain repair <kind> --apply` does: the kind plans and applies in one run,
+ * `foresights repair <kind> --apply` does: the kind plans and applies in one run,
  * each item bound to the bytes its plan read (`changed_since_read`), and
  * records on every hold it leaves why (a preview records nothing).
  *
@@ -136,7 +136,7 @@ export interface ContentLaneResult {
   apply_command: string;
 }
 
-/** `gbrain repair content [--source <id>] [--only <p>]... [--skip <p>]... [--no-llm] [--max-usd <n>] [--apply [--expect <h1>,<h2>]]`. */
+/** `foresights repair content [--source <id>] [--only <p>]... [--skip <p>]... [--no-llm] [--max-usd <n>] [--apply [--expect <h1>,<h2>]]`. */
 export function contentLaneArgv(opts: { source?: string; only?: readonly string[]; skip?: readonly string[]; noLlm?: boolean; maxLlmUsd?: number; apply?: boolean; expect?: readonly string[] }): string[] {
   return ['gbrain', 'repair', 'content', ...(opts.source ? ['--source', opts.source] : []), ...(opts.only ?? []).flatMap(path => ['--only', path]),
     ...(opts.skip ?? []).flatMap(path => ['--skip', path]), ...(opts.noLlm ? ['--no-llm'] : []), ...(opts.maxLlmUsd !== undefined ? ['--max-usd', String(opts.maxLlmUsd)] : []),

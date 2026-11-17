@@ -213,7 +213,7 @@ describe('build()', () => {
     const base = { VERSION: '0.1.0.0\n', 'CHANGELOG.md': changelog(section('0.1.0.0', 'First.')) };
     for (const bump of ['minor', 'major', "'micro'"]) {
       const { problems } = build(tree({ ...base, 'changelog.d/feature-x.md': `---\nbump: ${bump}\nimportant: security\n---\n**Faster sync.**\n` }));
-      expect(problems).toEqual([`changelog.d/feature-x.md says bump: ${bump.replace(/'/g, '')}; gbrain releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`]);
+      expect(problems).toEqual([`changelog.d/feature-x.md says bump: ${bump.replace(/'/g, '')}; foresights releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`]);
     }
     for (const line of ['bump: minor # feature', '"bump": major']) {
       expect(build(tree({ ...base, 'changelog.d/feature-x.md': `---\n${line}\n---\n**Faster sync.**\n` })).problems.join('\n')).toContain('changelog.d/feature-x.md says bump: ');

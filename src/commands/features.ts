@@ -1,8 +1,8 @@
 /**
- * gbrain features — Scan brain usage and recommend unused features.
+ * foresights features — Scan brain usage and recommend unused features.
  *
  * Usage:
- *   gbrain features [--json] [--auto-fix] [--help]
+ *   foresights features [--json] [--auto-fix] [--help]
  */
 
 import { gbrainPath } from '../core/config.ts';
@@ -127,7 +127,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
       id: 'missing-embeddings', priority: 1,
       title: 'Fix Missing Embeddings',
       pitch: `${health.missing_embeddings} chunks invisible to semantic search. One command fixes it.`,
-      command: 'gbrain embed --stale',
+      command: 'foresights embed --stale',
       auto_fixable: true,
     });
   }
@@ -138,7 +138,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
       id: 'dead-links', priority: 1,
       title: 'Fix Dead Links',
       pitch: `${health.dead_links} links pointing to non-existent pages.`,
-      command: 'gbrain check-backlinks fix',
+      command: 'foresights check-backlinks fix',
       auto_fixable: false,
     });
   }
@@ -151,7 +151,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
         id: 'zero-links', priority: 2,
         title: 'Build Link Graph',
         pitch: `${stats.page_count} pages but 0 links. Your brain is a flat file cabinet, not a knowledge graph.`,
-        command: 'gbrain extract links',
+        command: 'foresights extract links',
         auto_fixable: true,
       });
     }
@@ -162,7 +162,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
         id: 'zero-timeline', priority: 2,
         title: 'Extract Timeline',
         pitch: `No structured timeline entries. Your brain can't answer "when did X happen?"`,
-        command: 'gbrain extract timeline',
+        command: 'foresights extract timeline',
         auto_fixable: true,
       });
     }
@@ -174,7 +174,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
         id: 'low-coverage', priority: 2,
         title: 'Improve Embedding Coverage',
         pitch: `${pct}% embed coverage. ${health.missing_embeddings} chunks invisible to semantic search.`,
-        command: 'gbrain embed --stale',
+        command: 'foresights embed --stale',
         auto_fixable: true,
       });
     }
@@ -198,7 +198,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
         id: 'no-integrations', priority: 2,
         title: 'Set Up Integrations',
         pitch: `${unconfigured.length} integration recipes available but not configured: ${unconfigured.map(r => r.name).join(', ')}.`,
-        command: `gbrain integrations list`,
+        command: `foresights integrations list`,
         auto_fixable: false,
       });
     }
@@ -213,7 +213,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
           id: 'no-sync', priority: 2,
           title: 'Configure Sync',
           pitch: `Brain not syncing from git. Changes in your repo don't reach your brain.`,
-          command: 'gbrain sync --repo <path>',
+          command: 'foresights sync --repo <path>',
           auto_fixable: false,
         });
       }
@@ -228,7 +228,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
   };
 }
 
-/** The recommendations `gbrain features` would pitch to this user now; reads the offer state, never writes it. */
+/** The recommendations `foresights features` would pitch to this user now; reads the offer state, never writes it. */
 export async function pitchableFeatures(engine: BrainEngine): Promise<FeatureRecommendation[]> {
   const scan = await scanFeatures(engine);
   const offers = loadOffers();
@@ -275,7 +275,7 @@ async function executeAutoFix(rec: FeatureRecommendation, engine: BrainEngine): 
 
 export async function runFeatures(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain features [--json] [--auto-fix [--yes]]\n\nScan brain usage and recommend unused features.\n\n  --json       Output as JSON (for agents)\n  --auto-fix   Automatically fix all auto-fixable issues\n  --yes        Authorize the paid embedding auto-fix (non-interactive runs need it)');
+    console.log('Usage: foresights features [--json] [--auto-fix [--yes]]\n\nScan brain usage and recommend unused features.\n\n  --json       Output as JSON (for agents)\n  --auto-fix   Automatically fix all auto-fixable issues\n  --yes        Authorize the paid embedding auto-fix (non-interactive runs need it)');
     return;
   }
 
@@ -380,7 +380,7 @@ export function featuresAutoFixNotice(pitchable: readonly FeatureRecommendation[
     fix: {
       argv: ['gbrain', 'features', '--auto-fix', ...(paid ? ['--yes'] : [])], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
       why: paid ? 'Runs the fixes; refreshing embeddings calls the configured embedding provider (a small paid cost).' : 'Runs the fixes (link and timeline extraction; no paid calls).',
-      ...(paid ? { user_message: 'gbrain can fill in missing embeddings for your notes; it costs a little in embedding API calls. OK to run it?' } : {}),
+      ...(paid ? { user_message: 'foresights can fill in missing embeddings for your notes; it costs a little in embedding API calls. OK to run it?' } : {}),
     },
   };
 }
@@ -393,7 +393,7 @@ export async function featuresTeaserForDoctor(engine: BrainEngine): Promise<stri
     if (health.missing_embeddings > 0 && !await embeddingsDisabled(engine)) parts.push(`${health.missing_embeddings} missing embeddings`);
     if (health.dead_links > 0) parts.push(`${health.dead_links} dead links`);
     if (parts.length === 0) return null;
-    return `Tip: ${parts.join(', ')}. Run 'gbrain features' to fix.`;
+    return `Tip: ${parts.join(', ')}. Run 'foresights features' to fix.`;
   } catch {
     return null;
   }

@@ -125,7 +125,7 @@ for (const backend of testBackends()) describe(`[${backend}] remember on an enti
       verify: { mcp: { tool: 'get_page', arguments: { slug: PAGELESS } } } });
     // On the CLI the [AGENT] block asks first and fences the question for the user.
     const agent = renderCliNotices([renderNotice(notice!, cliRenderContext())], { json: false, tty: false }).stdout!;
-    expect(agent).toContain(`next: ask_user: gbrain put ${PAGELESS}`);
+    expect(agent).toContain(`next: ask_user: foresights put ${PAGELESS}`);
     expect(agent).toContain(`[SHOW USER]\n${notice!.user_message}\n[/SHOW USER]`);
     // A fact that lands on a page carries no such notice.
     const paged = caller(ctx);

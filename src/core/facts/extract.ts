@@ -42,7 +42,7 @@ import { isAIInvocationPolicyError } from '../ai/invocation-guard.ts';
  * Read the `facts.extraction_enabled` config row. Defaults to TRUE (on by
  * default — the headline feature should ship enabled). Operators flip it
  * to 'false' / '0' / 'no' / 'off' (case-insensitive) via
- * `gbrain config set facts.extraction_enabled false` to disable extraction
+ * `foresights config set facts.extraction_enabled false` to disable extraction
  * across the brain without requiring a binary downgrade.
  *
  * Same truthiness conventions as isAutoLinkEnabled / isAutoTimelineEnabled.
@@ -72,7 +72,7 @@ export type FactsExtractionModelSource = ResolveSource | 'measured_default';
 
 /**
  * The model facts extraction uses and which setting chose it. Configurable via
- * `gbrain config set facts.extraction_model <model>`; `models.tier.reasoning`,
+ * `foresights config set facts.extraction_model <model>`; `models.tier.reasoning`,
  * `models.default` and `GBRAIN_MODEL` reach it through resolveModel (v0.31.12).
  */
 export async function resolveFactsExtractionModel(engine?: BrainEngine): Promise<{ model: string; source: FactsExtractionModelSource }> {
@@ -101,7 +101,7 @@ export async function getFactsExtractionModel(engine?: BrainEngine): Promise<str
  * silently truncated output on mandatory-reasoning models (thinking tokens
  * count toward the cap), so the JSON never parsed and extraction returned
  * zero facts with no signal. Configurable via
- * `gbrain config set facts.extraction_max_tokens <n>`; default 4000.
+ * `foresights config set facts.extraction_max_tokens <n>`; default 4000.
  */
 export const DEFAULT_EXTRACTION_MAX_TOKENS = 4000;
 
@@ -186,7 +186,7 @@ export async function isConsumerDateGroundingOn(engine: BrainEngine | undefined,
  * (incl. the operator appendix above) is the primary lever; this gate only
  * kills the unambiguous classes. A pattern-count guard in
  * test/facts-extract-junk-filter.test.ts keeps it from silently widening.
- * Kill-switch: `gbrain config set facts.extraction_junk_filter false`.
+ * Kill-switch: `foresights config set facts.extraction_junk_filter false`.
  *
  * @internal Exported for tests.
  */
@@ -706,7 +706,7 @@ export async function extractFactsFromTurnWithOutcome(
         process.stderr.write(
           `[facts-extract] WARN: extractor output STILL truncated at maxTokens=${maxTokens * 2} ` +
           `(model=${model}); facts for this turn are likely lost. ` +
-          `Raise the cap: gbrain config set facts.extraction_max_tokens <n>\n`,
+          `Raise the cap: foresights config set facts.extraction_max_tokens <n>\n`,
         );
         return { ok: false, reason: 'truncated_output', model };
       }

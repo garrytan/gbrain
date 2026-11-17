@@ -1,5 +1,5 @@
 /**
- * Background payload parity (D7): `gbrain embed --stale --catch-up
+ * Background payload parity (D7): `foresights embed --stale --catch-up
  * --include-null-signature --batch-size N --background` used to silently
  * DEGRADE — the CLI payload builder dropped all four flags and the `embed`
  * handler read none of them, so the documented migration-recovery command ran

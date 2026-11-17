@@ -129,7 +129,7 @@ describe('runInitNudge — partial-checks notice', () => {
     );
     expect(out).toContain('Init checks incomplete');
     expect(out).toContain('(5/6)');
-    expect(out).toContain('gbrain onboard --check');
+    expect(out).toContain('foresights onboard --check');
     expect(out).not.toContain('Brain has opportunities');
   });
 });
@@ -140,7 +140,7 @@ describe('runInitNudge — non-empty brain opportunities', () => {
       stubEngine({ stale: 0, entities: 0, linked: 0, timeline: 0, takes: 0, pages: 10 }),
     );
     expect(out).toContain('Brain has opportunities: 0 takes');
-    expect(out).toContain("Run 'gbrain onboard --check' to see the plan");
+    expect(out).toContain("Run 'foresights onboard --check' to see the plan");
     // All 6 probes succeeded — no partial-checks suffix.
     expect(out).not.toContain('checks complete');
   });
@@ -153,7 +153,7 @@ describe('runInitNudge — agents get the nudge too (F7)', () => {
     ));
     expect(out).toContain('[AGENT]');
     expect(out).toContain('[onboard_opportunities]');
-    expect(out).toContain('gbrain onboard --check');
+    expect(out).toContain('foresights onboard --check');
   });
 });
 
@@ -161,10 +161,10 @@ describe('shared collector (collectOnboardOpportunities)', () => {
   test('init output is byte-identical to the pre-collector nudge', async () => {
     const full = await withEnv({ GBRAIN_NON_INTERACTIVE: '1', GBRAIN_INTERACTIVE: undefined }, () => runNudgeCaptured(
       stubEngine({ stale: 3, entities: 10, linked: 5, timeline: 2, takes: 0, pages: 20 })));
-    expect(full).toBe("[AGENT]\nwhy: [onboard_opportunities] Brain has opportunities: 3 stale chunks, link coverage 50%, timeline coverage 20%, 0 takes. Run 'gbrain onboard --check' to see the plan.\nactor: agent\nnext: run: gbrain onboard --check\n[/AGENT]\n");
+    expect(full).toBe("[AGENT]\nwhy: [onboard_opportunities] Brain has opportunities: 3 stale chunks, link coverage 50%, timeline coverage 20%, 0 takes. Run 'foresights onboard --check' to see the plan.\nactor: agent\nnext: run: foresights onboard --check\n[/AGENT]\n");
     const partial = await withEnv({ GBRAIN_NON_INTERACTIVE: '1', GBRAIN_INTERACTIVE: undefined }, () => runNudgeCaptured(
       stubEngine({ stale: 0, entities: 4, linked: new Error('linked probe failed'), timeline: 4, takes: 2, pages: 9 })));
-    expect(partial).toBe("[AGENT]\nwhy: [onboard_opportunities] Brain has opportunities: link coverage 0%. Run 'gbrain onboard --check' to see the plan. (5/6 checks complete; run gbrain onboard --check for full recommendations)\nactor: agent\nnext: run: gbrain onboard --check\n[/AGENT]\n");
+    expect(partial).toBe("[AGENT]\nwhy: [onboard_opportunities] Brain has opportunities: link coverage 0%. Run 'foresights onboard --check' to see the plan. (5/6 checks complete; run foresights onboard --check for full recommendations)\nactor: agent\nnext: run: foresights onboard --check\n[/AGENT]\n");
   });
 
   test('sequential (background refresh) and parallel (init) runs return the same counts; a failed probe is null, never a gap', async () => {

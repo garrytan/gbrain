@@ -1,5 +1,5 @@
 /**
- * Secret scan over the commits an automatic publish pushes. A commit gbrain did not write (a script's plain
+ * Secret scan over the commits an automatic publish pushes. A commit foresights did not write (a script's plain
  * `git commit`) never passed the write path's scan, so the publish scans, under its publish lock and for the exact
  * commit it pushes, what each commit in `base..head` adds: its message, the lines it adds file by file (a value a later
  * commit removed is still in the pushed history), and for a merge commit the lines it adds that no parent has
@@ -17,9 +17,9 @@
  * `.gitattributes`) as a gate change, so callers refuse. Output the parser does not recognise, a git failure or a run
  * past the time budget sets `unreadable` instead of returning a partial result. The time budget is checked between git
  * calls and while the diff is parsed, so a caller with a short budget (the owner's event loop) is never held much past it.
- * Commits gbrain's commit ledger records as page writes (`PAGE_WRITERS`) are not scanned: page bodies are stored raw by
+ * Commits foresights's commit ledger records as page writes (`PAGE_WRITERS`) are not scanned: page bodies are stored raw by
  * design (docs/guides/write-refusals.md#what-stays-raw-by-design) and their Git backups have always been pushed, so the
- * gate covers what gbrain did not write; `gbrain git commit-push` commits, which carry a script's files, are scanned.
+ * gate covers what foresights did not write; `foresights git commit-push` commits, which carry a script's files, are scanned.
  */
 import { closeSync, existsSync, fstatSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,8 +59,8 @@ const DIFF = ['diff-tree', '--stdin', '-r', '-p', '--root', '--cc', '--no-rename
 /**
  * Ledger writers whose commits hold only page writes: a Git effect's commit, a strict source's door commit and a hosted
  * repository's commits. A Git effect's or a door's record counts only when `verified` (VERIFIED_WRITERS: each committed
- * blob is the bytes the writer wrote, with no clean filter in between; records from releases before that check carry none). A record that adopted a file edited outside gbrain
- * (`adopted`) carries bytes gbrain did not write, so it is scanned, and so is a page-write commit older than the retained
+ * blob is the bytes the writer wrote, with no clean filter in between; records from releases before that check carry none). A record that adopted a file edited outside foresights
+ * (`adopted`) carries bytes foresights did not write, so it is scanned, and so is a page-write commit older than the retained
  * ledger or made before it existed.
  */
 const PAGE_WRITERS: ReadonlySet<string> = new Set(['effect', 'door', 'hosted_repo']);
@@ -321,8 +321,8 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
 
 /**
  * Writers that commit only blobs they scanned, staged, with the workspace allowlist the range scan also applies
- * (`gbrain sources push`, `gbrain bootstrap repo`): the allowlist edit such a commit carries is the user's answer to that
- * scan, so it is not refused as a gate change. Its content is still scanned. `gbrain sources push` also streams staged
+ * (`foresights sources push`, `foresights bootstrap repo`): the allowlist edit such a commit carries is the user's answer to that
+ * scan, so it is not refused as a gate change. Its content is still scanned. `foresights sources push` also streams staged
  * files past the range scan's cap (up to its own 512 MiB ceiling), so a file in its commit the range scan calls too large
  * was scanned; bootstrap's file scan skips files over the cap, so its large files stay refused.
  */
@@ -330,7 +330,7 @@ const STAGED_SCAN_WRITERS: ReadonlySet<string> = new Set(['workspace_push', 'boo
 const STREAMED_SCAN_WRITERS: ReadonlySet<string> = new Set(['workspace_push']);
 
 /**
- * The refusal for a push by `gbrain sources push` or `gbrain bootstrap repo` of `base..target` (an empty `base` covers
+ * The refusal for a push by `foresights sources push` or `foresights bootstrap repo` of `base..target` (an empty `base` covers
  * the whole history): the same scan and refusals as an automatic publish, except for what those writers' own commits
  * already passed (see STAGED_SCAN_WRITERS).
  */

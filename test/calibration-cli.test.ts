@@ -1,5 +1,5 @@
 /**
- * v0.36.1.0 (T7) — gbrain calibration CLI + get_calibration_profile MCP op tests.
+ * v0.36.1.0 (T7) — foresights calibration CLI + get_calibration_profile MCP op tests.
  *
  * Hermetic. Mock engine + injected args.
  */
@@ -182,7 +182,7 @@ describe('formatProfileText', () => {
   test('null profile prints helpful cold-brain message', () => {
     const out = formatProfileText(null, 'garry');
     expect(out).toContain('No calibration profile yet');
-    expect(out).toContain('gbrain dream --phase calibration_profile');
+    expect(out).toContain('foresights dream --phase calibration_profile');
   });
 
   test('happy profile prints Brier + accuracy + patterns + bias tags', () => {

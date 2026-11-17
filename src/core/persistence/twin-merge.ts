@@ -1,5 +1,5 @@
 /**
- * One merge primitive for a duplicate page ("twin") that a surviving page replaces, used by `gbrain repair origin-twins`
+ * One merge primitive for a duplicate page ("twin") that a surviving page replaces, used by `foresights repair origin-twins`
  * and the sync-time heal (#6948). It runs inside the caller's write with both page keys held and moves what other pages
  * and the twin's own rows say about the twin to the survivor:
  *
@@ -95,7 +95,7 @@ export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; 
   const conflicts = await twinMergeConflicts(tx, survivor.page_id, twin.page_id);
   if (conflicts.length) {
     throw opError('revision_conflict', 'The duplicate page holds evidence its survivor does not, so the merge was refused.',
-      `Merging ${twin.slug} into ${survivor.slug} in source ${sourceId} would discard ${conflicts.map(c => `${c.detail} (${c.table} ${c.id})`).join('; ')}. Nothing changed; the group needs a person (gbrain repair origin-twins --source ${sourceId}).`,
+      `Merging ${twin.slug} into ${survivor.slug} in source ${sourceId} would discard ${conflicts.map(c => `${c.detail} (${c.table} ${c.id})`).join('; ')}. Nothing changed; the group needs a person (foresights repair origin-twins --source ${sourceId}).`,
       { reason: 'twin_evidence_conflicts' });
   }
   await tx.createVersion(twin.slug, { sourceId });

@@ -1,6 +1,6 @@
 # Connect an existing company knowledge repository
 
-**Say to your agent:** “Connect our existing company brain to GBrain. Preserve the
+**Say to your agent:** “Connect our existing company brain to Foresights. Preserve the
 source files, show me the destination and any gaps, and ask before importing.”
 
 This workflow preserves structured company Markdown: customers, competitors,
@@ -15,7 +15,7 @@ its own explicit approval; connect does not strip sensitive facts or Git history
 ## Try it without private data
 
 ```bash
-gbrain sources demo company-brain
+foresights sources demo company-brain
 ```
 
 The bundled fictional sample goes through the real import and graph pipeline in
@@ -34,7 +34,7 @@ eligible files, and narrower access requirements must be resolved before apply.
 1. Inspect the repository without opening a database:
 
    ```bash
-   gbrain sources inspect ./company-wiki --profile company-brain
+   foresights sources inspect ./company-wiki --profile company-brain
    ```
 
    Every tracked file is accounted for as included, excluded, or unsupported.
@@ -46,7 +46,7 @@ eligible files, and narrower access requirements must be resolved before apply.
 2. Choose an existing destination and preview the effects:
 
    ```bash
-   gbrain sources connect ./company-wiki \
+   foresights sources connect ./company-wiki \
      --brain company-example --source wiki --profile company-brain
    ```
 
@@ -77,14 +77,14 @@ be mapped through a separately approved access design or excluded.
 ## Agent and CI use
 
 ```bash
-gbrain sources inspect ./company-wiki --profile company-brain \
+foresights sources inspect ./company-wiki --profile company-brain \
   --json --out ./company-import-plan.json
 
-gbrain sources connect --plan ./company-import-plan.json \
+foresights sources connect --plan ./company-import-plan.json \
   --brain company-example --source wiki --json
 
 # Only after approving that preview:
-gbrain sources connect --plan ./company-import-plan.json \
+foresights sources connect --plan ./company-import-plan.json \
   --brain company-example --source wiki --yes --json
 ```
 
@@ -116,20 +116,20 @@ or required consent, and 1 means blocked, failed, or incomplete work. Always rea
 ## Resume and verify
 
 ```bash
-gbrain sources status --brain company-example --json
-gbrain sync --brain company-example --source wiki --no-embed --no-pull
+foresights sources status --brain company-example --json
+foresights sync --brain company-example --source wiki --no-embed --no-pull
 ```
 
 An incomplete receipt retains the approved revision and outstanding phase.
 Graph or verification failures are retried even when the content has no diff.
 Incomplete checkpoints are protected from age-based cleanup. If the original
-commit objects are gone or the approved schema changed, inspect again; GBrain
+commit objects are gone or the approved schema changed, inspect again; Foresights
 does not substitute current HEAD silently. Managed brains retain their native
 writer, source-incarnation, and revision conflict checks.
 
 Semantic schema/extractor upgrades do not silently renew an old approval. This
 first version has no in-place reapproval command. Preview the old registration's
-removal impact with `gbrain sources remove wiki --brain company-example --dry-run`.
+removal impact with `foresights sources remove wiki --brain company-example --dry-run`.
 Removal requires separate destructive consent and `--confirm-destructive` before
 reinspecting and reconnecting the same checkout. Alternatively, use a separate
 authorized checkout/destination. Do not remove a source automatically merely to
@@ -161,7 +161,7 @@ adopts a repository's “safe changes commit to main” policy automatically. It
 on the trusted brain host; ordinary MCP/OAuth access is not source-administration
 authority, and thin clients do not fall back to an empty local brain.
 
-After separate approval, `gbrain sources federate wiki --brain company-example`
+After separate approval, `foresights sources federate wiki --brain company-example`
 can include the source in default cross-source search. That does not change its
 immutable import policy: sync still performs no pull, embedding, or source
 writeback, and automatic embedding backfill remains blocked. Federation does not

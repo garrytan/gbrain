@@ -6,17 +6,17 @@
  * cache helpers back from self-upgrade). `check-update.ts` re-exports the
  * public helpers for back-compat with existing importers.
  *
- * Supports both 3-segment (`0.41.38`) and 4-segment (`0.42.3.0`) gbrain
- * version strings. The 4th `.MICRO` segment is gbrain's dot-suffix
+ * Supports both 3-segment (`0.41.38`) and 4-segment (`0.42.3.0`) foresights
+ * version strings. The 4th `.MICRO` segment is foresights's dot-suffix
  * follow-up channel; comparisons use it as a 4th ordering key.
  */
 
-/** A parsed gbrain version tuple (major, minor, patch, micro). Historical
+/** A parsed foresights version tuple (major, minor, patch, micro). Historical
  * 3-segment versions are normalized with a zero micro segment. */
 export type SemverTuple = [number, number, number, number];
 
 /** Strict shape gate for a remote version string before it reaches the agent.
- * Accepts both 3-segment (`0.41.38`) and 4-segment (`0.42.3.0`) gbrain versions. */
+ * Accepts both 3-segment (`0.41.38`) and 4-segment (`0.42.3.0`) foresights versions. */
 export const VERSION_RE = /^\d+\.\d+(?:\.\d+){0,2}$/;
 
 /** True iff `v` (optionally `v`-prefixed) is a plain numeric dotted version. */
@@ -52,7 +52,7 @@ export function semverLte(a: SemverTuple, b: SemverTuple): boolean {
   return !semverGt(a, b);
 }
 
-/** True when `latest` is any strictly newer gbrain release than `current`. */
+/** True when `latest` is any strictly newer foresights release than `current`. */
 export function isNewerVersion(current: string, latest: string): boolean {
   const cur = parseSemver(current);
   const lat = parseSemver(latest);

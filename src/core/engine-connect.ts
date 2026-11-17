@@ -35,7 +35,7 @@ export const ONE_SHOT_READ_SHARED_BUFFERS = '32MB';
 
 /**
  * Postgres connections for a process that runs one read operation and exits. Each connection a pool opens is a
- * TCP and auth handshake behind a remote pooler, and a cold `gbrain search` opened five with the default pool for
+ * TCP and auth handshake behind a remote pooler, and a cold `foresights search` opened five with the default pool for
  * statements that mostly wait on one another. Two keep the read's parallel arms overlapping (the same wall clock as
  * ten at 40 ms RTT) for three fewer handshakes. GBRAIN_POOL_SIZE still sets it.
  */
@@ -57,7 +57,7 @@ export interface EngineConnectOptions {
 
 /** No config on this machine: the classified error with the keyless-init fix. */
 export function noBrainError() {
-  return opError('no_brain', 'No brain configured. Run: gbrain init', 'Run `gbrain init --pglite --no-embedding` for a local keyless brain, or `gbrain init --help` for hosted and Postgres options.', {
+  return opError('no_brain', 'No brain configured. Run: foresights init', 'Run `foresights init --pglite --no-embedding` for a local keyless brain, or `foresights init --help` for hosted and Postgres options.', {
     fix: { argv: ['gbrain', 'init', '--pglite', '--no-embedding'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Creates a local PGLite brain with no API keys; nothing leaves this machine.' },
   });

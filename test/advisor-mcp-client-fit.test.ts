@@ -152,7 +152,7 @@ describe('remote redaction (amendment 29)', () => {
     const agg = findings.find((f) => f.id === 'mcp_starter_fit_aggregate');
     expect(agg).toBeDefined();
     expect(agg!.title).toContain('1 MCP client');
-    expect(agg!.title).toContain('run `gbrain advisor` on the host');
+    expect(agg!.title).toContain('run `foresights advisor` on the host');
     expect(agg!.fix.command_argv).toBeNull();
     // No per-client finding, and no client identifier anywhere in the output.
     const serialized = JSON.stringify(findings);

@@ -12,7 +12,7 @@ export function makeBacklinksHandler(engine: BrainEngine): MinionHandler {
     // must never rewrite tracked brain pages with generated "Referenced in"
     // timeline bullets. Mirrors the documented intent in src/core/cycle.ts
     // (runPhaseBacklinks). The filesystem fixer stays available explicitly
-    // via '{"action":"fix"}' or `gbrain check-backlinks fix`.
+    // via '{"action":"fix"}' or `foresights check-backlinks fix`.
     const action: 'check' | 'fix' = job.data.action === 'fix' ? 'fix' : 'check';
     const dir = typeof job.data.dir === 'string'
       ? job.data.dir

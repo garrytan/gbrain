@@ -282,8 +282,8 @@ describe('v0.37 Lane D.4 — sync --help dispatch', () => {
   });
 });
 
-// Deferred-TODO ship: gbrain reinit-pglite
-describe('v0.37 deferred TODO shipped — gbrain reinit-pglite', () => {
+// Deferred-TODO ship: foresights reinit-pglite
+describe('v0.37 deferred TODO shipped — foresights reinit-pglite', () => {
   test('reinit-pglite is registered in CLI_ONLY + CLI_ONLY_SELF_HELP', () => {
     // Refactor wave 1 (W4 cli): one command-table record carries both
     // memberships (CLI_ONLY and CLI_ONLY_SELF_HELP are derived from it).
@@ -298,7 +298,7 @@ describe('v0.37 deferred TODO shipped — gbrain reinit-pglite', () => {
     expect(CLI_ONLY_SELF_HELP.has('reinit-pglite')).toBe(true);
   });
 
-  test('embeddingMismatchMessage PGLite branch keeps `gbrain reinit-pglite` as the labelled last resort', async () => {
+  test('embeddingMismatchMessage PGLite branch keeps `foresights reinit-pglite` as the labelled last resort', async () => {
     const { embeddingMismatchMessage } = await import('../src/core/embedding-dim-check.ts');
     const msg = embeddingMismatchMessage({
       currentDims: 1536,
@@ -310,9 +310,9 @@ describe('v0.37 deferred TODO shipped — gbrain reinit-pglite', () => {
     });
     // reinit-pglite stays available, labelled as the last resort AFTER the
     // data-preserving migration (A7: no hand-run wipe recipe).
-    expect(msg).toContain('gbrain reinit-pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024');
+    expect(msg).toContain('foresights reinit-pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024');
     expect(msg).not.toMatch(/\bmv /);
-    const migrateIdx = msg.indexOf('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run');
+    const migrateIdx = msg.indexOf('foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run');
     const lastResortIdx = msg.indexOf('Last resort');
     expect(migrateIdx).toBeGreaterThan(0);
     expect(lastResortIdx).toBeGreaterThan(migrateIdx);

@@ -5,7 +5,7 @@ export const AUTO_CHRONICLE_KEY = 'auto_chronicle';
 /** The one documented opt-out. Unsetting the key restores the default, which is on. */
 export const AUTO_CHRONICLE_OPT_OUT_ARGV = ['gbrain', 'config', 'set', 'auto_chronicle', 'false'] as const;
 export const AUTO_CHRONICLE_KEEP_ARGV = ['gbrain', 'config', 'set', 'auto_chronicle', 'true'] as const;
-/** Stamped by `gbrain config set auto_chronicle <value>`: the operator has seen the default-on change. */
+/** Stamped by `foresights config set auto_chronicle <value>`: the operator has seen the default-on change. */
 export const CHRONICLE_ACK_KEY = 'chronicle.default_on_acknowledged';
 /** Stamped when the one-shot post-upgrade notice prints. */
 export const CHRONICLE_NOTICE_SHOWN_KEY = 'chronicle.default_on_notice_shown';
@@ -30,7 +30,7 @@ export function autoChronicleSetting(raw: string | null | undefined): 'on' | 'of
 
 /**
  * Automatic extraction is ON by default (the default-on rule for new features); the opt-out is
- * `gbrain config set auto_chronicle false`. Each eligible new or changed page costs one chat call,
+ * `foresights config set auto_chronicle false`. Each eligible new or changed page costs one chat call,
  * bounded by `chronicle.job_budget_usd` per page and `chronicle.auto_daily_limit` per rolling day.
  */
 export async function isAutoChronicleEnabled(engine: BrainEngine): Promise<boolean> {
@@ -39,7 +39,7 @@ export async function isAutoChronicleEnabled(engine: BrainEngine): Promise<boole
 
 /**
  * True while the operator has not answered the default-on change: the feature is on and nobody ran
- * `gbrain config set auto_chronicle ...` since this release (an explicit `true` written before it
+ * `foresights config set auto_chronicle ...` since this release (an explicit `true` written before it
  * was a no-op, so it does not count as an answer).
  */
 export async function autoChronicleNeedsAcknowledgement(engine: BrainEngine): Promise<boolean> {
@@ -74,7 +74,7 @@ export const CHRONICLE_NUMERIC_KEYS = {
 
 export type ChronicleNumericKey = keyof typeof CHRONICLE_NUMERIC_KEYS;
 
-/** Every chronicle.* key gbrain reads or writes. `config set` refuses other chronicle.* leaves. */
+/** Every chronicle.* key foresights reads or writes. `config set` refuses other chronicle.* leaves. */
 export const CHRONICLE_CONFIG_KEYS: readonly string[] = [
   ...Object.keys(CHRONICLE_NUMERIC_KEYS),
   'chronicle.tz',
@@ -102,7 +102,7 @@ export function validateChronicleConfigValue(key: string, value: string): string
   if (key === AUTO_CHRONICLE_KEY) {
     return autoChronicleSetting(value) !== 'invalid' ? null
       : `auto_chronicle must be true or false (got '${value}'). Nothing was written. ` +
-        'To turn automatic event extraction off: gbrain config set auto_chronicle false';
+        'To turn automatic event extraction off: foresights config set auto_chronicle false';
   }
   if (key in CHRONICLE_NUMERIC_KEYS) {
     const k = key as ChronicleNumericKey;

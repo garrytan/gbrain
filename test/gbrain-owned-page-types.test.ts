@@ -1,8 +1,8 @@
 /**
- * #5881 — gbrain's own outputs use page types the bundled default pack
- * (gbrain-base-v2) declares. Pre-fix the drift phase and `gbrain report`
+ * #5881 — foresights's own outputs use page types the bundled default pack
+ * (gbrain-base-v2) declares. Pre-fix the drift phase and `foresights report`
  * stamped `type: report`, which base-v2 neither declares nor aliases, so
- * `schema lint --with-db` flagged gbrain's own pages as
+ * `schema lint --with-db` flagged foresights's own pages as
  * `stored_type_undeclared`; the meeting-ingestion skill named no type for
  * its transcript sidecar, and agents improvised undeclared ones.
  */
@@ -54,7 +54,7 @@ describe('#5881 gbrain-owned page types are declared by gbrain-base-v2', () => {
     expect(report!.frontmatter?.report_type).toBe('drift');
   }, 30_000);
 
-  test('`gbrain report` page frontmatter', async () => {
+  test('`foresights report` page frontmatter', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-report-type-'));
     const log = console.log;
     console.log = () => {};

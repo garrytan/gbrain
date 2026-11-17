@@ -1,5 +1,5 @@
 /**
- * v0.39 subprocess smoke for `gbrain doctor --json`.
+ * v0.39 subprocess smoke for `foresights doctor --json`.
  *
  * Covers the runDoctor wrapper paths that buildChecks-only tests can't
  * reach in-process (D10/CMT-2): outputResults render, process.exit code,
@@ -65,7 +65,7 @@ async function runCli(
   }
 }
 
-describe('gbrain doctor --json subprocess smoke (D10/CMT-2)', () => {
+describe('foresights doctor --json subprocess smoke (D10/CMT-2)', () => {
   test.skipIf(SKIP)('exits 0 on freshly-initialized PGLite brain; JSON envelope is well-formed', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-doctor-smoke-'));
     const shim = makeGbrainShim();

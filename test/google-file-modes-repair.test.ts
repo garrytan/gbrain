@@ -1,10 +1,10 @@
 /**
  * Legacy Google file repair (security fix wave, user challenge UC1): files
- * gbrain wrote under a Google source directory outside `~/.gbrain` before
- * this release keep their 0644 modes. `gbrain doctor` reports them
+ * foresights wrote under a Google source directory outside `~/.gbrain` before
+ * this release keep their 0644 modes. `foresights doctor` reports them
  * (`google_file_modes`), the v0.60.31 migration prints a one-time notice, and
- * `gbrain repair google-file-modes` previews by default and tightens only with
- * `--apply`: only gbrain's own layout, never the chosen root, never through a
+ * `foresights repair google-file-modes` previews by default and tightens only with
+ * `--apply`: only foresights's own layout, never the chosen root, never through a
  * symlink, never another user's file. POSIX modes only: skipped on win32.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -58,7 +58,7 @@ async function legacySource(id = 'gmail', dir = root) {
   for (const d of ['emails', 'emails/2026', 'emails/2026/09', 'calendar', 'calendar/2026', 'calendar/2026/09', 'people']) chmodSync(join(dir, d), 0o755);
   writeFileSync(join(dir, '.google-source.json'), '{}');
   chmodSync(join(dir, '.google-source.json'), 0o644);
-  writeFileSync(join(dir, 'my-own-notes.md'), 'not gbrain');
+  writeFileSync(join(dir, 'my-own-notes.md'), 'not foresights');
   chmodSync(join(dir, 'my-own-notes.md'), 0o644);
 }
 
@@ -67,7 +67,7 @@ const repair = (apply: boolean, source?: string) => withEnv({ GBRAIN_HOME: home 
   return runner.run('google-file-modes', await resolveRepairScope(engine, source), { sourceFlag: source, explicit: true });
 });
 
-describe.skipIf(process.platform === 'win32')('gbrain repair google-file-modes', () => {
+describe.skipIf(process.platform === 'win32')('foresights repair google-file-modes', () => {
   test('preview lists gbrain-written loose entries and changes nothing', async () => {
     await legacySource();
     const result = await repair(false, 'gmail');
@@ -76,7 +76,7 @@ describe.skipIf(process.platform === 'win32')('gbrain repair google-file-modes',
     expect(result.affected).toBe(11);
     expect(result.sample).toContain('gmail:.google-source.json');
     expect(result.sample.some(item => item.includes('my-own-notes'))).toBe(false);
-    expect(result.apply_command).toBe('gbrain repair google-file-modes --source gmail --apply');
+    expect(result.apply_command).toBe('foresights repair google-file-modes --source gmail --apply');
     expect(mode(join(root, PAGES[0]))).toBe(0o644);
     expect(mode(join(root, 'emails'))).toBe(0o755);
   });
@@ -140,9 +140,9 @@ describe.skipIf(process.platform === 'win32')('detection: doctor and the one-tim
     await legacySource();
     const check = await withEnv({ GBRAIN_HOME: home }, () => checkGoogleFileModes(engine));
     expect(check.status).toBe('warn');
-    expect(check.message).toContain(`Google source gmail: 4 file(s) and 7 directories gbrain wrote under ${root}`);
-    expect(check.message).toContain('Preview: gbrain repair google-file-modes --source gmail');
-    expect(check.message).toContain('apply after the user agrees: gbrain repair google-file-modes --source gmail --apply');
+    expect(check.message).toContain(`Google source gmail: 4 file(s) and 7 directories foresights wrote under ${root}`);
+    expect(check.message).toContain('Preview: foresights repair google-file-modes --source gmail');
+    expect(check.message).toContain('apply after the user agrees: foresights repair google-file-modes --source gmail --apply');
     expect(check.message).not.toContain('roadmap');
     await repair(true, 'gmail');
     expect((await withEnv({ GBRAIN_HOME: home }, () => checkGoogleFileModes(engine))).status).toBe('ok');
@@ -159,7 +159,7 @@ describe.skipIf(process.platform === 'win32')('detection: doctor and the one-tim
     expect(printed).toHaveLength(1);
     expect(printed[0]).toContain(`Google source custom keeps its files in ${root}, outside ~/.gbrain`);
     expect(printed[0]).toContain('(11 found now)');
-    expect(printed[0]).toContain('gbrain repair google-file-modes --source custom --apply');
+    expect(printed[0]).toContain('foresights repair google-file-modes --source custom --apply');
     expect(printed[0]).not.toContain('roadmap');
     expect(mode(join(root, PAGES[0]))).toBe(0o644);
     expect(await run()).toMatchObject({ status: 'skipped', detail: 'already_shown' });

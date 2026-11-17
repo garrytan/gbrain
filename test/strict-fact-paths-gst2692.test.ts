@@ -2,11 +2,11 @@
  * GST-2692: three remaining paths on a strict source that dropped a fact or wrote it to the database before Git.
  *
  * 1. Protects: on a source whose pages are canonical in Git (`canonical: git`),
- *    - the Google loops job's commitment fact is never dropped by a passing database error while gbrain admits it (the
+ *    - the Google loops job's commitment fact is never dropped by a passing database error while foresights admits it (the
  *      holding-page access read, held-fact-move.ts holdingPageFor, rethrows such an error since GST-2667): the job ends
  *      retryable with no loop row written for it, and its retry writes the fact on memory/unattributed with the loop
  *      row pointing at it;
- *    - an owner's `gbrain trust release` of a held fact with managed persistence disabled refuses `git_home_required`
+ *    - an owner's `foresights trust release` of a held fact with managed persistence disabled refuses `git_home_required`
  *      (`persistence_disabled`, a fix that previews turning managed persistence back on) with nothing written and the
  *      fact still held, for an entity with a page and one without.
  * 2. Fails when: loops-extract.ts swallows the error in its best-effort catch (master 6b88a1ce: `extracted`, the loop

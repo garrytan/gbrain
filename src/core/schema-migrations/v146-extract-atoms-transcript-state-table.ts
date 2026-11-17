@@ -17,7 +17,7 @@ export const v146: Migration = {
   // from raw_data (page-scoped); transcripts aren't pages" (raw_data.page_id
   // is NOT NULL REFERENCES pages(id)). It also must NOT be columns on
   // dream_verdicts itself: that table is documented as rebuildable via
-  // `gbrain dream retriage --force`, which clears it wholesale, and atom
+  // `foresights dream retriage --force`, which clears it wholesale, and atom
   // extraction state would be swept away as collateral.
   //
   // KEYED (source_id, file_path, content_hash), which adds source_id to the

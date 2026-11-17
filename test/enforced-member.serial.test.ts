@@ -228,7 +228,7 @@ for (const kind of testBackends()) {
       }
       for (const args of [['sync', '--help'], ['sync', '--json', '--help'], ['doctor', '--help'], ['recall', '--since', '30d', '--help'], ['search', '--help'], ['remember', '--help']]) {
         const r = await cli(args);
-        expect({ args: args.join(' '), exit: r.exitCode, ran: /withheld|results limited|doctor shows/.test(r.stderr), help: /gbrain|Usage/i.test(r.stdout + r.stderr) })
+        expect({ args: args.join(' '), exit: r.exitCode, ran: /withheld|results limited|doctor shows/.test(r.stderr), help: /(?:foresights|gbrain)|Usage/i.test(r.stdout + r.stderr) })
           .toEqual({ args: args.join(' '), exit: 0, ran: false, help: true });
       }
       const { existsSync } = await import('node:fs');

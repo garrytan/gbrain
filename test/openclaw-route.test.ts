@@ -1,12 +1,12 @@
 /**
- * OpenClaw's route to gbrain (HARN-18). OpenClaw 2026.10.6 refuses a skill
+ * OpenClaw's route to foresights (HARN-18). OpenClaw 2026.10.6 refuses a skill
  * document larger than one read ("Skill instructions cannot be partially
  * served") and serves nothing: the live tool-result cap is 64,000 characters
  * on a model with 200k+ context, 32,000 at 100k-200k, 16,000 below, and a
  * 32,768-byte read page when it does not know the context window
  * (dist/tool-result-limits-*.mjs, dist/agent-tools.read-*.mjs). Its system
  * prompt also says to call `skills_read`, a deferred tool a direct call
- * cannot reach, so nothing gbrain writes for OpenClaw names it. The per-turn
+ * cannot reach, so nothing foresights writes for OpenClaw names it. The per-turn
  * rule is the primary route; scaffolded skills are the fallback.
  */
 
@@ -51,7 +51,7 @@ describe('OpenClaw route', () => {
     expect(over).toEqual([]);
   });
 
-  test('no gbrain text written for OpenClaw names skills_read', () => {
+  test('no foresights text written for OpenClaw names skills_read', () => {
     const texts: Record<string, string> = {
       'docs/mcp/OPENCLAW.md': readFileSync(join(REPO_ROOT, 'docs', 'mcp', 'OPENCLAW.md'), 'utf8'),
       ...openclawTurnPluginFiles({ kind: 'mcp', server: 'gbrain' }),
@@ -64,13 +64,13 @@ describe('OpenClaw route', () => {
     const r = cli(['setup', 'openclaw', '--dry-run']);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("the per-turn rule is OpenClaw's primary route");
-    expect(r.stdout).toContain('gbrain skillpack scaffold --harness openclaw');
+    expect(r.stdout).toContain('foresights skillpack scaffold --harness openclaw');
   }, 120_000);
 
   test('scaffold --harness openclaw points at the per-turn rule as the primary route', () => {
     const r = cli(['skillpack', 'scaffold', '--harness', 'openclaw', '--workspace', '<home>/.openclaw/workspace']);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain('primary route');
-    expect(r.stdout).toContain('gbrain setup openclaw');
+    expect(r.stdout).toContain('foresights setup openclaw');
   }, 120_000);
 });

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair stuck-recovery` (#6650 §1.10, #6640 §B; GBRA-130 C-1, C-4): resolve a publication recovery that the
+ * `foresights repair stuck-recovery` (#6650 §1.10, #6640 §B; GBRA-130 C-1, C-4): resolve a publication recovery that the
  * owner's recovery pass refuses with `unexpected_file_bytes` (a canonical file matches neither its recorded prior nor its
  * published bytes, usually a human edit made while the write was publishing). Until it is resolved its worktree
  * claims nothing, and the resident consumer re-parks it every 30 s. Three record kinds resolve: a page write's
@@ -236,7 +236,7 @@ async function privateBackupDir(engine: BrainEngine, ...segments: string[]): Pro
   const resolved = canonicalFilesystemPath(dir);
   if (roots.some(row => existsSync(row.local_path) && containsPath(canonicalFilesystemPath(row.local_path), resolved))) {
     throw opError('permission_denied', 'Stuck-recovery backups must be stored outside every canonical source checkout.',
-      `Nothing was written: ${root} sits inside a source checkout. The user must move the gbrain config directory (GBRAIN_HOME) out of the checkout, then run the same command again.`);
+      `Nothing was written: ${root} sits inside a source checkout. The user must move the foresights config directory (GBRAIN_HOME) out of the checkout, then run the same command again.`);
   }
   return dir;
 }
@@ -443,7 +443,7 @@ Promise<{ item: StuckRecovery; sources: Array<{ prior: Bytes; disk: Bytes }> } |
 function ownerBinding(binding: WorktreeBinding | null, sourceId: string, hostId: string): WorktreeBinding {
   if (binding?.owner_host_id === hostId && binding.local_path) return binding;
   throw opError('owner_unavailable', `Source ${sourceId}'s canonical worktree is not owned by this host, so its recovery files cannot be read or resolved here.`,
-    `Nothing was changed. Run gbrain repair stuck-recovery --source ${sourceId} on the host that owns the source (gbrain sources writer status --source ${sourceId} --json names it).`,
+    `Nothing was changed. Run foresights repair stuck-recovery --source ${sourceId} on the host that owns the source (foresights sources writer status --source ${sourceId} --json names it).`,
     { fix: statusFix(sourceId) });
 }
 
@@ -538,37 +538,37 @@ function terminalReason(row: WriteRequest): string {
 }
 function effectReason(kind: string): string {
   return `A ${kind} effect recovery blocks the worktree, and its record does not hold usable withdrawn bytes for this canonical binding (missing, corrupt, `
-    + 'or recorded for another owner epoch, root or source incarnation), so gbrain repair stuck-recovery cannot write them back; it never restores the bytes from before a withdrawal.';
+    + 'or recorded for another owner epoch, root or source incarnation), so foresights repair stuck-recovery cannot write them back; it never restores the bytes from before a withdrawal.';
 }
 const effectFix = (sourceId: string, requestId: string | null): Action => ({ ask_user: true, argv: stuckRecoveryPreviewArgv([sourceId], requestId ?? undefined), consent: [],
   actor: 'agent', requires_exclusive: false,
   why: `A withdrawal mirror in source ${sourceId} stopped with its file edited, and its recovery record cannot write the withdrawn version back, so every write on the worktree waits. `
     + 'The preview (read-only) lists the effect and its file; only the user can decide how the file is put back.',
-  user_message: `A file in source ${sourceId} was edited while gbrain was removing a forgotten fact from it, and gbrain cannot finish that on its own, so writes to the source are paused. `
-    + 'Copy the edited file somewhere safe and put it back to its committed version (do not delete it); gbrain then finishes removing the forgotten fact. Make the edit again afterwards, leaving that fact out.' });
+  user_message: `A file in source ${sourceId} was edited while foresights was removing a forgotten fact from it, and foresights cannot finish that on its own, so writes to the source are paused. `
+    + 'Copy the edited file somewhere safe and put it back to its committed version (do not delete it); foresights then finishes removing the forgotten fact. Make the edit again afterwards, leaving that fact out.' });
 function bundleRefusal(row: WriteRequest): RefusedRecovery {
   return { code: 'recovery_bundle_unsupported', request_id: row.request_id, source_id: row.source_id, slug: row.slug, state: row.state, blocked_reason: row.blocked_reason ?? null,
     reason: `Request ${row.request_id} in source ${row.source_id} holds a shared-skill bundle recovery record this binary cannot read (an unknown shape or more files than a bundle holds).`,
     fix: { ask_user: true, argv: stuckRecoveryPreviewArgv([row.source_id], row.request_id), consent: [], actor: 'agent', requires_exclusive: false,
-      why: `Shared-skill request ${row.request_id} is stuck in recovery with a record gbrain repair stuck-recovery cannot read, so every write on source ${row.source_id} waits. `
+      why: `Shared-skill request ${row.request_id} is stuck in recovery with a record foresights repair stuck-recovery cannot read, so every write on source ${row.source_id} waits. `
         + 'The preview (read-only) lists it; which version of each skill file to keep is the user\'s call.',
-      user_message: `A shared-skill publication in source ${row.source_id} is stuck and this gbrain cannot resolve it. Upgrade gbrain on the brain host and run the preview again; `
+      user_message: `A shared-skill publication in source ${row.source_id} is stuck and this foresights cannot resolve it. Upgrade foresights on the brain host and run the preview again; `
         + 'or decide which version of each skill file to keep and put those bytes in place by hand.' } };
 }
 /** A listed refusal as the error a request-id preview throws. */
-/** A record a newer gbrain wrote (recovery-version.ts): refused with the upgrade fix before any of its fields is read. */
+/** A record a newer foresights wrote (recovery-version.ts): refused with the upgrade fix before any of its fields is read. */
 function newerRefusal(table: RecoveryTable, record: unknown, base: Omit<RefusedRecovery, 'code' | 'reason' | 'fix'>): RefusedRecovery {
   const error = recoveryVersionUnsupported(table, record, base.source_id);
   return { request_id: base.request_id, source_id: base.source_id, slug: base.slug, state: base.state, blocked_reason: base.blocked_reason,
     ...(base.effect_id ? { effect_id: base.effect_id } : {}), code: 'recovery_version_unsupported', reason: error.message, fix: error.fix };
 }
 function refusalError(refused: RefusedRecovery): OperationError {
-  const error = catalogueError(refused.code, refused.reason, `Nothing was changed. ${refused.fix?.user_message ?? `Inspect it read-only with gbrain sources writer status --source ${refused.source_id} --json.`}`);
+  const error = catalogueError(refused.code, refused.reason, `Nothing was changed. ${refused.fix?.user_message ?? `Inspect it read-only with foresights sources writer status --source ${refused.source_id} --json.`}`);
   if (refused.fix) error.fix = refused.fix;
   return error;
 }
 const choiceRefused = (reason: string, sourceId: string) => catalogueError('recovery_choice_refused', reason,
-  `Nothing was changed. Inspect the request read-only with gbrain sources writer status --source ${sourceId} --json and follow the guidance for its blocked reason.`);
+  `Nothing was changed. Inspect the request read-only with foresights sources writer status --source ${sourceId} --json and follow the guidance for its blocked reason.`);
 
 async function readJournal(engine: BrainEngine, key: string): Promise<Journal | null> {
   const [row] = await engine.executeRaw<{ completed_keys: Journal[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [RESOLUTION_OP, key]);
@@ -606,11 +606,11 @@ export function priorStageUnavailable(item: StuckRecovery, keep: KeepChoice, pre
       `Nothing was changed. The prior bytes cannot be put back, so the remaining exit keeps the edited file and abandons the write. Ask the user, then run: ${argv.join(' ')}`,
       { docs, fix: { argv, consent: ['destructive'], actor: 'agent', requires_exclusive: false, verify: { argv: status },
         why: 'Keeps the bytes on disk and abandons the write after backing up both versions; the recovery is then cleared and the worktree claims writes again.',
-        user_message: `gbrain's saved copy of the previous version of ${item.slug} ${what}, so that version cannot be put back. `
+        user_message: `foresights's saved copy of the previous version of ${item.slug} ${what}, so that version cannot be put back. `
           + 'Keep the file as it is on disk now and drop the write that was interrupted?' } });
   }
   return opError('recovery_prior_stage_unavailable', message,
-    `Nothing was changed. Something other than gbrain replaced the staged copy at ${stage.path}. Show the user the owner status (gbrain sources writer status --source ${item.source_id} --json) and that path; once it is a regular file again, preview again (${stuckRecoveryPreviewCommand([item.source_id], item.request_id)}).`,
+    `Nothing was changed. Something other than foresights replaced the staged copy at ${stage.path}. Show the user the owner status (foresights sources writer status --source ${item.source_id} --json) and that path; once it is a regular file again, preview again (${stuckRecoveryPreviewCommand([item.source_id], item.request_id)}).`,
     { docs, fix: { ...statusFix(item.source_id), verify: { argv: status } } });
 }
 
@@ -641,7 +641,7 @@ async function abandonWrite(engine: BrainEngine, row: WriteRequest, previewHash:
     return;
   }
   const recorded = new OperationError(row.error_code, row.error_message ?? 'Publication failed before database completion.',
-    `Read request ${row.request_id}'s receipt with gbrain write-request -- ${row.request_id}; the canonical file was kept as edited on disk.`);
+    `Read request ${row.request_id}'s receipt with foresights write-request -- ${row.request_id}; the canonical file was kept as edited on disk.`);
   if (!mayReprepare(row, recorded) && !transientDatabaseFailure(recorded)) { await finishUnpublishedFailure(engine, row, recorded); return; }
   await engine.transaction(tx => completeWrite(tx, row, mayReprepare(row, recorded) ? 'conflict' : 'failed', {}, { code: recorded.code, message: recorded.message }));
 }
@@ -661,9 +661,9 @@ function strictKeptEdit(item: StuckRecovery, request: WriteRequest, checkout: st
   const shown = paths.join(' ');
   const next = `The bytes on disk are kept and the write's publication was abandoned (request ${request.state}). Source ${item.source_id} is git-canonical, so Git is the parent: `
     + `the kept bytes are an uncommitted edit at ${shown} in ${checkout}, and the page keeps its committed version until Git holds the edit. This command does not mark the page repaired. `
-    + `To publish the edit: gbrain git commit-push --path ${checkout} -m "<message>" -- ${shown}, then ${sync.join(' ')}. `
+    + `To publish the edit: foresights git commit-push --path ${checkout} -m "<message>" -- ${shown}, then ${sync.join(' ')}. `
     + `To discard it: git -C ${checkout} restore -- ${shown}, then ${sync.join(' ')}. `
-    + `Verify with git -C ${checkout} status --porcelain -- ${shown} (empty once it is committed or restored), then gbrain sync status --source ${item.source_id} --json.`;
+    + `Verify with git -C ${checkout} status --porcelain -- ${shown} (empty once it is committed or restored), then foresights sync status --source ${item.source_id} --json.`;
   return { next, fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--path', checkout, '-m', '<MESSAGE>', '--', ...paths],
     inputs: [{ name: 'MESSAGE', how: `A one-line commit message for the kept edit, once the user chooses to publish it. To discard it instead: git -C ${checkout} restore -- ${shown}, then ${sync.join(' ')}.` }],
     consent: [], actor: 'agent', requires_exclusive: false,
@@ -676,23 +676,23 @@ function strictKeptEdit(item: StuckRecovery, request: WriteRequest, checkout: st
 
 function nextStep(item: StuckRecovery, keep: KeepChoice, request: WriteRequest): string {
   const state = request.state;
-  const sync = `gbrain sync --source ${item.source_id} --no-pull`;
+  const sync = `foresights sync --source ${item.source_id} --no-pull`;
   if (item.target === 'skill_bundle') return keep === 'disk'
     ? `Every skill file is kept as it is on disk and the bundle's publication was abandoned (request ${state}); the shared-skill records keep the version from before it. `
-      + `The backup holds each file's prior and disk bytes. Read the receipt with gbrain write-request -- ${item.request_id}; publish the skill again if the files on disk should become its new version.`
+      + `The backup holds each file's prior and disk bytes. Read the receipt with foresights write-request -- ${item.request_id}; publish the skill again if the files on disk should become its new version.`
     : state === 'queued' ? 'The prior bytes of every skill file are back on disk and the publication was requeued: the resident writer publishes it again on its next pass.'
-      : `The prior bytes of every skill file are back on disk and the publication ended ${state}; read its receipt with gbrain write-request -- ${item.request_id}.`;
+      : `The prior bytes of every skill file are back on disk and the publication ended ${state}; read its receipt with foresights write-request -- ${item.request_id}.`;
   // #6858: a managed sync import is the next sync's to finish: it retries the page after the manifest end (sync-page-fault.ts fileChangedAfterAdmission).
   if (keep === 'disk' && request.intent?.kind === 'managed_sync_import') return `The bytes on disk are kept and the sync import's publication was abandoned (request ${state}). This command does not mark the page repaired. `
     + `Next: ${sync}. That sync retries ${item.slug} after the rest of its run and imports the kept file when it is committed at the run's target; an uncommitted edit is held (worktree_dirty) and the rest of the source syncs. `
-    + `If a hold remains, gbrain sync status --source ${item.source_id} --json names it and its exit (commit the file, or gbrain sources reconcile ${item.source_id} ${item.slug} --brain host --preview).`;
+    + `If a hold remains, foresights sync status --source ${item.source_id} --json names it and its exit (commit the file, or foresights sources reconcile ${item.source_id} ${item.slug} --brain host --preview).`;
   if (keep === 'disk') return `The bytes on disk are kept and the write's publication was abandoned (request ${state}); the database page still holds the content before the write, `
     + 'so the page shows as file/database drift until it is reconciled. This command does not mark the page repaired. Next, in order: '
-    + `1) gbrain sources reconcile ${item.source_id} ${item.slug} --brain host --preview --auto-additive (writes nothing; when the file only adds to the page it fills the decisions in, `
+    + `1) foresights sources reconcile ${item.source_id} ${item.slug} --brain host --preview --auto-additive (writes nothing; when the file only adds to the page it fills the decisions in, `
     + 'and you apply the written preview with --from after the user agrees; anything else lists the decisions a person makes); '
     + `2) ${sync}, so a sync run that waits on this source resumes.`;
   return state === 'queued' ? 'The prior bytes are back on disk and the write was requeued: the resident writer publishes it again on its next pass.'
-    : `The prior bytes are back on disk and the write ended ${state}; read its receipt with gbrain write-request -- ${item.request_id}.`;
+    : `The prior bytes are back on disk and the write ended ${state}; read its receipt with foresights write-request -- ${item.request_id}.`;
 }
 
 async function startedJournal(engine: BrainEngine, key: string, item: StuckRecovery, opts: { keep: KeepChoice; previewHash: string }, command: string): Promise<Journal | null> {
@@ -705,7 +705,7 @@ async function lockOwner(engine: BrainEngine, item: StuckRecovery, hostId: strin
   const binding = ownerBinding(await getWorktreeBinding(engine, item.source_id, hostId), item.source_id, hostId);
   const lock = await acquireWorktree(binding, lockWaitMs ?? 10_000, undefined, engine, { yieldLanes: true });
   if (!lock) throw opError('writer_lock_unavailable', `Source ${item.source_id}'s worktree lock is held by another writer, so the recovery of request ${item.request_id} was not resolved.`,
-    `Nothing was changed. Rerun the same apply in a few seconds; if it stays busy, inspect the holder with gbrain sources writer status --source ${item.source_id} --json.`, { fix: statusFix(item.source_id) });
+    `Nothing was changed. Rerun the same apply in a few seconds; if it stays busy, inspect the holder with foresights sources writer status --source ${item.source_id} --json.`, { fix: statusFix(item.source_id) });
   return { binding, lock };
 }
 const changedAgain = (item: StuckRecovery, backupDir: string, command: string) => opError('unexpected_file_bytes',
@@ -790,7 +790,7 @@ Promise<ResolutionResult & { replayed: boolean }> {
     const blocked = sameIdentity(recovered, item);
     const result: ResolutionResult = { outcome: blocked ? 'still_blocked' : 'resolved', keep: opts.keep, request_state: recovered.state,
       blocked_reason: blocked ? recovered.blocked_reason ?? null : null, finished_by: ours ? 'this_run' : 'another_pass', backup_dir: journal.backup_dir,
-      next: blocked ? `The recovery is still blocked (${recovered.blocked_reason ?? 'recovering'}); rerun the same apply, or inspect it with gbrain sources writer status --source ${item.source_id} --json.`
+      next: blocked ? `The recovery is still blocked (${recovered.blocked_reason ?? 'recovering'}); rerun the same apply, or inspect it with foresights sources writer status --source ${item.source_id} --json.`
         : nextStep(item, opts.keep, recovered),
       ...(!blocked && opts.keep === 'disk' && item.target === 'page' && binding.canonical_git && binding.local_path ? strictKeptEdit(item, recovered, binding.local_path) : {}) };
     if (!blocked) await writeJournal(engine, key, { ...journal, phase: 'done', result });
@@ -866,7 +866,7 @@ Promise<ResolutionResult & { replayed: boolean }> {
     const blocked = same(finished);
     const result: ResolutionResult = { outcome: blocked ? 'still_blocked' : 'resolved', keep: opts.keep, request_state: finished?.state ?? 'committed',
       blocked_reason: blocked ? finished!.error_code : null, finished_by: ours ? 'this_run' : 'another_pass', backup_dir: journal.backup_dir,
-      next: blocked ? `The effect recovery is still blocked (${finished!.error_code ?? 'recovering'}); rerun the same apply, or inspect it with gbrain sources writer status --source ${item.source_id} --json.`
+      next: blocked ? `The effect recovery is still blocked (${finished!.error_code ?? 'recovering'}); rerun the same apply, or inspect it with foresights sources writer status --source ${item.source_id} --json.`
         : `The withdrawn bytes are back in ${item.files[0]!.relative} and the withdrawal mirror finished it; the edited bytes are backed up under ${journal.backup_dir} (0.disk, with a diff against 0.withdrawn). `
           + `Writes queued on source ${item.source_id} resume on the resident writer's next pass. Commit the file before the next sync (an uncommitted change is held as worktree_dirty). `
           + 'If the edit held other changes, make them again from the backup, leaving the forgotten fact out.' };

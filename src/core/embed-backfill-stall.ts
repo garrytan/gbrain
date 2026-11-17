@@ -14,7 +14,7 @@
  * submitting. Any change re-arms it: a run that embedded something or
  * completed ends the streak, and a different fingerprint (new stale chunks, a
  * blocker repaired or added) lets the next submission through. Explicit runs
- * (`gbrain embed --stale`, `gbrain jobs submit embed-backfill`) never pass
+ * (`foresights embed --stale`, `foresights jobs submit embed-backfill`) never pass
  * through this gate. doctor `embed_backfill_stalled` names the blocking pages.
  */
 import type { BrainEngine } from './engine.ts';

@@ -5,7 +5,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
-// Two persistence_requests reads a resident `gbrain serve` repeats walked every
+// Two persistence_requests reads a resident `foresights serve` repeats walked every
 // receipt ever written (receipts are permanent; compaction only drops intent):
 //
 // - The movement watermark (persistence/sync-movement.ts, every minute per

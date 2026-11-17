@@ -54,7 +54,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('code_edges_symbol', 'user_data', 'Code graph edges to unresolved symbols.'),
     carry('config', 'user_data', 'Brain settings, including the embedding column registry; the engine name and schema version stay each engine\'s own.',
       { rowFilter: "key NOT IN ('engine','version','graduation.deferred_indexes')" }),
-    carry('core_edit_notices', 'user_data', 'Remote edits to always-loaded core pages awaiting the owner\'s review (gbrain core diff/ack); dropping them would hide unreviewed edits.'),
+    carry('core_edit_notices', 'user_data', 'Remote edits to always-loaded core pages awaiting the owner\'s review (foresights core diff/ack); dropping them would hide unreviewed edits.'),
     carry('content_chunks', 'user_data', 'Chunks with embeddings (paid work), vectors carried as text at the source typmod.'),
     carry('context_volunteer_events', 'operational', 'Push-context telemetry.'),
     carry('conversation_parser_llm_cache', 'operational', 'Paid LLM parse cache; rebuilding spends money.'),
@@ -213,8 +213,8 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('think_ab_results', 'operational', 'Think A/B eval results.'),
     carry('timeline_entries', 'user_data', 'Timeline entries with attribution.'),
     carry('trust_proposals', 'user_data', 'Pending and decided trust decisions (#5575); dropping them would lose owner review state.'),
-    carry('trust_allow_rules', 'user_data', 'The owner\'s receipted write-gate allow rules (gbrain trust allow); dropping them would re-quarantine sources the owner allowed.'),
-    carry('wake_cron_runs', 'operational', 'Cron runs gbrain wakeshift emit recorded (Wakeshift); an open cron watch reconciles against them, so a run reported just before the move still wakes its watcher.'),
+    carry('trust_allow_rules', 'user_data', 'The owner\'s receipted write-gate allow rules (foresights trust allow); dropping them would re-quarantine sources the owner allowed.'),
+    carry('wake_cron_runs', 'operational', 'Cron runs foresights wakeshift emit recorded (Wakeshift); an open cron watch reconciles against them, so a run reported just before the move still wakes its watcher.'),
     carry('wake_crons', 'operational', 'The cron names the owner registered for watch_cron (Wakeshift); dropping them would make every cron watch read not_found.'),
     carry('wake_forgets', 'operational', 'Queued Wakeshift forget-user calls for removed members and revoked credentials; dropping them would skip a deletion the operator owes (Wakeshift ToS 8.2).'),
     carry('wake_subscriptions', 'operational', 'Report-back watches (Wakeshift): open ones point at jobs minion_jobs carries and at Wakeshift subscriptions that outlive the move, so a wake still arrives after graduation.'),
@@ -286,18 +286,18 @@ export async function assertRelationSet(engine: BrainEngine, kind: EngineKind, i
   ].filter(Boolean).join('; ');
   const verify = { argv: ['gbrain', 'migrate', '--to', 'postgres', '--plan', '--url-env', 'GBRAIN_TARGET_URL', '--json'] };
   throw opError('graduation_unclassified_table',
-    `The ${kind} schema does not match this gbrain's graduation inventory (${parts}).`,
+    `The ${kind} schema does not match this foresights's graduation inventory (${parts}).`,
     newer
-      ? `The ${kind} brain is at schema v${version}, newer than this gbrain (v${LATEST_VERSION}). Ask the user to upgrade gbrain on this machine (gbrain upgrade), then plan the move again. --force never bypasses this.`
-      : 'A relation this gbrain\'s own migrations create has no graduation inventory row, so nothing was copied. Report this as a gbrain bug with the relation names; --force never bypasses this.',
+      ? `The ${kind} brain is at schema v${version}, newer than this foresights (v${LATEST_VERSION}). Ask the user to upgrade foresights on this machine (foresights upgrade), then plan the move again. --force never bypasses this.`
+      : 'A relation this foresights\'s own migrations create has no graduation inventory row, so nothing was copied. Report this as a foresights bug with the relation names; --force never bypasses this.',
     {
       why: newer
         ? 'Graduation copies only relations it knows how to classify; a newer schema may hold state this binary would silently drop.'
         : 'Every relation must be classified carry, rebind, rebuild, discard or schema-owned before a copy, so no state is lost by omission.',
       fix: newer
-        ? { argv: ['gbrain', 'upgrade'], consent: [], actor: 'user', why: 'A newer gbrain knows the newer schema\'s relations.', requires_exclusive: false,
-          user_message: 'This brain was written by a newer gbrain. Please run `gbrain upgrade` on this machine, then I can plan the move again.', verify }
-        : { consent: [], actor: 'agent', why: 'An inventory row is missing in this gbrain release; a maintainer must add it.', requires_exclusive: false, verify },
+        ? { argv: ['gbrain', 'upgrade'], consent: [], actor: 'user', why: 'A newer foresights knows the newer schema\'s relations.', requires_exclusive: false,
+          user_message: 'This brain was written by a newer foresights. Please run `foresights upgrade` on this machine, then I can plan the move again.', verify }
+        : { consent: [], actor: 'agent', why: 'An inventory row is missing in this foresights release; a maintainer must add it.', requires_exclusive: false, verify },
       reason: newer ? 'newer_schema' : 'missing_inventory_row',
     });
 }

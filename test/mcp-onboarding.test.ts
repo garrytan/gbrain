@@ -3,7 +3,7 @@
  * the affinity map, per-class result predicates, the cache (cold, persisted,
  * TTL), dedupe/budget/mute through dispatch's ledger, the first-run bundle
  * on the second call, HTTP silence, and the stdio mute fix (mute_notice over
- * stdio, `gbrain notices unmute`, a fresh process).
+ * stdio, `foresights notices unmute`, a fresh process).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -118,7 +118,7 @@ describe('opportunity notices on stdio', () => {
       const stale = await mcpOnboardingNotices({ engine: engine as never, op: 'search', result: [], meta: { retrieval: { degraded: [] } }, config, render: dispatchRenderContext(stdio()) });
       const admitted = processNoticeLedger().admit(stale, { transport: 'stdio' });
       expect(admitted.map(n => n.code)).toEqual(['onboard_stale_chunks']);
-      expect(admitted[0].why).toContain('gbrain embed --stale');
+      expect(admitted[0].why).toContain('foresights embed --stale');
       expect(admitted[0].why).toContain('ask the user first');
       expect(onboard(await call('get_backlinks', { slug: 'people/alice-example' }))).toEqual(['onboard_link_coverage']);
     }, { OPENAI_API_KEY: key });
@@ -204,9 +204,9 @@ describe('opportunity notices on stdio', () => {
       await __warmOnboardingCacheForTests(engine as never);
       const starter = notices(await call('get_backlinks', { slug: 'people/alice-example' })).find(n => n.code === 'onboard_link_coverage')!;
       expect(starter.fix?.next).toBe('tell_user_to_run');
-      expect(starter.fix?.command).toContain('gbrain onboard --check');
+      expect(starter.fix?.command).toContain('foresights onboard --check');
       expect(starter.user_message).toBeTruthy();
-      expect(starter.why).toContain('gbrain extract links');
+      expect(starter.why).toContain('foresights extract links');
       newProcess();
       await __warmOnboardingCacheForTests(engine as never);
       const full = notices(await call('get_backlinks', { slug: 'people/alice-example' }, stdio(null))).find(n => n.code === 'onboard_link_coverage')!;
@@ -221,7 +221,7 @@ describe('opportunity notices on stdio', () => {
       await __warmOnboardingCacheForTests(engine as never);
       const readOnly = new Set(operations.filter(o => STARTER_OPS.has(o.name) && isReadOnlyOperation(o)).map(o => o.name));
       const ro = notices(await call('get_backlinks', { slug: 'people/alice-example' }, stdio(readOnly))).find(n => n.code === 'onboard_link_coverage')!;
-      expect(ro.why).toContain('gbrain notices mute onboard_link_coverage');
+      expect(ro.why).toContain('foresights notices mute onboard_link_coverage');
       expect(ro.why).not.toContain('mute_notice');
       newProcess();
       await __warmOnboardingCacheForTests(engine as never);
@@ -282,7 +282,7 @@ describe('stdio mutes', () => {
     });
   });
 
-  test('an MCP mute, then `gbrain notices unmute`, then a fresh process shows the notice again', async () => {
+  test('an MCP mute, then `foresights notices unmute`, then a fresh process shows the notice again', async () => {
     await inHome(async () => {
       await seedGaps();
       await call('mute_notice', { code: 'onboard_link_coverage' });

@@ -3,7 +3,7 @@
  * which migrations ran, so a table dropped afterwards (or swallowed by a pooler) stays invisible to
  * `apply-migrations` and `db-repair`. The expected set is the graduation inventory, which
  * test/graduation-inventory.test.ts pins to a fully migrated brain on each engine, so it covers tables that only a
- * migration creates (query_cache is not in schema.sql). Read-only; `gbrain repair missing-tables` recreates the
+ * migration creates (query_cache is not in schema.sql). Read-only; `foresights repair missing-tables` recreates the
  * rebuildable ones after a preview.
  */
 import type { BrainEngine } from './engine.ts';
@@ -23,7 +23,7 @@ export interface MissingTable {
   inventory_class: string;
   /** The graduation inventory loss kind: only `user_data` tables hold rows nothing can regenerate. */
   loss_kind: LossKind;
-  /** `gbrain repair missing-tables` can recreate it empty in its head shape. */
+  /** `foresights repair missing-tables` can recreate it empty in its head shape. */
   recreatable: boolean;
 }
 
@@ -68,7 +68,7 @@ export function recreateStep(table: string): ((engine: BrainEngine) => Promise<v
   };
 }
 
-/** The tables `gbrain repair missing-tables` can recreate. */
+/** The tables `foresights repair missing-tables` can recreate. */
 export const RECREATABLE_TABLES: readonly string[] = Object.keys(RECREATE);
 
 /** v055's DDL for a known vector shape (the table, its source index and, when pgvector can build one, its HNSW index). */

@@ -370,7 +370,7 @@ export function removeCodexHttpServerBlock(
   return { configPath, removed: true, backupPath, notes };
 }
 
-// ── Hash-owned single tables (`gbrain setup codex`) ─────────────────────────
+// ── Hash-owned single tables (`foresights setup codex`) ─────────────────────────
 //
 // Setup owns individual tables (`[mcp_servers.<name>]`, each
 // `[hooks.state."<key>"]`) by the fingerprint of their parsed value, not by
@@ -466,7 +466,7 @@ export function removeCodexTomlTable(configPath: string, path: string[], opts: {
   if (end < 0) end = lines.length;
   while (end > start + 1 && /^\s*(#.*)?$/.test(lines[end - 1]!)) end--;
   let from = start;
-  if (from > 0 && lines[from - 1]!.startsWith('# gbrain setup')) from--;
+  if (from > 0 && /^# (?:gbrain|foresights) setup/.test(lines[from - 1]!)) from--;
   if (from > 0 && lines[from - 1]!.trim() === '') from--;
   const kept = [...lines.slice(0, from), ...lines.slice(end)];
   while (kept.length > 0 && kept[kept.length - 1]!.trim() === '') kept.pop();

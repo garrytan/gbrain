@@ -678,7 +678,7 @@ describe('put_page suffixed slugs (#4807)', () => {
       expect(error).toBeInstanceOf(OperationError);
       expect(error.code).toBe('invalid_params');
       expect(error.message).toBe('put_page slugs must not end in .md or .mdx.');
-      expect(error.suggestion).toBe('Write the page as inbox/report: gbrain put inbox/report (the .md file name is added for you).');
+      expect(error.suggestion).toBe('Write the page as inbox/report: foresights put inbox/report (the .md file name is added for you).');
     }
     expect(await writeRequests()).toBe(before);
     expect(await engine.getPage('inbox/report.md', { sourceId: 'default' })).toBeNull();

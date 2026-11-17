@@ -43,10 +43,10 @@ export async function checkPurgeMirror(engine: BrainEngine, home = configDir()):
     name: NAME, status: 'warn', details,
     message: `${missing} of the ${capped ? 'first ' : ''}${requests.length} purge(s) this brain recorded in the last ${WINDOW_DAYS} days have no line in the purge mirror at ${path}`
       + `${lines === null ? ' (the mirror is missing or unreadable)' : ''}, so a restore from a backup older than them would not replay them and could bring the purged text back. `
-      + 'This happens when gbrain runs in a home directory that is removed after the run, or on another machine. Run every gbrain writer with GBRAIN_HOME set to one durable directory, so all of them append to the same mirror.',
+      + 'This happens when foresights runs in a home directory that is removed after the run, or on another machine. Run every foresights writer with GBRAIN_HOME set to one durable directory, so all of them append to the same mirror.',
     fix: { argv: ['gbrain', 'doctor', '--only', NAME, '--json'], consent: [], actor: 'host_admin', requires_exclusive: false, verify: doctorVerify(NAME), docs: DOCS,
       why: 'Read-only: shows which purge mirror this process uses and how many recent purges it lacks; the fix is setting GBRAIN_HOME on the brain host.',
-      user_message: 'Set GBRAIN_HOME to one durable directory for every gbrain process that writes to this brain, so restores can replay purges.' },
+      user_message: 'Set GBRAIN_HOME to one durable directory for every foresights process that writes to this brain, so restores can replay purges.' },
   };
 }
 

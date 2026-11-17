@@ -1,12 +1,12 @@
 # Community Ideas Ledger
 
 > A diary of the **valuable ideas** surfaced by the community-PR wave, kept so that
-> good thinking survives even when the PR that carried it is closed. gbrain moves
+> good thinking survives even when the PR that carried it is closed. foresights moves
 > fast and the maintainer's "cathedral" rewrites supersede most individual PRs —
 > but the *idea* behind a closed PR is often still worth something.
 >
 > **Bar for this file:** an idea only earns a line if it is (a) still live on
-> master and (b) genuinely valuable to gbrain users. **Graduating an idea to
+> master and (b) genuinely valuable to foresights users. **Graduating an idea to
 > `TODOS.md` is a higher bar still** — it must serve the North Star (next-Postgres-
 > for-memory: widest coverage, best-for-the-most-at-the-least) and be worth a
 > maintainer-owned implementation. Most lines here will never graduate. That's fine.
@@ -29,7 +29,7 @@ contributors hit the same walls.
   Every `to_tsvector`/`tsquery` is hardcoded `'english'` (query side, trigger side,
   and no reindex path), so non-English brains run every search through the English
   stemmer. A coherent 3-PR set: `GBRAIN_FTS_LANGUAGE` config → migration recreating
-  triggers with the chosen language → `gbrain reindex-search-vector` to change it
+  triggers with the chosen language → `foresights reindex-search-vector` to change it
   post-install. **Strongest i18n candidate to graduate.**
 - **Full-Unicode slugs** (#782, @tamagodo-fu; #514 zh, @JimmyJiang67) — **HELD, high.**
   CJK slugs already work (`CJK_SLUG_CHARS`); generalize to all scripts (Cyrillic,
@@ -105,7 +105,7 @@ these are the densest source of real bugs in the whole backlog.
   turns a Session-Pooler URL into an IPv6-only host, ECONNREFUSED on IPv4-only networks
   (the majority). Return null for pooler URLs.
 - **HOME-isolation in tests** (#205/#517/#534 @orendi84, #434 @lloydarmbrust) — **OPEN,
-  high.** The E2E suite spawns `gbrain init/import` against the developer's real
+  high.** The E2E suite spawns `foresights init/import` against the developer's real
   `~/.gbrain/config.json`, clobbering their live DB URL+keys. Isolate HOME to a tmpdir.
   *(A footgun that bites contributors of this very repo.)*
 - **dim-aware embed write target** (#1263, @DmitryBMsk) — **OPEN, high.** `upsertChunks`
@@ -129,7 +129,7 @@ these are the densest source of real bugs in the whole backlog.
 
 - **Keyword search ignores page titles** (#1646, @jeades) — **OPEN, high.** `searchKeyword`
   ranks only chunk `search_vector`, never `pages.search_vector` (weight-A titles), so an
-  exact-title `gbrain search` returns nothing while `query` finds it. High-impact, tiny.
+  exact-title `foresights search` returns nothing while `query` finds it. High-impact, tiny.
 - **`code-def` misses most OO symbols** (#1628, @rayers) — **OPEN, high.** `DEF_TYPES`
   omits method/constructor/field/struct/protocol, so `code-def` returns 0 for most
   object-oriented code. Root-cause fix in `normalizeSymbolType` + `DEF_TYPES`.
@@ -208,7 +208,7 @@ bge-m3, Copilot, Composio, Kimi, LM Studio, Mistral, Hunyuan, MiniMax…). The
   #1618 @punksterlabs) — **OPEN, high.** `FREE_LOCAL_CHAT_PROVIDERS` doesn't exist (only
   embed), brainstorm/cycle/takes hardcode `anthropic:claude-sonnet-4-6`, and the
   openai-compat `generateObject` path silently fails on providers that reject
-  `json_schema`. The "run gbrain fully local" cluster.
+  `json_schema`. The "run foresights fully local" cluster.
 - **OpenRouter config key** (#1714 @tmchow), **OAuth bearer for AI providers**
   (#1312 @pabloglzg), **API-key files** (#570 @shawnduggan) — **OPEN, med.** Credential
   ergonomics: config-file key (not just env), externally-minted bearer tokens, and
@@ -291,7 +291,7 @@ triage report) and should be treated as a coordinated design, not piecemeal merg
   every consumer (~10K tokens of schemas, tool confusion); `GBRAIN_EXPOSED_TOOLS` filters
   the advertised surface.
 - **Install-method detection for upgrade** (#538, @brucek) — **OPEN, high.** The README's
-  own recommended git-clone+bun-link install detects as `unknown`, so `gbrain upgrade`
+  own recommended git-clone+bun-link install detects as `unknown`, so `foresights upgrade`
   offers three dead ends including a wrong npm package.
 - **Runtime subagent defs** (#1282, @dcarolan1) — **OPEN, high.** The plugin loader
   validates `SubagentDefinition[]` at startup but the handler never reads
@@ -352,7 +352,7 @@ These are net-new surfaces held for a product decision, not auto-closed.
   checks aren't registered in `doctor-categories`, printing `unknown check name` every run;
   the drift guard only scanned `doctor.ts`, missing `onboard/checks.ts` emitters.
 - **Honest stale-lock hint** (#1553, @Sanjays2402) — **OPEN, med.** doctor always says
-  `gbrain sync --break-lock`, which silently no-ops on `gbrain-cycle` locks.
+  `foresights sync --break-lock`, which silently no-ops on `gbrain-cycle` locks.
 
 ---
 

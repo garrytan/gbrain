@@ -1,10 +1,10 @@
 /**
- * #6696 C3, revised by #6712 PR 1: `--retry-failed` on a managed source settles failures an older gbrain recorded under
+ * #6696 C3, revised by #6712 PR 1: `--retry-failed` on a managed source settles failures an older foresights recorded under
  * other cursor keys. The per-row action classifier (`managed-retry-actions.ts`) is gone: a source has one cursor key, and
  * the current key folds older-key cursors in (the newest unfinished one finishes in place under its key, the rest are
  * superseded with their failure rows). A failure no cursor holds at all is named with the orphan repair that retires it.
  *
- * Fixture: one source configured with strategy `markdown`, two unfinished cursors an older gbrain left under its own keys
+ * Fixture: one source configured with strategy `markdown`, two unfinished cursors an older foresights left under its own keys
  * (a `--full` run, and a newer run with an `--exclude`), both recorded before cursors kept their options, and one failure
  * row with no cursor, for a file sync does not index (so no successful run settles it on its own).
  *
@@ -12,7 +12,7 @@
  * row with no printed way out.
  *
  * #6712 PR 4b: a non-company source keeps no cursor, so its first live pass retires every older-key cursor of the
- * incarnation with its failure row (`retireLegacyCursors`); the first test seeds the two unfinished cursors an older gbrain
+ * incarnation with its failure row (`retireLegacyCursors`); the first test seeds the two unfinished cursors an older foresights
  * left instead of running one, and none of them remains after the retry.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -117,7 +117,7 @@ const actionLine = (out: string, label: RegExp) => {
   return found!.slice(found!.lastIndexOf(': ') + 2).trim();
 };
 
-/** An unfinished cursor (and manifest) an older gbrain left under `key`, recorded before cursors kept their options. */
+/** An unfinished cursor (and manifest) an older foresights left under `key`, recorded before cursors kept their options. */
 async function legacyCursor(engine: BrainEngine, id: string, key: string, ageMinutes: number, extra: Record<string, unknown> = {}) {
   const [source] = await engine.executeRaw<{ incarnation: string; root: string }>('SELECT incarnation::text AS incarnation, local_path AS root FROM sources WHERE id=$1', [id]);
   const context = await resolveManagedSyncContext(engine, { sourceId: id, noPull: true } as SyncOpts);
@@ -131,7 +131,7 @@ async function legacyCursor(engine: BrainEngine, id: string, key: string, ageMin
   await engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,$4::timestamptz)', ['managed-sync', key, JSON.stringify([cursor]), at]);
   await engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,$4::timestamptz)', ['managed-sync-manifest', runId, JSON.stringify(entries), at]);
 }
-const orphanCommand = (id: string) => `gbrain repair managed-sync-orphans --source ${id}`;
+const orphanCommand = (id: string) => `foresights repair managed-sync-orphans --source ${id}`;
 
 test('legacy failures under older keys: one --retry-failed folds their cursors in and settles them; the printed repair settles the cursor-less row', async () => withEnv(env, async () => { for (const engine of engines) {
   const { id, run, failure } = await fixture(engine);

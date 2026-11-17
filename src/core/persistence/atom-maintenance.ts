@@ -127,7 +127,7 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
   const caller = currentSubmissionAuthority();
   if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
     throw opError('permission_denied', 'Atom extraction cannot mutate a managed brain through an untrusted caller; a trusted local, source-wide writer is required.',
-      `Run atom extraction for source ${sourceId} from the gbrain CLI in a terminal on the brain host; MCP and delegated callers cannot publish atoms. Nothing was extracted.`,
+      `Run atom extraction for source ${sourceId} from the foresights CLI in a terminal on the brain host; MCP and delegated callers cannot publish atoms. Nothing was extracted.`,
       { reason: 'trusted_cli_required', fix: { ...drainFix(sourceId), actor: 'user',
         user_message: 'Atom extraction has to run from a terminal on the machine that hosts this brain. Please run the command shown there; it calls the configured LLM.' } });
   }
@@ -148,7 +148,7 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
   await authorizeWrite(engine, authority, 'delete_page', 'atoms/preflight');
   const { binding, writeThrough, connectorDatabase, refusal } = await atomOwnerTarget(engine, sourceId, source);
   if (refusal) throw opError('owner_unavailable', refusal,
-    `No extraction was started for source ${sourceId}. Check its canonical owner: run atom extraction on the host that owns the checkout, or have the user claim the checkout on this host with gbrain sources writer claim.`,
+    `No extraction was started for source ${sourceId}. Check its canonical owner: run atom extraction on the host that owns the checkout, or have the user claim the checkout on this host with foresights sources writer claim.`,
     { fix: ownerStatusFix(sourceId) });
   if (writeThrough && binding) {
     if (!await probeWorktreeWriter(binding, engine, wait.probeMs(MANAGED_WRITER_PROBE_WAIT_MS), signal)) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
@@ -313,9 +313,9 @@ export interface ManagedAtomGeneration {
   runId?: string;
   /** A transcript key's current file. */
   locator?: string | null;
-  /** A previewed operator retirement (gbrain repair stale-atoms): retires exactly these atoms; no extraction is completed. */
+  /** A previewed operator retirement (foresights repair stale-atoms): retires exactly these atoms; no extraction is completed. */
   approved?: { retire: string[]; retiredBy: DerivedRetiredBy; expect?: Record<string, string> };
-  /** An operator release of the held row this result matches (gbrain repair generations --mode release-held). */
+  /** An operator release of the held row this result matches (foresights repair generations --mode release-held). */
   release?: { holdId: string; reason: HeldReason };
 }
 
@@ -497,7 +497,7 @@ function malformedAtomReceipt(row: WriteRequest): never {
   const failure = (row.outcome as { failure?: unknown } | null)?.failure;
   const params = JSON.stringify({ sourceId: row.source_id, retryRequestId: row.request_id });
   const error = new OperationError('extraction_failed', `The accepted atom extraction failed${typeof failure === 'string' && failure ? ` (${failure})` : ''}; a new attempt needs approval.`,
-    `Approve one new attempt with gbrain jobs submit extract-atoms-drain --params '${params}'.`);
+    `Approve one new attempt with foresights jobs submit extract-atoms-drain --params '${params}'.`);
   error.why = 'This failed managed atom batch is not retried on its own (an explicit retry failed, or the drain has no checkpoint to count it against), so the same input is not paid for again without approval; the earlier atoms of the page stay as they were.';
   error.fix = { argv: ['gbrain', 'jobs', 'submit', 'extract-atoms-drain', '--params', params], consent: ['paid'], actor: 'agent', requires_exclusive: false,
     why: 'Runs one new paid extraction attempt for this batch; ask the user before spending.',
@@ -707,7 +707,7 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
   const p = row.intent as AtomIntent | null;
   if (!p || !['managed_atom_page', 'managed_atom_delete', 'managed_atom_complete'].includes(p.kind) || !p.origin || row.authority.remote) {
     throw opError('permission_denied', 'Unsupported atom maintenance intent.',
-      `Request ${row.request_id} in source ${row.source_id} is not an atom maintenance intent the trusted local writer can publish, so the coordinator refused it before any change. Atom extraction runs only from the gbrain CLI on the brain host; inspect the owner before resubmitting anything.`,
+      `Request ${row.request_id} in source ${row.source_id} is not an atom maintenance intent the trusted local writer can publish, so the coordinator refused it before any change. Atom extraction runs only from the foresights CLI on the brain host; inspect the owner before resubmitting anything.`,
       { fix: ownerStatusFix(row.source_id) });
   }
   // GBRA-161 PR 1b: an overwrite or retirement member runs only after its activation: the activation rechecked the input

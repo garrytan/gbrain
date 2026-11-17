@@ -21,16 +21,16 @@ describe('unbound_source on a classic Postgres brain (#6277)', () => {
     expect(env.code).toBe('owner_unavailable');
     expect(env.detail).toBe('unbound_source');
     expect(env.suggestion).toContain('/abs/notes/<slug>.md');
-    expect(env.suggestion).toContain('commit it in that checkout, then run gbrain sync --source notes');
+    expect(env.suggestion).toContain('commit it in that checkout, then run foresights sync --source notes');
     expect(env.retryable).toBe(false);
     expect(env.fix?.next).toBe('ask_user');
-    expect(env.fix?.user_message).toContain('commit it and run gbrain sync --source notes');
+    expect(env.fix?.user_message).toContain('commit it and run foresights sync --source notes');
   });
 
   test('remote: the steps go to the user, with no host path', () => {
     const env = mcp(unboundSourceError('notes', null, 'file_backed', true));
     expect(env.suggestion).toContain('ask the user to write the page as <slug>.md');
-    expect(env.suggestion).toContain('commit it, and run gbrain sync --source notes');
+    expect(env.suggestion).toContain('commit it, and run foresights sync --source notes');
     expect(env.suggestion).not.toContain('/abs');
     expect(env.retryable).toBe(false);
     expect(env.fix?.next).toBe('ask_user');
@@ -39,7 +39,7 @@ describe('unbound_source on a classic Postgres brain (#6277)', () => {
 
   test('managed mode keeps its bind / database_only guidance and is not retryable either', () => {
     const env = cli(unboundSourceError('notes', '/abs/notes', 'database_only_eligible'));
-    expect(env.suggestion).toContain('gbrain sources writer claim notes --path /abs/notes');
+    expect(env.suggestion).toContain('foresights sources writer claim notes --path /abs/notes');
     expect(env.suggestion).not.toContain('commit it');
     expect(env.retryable).toBe(false);
     expect(env.fix?.next).toBe('ask_user');

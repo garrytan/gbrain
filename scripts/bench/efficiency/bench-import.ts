@@ -13,10 +13,10 @@
  * database `bench_<label>` on the --pg-url server.
  *
  * Phases, each a fresh `gbrain` process with preload-instrument.ts:
- *   init                 gbrain init (schema + migrations)
- *   import <source>      gbrain import <dir> --no-embed --source-id <id> (parse + chunk + write)
- *   extract              gbrain extract all --source db (links + timeline)
- *   embed                gbrain embed --stale --max-usd N (provider calls; tokens + USD from usage)
+ *   init                 foresights init (schema + migrations)
+ *   import <source>      foresights import <dir> --no-embed --source-id <id> (parse + chunk + write)
+ *   extract              foresights extract all --source db (links + timeline)
+ *   embed                foresights embed --stale --max-usd N (provider calls; tokens + USD from usage)
  * Per phase: wall ms, CPU ms, engine method time (outermost calls) and
  * outbound HTTP time. A separate in-process probe times parseMarkdown and
  * chunking alone over the same files, so CPU-side parse/chunk cost is
@@ -145,7 +145,7 @@ async function main() {
   const rows: Row[] = [];
   const base = { suite: 'import' as const, machine: M, engine, brain: label, pages, chunks, mode: 'once' as const, n: 1 };
   for (const p of phases) {
-    rows.push({ ...base, command: `gbrain ${p.phase}`, p50_ms: p.wall_ms, p95_ms: p.wall_ms, errors: p.code === 0 ? 0 : 1, extra: { cpu_user_ms: p.cpu_user_ms, engine_ms: p.engine_ms, http_ms: p.http_ms, http_calls: p.http_calls, usd: p.usage?.usd, usage: p.usage?.byModel, engine_top: p.engine_top } });
+    rows.push({ ...base, command: `foresights ${p.phase}`, p50_ms: p.wall_ms, p95_ms: p.wall_ms, errors: p.code === 0 ? 0 : 1, extra: { cpu_user_ms: p.cpu_user_ms, engine_ms: p.engine_ms, http_ms: p.http_ms, http_calls: p.http_calls, usd: p.usage?.usd, usage: p.usage?.byModel, engine_top: p.engine_top } });
   }
   const totalImport = sum(importPhases, 'wall_ms');
   rows.push({

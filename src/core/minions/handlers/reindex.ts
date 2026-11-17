@@ -25,7 +25,7 @@ export function makeReindexHandler(engine: BrainEngine): MinionHandler {
       const { isConsentRefusal } = await import('../../consent.ts');
       if (!isConsentRefusal(e)) throw e;
       throw new UnrecoverableError(`confirmation_required: reindex job ${job.id} has no stored spend authorization, so it re-embedded nothing. `
-        + `Ask the user, then queue it again with approval (gbrain jobs submit reindex --params '{"markdown":true}' --yes) or run it inline: ${e.consent.fix.command ?? 'gbrain reindex --markdown --yes'}.`);
+        + `Ask the user, then queue it again with approval (foresights jobs submit reindex --params '{"markdown":true}' --yes) or run it inline: ${e.consent.fix.command ?? 'foresights reindex --markdown --yes'}.`);
     }
   };
 }

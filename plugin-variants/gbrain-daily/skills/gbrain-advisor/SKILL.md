@@ -2,20 +2,22 @@
 name: gbrain-advisor
 version: 1.0.0
 description: |
-  Proactive "make the most of gbrain" coaching. Runs `gbrain advisor` on a
+  Proactive "make the most of foresights" coaching. Runs `foresights advisor` on a
   cadence and pings the user with the top high-leverage actions for their brain:
   version drift, pending migrations, stalled jobs, low embed coverage, setup
   smells, and uninstalled brain skills. Read-only; always asks before fixing.
 triggers:
+  - "what should I do to get more out of foresights"
   - "what should I do to get more out of gbrain"
   - "is my brain set up right"
+  - "foresights advisor"
   - "gbrain advisor"
   - "advise me on my brain"
   - "weekly brain checkup"
 tools:
   - advisor
 mutating: false
-when_to_use: "Use when the user asks: \"what should I do to get more out of gbrain\", \"is my brain set up right\", \"gbrain advisor\", \"advise me on my brain\", \"weekly brain checkup\"."
+when_to_use: "Use when the user asks: \"what should I do to get more out of foresights\", \"what should I do to get more out of gbrain\", \"is my brain set up right\", \"foresights advisor\", \"gbrain advisor\"."
 ---
 
 # gbrain Advisor
@@ -26,7 +28,7 @@ when_to_use: "Use when the user asks: \"what should I do to get more out of gbra
 ## Contract
 
 This skill guarantees:
-- **Read-only.** `gbrain advisor` never mutates. It computes a ranked list of
+- **Read-only.** `foresights advisor` never mutates. It computes a ranked list of
   actions from existing brain state.
 - **Print, never execute.** You SHOW the user the findings and ASK before running
   any fix. The user owns every decision.
@@ -38,13 +40,13 @@ This skill guarantees:
 - On demand when the user asks "how do I get more out of this brain?"
 - On a **weekly** cadence via the cron recipe below (even idle brains get a
   "here's how to run this better" ping).
-- Monthly, the advisor also surfaces the backup-coverage verdict (`gbrain
+- Monthly, the advisor also surfaces the backup-coverage verdict (`foresights
   backup status` — which knowledge repos have no git remote); relay any warn.
 
 ## How to run it
 
 ```bash
-gbrain advisor --json
+foresights advisor --json
 ```
 
 Exit code is the severity gate (E2): `0` clean, `1` warn, `2` critical. The JSON
@@ -65,7 +67,7 @@ payload is `{ version, generated_at, worst, findings: [...] }`. Each finding has
    locally with an explicit confirm:
 
    ```bash
-   gbrain advisor --apply <dispatch_id>
+   foresights advisor --apply <dispatch_id>
    ```
 
    `--apply` is local-only, runs the fix as a structured argv (no shell), and
@@ -79,7 +81,7 @@ Install a weekly job via the `cron-scheduler` skill. Keep the prompt THIN — th
 job just reads this skill and runs the advisor:
 
 - **Schedule:** weekly, one quiet-hours-respecting slot (e.g. Monday 09:00 local).
-- **Job prompt:** `Read skills/gbrain-advisor/SKILL.md and run gbrain advisor --json. If anything is critical or new since last run, ping me with the top items and the exact fix commands. Ask before fixing.`
+- **Job prompt:** `Read skills/gbrain-advisor/SKILL.md and run foresights advisor --json. If anything is critical or new since last run, ping me with the top items and the exact fix commands. Ask before fixing.`
 - **Idempotent:** the advisor is read-only, so a double-fire is harmless.
 
 The advisor records a local run history, so on each fire you can tell the user
@@ -91,13 +93,13 @@ When you surface advisor findings to the user, lead with severity and keep it
 scannable:
 
 ```
-🧠 gbrain checkup — 2 things worth your attention
+🧠 foresights checkup — 2 things worth your attention
 
 CRITICAL  Schema migrations are pending.
-          Fix: gbrain apply-migrations --yes   (want me to run it?)
+          Fix: foresights apply-migrations --yes   (want me to run it?)
 
-WARN      gbrain 0.44 is available (you're on 0.43).
-          Fix: gbrain upgrade
+WARN      foresights 0.44 is available (you're on 0.43).
+          Fix: foresights upgrade
 ```
 
 - One block per finding, highest severity first.
@@ -107,10 +109,10 @@ WARN      gbrain 0.44 is available (you're on 0.43).
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- A `critical` finding (pending migrations) carries a fix such as `gbrain apply-migrations --yes`: ask the user before running it; findings without a `dispatch_id` are not auto-runnable.
-- `gbrain advisor` cannot reach the brain (`GBRAIN_DB_ACCESS` marker): route to the db-repair skill instead of reporting "no findings".
+- A `critical` finding (pending migrations) carries a fix such as `foresights apply-migrations --yes`: ask the user before running it; findings without a `dispatch_id` are not auto-runnable.
+- `foresights advisor` cannot reach the brain (`GBRAIN_DB_ACCESS` marker): route to the db-repair skill instead of reporting "no findings".
 
 ## Anti-Patterns
 

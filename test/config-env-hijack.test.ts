@@ -5,7 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import { dotenvValuesForKey, effectiveEnvDatabaseUrl } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-// #427 — Bun auto-loads `.env` from the process cwd, so running gbrain inside
+// #427 — Bun auto-loads `.env` from the process cwd, so running foresights inside
 // any web-app checkout whose `.env` defines DATABASE_URL silently retargets
 // the brain at that app's database. These tests pin the guard:
 // effectiveEnvDatabaseUrl() must treat a DATABASE_URL whose value matches a

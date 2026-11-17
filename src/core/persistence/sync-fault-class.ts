@@ -5,16 +5,16 @@
  * - `class`: `page` (one entry moved under the sync; the rest of the source is
  *   fine), `connection` (the database went away for a moment; nothing is
  *   recorded against the source), or `systemic` (the writer, the binding, an
- *   approval or gbrain itself; a retry alone changes nothing).
+ *   approval or foresights itself; a retry alone changes nothing).
  * - `safe_actions`: what an agent may do on its own, in order of preference.
  *   `retry` reruns the same sync; `retry_when_clean` re-screens a held file once
  *   its edit is committed; `repair` previews and applies a hash-bound file
  *   repair; `reconcile` previews the two diverged versions; `upgrade` installs a
- *   newer gbrain; `none` means wait for a person.
+ *   newer foresights; `none` means wait for a person.
  * - `needs_human`: whether a person has to choose or act before the fault
  *   clears, with `human_reason` naming why.
  *
- * `gbrain sync status --json`, `gbrain sync unblock` and the drain summary all
+ * `foresights sync status --json`, `foresights sync unblock` and the drain summary all
  * read this table; `docs/guides/sync-unblock-runbook.md` renders it, and
  * `test/sync-runbook-table.test.ts` pins the two together.
  *
@@ -64,52 +64,52 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'worktree_dirty', class: 'page', safe_actions: ['retry_when_clean'], needs_human: false,
     escalate: `${ESCALATE_AFTER} with no edit in the last ${HOLD_ESCALATE_MS / 3_600_000} h: the uncommitted edit is abandoned`, human_reason: 'An uncommitted edit of the file has sat in the checkout for a day without being committed; find out who made it and commit or restore it.' },
   { code: 'concurrent_write', class: 'page', safe_actions: ['reconcile'], needs_human: true, escalate: 'always: the file and the database page diverge',
-    human_reason: 'The Git file and the database page both changed; a person chooses which version wins (gbrain sources reconcile <source> <slug> --preview shows both and writes nothing).' },
+    human_reason: 'The Git file and the database page both changed; a person chooses which version wins (foresights sources reconcile <source> <slug> --preview shows both and writes nothing).' },
   { code: 'file_drift', class: 'page', safe_actions: ['reconcile'], needs_human: true, escalate: 'always: importing the file would replace a database version of the page that sync cannot trace to an import of it',
-    human_reason: 'Importing the file would replace a database version of the page that sync cannot trace to an import of the file; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
+    human_reason: 'Importing the file would replace a database version of the page that sync cannot trace to an import of the file; a person chooses which version wins (foresights repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
   { code: 'preparation_stalled', class: 'page', safe_actions: ['retry', 'upgrade'], needs_human: false,
     escalate: `${ESCALATE_AFTER}, or writer status names a step that never finishes`, human_reason: 'The write owner cannot finish preparing this file; writer status names the step, fix or report it.' },
   // Flip lane C: the database ended the write's statements (SQLSTATE 57014) persistence.max_preparation_attempts times; like
   // preparation_stalled the write ran out of attempts, so the entry is held and the run goes on.
   { code: 'write_interrupted', class: 'page', safe_actions: ['retry'], needs_human: false,
-    escalate: `${ESCALATE_AFTER}: gbrain sources writer status --source <source> --json (read-only) names the load on the write owner`,
-    human_reason: 'The database keeps ending this file\'s statements before they finish; writer status names the load on the write owner. Reduce it, then gbrain sources retry-held and the same sync.' },
+    escalate: `${ESCALATE_AFTER}: foresights sources writer status --source <source> --json (read-only) names the load on the write owner`,
+    human_reason: 'The database keeps ending this file\'s statements before they finish; writer status names the load on the write owner. Reduce it, then foresights sources retry-held and the same sync.' },
   { code: 'invalid_fence', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the fence repair preview offers no plan (a manual reason)', human_reason: 'Edit the facts or takes table the hold names and commit.' },
   { code: 'invalid_frontmatter', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the repair preview needs an interpretation (--include-ambiguous)', human_reason: 'Approve the proposed frontmatter fix or edit the file.' },
   { code: 'frontmatter_slug_conflict', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the lane recorded why it could not decide', human_reason: 'The content-repair lane could not clear the hold; its recorded verdict names the page, edit or setting.' },
   { code: 'rename_held', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the repair preview needs an interpretation', human_reason: 'Approve re-binding the rename to the current page.' },
   { code: 'file_too_large', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The file is over the page size limit; exclude it with sync.exclude, or split it into files under the limit.' },
   { code: 'content_rejected', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The content-sanity gate rejected the file; remove the junk or change junk_disposition.' },
-  { code: 'parser_regression', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a gbrain bug', human_reason: 'Report the file and gbrain version, then upgrade; never pin a release older than 0.60.305.0.' },
-  // #6712 PR 4b (S-47): bytes an older gbrain imported whose frontmatter aliases expand past #7018's intended bound; only an edit clears it.
+  { code: 'parser_regression', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a foresights bug', human_reason: 'Report the file and foresights version, then upgrade; never pin a release older than 0.60.305.0.' },
+  // #6712 PR 4b (S-47): bytes an older foresights imported whose frontmatter aliases expand past #7018's intended bound; only an edit clears it.
   { code: 'frontmatter_alias_limit', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file or its removal clears it',
     human_reason: 'The file\'s frontmatter nests YAML aliases past the size limit; reduce the alias nesting (or write the values out), or remove the file, and commit.' },
   { code: 'managed_image_sync_unsupported', class: 'page', safe_actions: ['none'], needs_human: false, escalate: 'never: images stay held while multimodal embedding is off', human_reason: 'Leave images held, exclude them with sync.exclude, or set GBRAIN_EMBEDDING_MULTIMODAL=true so the next sync imports them.' },
   // #6712 PR 2 (L4): two content refusals that hold the file; only the owner or the user changes the outcome.
   { code: 'purged_content', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only the owner clears a purge tombstone',
-    human_reason: 'The file carries content the owner purged; delete or edit the file and commit, or (only if the purge was a mistake) the owner clears it with gbrain pages unpurge <slug> --source <source> on the brain host.' },
+    human_reason: 'The file carries content the owner purged; delete or edit the file and commit, or (only if the purge was a mistake) the owner clears it with foresights pages unpurge <slug> --source <source> on the brain host.' },
   { code: 'write_gate_rejected', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: write_gate.external_mode=reject is the user\'s setting',
     human_reason: 'The write gate refuses the file\'s external instruction-like content under write_gate.external_mode=reject; the user decides whether to edit the file or switch the setting back to quarantine.' },
-  // #6727: pages an older gbrain imported without recording their file fold to the file's slug, several or one sync cannot write; a person decides.
+  // #6727: pages an older foresights imported without recording their file fold to the file's slug, several or one sync cannot write; a person decides.
   { code: 'legacy_slug_conflict', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a person decides which legacy page the file takes over',
-    human_reason: 'Pages an older gbrain imported without recording their file match this file and sync cannot pick one to import into; a person keeps the one that is its page and removes the others (gbrain delete --source <source> -- <slug>), or renames the file, then syncs.' },
-  // #6712 PR 4b (design v3.2 §3.1): a live pass settled the path three passes in a row and it never classified settled; a gbrain bug or an environment fault, never a loop.
+    human_reason: 'Pages an older foresights imported without recording their file match this file and sync cannot pick one to import into; a person keeps the one that is its page and removes the others (foresights delete --source <source> -- <slug>), or renames the file, then syncs.' },
+  // #6712 PR 4b (design v3.2 §3.1): a live pass settled the path three passes in a row and it never classified settled; a foresights bug or an environment fault, never a loop.
   { code: 'settle_mismatch', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pass cannot tell why the path does not settle',
-    human_reason: 'Sync settled this file three passes in a row but it never read settled afterwards; read gbrain doctor --json and gbrain sources writer status <source> (read-only), fix what they name, then run gbrain sources retry-held <source> to re-test it.' },
+    human_reason: 'Sync settled this file three passes in a row but it never read settled afterwards; read foresights doctor --json and foresights sources writer status <source> (read-only), fix what they name, then run foresights sources retry-held <source> to re-test it.' },
   // GBRA-130 A-6: one path's write failed the same unclassifiable way on repeated attempts; held so the rest of the source moves.
   // GBRA-287: a freeze hold whose stored page body a sync path could not read: whole (a page stored in segments), or at all
   // (rows that do not tile it). Keyed by detail codes no receipt carries, so a write receipt with the bare code keeps its class.
   { code: 'freeze_page_body_segmented', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a sync path read a page stored in segments whole',
-    human_reason: 'A sync path read this page stored in segments as one string, so its file is held and the rest of the source synced; upgrade gbrain, then run gbrain sources retry-held <source>, and report it with the gbrain version if it stays held.' },
+    human_reason: 'A sync path read this page stored in segments as one string, so its file is held and the rest of the source synced; upgrade foresights, then run foresights sources retry-held <source>, and report it with the foresights version if it stays held.' },
   { code: 'freeze_page_body_rows_unreadable', class: 'page', safe_actions: ['repair'], needs_human: true, escalate: 'always: the page\'s segment rows do not cover its stored body, so no sync can read it',
-    human_reason: 'The segment rows of this page stored in segments do not cover its body, so every read of it refuses and no retry clears the hold; preview gbrain repair segmented-tiling --source <source> --slug <slug> '
+    human_reason: 'The segment rows of this page stored in segments do not cover its body, so every read of it refuses and no retry clears the hold; preview foresights repair segmented-tiling --source <source> --slug <slug> '
       + '(read-only; doctor segmented_tiling lists the page) and apply it with the user\'s agreement. If doctor does not list the page, the rows exist but the role that reads the brain cannot see them: '
-      + 'give it the same access to page_body_manifest and page_segment_texts it has to pages, then run gbrain sources retry-held <source>.' },
+      + 'give it the same access to page_body_manifest and page_segment_texts it has to pages, then run foresights sources retry-held <source>.' },
   { code: 'page_write_failed', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: the writer cannot place the failure',
-    human_reason: 'The write of this file keeps failing with an error gbrain cannot classify (an owner exception or an unplaced refusal); read its receipt (gbrain write-request <request_id>), report it with the gbrain version or fix the file when the error names its content, then run gbrain sources retry-held <source>.' },
+    human_reason: 'The write of this file keeps failing with an error foresights cannot classify (an owner exception or an unplaced refusal); read its receipt (foresights write-request <request_id>), report it with the foresights version or fix the file when the error names its content, then run foresights sources retry-held <source>.' },
   // GBRA-130 A-7: the file is not a readable regular file inside the source root (a symlink, a non-regular file, a permission error).
   { code: 'file_unreadable', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a change to the checkout makes the file readable',
-    human_reason: 'Sync cannot read this file as a regular file inside the source root (a symlink, a non-regular file or a permission error) and never follows it; make it a readable regular file in the checkout (or exclude it with sync.exclude) and commit, then run gbrain sources retry-held <source>.' },
+    human_reason: 'Sync cannot read this file as a regular file inside the source root (a symlink, a non-regular file or a permission error) and never follows it; make it a readable regular file in the checkout (or exclude it with sync.exclude) and commit, then run foresights sources retry-held <source>.' },
   // #7052: a frontmatter tag is over the tags index's byte limit; only an edit to the file clears it.
   { code: 'tag_too_long', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
     human_reason: 'A frontmatter tag is longer than a tag can be; shorten it or split it into shorter tags and commit.' },
@@ -121,7 +121,7 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     human_reason: 'The file holds NUL bytes, which page text cannot store; save a UTF-16 file as UTF-8, remove the NUL bytes, or remove a binary file (or exclude it with sync.exclude), and commit.' },
   // GST-2312 (#9024): the committed blob is a Git filter's stored bytes (git-crypt, a clean/smudge driver); only an edit to the file, its filter or sync.exclude clears it.
   { code: 'content_filter_owned', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: sync never runs the filter that would turn the file into text',
-    human_reason: "The file is stored in Git through a filter (git-crypt or another clean/smudge driver) and gbrain does not run a repository's filter programs; exclude it with sync.exclude, or commit it without the filter, and commit." },
+    human_reason: "The file is stored in Git through a filter (git-crypt or another clean/smudge driver) and foresights does not run a repository's filter programs; exclude it with sync.exclude, or commit it without the filter, and commit." },
   // GBRA-133 S-33: the commit names a Git object the checkout no longer has and the working-tree copy differs; only restoring the object clears it.
   { code: 'git_object_missing', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only restoring the Git object clears it',
     human_reason: 'The checkout lost the Git object of this committed file and its working-tree copy differs or is gone; run git fsck in the checkout, restore the object with git fetch or from a backup, then sync (every sync re-tests the hold).' },
@@ -130,26 +130,26 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     human_reason: 'The file name is not valid UTF-8, so sync cannot read it by name; rename it to a UTF-8 name (convmv -f latin1 -t utf8 converts a Latin-1 name) and commit.' },
   // #6948: several live pages record the file as their origin; the sync-time heal resolves verified duplicates, a person decides the rest.
   { code: 'origin_conflict', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the hold carries a reason (the pages differ, ids conflict or none is the page the path names), or the heal is off',
-    human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
+    human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (foresights repair origin-twins --source <source> lists them with the commands), then syncs.' },
   // #6948: an `origin_conflict` hold whose verdict carries a reason (sync-status.ts holdVerdict): nothing resolves it without a person.
   // GBRA-133 PR 1: classic rename holds (src/core/classic-rename-holds.ts); only a person changes the file or removes the page.
   { code: 'rename_identity_unreadable', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the file title or id holds characters the database cannot compare',
     human_reason: 'The database refused to compare this renamed file title or frontmatter id; a person removes the NUL byte or broken Unicode character from the file and commits, then syncs.' },
   { code: 'rename_reconcile_failed', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the old page may be a duplicate',
-    human_reason: 'A rename imported but the old page could not be removed; a person runs a full sync of the source (it removes pages whose file is gone) or removes the old page with gbrain delete.' },
+    human_reason: 'A rename imported but the old page could not be removed; a person runs a full sync of the source (it removes pages whose file is gone) or removes the old page with foresights delete.' },
   // #7199: a `file_drift` hold with side `unknown` (no import record): neither side is known to have moved.
   { code: 'file_drift_unknown', class: 'page', safe_actions: ['reconcile'], needs_human: true, escalate: 'always: the file and the page differ and no import record says which changed',
-    human_reason: 'The file and the database page differ, and sync has no import record to tell which one changed since the last import, so it held the file instead of overwriting the page; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
+    human_reason: 'The file and the database page differ, and sync has no import record to tell which one changed since the last import, so it held the file instead of overwriting the page; a person chooses which version wins (foresights repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
   // GBRA-542: a deleted-side `file_drift` hold on a read-only mirror (sync-holds.ts mirrorDatabaseOnlyHold): the page stays live and database-only by design.
-  { code: 'file_drift_mirror_database_only', class: 'page', safe_actions: ['none'], needs_human: false, escalate: 'never: the page stays live and database-only because gbrain never writes a read-only mirror' },
+  { code: 'file_drift_mirror_database_only', class: 'page', safe_actions: ['none'], needs_human: false, escalate: 'never: the page stays live and database-only because foresights never writes a read-only mirror' },
   { code: 'origin_conflict_decision', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pages differ, their ids conflict or none is the page the path names',
-    human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
+    human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (foresights repair origin-twins --source <source> lists them with the commands), then syncs.' },
   // GBRA-130 A-17/B-3/B-4: a held `page_identity_changed` path (sync-status.ts holdVerdict): several tombstones, a spelling twin or a takeover whose ids differ.
   { code: 'page_identity_decision', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a person decides which page the file is',
-    human_reason: 'Sync cannot decide which page this file is (several deleted pages record it, another spelling of it collides, or its frontmatter id differs from the page at its slug) and never guesses; a person restores or purges the deleted pages, keeps one spelling, or fixes the id or the file name, commits, then runs gbrain sync --source <source> --no-pull.' },
+    human_reason: 'Sync cannot decide which page this file is (several deleted pages record it, another spelling of it collides, or its frontmatter id differs from the page at its slug) and never guesses; a person restores or purges the deleted pages, keeps one spelling, or fixes the id or the file name, commits, then runs foresights sync --source <source> --no-pull.' },
   // GBRA-133: a committed file missing from the working tree (a sparse checkout, a deletion not committed); classic sync holds it.
   { code: 'absent_from_worktree', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a person decides whether the file comes back or its deletion is committed',
-    human_reason: 'The file is committed but missing from the checkout; a person restores it (git restore, or widens the sparse checkout) so the next sync imports it, or commits the deletion with gbrain git commit-push, which clears the hold.' },
+    human_reason: 'The file is committed but missing from the checkout; a person restores it (git restore, or widens the sparse checkout) so the next sync imports it, or commits the deletion with foresights git commit-push, which clears the hold.' },
   // GBRA-133: a committed file name that is not valid UTF-8 or holds a control character cannot be a page path; classic sync holds it.
   { code: 'unsupported_path', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a rename makes the name a page path',
     human_reason: 'The file name is not valid UTF-8 or contains a control character, so it cannot be a page path; a person renames the file to a valid name and commits, and the next sync imports it and clears the hold.' },
@@ -163,21 +163,21 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'pending_import', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same path refuses again after a sync imported its file' },
   { code: 'raw_file_changed', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same path fails again after a rerun re-freezes it' },
   { code: 'file_database_drift', class: 'page', safe_actions: ['reconcile'], needs_human: true, escalate: 'always: the file and the database page diverge',
-    human_reason: 'The canonical file and the database page both changed; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
+    human_reason: 'The canonical file and the database page both changed; a person chooses which version wins (foresights repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
   { code: 'canonical_file_missing', class: 'page', safe_actions: ['repair'], needs_human: true, escalate: 'always: no sync can import a file that is not there',
-    human_reason: 'The page is live but its canonical file is gone (a ghost page); a person restores the file and syncs, or removes the page (gbrain repair ghost-pages --source <source> previews it and writes nothing).' },
+    human_reason: 'The page is live but its canonical file is gone (a ghost page); a person restores the file and syncs, or removes the page (foresights repair ghost-pages --source <source> previews it and writes nothing).' },
   { code: 'source_binding_changed', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always: the source or its checkout binding moved',
-    human_reason: 'The source was replaced, archived or re-bound under the write; inspect it with gbrain sources writer status --source <source> --json before anything is resubmitted.' },
+    human_reason: 'The source was replaced, archived or re-bound under the write; inspect it with foresights sources writer status --source <source> --json before anything is resubmitted.' },
   { code: 'unsafe_file_target', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always: the file target resolves outside its source',
-    human_reason: 'The canonical file target resolves outside its source (a symlink or a moved checkout); inspect the checkout with gbrain sources writer status --source <source> --json, then the user decides how to repair it.' },
+    human_reason: 'The canonical file target resolves outside its source (a symlink or a moved checkout); inspect the checkout with foresights sources writer status --source <source> --json, then the user decides how to repair it.' },
   { code: 'cancelled', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same group is cancelled again after a rerun' },
   // #6643: refinements of `cancelled` / `revision_conflict` by the receipt's recorded cause; they take precedence over the code.
   // #6712 retired both producers (one page, one fate); the rows render what older builds wrote as superseded.
-  { code: 'knock_on', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: superseded; an older gbrain cancelled this page for another page\'s failure and a plain sync re-freezes it' },
+  { code: 'knock_on', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: superseded; an older foresights cancelled this page for another page\'s failure and a plain sync re-freezes it' },
   { code: 'run_replaced', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: another run of the source superseded this one and covers its pages' },
   { code: 'outside_fence', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always: a request published outside the cursor that admitted it',
-    human_reason: 'A sync request was not the entry its cursor held (two drains of one cursor, or a writer defect). gbrain sync status --source <source> --json lists the live cursors; stop the extra drain (pause autopilot with gbrain autopilot pause) and report the fence snapshot the error carries.' },
-  { code: 'knock_on_exhausted', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: superseded; a plain sync resumes the entry an older gbrain stopped on' },
+    human_reason: 'A sync request was not the entry its cursor held (two drains of one cursor, or a writer defect). foresights sync status --source <source> --json lists the live cursors; stop the extra drain (pause autopilot with foresights autopilot pause) and report the fence snapshot the error carries.' },
+  { code: 'knock_on_exhausted', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: superseded; a plain sync resumes the entry an older foresights stopped on' },
   { code: 'sync_incomplete', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: an unfinished cursor resumes with the same command' },
   // Connection class: transport only; the cursor and manifest stand.
   { code: 'connection_lost', class: 'connection', safe_actions: ['retry'], needs_human: false, escalate: 'three reruns in a row end connection_lost (the database is unreachable from this host)' },
@@ -193,14 +193,14 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     escalate: 'never: a holder that stops committing ends the run drain_stalled instead' },
   { code: 'storage_error', class: 'connection', safe_actions: ['retry'], needs_human: false, escalate: 'the same error after a rerun (then it is not a dropped connection)' },
   // #6513: the engine-graduation fence (SQLSTATE 55000) refuses every write until the move finishes; the cursor and manifest stand.
-  { code: 'graduation_in_progress', class: 'connection', safe_actions: ['retry'], needs_human: false, escalate: 'gbrain migrate --status --json reports no running move and the fence still refuses' },
+  { code: 'graduation_in_progress', class: 'connection', safe_actions: ['retry'], needs_human: false, escalate: 'foresights migrate --status --json reports no running move and the fence still refuses' },
   // Systemic class: a retry alone changes nothing.
   { code: 'preparation_systemic', class: 'systemic', safe_actions: ['upgrade', 'retry'], needs_human: true, escalate: 'always', human_reason: 'Several writes could not finish preparing: the write owner is the likely cause. Writer status names it; fix, restart or upgrade it.' },
   { code: 'drain_stalled', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The write at the head of the source is wedged in its owner; restart the owner process writer status names.' },
-  { code: 'recovery_required', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'A write needs recovery on the brain host (gbrain sources writer status --json names it).' },
+  { code: 'recovery_required', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'A write needs recovery on the brain host (foresights sources writer status --json names it).' },
   // #8368: the checkout lost its ownership marker; only the verified self-transfer re-creates it.
   { code: 'owner_marker_missing', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always',
-    human_reason: 'The checkout lost its ownership marker (.gbrain-owner.json). On the brain host, run the verified self-transfer (gbrain sources writer transfer prepare <source> --self-transfer, then transfer accept) to re-create it; never create it by hand. The sync stopped blocked_by_failures on the refused file: run the same sync again.' },
+    human_reason: 'The checkout lost its ownership marker (.gbrain-owner.json). On the brain host, run the verified self-transfer (foresights sources writer transfer prepare <source> --self-transfer, then transfer accept) to re-create it; never create it by hand. The sync stopped blocked_by_failures on the refused file: run the same sync again.' },
   { code: 'owner_unavailable', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The write owner is gone; start or restart it on the brain host.' },
   { code: 'writer_coordinator_required', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'Managed persistence is not active for this source; activate it or sync unmanaged.' },
   { code: 'permission_denied', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'This principal may not sync the source; the owner grants it.' },
@@ -209,13 +209,13 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     human_reason: 'The database refused writes as read-only: a pooled server connection inherited default_transaction_read_only from another client, or the role, database or server is read-only. The database operator resets the pooler\'s server connections and finds the client issuing session-level SET; then sync again.' },
   // #6696 (A6/A7): a cumulative cap is full, or too small for the run; only the brain host's reversible config raise clears it.
   { code: 'write_quota_exhausted', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always',
-    human_reason: 'A cumulative write cap is full; the brain host runs the gbrain config set the error prints (gbrain doctor --only persistence_capacity --json names the value), then the same sync resumes.' },
+    human_reason: 'A cumulative write cap is full; the brain host runs the foresights config set the error prints (foresights doctor --only persistence_capacity --json names the value), then the same sync resumes.' },
   { code: 'write_quota_insufficient', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always',
-    human_reason: 'The run needs more write capacity than is left; the brain host runs the gbrain config set the error prints, then reruns the same sync.' },
+    human_reason: 'The run needs more write capacity than is left; the brain host runs the foresights config set the error prints, then reruns the same sync.' },
   { code: 'plan_stale', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The approved company-brain manifest changed; inspect and approve the repository again.' },
   // #6694: the source's pinned slug-root mode changed under a run of a subdirectory source; the checkpoint waits for the choice.
   { code: 'slug_root_mode_mismatch', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always: the two modes give different slugs',
-    human_reason: 'The source pins one slug-root mode and the sync ran under the other. A person chooses: set sources.config.slug_root_mode back to the mode the run used and rerun gbrain sync --no-pull --source <source> (the checkpoint is retried by itself), or keep the pin, retire the refused cursor with gbrain repair managed-sync-orphans --source <source> (preview, then apply with its hash) and rerun the sync (the pages the refused run wrote keep their old slugs beside the new ones).' },
+    human_reason: 'The source pins one slug-root mode and the sync ran under the other. A person chooses: set sources.config.slug_root_mode back to the mode the run used and rerun foresights sync --no-pull --source <source> (the checkpoint is retried by itself), or keep the pin, retire the refused cursor with foresights repair managed-sync-orphans --source <source> (preview, then apply with its hash) and rerun the sync (the pages the refused run wrote keep their old slugs beside the new ones).' },
   { code: 'invalid_params', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The resume options conflict with the stored cursor; use the resume command the error prints.' },
   // #6518: bookkeeping of an incarnation the source no longer has; a retry selects a different key, so only the repair clears it.
   { code: 'cursor_incarnation_retired', class: 'systemic', safe_actions: ['repair'], needs_human: false, escalate: 'the repair preview lists nothing to retire, or the same code returns after the apply' },
@@ -265,12 +265,12 @@ export function slugConflictEscalation(input: ContentRepairHoldInput | null | un
   if (input.action !== 'remove_slug') return undefined;
   if (input.reason === 'still_invalid') {
     return `Removing the slug: line of \`${input.path}\` alone leaves it unimportable${input.other_codes?.length ? ` (the frontmatter also needs ${input.other_codes.join(', ')})` : ''}; `
-      + `the user approves the frontmatter fix (gbrain repair frontmatter --only ${input.path} --include-ambiguous previews it and writes nothing) or edits the file.`;
+      + `the user approves the frontmatter fix (foresights repair frontmatter --only ${input.path} --include-ambiguous previews it and writes nothing) or edits the file.`;
   }
   if (input.reason === 'slug_page_mismatch') {
     return `Sync files \`${input.path}\` as page \`${input.slug ?? '?'}\`, which its slug: line does not name exactly; make the line name that slug or move the file, then commit.`;
   }
-  return `gbrain decided to remove the slug: line of \`${input.path}\` but could not write it (${input.reason}); delete the line by hand and commit.`;
+  return `foresights decided to remove the slug: line of \`${input.path}\` but could not write it (${input.reason}); delete the line by hand and commit.`;
 }
 
 /**
@@ -283,14 +283,14 @@ export function contentRepairHumanReason(input: ContentRepairHoldInput): string 
   const kind = input.type ? `the same ${input.type}` : 'the same thing';
   if (input.action === 'merge_into' && input.canonical) {
     if (input.slug && input.canonical === input.slug && other && other !== input.slug) {
-      return `This file and page \`${other}\` describe ${kind}; gbrain recommends keeping \`${input.path}\` (slug \`${input.canonical}\`), merging the unique sections of page \`${other}\` into it and deleting that page's file, then committing; `
-        + 'the hold clears on the next maintenance run after that file is gone. gbrain does not merge pages by itself yet.';
+      return `This file and page \`${other}\` describe ${kind}; foresights recommends keeping \`${input.path}\` (slug \`${input.canonical}\`), merging the unique sections of page \`${other}\` into it and deleting that page's file, then committing; `
+        + 'the hold clears on the next maintenance run after that file is gone. foresights does not merge pages by itself yet.';
     }
-    return `This file and page \`${input.canonical}\` describe ${kind}; gbrain recommends merging the unique sections of \`${input.path}\` into \`${input.canonical}\` and deleting \`${input.path}\`, then committing; `
-      + 'the hold clears on the next sync after the file is removed. gbrain does not merge pages by itself yet.';
+    return `This file and page \`${input.canonical}\` describe ${kind}; foresights recommends merging the unique sections of \`${input.path}\` into \`${input.canonical}\` and deleting \`${input.path}\`, then committing; `
+      + 'the hold clears on the next sync after the file is removed. foresights does not merge pages by itself yet.';
   }
   if (input.action === 'needs_human') {
-    return `gbrain could not decide whether \`${input.path}\`${other ? ` and page \`${other}\`${input.named_db_only ? ' (a database-only page with no file)' : ''}` : ' and the page its slug: line names'} are the same page; decide which keeps the slug: `
+    return `foresights could not decide whether \`${input.path}\`${other ? ` and page \`${other}\`${input.named_db_only ? ' (a database-only page with no file)' : ''}` : ' and the page its slug: line names'} are the same page; decide which keeps the slug: `
       + `remove the slug: line of \`${input.path}\` if they differ, or merge them by hand and delete the duplicate, then commit; the hold clears on the next sync.`;
   }
   return undefined;
@@ -319,13 +319,13 @@ export function classifySyncFault(input: { code: string; detail?: string | null;
   const slugHuman = input.code === 'frontmatter_slug_conflict' ? slugConflictEscalation(slugRepair) : undefined;
   const rule = (input.detail ? BY_CODE.get(input.detail) : undefined) ?? BY_CODE.get(input.code)
     ?? (/ECONN|ETIMEDOUT|EPIPE|connection.*closed|CONNECTION_ENDED/i.test(input.message ?? '') ? BY_CODE.get('connection_lost') : undefined);
-  if (!rule) return { class: 'systemic', safe_actions: ['none'], needs_human: true, human_reason: `Unknown code ${input.code}; run gbrain doctor --json and read gbrain errors ${input.code}.` };
+  if (!rule) return { class: 'systemic', safe_actions: ['none'], needs_human: true, human_reason: `Unknown code ${input.code}; run foresights doctor --json and read foresights errors ${input.code}.` };
   const repeated = rule.code === 'storage_error' && input.repeated && input.repeated.runs >= STORAGE_ERROR_REPEATS ? input.repeated : undefined;
   if (repeated) {
     const phase = /^<(.+)>$/.exec(repeated.path)?.[1];
     return { class: phase ? 'systemic' : 'page', safe_actions: ['none'], needs_human: true, human_reason: `${phase ? `The sync's ${phase} phase` : repeated.path} stopped the last ${repeated.runs} syncs with `
-      + `the same storage_error, so it is not a dropped connection and another rerun will not clear it; read last_error.message, ${phase ? 'run gbrain doctor --json' : 'fix, move or remove the file and commit'}, then sync again, `
-      + 'and report it to the gbrain maintainers if the cause is not clear.' };
+      + `the same storage_error, so it is not a dropped connection and another rerun will not clear it; read last_error.message, ${phase ? 'run foresights doctor --json' : 'fix, move or remove the file and commit'}, then sync again, `
+      + 'and report it to the foresights maintainers if the cause is not clear.' };
   }
   const exhausted = !rule.needs_human && (input.attempts ?? 0) >= HOLD_ATTEMPTS_NEEDS_HUMAN && (input.held_for_ms ?? 0) >= HOLD_ESCALATE_MS && !input.live_editor
     && rule.safe_actions[0] !== 'none' && rule.class === 'page' && (input.code !== 'frontmatter_slug_conflict' || slugHuman !== undefined);

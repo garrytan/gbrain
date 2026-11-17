@@ -9,27 +9,27 @@ import { normalizeScopesInput } from '../core/scope.ts';
 import { GRANT_PROFILES } from '../core/grants/model.ts';
 import { createMcpAdminHttp, McpAdminError, redactAdminValue, type McpAdminHttpOptions } from './mcp-admin-http.ts';
 
-const HELP = `gbrain mcp admin — administer a running server with owner credentials
+const HELP = `foresights mcp admin — administer a running server with owner credentials
 
-gbrain mcp admin login-link [--oauth-request ID]
-gbrain mcp admin clients
-gbrain mcp admin client ID
-gbrain mcp admin register NAME --redirect-uri URI [--redirect-uri URI ...]
-gbrain mcp admin setup ID --harness ID [--flow authorization-code|client-credentials]
-gbrain mcp admin invalidate-tokens|revoke|delete ID [--yes --if-version N]
-gbrain mcp admin attest CLIENT_ID --attest-actor qm|none [--attest-ops LIST] [--attest-read person|scope|none] [--dry-run]
-gbrain mcp admin members [--all]
-gbrain mcp admin member-add ID [--name NAME] [--email ADDR] [--groups G1,G2]
-gbrain mcp admin member-set ID --email ADDR|none
-gbrain mcp admin member-disable|member-enable ID
-gbrain mcp admin links [--member ID]
-gbrain mcp admin link MEMBER --qm CANONICAL_ID [--dry-run]
-gbrain mcp admin link --email ADDR --qm CANONICAL_ID [--dry-run]
-gbrain mcp admin unlink --qm CANONICAL_ID [--dry-run]
-gbrain mcp admin memory-proposals list [--source SOURCE] [--cursor CURSOR]
-gbrain mcp admin memory-proposals show REQUEST_ID
-gbrain mcp admin memory-proposals approve REQUEST_ID [--dry-run]
-gbrain mcp admin memory-proposals deny REQUEST_ID --reason TEXT [--dry-run]
+foresights mcp admin login-link [--oauth-request ID]
+foresights mcp admin clients
+foresights mcp admin client ID
+foresights mcp admin register NAME --redirect-uri URI [--redirect-uri URI ...]
+foresights mcp admin setup ID --harness ID [--flow authorization-code|client-credentials]
+foresights mcp admin invalidate-tokens|revoke|delete ID [--yes --if-version N]
+foresights mcp admin attest CLIENT_ID --attest-actor qm|none [--attest-ops LIST] [--attest-read person|scope|none] [--dry-run]
+foresights mcp admin members [--all]
+foresights mcp admin member-add ID [--name NAME] [--email ADDR] [--groups G1,G2]
+foresights mcp admin member-set ID --email ADDR|none
+foresights mcp admin member-disable|member-enable ID
+foresights mcp admin links [--member ID]
+foresights mcp admin link MEMBER --qm CANONICAL_ID [--dry-run]
+foresights mcp admin link --email ADDR --qm CANONICAL_ID [--dry-run]
+foresights mcp admin unlink --qm CANONICAL_ID [--dry-run]
+foresights mcp admin memory-proposals list [--source SOURCE] [--cursor CURSOR]
+foresights mcp admin memory-proposals show REQUEST_ID
+foresights mcp admin memory-proposals approve REQUEST_ID [--dry-run]
+foresights mcp admin memory-proposals deny REQUEST_ID --reason TEXT [--dry-run]
 
 --url URL                          Running server URL or /mcp endpoint (required)
 --admin-token-file FILE            Private owner credential; otherwise GBRAIN_ADMIN_BOOTSTRAP_TOKEN
@@ -54,7 +54,7 @@ gbrain mcp admin memory-proposals deny REQUEST_ID --reason TEXT [--dry-run]
 --json                             Structured result; credentials stay in private exports
 
 Registration creates authorization_code and refresh_token grants. The native client
-initiates OAuth and owns its PKCE verifier. For machine access use gbrain mcp grant.
+initiates OAuth and owns its PKCE verifier. For machine access use foresights mcp grant.
 Setup returns metadata and instructions; add --credentials-out for a private export.
 Login links are single-use: deliver the link to the owner without fetching it.
 OAuth admin scope does not grant owner administration authority.
@@ -127,20 +127,20 @@ const ACCESS_COMMANDS: Record<string, (client: AdminClient, parsed: AdminArgs, v
     const read = value('--attest-read');
     if (actor === undefined && ops === undefined && read === undefined) throw new McpAdminError('invalid_arguments', 'attest needs --attest-actor qm|none, --attest-ops <list> and/or --attest-read person|scope|none.');
     const dryRun = parsed.flags.has('--dry-run');
-    return client.request('/admin/api/access/attest', { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin client ${parsed.target} --url ${client.base}`, body: {
+    return client.request('/admin/api/access/attest', { method: 'POST', mutation: !dryRun, nextAction: `foresights mcp admin client ${parsed.target} --url ${client.base}`, body: {
       clientId: parsed.target, dryRun, ...(actor === undefined ? {} : { attestActor: actor === 'none' ? null : actor }), ...(ops === undefined ? {} : { attestOps: list(ops) }), ...(read === undefined ? {} : { attestRead: read === 'none' ? null : read }) } });
   },
   members: (client, parsed) => client.request(`/admin/api/access/members${parsed.flags.has('--all') ? '?all=1' : ''}`),
-  'member-add': (client, parsed, value) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`,
+  'member-add': (client, parsed, value) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `foresights mcp admin members --url ${client.base}`,
     body: { action: 'add', id: parsed.target, ...(value('--name') === undefined ? {} : { name: value('--name') }), ...(value('--email') === undefined ? {} : { email: value('--email') }),
       ...(value('--groups') === undefined ? {} : { groups: list(value('--groups')) }) } }),
   'member-set': (client, parsed, value) => {
     const email = value('--email');
     if (email === undefined) throw new McpAdminError('invalid_arguments', 'member-set needs --email <addr>|none.');
-    return client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'set', id: parsed.target, email: email === 'none' ? null : email } });
+    return client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `foresights mcp admin members --url ${client.base}`, body: { action: 'set', id: parsed.target, email: email === 'none' ? null : email } });
   },
-  'member-disable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'disable', id: parsed.target } }),
-  'member-enable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'enable', id: parsed.target } }),
+  'member-disable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `foresights mcp admin members --url ${client.base}`, body: { action: 'disable', id: parsed.target } }),
+  'member-enable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `foresights mcp admin members --url ${client.base}`, body: { action: 'enable', id: parsed.target } }),
   links: (client, _parsed, value) => client.request(`/admin/api/access/member-links${value('--member') ? `?member=${encodeURIComponent(value('--member')!)}` : ''}`),
   link: (client, parsed, value) => linkRequest(client, parsed, value, 'link'),
   unlink: (client, parsed, value) => linkRequest(client, parsed, value, 'unlink'),
@@ -154,7 +154,7 @@ const ACCESS_COMMANDS: Record<string, (client: AdminClient, parsed: AdminArgs, v
     const reason = value('--reason');
     if (parsed.sub === 'deny' && reason === undefined) throw new McpAdminError('invalid_arguments', 'deny needs --reason TEXT: the proposer reads it on its receipt.');
     const dryRun = parsed.flags.has('--dry-run');
-    return client.request(path, { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin memory-proposals show ${parsed.target} --url ${client.base}`,
+    return client.request(path, { method: 'POST', mutation: !dryRun, nextAction: `foresights mcp admin memory-proposals show ${parsed.target} --url ${client.base}`,
       body: { action: parsed.sub, dryRun, ...(reason === undefined ? {} : { reason }) } });
   },
 };
@@ -165,7 +165,7 @@ function linkRequest(client: AdminClient, parsed: AdminArgs, value: (flag: strin
   const email = value('--email');
   if (action === 'link' && (email === undefined) === (parsed.target === undefined)) throw new McpAdminError('invalid_arguments', 'link needs a member ID or --email <addr>, not both.');
   const dryRun = parsed.flags.has('--dry-run');
-  return client.request('/admin/api/access/member-links', { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin links --url ${client.base}`,
+  return client.request('/admin/api/access/member-links', { method: 'POST', mutation: !dryRun, nextAction: `foresights mcp admin links --url ${client.base}`,
     body: { action, externalId, dryRun, ...(action === 'link' ? (email === undefined ? { member: parsed.target } : { email }) : {}) } });
 }
 
@@ -209,8 +209,8 @@ export async function runMcpAdmin(args: string[], dependencies: Pick<McpAdminHtt
     sanitize = client.sanitize;
     endpoint = client.base;
     const inspect = parsed.target && parsed.command !== 'register'
-      ? `gbrain mcp admin client ${parsed.target} --url ${client.base}`
-      : `gbrain mcp admin clients --url ${client.base}`;
+      ? `foresights mcp admin client ${parsed.target} --url ${client.base}`
+      : `foresights mcp admin clients --url ${client.base}`;
     const path = `/admin/api/clients/${encodeURIComponent(parsed.target ?? '')}`;
     if (parsed.command === 'login-link') {
       const link = await client.loginLink(value('--oauth-request'));
@@ -251,7 +251,7 @@ export async function runMcpAdmin(args: string[], dependencies: Pick<McpAdminHtt
       if (!dryRun && output) {
         try { saveExport(output, result); }
         catch { throw new McpAdminError('credential_delivery_incomplete', `Registration completed for client ${String(result.clientId)} but its private export could not be saved. Recover setup into a new private file; do not repeat registration.`, undefined,
-          `gbrain mcp admin setup ${String(result.clientId)} --harness ${harness} --flow authorization-code --credentials-out <private-file> --url ${client.base}`); }
+          `foresights mcp admin setup ${String(result.clientId)} --harness ${harness} --flow authorization-code --credentials-out <private-file> --url ${client.base}`); }
       }
       const { clientSecret: _secret, credentials: _credentials, ...safe } = result;
       print({ status: dryRun ? 'preview' : 'registered', ...safe, ...(output && !dryRun ? { credential_file: output } : {}) });

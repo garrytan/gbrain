@@ -200,7 +200,7 @@ describe('merge_fences', () => {
     expect(mergedReceipt(r.before, r.fixes)![0]).toMatchObject({ fences: 3 });
   });
 
-  test('the merged page is held `repeated_marker` no longer; the reason table says gbrain merges and names the edit otherwise', () => {
+  test('the merged page is held `repeated_marker` no longer; the reason table says foresights merges and names the edit otherwise', () => {
     expect(FENCE_REASONS.repeated_marker.tier).toBe('manual');
     const fix = renderFenceFix({ reason: 'repeated_marker', fence: 'facts', section: 'body', rows: [], columns: [], line: 12 });
     expect(fix).toContain('merge_fences');

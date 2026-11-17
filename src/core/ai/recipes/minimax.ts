@@ -97,7 +97,7 @@ export const minimaxCompatFetch = (async (
  * `/chat/completions`. The flagship embedding model is `embo-01` (1536 dims).
  *
  * MiniMax's API takes an extra `type: 'db' | 'query'` field for asymmetric
- * retrieval. gbrain currently has no notion of "this is a document vs a
+ * retrieval. foresights currently has no notion of "this is a document vs a
  * query" at the embed-call site (embed() takes only texts), so we default
  * to `type: 'db'` for the indexing path. Queries also embed with `type:
  * 'db'`, making retrieval symmetric. This sacrifices some retrieval
@@ -113,7 +113,7 @@ export const minimax: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'embo-01',
     'MiniMax-M3',

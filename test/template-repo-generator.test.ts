@@ -37,7 +37,7 @@ describe('renderTemplateReadme', () => {
 
   test('carries the Use-this-template instructions with bootstrap status as the first CLI step', () => {
     expect(readme).toContain('Use this template');
-    expect(readme).toContain('gbrain bootstrap status');
+    expect(readme).toContain('foresights bootstrap status');
     expect(readme).toContain('BOOTSTRAP_FOR_AGENTS.md');
     // The privacy gate on this door [G7]: status hard-fails on a public origin.
     expect(readme.toLowerCase()).toContain('public');
@@ -45,10 +45,10 @@ describe('renderTemplateReadme', () => {
 
   test('references only the sanctioned stable distribution ref [C1]', () => {
     expect(readme).toContain(
-      'https://raw.githubusercontent.com/garrytan/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md',
+      'https://raw.githubusercontent.com/aimonk2025/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md',
     );
-    expect(readme).toContain('github:garrytan/gbrain#stable');
-    expect(readme).not.toMatch(/raw\.githubusercontent\.com\/garrytan\/gbrain\/(master|main|v\d)/);
+    expect(readme).toContain('github:aimonk2025/gbrain#stable');
+    expect(readme).not.toMatch(/raw\.githubusercontent\.com\/garrytan\/(?:foresights|gbrain)\/(master|main|v\d)/);
   });
 
   test('is deterministic and carries no timestamps [CX2-14]', () => {

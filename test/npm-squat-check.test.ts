@@ -28,7 +28,7 @@ function makePkg(dir: string, pkg: Record<string, unknown>, binRel = 'cli.js'): 
 
 let foreignLink: string; // symlink → unrelated npm package named "gbrain"
 let realBinShapeLink: string; // symlink → checkout with bin.gbrain = src/cli.ts
-let realRepoFieldLink: string; // symlink → package with garrytan/gbrain repository url
+let realRepoFieldLink: string; // symlink → package with aimonk2025/gbrain repository url
 let brokenLink: string;
 let nativeBin: string; // fake compiled binary (ELF magic)
 let orphanScript: string; // script with no package.json above it
@@ -60,7 +60,7 @@ beforeAll(() => {
     join(root, 'repo-field'),
     {
       name: 'gbrain',
-      repository: { type: 'git', url: 'git+https://github.com/garrytan/gbrain.git' },
+      repository: { type: 'git', url: 'git+https://github.com/aimonk2025/gbrain.git' },
       bin: { gbrain: 'dist/cli.js' },
     },
     join('dist', 'cli.js'),
@@ -86,7 +86,7 @@ afterAll(() => {
 });
 
 describe('classifyGbrainBinary', () => {
-  test('unrelated npm package named gbrain → foreign', () => {
+  test('unrelated npm package named foresights → foreign', () => {
     const c = classifyGbrainBinary(foreignLink);
     expect(c.kind).toBe('foreign');
     expect(c.detail).toContain('unrelated npm package');
@@ -96,7 +96,7 @@ describe('classifyGbrainBinary', () => {
     expect(classifyGbrainBinary(realBinShapeLink).kind).toBe('real');
   });
 
-  test('garrytan/gbrain repository field → real', () => {
+  test('aimonk2025/gbrain repository field → real', () => {
     expect(classifyGbrainBinary(realRepoFieldLink).kind).toBe('real');
   });
 
@@ -110,7 +110,7 @@ describe('classifyGbrainBinary', () => {
     expect(c.detail).toContain('compiled');
   });
 
-  test('script with no gbrain package.json above → unknown', () => {
+  test('script with no foresights package.json above → unknown', () => {
     expect(classifyGbrainBinary(orphanScript).kind).toBe('unknown');
   });
 
@@ -172,7 +172,7 @@ describe('assessGbrainBinaries', () => {
     const a = assessGbrainBinaries([foreignLink, realBinShapeLink]);
     expect(a.status).toBe('warn');
     expect(a.message).toContain('unrelated npm package');
-    expect(a.message).toContain('bun install -g github:garrytan/gbrain');
+    expect(a.message).toContain('bun install -g github:aimonk2025/gbrain');
   });
 
   test('only foreign on PATH → warn', () => {
@@ -223,26 +223,26 @@ describe('global installs (npm root -g, Bun global dir)', () => {
     makePkg(realGlobal, { name: 'gbrain', version: '0.60.0.0', bin: { gbrain: 'src/cli.ts' } }, join('src', 'cli.ts'));
   });
 
-  test('classifies a global package directory, null when nothing named gbrain is there', () => {
+  test('classifies a global package directory, null when nothing named foresights is there', () => {
     expect(classifyGlobalGbrainPackage(npmForeign)).toMatchObject({ kind: 'foreign', global: true });
     expect(classifyGlobalGbrainPackage(realGlobal)).toMatchObject({ kind: 'real', global: true });
     expect(classifyGlobalGbrainPackage(join(root, 'nowhere', 'gbrain'))).toBeNull();
   });
 
-  test('unrelated global package and no gbrain on PATH → warn with remove, reinstall and #218 recovery', () => {
+  test('unrelated global package and no foresights on PATH → warn with remove, reinstall and #218 recovery', () => {
     const a = assessGbrainBinaries([], { globalPackages: [npmForeign], npmRoot: join(root, 'npm-prefix', 'lib', 'node_modules') });
     expect(a.status).toBe('warn');
     expect(a.message).toContain('installed globally');
-    expect(a.message).toContain('no real gbrain is on PATH');
-    expect(a.message).toContain('bun install -g github:garrytan/gbrain#stable');
+    expect(a.message).toContain('no real foresights is on PATH');
+    expect(a.message).toContain('bun install -g github:aimonk2025/gbrain#stable');
     expect(a.message).toContain('#218');
-    expect(a.message).toContain('gbrain apply-migrations --yes --no-autopilot-install');
+    expect(a.message).toContain('foresights apply-migrations --yes --no-autopilot-install');
     expect(a.fix).toMatchObject({
       argv: ['npm', 'uninstall', '-g', 'gbrain'],
       ask_user: true,
       verify: { argv: ['gbrain', 'doctor', '--only', 'npm_squat', '--json'] },
     });
-    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#stable']);
+    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:aimonk2025/gbrain#stable']);
     expect(a.fix!.then!.then!.argv).toEqual(['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install']);
   });
 
@@ -261,7 +261,7 @@ describe('global installs (npm root -g, Bun global dir)', () => {
   test('only foreign on PATH → fix removes it and reinstalls', () => {
     const a = assessGbrainBinaries([foreignLink], { npmRoot: join(root, 'global', 'node_modules') });
     expect(a.fix!.argv).toEqual(['npm', 'uninstall', '-g', 'gbrain']);
-    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#stable']);
+    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:aimonk2025/gbrain#stable']);
   });
 
   test('a global package PATH already reaches is listed once', () => {
@@ -286,21 +286,21 @@ describe('global installs (npm root -g, Bun global dir)', () => {
     expect(a.fix!.user_message).toContain('package manager that installed it');
   });
 
-  test('an unidentified gbrain on PATH before an unrelated global package → remove only, no reinstall', () => {
+  test('an unidentified foresights on PATH before an unrelated global package → remove only, no reinstall', () => {
     const wrapperDir = join(root, 'wrapper-bin');
     mkdirSync(wrapperDir, { recursive: true });
     writeFileSync(join(wrapperDir, 'gbrain'), '#!/bin/sh\nexec bun "$HOME/gbrain/src/cli.ts" "$@"\n');
     const a = assessGbrainBinaries([join(wrapperDir, 'gbrain')], { globalPackages: [npmForeign], npmRoot: join(root, 'npm-prefix', 'lib', 'node_modules') });
     expect(a.status).toBe('warn');
-    expect(a.message).not.toContain('no real gbrain is on PATH');
+    expect(a.message).not.toContain('no real foresights is on PATH');
     expect(a.fix!.argv).toEqual(['npm', 'uninstall', '-g', 'gbrain']);
     expect(a.fix!.then).toBeUndefined();
   });
 
-  test('doctor running from this project counts as a real gbrain → remove only, no reinstall', () => {
+  test('doctor running from this project counts as a real foresights → remove only, no reinstall', () => {
     const a = assessGbrainBinaries([], { globalPackages: [npmForeign], npmRoot: join(root, 'npm-prefix', 'lib', 'node_modules'), selfDir: join(realGlobal, 'src') });
     expect(a.status).toBe('warn');
-    expect(a.message).not.toContain('no real gbrain is on PATH');
+    expect(a.message).not.toContain('no real foresights is on PATH');
     expect(a.fix!.then).toBeUndefined();
   });
 

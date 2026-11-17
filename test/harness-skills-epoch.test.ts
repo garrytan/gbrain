@@ -5,7 +5,7 @@
  * HTTP transport on PGLite (and on Postgres when DATABASE_URL is set).
  *
  * Protects: doctor's epoch comparison (`supersededEnrollments`) names the
- * stale receipt; `gbrain bootstrap harness --refresh-skills`
+ * stale receipt; `foresights bootstrap harness --refresh-skills`
  * (`refreshHarnessSkills`) makes the receipt and the native router adopt the
  * current epoch under the recorded credential; a local leave whose own epoch
  * was superseded completes instead of staying `remote_membership_pending`

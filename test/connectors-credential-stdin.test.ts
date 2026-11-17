@@ -45,7 +45,7 @@ async function runCli(args: string[], stdin: 'silent' | 'partial' | 'devnull') {
 
 describe('credential stdin recovery', () => {
   test('the credential message for a silent pipe names only the stdin pipe', () => {
-    const msg = stdinFailureMessage({ kind: 'timeout', phase: 'first_byte', bytes: 0 }, "printf '%s' \"$KEY\" | gbrain connectors auth fireflies --token -", { credential: true });
+    const msg = stdinFailureMessage({ kind: 'timeout', phase: 'first_byte', bytes: 0 }, "printf '%s' \"$KEY\" | foresights connectors auth fireflies --token -", { credential: true });
     expect(msg).toContain('stdin was open but silent');
     expect(msg).not.toMatch(ARGV_HINT);
     expect(msg).toContain('Never put the credential on the command line');

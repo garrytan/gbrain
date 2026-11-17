@@ -1,5 +1,5 @@
 /**
- * GST-1943: `gbrain storage adopt` on a repo-less brain (PGLite; the database is the record). Protects:
+ * GST-1943: `foresights storage adopt` on a repo-less brain (PGLite; the database is the record). Protects:
  *   - the preview maps each interim stored-object page under the prefix (never the index page) onto a card, lists every
  *     refused field with its reason, and writes nothing;
  *   - the apply needs the preview's plan_hash (a stale one refuses preview_changed) and each refused field named with

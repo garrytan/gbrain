@@ -3,7 +3,7 @@
  *
  * Mirrors the 6-tier priority chain from source-resolver.test.ts but
  * asserts the returned `tier` label matches the winning tier.
- * Powers `gbrain sources current` so users can verify both the
+ * Powers `foresights sources current` so users can verify both the
  * resolved source AND the reason it resolved.
  */
 

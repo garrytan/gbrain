@@ -21,17 +21,17 @@ import { readLocalWriter, withVerifiedLocalRegistration } from '../core/persiste
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 
 export const RECONCILE_HELP = `Usage:
-  gbrain sources reconcile <source> <slug> --brain <id> [--preview] [--adopt-slug-path] [--out <new-file>] [--json]
-  gbrain sources reconcile <source> <slug> --brain <id> --preview --from <preview-file>
+  foresights sources reconcile <source> <slug> --brain <id> [--preview] [--adopt-slug-path] [--out <new-file>] [--json]
+  foresights sources reconcile <source> <slug> --brain <id> --preview --from <preview-file>
     --decisions <decisions-file> --out <new-file> [--json]
-  gbrain sources reconcile <source> <slug> --brain <id> --preview --auto-additive [--accept-suggested]
+  foresights sources reconcile <source> <slug> --brain <id> --preview --auto-additive [--accept-suggested]
     --out <new-file> [--json]
-  gbrain sources reconcile <source> <slug> --brain <id> --apply <resolved-preview-file>
+  foresights sources reconcile <source> <slug> --brain <id> --apply <resolved-preview-file>
     --request-id <uuid> [--json]
-  gbrain sources reconcile <source> --brain <id> --audit [--classify] [--limit <1-100>] [--after <slug>] [--json]
-  gbrain sources reconcile <source> --brain <id> --audit --conflicts [--window <n>] [--limit <1-100>] [--after <cursor>] [--json]
-  gbrain sources reconcile <source> <slug> --brain <id> --backups [--limit <1-100>] [--after <request-uuid>] [--json]
-  gbrain sources reconcile <source> <slug> --brain <id> --remove-backup <exact-reference> [--json]
+  foresights sources reconcile <source> --brain <id> --audit [--classify] [--limit <1-100>] [--after <slug>] [--json]
+  foresights sources reconcile <source> --brain <id> --audit --conflicts [--window <n>] [--limit <1-100>] [--after <cursor>] [--json]
+  foresights sources reconcile <source> <slug> --brain <id> --backups [--limit <1-100>] [--after <request-uuid>] [--json]
+  foresights sources reconcile <source> <slug> --brain <id> --remove-backup <exact-reference> [--json]
 
 Preview is the default and never changes canonical content. A database-only
 page (no recorded origin, for example one written while the source was unbound)
@@ -47,7 +47,7 @@ before applying. Apply preserves both originals and uses the current canonical
 owner without changing ownership, activation, roots, or sync checkpoints.
 The caller must already have a trusted CLI registration whose original and
 current grants permit put_page for this source and exact slug.
-Read a pending apply's receipt with gbrain write-request --brain <id> -- <request-id>
+Read a pending apply's receipt with foresights write-request --brain <id> -- <request-id>
 (MCP: get_write_request), which needs its own operation grant; identical apply
 replay is available without that receipt helper. Inspect the private artifact's .conflicts
 and .result locally before applying; stdout contains only a summary.
@@ -71,7 +71,7 @@ adds each drifted page's structural classification and counts, never values.
 the owner host whether the file still differs and its drift class), scanning the
 newest --window request sequences (default 100000, at most 1000000); --after takes
 the previous page's next cursor and complete is true only when the window reached
-the oldest receipt. Resolve the listed pages with gbrain repair file-drift.
+the oldest receipt. Resolve the listed pages with foresights repair file-drift.
 Backups persist until explicitly removed. Removal deletes that private history,
 not the page or immutable receipt, and refuses nonterminal/recovering requests.`;
 
@@ -144,7 +144,7 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   if (flags.has('--classify') && !audit) throw opError('invalid_params', '--classify is only valid with --audit.',
     'Add --audit (with --source), or drop --classify.');
   if (flags.has('--conflicts') && !audit) throw opError('invalid_params', '--conflicts is only valid with --audit.',
-    `Add --audit: gbrain sources reconcile ${source} --brain host --audit --conflicts.`);
+    `Add --audit: foresights sources reconcile ${source} --brain host --audit --conflicts.`);
   if (flags.has('--conflicts') && flags.has('--classify')) throw opError('invalid_params', '--conflicts and --classify are separate audits.',
     'Run --audit --conflicts for the conflict receipts grouped by slug (it classifies pages whose file still differs), or --audit --classify for the page-by-page drift scan.');
   if (flags.has('--window') && !flags.has('--conflicts')) throw opError('invalid_params', '--window is only valid with --audit --conflicts.',

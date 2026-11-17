@@ -1,7 +1,7 @@
 /**
  * #7147: a one-shot read verb through a transaction-mode pooler pays one
  * network round trip per statement, so startup statements are the wall clock
- * of every `gbrain entity` / `gbrain get` call. This pins the statements a cold
+ * of every `foresights entity` / `foresights get` call. This pins the statements a cold
  * read spends on the config table and on managed-writer maintenance, counted
  * at the socket by the wire trace (`GBRAIN_SQL_TRACE`), never in milliseconds.
  *
@@ -70,7 +70,7 @@ describeDatabase('cold read verb startup through a transaction pooler (#7147)', 
   }, 180_000);
 
   for (const args of [['entity', 'Alice Example'], ['get', 'people/alice-example']]) {
-    test(`gbrain ${args[0]}: config reads come from snapshots, and no retired-marker cleanup runs`, async () => {
+    test(`foresights ${args[0]}: config reads come from snapshots, and no retired-marker cleanup runs`, async () => {
       const { statements } = await tracedRead(args, `budget-${args[0]}`);
       const config = configStatements(statements);
       expect(config.length, config.map(s => s.sql).join('\n')).toBeLessThanOrEqual(2);
@@ -87,7 +87,7 @@ describeDatabase('cold read verb startup through a transaction pooler (#7147)', 
   const sql = (s: StatementRecord) => s.sql.replace(/\s+/g, ' ').trim();
   const show = (rows: StatementRecord[]) => rows.map(sql).join('\n');
   for (const args of [['search', 'Acme'], ['query', 'who works at Acme'], ['get', 'people/alice-example'], ['entity', 'Alice Example'], ['recall', 'Alice Example']]) {
-    test(`gbrain ${args[0]}: one config read, one sources read, one custody read, two connections`, async () => {
+    test(`foresights ${args[0]}: one config read, one sources read, one custody read, two connections`, async () => {
       const { statements } = await tracedRead(args, `folded-${args[0]}`);
       const config = configStatements(statements);
       expect(config.map(sql), show(config)).toEqual(['SELECT key, value FROM config']);
@@ -101,7 +101,7 @@ describeDatabase('cold read verb startup through a transaction pooler (#7147)', 
     }, 120_000);
   }
 
-  test('gbrain search: the search-statistics guard is one statement', async () => {
+  test('foresights search: the search-statistics guard is one statement', async () => {
     const { statements } = await tracedRead(['search', 'Acme'], 'folded-statistics');
     const probes = statements.filter(s => s.sql.includes('pg_stats') || /reltuples::float8 AS reltuples FROM pg_class WHERE oid = 'pages'/.test(s.sql) || s.sql.includes('pg_statistic_ext'));
     expect(probes.length, show(probes)).toBe(1);

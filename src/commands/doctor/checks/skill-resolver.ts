@@ -1,6 +1,6 @@
 /**
  * `skill_resolver` (GBRA-377 PR B): the skill-resolver hook lane that
- * `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` turns on
+ * `foresights setup <claude-code|codex|hermes> --skill-loading resolve` turns on
  * (src/core/skills/resolver/hook-lane.ts). Per harness it reports the lane's
  * hook (wired, untrusted in Codex or unapproved in Hermes, outdated when it predates the SessionStart
  * compaction reset, or missing), each catalog's freshness
@@ -37,11 +37,11 @@ export interface SkillResolverView {
   config: 'ok' | 'absent' | 'unreadable';
   harnesses: SkillResolverHarnessView[];
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number> };
-  /** The OpenClaw plugin (gbrain setup openclaw --skill-loading resolve|shadow), when any of it exists. */
+  /** The OpenClaw plugin (foresights setup openclaw --skill-loading resolve|shadow), when any of it exists. */
   openclaw?: OpenclawSkillView;
-  /** The Pi extension (gbrain setup pi --skill-loading resolve), when any of it exists. */
+  /** The Pi extension (foresights setup pi --skill-loading resolve), when any of it exists. */
   pi?: PiSkillView;
-  /** Cursor's pinned-skills rules (gbrain setup cursor --skill-loading resolve), when a project is recorded. */
+  /** Cursor's pinned-skills rules (foresights setup cursor --skill-loading resolve), when a project is recorded. */
   cursor?: CursorSkillView;
 }
 
@@ -114,8 +114,8 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
   if (v.config === 'unreadable') {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} The hook lane prints nothing until it can read it.`, details: { ...details, code: 'skill_resolver_config_unreadable' },
       fix: { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: 'docs/guides/skill-resolver.md#skill_resolver_config_unreadable',
-        why: 'gbrain never rewrites a config file it cannot parse; the lane and setup leave it alone.',
-        user_message: `gbrain's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: gbrain setup <claude-code|codex|hermes> --skill-loading resolve` } };
+        why: 'foresights never rewrites a config file it cannot parse; the lane and setup leave it alone.',
+        user_message: `foresights's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: foresights setup <claude-code|codex|hermes> --skill-loading resolve` } };
   }
   const broken = v.harnesses.find((h) => h.on && (h.hook !== 'wired' || !h.catalogs.some((c) => isTurnCatalog(h.harness, c.name))));
   if (broken) {
@@ -129,19 +129,19 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
   if (oc) {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
       fix: { argv: ['gbrain', 'setup', 'openclaw', '--skills-index-only'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
-        why: 'Rebuilds the OpenClaw catalogs, the library and the plugin state without running any OpenClaw command; gbrain setup openclaw --skill-loading resolve reinstalls the plugin itself.' } };
+        why: 'Rebuilds the OpenClaw catalogs, the library and the plugin state without running any OpenClaw command; foresights setup openclaw --skill-loading resolve reinstalls the plugin itself.' } };
   }
   const pi = v.pi ? describePiSkillView(v.pi).problem : null;
   if (pi) {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} Pi: ${pi.what}.`, details: { ...details, code: pi.code },
       fix: { argv: setupArgv('pi'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${pi.code}`,
-        why: 'Rebuilds the pi-user catalog, the library and the state, and rewrites the Pi extension; gbrain setup pi --skill-loading off removes it instead.' } };
+        why: 'Rebuilds the pi-user catalog, the library and the state, and rewrites the Pi extension; foresights setup pi --skill-loading off removes it instead.' } };
   }
   const cursor = v.cursor ? describeCursorSkillView(v.cursor).problem : null;
   if (cursor) {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} Cursor: ${cursor.what}.`, details: { ...details, code: cursor.code },
       fix: { argv: setupArgv('cursor'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${cursor.code}`,
-        why: `Run it in ${cursor.project}: it rebuilds that project's catalog and rewrites its pinned-skills rule; gbrain setup cursor --skill-loading off there removes them instead.` } };
+        why: `Run it in ${cursor.project}: it rebuilds that project's catalog and rewrites its pinned-skills rule; foresights setup cursor --skill-loading off there removes them instead.` } };
   }
   return { name, status: 'ok', message: describeSkillResolver(v), details };
 }

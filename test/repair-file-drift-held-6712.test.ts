@@ -1,5 +1,5 @@
 /**
- * #6712 PR 4b (design v3.2 §4, probe dx-native-1): `gbrain repair file-drift --held --side <side> [--state <state>]`
+ * #6712 PR 4b (design v3.2 §4, probe dx-native-1): `foresights repair file-drift --held --side <side> [--state <state>]`
  * resolves the source's held `file_drift` pages of one Decision.
  *   - `--side deleted` without `--state` is refused (`file_drift_state_required`): in each deleted state --prefer file and
  *     --prefer database do opposite things;
@@ -202,7 +202,7 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
     const mixed = await refusal(run(f.sourceId, { prefer: 'file' }));
     expect(mixed.code).toBe('file_drift_mixed_selection');
     expect(mixed.message).toContain('3 different Decisions');
-    expect(mixed.suggestion).toContain(`gbrain repair file-drift --source ${f.sourceId} --held --side both --prefer file`);
+    expect(mixed.suggestion).toContain(`foresights repair file-drift --source ${f.sourceId} --held --side both --prefer file`);
     expect(mixed.suggestion).toContain('--held --side deleted --state tombstone_edited --prefer file');
     expect(mixed.suggestion).toContain('--held --side deleted --state purged_differs --prefer file');
     const states = await refusal(run(f.sourceId, { prefer: 'file', only: ['notes/tomb.md', 'notes/purged.md'] }));

@@ -1,5 +1,5 @@
 /**
- * gbrain integrity — scan, report, and repair brain-integrity issues.
+ * foresights integrity — scan, report, and repair brain-integrity issues.
  *
  * The user-visible shipping milestone for the Knowledge Runtime delta.
  * Uses PR 1's resolver SDK + PR 2's BrainWriter to target two known pain
@@ -10,9 +10,9 @@
  *   2. Dead or rotted URLs in existing citations
  *
  * Subcommands:
- *   gbrain integrity check              Read-only report to stdout
- *   gbrain integrity auto               Three-bucket repair with confidence
- *   gbrain integrity auto --dry-run     Same as auto, no writes
+ *   foresights integrity check              Read-only report to stdout
+ *   foresights integrity auto               Three-bucket repair with confidence
+ *   foresights integrity auto --dry-run     Same as auto, no writes
  *
  * Three-bucket confidence (contract with x_handle_to_tweet resolver):
  *   >= 0.8 → auto-repair through BrainWriter transaction
@@ -367,8 +367,8 @@ export interface IntegrityScanResult {
 
 /**
  * Read-only integrity scan over the engine's pages. No network, no writes,
- * no resolver calls. Called by `gbrain integrity check` for the full report
- * and by `gbrain doctor` (non-fast) for a sampled health signal.
+ * no resolver calls. Called by `foresights integrity check` for the full report
+ * and by `foresights doctor` (non-fast) for a sampled health signal.
  *
  * Caller owns the engine lifecycle.
  */
@@ -452,7 +452,7 @@ async function scanIntegrityBatch(
   const typeCondition = typeFilter ? `AND slug LIKE $${params.push(`${typeFilter}/%`)}` : '';
   // Boolean validate is the documented contract; stringly-typed 'false' (quoted
   // YAML) diverges from the sequential path's strict === false check. Intentional
-  // — gbrain lint should reject stringly-typed validate at write time.
+  // — foresights lint should reject stringly-typed validate at write time.
   const validateCondition = `AND (frontmatter->>'validate' IS NULL OR frontmatter->>'validate' != 'false')`;
 
   // v0.32.8: scan ONE row per (source_id, slug) pair, not one per slug.
@@ -708,7 +708,7 @@ async function cmdAuto(args: string[]): Promise<void> {
 
 function cmdReview(): void {
   if (!existsSync(getReviewFile())) {
-    console.log(`No review queue yet. Run: gbrain integrity auto --confidence 0.8`);
+    console.log(`No review queue yet. Run: foresights integrity auto --confidence 0.8`);
     return;
   }
   const content = readFileSync(getReviewFile(), 'utf-8');
@@ -767,7 +767,7 @@ async function repairBareTweet(args: RepairArgs): Promise<void> {
     // until a more thorough repair pass removes the bare phrase.
     await tx.appendTimeline(slug, {
       date: dateISO,
-      source: 'gbrain integrity --auto',
+      source: 'foresights integrity --auto',
       summary: `Bare-tweet reference repaired (line ${hit.line}): "${truncate(hit.rawLine, 80)}"`,
       detail: cite,
     });
@@ -846,7 +846,7 @@ export function extractXHandleFromFrontmatter(fm: Record<string, unknown> | unde
 async function connect(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init');
+    console.error('No brain configured. Run: foresights init');
     process.exit(1);
   }
   const engine = await createEngine(toEngineConfig(config));
@@ -881,7 +881,7 @@ function truncate(s: string, n: number): string {
 }
 
 export function printUsage(): void {
-  console.log(`Usage: gbrain integrity <subcommand> [options]
+  console.log(`Usage: foresights integrity <subcommand> [options]
 
 Subcommands:
   check                         Read-only report (pages scanned, bare tweets found)

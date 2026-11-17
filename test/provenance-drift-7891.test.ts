@@ -1,5 +1,5 @@
 /**
- * #7891 / #7918 part 1: doctor `provenance_stamp_drift` and `gbrain repair provenance`.
+ * #7891 / #7918 part 1: doctor `provenance_stamp_drift` and `foresights repair provenance`.
  *
  * 1. Protects: a page whose provenance stamps and lowering marker a remote write removed before #7892 is reported
  *    read-only by doctor; the repair previews it without writing anything, and `--apply --expect <hash> --yes` puts the
@@ -134,7 +134,7 @@ for (const kind of testBackends()) {
         expect(dry.affected).toBe(1);
         expect(dry.listing.map((entry: Record<string, string>) => [entry.class, entry.item.split(' ')[0]])).toEqual([['remote', `default:${slug}`]]);
         expect(dry.listing[0].detail).toContain('ingested_via (none) -> webhook');
-        expect(dry.apply_command).toBe(`gbrain repair provenance --source default --apply --expect ${dry.preview_hash} --yes`);
+        expect(dry.apply_command).toBe(`foresights repair provenance --source default --apply --expect ${dry.preview_hash} --yes`);
         expect({ revision: (await page(slug)).revision, tier: await tierOf(slug), file: repo ? fs.readFileSync(fileOf(slug), 'utf8') : null }).toEqual(before);
         expect(await proposals(slug)).toEqual([]);
       }, 120_000);
@@ -209,7 +209,7 @@ for (const kind of testBackends()) {
         expect(fs.readFileSync(fileOf(slug), 'utf8')).toBe(edited);
         const dry = await run(false);
         expect(dry.affected).toBe(0);
-        expect(dry.listing.map((entry: Record<string, string>) => [entry.class, entry.detail])).toEqual([['needs_review', expect.stringContaining('gbrain sync first')]]);
+        expect(dry.listing.map((entry: Record<string, string>) => [entry.class, entry.detail])).toEqual([['needs_review', expect.stringContaining('foresights sync first')]]);
         expect(fs.readFileSync(fileOf(slug), 'utf8')).toBe(edited);
         expect(await proposals(slug)).toEqual([]);
       }, 120_000);
@@ -224,7 +224,7 @@ for (const kind of testBackends()) {
         expect(dry.listing.map((entry: Record<string, string>) => entry.class)).toEqual(['needs_review']);
       }, 120_000);
 
-      test.skipIf(!repo)('a page of a clone gbrain pulls is listed needs_review, not repaired in the database alone', async () => {
+      test.skipIf(!repo)('a page of a clone foresights pulls is listed needs_review, not repaired in the database alone', async () => {
         const slug = 'inbox/owned-clone';
         await seed(slug, STORED);
         await rewrite(slug, {}, 'oauth_client');

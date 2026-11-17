@@ -460,12 +460,12 @@ test('an exhausted projection retry reports page_projection_conflict with the ch
       code: 'page_projection_conflict', error: 'page_projection_conflict', class: 'retryable', retryable: true,
       message: `The search projection of ${slug} (source ${sourceId}) changed during preparation (chunk_digest) at the same page revision; nothing was installed. Re-read its current snapshot before retrying.`,
       detail: 'changed: chunk_digest',
-      suggestion: `Re-run gbrain reindex-code; it re-reads the current projection. If it conflicts again, another worker is still installing: wait for it to finish, then re-run. Next: gbrain get --source ${sourceId} -- ${slug}`,
-      fix: { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], command: `gbrain get --source ${sourceId} -- ${slug}`, actor: 'agent' },
+      suggestion: `Re-run foresights reindex-code; it re-reads the current projection. If it conflicts again, another worker is still installing: wait for it to finish, then re-run. Next: foresights get --source ${sourceId} -- ${slug}`,
+      fix: { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], command: `foresights get --source ${sourceId} -- ${slug}`, actor: 'agent' },
     });
     expect(json.why).toContain(`installed a newer search projection of ${slug}`);
     const text = renderCliError(error, { json: false, command: 'reindex-code', tty: false });
-    expect(text.stderr).toBe(`Error [page_projection_conflict]: ${json.message}\nFix: gbrain get --source ${sourceId} -- ${slug}\nWhy: ${json.why}\nDocs: ${json.docs}\n`);
+    expect(text.stderr).toBe(`Error [page_projection_conflict]: ${json.message}\nFix: foresights get --source ${sourceId} -- ${slug}\nWhy: ${json.why}\nDocs: ${json.docs}\n`);
     expect(json.docs).toContain('docs/guides/repair.md#page-projection-conflict');
   }
 });

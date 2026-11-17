@@ -1,20 +1,20 @@
 /**
- * #5312: gbrain's own IPC endpoints live INSIDE the PGLite data dir
+ * #5312: foresights's own IPC endpoints live INSIDE the PGLite data dir
  * (`resolveSocketPathForConfig` → `<database_path>/.gbrain-<kind>.sock`), and
  * PGLite's `dumpDataDir` cannot read a non-regular file, so one socket left by
- * a killed `gbrain serve` wedges every later `backup create` until a human
+ * a killed `foresights serve` wedges every later `backup create` until a human
  * deletes it. The sweep below runs under the engine's writer lock, right
- * before the dump, and removes ONLY those two gbrain artefacts, ONLY when their
+ * before the dump, and removes ONLY those two foresights artefacts, ONLY when their
  * holder is provably dead (no bind claim holder AND no live listener). Any
  * other socket, FIFO or symlink at the data dir's top level is left in place
  * and named, so the typed `backup_dump_failed` refusal tells the operator what
  * blocks the dump instead of a bare WASI errno. Symlinks are never followed and
  * regular files are never deleted: the engine lock proves there is no PGLite
- * owner, not that an arbitrary endpoint belongs to a dead gbrain process.
+ * owner, not that an arbitrary endpoint belongs to a dead foresights process.
  *
  * #5312 Windows half: Bun cannot `lstat` a stale AF_UNIX reparse point (EACCES),
  * so classifying first threw before the probe/claim/remove sequence ran. An
- * `unreadable` entry at one of gbrain's own socket paths skips the
+ * `unreadable` entry at one of foresights's own socket paths skips the
  * symlink/socket classification and goes to the probe and the bind claim;
  * removal happens only through the native tag-verifying remover
  * (`binding.removeStaleWindowsSocket`, which opens the leaf with
@@ -31,7 +31,7 @@ import { AgentInstallError } from '../agent-install/state.ts';
 export type KeptArtefactReason = 'live_listener' | 'symlink' | 'not_a_socket' | 'foreign_socket' | 'foreign_fifo' | 'unreadable';
 
 export interface RuntimeArtefactSweep {
-  /** gbrain runtime sockets whose holder was dead; unlinked before the dump. */
+  /** foresights runtime sockets whose holder was dead; unlinked before the dump. */
   removed: string[];
   /** Non-regular entries the sweep refused to touch, with the reason it left each one. */
   kept: { path: string; reason: KeptArtefactReason }[];
@@ -52,7 +52,7 @@ function entryStat(path: string): fs.Stats | 'missing' | 'unreadable' {
   }
 }
 
-/** Remove gbrain's dead runtime sockets from `dataDir`; list every other non-regular top-level entry. Call only while holding the PGLite writer lock. */
+/** Remove foresights's dead runtime sockets from `dataDir`; list every other non-regular top-level entry. Call only while holding the PGLite writer lock. */
 export async function sweepStaleRuntimeArtefacts(dataDir: string): Promise<RuntimeArtefactSweep> {
   const dir = resolve(dataDir);
   const sweep: RuntimeArtefactSweep = { removed: [], kept: [] };
@@ -107,12 +107,12 @@ export async function sweepStaleRuntimeArtefacts(dataDir: string): Promise<Runti
 }
 
 const KEPT_REASON_TEXT: Record<KeptArtefactReason, string> = {
-  live_listener: 'a gbrain socket something is still listening on',
+  live_listener: 'a foresights socket something is still listening on',
   symlink: 'a symbolic link (not followed)',
-  not_a_socket: 'a regular file where a gbrain socket is expected',
-  foreign_socket: 'a socket gbrain does not own',
-  foreign_fifo: 'a FIFO gbrain does not own',
-  unreadable: 'an entry this runtime cannot inspect (on Windows, a stale gbrain socket the native verifier did not remove)',
+  not_a_socket: 'a regular file where a foresights socket is expected',
+  foreign_socket: 'a socket foresights does not own',
+  foreign_fifo: 'a FIFO foresights does not own',
+  unreadable: 'an entry this runtime cannot inspect (on Windows, a stale foresights socket the native verifier did not remove)',
 };
 
 /** The typed refusal for a `dumpDataDir` failure: the WASI errno plus every non-regular entry the sweep left in the data dir. */

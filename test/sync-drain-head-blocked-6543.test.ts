@@ -19,7 +19,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import type { SyncResult } from '../src/commands/sync.ts';
 
-const RESUME = 'gbrain sync --source s';
+const RESUME = 'foresights sync --source s';
 const done: SyncResult = { status: 'synced', fromCommit: 'a', toCommit: 'b', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
 const fence: HeadBlocker = { predicate: 'refresh_fence', ids: ['ref-1'], state: 'fenced', owner: { kind: 'refresh', pid: null, live: false, restart_required: false }, intervention: true };
 const hold: HeadBlocker = { predicate: 'root_hold', ids: ['req-ahead'], state: 'running', owner: { kind: 'serve', pid: 77, live: true, restart_required: false }, intervention: false };
@@ -35,7 +35,7 @@ describe('in-pass governor: head blocker classification', () => {
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled',
       stall: { cause: 'head_blocked', in_pass: true, head_request_id: 'req-head', claimable_here: false, consumer: 'self(full)', blocked_by: { predicate: 'refresh_fence', ids: ['ref-1'] } } });
     const next = drainNext(result, RESUME, 's')!;
-    expect(next).toMatchObject({ code: 'drain_stalled', cause: 'head_blocked', safe_to_loop: false, command: 'gbrain sources refresh s --resume', docs: 'docs/guides/write-refusals.md#head-blocked' });
+    expect(next).toMatchObject({ code: 'drain_stalled', cause: 'head_blocked', safe_to_loop: false, command: 'foresights sources refresh s --resume', docs: 'docs/guides/write-refusals.md#head-blocked' });
     expect(next.fix).toMatchObject({ argv: ['gbrain', 'sources', 'refresh', 's', '--resume'], next: 'run' });
     const summary = formatDrainSummary(result, RESUME, 's').join('\n');
     expect(summary).toContain('cause=head_blocked');
@@ -50,7 +50,7 @@ describe('in-pass governor: head blocker classification', () => {
       pass: () => new Promise<SyncResult>(() => undefined) });
     const next = drainNext(result, RESUME, 's')!;
     expect(next).toMatchObject({ cause: 'head_blocked', fix: { actor: 'host_admin', next: 'tell_user_to_run' } });
-    expect(next.why).toContain('Restart the gbrain serve process (pid 4242)');
+    expect(next.why).toContain('Restart the foresights serve process (pid 4242)');
   });
 
   test('a live blocker (a foreground publication ahead) lasting several ticks never stops the drain; the pass completes', async () => {
@@ -122,7 +122,7 @@ describe('head blocker probe over a real brain', () => {
       const status = await readWriterDiagnostics(engine);
       const row = (status.blockers as Array<Record<string, unknown>>).find(b => b.request_id === head.request_id)!;
       expect(row).toMatchObject({ claimable_here: false, blocked_by: { predicate: 'refresh_fence', ids: [refresh!.id] } });
-      expect(String(row.next_action)).toContain(`gbrain sources refresh ${id} --resume`);
+      expect(String(row.next_action)).toContain(`foresights sources refresh ${id} --resume`);
       expect(row.cancel_command).toBeUndefined();
 
       // A refresh process holding the lock is live work: the drain keeps waiting.

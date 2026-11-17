@@ -1,5 +1,5 @@
 /**
- * G5 lane C (#6023 follow-up): `gbrain repair consolidate-ties` on a fenced
+ * G5 lane C (#6023 follow-up): `foresights repair consolidate-ties` on a fenced
  * fact is a projection repair. The pre-#6023 consolidation writeback closed a
  * tied fact in the database only (`UPDATE facts SET valid_until ...` in the
  * managed preparer and the unmanaged writer, never a fence edit), so the

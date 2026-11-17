@@ -56,7 +56,7 @@ const find_orphans: Operation = {
     // ctx.auth.allowedSources) via the canonical sourceScopeOpts ladder.
     // Pre-fix, find_orphans returned brain-wide orphans regardless of a
     // source-bound OAuth client's scope — a read leak in the v0.34.1
-    // source-isolation class. Local CLI callers route through `gbrain
+    // source-isolation class. Local CLI callers route through `foresights
     // orphans --source` instead (ctx.remote === false → empty scope here).
     // #5891: a named source narrows the caller's scope and never widens it.
     // A remote caller's inbound links count only from referrers in its scope.

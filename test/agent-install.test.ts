@@ -87,7 +87,7 @@ console.log(JSON.stringify({ anthropic: cfg.env.ANTHROPIC_BASE_URL, openai: cfg.
 test('missing runtime reports the recovery owned by its installer', async () => {
   const launcher = join(temporary, 'gbrain');
   writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: join(temporary, 'missing'),
-    repairHint: 'Reinstall GBrain, then repeat connect with your private handoff.' }), { mode: 0o700 });
+    repairHint: 'Reinstall Foresights, then repeat connect with your private handoff.' }), { mode: 0o700 });
   const child = Bun.spawn(['bash', launcher], { stdout: 'pipe', stderr: 'pipe' });
   const errors = await new Response(child.stderr).text();
   expect(await child.exited).toBe(1);

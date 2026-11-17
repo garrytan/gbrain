@@ -103,7 +103,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         }
         const hold = JSON.parse(readFileSync(join(b.root, '.github-source.json'), 'utf8')).item_holds as { items: Record<string, { code: string; state: string; message: string }> };
         expect(hold.items['acme-example/app#1']).toMatchObject({ code: 'file_database_drift', state: 'held' });
-        expect(hold.items['acme-example/app#1']!.message).toContain(`gbrain sync --source ${SOURCE}`);
+        expect(hold.items['acme-example/app#1']!.message).toContain(`foresights sync --source ${SOURCE}`);
         expect(await b.body(GOOD)).toContain('Upstream 1');
         expectOthersUnchanged(before, await snapshotItems(b.engine, SOURCE), { expectProgress: [GOOD], changed: ['gh/acme-example/app'] });
       });

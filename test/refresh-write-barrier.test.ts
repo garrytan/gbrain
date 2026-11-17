@@ -7,7 +7,7 @@
  * a consumer claim without the barrier's session declaration (an older binary) cannot move a deferred row; a replay of the
  * request id returns the same receipt; a write past the wait limit ends `refresh_barrier_expired` with its counters
  * released; a token revoked while its write waits ends it `permission_denied`; every write during a refresh is deferred, with no per-refresh cap; a live consumer without the capability keeps the
- * refusal; a repo-less source is never deferred; `gbrain upgrade --check-downgrade` exits 3 while a deferred write waits.
+ * refusal; a repo-less source is never deferred; `foresights upgrade --check-downgrade` exits 3 while a deferred write waits.
  * Seams: the real refresh state machine paused at its drained boundary (`hooks.boundary`); GBRAIN_REFRESH_BARRIER.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
@@ -367,7 +367,7 @@ test('GST-1582: writes during one refresh are all deferred, none refused, and ea
   }
 }), 180_000);
 
-test('gbrain upgrade --check-downgrade exits 3 downgrade_blocked_deferred_writes while a deferred write waits, 0 once it drained', () => each(async f => {
+test('foresights upgrade --check-downgrade exits 3 downgrade_blocked_deferred_writes while a deferred write waits, 0 once it drained', () => each(async f => {
   const engine = new Proxy(f.engine, { get: (target, key) => key === 'disconnect' ? async () => undefined : Reflect.get(target, key, target) });
   const check = async () => {
     _resetCliExitVerdictForTests();
@@ -631,7 +631,7 @@ async function crashAtFenced(f: RefreshFixture, moveHead: () => string): Promise
   return { deferred, landed };
 }
 
-test('GBEV-44: a refresh killed at fenced after its drain landed a gbrain commit resumes: the row aborts, nothing is reset and its deferred write commits', () => each(async f => {
+test('GBEV-44: a refresh killed at fenced after its drain landed a foresights commit resumes: the row aborts, nothing is reset and its deferred write commits', () => each(async f => {
   const { deferred, landed } = await crashAtFenced(f, () => {
     const sha = commitFile(f.root, 'alpha/drained.md', page('Drained', 'A write admitted before the fence.'), 'gbrain: persist canonical memory update');
     recordCommit(f.root, { sha, writer: 'effect' });
@@ -641,13 +641,13 @@ test('GBEV-44: a refresh killed at fenced after its drain landed a gbrain commit
   expect(resumed.status).toBe('abandoned');
   const [row] = await f.refreshRows();
   expect(row.state).toBe('aborted');
-  expect((row.outcome.refusal as { cause: string }).cause).toContain("gbrain's own commits");
+  expect((row.outcome.refusal as { cause: string }).cause).toContain("foresights's own commits");
   expect(f.head()).toBe(landed);
   expect((await settle(f, deferred)).state).toBe('committed');
 }), 180_000);
 
 test('#8766 review: a refresh killed at fenced after HEAD moved still aborts on resume when the commit ledger cannot be read', () => each(async f => {
-  const { landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/foreign.md', page('Foreign', 'A commit gbrain did not make.'), 'foreign commit'));
+  const { landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/foreign.md', page('Foreign', 'A commit foresights did not make.'), 'foreign commit'));
   const { current } = ledgerFiles(ledgerLocation(f.root)!.common);
   rmSync(current, { force: true });
   mkdirSync(current, { recursive: true });
@@ -656,14 +656,14 @@ test('#8766 review: a refresh killed at fenced after HEAD moved still aborts on 
     expect(resumed.status).toBe('abandoned');
     const [row] = await f.refreshRows();
     expect(row.state).toBe('aborted');
-    expect((row.outcome.refusal as { cause: string }).cause).toContain('a commit or checkout gbrain did not make');
+    expect((row.outcome.refusal as { cause: string }).cause).toContain('a commit or checkout foresights did not make');
     expect(f.head()).toBe(landed);
   } finally {
     rmSync(current, { recursive: true, force: true });
   }
 }), 180_000);
 
-test('GBEV-44: the owner scan aborts an orphaned fenced row whose HEAD moved only through gbrain commits before the merge', () => each(async f => {
+test('GBEV-44: the owner scan aborts an orphaned fenced row whose HEAD moved only through foresights commits before the merge', () => each(async f => {
   const { deferred, landed } = await crashAtFenced(f, () => {
     const first = commitFile(f.root, 'alpha/drained-1.md', page('Drained one', 'A write admitted before the fence.'), 'gbrain: persist canonical memory update');
     recordCommit(f.root, { sha: first, writer: 'effect' });
@@ -680,8 +680,8 @@ test('GBEV-44: the owner scan aborts an orphaned fenced row whose HEAD moved onl
 }), 180_000);
 
 
-test('GST-1674: a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge resumes: the row aborts and its deferred write commits', () => each(async f => {
-  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around gbrain.'), 'outside'));
+test('GST-1674: a refresh killed at fenced after a commit foresights did not make moved HEAD before the merge resumes: the row aborts and its deferred write commits', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around foresights.'), 'outside'));
   const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true });
   expect(resumed.status).toBe('abandoned');
   const [row] = await f.refreshRows();
@@ -691,8 +691,8 @@ test('GST-1674: a refresh killed at fenced after a commit gbrain did not make mo
   expect((await settle(f, deferred)).state).toBe('committed');
 }), 180_000);
 
-test('a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge aborts on the owner scan, without --resume', () => each(async f => {
-  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around gbrain.'), 'outside'));
+test('a refresh killed at fenced after a commit foresights did not make moved HEAD before the merge aborts on the owner scan, without --resume', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around foresights.'), 'outside'));
   await resumeWorktreeRefreshes(f.engine);
   const [row] = await f.refreshRows();
   expect(row.state).toBe('aborted');

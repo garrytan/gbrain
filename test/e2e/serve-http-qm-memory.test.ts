@@ -1,7 +1,7 @@
 /**
- * GST-359 D: memory_recall and memory_write over the real keyless `gbrain serve --http`, with a client-credentials client
+ * GST-359 D: memory_recall and memory_write over the real keyless `foresights serve --http`, with a client-credentials client
  * granted the attest right by the real CLI (default attested operations) and alice-example and bob-example linked by
- * `gbrain access member link`.
+ * `foresights access member link`.
  *
  * 1. Protects: QM's two tools on the production HTTP transport of a keyless brain: a committed write and its replay,
  *    recall that leads with the person's own facts and never shows another member's, the unlinked recall success

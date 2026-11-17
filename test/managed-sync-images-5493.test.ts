@@ -163,7 +163,7 @@ describe('managed sync imports images when multimodal embedding is on (#5493 hel
   test('a hold written before this release is re-screened and imported once multimodal embedding is on', async () =>
     withEnv(env, async () => {
       for (const engine of engines) {
-        // The image is committed but synced while multimodal was off (not an entry); an older gbrain then held it.
+        // The image is committed but synced while multimodal was off (not an entry); an older foresights then held it.
         const { sourceId, root, head } = await managedSource(engine, { 'notes/plain.md': NOTE, 'notes/held.png': PNG });
         await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'false' }, async () => {
           expect((await performManagedSync(engine, { sourceId, noPull: true })).status).toBe('first_sync');

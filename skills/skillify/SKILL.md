@@ -55,7 +55,7 @@ upstream: skillify@fc834ee
 
 > **Relationship to `/cross-modal-review`:** That skill is the manual mid-flow
 > "second opinion" gate (one model reviews work product before commit). This
-> skill's Phase 3 below uses `gbrain eval cross-modal` instead — three
+> skill's Phase 3 below uses `foresights eval cross-modal` instead — three
 > different-provider frontier models score-and-iterate on a documented
 > dimension list *before* tests cement behavior. Use `/cross-modal-review`
 > for ad-hoc second opinions; use Phase 3 here when skillifying a feature.
@@ -63,10 +63,10 @@ upstream: skillify@fc834ee
 ## Contract
 
 A feature is "properly skilled" when all 15 checklist items (0 + 1–14; 3b
-rides with item 3) pass. `gbrain skillify check` audits the mechanical items
+rides with item 3) pass. `foresights skillify check` audits the mechanical items
 (1–11); items 0, 3b, 12, 13, and 14 are procedural gates the agent verifies
 directly. Item 3 (cross-modal eval) is informational in the audit — it does
-not gate `gbrain skillify check`, but a missing or stale receipt is surfaced
+not gate `foresights skillify check`, but a missing or stale receipt is surfaced
 so the user knows where the gate stands.
 
 **Idempotency guarantee:** skillify can run on the same skill any number of
@@ -134,7 +134,7 @@ descriptions. If a proposed trigger collides with an existing skill, prefer
 merging — add a trigger, mode, or phase to the existing skill, bump its minor
 version, and run this checklist on the merged result — over creating a
 near-duplicate. If you create a separate skill despite overlap, record the
-one-sentence distinction in the new SKILL.md. `gbrain check-resolvable`
+one-sentence distinction in the new SKILL.md. `foresights check-resolvable`
 (Phase 5) is the backstop that catches what the pre-check misses.
 
 ### Mode B: Improve Existing Skill (SKILL.md exists)
@@ -255,7 +255,7 @@ eval_contract:
 ### Wire the contract into the eval
 
 Pass the contract's goal as `--task` and its dimensions as `--dimensions` to
-`gbrain eval cross-modal`. The eval then measures the skill against ITS stated
+`foresights eval cross-modal`. The eval then measures the skill against ITS stated
 purpose, not a generic checklist. State hard-fail conditions inside the task
 text so judges zero the score when they fire ("If any claim is fabricated, the
 output fails regardless of other qualities").
@@ -281,7 +281,7 @@ evaluated.
 ### Step 3: Run the eval gate
 
 ```bash
-gbrain eval cross-modal \
+foresights eval cross-modal \
   --task "The eval contract's goal, including its hard-fail conditions" \
   --dimensions "dim_one,dim_two,dim_three" \
   --output skills/<slug>/SKILL.md
@@ -298,16 +298,16 @@ new receipt, so every iteration leaves its own baseline).
 
 | Slot | 1. flag | 2. brain config key | 3. fallback |
 |------|---------|---------------------|-------------|
-| A | `--slot-a-model <provider:model>` | `models.eval.cross_modal.slot_a` | gbrain's shipped default for slot A |
-| B | `--slot-b-model <provider:model>` | `models.eval.cross_modal.slot_b` | gbrain's shipped default for slot B |
-| C | `--slot-c-model <provider:model>` | `models.eval.cross_modal.slot_c` | gbrain's shipped default for slot C |
+| A | `--slot-a-model <provider:model>` | `models.eval.cross_modal.slot_a` | foresights's shipped default for slot A |
+| B | `--slot-b-model <provider:model>` | `models.eval.cross_modal.slot_b` | foresights's shipped default for slot B |
+| C | `--slot-c-model <provider:model>` | `models.eval.cross_modal.slot_c` | foresights's shipped default for slot C |
 
 The brain config keys are the same ones the nightly quality probe reads, so
-pin them once (`gbrain config set models.eval.cross_modal.slot_a
+pin them once (`foresights config set models.eval.cross_modal.slot_a
 <provider:model>`) and every run — CLI or probe — judges with the same
-panel. `gbrain models` shows the panel the probe resolves. The shipped
+panel. `foresights models` shows the panel the probe resolves. The shipped
 defaults are three current frontier models from three providers; they move
-with gbrain releases, so do not copy literal ids into a skill — a slot whose
+with foresights releases, so do not copy literal ids into a skill — a slot whose
 default provider has no key here is substituted with the configured chat
 model (#4636) and the receipt records the model that actually judged.
 
@@ -362,15 +362,15 @@ CYCLE 3 (final):
 
 ### Provider configuration
 
-Models resolve through the gbrain AI gateway. Configure once with:
+Models resolve through the foresights AI gateway. Configure once with:
 
 ```bash
-gbrain providers test    # see what's configured
-gbrain config            # set keys
+foresights providers test    # see what's configured
+foresights config            # set keys
 ```
 
-Each slot needs a key for its provider: `gbrain providers test --model
-<provider:model>` says whether a slot's model is reachable, and `gbrain
+Each slot needs a key for its provider: `foresights providers test --model
+<provider:model>` says whether a slot's model is reachable, and `foresights
 providers env <provider>` names the env var or `<vendor>_api_key` config key
 that recipe reads (`~/.gbrain/config.json` plus `process.env`). Pin the slots
 to providers you have keys for instead of acquiring keys for the defaults.
@@ -434,7 +434,7 @@ re-run a **representative live task** through the edited skill and eval'd the
 real output it would have produced.
 
 1. **Detect schedule backing:** check whether any cron entry or recurring
-   minion job invokes the skill (`gbrain jobs list`, plus the scheduler
+   minion job invokes the skill (`foresights jobs list`, plus the scheduler
    config per `skills/conventions/cron-via-minions.md`). If ≥1 job references
    the skill, this gate applies.
 2. **Pick the highest-bar representative task** — the input where quality is
@@ -488,7 +488,7 @@ NOW that eval has proven quality, write tests that lock it in:
    - No DRY violations (shared logic in lib/, not copy-pasted)
    - No ambiguous trigger routing
 
-After creating or updating a skill, re-run `gbrain check-resolvable --json`
+After creating or updating a skill, re-run `foresights check-resolvable --json`
 and resolve every flag: two skills confusable by the same trigger get
 disambiguating trigger words or a merge; a skill whose triggers are a subset
 of another's gets merged or made more specific.
@@ -502,15 +502,15 @@ of another's gets merged or made more specific.
 ### Scheduled-run observability (item 12) — for any schedule-backed skill
 
 If the skill backs a cron or recurring job, the job MUST run through minions
-(`gbrain jobs submit` from the cron line) rather than a bare shell pipeline,
+(`foresights jobs submit` from the cron line) rather than a bare shell pipeline,
 so every run leaves a job record with status, progress, and logs — ghost
 crons that run silently are the #1 source of observability bugs.
 
 **Verification:**
 
 ```bash
-gbrain jobs list             # the scheduled job appears with a status
-gbrain jobs get <id>         # per-run progress + result is inspectable
+foresights jobs list             # the scheduled job appears with a status
+foresights jobs get <id>         # per-run progress + result is inspectable
 ```
 
 Scheduling patterns live in `skills/conventions/cron-via-minions.md` and
@@ -521,10 +521,10 @@ Scheduling patterns live in `skills/conventions/cron-via-minions.md` and
 
 ```bash
 bun test test/<skill>.test.ts                    # unit tests
-gbrain skillify check skills/<slug>/scripts/<slug>.mjs --json | \
+foresights skillify check skills/<slug>/scripts/<slug>.mjs --json | \
   jq '.[] | .items[] | select(.name | contains("Cross-modal"))'
 ls -t ~/.gbrain/.gbrain/eval-receipts/<slug>-*.json | head -2   # receipt landed; prior baseline visible
-gbrain check-resolvable --json | jq .ok          # resolver clean
+foresights check-resolvable --json | jq .ok          # resolver clean
 ```
 
 ## Worked Example: Skillifying a "summarize-pr" Feature
@@ -613,30 +613,30 @@ Skillify produces three durable artifacts per skill:
 
 1. **The skill tree on disk.** `skills/<slug>/SKILL.md` (carrying its
    `eval_contract`), `scripts/<slug>.mjs`, `routing-eval.jsonl`, plus a
-   `test/<slug>.test.ts` skeleton. Generated by `gbrain skillify scaffold
+   `test/<slug>.test.ts` skeleton. Generated by `foresights skillify scaffold
    <name>` and refined by the agent into a real implementation.
 2. **A cross-modal eval receipt lineage** at
    `~/.gbrain/.gbrain/eval-receipts/<slug>-<sha8>.json`. The sha-8 binds each
    receipt to the SKILL.md content that produced it, so prior receipts
-   persist as the no-regression baselines (Phase 3.5). `gbrain skillify
+   persist as the no-regression baselines (Phase 3.5). `foresights skillify
    check` surfaces the current receipt's status (`found` / `stale` /
    `missing`) as informational.
-3. **An audit verdict** from `gbrain skillify check`: `properly skilled` |
+3. **An audit verdict** from `foresights skillify check`: `properly skilled` |
    `close — create: <missing items>` | `needs skillify — run /skillify on
    <target>`. Score is `<passed>/<total>`. Required items gate the verdict;
    the cross-modal item is informational and never blocks PASS.
 
-JSON output (`gbrain skillify check --json`) includes the same fields plus
+JSON output (`foresights skillify check --json`) includes the same fields plus
 the per-item detail string, so agents can route on the structured envelope
 without parsing prose.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain skillify check` reports failing checklist items: fix only those items and re-run; any edit must keep existing tests green (no-regression law).
-- `gbrain eval cross-modal` fails or lacks a provider key: report the eval as not run; do not mark the skill proven.
-- `gbrain check-resolvable` reports the new skill unreachable or overlapping: fix its RESOLVER row and re-run. Scaffolding appends the row under a placeholder `## Uncategorized` heading; move it into a fitting category.
+- `foresights skillify check` reports failing checklist items: fix only those items and re-run; any edit must keep existing tests green (no-regression law).
+- `foresights eval cross-modal` fails or lacks a provider key: report the eval as not run; do not mark the skill proven.
+- `foresights check-resolvable` reports the new skill unreachable or overlapping: fix its RESOLVER row and re-run. Scaffolding appends the row under a placeholder `## Uncategorized` heading; move it into a fitting category.
 
 ## Anti-Patterns
 

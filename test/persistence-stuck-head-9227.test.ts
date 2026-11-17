@@ -1,5 +1,5 @@
 /**
- * gbrain#9227: a write killed at the head of a source's queue, or one whose principal is gone, must not wedge the
+ * foresights#9227: a write killed at the head of a source's queue, or one whose principal is gone, must not wedge the
  * source. Each case kills a real child process (test/fixtures/stuck-head-worker.ts) with SIGKILL at a fault seam and
  * reads what becomes of the head it left, on PGLite and, with DATABASE_URL, on Postgres:
  *
@@ -15,7 +15,7 @@
  * on both engines. On Postgres its one-shot consumer proves a same-host owner dead (#6650); on PGLite it holds the
  * datastore lock, so every claim written before it started is abandoned and its first scan releases them (#9227).
  * Case 3 is recovered at once on both engines (the recovery scan). A revoked principal's write ends
- * `failed`/`permission_denied` when it is next prepared. Meanwhile `gbrain sources writer status`, run from a new
+ * `failed`/`permission_denied` when it is next prepared. Meanwhile `foresights sources writer status`, run from a new
  * process, reports the owner exited (`claim_owner_exited`, `resumes_on_its_own: true`). A live owner keeps its claim: a
  * second PGLite process cannot open the brain at all, and Postgres cannot prove a live owner dead. An owner Postgres
  * cannot prove dead (another boot or pid namespace) still holds the head for the rest of its lease (30 s, or 365 s
@@ -120,7 +120,7 @@ for (const backend of testBackends()) describe(`[${backend}] a stuck head of a s
   const head = async (requestId: string): Promise<Head> => (await engine.executeRaw<Head>(`SELECT state,error_code,preparation_attempts,recovery IS NOT NULL AS recovery,
     claim_phase->>'phase' AS phase,execution_token::text AS token,round(EXTRACT(EPOCH FROM claim_expires_at-updated_at))::int AS lease_s
     FROM persistence_requests WHERE request_id=$1::uuid`, [requestId]))[0]!;
-  /** The request's `gbrain sources writer status` row as a new process on this host reads it. */
+  /** The request's `foresights sources writer status` row as a new process on this host reads it. */
   const blocker = async (source: string, requestId: string) => (await worker({ slug: 'unused', sourceId: source, requestId, status: true })).blocker!;
   const lapse = (requestId: string) => engine.executeRaw(`UPDATE persistence_requests SET claim_expires_at=now()-interval '1 second' WHERE request_id=$1::uuid AND state='running'`, [requestId]);
 

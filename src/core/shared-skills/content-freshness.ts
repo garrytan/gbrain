@@ -89,7 +89,7 @@ export async function ownedContentFreshness(engine: BrainEngine, sourceIds?: str
 
 /**
  * C-7: owned content sources whose complete receipt, local_path and owner binding disagree on the root (a transfer or
- * relocation an older release ran, or a set-path still to run). Doctor names `gbrain repair content-receipt-root` for them.
+ * relocation an older release ran, or a set-path still to run). Doctor names `foresights repair content-receipt-root` for them.
  */
 export async function staleOwnedContent(engine: BrainEngine, sourceIds?: string[]): Promise<StaleOwnedContent[]> {
   const result: StaleOwnedContent[] = [];

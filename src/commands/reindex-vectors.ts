@@ -1,10 +1,10 @@
 /**
- * `gbrain reindex --vectors [--dry-run] [--json]` — rebuild every HNSW vector
+ * `foresights reindex --vectors [--dry-run] [--json]` — rebuild every HNSW vector
  * index in the brain from the stored vectors.
  *
- * #4616: a PGLite WAL reset (auto-repair or `gbrain pglite-repair`) resets the
+ * #4616: a PGLite WAL reset (auto-repair or `foresights pglite-repair`) resets the
  * log in place but never rebuilds indexes, so an HNSW index can miss rows
- * written just before the crash. Those pages stay reachable by `gbrain get`
+ * written just before the crash. Those pages stay reachable by `foresights get`
  * and keyword search while vector search never returns them. Rebuilding the
  * index from the table is the fix; no vector is re-embedded and nothing is
  * paid. Postgres rebuilds concurrently so reads and writes continue.
@@ -13,7 +13,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { quoteIdentifier } from '../core/search/embedding-column.ts';
 import { withHnswBuildMemory } from '../core/vector-index.ts';
 
-export const REINDEX_VECTORS_COMMAND = 'gbrain reindex --vectors';
+export const REINDEX_VECTORS_COMMAND = 'foresights reindex --vectors';
 
 export interface ReindexVectorsResult {
   indexes: { table: string; index: string }[];

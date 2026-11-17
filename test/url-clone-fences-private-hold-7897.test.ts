@@ -1,5 +1,5 @@
 /**
- * #7897: `gbrain repair url-clone-fences` (src/core/repair/url-clone-fences.ts) restored a gbrain-owned clone file by
+ * #7897: `foresights repair url-clone-fences` (src/core/repair/url-clone-fences.ts) restored a gbrain-owned clone file by
  * importing HEAD's bytes through `importFromContent` without the private-request hold and ignored the result. A HEAD
  * that asks for `visibility: private` in a spelling page privacy does not read (sync holds it `visibility_noncanonical`)
  * was imported world-readable on an unmanaged brain and reported `restored`.
@@ -44,7 +44,7 @@ interface Clone { engine: BrainEngine; root: string; upstream: string; file: () 
 
 /**
  * An owned clone whose first sync imported a world page; HEAD then moves to `extra` frontmatter (an upstream commit the clone pulled) and an
- * older gbrain's fence writer appends one row to the working copy, so the file differs from HEAD by fence rows only.
+ * older foresights's fence writer appends one row to the working copy, so the file differs from HEAD by fence rows only.
  */
 async function withClone(databaseUrl: string | undefined, extra: string, run: (c: Clone) => Promise<void>): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-7897-clone-'));

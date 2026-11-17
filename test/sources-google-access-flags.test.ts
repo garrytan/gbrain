@@ -1,5 +1,5 @@
 /**
- * gbrain sources add --kind google — the v0.47 non-vault access flags
+ * foresights sources add --kind google — the v0.47 non-vault access flags
  * (--access vault|command|env, --token-command, --token-env) on a real PGLite
  * engine (src/commands/sources.ts:runAdd → src/core/sources-ops.ts Path D).
  *
@@ -84,7 +84,7 @@ async function captured(fn: () => Promise<void>): Promise<Captured> {
   return { out: outChunks.join(''), err: errChunks.join(''), exitCalled };
 }
 
-/** Run `gbrain sources add <id> --kind google --account alice@example.com …`
+/** Run `foresights sources add <id> --kind google --account alice@example.com …`
  *  under a fresh temp GBRAIN_HOME (returned for vault seeding via `seed`). */
 async function addGoogle(
   id: string,
@@ -291,7 +291,7 @@ describe('sources add --kind google --calendar-id', () => {
     const r = await addGoogle('gcal-empty', ['--calendar-id', ''], { seed: seedVault });
     expect(r.exitCalled).toBe(2);
     expect(r.err).toContain('--calendar-id needs a value');
-    expect(r.err).toContain('gbrain google calendars');
+    expect(r.err).toContain('foresights google calendars');
     expect(await sourceConfig('gcal-empty')).toBeNull();
   });
 

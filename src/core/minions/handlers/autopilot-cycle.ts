@@ -11,7 +11,7 @@ import { CONNECTOR_SOURCE_PHASES } from '../../cycle/phase-scope.ts';
 
 /**
  * Autopilot-cycle handler: delegates to runCycle. Shares the exact same
- * phase set and ordering as `gbrain dream` and autopilot's inline path —
+ * phase set and ordering as `foresights dream` and autopilot's inline path —
  * one source of truth for what the brain does overnight.
  *
  * Yields the event loop between phases so the worker's lock-renewal
@@ -21,14 +21,14 @@ import { CONNECTOR_SOURCE_PHASES } from '../../cycle/phase-scope.ts';
  *
  * Phase failures surface as report.status='partial' (via runCycle's
  * derivation); the handler returns { partial, status, report } so
- * `gbrain jobs get <id>` shows the full structured report. Does NOT
+ * `foresights jobs get <id>` shows the full structured report. Does NOT
  * throw on partial: a flaky phase must not block every future cycle.
  */
 export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
   return async (job) => {
     const { runCycle } = await import('../../cycle.ts');
     // v0.41.30 (T2): fall back to null (NOT cwd '.') when no repo is configured.
-    // The queued cycle is the same primitive `gbrain dream` uses; a checkout-less
+    // The queued cycle is the same primitive `foresights dream` uses; a checkout-less
     // postgres brain should skip filesystem phases (no_brain_dir) and run the
     // DB-only phases (resolve_symbol_edges, embed, ...) — not silently lint/sync
     // against whatever directory the worker happens to be running in.
@@ -168,7 +168,7 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
       ...(sourceId && (effectiveBrainDir === null || (effectivePhases !== undefined && !effectivePhases.includes('sync')))
         ? { sourceChangedSince: lastSourceCycleAt } : {}),
       ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
-      // #7241: the phase in progress, for `gbrain jobs get` / get_job_progress while the cycle runs.
+      // #7241: the phase in progress, for `foresights jobs get` / get_job_progress while the cycle runs.
       onPhaseStart: (phase, index, count) => reportJobProgress(job, { phase, phase_index: index, phase_count: count, started_at: new Date().toISOString() }),
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.

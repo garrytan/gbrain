@@ -1,8 +1,8 @@
 /**
- * GST-363 (PR 1): `gbrain setup <harness> --serves one|several`. Setup stays engine-free, so every brain read and
- * write here is a child of the absolute launcher (as `gbrain init` is):
+ * GST-363 (PR 1): `foresights setup <harness> --serves one|several`. Setup stays engine-free, so every brain read and
+ * write here is a child of the absolute launcher (as `foresights init` is):
  *
- *   - `gbrain access serves --json` reads whether the brain serves several people and the member the stdio server
+ *   - `foresights access serves --json` reads whether the brain serves several people and the member the stdio server
  *     reads as. An existing brain it cannot read refuses (setup_serves_unreadable). A one-person setup (the default)
  *     on a brain that serves several people refuses (setup_serves_several) unless this harness's entry or config
  *     mcp.stdio_member binds the stdio connection. --stdio-member <enabled member> on claude-code or codex writes
@@ -10,9 +10,9 @@
  *     only that harness on this machine, PGLite or Postgres; setup refuses the flag where a shared-stdio harness
  *     (sharedStdioHarness) is installed. A rewrite carries an entry's own member forward and never adds one. The
  *     brain-first text says the connection is already scoped only once it is bound.
- *   - `--serves several --members a,b` runs `gbrain access serves several --yes --json` (members, one folder rule per
+ *   - `--serves several --members a,b` runs `foresights access serves several --yes --json` (members, one folder rule per
  *     member, one bound key per member in a 0600 file) and proves the labels with one bound read per member
- *     per other member (`gbrain find people/<other>/ --as <member> --json`): none returns a page.
+ *     per other member (`foresights find people/<other>/ --as <member> --json`): none returns a page.
  */
 import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -73,7 +73,7 @@ export function servesRoster(flags: ServesFlags, harness: string): string[] | Op
   if (flags.serves !== 'several') return [];
   try {
     const roster = readRoster(flags.members, flags.membersFile);
-    return roster.length ? roster : rosterEmpty(`gbrain setup ${harness} --serves several`) as OperationError;
+    return roster.length ? roster : rosterEmpty(`foresights setup ${harness} --serves several`) as OperationError;
   } catch (e) {
     if (e instanceof OperationError) return e;
     return opError('invalid_params', `--members-file could not be read: ${(e as Error).message}`, 'Pass a readable file with one member id per line.');
@@ -84,12 +84,12 @@ export function servesRoster(flags: ServesFlags, harness: string): string[] | Op
 export function readServesStatus(launcher: string): { status: ServesStatus } | { error: string } {
   const r = child(launcher, ['access', 'serves', '--json', '--no-open-pages']);
   const status = r.ok ? parsed<ServesStatus>(r.stdout) : null;
-  return status && 'serves' in status ? { status } : { error: (r.stderr || r.stdout).trim() || 'gbrain access serves --json printed nothing' };
+  return status && 'serves' in status ? { status } : { error: (r.stderr || r.stdout).trim() || 'foresights access serves --json printed nothing' };
 }
 
 export function servesUnreadable(error: string, harness: string): OperationError {
   return opError('setup_serves_unreadable', `Setup could not read whether this brain serves several people (${error.split('\n')[0]}), so it cannot tell whether the ${harness} connection would read for everyone. Nothing was written.`,
-    'Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again.',
+    'Run foresights access serves --json to see why the brain cannot be read, fix that, then run setup again.',
     { fix: { argv: ['gbrain', 'access', 'serves', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Read-only: shows whom the brain serves, or the error that stops setup reading it.' } });
 }
 
@@ -111,7 +111,7 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
 function runServesSeveral(launcher: string, roster: string[], flags: ServesFlags): Omit<ServesOutcome, 'brain_serves'> {
   const r = child(launcher, ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.labelledOnly ? ['--labelled-only'] : []), ...(flags.dryRun ? [] : ['--yes']), '--json']);
   const receipt = parsed<ServesReceipt>(r.stdout);
-  if (!receipt || !('members' in receipt)) return { mode: 'several', error: (r.stderr || r.stdout).trim() || 'gbrain access serves several failed' };
+  if (!receipt || !('members' in receipt)) return { mode: 'several', error: (r.stderr || r.stdout).trim() || 'foresights access serves several failed' };
   if (flags.dryRun || receipt.error || !receipt.applied) return { mode: 'several', receipt };
   const source = flags.source ? ['--source-id', flags.source] : [];
   const read = (member: string, prefix: string, limit: number) => {
@@ -144,7 +144,7 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
   if (roster instanceof OperationError) return roster;
   const named = flags.stdioMember;
   if (named && flags.serves === 'several' && !roster.includes(named)) return opError('invalid_params', `--stdio-member ${named} is not one of the people in --members; nothing was written.`, 'Name a member listed in --members.');
-  if (named && flags.serves !== 'several' && !hasBrain) return opError('invalid_params', `--stdio-member ${named} names a member, and this brain does not exist yet, so it has none; nothing was written.`, `Label the people it serves in the same run: gbrain setup ${harness} --serves several --members <ids> --stdio-member ${named}.`);
+  if (named && flags.serves !== 'several' && !hasBrain) return opError('invalid_params', `--stdio-member ${named} names a member, and this brain does not exist yet, so it has none; nothing was written.`, `Label the people it serves in the same run: foresights setup ${harness} --serves several --members <ids> --stdio-member ${named}.`);
   if ((flags.serves === 'several' || named) && liveOurs) {
     return opError('setup_owner_conflict', `A live stdio serve started by this registration holds the PGLite brain, and ${flags.serves === 'several' ? 'labelling several people needs to write to it' : `checking that ${named} is an enabled member needs to read it`}; nothing was written.`,
       `Quit the ${harness} session that started it, then run setup again.`, { reason: 'live_serve', docs: 'docs/guides/repair.md#setup-owner-conflict' });
@@ -196,7 +196,7 @@ export function bindStdio(harness: string, status: ServesStatus | null, entry: E
   const action = removed ? 'remove' as const : null;
   if (status?.stdio_member) return { member: status.stdio_member, action: action ?? 'keep', detail: `${removed}this harness reads as ${status.stdio_member} through config mcp.stdio_member, set by hand, which every stdio session that opens this brain without --stdio-member reads as` };
   if (status?.serves !== 'several' && !removed) return undefined;
-  return { member: null, action: action ?? 'unbound', detail: `${removed}this harness's stdio sessions read only pages no rule restricts, so its instructions keep the one-person scoping lines; to bind a harness only one person uses, run gbrain setup ${harness} --stdio-member <member>` };
+  return { member: null, action: action ?? 'unbound', detail: `${removed}this harness's stdio sessions read only pages no rule restricts, so its instructions keep the one-person scoping lines; to bind a harness only one person uses, run foresights setup ${harness} --stdio-member <member>` };
 }
 
 export function servesOk(o: ServesOutcome | null): boolean {

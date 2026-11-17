@@ -16,7 +16,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       mkdirSync(bin);
       mkdirSync(join(pkg, 'src'), { recursive: true });
       mkdirSync(join(home, '.bun', 'install', 'global'), { recursive: true });
-      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'https://github.com/garrytan/gbrain' } }));
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'https://github.com/aimonk2025/gbrain' } }));
       const driver = join(pkg, 'src', 'cli.ts');
       writeFileSync(driver, `const { runUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nawait runUpgrade(['--no-autopilot-install', '--no-bun-floor-check']);\n`);
       writeFileSync(join(bin, 'bun'), `#!/bin/sh\nprintf 'bun:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\n`, { mode: 0o755 });
@@ -41,7 +41,7 @@ describe('upgrade autopilot opt-out propagation', () => {
     try {
       const driver = join(home, 'driver.ts');
       const unitPath = join(home, '.config', 'systemd', 'user', 'gbrain-autopilot.service');
-      const unit = 'Description=GBrain Autopilot\nExecStart=/example/start.sh\nRestart=on-failure\nStandardOutput=append:%h/.gbrain/autopilot.log\n';
+      const unit = 'Description=Foresights Autopilot\nExecStart=/example/start.sh\nRestart=on-failure\nStandardOutput=append:%h/.gbrain/autopilot.log\n';
       mkdirSync(dirname(unitPath), { recursive: true });
       writeFileSync(unitPath, unit);
       const bin = join(home, 'bin');

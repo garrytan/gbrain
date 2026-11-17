@@ -1,5 +1,5 @@
 /**
- * Writer transfer administration (`gbrain sources writer transfer prepare|accept|cancel`), dispatched by
+ * Writer transfer administration (`foresights sources writer transfer prepare|accept|cancel`), dispatched by
  * `runPersistenceAdministration`. Prepare drains the owner and records the manifest; accept moves ownership to the
  * successor; cancel (C-5) returns a prepared transfer nobody accepted to active on the owner host. Every non-dry-run
  * change requires its action-specific --admin-intent and the reviewed --expected-state.
@@ -27,7 +27,7 @@ const transferStatusFix = (sourceId: string) =>
 function expectedEpoch(params: Record<string, unknown>, sourceId: string): string {
   if (typeof params.expected_epoch !== 'string' || !/^[1-9]\d{0,18}$/.test(params.expected_epoch)
     || BigInt(params.expected_epoch) > 9_223_372_036_854_775_807n) throw invalid('expected_epoch must be the prepared positive owner epoch.',
-    `Pass --expected-epoch with the owner_epoch that gbrain sources writer transfer prepare ${sourceId} printed (a positive integer).`, transferStatusFix(sourceId));
+    `Pass --expected-epoch with the owner_epoch that foresights sources writer transfer prepare ${sourceId} printed (a positive integer).`, transferStatusFix(sourceId));
   return params.expected_epoch;
 }
 
@@ -39,7 +39,7 @@ export async function runWriterTransferAdministration(engine: BrainEngine, opera
     if (params.dry_run) {
       const preview = await cancelWriterTransfer(engine, sourceId, epoch, existingHostIdFor(engine)!, undefined, { dryRun: true });
       return { dry_run: true, action: operation, source_id: sourceId, ...preview,
-        ...(preview.cancellable ? { apply_command: `gbrain sources writer transfer cancel ${sourceId} --expected-epoch ${epoch} --admin-intent writer_transfer_cancel --expected-state <admin_state>` } : {}) };
+        ...(preview.cancellable ? { apply_command: `foresights sources writer transfer cancel ${sourceId} --expected-epoch ${epoch} --admin-intent writer_transfer_cancel --expected-state <admin_state>` } : {}) };
     }
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     const cancelled = await cancelWriterTransfer(engine, sourceId, epoch, undefined, expectedState);
@@ -74,7 +74,7 @@ export async function runWriterTransferAdministration(engine: BrainEngine, opera
   const sourceId = source(params.source_id), root = path(params.path);
   const epoch = expectedEpoch(params, sourceId);
   if (typeof params.manifest !== 'string' || !/^[a-f0-9]{64}$/.test(params.manifest)) throw invalid('manifest must be the prepared SHA-256 manifest digest.',
-    `Pass --manifest with the 64-character manifest digest that gbrain sources writer transfer prepare ${sourceId} printed.`, transferStatusFix(sourceId));
+    `Pass --manifest with the 64-character manifest digest that foresights sources writer transfer prepare ${sourceId} printed.`, transferStatusFix(sourceId));
   if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, epoch, params.manifest, existingHostIdFor(engine)!, undefined, { ...transfer, dryRun: true });
   if (params.dry_run) {
     const current = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));

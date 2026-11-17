@@ -2,13 +2,13 @@
  * #7630: a relative stored sync anchor (a legacy `sources.local_path` of ".") must never make sync treat the directory
  * it runs from as the brain.
  *
- * Before the fix, `gbrain sync --source default` (or `--all`) run from an unrelated folder resolved "." to that folder,
+ * Before the fix, `foresights sync --source default` (or `--all`) run from an unrelated folder resolved "." to that folder,
  * `isAnchorOwnedSyncPath` compared realpath(".") with realpath(cwd) (always equal), and preflight Git-initialized the
  * folder, committed everything in it as a baseline and imported its markdown. A foreground write that ended
  * `preparation_stalled` meanwhile got a receipt telling the user to run exactly that sync.
  *
  * Protects (this file: sync itself):
- * - sync refuses `sync_anchor_relative` (exit 3, a fix asking the user for `gbrain sources set-path <id> <dir>`) for a relative
+ * - sync refuses `sync_anchor_relative` (exit 3, a fix asking the user for `foresights sources set-path <id> <dir>`) for a relative
  *   `local_path` reached by `--source` (the anchor read) or by `--all` (the row's path passed through), and for a relative
  *   legacy `sync.repo_path`; the folder gets no `.git` and nothing is imported;
  * - a relative anchor never proves ownership, so even an explicit absolute path to the cwd is not auto-initialized;
@@ -54,12 +54,12 @@ describe7630('', (t) => {
     expect(existsSync(join(folder, '.git'))).toBe(false);
   }, 120_000);
 
-  // Value: protects=gbrain sync --all fails only the source with a relative local_path and still syncs an absolute one;
+  // Value: protects=foresights sync --all fails only the source with a relative local_path and still syncs an absolute one;
   //   fails_when=the --all fan-out guard aborts the whole run, drops the source, or reports it ok / imports the cwd;
   //   why_new=the performSync cases above never enter runSyncAll's fan-out or its per-source JSON envelope; seam=none;
   //   no_claim=the cost-gate walk ordering (--no-embed skips the gate), the exit-3 mapping of a single-source run, and parallel
   //   import workers (--workers 1: a worker opens the configured DATABASE_URL, not this test's isolated Postgres database)
-  test('gbrain sync --all fails only the relative source: an absolute source still syncs and the cwd is untouched', async () => {
+  test('foresights sync --all fails only the relative source: an absolute source still syncs and the cwd is untouched', async () => {
     const { engine, folder } = t;
     const repo = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-7630-repo-')));
     try {
@@ -88,11 +88,11 @@ describe7630('', (t) => {
     }
   }, 120_000);
 
-  // Value: protects=gbrain sync --source with a relative anchor refuses before the embed cost gate estimates the cwd or calls a provider;
+  // Value: protects=foresights sync --source with a relative anchor refuses before the embed cost gate estimates the cwd or calls a provider;
   //   fails_when=the runSingleSourceSync guard is removed or moved after the cost gate, which then walks and prices the cwd's files;
   //   why_new=every other refusal case uses performSync or --no-embed, which skips the gate; seam=none;
   //   no_claim=a real provider (dummy key via configureGateway; fetch is watched, never answered)
-  test('gbrain sync --source default refuses a relative anchor before the embed cost gate: no estimate, no provider call', async () => {
+  test('foresights sync --source default refuses a relative anchor before the embed cost gate: no estimate, no provider call', async () => {
     const { engine, folder } = t;
     await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id='default'");
     for (let i = 0; i < 5; i++) writeFileSync(join(folder, `page-${i}.md`), `---\ntype: note\ntitle: Page ${i}\n---\n\n${'word '.repeat(200)}\n`);
@@ -115,9 +115,9 @@ describe7630('', (t) => {
 
   // Value: protects=with an explicit absolute --repo and a stored "." the embed cost gate prices the --repo directory, never the cwd;
   //   fails_when=the gate input prefers the stored relative local_path, so the estimate runs git and walks files in whatever folder
-  //   gbrain runs from; why_new=the gate case above refuses before the gate (no --repo); seam=resolveSingleSyncEmbedPlan spied to
+  //   foresights runs from; why_new=the gate case above refuses before the gate (no --repo); seam=resolveSingleSyncEmbedPlan spied to
   //   record its source and stop the run; no_claim=what the estimate would cost
-  test('gbrain sync --repo <absolute> with a stored "." prices the --repo directory in the cost gate, never the cwd', async () => {
+  test('foresights sync --repo <absolute> with a stored "." prices the --repo directory in the cost gate, never the cwd', async () => {
     const { engine, folder } = t;
     const repo = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-7630-gate-')));
     try {
@@ -149,7 +149,7 @@ describe7630('', (t) => {
   //   fails_when=the guard starts refusing every relative repoPath instead of only the stored anchor itself;
   //   why_new=no other case passes a relative repoPath other than the anchor; seam=none; no_claim=parallel import workers
   //   (--workers 1: a worker opens the configured DATABASE_URL, not this test's isolated Postgres database)
-  test('gbrain sync --repo brain (relative, not the stored ".") is honored: brain syncs, the cwd stays untouched', async () => {
+  test('foresights sync --repo brain (relative, not the stored ".") is honored: brain syncs, the cwd stays untouched', async () => {
     const { engine, folder } = t;
     await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id='default'");
     const brain = join(folder, 'brain');
@@ -165,10 +165,10 @@ describe7630('', (t) => {
     expect(existsSync(join(folder, '.git'))).toBe(false);
   }, 120_000);
 
-  // Value: protects=gbrain sync --repo . with a stored anchor of "." refuses sync_anchor_relative and git-inits nothing (decided: keep the refusal);
+  // Value: protects=foresights sync --repo . with a stored anchor of "." refuses sync_anchor_relative and git-inits nothing (decided: keep the refusal);
   //   fails_when=an explicit --repo bypasses the guard and the cwd is resolved as the brain; why_new=the performSync "." case never runs the CLI
   //   --repo flag through runSingleSourceSync; seam=none; no_claim=none beyond protects
-  test('gbrain sync --repo . with a stored "." is refused sync_anchor_relative: no .git, no import', async () => {
+  test('foresights sync --repo . with a stored "." is refused sync_anchor_relative: no .git, no import', async () => {
     const { engine, folder } = t;
     await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id='default'");
     const result = await runSyncCli(['--repo', '.', '--no-pull', '--no-embed', '--json']);
@@ -203,7 +203,7 @@ describe7630('', (t) => {
   //   and writes the managed block into the cwd repo's .gitignore;
   //   why_new=the --all case above never reaches the single-source post-sync upkeep; seam=none;
   //   no_claim=watch mode (the same expression at its second call site), parallel import workers (--workers 1)
-  test('gbrain sync --source of an absolute source leaves the cwd repo\'s .gitignore alone when default\'s local_path is "."', async () => {
+  test('foresights sync --source of an absolute source leaves the cwd repo\'s .gitignore alone when default\'s local_path is "."', async () => {
     const { engine, folder } = t;
     const repo = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-7630-repo-')));
     try {

@@ -212,7 +212,7 @@ describe('opencodeEntryKind — the ownership arbiter truth table', () => {
     // local × command shapes (all with matching source)
     { label: 'local abs path + same source', entry: { type: 'local', command: ['/opt/bin/gbrain', 'serve'], environment: { GBRAIN_SOURCE: 'ws-a' } }, expectArg: { sourceId: 'ws-a' }, want: 'ours-same-source' },
     { label: 'local PATH-resolved + same source', entry: { type: 'local', command: ['gbrain', 'serve'], environment: { GBRAIN_SOURCE: 'ws-a' } }, expectArg: { sourceId: 'ws-a' }, want: 'ours-same-source' },
-    { label: 'local bun-run wrapper + same source (gbrain path segment)', entry: { type: 'local', command: ['bun', 'run', '/repo/gbrain/src/cli.ts', 'serve'], environment: { GBRAIN_SOURCE: 'ws-a' } }, expectArg: { sourceId: 'ws-a' }, want: 'ours-same-source' },
+    { label: 'local bun-run wrapper + same source (foresights path segment)', entry: { type: 'local', command: ['bun', 'run', '/repo/gbrain/src/cli.ts', 'serve'], environment: { GBRAIN_SOURCE: 'ws-a' } }, expectArg: { sourceId: 'ws-a' }, want: 'ours-same-source' },
     // [anchored bun-arg fingerprint] a loose substring scan classified a
     // gbrainy-fork checkout as ours; the anchor requires an exact `gbrain`
     // (or `gbrain-*`) path segment in some arg — a gbrain-less cli path is
@@ -226,9 +226,9 @@ describe('opencodeEntryKind — the ownership arbiter truth table', () => {
     { label: 'local + no expectation → ours', entry: { type: 'local', command: ['gbrain', 'serve'], environment: { GBRAIN_SOURCE: 'ws-b' } }, expectArg: {}, want: 'ours-same-source' },
     // foreign local shapes
     { label: 'local non-gbrain command', entry: { type: 'local', command: ['npx', 'other-mcp'], environment: { GBRAIN_SOURCE: 'ws-a' } }, expectArg: { sourceId: 'ws-a' }, want: 'foreign' },
-    { label: 'local gbrain command but NO GBRAIN_SOURCE', entry: { type: 'local', command: ['gbrain', 'serve'], environment: {} }, expectArg: { sourceId: 'ws-a' }, want: 'foreign' },
+    { label: 'local foresights command but NO GBRAIN_SOURCE', entry: { type: 'local', command: ['gbrain', 'serve'], environment: {} }, expectArg: { sourceId: 'ws-a' }, want: 'foreign' },
     { label: 'local gbrain-prefixed foreign binary is NOT ours', entry: { type: 'local', command: ['/opt/bin/gbrainy', 'serve'], environment: { GBRAIN_SOURCE: 'ws-a' } }, expectArg: { sourceId: 'ws-a' }, want: 'foreign' },
-    // kind mismatch (red-team): a remote expectation finding a LOCAL gbrain
+    // kind mismatch (red-team): a remote expectation finding a LOCAL foresights
     // entry (and vice versa) is ANOTHER lane's registration — never a silent
     // same-source match (which would replace it, and --remove would delete it).
     { label: 'local entry + remote expectation (url) → ours-other-source, never silently replaceable', entry: { type: 'local', command: ['gbrain', 'serve'], environment: { GBRAIN_SOURCE: 'ws-a' } }, expectArg: { url: 'http://h:1/mcp' }, want: 'ours-other-source' },
@@ -269,7 +269,7 @@ describe('foreign + other-source gating on write', () => {
     writeFileSync(cfg(), '{"mcp":{"gbrain":{"type":"local","command":["gbrain","serve"],"environment":{"GBRAIN_SOURCE":"ws-b"}}}}');
     expect(() =>
       writeOpencodeMcpEntry(cfg(), localEntry(), { expect: { sourceId: 'ws-a' } }),
-    ).toThrow(/DIFFERENT gbrain workspace/);
+    ).toThrow(/DIFFERENT (?:foresights|gbrain) workspace/);
     const res = writeOpencodeMcpEntry(cfg(), localEntry(), {
       expect: { sourceId: 'ws-a' },
       allowReplaceOtherSource: true,
@@ -488,7 +488,7 @@ describe('remove', () => {
     writeFileSync(cfg(), before);
     const r = removeOpencodeMcpEntry(cfg(), 'gbrain', { sourceId: 'ws-a' }, { skipOtherSource: true });
     expect(r.removed).toBe(false);
-    expect(r.notes.join(' ')).toMatch(/DIFFERENT gbrain workspace.*left in place/);
+    expect(r.notes.join(' ')).toMatch(/DIFFERENT (?:foresights|gbrain) workspace.*left in place/);
     expect(readFileSync(cfg(), 'utf8')).toBe(before);
     // Without the flag the pre-existing behavior holds: removed with a note.
     const r2 = removeOpencodeMcpEntry(cfg(), 'gbrain', { sourceId: 'ws-a' });

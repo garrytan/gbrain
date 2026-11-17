@@ -3,9 +3,9 @@
  * retrieval tier is `per_chunk_synopsis` (search.mode tokenmax, or a source or
  * page override). Import and sync embed those pages at the free title tier and
  * leave the synopsis tier to the `contextual_reindex_per_chunk` job, which no
- * automatic path submits; `gbrain reindex --synopsis` is the explicit,
+ * automatic path submits; `foresights reindex --synopsis` is the explicit,
  * operator-run sweep. This module holds the reads shared by that command, the
- * doctor check `synopsis_tier_coverage` and the `gbrain search modes` line:
+ * doctor check `synopsis_tier_coverage` and the `foresights search modes` line:
  * which pages resolve to the synopsis tier (the SQL twin of
  * resolveContextualRetrievalMode), how many of their chunks carry synopsis
  * vectors, and what the sweep would cost. Database reads only, so a repo-less
@@ -238,7 +238,7 @@ export async function readLastSynopsisSweep(engine: BrainEngine): Promise<{ jobs
   }
 }
 
-/** One line for `gbrain search modes` and the doctor message: the configured tier's chunk coverage. */
+/** One line for `foresights search modes` and the doctor message: the configured tier's chunk coverage. */
 export function formatSynopsisCoverageLine(c: SynopsisCoverage): string {
   if (c.eligible_chunks === 0) return 'Synopsis tier: configured (per_chunk_synopsis); no chunked pages resolve to it yet.';
   const large = c.large_title_pages ? ` ${c.large_title_pages} large page(s) (${c.large_title_chunks} chunk(s)) stay on the title tier by design.` : '';

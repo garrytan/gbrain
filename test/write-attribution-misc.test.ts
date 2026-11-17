@@ -71,7 +71,7 @@ async function repair(engine: BrainEngine, kind: string, args: string[]) {
 const expectHash = (preview: { apply_command: string }) => preview.apply_command.match(/--expect ([0-9a-f]+)/)![1];
 
 describe('remaining unmanaged writers', () => {
-  test('gbrain repair captured-facts --apply expires a database-only self-capture row, keeping its creator', async () => {
+  test('foresights repair captured-facts --apply expires a database-only self-capture row, keeping its creator', async () => {
     const claude = join(scratch, 'claude');
     mkdirSync(join(claude, 'projects', '-tmp-gbrain-claude-cli-cwd-4242'), { recursive: true });
     writeFileSync(join(claude, 'projects', '-tmp-gbrain-claude-cli-cwd-4242', 'sess-self.jsonl'), '{}\n');
@@ -87,7 +87,7 @@ describe('remaining unmanaged writers', () => {
     }
   }, 120_000);
 
-  test('gbrain repair extractor-facts --apply restores an expired extractor fact, keeping its creator', async () => {
+  test('foresights repair extractor-facts --apply restores an expired extractor fact, keeping its creator', async () => {
     for (const engine of engines) {
       const brain = await unmanagedBrain(engine);
       await creatorPage(brain, 'conversations/example-call');

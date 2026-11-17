@@ -1,5 +1,5 @@
 /**
- * gbrain OAuth scope hierarchy + allowlist (v0.28).
+ * foresights OAuth scope hierarchy + allowlist (v0.28).
  *
  * Single source of truth for the 5 scope strings. Used by:
  *  - src/commands/serve-http.ts (scopesSupported, request-time hasScope)
@@ -57,8 +57,8 @@ export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
 /**
  * Ceiling for anonymous Dynamic Client Registration (RFC 7591). A network
  * caller that self-registers may hold at most `read write`; every privileged
- * scope needs an operator-created grant (`gbrain auth register-client`, the
- * admin API) or a later `gbrain auth rescope-client`. The owner-approval
+ * scope needs an operator-created grant (`foresights auth register-client`, the
+ * admin API) or a later `foresights auth rescope-client`. The owner-approval
  * step on /authorize shows the requested scopes but never narrows them, so
  * the ceiling is what keeps "approve" from meaning "grant admin".
  */
@@ -73,9 +73,9 @@ const DCR_MACHINE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(['read']);
 
 /**
  * #5575 (CEO-6): scopes only the trusted local CLI may grant
- * (`gbrain auth create --scopes ...,memory_confirm`, `auth register-client`,
+ * (`foresights auth create --scopes ...,memory_confirm`, `auth register-client`,
  * `auth rescope`). `memory_confirm` lets a connection confirm memory as the
- * owner (raise a trust tier), so the admin HTTP API, the admin SPA, `gbrain mcp
+ * owner (raise a trust tier), so the admin HTTP API, the admin SPA, `foresights mcp
  * admin`, API-key minting and dynamic registration all refuse it, and no
  * grant profile or grandfathered token carries it.
  */
@@ -86,7 +86,7 @@ export function localCliOnlyScopeViolation(requested: readonly string[]): string
   const over = [...new Set(requested.filter(s => LOCAL_CLI_ONLY_SCOPES.has(s as Scope)))];
   if (over.length === 0) return null;
   return `Scope "${over.join(' ')}" lets a connection confirm memory as the owner, so only the local CLI on the brain host can grant it: `
-    + '`gbrain auth create <name> --scopes read,write,memory_confirm` or `gbrain auth rescope --client <client_id> --scopes ...`.';
+    + '`foresights auth create <name> --scopes read,write,memory_confirm` or `foresights auth rescope --client <client_id> --scopes ...`.';
 }
 
 /**
@@ -111,8 +111,8 @@ export function dcrScopeViolation(requested: readonly string[], grantTypes: read
     (machine
       ? `a client_credentials registration is limited to \`${limit}\` because it is issued without owner approval. `
       : `self-registered clients are limited to \`${limit}\`. `) +
-    'Register the client with `gbrain auth register-client` / the admin API instead, ' +
-    'or register with a narrower scope and widen it later with `gbrain auth rescope-client <client_id> --scopes ...`.'
+    'Register the client with `foresights auth register-client` / the admin API instead, ' +
+    'or register with a narrower scope and widen it later with `foresights auth rescope-client <client_id> --scopes ...`.'
   );
 }
 

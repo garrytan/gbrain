@@ -1,13 +1,13 @@
 /**
- * `gbrain maintain --schedule [--yes] [--dry-run]` and `--unschedule` (GBRA-438 PR 2, decision E1):
+ * `foresights maintain --schedule [--yes] [--dry-run]` and `--unschedule` (GBRA-438 PR 2, decision E1):
  * the opt-in operating-system schedule for free upkeep, never installed by default. Every
- * 6 hours the job runs `gbrain maintain --unattended --runner schedule` once and exits:
+ * 6 hours the job runs `foresights maintain --unattended --runner schedule` once and exits:
  *
  *   - macOS: a launchd user agent (no sudo; runs while the user is logged in);
  *   - Linux with a working systemd user manager: a .service plus .timer pair (runs after
  *     logout only with lingering, which may need an admin);
  *   - other Linux: one user crontab line, tagged with this brain's marker;
- *   - a container or cloud sandbox: nothing is installed; the resident `gbrain serve`
+ *   - a container or cloud sandbox: nothing is installed; the resident `foresights serve`
  *     (stdio or --http) is the runner there;
  *   - Windows: nothing is installed; the outcome prints the schtasks line to add by hand.
  *
@@ -55,9 +55,9 @@ export function scheduleNames(suffix: string | null): ScheduleNames {
 const sq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 export interface ScheduleWrapperParams {
-  /** From resolveServeGbrainCommand: `[gbrain]` or `[bun, cli.ts]`. */
+  /** From resolveServeGbrainCommand: `[foresights]` or `[bun, cli.ts]`. */
   gbrainCommand: string[];
-  /** `<gbrain home>/env`, sourced for keys (set -a). */
+  /** `<foresights home>/env`, sourced for keys (set -a). */
   gbrainEnvFile: string;
   /** The installer's GBRAIN_HOME, baked when set (supervisors pass no environment). */
   gbrainHome?: string;
@@ -110,7 +110,7 @@ export function renderScheduleLaunchdPlist(p: { label: string; wrapperPath: stri
 
 export function renderScheduleSystemdService(p: { wrapperPath: string; logPath: string }): string {
   return `[Unit]
-Description=GBrain free upkeep (gbrain maintain --unattended --runner schedule)
+Description=Foresights free upkeep (foresights maintain --unattended --runner schedule)
 
 [Service]
 Type=oneshot
@@ -122,7 +122,7 @@ StandardError=append:${systemdSpecifierEscape(p.logPath)}
 
 export function renderScheduleSystemdTimer(p: { unit: string }): string {
   return `[Unit]
-Description=GBrain free upkeep every ${SCHEDULE_INTERVAL_HOURS} hours
+Description=Foresights free upkeep every ${SCHEDULE_INTERVAL_HOURS} hours
 
 [Timer]
 OnCalendar=*-*-* 00/${SCHEDULE_INTERVAL_HOURS}:17:00
@@ -155,7 +155,7 @@ export interface ScheduleEnv {
   executionEnv: ExecutionEnvironment;
   /** `<HOME>`: where LaunchAgents and the systemd user dir live. */
   home: string;
-  /** The brain's gbrain home (GBRAIN_HOME aware): wrapper, log. */
+  /** The brain's foresights home (GBRAIN_HOME aware): wrapper, log. */
   dir: string;
   names: ScheduleNames;
   gbrainCommand: string[];
@@ -330,18 +330,18 @@ export async function runMaintainSchedule(args: string[], env: ScheduleEnv = def
   const paths = schedulePaths(env);
   if (target === 'windows') {
     const line = windowsScheduleCommand(env.gbrainCommand);
-    setCliExitVerdict(writeCliError(opError('schedule_unsupported', `gbrain maintain --schedule installs nothing on Windows. To schedule free upkeep by hand, run: ${line}`,
+    setCliExitVerdict(writeCliError(opError('schedule_unsupported', `foresights maintain --schedule installs nothing on Windows. To schedule free upkeep by hand, run: ${line}`,
       `Add the scheduled task yourself with: ${line}`, { reason: 'windows', detail: line }), 'maintain', { json }));
     return;
   }
   if (target === 'container') {
     setCliExitVerdict(writeCliError(opError('schedule_unsupported', 'This looks like a container or cloud sandbox, where an operating-system schedule does not survive a redeploy, so nothing was installed.',
-      'Keep gbrain serve running in the container (gbrain serve --http for a hosted brain): it runs free upkeep on its own while idle.', { reason: 'container' }), 'maintain', { json }));
+      'Keep foresights serve running in the container (foresights serve --http for a hosted brain): it runs free upkeep on its own while idle.', { reason: 'container' }), 'maintain', { json }));
     return;
   }
   if (env.brainId && env.brainId !== HOST_BRAIN_ID && !args.includes('--unschedule')) {
-    setCliExitVerdict(writeCliError(opError('schedule_unsupported', `gbrain maintain --schedule covers the host brain only, and this command selects the mounted brain ${env.brainId}, so nothing was installed.`,
-      `Run gbrain maintain --schedule without --brain for the host brain. For ${env.brainId}, add gbrain --brain ${env.brainId} maintain --unattended to a scheduler yourself.`, { reason: 'mount', detail: env.brainId }), 'maintain', { json }));
+    setCliExitVerdict(writeCliError(opError('schedule_unsupported', `foresights maintain --schedule covers the host brain only, and this command selects the mounted brain ${env.brainId}, so nothing was installed.`,
+      `Run foresights maintain --schedule without --brain for the host brain. For ${env.brainId}, add foresights --brain ${env.brainId} maintain --unattended to a scheduler yourself.`, { reason: 'mount', detail: env.brainId }), 'maintain', { json }));
     return;
   }
   if (args.includes('--unschedule')) {
@@ -352,10 +352,10 @@ export async function runMaintainSchedule(args: string[], env: ScheduleEnv = def
     return;
   }
   const writes = scheduleWrites(target, paths);
-  const what = `every ${SCHEDULE_INTERVAL_HOURS} hours, ${target === 'macos' ? 'a launchd agent' : target === 'linux-systemd' ? 'a systemd user timer' : 'a crontab line'} runs gbrain ${SCHEDULED_RUN_ARGS.join(' ')}`;
+  const what = `every ${SCHEDULE_INTERVAL_HOURS} hours, ${target === 'macos' ? 'a launchd agent' : target === 'linux-systemd' ? 'a systemd user timer' : 'a crontab line'} runs foresights ${SCHEDULED_RUN_ARGS.join(' ')}`;
   if (args.includes('--dry-run')) {
     print(json, { status: 'dry_run', target, would_write: writes, interval_hours: SCHEDULE_INTERVAL_HOURS },
-      [`gbrain maintain --schedule --dry-run: nothing was written. On ${target}, ${what}.`, '  would write:', ...writes.map((w) => `    ${w}`), '  Install: gbrain maintain --schedule --yes (after the user agrees).']);
+      [`foresights maintain --schedule --dry-run: nothing was written. On ${target}, ${what}.`, '  would write:', ...writes.map((w) => `    ${w}`), '  Install: foresights maintain --schedule --yes (after the user agrees).']);
     return;
   }
   try {
@@ -363,10 +363,10 @@ export async function runMaintainSchedule(args: string[], env: ScheduleEnv = def
       command: 'maintain',
       effects: ['persistent_install'],
       actor: 'agent',
-      what: 'Install an operating-system schedule for free gbrain upkeep',
-      why: `On ${target}, ${what}. Writes: ${writes.join(', ')}. A run calls no chat model and never purges a page; it exits at once while a gbrain serve owns the brain or upkeep is not due.`,
-      risk: 'A scheduled job keeps running after this session until gbrain maintain --unschedule removes it.',
-      user_message: `I'd like to add a small scheduled job that runs gbrain's free upkeep (links, timeline, facts index) every ${SCHEDULE_INTERVAL_HOURS} hours, so your brain stays tidy when no agent session is open. It deletes nothing and calls no chat model; with an embedding key it may embed new text, capped at $1 a day. You can remove it any time with gbrain maintain --unschedule. OK?`,
+      what: 'Install an operating-system schedule for free foresights upkeep',
+      why: `On ${target}, ${what}. Writes: ${writes.join(', ')}. A run calls no chat model and never purges a page; it exits at once while a foresights serve owns the brain or upkeep is not due.`,
+      risk: 'A scheduled job keeps running after this session until foresights maintain --unschedule removes it.',
+      user_message: `I'd like to add a small scheduled job that runs foresights's free upkeep (links, timeline, facts index) every ${SCHEDULE_INTERVAL_HOURS} hours, so your brain stays tidy when no agent session is open. It deletes nothing and calls no chat model; with an embedding key it may embed new text, capped at $1 a day. You can remove it any time with foresights maintain --unschedule. OK?`,
       argv: ['gbrain', 'maintain', '--schedule', '--yes'],
       preview_argv: ['gbrain', 'maintain', '--schedule', '--dry-run'],
       args,
@@ -379,16 +379,16 @@ export async function runMaintainSchedule(args: string[], env: ScheduleEnv = def
   const result = await installSchedule(target, env);
   if (result.error) {
     setCliExitVerdict(writeCliError(opError('schedule_install_failed', `The free upkeep schedule was written but the ${target} scheduler refused it: ${result.error}`,
-      'Read the error above, fix the scheduler, then run gbrain maintain --schedule --yes again.', { detail: result.error }), 'maintain', { json }));
+      'Read the error above, fix the scheduler, then run foresights maintain --schedule --yes again.', { detail: result.error }), 'maintain', { json }));
     return;
   }
   print(json, { status: 'installed', target, written: result.written, notes: result.notes, interval_hours: SCHEDULE_INTERVAL_HOURS },
     [`Scheduled free upkeep: ${what}.`, `  Wrote: ${result.written.join(', ')}`, `  Log: ${paths.log}`, ...result.notes.map((n) => `  ${n}`),
-      '  A run exits at once while a gbrain serve owns the brain or upkeep is not due.', '  Remove: gbrain maintain --unschedule']);
+      '  A run exits at once while a foresights serve owns the brain or upkeep is not due.', '  Remove: foresights maintain --unschedule']);
 }
 
 /**
- * The engine-free part of `gbrain maintain`, routed before connectEngine: `--schedule` and
+ * The engine-free part of `foresights maintain`, routed before connectEngine: `--schedule` and
  * `--unschedule`, and a scheduled run (`--unattended --runner schedule`) while a live serve
  * owns the brain, which exits 0 without opening it (a PGLite open would wait on the serve's lock).
  */
@@ -401,7 +401,7 @@ export async function tryRunMaintainEngineFree(args: string[], deps: { liveServe
   const runner = args.indexOf('--runner');
   const scheduled = args.includes('--unattended') && runner >= 0 && args[runner + 1] === 'schedule';
   if (!scheduled || !await (deps.liveServe ?? liveServeOwnsBrain)()) return false;
-  const message = 'A gbrain serve owns this brain and runs free upkeep while it is idle (serve owns upkeep), so the scheduled run did nothing.';
+  const message = 'A foresights serve owns this brain and runs free upkeep while it is idle (serve owns upkeep), so the scheduled run did nothing.';
   print(args.includes('--json'), { status: 'skipped', exit: 0, code: 'maintenance_owned_by_serve', message }, [message]);
   return true;
 }

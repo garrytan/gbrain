@@ -26,7 +26,7 @@
  *   reconciliation and booking the source's facts fence as an
  *   `integrity_guard` halt.
  * - G4: a legacy row that copies a fenced claim of its page (`duplicate_claim`)
- *   is never adopted; `gbrain repair duplicate-facts` keeps the fence row and
+ *   is never adopted; `foresights repair duplicate-facts` keeps the fence row and
  *   retires the legacy copy onto it, and the page then leaves the guard.
  *   Before, the repair kept an older legacy copy and held the fence row.
  * Seams: planFence against an engine stub, the managed-brain helper for the

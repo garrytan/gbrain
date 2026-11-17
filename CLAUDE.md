@@ -1,31 +1,31 @@
 # CLAUDE.md
 
-GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable
+Foresights is a personal knowledge brain and GStack mod for agent platforms. Pluggable
 engines: PGLite (embedded Postgres via WASM, zero-config default) or Postgres + pgvector
-+ hybrid search in a managed Supabase instance. `gbrain init` defaults to PGLite;
-suggests Supabase for 1000+ files. GStack teaches agents how to code. GBrain teaches
++ hybrid search in a managed Supabase instance. `foresights init` defaults to PGLite;
+suggests Supabase for 1000+ files. GStack teaches agents how to code. Foresights teaches
 agents everything else: brain ops, signal detection, content ingestion, enrichment,
 cron scheduling, reports, identity, and access control.
 
 ## North Star
 
-gbrain aims to be the **next Postgres for memory**: the most well-tested, widest-coverage,
+foresights aims to be the **next Postgres for memory**: the most well-tested, widest-coverage,
 best-for-the-most-at-the-least retrieval + agent memory system for company brains and
 personal AI, built to serve a billion people. Every feature and every eval is judged
-against this bar. "gbrain is best" is a WHOLE-SYSTEM claim — proven across the full
+against this bar. "foresights is best" is a WHOLE-SYSTEM claim — proven across the full
 BrainBench suite (retrieval, longmemeval, calibration, …) — not by any single feature.
-When scoping an eval, prove the FEATURE delivers value to gbrain users; do not waste it
-proving that gbrain's particular algorithm beats some other algorithm (a research
+When scoping an eval, prove the FEATURE delivers value to foresights users; do not waste it
+proving that our particular algorithm beats some other algorithm (a research
 bake-off, off-mission).
 
 ## Two organizational axes (read this first)
 
-GBrain knowledge is organized along two orthogonal axes. Users AND agents must
+Foresights knowledge is organized along two orthogonal axes. Users AND agents must
 understand both, or queries misroute silently.
 
 - **Brain** — WHICH DATABASE. Your personal brain is `host`. You can mount
   additional brains (team-published, each with their own DB and access policy)
-  via `gbrain mounts add` (v0.19+). Routing: `--brain`, `GBRAIN_BRAIN_ID`,
+  via `foresights mounts add` (v0.19+). Routing: `--brain`, `GBRAIN_BRAIN_ID`,
   `.gbrain-mount` dotfile.
 - **Source** — WHICH REPO INSIDE THE DATABASE. A brain can hold many sources
   (wiki, gstack, openclaw, essays). Slugs scope per source. Routing:
@@ -38,7 +38,7 @@ mount, CEO-class with multiple team brains) and
 
 ## Architecture
 
-Contract-first: `src/core/operations.ts` defines 100+ shared operations (including `volunteer_context` — push-based context, see `docs/guides/push-context.md` — and the seven frozen MEMORY_VERBS `recall`/`remember`/`entity`/`synthesize`/`forget`/`context_pack`/`delta` — the last two are v0.45.7 ambient-recall boundary verbs (budget-packed pack + "what changed since"), all seven stamp `protocol_version: 1`, servable alone via `gbrain serve --surface verbs`, see `docs/protocol/MEMORY_VERBS_v1.md` + `docs/guides/ambient-recall.md`). CLI and MCP
+Contract-first: `src/core/operations.ts` defines 100+ shared operations (including `volunteer_context` — push-based context, see `docs/guides/push-context.md` — and the seven frozen MEMORY_VERBS `recall`/`remember`/`entity`/`synthesize`/`forget`/`context_pack`/`delta` — the last two are v0.45.7 ambient-recall boundary verbs (budget-packed pack + "what changed since"), all seven stamp `protocol_version: 1`, servable alone via `foresights serve --surface verbs`, see `docs/protocol/MEMORY_VERBS_v1.md` + `docs/guides/ambient-recall.md`). CLI and MCP
 server are both generated from this single source. Engine factory (`src/core/engine-factory.ts`)
 dynamically imports the configured engine (`'pglite'` or `'postgres'`). Skills are fat
 markdown files (tool-agnostic, work with both CLI and plugin contexts).
@@ -149,32 +149,31 @@ on demand — read the linked doc before working in that area.
 | search modes / cost knobs | `docs/guides/search-modes.md` |
 | engine detection / Postgres adoption / DB-access repair / degraded serve (`engine status`, `db-repair`, `init --prefer-postgres`, `GBRAIN_DB_ACCESS`) | `docs/ENGINES.md` ("Engine detection and access repair" + "Local Postgres") |
 | embedding spend gates / cost gate / `spend.posture` / off switches | `docs/operations/spend-controls.md` |
-| the monthly backup-coverage check (`gbrain backup`, render channels, nag budget) | `docs/operations/backup-check.md` + the `backup/*` entries in `KEY_FILES.md` |
+| the monthly backup-coverage check (`foresights backup`, render channels, nag budget) | `docs/operations/backup-check.md` + the `backup/*` entries in `KEY_FILES.md` |
 | push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
-| checkpoint compaction / compiled context files (`gbrain compile-context`) | `docs/guides/checkpoint-compaction.md` + `docs/guides/ambient-recall.md` |
+| checkpoint compaction / compiled context files (`foresights compile-context`) | `docs/guides/checkpoint-compaction.md` + `docs/guides/ambient-recall.md` |
 | ambient memory writeback (opt-in unprompted fact capture — `memory.auto_writeback`, harness instruction blocks, Stop-hook backstop, read-time TTL) | `docs/guides/ambient-writeback.md` + the ambient-writeback cluster in `KEY_FILES.md` |
 | Memorable integration / session receipts / relay consent (`integrations.memorable.*`) | `docs/memorable-agents.md` + the hook-heartbeat/capture-spec/codex-hooks entries in `KEY_FILES.md` |
-| chat connectors (live ChatGPT/Claude history sync — `gbrain connectors`) | `docs/guides/chat-connectors.md` + the `src/core/connectors/*` entries in `KEY_FILES.md` |
+| chat connectors (live ChatGPT/Claude history sync — `foresights connectors`) | `docs/guides/chat-connectors.md` + the `src/core/connectors/*` entries in `KEY_FILES.md` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |
-| publishing the brain's MCP server to other devices and agents (`gbrain mcp expose`, Tailscale default, Grok Bot / Muse hosted path) | `docs/guides/remote-mcp.md` + `docs/mcp/DEPLOY.md` + the `remote-mcp` skill |
+| publishing the brain's MCP server to other devices and agents (`foresights mcp expose`, Tailscale default, Grok Bot / Muse hosted path) | `docs/guides/remote-mcp.md` + `docs/mcp/DEPLOY.md` + the `remote-mcp` skill |
 | memory verbs / MCP tool surface (`--surface`) / conformance | `docs/protocol/MEMORY_VERBS_v1.md` + the `verbs*`/`surface.ts`/`protocol.ts` entries in `KEY_FILES.md` |
-| the CLI surface (commands + flags) | `gbrain --help` / `gbrain --tools-json`, plus the relevant `KEY_FILES.md` entry |
+| the CLI surface (commands + flags) | `foresights --help` / `foresights --tools-json`, plus the relevant `KEY_FILES.md` entry |
 | adding a storage method, migration, doctor check, CLI-only command, HTTP route or sync phase | `CONTRIBUTING.md` ("Where does my change go?"); branches from before refactor wave 1: `docs/architecture/wave-1-porting.md` |
 | running, writing or retiring tests | `docs/TESTING.md` ([authoring gate](docs/TESTING.md#authoring-gate), [retiring](docs/TESTING.md#retiring-a-test)) |
 | bulk-command progress wiring | `docs/progress-events.md` |
 | eval methodology / metrics | `docs/eval/` |
 | brains vs sources / topology | `docs/architecture/brains-and-sources.md`, `topologies.md` |
 | google connector (Gmail/Calendar/Contacts, OAuth) / credential vault | `docs/guides/google-connect.md` + the `creds/*` + `google/*` entries in `KEY_FILES.md` |
-| open loops / `gbrain waiting` / commitment extraction | `docs/guides/open-loops.md` + the `loops*` entries in `KEY_FILES.md` |
+| open loops / `foresights waiting` / commitment extraction | `docs/guides/open-loops.md` + the `loops*` entries in `KEY_FILES.md` |
 | skill routing | `skills/RESOLVER.md` |
-| agent bootstrap (paste-in install, hooks, `gbrain bootstrap`, sweep, keyless) | `docs/guides/bootstrap.md` + `docs/designs/AGENT_BOOTSTRAP_PLAN.md` + the KEY_FILES bootstrap cluster |
+| agent bootstrap (paste-in install, hooks, `foresights bootstrap`, sweep, keyless) | `docs/guides/bootstrap.md` + `docs/designs/AGENT_BOOTSTRAP_PLAN.md` + the KEY_FILES bootstrap cluster |
 | shipping a release / CHANGELOG / PR conventions | `docs/RELEASING.md` (ship IRON RULES stay inline below) |
 
 ## Maintaining CLAUDE.md and the reference docs
 
-An append-only per-file index once grew CLAUDE.md to ~592KB. The rules that keep it
-from recurring:
+An append-only per-file index once grew CLAUDE.md to ~592KB. Rules that stop a repeat:
 
 - **CLAUDE.md is orientation, not the implementation spec.** It carries the North
   Star, the two axes, architecture + cross-cutting invariants, the resolver, and
@@ -322,7 +321,7 @@ four numeric segments are required first. Historical 3-segment versions
 | File | What lives there | Format |
 |---|---|---|
 | `VERSION` | The single source of truth. Read first by `/ship`, the binary, and CI version-gate. | Bare 4-segment string `MAJOR.MINOR.PATCH.MICRO` (e.g. `0.31.4.1`), no leading `v`. |
-| `package.json` | Bun/npm package version. `gbrain --version` reads it via the compiled binary's bundled package metadata. CI version-gate cross-checks this against `VERSION` and fails if they drift. | `"version": "0.31.4.1"` |
+| `package.json` | Bun/npm package version. `foresights --version` reads it via the compiled binary's bundled package metadata. CI version-gate cross-checks this against `VERSION` and fails if they drift. | `"version": "0.31.4.1"` |
 | `CHANGELOG.md` | Top entry header `## [0.31.4.1] - YYYY-MM-DD` plus the "To take advantage of v0.31.4.1" block. | Standard Keep-a-Changelog header. |
 | `TODOS.md` | Any TODO entries that mention "follow-up from vX.Y.Z.W" use the version of the release that filed them. Update only when filing NEW follow-up TODOs. | Inline `vX.Y.Z.W` references in TODO bodies. |
 | `openclaw.plugin.json` | OpenClaw plugin manifest (v0.45.6.0, #4033). Hand-maintained; `test/openclaw-plugin-manifest.test.ts` fails the suite if it drifts from `package.json`. Merges from master auto-resolve it to master's version — re-bump it with the trio. | `"version": "0.45.12.0"` |
@@ -418,9 +417,9 @@ public-facing artifact.** Public artifacts include: `CHANGELOG.md`, `README.md`,
 code. Query examples, benchmark stories, and migration guides MUST use generic
 placeholders.
 
-Why: gbrain runs a personal knowledge brain containing notes on real people and
+Why: foresights runs a personal knowledge brain containing notes on real people and
 real companies (YC founders, portfolio companies, funds, investors, meeting
-attendees). When a doc copies a query like `gbrain graph diana-hu --depth 2` or
+attendees). When a doc copies a query like `foresights graph diana-hu --depth 2` or
 names a specific agent fork like `Wintermute`, that real name gets indexed by
 search engines, surfaced in cross-references, and distributed with every release.
 
@@ -448,9 +447,8 @@ plans) — those aren't distributed. Anything checked into this repo or shipped
 in a release must use the OpenClaw phrasing above. Sweeping a stale reference
 is a small clean-up PR, not a debate.
 
-**When in doubt, ask yourself:** "Would this query reveal private information
-about the user's contacts, investments, or portfolio if it were read by a
-stranger?" If yes, replace with generic placeholders.
+**When in doubt:** would this query reveal private information about the user's
+contacts, investments, or portfolio to a stranger? If yes, use generic placeholders.
 
 **Illustrative API examples with household-brand companies** (Stripe, Brex, OpenAI,
 GitHub, etc.) are fine — they're public entities, not contacts in anyone's brain.

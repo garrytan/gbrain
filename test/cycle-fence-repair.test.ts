@@ -96,7 +96,7 @@ describe('fence_repair phase gates and budget', () => {
     expect(paused.status).toBe('skipped');
     expect(paused.details.reason).toBe('disabled');
     expect(paused.summary).toContain('nothing was repaired');
-    expect(paused.summary).toContain('gbrain config set fences.repair.enabled true');
+    expect(paused.summary).toContain('foresights config set fences.repair.enabled true');
     expect(stub.plans).toHaveLength(0);
     expect(stub.applied).toHaveLength(0);
 
@@ -167,7 +167,7 @@ describe('fence_repair phase report', () => {
     expect(result.summary).toContain('3 still held (holder_unresolved 1, llm_disabled 1, missing_begin 1)');
     expect(result.summary).toContain('the oldest unresolved hold is 26 h old');
     expect(result.summary).toContain('Model (Tier 3) repair is off (fences.repair.llm false): 1 fence(s) wait for it');
-    expect(result.summary).toContain('gbrain config set fences.repair.llm true');
+    expect(result.summary).toContain('foresights config set fences.repair.llm true');
     expect(result.summary).toContain('1 need a manual edit');
     expect((result.details.fix as { argv?: string[] }).argv).toEqual(['gbrain', 'repair', 'fences']);
   });
@@ -187,7 +187,7 @@ describe('fence_repair phase report', () => {
     const result = await runFenceRepairPhase(engine, { dryRun: false, registry: [failing.spec] });
     expect(result).toMatchObject({ status: 'warn', details: { reason: 'error', code: 'database_error' } });
     expect(JSON.stringify(result)).not.toContain('SENTINEL-CELL-VALUE');
-    expect(result.summary).toContain('gbrain repair fences');
+    expect(result.summary).toContain('foresights repair fences');
 
     const controller = new AbortController();
     controller.abort();

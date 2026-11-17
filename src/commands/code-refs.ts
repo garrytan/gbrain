@@ -1,5 +1,5 @@
 /**
- * gbrain code-refs <symbol>
+ * foresights code-refs <symbol>
  *
  * v0.19.0 Layer 7 — find all usage sites of a named symbol among the
  * brain's code pages. The DX "magical moment" for v0.19.0: an agent
@@ -97,7 +97,7 @@ export async function runCodeRefs(engine: BrainEngine, args: string[]): Promise<
       class: 'UsageError',
       code: 'code_refs_requires_symbol',
       message: 'code-refs requires a symbol name',
-      hint: 'gbrain code-refs <symbol> [--source S | --all-sources] [--lang <language>] [--json]',
+      hint: 'foresights code-refs <symbol> [--source S | --all-sources] [--lang <language>] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify(legacyNestedErrorDocument(err.envelope, ['gbrain', 'code-refs', '--help'])));

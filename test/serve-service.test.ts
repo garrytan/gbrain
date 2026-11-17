@@ -1,6 +1,6 @@
 /**
- * src/core/serve-service.ts — the persistent `gbrain serve --http` user
- * service behind `gbrain mcp expose`. Everything runs in a tmpdir against a
+ * src/core/serve-service.ts — the persistent `foresights serve --http` user
+ * service behind `foresights mcp expose`. Everything runs in a tmpdir against a
  * recording fake runner: no launchctl, no systemctl, no process.env writes.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -77,7 +77,7 @@ describe('paths + target detection', () => {
     // cli.ts gone (a packed install without sources) → never bake a path that cannot run
     expect(resolveServeGbrainCommand({ which: () => null, execPath: '/home/u/.bun/bin/bun', argv1: '/repo/src/cli.ts', metaUrl: devMeta, fileExists: () => false }))
       .toEqual(['/home/u/.bun/bin/bun']);
-    // the bun runtime itself is never mistaken for a compiled gbrain (bun-profile, bun.exe)
+    // the bun runtime itself is never mistaken for a compiled foresights (bun-profile, bun.exe)
     expect(resolveServeGbrainCommand({ which: () => null, execPath: '/usr/local/bin/bun-profile', argv1: '', metaUrl: devMeta, fileExists: p => p === '/repo/src/cli.ts' }))
       .toEqual(['/usr/local/bin/bun-profile', '/repo/src/cli.ts']);
   });
@@ -456,7 +456,7 @@ describe('ensureAdminToken: exclusive-create race', () => {
 });
 
 describe('the rendered wrapper actually runs under bash', () => {
-  // A stand-in for the gbrain CLI: records how the wrapper invoked it.
+  // A stand-in for the foresights CLI: records how the wrapper invoked it.
   const FAKE_GBRAIN = `#!/bin/bash
 {
   echo "argv=$*"

@@ -45,8 +45,8 @@ export function bunVersionMeets(version: string, floor: string): boolean | null 
 
 export function unsupportedBunMessage(version = typeof Bun === 'undefined' ? '' : Bun.version): string | null {
   if (bunVersionMeets(version, MINIMUM_BUN_VERSION)) return null;
-  return `GBrain requires Bun ${MINIMUM_BUN_VERSION} or newer (found ${version ? `Bun ${version}` : 'no Bun runtime'}).\n`
-    + 'Fix: run `bun upgrade`, then restart GBrain. If a `gbrain upgrade` stopped here, finish it with `gbrain post-upgrade`.';
+  return `Foresights requires Bun ${MINIMUM_BUN_VERSION} or newer (found ${version ? `Bun ${version}` : 'no Bun runtime'}).\n`
+    + 'Fix: run `bun upgrade`, then restart Foresights. If a `foresights upgrade` stopped here, finish it with `foresights post-upgrade`.';
 }
 
 export function assertSupportedBun(version?: string): void {
@@ -57,7 +57,7 @@ export function assertSupportedBun(version?: string): void {
 /**
  * The CLI entrypoint gate: below the floor every command exits 1 before any
  * work starts. `--version` still answers (exit 0, refusal on stderr) so an
- * upgrade run by an older gbrain can confirm the swapped version. Autopilot
+ * upgrade run by an older foresights can confirm the swapped version. Autopilot
  * services log stdout to autopilot.log and stderr to an unsurfaced
  * autopilot.err, so its refusal goes to both.
  */
@@ -66,7 +66,7 @@ export function exitOnUnsupportedBun(command: string | undefined, cliVersion: st
   if (!refusal) return;
   console.error(refusal);
   if (command === '--version' || command === 'version') {
-    console.log(`gbrain ${cliVersion}`);
+    console.log(`foresights ${cliVersion}`);
     process.exit(0);
   }
   if (command === 'autopilot') console.log(`${new Date().toISOString()} [autopilot] ${refusal}`);

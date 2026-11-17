@@ -1,5 +1,5 @@
 /**
- * `gbrain repair origin-twins --source <id>` (#6948): resolve live pages that record the same origin (`source_path`).
+ * `foresights repair origin-twins --source <id>` (#6948): resolve live pages that record the same origin (`source_path`).
  *
  * Explicit-only, preview-bound, trusted local CLI on the source's owner host. The preview lists every twin group of the
  * source (the stored spelling, and the legacy `<scope>/<origin>` spelling of a scoped source-root source), each with
@@ -70,7 +70,7 @@ const previewFix = (sourceId: string) => readFix('Previews the duplicate-origin 
 export const ORIGIN_TWINS_CONSENT_TEXT = {
   what: 'Resolve each previewed duplicate-origin group: the canonical page keeps the file; each other page gives it up',
   why: 'Several live pages record the same file, which held that file out of every sync; the preview listed each group with its pages, revisions and verdict.',
-  risk: `A merged twin's inbound links, aliases, tags and facts others assert move to the surviving page, its slug becomes an alias, and it is soft-deleted (the file stays) and purged ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h later; gbrain restore brings back its text as a database-only page, and moved references stay on the survivor. A detached page only forgets the file and stays live.`,
+  risk: `A merged twin's inbound links, aliases, tags and facts others assert move to the surviving page, its slug becomes an alias, and it is soft-deleted (the file stays) and purged ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h later; foresights restore brings back its text as a database-only page, and moved references stay on the survivor. A detached page only forgets the file and stays live.`,
   user_message: `Resolve the previewed duplicate-origin groups? Merged twins are soft-deleted (the file stays) and purged after ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h`,
 };
 
@@ -183,7 +183,7 @@ export function groupPairs(group: OriginTwinGroup, keep?: string): OriginTwinPai
 }
 
 function decisionCommands(group: OriginTwinGroup): string[] {
-  return [...group.claimants.map(page => `gbrain get --source ${group.source_id} -- '${page.slug}'`),
+  return [...group.claimants.map(page => `foresights get --source ${group.source_id} -- '${page.slug}'`),
     `Pick the page that is ${group.source_path}'s, then: ${originTwinsRepairCommand(group.source_id)} --slug '<kept-slug>' (the others forget the file and stay live; nothing is deleted)`];
 }
 
@@ -203,16 +203,16 @@ export const originTwinsRepair: RepairHandler = {
   kind: 'origin-twins',
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (opts?.remote === true) throw trustedCliRequired('gbrain repair origin-twins runs only from the trusted local CLI on the brain host.');
+    if (opts?.remote === true) throw trustedCliRequired('foresights repair origin-twins runs only from the trusted local CLI on the brain host.');
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair origin-twins needs --source <id>.',
-        'Duplicate-origin groups are checked on each source\'s own canonical owner host; name one source, e.g. gbrain repair origin-twins --source default.',
+      throw opError('invalid_params', 'foresights repair origin-twins needs --source <id>.',
+        'Duplicate-origin groups are checked on each source\'s own canonical owner host; name one source, e.g. foresights repair origin-twins --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: DOCS });
     }
     const sourceId = scope.source_ids[0]!;
     const command = originTwinsRepairCommand(sourceId);
     const keep = opts?.slugs?.length ? opts.slugs : undefined;
-    if (keep && keep.length !== 1) throw opError('invalid_params', 'gbrain repair origin-twins --slug names the one page that keeps a file.', `Name one slug per run: ${command} --slug '<kept-slug>'.`, { fix: previewFix(sourceId), docs: DOCS });
+    if (keep && keep.length !== 1) throw opError('invalid_params', 'foresights repair origin-twins --slug names the one page that keeps a file.', `Name one slug per run: ${command} --slug '<kept-slug>'.`, { fix: previewFix(sourceId), docs: DOCS });
     const context = await originOwnerContext(engine, sourceId);
     if (!context.ok) {
       // Off the owner host (or with no checkout bound) a source that holds no twin has nothing to resolve; the index needs no checkout.
@@ -248,7 +248,7 @@ export const originTwinsRepair: RepairHandler = {
         details: { decisions: decisions.map(group => ({ ...group, commands: decisionCommands(group) })), mass_merge: mass, truncated: scan.truncated, purge_fuse_hours: ORIGIN_TWINS_PURGE_FUSE_HOURS, docs: DOCS } };
     }
     if (!opts.expect) {
-      throw opError('invalid_params', 'gbrain repair origin-twins --apply resolves only the set a preview printed.',
+      throw opError('invalid_params', 'foresights repair origin-twins --apply resolves only the set a preview printed.',
         `Preview first: ${command} — then, after the user agrees, run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, { fix: previewFix(sourceId), docs: DOCS });
     }
     const approved = await loadApprovedSet<ApprovedPair>(engine, { command: 'origin-twins', hash: opts.expect, previewCommand: command,

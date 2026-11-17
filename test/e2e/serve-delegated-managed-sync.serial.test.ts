@@ -1,6 +1,6 @@
 /**
- * #6317 (D1 a′) on real Postgres: a spawned `gbrain serve` owns the host (its
- * B3 heartbeat row says so), and `gbrain sync --source <id> --no-pull --no-embed
+ * #6317 (D1 a′) on real Postgres: a spawned `foresights serve` owns the host (its
+ * B3 heartbeat row says so), and `foresights sync --source <id> --no-pull --no-embed
  * --json` from a second process hands the managed catch-up to it over the
  * resolve-IPC socket as the CLI's verified writer. Asserts the CLI's exit code
  * and JSON envelope are the in-process ones, the drain's own lines reached the
@@ -50,7 +50,7 @@ function childEnv(extra: Record<string, string | undefined> = {}): Record<string
   });
 }
 
-/** One stdio MCP session against the spawned `gbrain serve` (ndjson JSON-RPC). */
+/** One stdio MCP session against the spawned `foresights serve` (ndjson JSON-RPC). */
 class StdioServe {
   readonly child: ChildProcess;
   stderr = '';
@@ -185,7 +185,7 @@ describeWithDb('serve-delegated managed sync on Postgres (#6317 D1 a′)', () =>
     const elapsedMs = performance.now() - started;
     stopProbing = true; await probing;
     if (result.code !== 0) throw new Error(`sync exited ${result.code}\nstdout:\n${result.out}\nstderr:\n${result.err}\nserve stderr:\n${serve!.stderr}`);
-    expect(result.err).toMatch(new RegExp(`a live gbrain serve \\(PID ${serve!.pid}\\) owns this host's writes — running the managed catch-up inside it as this CLI's writer`));
+    expect(result.err).toMatch(new RegExp(`a live foresights serve \\(PID ${serve!.pid}\\) owns this host's writes — running the managed catch-up inside it as this CLI's writer`));
     expect(result.err).toMatch(new RegExp(`\\[sync\\] managed catch-up: ${PAGES} entries frozen`));
     expect(serve!.stderr).toMatch(/\[serve-sync\] start job=.* managed=true/);
     expect(serve!.stderr).toMatch(/\[serve-sync\] done job=.* drain=synced/);

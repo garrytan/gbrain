@@ -22,11 +22,11 @@ describe('schemaVersionHealth', () => {
     expect(schemaVersionHealth(0, 130).status).toBe('fail');
     expect(schemaVersionHealth(125, 130)).toEqual({
       status: 'warn',
-      message: 'Version 125, latest is 130. Fix: gbrain apply-migrations --yes',
+      message: 'Version 125, latest is 130. Fix: foresights apply-migrations --yes',
     });
     expect(schemaVersionHealth(125, 130, { remote: true })).toEqual({
       status: 'warn',
-      message: 'Version 125, latest is 130. Run `gbrain apply-migrations --yes` on the host.',
+      message: 'Version 125, latest is 130. Run `foresights apply-migrations --yes` on the host.',
     });
   });
 });

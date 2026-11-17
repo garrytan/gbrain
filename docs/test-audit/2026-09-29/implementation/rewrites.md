@@ -82,7 +82,7 @@ One table of 10 retracted honesty/privacy claims, negative only, scanned whitesp
 |---|---|---|---|---|
 | `mcp-registration-blocks` › "no doc prescribes the retired ~/.openclaw/config.json path" | `docs/mcp/OPENCLAW.md` re-adds `~/.openclaw/config.json` | old fails | `doc-claims` | fails |
 | `mcp-registration-blocks` › "OPENCLAW.md registers via the openclaw mcp CLI" (positive) | reword the registration sentence | old passes (the phrase appears elsewhere); vacuous as a guard | none needed (dropped positive) | — |
-| `docs-navigation` › "active memory guidance keeps durable preferences separate…" | `brain-vs-memory.md` re-adds "Don't store user⏎preferences in GBrain" (line-wrapped) | old passes (blind: no whitespace flattening) | `doc-claims` | fails |
+| `docs-navigation` › "active memory guidance keeps durable preferences separate…" | `brain-vs-memory.md` re-adds "Don't store user⏎preferences in Foresights" (line-wrapped) | old passes (blind: no whitespace flattening) | `doc-claims` | fails |
 | `docs-navigation` › "primary docs do not reinstate blanket graph or exclusivity promises" | `memory-boundaries.md` "not a full database backup" → "not a complete database backup" (same meaning) | old fails (prose-coupled positive) | negatives moved to `doc-claims` | — |
 | same | `skills/query/SKILL.md` adds "Every `put_page` auto-creates links." | old passes (blind: skills not scanned) | `doc-claims` | fails |
 | `put-page-remote-autolink-hint` › "downstream-upgrade doc and enrich skill state the MCP skip…" | `skills/enrich/SKILL.md` re-adds "MCP response includes `auto_links: { created`" | old fails | `doc-claims` | fails |
@@ -129,14 +129,14 @@ The byte pins (`* 10 + 27 ) / 28`, `bytes/2.8`, not `* 2 / 7`, not `/ 4 ))`, not
 
 | New/changed test | Probe edit | Result | Reverted |
 |---|---|---|---|
-| docs-cli › every `gbrain <verb> [--flag]` … resolves | (i) append ```` ```bash\ngbrain notacommand --x\n``` ```` to docs/guides/cron-schedule.md | FAIL: `docs/guides/cron-schedule.md:354: gbrain notacommand — unknown verb` (4 pass / 1 fail) | yes |
+| docs-cli › every `foresights <verb> [--flag]` … resolves | (i) append ```` ```bash\ngbrain notacommand --x\n``` ```` to docs/guides/cron-schedule.md | FAIL: `docs/guides/cron-schedule.md:354: foresights notacommand — unknown verb` (4 pass / 1 fail) | yes |
 | same | (iii) same block with `<!-- gbrain-cli: historical -->` above the fence | PASS (5/5): the marker suppresses it | yes |
-| same | (ii) `skills/brain-pdf/SKILL.md`: `gbrain get "$SLUG" --no-such-flag` | FAIL: `skills/brain-pdf/SKILL.md:83: … unknown flag --no-such-flag for 'gbrain get'` | yes |
+| same | (ii) `skills/brain-pdf/SKILL.md`: `foresights get "$SLUG" --no-such-flag` | FAIL: `skills/brain-pdf/SKILL.md:83: … unknown flag --no-such-flag for 'foresights get'` | yes |
 | docs-cli › ALLOWLIST has no stale entries | (iv) add allowlist entry `docs/guides/cron-schedule.md: --type` (already fixed) | FAIL: "no longer match a violation — remove them … docs/guides/cron-schedule.md: --type" | yes |
 | same (production) | (vi) `src/core/cli-flag-registry.generated.ts`: add `--dry-run` to `auth` | FAIL: the auth `--dry-run` allowlist entries are reported stale | yes |
 | docs-cli › scanner self-check | (v) `src/cli.ts` `validateCommandFlags`: `return null;` first line | FAIL: self-check (expected `3:--no-such-flag` missing) and stale-allowlist test both fail | yes |
-| docs-cli main + remediation | (vii) `src/cli.ts`: drop `'sync'` from CLI_ONLY | FAIL: dozens of `gbrain sync — unknown verb` (docs/ENGINES.md:289, …) | yes |
-| remediation › CHANGELOG top entry | (viii) add ``Run `gbrain notacommand` first.`` to the top CHANGELOG entry | FAIL: `CHANGELOG.md (top entry): gbrain notacommand is not a real command` (2 pass / 1 fail) | yes |
+| docs-cli main + remediation | (vii) `src/cli.ts`: drop `'sync'` from CLI_ONLY | FAIL: dozens of `foresights sync — unknown verb` (docs/ENGINES.md:289, …) | yes |
+| remediation › CHANGELOG top entry | (viii) add ``Run `foresights notacommand` first.`` to the top CHANGELOG entry | FAIL: `CHANGELOG.md (top entry): foresights notacommand is not a real command` (2 pass / 1 fail) | yes |
 
 ## Retiring-a-test evidence
 
@@ -144,27 +144,27 @@ No test cases were deleted. Only duplicated scanner code was deleted: `validComm
 
 | Deleted test | Probe edit | Result | Surviving owner | Owner result |
 |---|---|---|---|---|
-| `test/docs-cli-commands.test.ts` › "every `gbrain <verb>` in README/docs/skills resolves to a live command" (renamed, not removed) | `src/cli.ts`: drop `'sync'` from CLI_ONLY | n/a (renamed) | same file › "every `gbrain <verb> [--flag]` in README/docs/skills resolves against the live CLI" | fails (1 of 5) |
-| duplicated `validCommands`/`commandPosition` in `test/remediation-command-resolution.test.ts` (helper code, not a test) | CHANGELOG top entry gains `gbrain notacommand` | n/a | same file › "CHANGELOG top entry: every gbrain verb resolves" (via helper) | fails (1 of 3) |
+| `test/docs-cli-commands.test.ts` › "every `foresights <verb>` in README/docs/skills resolves to a live command" (renamed, not removed) | `src/cli.ts`: drop `'sync'` from CLI_ONLY | n/a (renamed) | same file › "every `foresights <verb> [--flag]` in README/docs/skills resolves against the live CLI" | fails (1 of 5) |
+| duplicated `validCommands`/`commandPosition` in `test/remediation-command-resolution.test.ts` (helper code, not a test) | CHANGELOG top entry gains `foresights notacommand` | n/a | same file › "CHANGELOG top entry: every foresights verb resolves" (via helper) | fails (1 of 3) |
 
 ## Stale docs found (28 hits → 0 open)
 
 | Location | Finding | Action |
 |---|---|---|
 | docs/guides/minions-deployment.md:445, minions-shell-jobs.md:258, skills/migrations/v0.14.0.md:136,155 | `jobs list --name shell`: `--name` never existed (the real CLI rejects it) | `jobs list --status X --json \| jq 'select(.name == "shell")'` |
-| skills/migrations/v0.14.0.md:167 | `jobs stats --orphaned` (never shipped, listed as deferred) | reworded to "an orphaned-job view in `gbrain jobs stats`" |
+| skills/migrations/v0.14.0.md:167 | `jobs stats --orphaned` (never shipped, listed as deferred) | reworded to "an orphaned-job view in `foresights jobs stats`" |
 | docs/guides/cron-schedule.md:98 | `search --type calendar --recent 7d` (no such flags) | `query "flight" --types calendar --since 7d` |
-| skills/brain-pdf/SKILL.md:83 | `get --raw` ("whatever flag exposes raw body") | `gbrain get "$SLUG"`, which already prints markdown with frontmatter |
+| skills/brain-pdf/SKILL.md:83 | `get --raw` ("whatever flag exposes raw body") | `foresights get "$SLUG"`, which already prints markdown with frontmatter |
 | skills/migrations/v0.13.0.md:64 | `graph --type a,b` | `graph … --link-type invested_in` (the op param is `link_type`) |
-| skills/migrations/v0.13.0.md:82 | `gbrain normalize-types` (v0.14), never shipped | claim deleted |
-| skills/migrations/v0.32.2.md:62 | `gbrain rebuild` (v0.32.3), never existed | reworded to "a rebuild of the database from the repo" |
-| skills/migrations/v0.33.0.md:104, v0.33.3.0.md:104 | `apply-migrations --status \| grep edges_backfilled_at_v0_34` (no `--status`, and v51 is facts_fence_columns) | `gbrain doctor --json \| jq '.checks[] \| select(.name == "schema_version")'` |
-| skills/migrations/v0.40.5.md:67-68 | `gbrain exec "UPDATE …"`, never existed | `psql "$DATABASE_URL" -c "UPDATE …"`, with a note that no gbrain command sets priority |
-| skills/migrations/v0.41.11.0.md:60 | `gbrain forget --where` described as a TODO | reworded so the fake flag is not shown as a command |
-| docs/migrations/v0.41.2-markdown-greenfield.md:37,70,131,149 | `capture --source markdown-greenfield --repo …` never worked; the importer module is unwired (scripts/check-orphan-modules.mjs:82 "awaits a wire-up vs delete product decision") | Dry-run, import, re-run and rollback sections replaced with a "Status: not wired to the CLI" note pointing to `gbrain import <dir>` |
-| skills/migrations/v0.33.0.md:130, v0.33.3.0.md:130, v0.34.0.0.md:69-70 | `gbrain wiki` / `blast` / `flow` in "what v0.34 will add / slipped" plan notes | `<!-- gbrain-cli: historical -->` marker |
-| docs/guides/rls-and-you.md:188 | `gbrain rls-exempt` (the doc says it is deliberately not shipped) | allowlist (carried over) |
-| docs/guides/concurrent-writes.md:398,471, shared-brain-skills.md:192 | `auth rescope-client … --dry-run`, `auth local-writer register … --dry-run` | allowlist. **Real CLI bug:** the handlers parse `--dry-run` (src/core/grants/cli.ts:19, persistence-admin.ts), but `CLI_FLAG_REGISTRY['auth']` omits it (the generator's SAFETY_FLAGS drop it because auth.ts does not consume it at depth zero). `bun src/cli.ts auth rescope-client foo --dry-run --json` → `unknown flag --dry-run for 'gbrain auth'`, exit 1. Fix: `EXTRA_FLAGS.auth = ['--dry-run']` in scripts/generate-flag-registry.ts, then `bun run build:flag-registry`; the stale-entry test then forces removal of the allowlist entries. |
+| skills/migrations/v0.13.0.md:82 | `foresights normalize-types` (v0.14), never shipped | claim deleted |
+| skills/migrations/v0.32.2.md:62 | `foresights rebuild` (v0.32.3), never existed | reworded to "a rebuild of the database from the repo" |
+| skills/migrations/v0.33.0.md:104, v0.33.3.0.md:104 | `apply-migrations --status \| grep edges_backfilled_at_v0_34` (no `--status`, and v51 is facts_fence_columns) | `foresights doctor --json \| jq '.checks[] \| select(.name == "schema_version")'` |
+| skills/migrations/v0.40.5.md:67-68 | `foresights exec "UPDATE …"`, never existed | `psql "$DATABASE_URL" -c "UPDATE …"`, with a note that no foresights command sets priority |
+| skills/migrations/v0.41.11.0.md:60 | `foresights forget --where` described as a TODO | reworded so the fake flag is not shown as a command |
+| docs/migrations/v0.41.2-markdown-greenfield.md:37,70,131,149 | `capture --source markdown-greenfield --repo …` never worked; the importer module is unwired (scripts/check-orphan-modules.mjs:82 "awaits a wire-up vs delete product decision") | Dry-run, import, re-run and rollback sections replaced with a "Status: not wired to the CLI" note pointing to `foresights import <dir>` |
+| skills/migrations/v0.33.0.md:130, v0.33.3.0.md:130, v0.34.0.0.md:69-70 | `foresights wiki` / `blast` / `flow` in "what v0.34 will add / slipped" plan notes | `<!-- gbrain-cli: historical -->` marker |
+| docs/guides/rls-and-you.md:188 | `foresights rls-exempt` (the doc says it is deliberately not shipped) | allowlist (carried over) |
+| docs/guides/concurrent-writes.md:398,471, shared-brain-skills.md:192 | `auth rescope-client … --dry-run`, `auth local-writer register … --dry-run` | allowlist. **Real CLI bug:** the handlers parse `--dry-run` (src/core/grants/cli.ts:19, persistence-admin.ts), but `CLI_FLAG_REGISTRY['auth']` omits it (the generator's SAFETY_FLAGS drop it because auth.ts does not consume it at depth zero). `bun src/cli.ts auth rescope-client foo --dry-run --json` → `unknown flag --dry-run for 'foresights auth'`, exit 1. Fix: `EXTRA_FLAGS.auth = ['--dry-run']` in scripts/generate-flag-registry.ts, then `bun run build:flag-registry`; the stale-entry test then forces removal of the allowlist entries. |
 
 ## Commands run
 
@@ -270,9 +270,9 @@ All probes were applied to production code, run, and reverted with `git checkout
 | ↳ "uses subagent_tool_executions for slug provenance" | `patterns.ts` collectChildPutPageSlugs: `tool_name = 'brain_put_page'` → `'put_page'` | old 1 of 16 fails | `test/cycle-patterns-source-scope.test.ts` › "collected refs carry the cycle source" (+4) | fails (5 of 6) |
 | ↳ "runs after extract — does not call runAutoLink / extractPageLinks" (vacuous negative pin) | `src/core/cycle.ts` ALL_PHASES: move `'patterns'` before `'extract'` | old 16/16 pass (blind) | `test/core/cycle.serial.test.ts` › "default: all 6 phases run in order" | fails (1 of 41) |
 | ↳ "imports … SubagentHandlerData" | vacuous: a type-only import, enforced by `tsc` | — | `bun run typecheck` | — |
-| `test/cli.test.ts` › "reindex is in CLI_ONLY" (deleted) | `src/cli.ts`: drop `'reindex'` from `CLI_ONLY` | old file 2 of 24 fail (this pin + the census) | `test/cli.test.ts` › "CLI-only commands reach their handlers instead of \"Unknown command\"" (new, spawns `gbrain <cmd> --help` for reindex/import/export/embed/files) + kept census | fails (2 of 20) |
+| `test/cli.test.ts` › "reindex is in CLI_ONLY" (deleted) | `src/cli.ts`: drop `'reindex'` from `CLI_ONLY` | old file 2 of 24 fail (this pin + the census) | `test/cli.test.ts` › "CLI-only commands reach their handlers instead of \"Unknown command\"" (new, spawns `foresights <cmd> --help` for reindex/import/export/embed/files) + kept census | fails (2 of 20) |
 | `test/cli.test.ts` › "CLI_ONLY set contains expected commands" (deleted) | `cli.ts`: drop `'files'` from `CLI_ONLY` | old 1 of 24 fails — only the kept census; this pin is blind (`'files'` still appears in `case 'files':`) | same new spawn test | fails (2 of 20) |
-| `test/cli.test.ts` › "ask alias maps to query in source" (replaced) | `cli.ts`: delete the `if (command === 'ask') command = 'query'` block | old 1 of 24 fails | `test/cli.test.ts` › "ask dispatches to the query op" (new, spawns `gbrain ask --help`, expects `Usage: gbrain query`) | fails (1 of 20) |
+| `test/cli.test.ts` › "ask alias maps to query in source" (replaced) | `cli.ts`: delete the `if (command === 'ask') command = 'query'` block | old 1 of 24 fails | `test/cli.test.ts` › "ask dispatches to the query op" (new, spawns `foresights ask --help`, expects `Usage: foresights query`) | fails (1 of 20) |
 | ↳ coupling evidence | `cli.ts`: behavior-preserving `command = ({ ask: 'query' })[command] ?? command` | old 1 of 24 fails | same new test | passes (20 of 20) |
 | `test/cli.test.ts` › "imports operations from operations.ts" + "builds cliOps map from operations" (deleted) | `cli.ts`: `cliOps` population guarded with `&& false` (map left empty) | old 1 of 24 fails — neither pin (strings survive) | existing `test/cli.test.ts` › "per-command --help prints usage without DB connection" + new "ask dispatches to the query op" | fails (2 of 20) |
 | `test/cli.test.ts` › "has formatResult function for CLI output" (deleted) | vacuous: `formatResult` is imported and called by the kept "formatResult's default renderer is bigint-safe" test; removal is a `tsc` + runtime failure there | — | `test/cli.test.ts` › "formatResult's default renderer is bigint-safe" | — |
@@ -281,10 +281,10 @@ All probes were applied to production code, run, and reverted with `git checkout
 | ↳ "uses clawhub --version, not which clawhub" | `upgrade.ts`: `execSync('which clawhub', …)` | old 2 of 30 fail | new › "clawhub is detected by running `clawhub --version`, not by PATH presence" (+ hung-probe test) | fails (2 of 25) |
 | ↳ "has timeout on upgrade execSync calls" | `upgrade.ts`: drop `timeout: 5_000` from the clawhub detection probe | old 30/30 pass (blind: other `timeout:` literals keep the count ≥2) | new › "a hung `clawhub --version` probe times out instead of wedging upgrade" | fails (1 of 1 run with `-t hung`; hit the 60s test timeout) |
 | ↳ "does not reference npm in case labels or messages" | covered by the same clawhub test: the `unknown` path's full stdout+stderr must not mention `npm` | — | new › "clawhub is detected by running `clawhub --version`…" | asserts on output |
-| ↳ "bun-link signal walks .git/config for garrytan/gbrain match" (`toLowerCase`) | `upgrade.ts` detectBunLink: `cfg.includes(GBRAIN_GITHUB_REPO)` (case-sensitive) | old 30/30 pass (blind: `toLowerCase()` appears elsewhere) | new › "bun-link: case-insensitive .git/config marker; git pull + bun install run at the repo root without a shell" (config url `GarryTan/GBrain`) | fails (1 of 25) |
+| ↳ "bun-link signal walks .git/config for aimonk2025/gbrain match" (`toLowerCase`) | `upgrade.ts` detectBunLink: `cfg.includes(GBRAIN_GITHUB_REPO)` (case-sensitive) | old 30/30 pass (blind: `toLowerCase()` appears elsewhere) | new › "bun-link: case-insensitive .git/config marker; git pull + bun install run at the repo root without a shell" (config url `GarryTan/Foresights`) | fails (1 of 25) |
 | ↳ "detectBunLink does not gate on isSymbolicLink" | `upgrade.ts` detectBunLink: `if (!lstatSync(argv1).isSymbolicLink()) return null` | old 1 of 30 fails | same new bun-link test (argv[1] is a real file) | fails (1 of 25) |
 | ↳ "detectBunLink returns repoRoot" + "bun-link upgrade uses execFileSync for shell-injection safety" | `upgrade.ts`: `execSync(\`git -C ${linkInfo.repoRoot} pull --ff-only\`)` | old 1 of 30 fails | same new bun-link test (checkout path contains `$(touch INJECTED-…)`; the probe run created the marker, the test caught it) | fails (1 of 25) |
-| ↳ "bun global upgrade passes cwd to bun update" | `upgrade.ts`: drop `cwd: bunGlobalRoot` from `bun update gbrain` | old 1 of 30 fails | new › "bun global install: `bun update gbrain` runs in the bun global root" | fails (1 of 25) |
+| ↳ "bun global upgrade passes cwd to bun update" | `upgrade.ts`: drop `cwd: bunGlobalRoot` from `bun update foresights` | old 1 of 30 fails | new › "bun global install: `bun update foresights` runs in the bun global root" | fails (1 of 25) |
 | ↳ "classifyBunInstall checks repository.url AND src/cli.ts marker" | `upgrade.ts` classifyBunInstall: remove the repository.url check | old 30/30 pass (blind) | new › "canonical by repository.url: bun, no squatter warning" | fails (1 of 25) |
 | ↳ (same test, marker half) | `upgrade.ts` classifyBunInstall: remove the `src/cli.ts` marker check | old 1 of 30 fails | new › "canonical by shipped src/cli.ts marker when repository is absent" | fails (1 of 25) |
 | ↳ "squatter recovery message names both source-clone AND release-binary paths" | `upgrade.ts` printSquatterRecovery: drop the releases URL line | old 30/30 pass (blind: `releases` appears elsewhere in the file) | new › "npm squatter … warns with clone + release recovery (#658)" | fails (1 of 25) |

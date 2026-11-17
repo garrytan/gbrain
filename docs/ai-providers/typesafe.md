@@ -3,7 +3,7 @@
 TypeSafe's Jev is a decision model. One `POST /v1/systemone` request carries a
 shared `state` and a map of typed questions, and returns, per question, a
 probability (yes/no), one option with a probability distribution (choice), or
-a rubric score. GBrain uses it in two places:
+a rubric score. Foresights uses it in two places:
 
 - **System One (`decide`)**: typed decisions inside search, `think`, dream and
   the fact sweep. With a key installed, the two slots with a measured win,
@@ -27,16 +27,16 @@ When `TYPESAFE_API_KEY` or `JEV_TYPESAFE_API_KEY` is set (shell or
 | `conflict` (contradiction proposals) | fact text, including private facts | the sweep after `extract_facts` | found 94/97 updated facts vs 0/97; proposals only, nothing changes until you accept |
 
 For these two slots the key is your opt-in for that data. Nothing is written
-to config; `gbrain decide status` shows `on (default: Jev key present)`.
-Opt out with `gbrain decide disable triage`, `gbrain decide disable conflict`
-or `gbrain decide disable --all`. An explicit `decide.egress.private deny`
+to config; `foresights decide status` shows `on (default: Jev key present)`.
+Opt out with `foresights decide disable triage`, `foresights decide disable conflict`
+or `foresights decide disable --all`. An explicit `decide.egress.private deny`
 or `decide.provider none` turns the defaults off too. Details:
 [System One defaults](../guides/system-one.md#defaults-on-with-a-key-for-what-measurably-helps).
 
 ## Key setup
 
 Get a key at [console.typesafe.ai](https://console.typesafe.ai). Put it in
-your shell environment or in the GBrain home environment file
+your shell environment or in the Foresights home environment file
 (`~/.gbrain/.env`, or `$GBRAIN_HOME/.env`), never in a project `.env` and
 never in chat:
 
@@ -51,18 +51,18 @@ environment takes precedence over the home file.
 Check it with one tiny live request that sends no brain content:
 
 ```bash
-gbrain decide probe
+foresights decide probe
 ```
 
 ```
 TypeSafe Jev probe: resolved jev-1.13.0 (requested typesafe:jev-1.13.0) in 439 ms, 383 input tokens, $0.000016.
 Key: TYPESAFE_API_KEY. No brain content was sent.
-Next: gbrain decide probe --query "<a question your brain can answer>"
+Next: foresights decide probe --query "<a question your brain can answer>"
 ```
 
-`gbrain decide status` names the variable that supplied the key
+`foresights decide status` names the variable that supplied the key
 (`key: TYPESAFE_API_KEY`, `key: JEV_TYPESAFE_API_KEY` or `key: not set`).
-`gbrain providers list` shows TypeSafe with its `RERANK` and `DECIDE`
+`foresights providers list` shows TypeSafe with its `RERANK` and `DECIDE`
 capabilities and whether the key is present.
 
 ## Pinned versus alias models
@@ -70,17 +70,17 @@ capabilities and whether the key is present.
 | Model id | What it is | Use it for |
 |---|---|---|
 | `typesafe:jev-1.13.0` | A pinned, versioned model. The default. | Everything. Calibrations and thresholds are measured against one pinned id. |
-| `typesafe:jev-latest` | An alias for the newest stable release. It moves when TypeSafe ships a release. | Trying a new release on purpose. `gbrain doctor` warns while you use it. |
+| `typesafe:jev-latest` | An alias for the newest stable release. It moves when TypeSafe ships a release. | Trying a new release on purpose. `foresights doctor` warns while you use it. |
 | `typesafe:jev-preview` | An alias for the newest release, stable or not. | Same as `jev-latest`, earlier. Doctor warns. |
 
-Every response names the versioned model that answered, and GBrain records
+Every response names the versioned model that answered, and Foresights records
 it. Within one logical decision (every batch of one request), answers from
 two different resolved models fail the decision, which then takes its
 documented fail direction. This closes the gap noted in the #5178 review,
 where `jev-latest` batches could mix versions.
 
-`gbrain decide enable` always writes the resolved pinned id, never an alias,
-so a later GBrain release that changes the default pin does not move a brain
+`foresights decide enable` always writes the resolved pinned id, never an alias,
+so a later Foresights release that changes the default pin does not move a brain
 that already opted in. If the pinned id stops being served, calls fail with
 `pinned_model_unavailable` and doctor names the recovery. See
 [troubleshooting](../guides/system-one.md#pinned_model_unavailable).
@@ -91,7 +91,7 @@ Two settings route decide at a Jev served somewhere other than
 `api.typesafe.ai` (an inference gateway, an on-prem deployment):
 
 - `provider_base_urls.typesafe` (in `~/.gbrain/config.json`, or
-  `gbrain config set provider_base_urls.typesafe https://gw.example.com/typesafe/v1`)
+  `foresights config set provider_base_urls.typesafe https://gw.example.com/typesafe/v1`)
   replaces the origin; the `/systemone` path is appended to it. The reranker
   path uses the same setting.
 - `decide.provider` accepts any model id the endpoint publishes, not only
@@ -100,14 +100,14 @@ Two settings route decide at a Jev served somewhere other than
   no second colon. The endpoint still has to answer with the resolved model
   name, and an id it does not serve fails with `pinned_model_unavailable`.
 
-An id that GBrain ships no tariff for has no price, so its spend cannot be
+An id that Foresights ships no tariff for has no price, so its spend cannot be
 metered against `decide.budget.daily_usd`: decide refuses it before anything
 is sent, with `unpriced_model`, until you register the price the endpoint
 bills you:
 
 ```bash
-gbrain pricing set typesafe:oc/jev-1.13-free --rate 0.05 --source https://gw.example.com/pricing
-gbrain decide probe
+foresights pricing set typesafe:oc/jev-1.13-free --rate 0.05 --source https://gw.example.com/pricing
+foresights decide probe
 ```
 
 The spend ledger then records that price per call; it never records $0 for
@@ -118,13 +118,13 @@ a model whose cost is unknown. See
 
 Carried from #5178 by [dsandrade](https://github.com/dsandrade), who designed
 the native Jev reranker adapter, its context-aware packing and its cost
-accounting. GBrain now runs that adapter on the shared decide core.
+accounting. Foresights now runs that adapter on the shared decide core.
 
 The one-step way, which records what it changed so `disable` can restore it:
 
 ```bash
-gbrain decide enable rerank          # shows what leaves the machine, asks, then writes
-gbrain decide disable rerank         # restores your previous reranker settings
+foresights decide enable rerank          # shows what leaves the machine, asks, then writes
+foresights decide disable rerank         # restores your previous reranker settings
 ```
 
 `enable rerank` writes `decide.provider`, `decide.slots.rerank.mode on`,
@@ -135,9 +135,9 @@ only the ones you have not changed since.
 The manual way, exactly as #5178 documents it, still works:
 
 ```bash
-gbrain config set search.reranker.model typesafe:jev-1.13.0
-gbrain config set search.reranker.enabled true
-gbrain search modes
+foresights config set search.reranker.model typesafe:jev-1.13.0
+foresights config set search.reranker.enabled true
+foresights search modes
 ```
 
 How the reranker behaves:
@@ -164,25 +164,25 @@ How the reranker behaves:
   CRAG's strong-evidence grade do not read Jev rubric scores.
 
 With `decide.slots.rerank.mode on`, reranks also write decision receipts and
-stamp `rerank.model_resolved` in search meta. `gbrain decide status` shows
+stamp `rerank.model_resolved` in search meta. `foresights decide status` shows
 the active reranker and whether Jev is being called. `decide.provider none`
 stops decide slots and rerank shadow, but not a Jev reranker you selected
-yourself; turn that off with `gbrain decide disable rerank` or
-`gbrain config set search.reranker.enabled false`.
+yourself; turn that off with `foresights decide disable rerank` or
+`foresights config set search.reranker.enabled false`.
 
 ## Pricing
 
 Per TypeSafe's [models page](https://docs.typesafe.ai/models), retrieved
 2026-09-30: $0.042 per million input tokens for `jev-1.13.0`. Output tokens
-are free. GBrain's price table carries the same figure for the pinned id and
+are free. Foresights's price table carries the same figure for the pinned id and
 both aliases.
 
 Measured with a test key on 2026-09-30 (a two-page brain):
 
 | Call | Input tokens | Cost |
 |---|---|---|
-| `gbrain decide probe` (two questions, fixed sentence) | 383 | $0.000016 |
-| `gbrain decide probe --query` over one result | about 450 | $0.000019 |
+| `foresights decide probe` (two questions, fixed sentence) | 383 | $0.000016 |
+| `foresights decide probe --query` over one result | about 450 | $0.000019 |
 | Reranking 1,000 queries, 30 candidates each (planner estimate) | | about $0.54 |
 
 Third-party decide spend is capped by `decide.budget.daily_usd` (default
@@ -192,7 +192,7 @@ and concurrent processes can overshoot it slightly. Two paths sit outside
 it: the Jev reranker under `rerank` `on` uses the existing reranker spend
 controls, and `llm:` providers use the chat spend controls. Spend triggered
 by remote callers (MCP `query` and `think`) is limited to
-`decide.budget.remote_share` of the cap (default 0.5). `gbrain decide status`
+`decide.budget.remote_share` of the cap (default 0.5). `foresights decide status`
 prints today's spend, the remote share and what the cap does not cover.
 
 ## Limits
@@ -204,10 +204,10 @@ Per the [models page](https://docs.typesafe.ai/models), retrieved 2026-09-30:
 - Rate limits: 100K tokens per second and 40 requests per second for
   `jev-1.13.0`. TypeSafe says these limits "are adjusting dynamically" and can
   change without notice, and other TypeSafe sources have published different
-  figures. GBrain hardcodes no rate constants.
+  figures. Foresights hardcodes no rate constants.
 - Input: text only.
 
-How GBrain stays inside them: at most `decide.max_concurrency` (default 16)
+How Foresights stays inside them: at most `decide.max_concurrency` (default 16)
 requests in flight on hot paths and `decide.background_concurrency`
 (default 4) on background paths. A 429 `retry-after` is honored once, and
 only when it fits the deadline. There is no retry that extends a deadline.
@@ -216,7 +216,7 @@ only when it fits the deadline. There is no retry that extends a deadline.
 
 TypeSafe states that Jev is not trained on customer requests or responses,
 and that zero data retention is available to enterprise customers (see the
-TypeSafe legal pages linked from the models page). GBrain treats TypeSafe as
+TypeSafe legal pages linked from the models page). Foresights treats TypeSafe as
 a third party either way and gates every request.
 
 A request carries only the data classes you consented to for TypeSafe:
@@ -228,7 +228,7 @@ A request carries only the data classes you consented to for TypeSafe:
 | Fact text | The contradiction sweep is on | `decide.egress.typesafe.facts` |
 | Conversation text (prompts, transcripts) | Know-to-ask, dream triage or claim support is on | `decide.egress.typesafe.conversation` |
 
-`gbrain decide enable <slot>` shows what leaves the machine and writes these
+`foresights decide enable <slot>` shows what leaves the machine and writes these
 keys only after you confirm.
 
 ### What never leaves the machine
@@ -250,7 +250,7 @@ keys only after you confirm.
   outcomes, never query, prompt, page or transcript text.
 - Calibrations, proposals and the spend ledger.
 
-The key-only `gbrain decide probe` sends one fixed sentence ("We decided to
+The key-only `foresights decide probe` sends one fixed sentence ("We decided to
 ship the beta on Friday.") and nothing from your brain.
 
 ## Say to your agent
@@ -263,10 +263,10 @@ ship the beta on Friday.") and nothing from your brain.
 
 > Stop calling TypeSafe from this brain.
 
-The agent runs `gbrain decide probe`, `gbrain decide enable rerank`, and
-`gbrain decide disable --all` (which also restores a reranker that
+The agent runs `foresights decide probe`, `foresights decide enable rerank`, and
+`foresights decide disable --all` (which also restores a reranker that
 `decide enable rerank` set; a Jev reranker you configured by hand needs
-`gbrain config set search.reranker.enabled false`). Give the key through the
+`foresights config set search.reranker.enabled false`). Give the key through the
 home environment file or your shell, not the chat.
 
 ## References
@@ -275,4 +275,4 @@ TypeSafe [API](https://docs.typesafe.ai/api),
 [models and pricing](https://docs.typesafe.ai/models),
 [Score](https://docs.typesafe.ai/primitives/score) and the
 [reranking cookbook](https://docs.typesafe.ai/cookbooks/rerank_typesafe).
-The GBrain contract is [`docs/architecture/decide.md`](../architecture/decide.md).
+The Foresights contract is [`docs/architecture/decide.md`](../architecture/decide.md).

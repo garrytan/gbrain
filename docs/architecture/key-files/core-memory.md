@@ -44,7 +44,7 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   `src/core/eligibility/generation.ts`, revalidated on every delivery: the
   `coreOnly` arm answers `coreTrust.unchanged` for a matching
   `coreIdentity`; a failed or timed-out refresh delivers no core block,
-  never the memo), and `gbrain compile-context
+  never the memo), and `foresights compile-context
   --include-core` (`src/core/context/compile-view.ts`,
   `src/core/context/compiled-core.ts` for git safety and the record doctor
   reads).
@@ -56,7 +56,7 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   item still publishing is `pending` with its `target`, not `failed`; #7432:
   every item field but `fact` and `replaces`, `entity`, `content_origin` and
   `valid_from` included, is also a top-level default an item's own value overrides).
-- `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
+- `src/commands/core.ts` (`foresights core`), `src/commands/doctor/checks/core-memory.ts`
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,
   `test/core-cli.test.ts`, `test/compile-context-core.serial.test.ts`,

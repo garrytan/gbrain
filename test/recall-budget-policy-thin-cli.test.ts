@@ -93,7 +93,7 @@ test.each([
 test('a query value spelling the policy flag does not opt a legacy thin call into new routing', async () => {
   const result = await thinCall('postgres', ['--query', '--budget-policy', '--json']);
   expect(result.exitCode).toBe(1);
-  expect(result.stderr).toContain('`gbrain recall` is not routable');
+  expect(result.stderr).toContain('`foresights recall` is not routable');
   expect(result.calls).toEqual([]);
   expect(result.localStoreCreated).toBe(false);
 });

@@ -106,7 +106,7 @@ async function batchedUpdate(engine: BrainEngine, ctx: PreludeContext, u: Batche
     if (!announced && written > 0) {
       announced = true;
       migrationNotice(`  [${u.version}] ${u.what}, ${backfillBatchRows} rows per committed batch; `
-        + 'an interrupted run resumes where it stopped: gbrain apply-migrations --yes\n');
+        + 'an interrupted run resumes where it stopped: foresights apply-migrations --yes\n');
     }
     if (announced && Date.now() - lastProgress >= PROGRESS_INTERVAL_MS) {
       lastProgress = Date.now();
@@ -188,7 +188,7 @@ async function v161(engine: BrainEngine, ctx: PreludeContext): Promise<void> {
        FROM pg_index i WHERE i.indexrelid = to_regclass($1)`, [V161_INDEX]))[0];
   const before = await state();
   if (before?.valid) return;
-  if (before?.building) throw new Error(`Index ${V161_INDEX} is being built by another session; once that build ends, run gbrain apply-migrations --yes again.`);
+  if (before?.building) throw new Error(`Index ${V161_INDEX} is being built by another session; once that build ends, run foresights apply-migrations --yes again.`);
   if (before) await dropInvalidConcurrentIndex(engine, 161, V161_INDEX);
   migrationNotice(`  [161] building ${V161_INDEX} concurrently; this can take minutes and is safe to interrupt (the next run rebuilds it)\n`);
   await engine.withReservedConnection(async conn => {
@@ -200,7 +200,7 @@ async function v161(engine: BrainEngine, ctx: PreludeContext): Promise<void> {
       await conn.executeRaw('RESET statement_timeout').catch(() => {});
     }
   }, { selfContained: true });
-  if (!(await state())?.valid) throw new Error(`Index ${V161_INDEX} is not valid after its concurrent build; run gbrain apply-migrations --yes again to rebuild it.`);
+  if (!(await state())?.valid) throw new Error(`Index ${V161_INDEX} is not valid after its concurrent build; run foresights apply-migrations --yes again to rebuild it.`);
 }
 
 /**

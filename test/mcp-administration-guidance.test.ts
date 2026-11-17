@@ -6,7 +6,7 @@ describe('MCP administration discovery', () => {
     const guidance = mcpAdministrationGuidance();
     expect(guidance.oauth_admin_scope_grants_owner_access).toBe(false);
     expect(guidance).not.toHaveProperty('admin_url');
-    expect(guidance.next_action).toContain('gbrain mcp admin login-link');
+    expect(guidance.next_action).toContain('foresights mcp admin login-link');
     expect(guidance.next_action).toContain('--admin-token-file');
   });
 

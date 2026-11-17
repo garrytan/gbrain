@@ -81,7 +81,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect((await snapshotItems(engine, SOURCE)).get(UNTOUCHED)).toEqual(before.get(UNTOUCHED));
         const doctor = await checkParkedEffects(engine);
         expect(doctor.message).toContain(`${W2} (${WITHHELD})`);
-        expect(doctor.message).toContain(`gbrain sources writer retry-effects ${SOURCE} --request-id ${request.request_id} --dry-run`);
+        expect(doctor.message).toContain(`foresights sources writer retry-effects ${SOURCE} --request-id ${request.request_id} --dry-run`);
         expect(await expectUnitNotAborted(() => settleLifecycle(engine))).toBe(0);
 
         // Recovery: the file is restored, one retry-effects reruns the mirror's parked target and re-arms the withheld ones.

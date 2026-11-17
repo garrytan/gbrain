@@ -5,7 +5,7 @@
  *
  * A card never carries a credential or a command: string fields are secret-scanned and shape-checked (env assignments,
  * credential-named variables, URL userinfo, presigned-URL parameters), keys that name a command are refused anywhere in
- * the card, and `restore` is a structured `{ skill, args }` the agent's own restore skill runs. gbrain itself never
+ * the card, and `restore` is a structured `{ skill, args }` the agent's own restore skill runs. foresights itself never
  * contacts a store.
  */
 import { z } from 'zod';
@@ -55,7 +55,7 @@ const RestoreEventSchema = z.object({
   verified: z.boolean(),
 }).strict();
 
-/** What a caller sends: every card field except the ones gbrain stamps. */
+/** What a caller sends: every card field except the ones foresights stamps. */
 export const CardInputSchema = z.object({
   id: z.string().regex(CARD_ID_RE),
   title: text(300).min(1),
@@ -98,7 +98,7 @@ const PRESIGNED = /(?:X-Amz-Signature|X-Amz-Credential|X-Goog-Signature|Authoriz
 
 function invalid(path: string, message: string, reason: string): OperationError {
   return opError('storage_record_invalid', `Storage card field ${path || '(card)'}: ${message}; nothing was written.`,
-    'Fix that field and send the card again; gbrain storage-register --help shows the card fields.', { reason });
+    'Fix that field and send the card again; foresights storage-register --help shows the card fields.', { reason });
 }
 
 /** Every string in `value` and every object key, each with its path (command keys are refused wherever they appear). */
@@ -168,7 +168,7 @@ export function parseCardInput(raw: unknown): CardInput {
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid('', 'the card must be a JSON object', 'not_object');
   for (const key of STAMPED_KEYS) {
-    if (Object.hasOwn(value, key)) throw invalid(key, 'gbrain sets this field itself', 'stamped_field');
+    if (Object.hasOwn(value, key)) throw invalid(key, 'foresights sets this field itself', 'stamped_field');
   }
   walk(value, '', assertNoCredential);
   const details = (value as { details?: unknown }).details;
@@ -211,7 +211,7 @@ function summary(card: Card): string {
   return lines.join('\n') + '\n';
 }
 
-/** A card without the fields gbrain stamps, validated again: what two copies of one card compare on. Null when it fails the schema. */
+/** A card without the fields foresights stamps, validated again: what two copies of one card compare on. Null when it fails the schema. */
 export function cardContent(card: Record<string, unknown>): CardInput | null {
   const { registered_by: _by, origin: _origin, ...content } = card;
   try { return parseCardInput(content); } catch (error) { if (error instanceof OperationError) return null; throw error; }

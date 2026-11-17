@@ -1,5 +1,5 @@
 /**
- * GST-2468: the one door for an operator repair's label-only page write (`gbrain repair private-labels`, `gbrain repair
+ * GST-2468: the one door for an operator repair's label-only page write (`foresights repair private-labels`, `foresights repair
  * visibility`). The write authors nothing, so the page keeps its stored trust tier and files no `lower_page` proposal,
  * and its canonical file changes only in the label lines (persistence/label-edit.ts):
  *   - a managed brain publishes it through the maintenance door with keep_trust and the label edit (the Git door on a
@@ -69,7 +69,7 @@ export async function importAtRevision(engine: BrainEngine, page: { source_id: s
  * edited (labelEditFile, the managed brain's splice) are imported under withTrustKeep at `revision` and written back with
  * their preimage checked, in one transaction, so the file and the row agree and the tier is kept. A file edited between
  * the read and the write refuses `source_changed` and rolls the import back. A file this repair cannot write
- * (`sync.write_through` off, a clone gbrain pulls, an unresolvable target, a write error) is held `file_backed` with
+ * (`sync.write_through` off, a clone foresights pulls, an unresolvable target, a write error) is held `file_backed` with
  * nothing written, since a database-only write would come back from the file at the next sync. A page with no file on
  * purpose (no checkout configured, a non-canonical target) or whose recorded file is gone writes the database only.
  * The revision written; null when the page moved.
@@ -79,14 +79,14 @@ export async function writeLabelFile(engine: BrainEngine, page: { source_id: str
   const ref = `${page.source_id}:${page.slug}`;
   const held = (why: string): RepairItemOutcome => ({ applied: false, outcome: 'file_backed', detail: { path: write.path },
     reason: `${ref} has a file in its source's checkout (${write.path}) that this repair cannot write (${why}), and a database-only write would come back from the file `
-      + `at the next sync. Make the change in that file by hand, commit it, then run: gbrain sync --source ${page.source_id}` });
+      + `at the next sync. Make the change in that file by hand, commit it, then run: foresights sync --source ${page.source_id}` });
   const { isWriteThroughDisabled, writePageThrough } = await import('../write-through.ts');
   if (await isWriteThroughDisabled(engine)) return held('sync.write_through is off');
   const { ownerRepairFile } = await import('../trust/page-handlers.ts');
   const file = await ownerRepairFile(engine, page.source_id, page.slug);
   if (!file.ok && file.reason !== 'file_database_drift') return held(file.reason);
   if (!file.ok) throw opError('source_changed', `${ref} was not written: its file in the source's checkout holds an edit the database lacks.`,
-    `Run gbrain sync --source ${page.source_id}, then preview ${write.preview} again.`);
+    `Run foresights sync --source ${page.source_id}, then preview ${write.preview} again.`);
   const before = file.target?.expectedFileBytes ?? null;
   const snapshot = before === null ? null : await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
   if (before === null || !snapshot) return importAtRevision(engine, page, write.revision, write.content, write.embed, write.preview);
@@ -135,7 +135,7 @@ export async function labelFileRefusal(engine: BrainEngine, snapshot: PageSnapsh
       const local = (error as OperationError & { localEdit?: { root: string; path: string } }).localEdit;
       const text = local ? read(local.root, local.path) : null;
       const keys = local && text ? await fileSnapshotDifference(engine, slug, text.toString('utf8'), snapshot, relative(local.root, local.path).split(sep).join('/')) : [];
-      return drift(keys, local ? `gbrain sources reconcile ${sourceId} ${slug} --preview` : error.suggestion ?? '', error);
+      return drift(keys, local ? `foresights sources reconcile ${sourceId} ${slug} --preview` : error.suggestion ?? '', error);
     }
   } else {
     if (!(await filesInCheckout(engine, [Number(snapshot.page.id)])).has(Number(snapshot.page.id))) return null;
@@ -146,8 +146,8 @@ export async function labelFileRefusal(engine: BrainEngine, snapshot: PageSnapsh
       const target = await derivedFileTarget(engine, slug, sourceId);
       const text = target.ok ? read(target.target.writeRoot, target.target.filePath) : null;
       const keys = text ? await fileSnapshotDifference(engine, slug, text.toString('utf8'), snapshot, snapshot.page.source_path ?? `${slug}.md`) : [];
-      return drift(keys, `gbrain sync --source ${sourceId}`, opError('source_changed', `${sourceId}:${slug} was not written: its file in the source's checkout holds an edit the database lacks.`,
-        `Run gbrain sync --source ${sourceId}, then preview the repair again.`, { detail: 'file_database_drift' }));
+      return drift(keys, `foresights sync --source ${sourceId}`, opError('source_changed', `${sourceId}:${slug} was not written: its file in the source's checkout holds an edit the database lacks.`,
+        `Run foresights sync --source ${sourceId}, then preview the repair again.`, { detail: 'file_database_drift' }));
     }
     if (!file.ok || !file.target?.expectedFileBytes) return null;
     bytes = Buffer.from(file.target.expectedFileBytes, 'utf8');

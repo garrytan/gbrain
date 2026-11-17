@@ -116,7 +116,7 @@ function git(dir: string, ...args: string[]): void {
 
 async function gbrain(h: DoctorHome, args: string[]): Promise<GbrainRun> {
   const run = await runGbrain(h, args);
-  if (run.exitCode !== 0) throw new Error(`gbrain ${args.join(' ')} failed (${run.exitCode}): ${run.stderr}`);
+  if (run.exitCode !== 0) throw new Error(`foresights ${args.join(' ')} failed (${run.exitCode}): ${run.stderr}`);
   return run;
 }
 

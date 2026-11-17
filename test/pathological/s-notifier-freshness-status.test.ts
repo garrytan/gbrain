@@ -5,7 +5,7 @@
  *  - search results carry a per-source freshness entry from the notifier's cached coverage record: not_monitored when
  *    no resident watches the source (never current), current once a live resident observed HEAD = last_commit;
  *  - the sync-status notifier block names the resident (kind, pid) or says none is running with the fix
- *    gbrain sync --source <id> --no-pull;
+ *    foresights sync --source <id> --no-pull;
  *  - a stalled notifier (notifier_stalled) is reported with the fix and the trace path to a local caller, and a remote
  *    projection carries no trace path, pid or host id.
  * On v0.60.309.0 search carried no freshness and nothing recorded the notifier. PGLite always, Postgres when DATABASE_URL is set.

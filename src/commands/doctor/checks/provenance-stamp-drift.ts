@@ -4,7 +4,7 @@
  * pages whose file would re-read above their stored tier (#7918). Read-only; per source it runs `scanProvenanceDrift`
  * (trust/provenance-drift.ts, at most `DRIFT_SCAN_LIMIT` live pages). `warn` when a remote or unattributed write did
  * the damage or a marker is missing; the owner's own edits are listed in details only. The fix previews
- * `gbrain repair provenance`, which writes nothing; applying it only lowers trust and is the user's call.
+ * `foresights repair provenance`, which writes nothing; applying it only lowers trust and is the user's call.
  */
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
@@ -40,11 +40,11 @@ async function runProvenanceStampDrift(ctx: DoctorContext): Promise<Check[]> {
     checks.push({ name: 'provenance_stamp_drift', status: 'warn', details,
       message: `${total} page(s) carry provenance stamps or a trust marker that a write removed before stamps became server-owned, or would re-read above their stored tier `
         + `(${found.map(scan => `${scan.source_id}: ${pages(scan)}`).join('; ')}; e.g. ${found.flatMap(scan => scan.items.filter(item => item.verdict.class !== 'local').slice(0, 3).map(item => `${scan.source_id}:${item.slug}`)).slice(0, 5).join(', ')})${bounded}. `
-        + `Preview the repair with gbrain repair provenance --source ${first.source_id}; it lists each page and writes nothing. Applying it only lowers trust.`,
+        + `Preview the repair with foresights repair provenance --source ${first.source_id}; it lists each page and writes nothing. Applying it only lowers trust.`,
       fix: agentFix(preview, 'Lists each page with the stamps, marker and tier before and after; it writes nothing. Applying the repair is the user\'s call.',
         'provenance_stamp_drift', { ask_user: true, docs: DOCS,
-          user_message: `${total} page(s) (for example ${sample.slug}) lost the record of where they came from, so gbrain may trust them more than it should. `
-            + 'Should I show you the list and put the original record back? It only lowers trust, and you can undo each page in gbrain trust review.' }) });
+          user_message: `${total} page(s) (for example ${sample.slug}) lost the record of where they came from, so foresights may trust them more than it should. `
+            + 'Should I show you the list and put the original record back? It only lowers trust, and you can undo each page in foresights trust review.' }) });
   } catch (error) {
     checks.push(checkError('provenance_stamp_drift', 'check page history for provenance stamps and trust markers a write removed', error, { details: { docs: DOCS } }));
   }

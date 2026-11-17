@@ -1,5 +1,5 @@
 /**
- * GST-363: gbrain setup on upgrade paths and on a one-person brain, spawned against a temp HOME / GBRAIN_HOME (PGLite).
+ * GST-363: foresights setup on upgrade paths and on a one-person brain, spawned against a temp HOME / GBRAIN_HOME (PGLite).
  * Split from test/setup-serves-several.test.ts; the box and readers are in test/helpers/setup-serves-box.ts.
  *
  * 1. Protects: post-upgrade rewrites, setup re-runs from the receipt and apply-migrations carry an entry's
@@ -21,14 +21,14 @@ import { brainWithPages, box, claudeMd, CLEAN, entry, entryArgs, gbrain, normali
 
 afterAll(removeTempDirs);
 
-describe('gbrain setup --serves (spawned, PGLite)', () => {
+describe('foresights setup --serves (spawned, PGLite)', () => {
   test('upgrade paths carry an entry\'s --stdio-member forward and never add one: post-upgrade rewrites, setup re-runs from the receipt, --no-stdio-member removes it', async () => {
     const b = box();
     await brainWithPages(b);
     expect((await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--stdio-member', 'alice-example'])).exitCode).toBe(0);
     const refresh = async () => { const lines: string[] = []; await withEnv({ ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home }, () => refreshHookLaunchers((l) => lines.push(l))); return lines; };
     staleEntry(b);
-    expect((await refresh()).join('\n')).toContain('now start gbrain from its own directory');
+    expect((await refresh()).join('\n')).toContain('now start foresights from its own directory');
     expect(entryArgs(b).slice(-2)).toEqual(['--stdio-member', 'alice-example']);
     expect(entry(b).command).not.toBe(b.bin);
     for (const r of setupReceipts(b)) {
@@ -75,7 +75,7 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
     expect(refused.exitCode).not.toBe(0);
     expect(refused.stdout).toContain('setup_serves_several');
     expect(refused.stdout).toContain('2 enabled members (alice-example, bob-example)');
-    expect(refused.stdout).toContain('gbrain setup claude-code --serves several --members alice-example,bob-example');
+    expect(refused.stdout).toContain('foresights setup claude-code --serves several --members alice-example,bob-example');
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
     expect((await gbrain(b, ['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
     const owner = await setup(b, ['claude-code', '--json']);

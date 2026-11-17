@@ -124,7 +124,7 @@ test('out of budget the follower is resumable with sync_drain_lease_held, the ho
       holder: { kind: 'serve', id: 'serve-example', pid: process.pid, host: expect.any(String), started_at: expect.any(String), last_heartbeat_at: expect.any(String),
         version: expect.any(String), progress: { committed: 0 } } } });
   expect(result.leaseHeld!.fix.why).toContain('--break-lock');
-  const next = drainNext(result, `gbrain sync --source ${id} --no-pull`, id);
+  const next = drainNext(result, `foresights sync --source ${id} --no-pull`, id);
   expect(next).toMatchObject({ code: 'sync_drain_lease_held', safe_to_loop: true, retry_after_ms: 60_000, fix: { next: 'wait' } });
   expect(await managedRows(engine, id)).toEqual({ cursors: 0, requests: 0 });
   await holder.release();
@@ -153,7 +153,7 @@ test('a holder that heartbeats but makes no progress for the stall window stops 
   await engine.executeRaw(`UPDATE gbrain_cycle_locks SET acquired_at=now()-make_interval(secs => $2) WHERE id=$1`, [syncLockId(id), HOLDER_STALL_MS / 1000 + 60]);
   const result = await performSync(engine, plain(id, { followDrainLease: true, deadlineAtMs: Date.now() + 30_000 }));
   expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'no_progress', owner_kind: 'cli', lease_holder: { kind: 'cli' } } });
-  const next = drainNext(result, `gbrain sync --source ${id} --no-pull`, id);
+  const next = drainNext(result, `foresights sync --source ${id} --no-pull`, id);
   expect(next).toMatchObject({ code: 'drain_stalled', cause: 'no_progress', safe_to_loop: false });
   expect(next?.why).toContain('--break-lock');
   await holder.release();
@@ -238,7 +238,7 @@ test('the follower stops before the process watchdog: the lesser of its deadline
   expect(followStopAt(now)).toBeGreaterThan(now + 9 * 60_000);
 });
 
-// The cron recipe doctor prints (`gbrain sync --all --no-pull --hard-deadline 13m`) against a live serve holder: it follows the
+// The cron recipe doctor prints (`foresights sync --all --no-pull --hard-deadline 13m`) against a live serve holder: it follows the
 // serve instead of refusing or draining beside it, and finishes the source once the serve's drain ends.
 test('doctor\'s cron recipe follows a live serve holder and finishes the source; --no-delegate does not bypass the lease', async () => isolated(async engine => {
   const id = await fixture(engine);

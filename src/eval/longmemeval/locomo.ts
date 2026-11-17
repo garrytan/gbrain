@@ -1,6 +1,6 @@
 /**
  * locomo.ts — converts LoCoMo conversations (`locomo10.json`) into the
- * LongMemEval question format `gbrain eval longmemeval` reads, so the
+ * LongMemEval question format `foresights eval longmemeval` reads, so the
  * retrieval arms run unchanged on LoCoMo.
  *
  * One question per QA, excluding category 5 (adversarial; no evidence). The

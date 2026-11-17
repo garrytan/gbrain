@@ -8,7 +8,7 @@
  * stamping a watermark on `pages` would churn every reconcile.
  *
  * The cycle's extract_facts phase drains pages whose watermark is behind
- * their revision, so a fence imported by a standalone `gbrain sync` (which
+ * their revision, so a fence imported by a standalone `foresights sync` (which
  * the cycle's own no-op sync never reports as changed) still reaches the
  * facts index, and a fence removed from a page still expires its rows.
  *
@@ -172,7 +172,7 @@ export function applyFactsReconcileBacklog(
   const parts: string[] = [];
   if (backlog.pending > 0) {
     parts.push(`${backlog.pending} page(s) with a Facts fence are not reconciled into the facts index yet ` +
-      `(the dream cycle drains up to ${FACTS_DRAIN_PAGE_LIMIT} per run; to reconcile every page now run: gbrain dream --phase extract_facts)`);
+      `(the dream cycle drains up to ${FACTS_DRAIN_PAGE_LIMIT} per run; to reconcile every page now run: foresights dream --phase extract_facts)`);
   }
   if (backlog.invalid.length > 0) {
     const names = backlog.invalid.slice(0, 3).map(p => p.slug).join(', ');

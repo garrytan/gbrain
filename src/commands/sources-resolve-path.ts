@@ -1,18 +1,18 @@
 /**
- * GBRA-150: `gbrain sources resolve-path <id> <path...> [--stdin] [--json]`, the CLI face of the read-only
- * `sources_resolve_path` operation (src/core/persistence/resolve-paths.ts): what gbrain did with each file path of a source.
+ * GBRA-150: `foresights sources resolve-path <id> <path...> [--stdin] [--json]`, the CLI face of the read-only
+ * `sources_resolve_path` operation (src/core/persistence/resolve-paths.ts): what foresights did with each file path of a source.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { resolveSourcePaths } from '../core/persistence/resolve-paths.ts';
 
-export const RESOLVE_PATH_USAGE = 'Usage: gbrain sources resolve-path <id> <path...> [--stdin] [--json]';
+export const RESOLVE_PATH_USAGE = 'Usage: foresights sources resolve-path <id> <path...> [--stdin] [--json]';
 
 export async function runResolvePath(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`${RESOLVE_PATH_USAGE}\n\n`
       + 'Read-only. For each file path of a source (relative to the source root, or to the Git top level), print the slug\n'
-      + 'gbrain gives it, whether sync skips it (and why), its hold, its page and embedding state, whether search can find it\n'
+      + 'foresights gives it, whether sync skips it (and why), its hold, its page and embedding state, whether search can find it\n'
       + 'now, and the command that moves it on. A deleted path is checked by the page that records it as its origin, never by\n'
       + 'slug, so a case-folded twin that owns the slug is not mistaken for a failed delete.\n'
       + '  --stdin  read further paths from standard input, one per line (for example from git diff --name-only)\n'

@@ -67,7 +67,7 @@ This review respects the standing preference to ship fix waves as one PR. None o
 **Fix:** Make W5 plus the W3 registry the first commits in the collector, and define a cut line for the rest: W1 domains beyond the first few, and the W4 autopilot and jobs items, drop to wave 2 if the landing window slips. Scope shrinks, the PR count stays at one.
 
 ### 10. The competitive risk is opportunity cost, not rivals (MEDIUM)
-**What's wrong:** No competitor will "solve GBrain's internal structure first". The real risk is a multi-week slowdown in feature and fix work, and in community PR throughput, while other agent-memory products keep shipping user-visible capability. Nothing in this plan changes retrieval quality or UX by design.
+**What's wrong:** No competitor will "solve Foresights's internal structure first". The real risk is a multi-week slowdown in feature and fix work, and in community PR throughput, while other agent-memory products keep shipping user-visible capability. Nothing in this plan changes retrieval quality or UX by design.
 **Fix:** Time-box the effort, publish the landing window, and keep the retrieval and research track moving in parallel on non-target files. The measured-benefit priority argues against letting a structural refactor starve evaluation work.
 
 ## Alternatives dismissed without enough analysis

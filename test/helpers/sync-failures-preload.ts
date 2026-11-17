@@ -5,8 +5,8 @@
  * Why this exists: the suite deliberately exercises broken-fixture import and
  * sync paths (bad frontmatter, slug mismatches, unparseable YAML). Every one of
  * those records a row through `src/core/sync-failure-ledger.ts`, which resolved
- * to the gbrain home with no override — so fixture failures appended straight
- * into the operator's live ledger. That file is not inert: `gbrain doctor` reads
+ * to the foresights home with no override — so fixture failures appended straight
+ * into the operator's live ledger. That file is not inert: `foresights doctor` reads
  * it and keeps warning until each entry is fixed or acknowledged, and the rows
  * carry commit attribution, so a fabricated `srcE / notes/bad.md` row looks
  * exactly like a real un-indexed page.

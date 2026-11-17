@@ -64,7 +64,7 @@ async function runCli(args: string[]): Promise<{
   }
 }
 
-describe('gbrain book-mirror — CLI registration', () => {
+describe('foresights book-mirror — CLI registration', () => {
   // v0.34.1 (#876): migrations v60-v65 added oauth_clients.source_id +
   // federated_read FK plumbing. The cold-spawned subprocess's initSchema
   // chain now takes ~1s longer end-to-end; bump these tests' timeout to
@@ -86,7 +86,7 @@ describe('gbrain book-mirror — CLI registration', () => {
   }, 30000);
 });
 
-describe('gbrain book-mirror — source file invariants', () => {
+describe('foresights book-mirror — source file invariants', () => {
   const source = readFileSync(
     join(REPO_ROOT, 'src/commands/book-mirror.ts'),
     'utf-8',

@@ -28,8 +28,8 @@ export function fileDatabaseDriftToken(slug: string, sourceId: string, when: 'be
   disposition = 'its rows stay unfenced, active and searchable until they agree', step = 'the fence step'): string {
   return `${slug} (file_database_drift: the canonical file and the database body ${when === 'before' ? 'differ' : `changed while ${step} ran`}, `
     + `so neither was replaced and ${disposition}. If the file holds the newer edit, `
-    + `gbrain sync --source ${sourceId} imports it; if the database copy is newer, re-save it with write-through on `
-    + `(gbrain get ${slug} --source ${sourceId}, then gbrain put ${slug} --source-id ${sourceId}); when both changed, ask the user which edit wins)`;
+    + `foresights sync --source ${sourceId} imports it; if the database copy is newer, re-save it with write-through on `
+    + `(foresights get ${slug} --source ${sourceId}, then foresights put ${slug} --source-id ${sourceId}); when both changed, ask the user which edit wins)`;
 }
 
 /** The file's body and timeline as the mirror would store them. */
@@ -124,7 +124,7 @@ function fileHeldBy(fileBytes: string, slug: string, state: StoredState): boolea
 }
 
 /**
- * #6982, the database→file direction: whether gbrain may replace or remove the checkout file at `filePath` for page
+ * #6982, the database→file direction: whether foresights may replace or remove the checkout file at `filePath` for page
  * `slug` without losing an edit. It may when the file is absent, or when the file holds nothing the database lacks:
  * its body, timeline and frontmatter equal the live page's or one of its newest page_versions rows (the state before
  * the database write being published). Otherwise the file carries an edit only it holds (a hand edit sync has not
@@ -134,7 +134,7 @@ function fileHeldBy(fileBytes: string, slug: string, state: StoredState): boolea
  * that changes between this check and the write is refused there too.
  *
  * `alsoHeldAs` (GBRA-133, #7292): other bytes the file stands for when compared with one stored state, or null. A
- * connector passes the file with that state's `## Facts` fence put back: that fence is gbrain's own content, which the
+ * connector passes the file with that state's `## Facts` fence put back: that fence is foresights's own content, which the
  * provider's render never had, so a file that lacks only it holds no edit the database lacks. Per state (#8645): the
  * live row stores the fence without the withdrawal overlay a page read adds, while versions store the overlaid view.
  */

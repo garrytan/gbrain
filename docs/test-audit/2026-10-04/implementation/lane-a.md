@@ -11,7 +11,7 @@ run.
 
 ## W2: live flakes
 
-### B1: `gbrain sources add` crashed when git gc pruned `.git/objects`
+### B1: `foresights sources add` crashed when git gc pruned `.git/objects`
 
 `assertNoPhysicalRootOverlap` (`src/core/persistence/physical-root-record.ts`)
 and `topologyDirectoryBytes` (`src/core/persistence/topology-filesystem.ts`)

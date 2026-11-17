@@ -21,7 +21,7 @@ export interface BlockMarkers {
 
 function damagedMarkersError(m: BlockMarkers, begins: number, ends: number): Error {
   return new Error(
-    `the gbrain ${m.label} markers in this file are damaged ` +
+    `the foresights ${m.label} markers in this file are damaged ` +
       `(${begins} begin / ${ends} end` +
       `${begins === 1 && ends === 1 ? ', out of order' : ''}) — ` +
       `the managed block was hand-edited. Fix the markers (or delete the whole block, ` +

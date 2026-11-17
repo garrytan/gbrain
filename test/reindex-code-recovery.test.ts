@@ -6,7 +6,7 @@
  *      --force (pure helper, unit-tested here).
  *   2. doctor `code_chunk_metadata` — counts code-page chunks with
  *      symbol_name IS NULL AND language IS NULL and names
- *      `gbrain reindex-code --force` as the cure.
+ *      `foresights reindex-code --force` as the cure.
  *   3. the CLI help line for reindex-code documents --force.
  */
 

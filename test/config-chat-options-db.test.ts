@@ -85,7 +85,7 @@ describe('config set provider_chat_options validation', () => {
 
   test('a dotted leaf is refused with the exact JSON-form command', () => {
     expect(() => assertProviderChatOptionsSetValue('provider_chat_options.deepseek:deepseek-v4.thinking.type', 'disabled'))
-      .toThrow(`gbrain config set provider_chat_options.deepseek:deepseek-v4 '{"thinking":{"type":"disabled"}}'`);
+      .toThrow(`foresights config set provider_chat_options.deepseek:deepseek-v4 '{"thinking":{"type":"disabled"}}'`);
   });
 
   test('a non-object value is refused', () => {

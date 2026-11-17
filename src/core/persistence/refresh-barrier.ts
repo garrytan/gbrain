@@ -1,7 +1,7 @@
 /**
  * Convergence PR B (docs/designs/REFRESH_WRITE_BARRIER.md): the replay side of the refresh write barrier.
  *
- * A page write admitted while `gbrain sources refresh` held its worktree waits in state `deferred` (journal.ts) until the
+ * A page write admitted while `foresights sources refresh` held its worktree waits in state `deferred` (journal.ts) until the
  * refresh is released (completed or aborted). When it is claimed, before anything is published, two checks run here:
  * the write's durable authority against current grants (it may have waited minutes), and whether the refresh changed
  * any file the publication writes. A refresh that changed one ends the write `revision_conflict` (nothing applied), so
@@ -153,7 +153,7 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
       const [held] = await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE', [row.deferred_refresh_id]);
       if (!held) return null;
       return completeWrite(tx, row, 'failed', {}, { code: 'refresh_barrier_expired',
-        message: `Request ${row.request_id} waited behind refresh ${row.deferred_refresh_id} for more than ${Math.round(maxWaitMs / 1000)} s, and the refresh has not finished, so nothing was applied. Check the refresh with gbrain sources writer status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
+        message: `Request ${row.request_id} waited behind refresh ${row.deferred_refresh_id} for more than ${Math.round(maxWaitMs / 1000)} s, and the refresh has not finished, so nothing was applied. Check the refresh with foresights sources writer status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
     });
     if (done) finished.push(done);
   }
@@ -168,11 +168,11 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
           AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);
       if (!held) return null;
       const waited = `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s`;
-      const status = `gbrain sync status --source ${row.source_id} --json`;
+      const status = `foresights sync status --source ${row.source_id} --json`;
       if (row.operation === 'remember') return completeWrite(tx, row, 'conflict', {}, { code: 'source_changed', detail: { origin: PENDING_IMPORT },
         message: `${waited} for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so the fact is not saved yet. ${typeof row.intent?.entity_slug === 'string'
-          ? `It is kept for one automatic replay attempt by the first managed sync that imports the file; until that replay commits, gbrain repair failed-writes --source ${row.source_id} lists it (a replay that is refused stays there for a person to replay).`
-          : `It is kept, but it named no entity, so no sync replays it: gbrain repair failed-writes --source ${row.source_id} lists it for a person to replay once the source has synced.`} Do not save it again; check the source with ${status}.` });
+          ? `It is kept for one automatic replay attempt by the first managed sync that imports the file; until that replay commits, foresights repair failed-writes --source ${row.source_id} lists it (a replay that is refused stays there for a person to replay).`
+          : `It is kept, but it named no entity, so no sync replays it: foresights repair failed-writes --source ${row.source_id} lists it for a person to replay once the source has synced.`} Do not save it again; check the source with ${status}.` });
       return completeWrite(tx, row, 'failed', {}, { code: 'pending_import_expired',
         message: `${waited} for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so nothing was applied. Check the source with ${status}, then submit the write again with a new request_id.` });
     }).catch(error => { if ((error as { code?: string })?.code === 'write_claim_lost') return null; throw error; });
@@ -193,7 +193,7 @@ export async function deferredWaiting(engine: SqlEngine, row: Pick<WriteRequest,
   return held?.waiting !== false;
 }
 
-/** Writes admitted deferred that have not finished (waiting, or claimed and still publishing), for `gbrain upgrade --check-downgrade`. */
+/** Writes admitted deferred that have not finished (waiting, or claimed and still publishing), for `foresights upgrade --check-downgrade`. */
 export async function deferredBacklog(engine: SqlEngine): Promise<{ count: number; oldest_age_ms: number }> {
   const [row] = await engine.executeRaw<{ count: number; oldest_age_ms: number | null }>(`SELECT count(*)::int AS count,
     (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests

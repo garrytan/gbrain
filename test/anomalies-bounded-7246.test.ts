@@ -1,5 +1,5 @@
 /**
- * #7246: find_anomalies (and `gbrain anomalies --json`) returned every slug
+ * #7246: find_anomalies (and `foresights anomalies --json`) returned every slug
  * of an anomalous cohort, so a bulk-import day put tens of thousands of slugs
  * in one response. Each row now carries at most 20 slugs and
  * `page_slugs_complete: false` when it left some out; the count still covers
@@ -46,7 +46,7 @@ describe('find_anomalies bounded slug lists (#7246)', () => {
     expect(out!.page_slugs_complete).toBeUndefined();
   });
 
-  test('gbrain anomalies --json is capped by default and --all keeps every slug', async () => {
+  test('foresights anomalies --json is capped by default and --all keeps every slug', async () => {
     const [capped] = await cliJson([]);
     expect(capped.page_slugs).toHaveLength(20);
     expect(capped.page_slugs_complete).toBe(false);

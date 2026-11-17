@@ -44,7 +44,7 @@ describe('chronicle_backfill op', () => {
     await engine.putPage('meetings/m2', { type: 'meeting', title: 'm2', compiled_truth: LONG });
     await engine.putPage('life/diary/d1', { type: 'diary', title: 'd1', compiled_truth: LONG }); // excluded
     const dry = await run({ dry_run: true });
-    expect(dry).toMatchObject({ eligible: 2, queued: 2, dry_run: true, ask_user: true, next_command: 'gbrain chronicle-backfill --limit 1000 --yes' });
+    expect(dry).toMatchObject({ eligible: 2, queued: 2, dry_run: true, ask_user: true, next_command: 'foresights chronicle-backfill --limit 1000 --yes' });
     const unconsented = await run({});
     expect(unconsented).toMatchObject({ queued: 2, dry_run: true, ask_user: true });
     expect(unconsented.message).toContain('needs --yes; nothing was queued');
@@ -55,7 +55,7 @@ describe('chronicle_backfill op', () => {
     await engine.putPage('meetings/m1', { type: 'meeting', title: 'm1', compiled_truth: LONG });
     await engine.putPage('meetings/m2', { type: 'meeting', title: 'm2', compiled_truth: LONG });
     const r = await run({ yes: true });
-    expect(r).toMatchObject({ eligible: 2, queued: 2, dry_run: false, ask_user: false, next_command: 'gbrain dream --phase chronicle' });
+    expect(r).toMatchObject({ eligible: 2, queued: 2, dry_run: false, ask_user: false, next_command: 'foresights dream --phase chronicle' });
     expect(await queued()).toEqual(['default:meetings/m1', 'default:meetings/m2']);
   });
 

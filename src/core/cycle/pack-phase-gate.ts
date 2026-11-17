@@ -1,6 +1,6 @@
 /**
  * #6393: the pack gate for pack-declared paid phases (extract_atoms,
- * synthesize_concepts). Resolves through the same tiers `gbrain schema active`
+ * synthesize_concepts). Resolves through the same tiers `foresights schema active`
  * uses (DB config and per-source DB config included). A paid phase that only
  * the DB tiers declare, and that the file-plane resolution this gate used
  * before did not, stays skipped until the operator sets `cycle.<phase>.enabled`.
@@ -44,7 +44,7 @@ export async function resolvePackPhaseGate(
 }
 
 const NOT_DECLARED: Partial<Record<CyclePhase, string>> = {
-  extract_atoms: 'extract_atoms: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything); run `gbrain dream --phase extract_atoms --drain` to drain a backlog',
+  extract_atoms: 'extract_atoms: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything); run `foresights dream --phase extract_atoms --drain` to drain a backlog',
   synthesize_concepts: 'synthesize_concepts: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything)',
 };
 
@@ -57,7 +57,7 @@ export async function packGateSkip(engine: BrainEngine, phase: CyclePhase, sourc
     status: 'skipped',
     duration_ms: 0,
     summary: gate.consent_required
-      ? `${phase}: the active pack ${gate.resolved_pack} (from ${gate.source_tier}) declares this paid phase, which did not run before; run \`gbrain config set cycle.${phase}.enabled true\` to let the cycle run it`
+      ? `${phase}: the active pack ${gate.resolved_pack} (from ${gate.source_tier}) declares this paid phase, which did not run before; run \`foresights config set cycle.${phase}.enabled true\` to let the cycle run it`
       : NOT_DECLARED[phase] ?? `${phase}: active pack does not declare this phase`,
     details: {
       reason: gate.consent_required ? 'consent_required' : gate.reason ?? 'not_in_active_pack',

@@ -1,7 +1,7 @@
 /**
  * `local_edit_adoptions` (GST-1601 part 2, persistence/local-edit-adoption.ts): per source, the one-sided local edits the
  * owner adopted in the last 24 hours (a remember, capture or add_timeline_entry whose page file someone edited outside
- * gbrain, adopted in its own commit before the write applied). Informational and always ok: adoption is opt-in per
+ * foresights, adopted in its own commit before the write applied). Informational and always ok: adoption is opt-in per
  * source (`persistence.adopt_local_edits.source.<id>`), and an edit someone keeps making by hand is worth knowing about.
  * Paths are source-relative; no page text. #8755: read from the receipt's `outcome.adopted_local_edit`, which compaction
  * keeps (it drops the intent), so a compacted adoption is still counted.
@@ -30,7 +30,7 @@ async function runLocalEditAdoptions(ctx: DoctorContext): Promise<Check[]> {
     }
     checks.push({ name: 'local_edit_adoptions', status: 'ok', details: { sources, docs: DOCS },
       message: `Local edits adopted in the last 24 h: ${sources.map(source => `${source.source_id}: ${source.adoptions} (${source.paths.join(', ')})`).join('; ')}. `
-        + 'Each was committed on its own before the write that met it; someone or something is editing these files outside gbrain.' });
+        + 'Each was committed on its own before the write that met it; someone or something is editing these files outside foresights.' });
   } catch (error) {
     checks.push({ name: 'local_edit_adoptions', status: 'ok', details: { health: 'unknown', docs: DOCS },
       message: `Could not read local edit adoptions (${error instanceof Error ? error.message : String(error)}).` });

@@ -2,7 +2,7 @@
  * #5187 / C-N6: the nightly probes run on a compiled binary install.
  *
  * Builds test/helpers/nightly-probe-compiled-harness.ts with
- * `bun build --compile`, copies the binary into an empty directory (no gbrain
+ * `bun build --compile`, copies the binary into an empty directory (no foresights
  * checkout), and runs both autopilot probe steps with an isolated
  * GBRAIN_HOME and audit dir and the gateway's test transports as a hermetic
  * provider (fake keys, no network). The same harness also runs from source

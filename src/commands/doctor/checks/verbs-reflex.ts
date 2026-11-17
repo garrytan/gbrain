@@ -25,7 +25,7 @@ import { checkError } from '../check-fix.ts';
  *                                       skill carries). Never claims a host
  *                                       capability it can't observe.
  * Policy-skill install state is reported in details (it ships into the HOST
- * repo, so absence in gbrain's own skills dir is expected, not a failure).
+ * repo, so absence in foresights's own skills dir is expected, not a failure).
  */
 /**
  * MEMORY_VERBS v1 (Cathedral 1, E4) — usage-sidecar health. Read-only,
@@ -68,7 +68,7 @@ export async function buildMemoryVerbsCheck(): Promise<Check> {
 }
 
 /**
- * E2: no `gbrain serve` running is the normal state before an agent harness is
+ * E2: no `foresights serve` running is the normal state before an agent harness is
  * wired, not a fault. Info, with the harness-wiring fix (which is what starts
  * a serve) when one applies.
  */
@@ -123,18 +123,18 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
     }
 
     // #4474: when the socket is absent, say the operational truth plainly —
-    // ONLY a running `gbrain serve` (stdio or --http) binds it, and until
+    // ONLY a running `foresights serve` (stdio or --http) binds it, and until
     // one does every lifecycle hook degrades to no_serve on this brain.
     const runtimeMsg = firedRecently
       ? `active (last fired ${lastFired})`
       : viablePathVisible
         ? 'enabled; not observed firing yet'
-        : 'enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise)';
+        : 'enabled but NO resolve path exists right now: the IPC socket is only bound by a running `foresights serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise)';
 
     const status: Check['status'] = firedRecently || viablePathVisible ? 'ok' : 'warn';
     const skillHint = skillInstalled
       ? ''
-      : ' — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`';
+      : ' — policy skill not installed; run `foresights integrations install retrieval-reflex --target <host-repo>`';
     const noServe = status === 'warn' && engineKind === 'pglite';
     return {
       name,

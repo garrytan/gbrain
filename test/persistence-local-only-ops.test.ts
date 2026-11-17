@@ -1,6 +1,6 @@
 /**
  * #5864: the trusted local CLI reaches the four localOnly skill-administration
- * operations, `gbrain takes remove` (#5167) and `gbrain takes rebuild` (W9F
+ * operations, `foresights takes remove` (#5167) and `foresights takes rebuild` (W9F
  * item 8: it hung on the owner's lock until killed), while a serve owns the
  * PGLite brain. Authoring gate: (1) protects
  * the delegated route for get_skill_retention, prune_skill_revisions,
@@ -107,7 +107,7 @@ describe('localOnly skill administration through a resident owner', () => {
     } finally { clearTimeout(timeout); }
   };
 
-  test('gbrain takes remove (#5167) removes a row through the resident owner', async () => {
+  test('foresights takes remove (#5167) removes a row through the resident owner', async () => {
     const slug = 'notes/ipc-takes-remove';
     expect((await call('put_page', { slug, content: '---\ntitle: IPC takes remove\ntype: note\n---\nAbout the remove path.\n' })).code).toBe(0);
     for (const claim of ['Keep one', 'Drop two']) {
@@ -122,7 +122,7 @@ describe('localOnly skill administration through a resident owner', () => {
     expect(indexed.map(row => [row.row_num, row.claim])).toEqual([[1, 'Keep one']]);
   }, 120_000);
 
-  test('gbrain takes rebuild (W9F item 8) runs through the resident owner and prints what a local rebuild returns', async () => {
+  test('foresights takes rebuild (W9F item 8) runs through the resident owner and prints what a local rebuild returns', async () => {
     const slug = 'notes/ipc-takes-rebuild';
     expect((await call('put_page', { slug, content: '---\ntitle: IPC takes rebuild\ntype: note\n---\nAbout the rebuild path.\n' })).code).toBe(0);
     for (const claim of ['First claim', 'Second claim']) {
@@ -155,7 +155,7 @@ describe('localOnly skill administration through a resident owner', () => {
   });
 });
 
-describe('gbrain takes rebuild without a resident owner (W9F item 8)', () => {
+describe('foresights takes rebuild without a resident owner (W9F item 8)', () => {
   const slug = 'notes/local-takes-rebuild';
   let dir: string;
   beforeAll(async () => {

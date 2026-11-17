@@ -3,8 +3,8 @@
  * plugin `gbrain-skill-resolver` (written by openclaw-skill-plugin.ts):
  * index.js, the loader the gateway imports, and worker.js, the worker thread
  * that runs the resolver library. Plain ES modules with no dependencies: the
- * gateway runs them under its own Node. Only paths and the gbrain bin are
- * baked in, never mode, pins or a library path, so they change only when gbrain
+ * gateway runs them under its own Node. Only paths and the foresights bin are
+ * baked in, never mode, pins or a library path, so they change only when foresights
  * changes the plugin code itself.
  */
 
@@ -12,8 +12,8 @@ export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 1;
 
 export interface LoaderConstants { home: string; libDir: string; statePath: string; logDir: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
-const WORKER_JS = String.raw`// Managed by gbrain setup openclaw (gbrain-skill-resolver worker thread); a re-run rewrites this file.
-// Runs every synchronous resolver step off the gateway's event loop. It loads the gbrain library only
+const WORKER_JS = String.raw`// Managed by foresights setup openclaw (gbrain-skill-resolver worker thread); a re-run rewrites this file.
+// Runs every synchronous resolver step off the gateway's event loop. It loads the foresights library only
 // by content address: the file must sit in the baked library directory, belong to this user, be
 // writable by nobody else and hash to the sha256 the state names; the checked bytes are what run.
 import { parentPort, workerData } from 'node:worker_threads';
@@ -84,10 +84,10 @@ parentPort.on('message', async (m) => {
 });
 `;
 
-const LOADER_JS = String.raw`// Managed by gbrain setup openclaw; a re-run rewrites this file. Remove: gbrain setup openclaw --skill-loading off
+const LOADER_JS = String.raw`// Managed by foresights setup openclaw; a re-run rewrites this file. Remove: foresights setup openclaw --skill-loading off
 // gbrain-skill-resolver: after each user message, up to a few installed skills that fit it (appendContext),
 // plus the operator's pinned skills (appendSystemContext). Mode, pins and agents come from a data-only
-// state file gbrain writes, re-read when it changes, so a mode or pin change never reloads this plugin.
+// state file foresights writes, re-read when it changes, so a mode or pin change never reloads this plugin.
 // Every failure path lets the turn proceed unchanged; no handler waits more than DEADLINE_MS.
 import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
@@ -370,8 +370,8 @@ function onSkillChanged() {
 
 export default {
   id: ID,
-  name: 'GBrain skill resolver',
-  description: 'Suggests the installed skills that fit each user message, plus the operator\'s pinned skills (managed by gbrain setup openclaw).',
+  name: 'Foresights skill resolver',
+  description: 'Suggests the installed skills that fit each user message, plus the operator\'s pinned skills (managed by foresights setup openclaw).',
   version: PLUGIN_VERSION,
   register(api) {
     pruneLogs();

@@ -63,7 +63,7 @@ for (const kind of testBackends()) {
       const doctor = await checkPersistenceCapacity(engine);
       expect(doctor.status).toBe('warn');
       expect(doctor.message).toContain('about 24 day(s) left at the 7-day rate');
-      expect((doctor.details as { commands: string[] }).commands).toEqual([`gbrain config set persistence.limits.principal_lifetime_ids ${760 + 10 * 365}`]);
+      expect((doctor.details as { commands: string[] }).commands).toEqual([`foresights config set persistence.limits.principal_lifetime_ids ${760 + 10 * 365}`]);
       expect(doctor.fix).toMatchObject({ argv: ['gbrain', 'config', 'set', 'persistence.limits.principal_lifetime_ids', String(760 + 10 * 365)], actor: 'host_admin' });
     });
 

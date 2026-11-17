@@ -1,5 +1,5 @@
 /**
- * #6764: what doctor `unlinked_facts` and `gbrain facts relink --conversation`
+ * #6764: what doctor `unlinked_facts` and `foresights facts relink --conversation`
  * remember about a conversation page's unlinked derived rows, so the free
  * pass, then the paid fallback, then the manual route converge instead of
  * cycling. All of it lives in `fact_relink_attempts` (no new table):

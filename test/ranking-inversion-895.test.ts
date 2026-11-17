@@ -1,7 +1,7 @@
 /**
  * #895 — ranking-inversion headline pin.
  *
- * The oldest P1 in the repo: `gbrain query "Who is Zhang San"` ranked the
+ * The oldest P1 in the repo: `foresights query "Who is Zhang San"` ranked the
  * entity page the user asked about LAST while topical distractors (a concepts
  * page, a company page) floated to the top. The reporter's 5-page fixture now
  * ranks correctly on the lexical-only path; this test pins that end-to-end so

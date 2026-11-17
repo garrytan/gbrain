@@ -78,7 +78,7 @@ function markerExists(path: string): boolean {
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw opError('writer_coordinator_required', 'Managed-root marker cannot be inspected.',
-      `gbrain could not read ${path} (${(error as NodeJS.ErrnoException).code ?? 'unknown error'}), so it cannot tell whether this checkout is managed and refuses the write. Fix the path's permissions for this user, then run the command again.`);
+      `foresights could not read ${path} (${(error as NodeJS.ErrnoException).code ?? 'unknown error'}), so it cannot tell whether this checkout is managed and refuses the write. Fix the path's permissions for this user, then run the command again.`);
   }
 }
 /** Shared refusal marker helps installations with separate homes. It NEVER grants ownership. */
@@ -156,7 +156,7 @@ export function canonicalManagedRoots(records: ManagedRootRecord[]): ManagedRoot
 export function recordManagedRoots(brainId: string, records: ManagedRootRecord[], modeEpoch?: number): ManagedRootRecord[] {
   if (!/^[a-f0-9-]{36}$/i.test(brainId)) {
     throw opError('storage_error', 'Invalid managed-root brain identity.',
-      'The managed-root registry was given a brain identity that is not a UUID, so nothing was recorded. This is an internal fault: run gbrain doctor --json and report it to the user.');
+      'The managed-root registry was given a brain identity that is not a UUID, so nothing was recorded. This is an internal fault: run foresights doctor --json and report it to the user.');
   }
   const canonical = canonicalManagedRoots(records);
   if (!canonical.length) return canonical;
@@ -195,7 +195,7 @@ export function registeredManagedRootRecords(): Array<{ root: string; source_id?
     if (code === 'ENOENT') return [];
     // GST-1623: an unlistable registry is a typed refusal, never a raw error.
     throw opError('writer_coordinator_required', 'Managed-root ownership records cannot be listed.',
-      `gbrain could not read ${directory} (${code ?? 'unknown error'}), so it cannot tell which checkouts this brain manages and refuses the command. Fix the path's permissions for this user (or move aside a file standing where that directory belongs), then run the command again.`);
+      `foresights could not read ${directory} (${code ?? 'unknown error'}), so it cannot tell which checkouts this brain manages and refuses the command. Fix the path's permissions for this user (or move aside a file standing where that directory belongs), then run the command again.`);
   }
   const records: Array<{ root: string; source_id?: string }> = [];
   for (const file of files.filter(file => file.endsWith('.json'))) {

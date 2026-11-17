@@ -77,7 +77,7 @@ describe('checkAbandonedThreads', () => {
     const out = await checkAbandonedThreads(buildMockEngine({ abandonedCount: 4 }));
     expect(out.status).toBe('ok');
     expect(out.message).toContain('4 high-conviction take(s)');
-    expect(out.message).toContain('gbrain calibration');
+    expect(out.message).toContain('foresights calibration');
   });
 
   test('engine throw → warn with diagnostic (non-blocking)', async () => {
@@ -110,7 +110,7 @@ describe('checkCalibrationFreshness', () => {
     const out = await checkCalibrationFreshness(buildMockEngine({ freshGeneratedAt: d }));
     expect(out.status).toBe('warn');
     expect(out.message).toContain('10 days old');
-    expect(out.message).toContain('gbrain calibration --regenerate');
+    expect(out.message).toContain('foresights calibration --regenerate');
   });
 
   test('boundary: 7 days old → still ok (NOT warn)', async () => {
@@ -171,14 +171,14 @@ describe('checkVoiceGateHealth', () => {
     expect(out.message).toContain('1/10 failed');
   });
 
-  test('30%+ fail rate → warn telling the agent to report it (no pointer into gbrain source)', async () => {
+  test('30%+ fail rate → warn telling the agent to report it (no pointer into foresights source)', async () => {
     const out = await checkVoiceGateHealth(
       buildMockEngine({ voiceTotal: 10, voiceFailures: 4 }),
     );
     expect(out.status).toBe('warn');
     expect(out.message).toContain('4/10');
     expect(out.message).not.toContain('voice-gate.ts');
-    expect(out.message).toContain('gbrain doctor --json');
+    expect(out.message).toContain('foresights doctor --json');
     expect(out.fix_unavailable_reason).toBe('operator_judgement');
   });
 

@@ -3,7 +3,7 @@
  * the real CLI and script entry points.
  *
  * Authoring gate: (1) protects what an operator reads when a usage window
- * reaches back past pruned history: `gbrain auth clients --usage` prints the
+ * reaches back past pruned history: `foresights auth clients --usage` prints the
  * truncation with the exact `--days` that is complete and the recovery note,
  * its `--json` carries the same facts in keys only (stdout stays one JSON
  * document), and `scripts/derive-starter-ops.ts` refuses on stderr with a

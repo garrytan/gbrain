@@ -1,12 +1,12 @@
 /**
- * self_capture doctor check (#5413): corpus files captured from gbrain's own
+ * self_capture doctor check (#5413): corpus files captured from foresights's own
  * claude-cli sessions before the session-end hook refused them. Dream
  * discovery and the sweep already skip every self-capture they can identify;
  * this check counts what is still sitting in the session corpus so the
  * operator can quarantine it by hand. It never moves or deletes anything.
  *
  * Classified: the file's session id matches a harness transcript under a
- * gbrain claude-cli scratch project. Unclassifiable: no harness transcript
+ * foresights claude-cli scratch project. Unclassifiable: no harness transcript
  * exists for the session any more (Claude Code pruned it), so whether it is
  * a self-capture cannot be decided from this host. Best-effort: both counts
  * read the local filesystem of the brain host.
@@ -85,12 +85,12 @@ export async function selfCaptureCheck(engine: BrainEngine, opts: { projectsRoot
       quarantine_commands: commands, docs: 'docs/guides/repair.md#quarantine-self-captured-corpus-files' };
     const unknownNote = unclassifiable.length ? ` ${unclassifiable.length} corpus file(s) have no harness transcript left, so whether they are self-captures cannot be decided here; review them by hand.` : '';
     if (unreadable) return { name, status: 'warn', details, message: `${unreadable} session corpus director${unreadable === 1 ? 'y' : 'ies'} could not be read, so self-capture health is unknown `
-      + `(at least ${classified.length} identified self-capture(s)). Fix the directory permissions on the brain host and rerun gbrain doctor.${unknownNote}` };
-    if (!classified.length) return { name, status: 'ok', details, message: `No identified gbrain self-capture remains in the session corpus.${unknownNote}` };
-    return { name, status: 'warn', details, message: `${classified.length} session corpus file(s) were captured from gbrain's own claude-cli sessions (#5413); the newest is from ${newest}. `
-      + `This gbrain no longer creates them (#5820), so the count stops growing once every hook and serve process runs it; the existing files need one quarantine. `
+      + `(at least ${classified.length} identified self-capture(s)). Fix the directory permissions on the brain host and rerun foresights doctor.${unknownNote}` };
+    if (!classified.length) return { name, status: 'ok', details, message: `No identified foresights self-capture remains in the session corpus.${unknownNote}` };
+    return { name, status: 'warn', details, message: `${classified.length} session corpus file(s) were captured from foresights's own claude-cli sessions (#5413); the newest is from ${newest}. `
+      + `This foresights no longer creates them (#5820), so the count stops growing once every hook and serve process runs it; the existing files need one quarantine. `
       + `Dream and the sweep skip them, but they stay in the corpus until you move them. Nothing was moved or deleted. Quarantine them on the brain host: `
-      + `${commands.slice(0, 3).join(' && ')}${classified.length > 2 ? ' … (full list: gbrain doctor --json, check self_capture; recipe: docs/guides/repair.md#quarantine-self-captured-corpus-files)' : ''}.${unknownNote}` };
+      + `${commands.slice(0, 3).join(' && ')}${classified.length > 2 ? ' … (full list: foresights doctor --json, check self_capture; recipe: docs/guides/repair.md#quarantine-self-captured-corpus-files)' : ''}.${unknownNote}` };
   } catch (error) {
     return { name, status: 'warn', message: `Self-capture scan could not run: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
       details: { count: 'unknown', truncated: true, health: 'unknown' } };

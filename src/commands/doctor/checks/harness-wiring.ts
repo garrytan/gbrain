@@ -4,10 +4,10 @@
  *
  * Engine-free and read-only. The full doctor run only READS the registration
  * (Claude Code `~/.claude.json`, Codex `config.toml`, opencode `opencode.json`)
- * and reports it; `gbrain doctor --only harness_wiring` adds the smoke test:
- * a live `gbrain serve` holding this brain's lock → pass (`wired_running`);
+ * and reports it; `foresights doctor --only harness_wiring` adds the smoke test:
+ * a live `foresights serve` holding this brain's lock → pass (`wired_running`);
  * otherwise spawn the registered argv (15 s bound) and run initialize +
- * tools/list + `recall {query:"gbrain install check", limit:1}` (an empty
+ * tools/list + `recall {query:"foresights install check", limit:1}` (an empty
  * result passes). A `gbrain_status` reply (status-only serve) is reported with
  * its reason and fix. A live status-only `serve --http` (its marker under
  * GBRAIN_HOME, answering `/health` 503 as that instance within 500 ms) is
@@ -15,7 +15,7 @@
  * reason's fix. On a brain with no PGLite lock to consult (Postgres,
  * `database_url`, a `remote_mcp` thin client) an HTTP registration is probed
  * with a credential-free GET of its `/health` (`?deep=1` locally, shallow for
- * a thin client, 3 s, redirects not followed): a gbrain `status: ok` answer is
+ * a thin client, 3 s, redirects not followed): a foresights `status: ok` answer is
  * `wired_running` with `mcp_access: 'unverified'` (a listener is proven, the
  * registration's credentials and tool access are not); a refused loopback
  * `http:` port is `http_serve_missing` with the `serve --http` fix; every other
@@ -55,7 +55,7 @@ import { brainFirstTarget, inspectBrainFirst, isBrainFirstHarness, readBrainFirs
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
 export const HARNESS_HTTP_PROBE_TIMEOUT_MS = 3_000;
 const NAME = 'harness_wiring';
-const SMOKE_QUERY = 'gbrain install check';
+const SMOKE_QUERY = 'foresights install check';
 const STATUS_TOOL = 'gbrain_status';
 const RECALL_TOOL = 'recall';
 
@@ -95,7 +95,7 @@ function stringRecord(v: unknown): Record<string, string> | undefined {
   return out;
 }
 
-/** #7422: the install receipt `gbrain bootstrap` keeps (its workspace and the registrations it made), or null. */
+/** #7422: the install receipt `foresights bootstrap` keeps (its workspace and the registrations it made), or null. */
 function bootstrapReceipt(): ReturnType<typeof readReceipt> {
   try { return readReceipt(resolveGbrainHome()); } catch { return null; }
 }
@@ -167,7 +167,7 @@ function opencodeRegistration(name: string): HarnessRegistration | null {
   return { harness: 'opencode', source: path, kind: 'stdio', command: argv[0], args: argv.slice(1), env: stringRecord(entry.environment) };
 }
 
-/** Every gbrain MCP registration this machine's harness configs carry. */
+/** Every foresights MCP registration this machine's harness configs carry. */
 export function readHarnessRegistrations(name = 'gbrain'): HarnessRegistration[] {
   return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
 }
@@ -175,7 +175,7 @@ export function readHarnessRegistrations(name = 'gbrain'): HarnessRegistration[]
 interface RecordedRegistration { harness: ReadinessHarness; scope: string; config: string }
 
 /**
- * #7422: MCP registrations `gbrain bootstrap` recorded for these harnesses
+ * #7422: MCP registrations `foresights bootstrap` recorded for these harnesses
  * whose config file this process cannot read (a service running under
  * another HOME, a permission): unverified here, not missing. A readable
  * config without the registration is not listed (it was removed).
@@ -249,7 +249,7 @@ interface SmokeOutcome { ok: boolean; reason: string; message: string; fix?: Act
 
 const serveHttpFix = (): Action => ({ argv: ['gbrain', 'serve', '--http'], consent: [], actor: 'user', requires_exclusive: true, verify: doctorVerify(NAME),
   why: 'The registration points at the shared HTTP server; it must be running (a long-lived process, so the user or a service manager starts it).',
-  user_message: 'gbrain\'s shared memory server is not running. Please start `gbrain serve --http` (or its service) so your agent sessions can reach memory.' });
+  user_message: 'foresights\'s shared memory server is not running. Please start `foresights serve --http` (or its service) so your agent sessions can reach memory.' });
 
 function isLoopbackHost(hostname: string): boolean {
   const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
@@ -302,7 +302,7 @@ export async function probeHttpRegistration(r: HarnessRegistration, opts: { remo
   }
   const unhealthy = (why: string, extra: Record<string, unknown> = {}): SmokeOutcome => ({
     ok: false, reason: 'http_serve_unhealthy', details: { probe: 'health', http_status: res.status, ...remoteDetail, ...extra },
-    message: `the registered endpoint answered, but not as a healthy gbrain server (${why}); MCP access unverified. Doctor does not start a second server on a port something already answers on.`,
+    message: `the registered endpoint answered, but not as a healthy foresights server (${why}); MCP access unverified. Doctor does not start a second server on a port something already answers on.`,
   });
   if (res.status >= 300 && res.status < 400) return unhealthy(`HTTP ${res.status} redirect; doctor does not follow redirects`);
   type HealthBody = { status?: unknown; version?: unknown; error_description?: unknown };
@@ -316,7 +316,7 @@ export async function probeHttpRegistration(r: HarnessRegistration, opts: { remo
   const version = typeof body.version === 'string' ? body.version : undefined;
   const details: Record<string, unknown> = { probe: 'health', mcp_access: 'unverified', ...remoteDetail, ...(version ? { version } : {}), ...(version && version !== VERSION ? { version_mismatch: true } : {}) };
   return { ok: true, reason: 'wired_running', details,
-    message: `endpoint reachable (${probe.pathname}${version ? `, gbrain ${version}` : ''}); MCP access unverified: the health route proves a listener, not that this registration's credentials reach memory tools.` };
+    message: `endpoint reachable (${probe.pathname}${version ? `, foresights ${version}` : ''}); MCP access unverified: the health route proves a listener, not that this registration's credentials reach memory tools.` };
 }
 
 /** Spawn the registered stdio argv and run initialize + tools/list + recall. Never throws. */
@@ -378,10 +378,10 @@ async function smoke(r: HarnessRegistration): Promise<Check> {
       return { name: NAME, status: 'warn', message: `${describeRegistration(r)} is registered over HTTP, but the live server (PID ${lock.pid}) is a stdio serve, so the HTTP endpoint cannot answer.`,
         details: { ...details, reason: 'http_serve_missing' }, ...(fix ? { fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }) };
     }
-    return { name: NAME, status: 'ok', message: `${describeRegistration(r)}: a live gbrain ${transport} (PID ${lock.pid}) holds this brain.`, details: { ...details, reason: 'wired_running' } };
+    return { name: NAME, status: 'ok', message: `${describeRegistration(r)}: a live foresights ${transport} (PID ${lock.pid}) holds this brain.`, details: { ...details, reason: 'wired_running' } };
   }
   if (r.kind === 'http') {
-    return { name: NAME, status: 'warn', message: `${describeRegistration(r)} is registered, but no \`gbrain serve --http\` is running on this machine, so new sessions get no memory tools.`,
+    return { name: NAME, status: 'warn', message: `${describeRegistration(r)} is registered, but no \`foresights serve --http\` is running on this machine, so new sessions get no memory tools.`,
       details: { ...details, reason: 'http_serve_missing' }, fix: serveHttpFix() };
   }
   const outcome = await smokeStdioRegistration(r);
@@ -402,7 +402,7 @@ export interface InstructionBlockView {
 }
 
 /**
- * The brain-first instruction block for every surface gbrain wrote or was
+ * The brain-first instruction block for every surface foresights wrote or was
  * told to skip (the ledger), plus each registered or plugin-served harness
  * with no record, checked at that harness's default instruction file. Read-only.
  */
@@ -448,18 +448,18 @@ export function withInstructionBlocks(check: Check, views: InstructionBlockView[
   }
   const first = bad[0]!;
   const problems = bad.map((v) => `the ${v.harness} block in ${v.path} ${INSTRUCTION_PROBLEM[v.state]}`).join('; ');
-  const message = `${check.message} Brain-first instructions: ${problems}, so sessions are not told to check gbrain first.`;
+  const message = `${check.message} Brain-first instructions: ${problems}, so sessions are not told to check foresights first.`;
   if (check.status !== 'ok') return { ...check, message, details };
   const fix: Action = first.state === 'damaged'
     ? { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
-      why: `The brain-first markers in ${first.path} were hand-edited; gbrain will not guess which lines are its own.`,
-      user_message: `The gbrain instruction block in ${first.path} has damaged markers. Please delete the block (both marker lines included), then I'll write a fresh one.` }
+      why: `The brain-first markers in ${first.path} were hand-edited; foresights will not guess which lines are its own.`,
+      user_message: `The foresights instruction block in ${first.path} has damaged markers. Please delete the block (both marker lines included), then I'll write a fresh one.` }
     : repairArgv(first);
   return { name: NAME, status: 'warn', message, details, fix };
 }
 
 const SKILLS_INDEX_PROBLEM: Record<Exclude<SkillsIndexState, 'current'>, string> = {
-  launcher_missing: 'names a gbrain that is no longer there, so every skill load fails',
+  launcher_missing: 'names a foresights that is no longer there, so every skill load fails',
   ledger_unreadable: 'record cannot be read',
   stale: 'indexes an older set of bundled skills',
   absent: 'is gone from the file',
@@ -489,11 +489,11 @@ export function withSkillsIndex(check: Check, views: SkillsIndexView[]): Check {
   if (!broken || check.status !== 'ok') return { ...check, message, details };
   const fix: Action = broken.state === 'ledger_unreadable'
     ? { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
-      why: 'gbrain will not guess which skills indexes and permission rules it owns from a ledger it cannot read.',
-      user_message: `The gbrain skills record cannot be read: ${broken.refresh}` }
+      why: 'foresights will not guess which skills indexes and permission rules it owns from a ledger it cannot read.',
+      user_message: `The foresights skills record cannot be read: ${broken.refresh}` }
     : { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
-      why: `The skills index in ${broken.path} names a gbrain that is no longer there, so the agent cannot load any skill it lists.`,
-      user_message: `The ${broken.harness} skills index points at a gbrain that was moved or uninstalled. Run: ${broken.refresh}, with the absolute path of the gbrain you use now.` };
+      why: `The skills index in ${broken.path} names a foresights that is no longer there, so the agent cannot load any skill it lists.`,
+      user_message: `The ${broken.harness} skills index points at a foresights that was moved or uninstalled. Run: ${broken.refresh}, with the absolute path of the foresights you use now.` };
   return { name: NAME, status: 'warn', message, details, fix };
 }
 
@@ -511,7 +511,7 @@ function repairArgv(v: InstructionBlockView): Action {
   if (project) {
     const dir = v.harness === 'cursor' ? dirname(dirname(dirname(v.path))) : dirname(v.path);
     return { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), why,
-      user_message: `The gbrain instruction block in ${v.path} needs a refresh. From ${dir}, run: ${argv.join(' ')}` };
+      user_message: `The foresights instruction block in ${v.path} needs a refresh. From ${dir}, run: ${argv.join(' ')}` };
   }
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(NAME), why };
 }
@@ -542,7 +542,7 @@ export function turnHookViews(views: InstructionBlockView[]): TurnHookState[] {
 export function withTurnHooks(check: Check, views: InstructionBlockView[], hooks: TurnHookState[]): Check {
   if (hooks.length === 0) return check;
   const details = { ...(check.details ?? {}), turn_hooks: hooks };
-  // Missing beside a block gbrain recorded writing (the ledger) is a failed install; beside an unrecorded default-path block it is only reported.
+  // Missing beside a block foresights recorded writing (the ledger) is a failed install; beside an unrecorded default-path block it is only reported.
   const bad = hooks.find((h) => h.state === 'untrusted' || (h.state === 'missing' && views.some((v) => v.harness === h.harness && v.from === 'ledger')));
   if (!bad) return { ...check, details };
   const message = `${check.message} Per-turn hook: ${bad.detail}, so the brain-first rule does not reach each turn (check: ${bad.native_inspect}).`;
@@ -551,7 +551,7 @@ export function withTurnHooks(check: Check, views: InstructionBlockView[], hooks
   const rerun = view ? repairArgv(view).argv : undefined;
   const fix: Action = rerun ? turnHookFix(bad.harness, rerun)
     : { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), why: turnHookFix(bad.harness, []).why,
-      user_message: `The gbrain per-turn hook for ${bad.harness} is not active: ${bad.detail}. From that project directory, run: gbrain setup ${bad.harness} --instructions-only` };
+      user_message: `The foresights per-turn hook for ${bad.harness} is not active: ${bad.detail}. From that project directory, run: foresights setup ${bad.harness} --instructions-only` };
   return { name: NAME, status: 'warn', message, details: { ...details, code: 'turn_hook_not_loaded', turn_hook_reason: bad.state }, fix };
 }
 
@@ -578,22 +578,22 @@ export function hookLauncherFix(p: HookLauncherProblem): Action {
   const receipt = record && (() => { try { return (setupHarness === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
   const argv = receipt && setupHarness ? setupRerunArgv(setupHarness, receipt, project ?? undefined)
     : ['gbrain', 'setup', p.harness, ...(p.lane === 'turn-rule' ? ['--instructions-only'] : []), ...(record && record.name !== 'gbrain' ? ['--name', record.name] : []), ...(project ? ['--scope', 'project'] : [])];
-  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes Claude Code's user-scope setup hooks too; it never rewrites a Codex file.";
-  // gbrain setup codex rewrites the shared hooks.json and recomputes its trust, which can re-enable or newly trust a group, so only the user runs it.
-  const codexTrust = '`gbrain setup codex` rewrites the Codex hooks.json and its trust entries, so run it yourself';
+  const why = "Rewrites foresights's hooks to start foresights from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `foresights post-upgrade` refreshes Claude Code's user-scope setup hooks too; it never rewrites a Codex file.";
+  // foresights setup codex rewrites the shared hooks.json and recomputes its trust, which can re-enable or newly trust a group, so only the user runs it.
+  const codexTrust = '`foresights setup codex` rewrites the Codex hooks.json and its trust entries, so run it yourself';
   const verify = doctorVerify(NAME);
   if (p.rerun) {
     const run = `${p.rerunFrom ? `from ${p.rerunFrom}, ` : ''}run: ${p.rerun.join(' ')}`;
-    const laneWhy = `Rewrites the entry to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session or MCP server starts there.${p.harness === 'codex' && p.rerun[1] === 'setup' ? " gbrain setup codex repeats the install's recorded decisions and re-trusts setup's own hook groups." : ''}`;
-    if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove that file (gbrain did not write it), then ${run}` };
+    const laneWhy = `Rewrites the entry to start foresights from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session or MCP server starts there.${p.harness === 'codex' && p.rerun[1] === 'setup' ? " foresights setup codex repeats the install's recorded decisions and re-trusts setup's own hook groups." : ''}`;
+    if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove that file (foresights did not write it), then ${run}` };
     if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${run}` };
     if (p.setupOwned && p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. ${codexTrust}: ${p.rerun.join(' ')}` };
     if (p.setupOwned) return { argv: p.rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why: laneWhy };
-    return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto gbrain's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (gbrain does not rewrite it), then ` : ''}${run}` };
+    return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto foresights's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (foresights does not rewrite it), then ` : ''}${run}` };
   }
-  if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
+  if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (foresights did not write it), then run: ${argv.join(' ')}` };
   if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };
-  if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `gbrain's hooks for ${project} start gbrain in the session's directory. From ${project}, run: ${argv.join(' ')}` };
+  if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `foresights's hooks for ${project} start foresights in the session's directory. From ${project}, run: ${argv.join(' ')}` };
   if (p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. ${codexTrust}: ${argv.join(' ')}` };
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
 }
@@ -648,22 +648,22 @@ async function registrationCheck(opts: { smoke: boolean }, regs: HarnessRegistra
     const recorded = recordedUnreadableRegistrations(detected.filter((h) => !plugins.some((lane) => lane.harness === h)));
     const harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h) && !recorded.some((r) => r.harness === h));
     if (detected.length > 0 && harnesses.length === 0 && recorded.length > 0) {
-      return infoCheck(NAME, `${recorded.map((r) => `${HARNESS_LABEL[r.harness]}: \`gbrain bootstrap\` recorded a gbrain MCP registration (${r.scope} scope)`).join('; ')}, `
-        + `but this process cannot read its config, so doctor did not verify it here. Verify it with \`gbrain doctor --only harness_wiring\` run as the user who runs the agent app.`,
+      return infoCheck(NAME, `${recorded.map((r) => `${HARNESS_LABEL[r.harness]}: \`foresights bootstrap\` recorded a foresights MCP registration (${r.scope} scope)`).join('; ')}, `
+        + `but this process cannot read its config, so doctor did not verify it here. Verify it with \`foresights doctor --only harness_wiring\` run as the user who runs the agent app.`,
         'unknown', undefined, { reason: 'registration_recorded', harnesses: recorded.map((r) => r.harness), registrations: recorded });
     }
     if (detected.length > 0 && harnesses.length === 0) {
       return { name: NAME, status: 'ok',
-        message: `${plugins.map((p) => `${HARNESS_LABEL[p.harness]} gets gbrain from the enabled '${p.plugin}' plugin`).join('; ')}. Enabled is a config signal: doctor does not smoke-test plugin lanes, so verify by starting a new session in that app and checking that gbrain's tools (recall, remember) are listed.`,
+        message: `${plugins.map((p) => `${HARNESS_LABEL[p.harness]} gets foresights from the enabled '${p.plugin}' plugin`).join('; ')}. Enabled is a config signal: doctor does not smoke-test plugin lanes, so verify by starting a new session in that app and checking that foresights's tools (recall, remember) are listed.`,
         details: { reason: 'plugin_lane_enabled', plugins: plugins.map((p) => p.plugin), harnesses: plugins.map((p) => p.harness),
-          verify: 'start a new session in the harness and list its tools; gbrain\'s recall and remember should appear' } };
+          verify: 'start a new session in the harness and list its tools; foresights\'s recall and remember should appear' } };
     }
     const view = brainLock();
     const lock = view.kind === 'pglite' ? view.lock : null;
     const lockOwner = lock?.held && lock.isServe && lock.pid !== undefined ? { pid: lock.pid, transport: lock.http ? 'http' as const : 'stdio' as const, is_self: false } : null;
     const entry = harnessWiringEntry({ transport: 'cli', harnesses, lockOwner, gbrainBin: resolveGbrainBin() });
     if (harnesses.length === 0) return infoCheck(NAME, `${entry.why} Wire one when the user picks an agent app.`, entry.state, entry.fix, { reason: entry.reason });
-    return { name: NAME, status: 'warn', message: `${harnesses.map((h) => HARNESS_LABEL[h]).join(', ')} ${harnesses.length > 1 ? 'are' : 'is'} installed but ${harnesses.length > 1 ? 'have' : 'has'} no gbrain MCP registration, so its sessions get no memory tools. ${entry.why}`,
+    return { name: NAME, status: 'warn', message: `${harnesses.map((h) => HARNESS_LABEL[h]).join(', ')} ${harnesses.length > 1 ? 'are' : 'is'} installed but ${harnesses.length > 1 ? 'have' : 'has'} no foresights MCP registration, so its sessions get no memory tools. ${entry.why}`,
       details: { reason: entry.reason }, ...(entry.fix ? { fix: entry.fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }) };
   }
   const bare = regs.find((r) => r.kind === 'stdio' && r.command && !isAbsolute(r.command) && r.command !== 'bun' && r.command !== 'node');
@@ -675,7 +675,7 @@ async function registrationCheck(opts: { smoke: boolean }, regs: HarnessRegistra
   const active = detectedHarnesses()[0];
   const primary = regs.find((r) => r.harness === active) ?? regs[0];
   if (opts.smoke) return smoke(primary);
-  return { name: NAME, status: 'ok', message: `Registered: ${regs.map(describeRegistration).join('; ')}. Smoke-test it with \`gbrain doctor --only harness_wiring\`.`,
+  return { name: NAME, status: 'ok', message: `Registered: ${regs.map(describeRegistration).join('; ')}. Smoke-test it with \`foresights doctor --only harness_wiring\`.`,
     details: { reason: 'registration_unverified', harnesses: regs.map((r) => r.harness) } };
 }
 

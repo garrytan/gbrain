@@ -633,7 +633,7 @@ export interface NewFact {
   embedding?: Float32Array | null;     // pre-computed; if null, insertFact computes via gateway
   /**
    * v0.35.4 (D-CDX-5) — typed-claim fields. Optional. When populated,
-   * `gbrain eval trajectory` + `find_trajectory` MCP op consume them for
+   * `foresights eval trajectory` + `find_trajectory` MCP op consume them for
    * chronological regression detection and drift_score. `claim_metric` is
    * normalized to lowercase snake_case by the extraction layer before
    * this method sees it; the engine stores verbatim.
@@ -703,7 +703,7 @@ export interface FactListOpts {
    * starve `recall` of real facts. Honored consistently by
    * `listFactsByEntity` / `listFactsBySession` / `listFactsSince` on both
    * engines. Off by default so existing callers that intentionally want
-   * the full row set (e.g. `gbrain doctor` checkpoint audits) are
+   * the full row set (e.g. `foresights doctor` checkpoint audits) are
    * unaffected.
    */
   excludeAuditRows?: boolean;
@@ -718,7 +718,7 @@ export interface FactListOpts {
 /** FactListOpts plus the entity (and the page the fact sits on) listFactsSince and listFactsKeyset narrow to before LIMIT. */
 export type RecallFactReadOpts = FactListOpts & { entitySlug?: string; sourceMarkdownSlug?: string };
 
-/** Per-source operational health snapshot consumed by `gbrain doctor`. */
+/** Per-source operational health snapshot consumed by `foresights doctor`. */
 export interface FactsHealth {
   source_id: string;
   total_active: number;          // expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
@@ -863,7 +863,7 @@ export interface BrainEngine {
    * Fetch a page by slug.
    * v0.26.5: by default soft-deleted rows return null (matches the search
    * filter contract). Pass `opts.includeDeleted: true` to surface them with
-   * `deleted_at` populated — used by `gbrain pages purge-deleted` listing,
+   * `deleted_at` populated — used by `foresights pages purge-deleted` listing,
    * by `restore_page` flow, and by operator diagnostics.
    */
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
@@ -901,8 +901,8 @@ export interface BrainEngine {
    *     AND `deleted_at IS NULL`
    *
    * Background: the overlapping-ingest-roots bug class (infiniteGameExp,
-   * issue #1309) created two pages per file when a user ran `gbrain import
-   * /vault/Subdir/` then `gbrain import /vault/` — the slug-shape changed
+   * issue #1309) created two pages per file when a user ran `foresights import
+   * /vault/Subdir/` then `foresights import /vault/` — the slug-shape changed
    * but the content + external ID were identical. Pre-fix, the import
    * pipeline dedup-checked by `getPage(slug)` alone and missed the
    * cross-slug duplicate. This method gives the importer a deterministic
@@ -940,10 +940,10 @@ export interface BrainEngine {
    * Cascades through content_chunks / page_links / chunk_relations via FKs.
    *
    * v0.41.19.0 (CDX-11): single-row primitive used by `purgeDeletedPages`,
-   * `gbrain sync` (one path per call), test setup teardown, and the v0.41.19.0
+   * `foresights sync` (one path per call), test setup teardown, and the v0.41.19.0
    * sync-delete decompose path (when `deletePages` throws on a 500-row batch,
    * the sync loop falls back to per-slug `deletePage` to log unrecoverable
-   * failures to `failedFiles`). `gbrain sync` calls this on EVERY run that
+   * failures to `failedFiles`). `foresights sync` calls this on EVERY run that
    * sees a deleted file — it is NOT admin-only.
    *
    * Unlike `deletePages` it scrubs nothing else: the page purge, its main
@@ -978,7 +978,7 @@ export interface BrainEngine {
    * the whole batch rolls back. Coarser than the per-row `deletePage`
    * cadence — a mid-loop abort or transient connection failure can roll
    * back up to `DELETE_BATCH_SIZE - 1` successful deletes from the
-   * in-flight batch. `gbrain sync` is idempotent (next run picks them up
+   * in-flight batch. `foresights sync` is idempotent (next run picks them up
    * via git diff); other callers should account for the contract.
    *
    * sourceId is REQUIRED (no `'default'` fallback). This is asymmetric with
@@ -1021,7 +1021,7 @@ export interface BrainEngine {
    *  AND source_id = $2 AND deleted_at IS NULL RETURNING slug`.
    *
    * The batch twin of `softDeletePage`, mirroring the `deletePages` contract
-   * exactly so `gbrain sync`'s delete lanes (which previously hard-deleted
+   * exactly so `foresights sync`'s delete lanes (which previously hard-deleted
    * through `deletePages`/`deletePage`, bypassing the 72h recovery window)
    * can swap in place:
    *
@@ -1056,7 +1056,7 @@ export interface BrainEngine {
   restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean>;
   /**
    * v0.26.5 — hard-delete pages whose `deleted_at` is older than the cutoff.
-   * Called by the autopilot purge phase and by the `gbrain pages purge-deleted`
+   * Called by the autopilot purge phase and by the `foresights pages purge-deleted`
    * CLI escape hatch. Cascades through existing FKs.
    *
    * `opts.dryRun: true` runs a SELECT with the SAME WHERE predicate (same
@@ -1091,7 +1091,7 @@ export interface BrainEngine {
    * Source-bleed via fuzzy resolution was the bug class infiniteGameExp
    * reported as #1436. When neither opt is set, the original unscoped
    * behavior is preserved for back-compat with internal callers (the
-   * `gbrain query --resolve` CLI path, etc.). Field names match the
+   * `foresights query --resolve` CLI path, etc.). Field names match the
    * `sourceScopeOpts(ctx)` helper output so callers can spread directly.
    */
   resolveSlugs(partial: string, opts?: PageReadScope): Promise<string[]>;
@@ -1121,7 +1121,7 @@ export interface BrainEngine {
    *
    * #4304: `updated_at` (the row's last DB-write time — "touched since",
    * NOT the content's authored date) is included so time-window walks like
-   * `gbrain extract --since` can filter refs BEFORE fetching full pages,
+   * `foresights extract --since` can filter refs BEFORE fetching full pages,
    * instead of a getPage round-trip per page across the whole corpus.
    */
   listAllPageRefs(): Promise<Array<{ slug: string; source_id: string; updated_at: Date }>>;
@@ -1165,7 +1165,7 @@ export interface BrainEngine {
   updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean>;
 
   /**
-   * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
+   * v0.37.0 — prefix-stratified page sampling for `foresights brainstorm` / `foresights lsd`
    * domain-bank module. Takes a caller-supplied prefix list (cached at the domain-bank
    * layer per D3), returns one page per prefix tiebroken by `connection_count`
    * (LEFT JOIN to page_links, count of inbound links).
@@ -1184,7 +1184,7 @@ export interface BrainEngine {
   listPrefixSampledPages(opts: DomainBankSampleOpts): Promise<DomainBankRow[]>;
 
   /**
-   * v0.37.0 — corpus-sampling fallback for `gbrain brainstorm` when prefix-stratified
+   * v0.37.0 — corpus-sampling fallback for `foresights brainstorm` when prefix-stratified
    * can't fill M (small brain, single-prefix corpus). Random sample of N pages with
    * the same exclusion + source-scope semantics as `listPrefixSampledPages`.
    * Deterministic with `opts.seed` set; falls back to RANDOM() otherwise.
@@ -1288,7 +1288,7 @@ export interface BrainEngine {
    *
    * `opts.sourceId` scopes the count to a single source. When omitted,
    * counts across every source in the brain. Operators running
-   * `gbrain embed --stale --source media-corpus` expect only that
+   * `foresights embed --stale --source media-corpus` expect only that
    * source's NULLs touched; the caller threads `sourceId` here.
    *
    * `includeNullSignature` (only meaningful with `signature`, #3391): also
@@ -1301,7 +1301,7 @@ export interface BrainEngine {
    * Sum of LENGTH(chunk_text) over stale chunks — the character-count
    * backlog the embed phase / embed-backfill will process. Sibling of
    * countStaleChunks (same stale predicate + embed_skip filter + optional
-   * sourceId scope); used by the `gbrain sync --all` cost preview to price
+   * sourceId scope); used by the `foresights sync --all` cost preview to price
    * the embedding backlog via estimateCostFromChars. Returns 0 on an
    * empty/fully-embedded brain.
    *
@@ -1333,7 +1333,7 @@ export interface BrainEngine {
    * page signature is NULL (pre-v108 pages that predate the stamp). After a
    * provider/model swap those vectors are in the old embedding space; the
    * default grandfather clause would silently keep them mixed into the new
-   * index. `gbrain migrate embeddings` and `embed --stale
+   * index. `foresights migrate embeddings` and `embed --stale
    * --include-null-signature` set this.
    */
   invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number>;
@@ -1426,7 +1426,7 @@ export interface BrainEngine {
   // A page is stale for extraction when its links_extracted_at is NULL,
   // older than the extractor version stamp, or older than its updated_at
   // (edited-since-extract — the MCP put_page / sync --no-extract path).
-  // Powers `gbrain extract --stale` + the `links_extraction_lag` doctor check.
+  // Powers `foresights extract --stale` + the `links_extraction_lag` doctor check.
   // ============================================================
   /**
    * Count pages needing (re)extraction. `versionTs` is the ISO-8601
@@ -1459,7 +1459,7 @@ export interface BrainEngine {
    * crash mid-batch leaves pages unstamped and they re-extract next run.
    *
    * Each ref may carry its own `extractedAt`; refs that omit it use the
-   * `defaultExtractedAt` arg. `gbrain extract --stale` passes the row's READ
+   * `defaultExtractedAt` arg. `foresights extract --stale` passes the row's READ
    * `updated_at` per ref (v0.42.7 D4 race fix) so a concurrent edit landing
    * between the SELECT and this stamp advances `updated_at` past the stamped
    * value → the page stays stale → re-extracted next run, never marked
@@ -1596,7 +1596,7 @@ export interface BrainEngine {
   getBacklinks(slug: string, opts?: LinkReadScope): Promise<Link[]>;
   /**
    * v114 (#1941): distinct link_source provenances with edge counts, for
-   * `gbrain link-sources`. Source-scoped via `{sourceId?, sourceIds?}` (both
+   * `foresights link-sources`. Source-scoped via `{sourceId?, sourceIds?}` (both
    * forms, so federated `allowedSources` reads don't leak cross-source counts).
    * Deterministic order `count DESC, link_source ASC NULLS LAST` for PG/PGLite
    * parity. `link_source` may be NULL (legacy/unknown rows).
@@ -1623,7 +1623,7 @@ export interface BrainEngine {
    * historical unscoped behavior — live-mode callers that already know
    * the source should pass it to avoid cross-source slug suggestions that
    * get silently dropped at the FK filter downstream. Batch-mode callers
-   * (e.g. `gbrain extract`) intentionally omit it to build a cross-source
+   * (e.g. `foresights extract`) intentionally omit it to build a cross-source
    * resolution map.
    */
   findByTitleFuzzy(
@@ -1803,10 +1803,10 @@ export interface BrainEngine {
    * Return every page with no inbound links.
    * Domain comes from the frontmatter `domain` field (null if unset).
    * The caller filters pseudo-pages + derives display domain.
-   * Used by `gbrain orphans` and `runCycle`'s orphan sweep phase.
+   * Used by `foresights orphans` and `runCycle`'s orphan sweep phase.
    *
    * v0.41.29.0: scopes the CANDIDATE set to one source (`sourceId`, from
-   * `gbrain doctor/orphans --source` + single-source MCP clients) or a
+   * `foresights doctor/orphans --source` + single-source MCP clients) or a
    * federated set (`sourceIds`, from `allowedSources` MCP clients). The
    * inbound-link side is NOT scoped — a page in source X linked FROM
    * source Y is genuinely reachable, so it is not an orphan of X. Omit
@@ -2130,7 +2130,7 @@ export interface BrainEngine {
 
   /**
    * Load contradiction-probe run history within the last N days, ordered
-   * newest first. Used by `gbrain eval suspected-contradictions trend` and
+   * newest first. Used by `foresights eval suspected-contradictions trend` and
    * by the doctor `contradictions` check. `report_json` and
    * `source_tier_breakdown` are parsed JSONB columns.
    */
@@ -2357,7 +2357,7 @@ export interface BrainEngine {
 
   /**
    * Audit log: facts that were superseded (superseded_by set), newest
-   * first. Drives `gbrain recall --supersessions`. v0.46 (#3014): the
+   * first. Drives `foresights recall --supersessions`. v0.46 (#3014): the
    * filter requires only `superseded_by IS NOT NULL`, not `expired_at`
    * too — the ontology-dimension writer closes a superseded row via
    * `valid_until` (not `expired_at`) so `--asof` time-travel still sees
@@ -2374,7 +2374,7 @@ export interface BrainEngine {
 
   /**
    * v0.32: count facts that haven't been promoted to takes by the consolidate
-   * phase yet (active + unconsolidated). Drives `gbrain recall --pending`.
+   * phase yet (active + unconsolidated). Drives `foresights recall --pending`.
    * Single SQL: COUNT(*) WHERE consolidated_at IS NULL AND expired_at IS NULL
    * AND (valid_until IS NULL OR valid_until > now()) — read-time TTL validity
    * keeps this backlog in lockstep with what the consolidator can read.
@@ -2421,7 +2421,7 @@ export interface BrainEngine {
    */
   findTrajectory(opts: TrajectoryOpts): Promise<TrajectoryPoint[]>;
 
-  /** Per-source operational metrics for `gbrain doctor` facts_health check. */
+  /** Per-source operational metrics for `foresights doctor` facts_health check. */
   getFactsHealth(source_id: string): Promise<FactsHealth>;
 
   // Segmented page storage (Wave B; SQL in engine-sql/page-body.ts). Called only when pages.segmented_storage is on.
@@ -2593,7 +2593,7 @@ export interface BrainEngine {
    * Used by the phantom-redirect pass in `extract_facts` after appending
    * migrated fact rows to a canonical page's disk fence: we just rewrote the
    * `.md` on disk, so the DB body must match before the next reconcile reads
-   * stale state. content_hash is included so the next `gbrain sync` sees the
+   * stale state. content_hash is included so the next `foresights sync` sees the
    * canonical as unchanged and skips re-import (round-14 + codex #7 — the
    * "second cycle is a no-op" premise depends on all three columns moving
    * together).
@@ -2658,13 +2658,13 @@ export interface BrainEngine {
   setConfig(key: string, value: string): Promise<void>;
   /**
    * v0.32.3 — delete a config row. Returns the number of rows deleted (0 or 1).
-   * No-op when the key doesn't exist. Used by `gbrain config unset` and by
-   * `gbrain search modes --reset`. Engine-agnostic.
+   * No-op when the key doesn't exist. Used by `foresights config unset` and by
+   * `foresights search modes --reset`. Engine-agnostic.
    */
   unsetConfig(key: string): Promise<number>;
   /**
    * v0.32.3 — list config keys matching a literal prefix (e.g. "search.").
-   * Used by `gbrain config unset --pattern` and the search-modes --reset path.
+   * Used by `foresights config unset --pattern` and the search-modes --reset path.
    * Does NOT support glob/regex on purpose — the caller knows the prefix.
    */
   listConfigKeys(prefix: string): Promise<string[]>;
@@ -2673,7 +2673,7 @@ export interface BrainEngine {
    *
    * `loadConfigWithEngine()` needs ~44 config keys on every connect. Read one
    * key at a time that is 44 round trips, which costs nothing on PGLite and
-   * dominates the wall clock on a hosted Postgres: `gbrain stats` against a
+   * dominates the wall clock on a hosted Postgres: `foresights stats` against a
    * Supabase brain spent seconds on reads the server answered in under 3ms
    * total. The config table is a handful of rows, so fetching all of it is
    * cheaper than fetching any meaningful subset of it.
@@ -2805,18 +2805,18 @@ export interface BrainEngine {
 
   // Eval capture (v0.25.0 — BrainBench-Real substrate).
   // Captured at the op-layer wrapper in src/core/operations.ts; reads via
-  // `gbrain eval export` (NDJSON) for sibling gbrain-evals consumption.
+  // `foresights eval export` (NDJSON) for sibling gbrain-evals consumption.
   // Adding these to BrainEngine is a breaking-interface change for third-
   // party engine implementers — this is why v0.25.0 is a minor bump.
   /** Insert a captured candidate. Returns the new row id. Best-effort: callers swallow failures and route them through `logEvalCaptureFailure`. */
   logEvalCandidate(input: EvalCandidateInput): Promise<number>;
-  /** Read candidates by time window / limit / tool filter. Used by `gbrain eval export`. */
+  /** Read candidates by time window / limit / tool filter. Used by `foresights eval export`. */
   listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]>;
-  /** Delete candidates created before `date`. Returns rows deleted. Used by `gbrain eval prune`. */
+  /** Delete candidates created before `date`. Returns rows deleted. Used by `foresights eval prune`. */
   deleteEvalCandidatesBefore(date: Date): Promise<number>;
-  /** Log a capture failure so `gbrain doctor` can surface drops cross-process. Best-effort; symmetric with logEvalCandidate (failure-of-failure is lost). */
+  /** Log a capture failure so `foresights doctor` can surface drops cross-process. Best-effort; symmetric with logEvalCandidate (failure-of-failure is lost). */
   logEvalCaptureFailure(reason: EvalCaptureFailureReason): Promise<void>;
-  /** Read capture failures within an optional time window. Used by `gbrain doctor`. */
+  /** Read capture failures within an optional time window. Used by `foresights doctor`. */
   listEvalCaptureFailures(filter?: { since?: Date }): Promise<EvalCaptureFailure[]>;
 
   // ============================================================
@@ -2864,7 +2864,7 @@ export interface BrainEngine {
 
   /**
    * v0.41.39 (issue #1700) — enrich candidate selection for
-   * `gbrain enrich --thin`. ONE source-aware SQL query: thin-filter +
+   * `foresights enrich --thin`. ONE source-aware SQL query: thin-filter +
    * per-page inbound-link count (source-correct via `to_page_id = p.id`,
    * `link_source='mentions'` excluded) + optional `enriched_at` recency
    * guard + whitelisted ORDER BY (ENRICH_ORDER_SQL) + LIMIT. Returns a

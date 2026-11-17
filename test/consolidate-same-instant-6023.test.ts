@@ -6,7 +6,7 @@
  * marked superseded, with no exact undo. The cluster is now held unchanged and
  * reported with a count and an agent-actionable next step, on the unmanaged
  * writer, the managed submitter and the managed preparer of an already
- * admitted intent. `gbrain repair consolidate-ties` lists and, after a
+ * admitted intent. `foresights repair consolidate-ties` lists and, after a
  * preview, restores facts an earlier release closed this way.
  *
  * Reproduction reported on issue #6023 (in-memory PGLite, synthetic fixture).

@@ -1,9 +1,9 @@
 /**
- * #5988: Git sync holds. A file whose content gbrain refuses deterministically
+ * #5988: Git sync holds. A file whose content foresights refuses deterministically
  * (unreadable or ambiguous frontmatter, a frontmatter slug naming another page,
  * over-size, an operator content reject) is held instead of blocking the sync:
  * the rest of the source imports, the checkpoint advances, and the hold stays
- * visible until the file changes, is deleted, or a newer gbrain can read it.
+ * visible until the file changes, is deleted, or a newer foresights can read it.
  *
  * Storage: one `op_checkpoints` row per hold (op `sync-hold`, fingerprint
  * `source:incarnation:path`) and one small per-source summary row (op
@@ -22,14 +22,14 @@
  * reason, parsed row numbers and the file line, never a cell value; the
  * summary also counts them (`fences`) so every surface can route a source to
  * the right repair (`holdRepairSteps`, D6): the content-repair lane
- * (`gbrain repair content`, #6377) for fence and slug-conflict holds,
- * `gbrain repair frontmatter` for the rest. A fence hold's own fix depends on
+ * (`foresights repair content`, #6377) for fence and slug-conflict holds,
+ * `foresights repair frontmatter` for the rest. A fence hold's own fix depends on
  * its state (`fence-repair/hold-fix.ts`, D17). #6377
  * `frontmatter_slug_conflict` holds carry the content-repair lane's last
  * verdict (`meta.content_repair`: action, reason code, slugs, model, when it
  * is tried again; never the model's prose), written by
  * `recordContentHoldRepair` and kept across a re-screen of the same bytes;
- * their fix is that file's `gbrain repair content --only <path>` preview and,
+ * their fix is that file's `foresights repair content --only <path>` preview and,
  * for a recommended merge or an undecidable pair, a paragraph for a person.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -84,7 +84,7 @@ export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regre
   | 'file_unreadable'
   /** GBRA-130 A-17/B-3/B-4: a path whose page identity sync cannot decide (several tombstones, a spelling twin, a takeover whose ids differ). */
   | 'page_identity_changed'
-  /** #6712 PR 4b (S-47): bytes an older gbrain imported and validated whose frontmatter aliases expand past #7018's bound; held alone, never a parser regression. */
+  /** #6712 PR 4b (S-47): bytes an older foresights imported and validated whose frontmatter aliases expand past #7018's bound; held alone, never a parser regression. */
   | 'frontmatter_alias_limit'
   /** GBRA-133 S-39: a Markdown file whose text holds a NUL byte (U+0000): a binary file, a padded file, a UTF-16 save. */
   | 'content_null_bytes'
@@ -114,9 +114,9 @@ export interface PreparationStallMeta {
   step: string | null;
   waiting_on: 'git' | 'fs' | 'db' | 'pool' | 'unknown' | null;
   attempts: number | null;
-  /** The gbrain that wrote the hold; a different version re-screens it (`holdRescreenDue`). */
+  /** The foresights that wrote the hold; a different version re-screens it (`holdRescreenDue`). */
   gbrain_version: string;
-  /** The `gbrain sync` arguments that resume the cursor with its stored options (after `sources retry-held`). */
+  /** The `foresights sync` arguments that resume the cursor with its stored options (after `sources retry-held`). */
   sync_argv: string[];
 }
 export type GitHoldReason = InvalidFrontmatterReason | 'rename_source_changed' | 'explicit_id_conflict' | FenceReason | OriginConflictReason | PageIdentityHoldReason
@@ -134,11 +134,11 @@ export interface GitHoldMeta {
   reason?: GitHoldReason;
   key?: string;
   line?: number;
-  /** The frontmatter reader version that refused it; an older one is re-screened by a newer gbrain. */
+  /** The frontmatter reader version that refused it; an older one is re-screened by a newer foresights. */
   recovery_version: number;
   /** #6188 `invalid_fence`: where the fence was refused (location-only); a prepare-time hold names the receipt's reason here. */
   fence?: FenceMessageLocation;
-  /** #6188: the fence screen version that held it; an older one is re-screened by a newer gbrain. */
+  /** #6188: the fence screen version that held it; an older one is re-screened by a newer foresights. */
   fence_version?: number;
   /** #8059: the quoted-marker screen version that held it (`QUOTE_SCREEN_VERSION`); an older one is re-screened once, without touching the parser version. */
   quote_version?: number;
@@ -158,7 +158,7 @@ export interface GitHoldMeta {
   drift_version?: number;
   /**
    * #6712 PR 4b `file_drift`: which side a Decision is about (design v3.2 §4): `both` (the file and the page moved), `unknown`
-   * (no import record says which), `deleted` (one side is a deletion, named by `state`). Absent on holds an older gbrain
+   * (no import record says which), `deleted` (one side is a deletion, named by `state`). Absent on holds an older foresights
    * wrote; `fileDriftSide` reads those from `sides`.
    */
   side?: FileDriftSide;
@@ -184,9 +184,9 @@ export interface GitHoldMeta {
   content_repair?: ContentHoldRepairState;
   /** #6278 `preparation_stalled`: the failed receipt's step, wait cause and attempt count. */
   stall?: PreparationStallMeta;
-  /** GBRA-130 A-6 `page_write_failed`: the repeated failure (code, origin, error class, SQLSTATE), its newest receipt and the gbrain that held it. */
+  /** GBRA-130 A-6 `page_write_failed`: the repeated failure (code, origin, error class, SQLSTATE), its newest receipt and the foresights that held it. */
   write_failure?: PageWriteFailureMeta;
-  /** #6278: the held entry is a deletion (the file is gone); discovery re-screens it on request or a gbrain change, not on its absence. */
+  /** #6278: the held entry is a deletion (the file is gone); discovery re-screens it on request or a foresights change, not on its absence. */
   deleted?: true;
   /** GBRA-133 `file_drift` `file_gone`: `sync.apply_held_deletions` refused this deletion (sync-held-deletions.ts) while the page was at `page_revision`. */
   held_deletion?: { refused: string; page_revision: string };
@@ -211,7 +211,7 @@ export interface GitHoldMeta {
   identity_paths?: string[];
   /** GBRA-130 `page_identity_changed` (`identity_differs`): the frontmatter ids of the page and of the file. */
   identity_ids?: { page: string; file: string };
-  /** #8072 `file_too_large`: the streamed (segmented) preparation read the whole file to refuse it, under this gbrain; it re-screens when the file changes, on retry, or under another gbrain. */
+  /** #8072 `file_too_large`: the streamed (segmented) preparation read the whole file to refuse it, under this foresights; it re-screens when the file changes, on retry, or under another foresights. */
   streamed?: { gbrain_version: string };
 }
 
@@ -275,7 +275,7 @@ export interface GitHoldRecord {
   run_id: string | null;
   mode: 'managed' | 'legacy';
   meta: GitHoldMeta;
-  /** GBRA-542: set by the readers, never stored: the source is a read-only mirror (`mirror_read_only`), so gbrain never writes its files. */
+  /** GBRA-542: set by the readers, never stored: the source is a read-only mirror (`mirror_read_only`), so foresights never writes its files. */
   read_only_checkout?: true;
 }
 
@@ -356,7 +356,7 @@ const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','
 
 /**
  * GBRA-542: a deleted-side `file_drift` hold on a read-only mirror whose file Git committed and the upstream removed while the
- * page changed in the database (or has no import record). gbrain never writes the mirror's files, so the page stays live and
+ * page changed in the database (or has no import record). foresights never writes the mirror's files, so the page stays live and
  * database-only: the hold is carried by design (class `mirror_database_only`), never re-screened by a plain sync and never a
  * person's to clear. Deleting the page as the upstream did stays the owner's explicit `--prefer file` repair.
  */
@@ -623,9 +623,9 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
  * share, apart from the byte comparison each makes its own way. A hold is
  * re-screened when `sources retry-held` asked, when its verdict depends on
  * database state or the working tree (slug conflicts, over-size, renames,
- * parser regressions), or when the gbrain that wrote it read frontmatter or
+ * parser regressions), or when the foresights that wrote it read frontmatter or
  * screened fences with an older version than this one. #6278: a
- * `preparation_stalled` hold re-screens when the gbrain version changed (the
+ * `preparation_stalled` hold re-screens when the foresights version changed (the
  * stall was the owner's, not the file's), and #6712 on every sync until it
  * has been held `HOLD_ATTEMPTS_NEEDS_HUMAN` times (attempts count real
  * re-holds); past that it waits for `sources retry-held`. #6529: a `managed_image_sync_unsupported` hold
@@ -640,7 +640,7 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
  * under the same blob id), so it re-screens on every sync; a `page_write_failed` hold of a freeze fault (origin `freeze`,
  * S-63) is re-tested by every sync until it has been held `HOLD_ATTEMPTS_NEEDS_HUMAN` times, so a transient fault clears.
  * #8072: a `file_too_large` hold is re-screened by every sync only while that costs its size (an lstat): one the streamed
- * preparation refused after reading the whole file (`meta.streamed`) waits for its bytes to change, a retry or another gbrain.
+ * preparation refused after reading the whole file (`meta.streamed`) waits for its bytes to change, a retry or another foresights.
  */
 /**
  * GBRA-133: the `file_drift` screen version; 1 is #7340's rule (a page with no import record compares its file at the baseline commit),
@@ -678,14 +678,14 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
  * frontmatter repair preview; a source with several kinds names each.
  */
 export interface HoldRepairRoute { fences: number; others: number; concurrent?: number; stalled?: number; dirty?: number;
-  /** #6712 `file_drift` holds: a database edit sync would have overwritten; each routes to `gbrain repair file-drift`. */
+  /** #6712 `file_drift` holds: a database edit sync would have overwritten; each routes to `foresights repair file-drift`. */
   drift?: number;
   /** #6377 `frontmatter_slug_conflict` holds, counted apart from `others` by callers that read codes (summary counts leave them in `others`). */
   slug_conflicts?: number;
   /** GBRA-542: the source is a read-only mirror, so its drift holds are carried and never resolved toward the database. */
   mirror?: boolean }
 
-/** `gbrain repair content --source <id> [--only <path>]`: the content-repair lane's read-only preview (#6377; no model call). */
+/** `foresights repair content --source <id> [--only <path>]`: the content-repair lane's read-only preview (#6377; no model call). */
 export function contentRepairArgv(sourceId: string, path?: string): string[] {
   return ['gbrain', 'repair', 'content', '--source', sourceId, ...(path ? ['--only', path] : [])];
 }
@@ -712,28 +712,28 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
     + '(read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>])'
     + (auto?.active ? '' : ', then run the apply command it prints');
   const frontmatterText = `preview the frontmatter and other fixes with ${frontmatter.join(' ')} (writes nothing until a hash-bound apply)`;
-  const concurrentText = `for each concurrent-write hold, preview the reconciliation with gbrain sources reconcile ${sourceId} <slug> --preview `
-    + `(gbrain sources status ${sourceId} names each slug and the database write that raced the import), resolve and apply it, then run gbrain sources retry-held ${sourceId} and gbrain sync --source ${sourceId} --no-pull`;
+  const concurrentText = `for each concurrent-write hold, preview the reconciliation with foresights sources reconcile ${sourceId} <slug> --preview `
+    + `(foresights sources status ${sourceId} names each slug and the database write that raced the import), resolve and apply it, then run foresights sources retry-held ${sourceId} and foresights sync --source ${sourceId} --no-pull`;
   const stalled = stalledHoldSteps(sourceId);
   const stalledText = `the ${route.stalled ?? 0} preparation-stalled hold(s) are not file problems and need no repair: inspect the writer with ${stalled.status.join(' ')} (read-only), `
-    + `fix what it names or upgrade gbrain, then run ${stalled.retry.join(' ')} and the same sync again (${stalled.sync.join(' ')} with the run's options)`;
+    + `fix what it names or upgrade foresights, then run ${stalled.retry.join(' ')} and the same sync again (${stalled.sync.join(' ')} with the run's options)`;
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
-  const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (gbrain sources status ${sourceId} names each file), `
+  const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (foresights sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
-  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which gbrain never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if gbrain should write the checkout`
-    : `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
-    + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run gbrain sync --source ${sourceId} --no-pull`;
+  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which foresights never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if foresights should write the checkout`
+    : `for each file-drift hold, preview the resolution with foresights repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
+    + `(foresights sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run foresights sync --source ${sourceId} --no-pull`;
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
   }
   if (route.dirty && !route.others && !content && !route.concurrent && !route.stalled && !route.drift) {
-    return { argv: unblock, commands: [`gbrain sources status ${sourceId} --json`, unblock.join(' '), `gbrain sync --source ${sourceId} --no-pull`], text: dirtyText };
+    return { argv: unblock, commands: [`foresights sources status ${sourceId} --json`, unblock.join(' '), `foresights sync --source ${sourceId} --no-pull`], text: dirtyText };
   }
   if (route.concurrent || route.stalled || route.dirty || route.drift) {
     const parts = [...(route.others ? [frontmatterText] : []), ...(content ? [fenceText] : []), ...(route.concurrent ? [concurrentText] : []), ...(route.stalled ? [stalledText] : []),
       ...(route.dirty ? [dirtyText] : []), ...(route.drift ? [driftText] : [])];
     const commands = [...(route.others ? [frontmatter.join(' ')] : []), ...(content ? [fences.join(' ')] : []),
-      ...(route.stalled ? [stalled.status.join(' ')] : []), `gbrain sources status ${sourceId} --json`, ...(route.dirty ? [unblock.join(' ')] : []), `gbrain sources retry-held ${sourceId}`, `gbrain sync --source ${sourceId} --no-pull`];
+      ...(route.stalled ? [stalled.status.join(' ')] : []), `foresights sources status ${sourceId} --json`, ...(route.dirty ? [unblock.join(' ')] : []), `foresights sources retry-held ${sourceId}`, `foresights sync --source ${sourceId} --no-pull`];
     return { argv: route.others ? frontmatter : content ? fences : route.concurrent || route.drift ? ['gbrain', 'sources', 'status', sourceId, '--json'] : route.stalled ? stalled.status : unblock, commands, text: parts.join('; ') };
   }
   if (content && !route.others) return { argv: fences, commands: [fences.join(' ')], text: fenceText };
@@ -742,14 +742,14 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
 }
 
 /**
- * #6712 PR 4b: the side of a `file_drift` hold. A hold an older gbrain wrote carries only `sides`: `both` and `unknown` read
+ * #6712 PR 4b: the side of a `file_drift` hold. A hold an older foresights wrote carries only `sides`: `both` and `unknown` read
  * as that side; a `database` hold (a one-sided database move sync no longer holds) has none, so no `--held --side` selects it.
  */
 export function fileDriftSide(meta: Pick<GitHoldMeta, 'side' | 'sides'>): FileDriftSide | undefined {
   return meta.side ?? (meta.sides === 'both' || meta.sides === 'unknown' ? meta.sides : undefined);
 }
 
-/** #6712 PR 4b: what `gbrain repair file-drift --prefer <prefer>` does to a page of this side and state, as every surface names it. */
+/** #6712 PR 4b: what `foresights repair file-drift --prefer <prefer>` does to a page of this side and state, as every surface names it. */
 export function fileDriftActionVerb(side: FileDriftSide, state: FileDriftDeletedState | undefined, prefer: 'file' | 'database'): string {
   if (side !== 'deleted') return prefer === 'database' ? 'rewrite the file from the page' : 'import the file into the page';
   if (state === 'tombstone_edited') return prefer === 'database' ? 'keep the deletion and remove the file' : 'restore and import';
@@ -774,7 +774,7 @@ export function heldDriftPreviewArgv(sourceId: string, side: FileDriftSide, stat
     ...(path ? ['--only', path] : []), '--prefer', prefer];
 }
 
-/** GST-2584: the read-only preview of `gbrain repair moved-pages`, which folds a page whose file moved into the moved page. */
+/** GST-2584: the read-only preview of `foresights repair moved-pages`, which folds a page whose file moved into the moved page. */
 export function movedPagesPreviewArgv(sourceId: string, slug?: string | null): string[] {
   return ['gbrain', 'repair', 'moved-pages', '--source', sourceId, ...(slug ? ['--slug', slug] : [])];
 }
@@ -793,10 +793,10 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
         why: `Decides ${record.path} again under the fixed gbrain.yml: a database-only page is kept, any other deletion follows its usual proof.` },
       verify };
   }
-  // GBRA-542: on a read-only mirror gbrain never rewrites a file, so no fix names --prefer database there.
+  // GBRA-542: on a read-only mirror foresights never rewrites a file, so no fix names --prefer database there.
   if (mirrorDatabaseOnlyHold({ ...record, code: 'file_drift' })) {
     return { argv: preview('file'), consent: [], actor: 'user', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
-      why: `${record.path} is gone from the read-only mirror's last commit, and page ${slug}${revision} changed in the database or has no import record, so sync keeps the page. gbrain never writes this mirror's files, so the page stays live and database-only: the hold is carried by design (mirror_database_only), never re-screened by a plain sync, and needs nothing. Only if the owner wants the page gone as the upstream did, this preview (writes nothing) shows what --prefer file deletes; its apply needs the user's consent.`,
+      why: `${record.path} is gone from the read-only mirror's last commit, and page ${slug}${revision} changed in the database or has no import record, so sync keeps the page. foresights never writes this mirror's files, so the page stays live and database-only: the hold is carried by design (mirror_database_only), never re-screened by a plain sync, and needs nothing. Only if the owner wants the page gone as the upstream did, this preview (writes nothing) shows what --prefer file deletes; its apply needs the user's consent.`,
       verify };
   }
   const uncommitted = state === 'file_gone' && (record.meta.reason === 'never_committed' || record.meta.reason === 'ignored');
@@ -809,7 +809,7 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   // GST-2584: a file that moved left its page behind; the --held preview lists it moved_to and names the fold.
   const moved = state === 'file_gone' ? `If the file moved, the preview lists the page moved_to <slug> and names ${shellQuote(movedPagesPreviewArgv(source, record.slug))}, which folds it into the moved page. ` : '';
   const readOnly = record.read_only_checkout === true;
-  const options = readOnly ? `${moved}The source is a read-only mirror, so gbrain never rewrites its files and keeping the database copy needs no repair; this preview (writes nothing) shows --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
+  const options = readOnly ? `${moved}The source is a read-only mirror, so foresights never rewrites its files and keeping the database copy needs no repair; this preview (writes nothing) shows --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
     : `${moved}This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
     + `${fileDriftActionVerb('deleted', state, 'file')}. `;
   return { argv: preview(readOnly ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
@@ -830,7 +830,7 @@ export const FILE_DRIFT_APPLY_STEP = 'The preview writes nothing and names what 
 /**
  * The exact next step for one hold: the repair preview for frontmatter, the
  * split or exclude for size, and for a fence hold the step its state calls
- * for (`fenceHoldFix`: that file's `gbrain repair fences --only <path>`
+ * for (`fenceHoldFix`: that file's `foresights repair fences --only <path>`
  * preview, then the apply, the edit or the paid setting). `auto` is what the
  * caller read about the maintenance run (undefined: unknown).
  */
@@ -851,17 +851,17 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
           docs: 'docs/guides/repair.md#segmented-tiling',
           why: `The segment rows of the page ${record.path} maps to do not cover its stored body, so every read of it refuses page_body_rows_unreadable and sync holds the file on every retry. `
             + 'This previews republishing the page from its file at HEAD and writes nothing; applying it needs the user\'s agreement and the printed preview hash, and clears the hold. '
-            + `If doctor segmented_tiling does not list the page, the rows exist but the role that reads the brain cannot see them: give it access to page_body_manifest and page_segment_texts, then run gbrain sources retry-held ${source}.`,
+            + `If doctor segmented_tiling does not list the page, the rows exist but the role that reads the brain cannot see them: give it access to page_body_manifest and page_segment_texts, then run foresights sources retry-held ${source}.`,
           verify: { argv: ['gbrain', 'doctor', '--only', 'segmented_tiling', '--json'] } };
       }
       // GBRA-133 S-63: a freeze fault threw before any request was admitted, so there is no receipt; the hold names the error.
       if (failure?.origin === 'freeze') return { argv: ['gbrain', 'sources', 'retry-held', source], consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#page_write_failed',
         why: `Sync could not prepare ${record.path} (${failure.error_class ?? 'an unexpected error'}${failure.errno ? `, ${failure.errno}` : ''}; the hold message names it), so it held that file and the rest of the source kept syncing. `
-          + `The next syncs re-test it on their own; once it has been held ${HOLD_ATTEMPTS_NEEDS_HUMAN} times, fix the file when the error names it, or report it with the gbrain version, then schedule the re-test.`,
+          + `The next syncs re-test it on their own; once it has been held ${HOLD_ATTEMPTS_NEEDS_HUMAN} times, fix the file when the error names it, or report it with the foresights version, then schedule the re-test.`,
         verify };
       return { argv: ['gbrain', 'write-request', '--', failure?.request_id ?? '<request_id>'], consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#page_write_failed',
         why: `The write of ${record.path} failed the same way ${failure?.attempts ?? 'several'} times (${failure?.origin ?? failure?.code ?? 'an unclassified failure'}${failure?.errno ? `, SQLSTATE ${failure.errno}` : ''}${failure?.error_class ? `, ${failure.error_class}` : ''}), so sync held it and the rest of the source kept syncing. `
-          + 'The receipt (read-only) names the error; report it with the gbrain version, or fix the file when the error names its content. An upgrade re-tests the path on its own.',
+          + 'The receipt (read-only) names the error; report it with the foresights version, or fix the file when the error names its content. An upgrade re-tests the path on its own.',
         then: { argv: ['gbrain', 'sources', 'retry-held', source], consent: [], actor: 'agent', requires_exclusive: false, verify,
           why: `Schedules ${record.path} for a re-screen on the next sync once the cause is fixed.` },
         verify };
@@ -901,7 +901,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       }
       return { argv: ['gbrain', 'sources', 'reconcile', source, slug, '--preview'], consent: [], actor: 'agent', requires_exclusive: false,
         why: `${record.path} changed in Git while ${by}, so the two versions diverge and neither was overwritten. `
-          + `The reconcile preview shows both and writes nothing; resolve it with the user, apply it, then re-screen the file with gbrain sources retry-held ${source} and gbrain sync --source ${source} --no-pull. The rest of the source is not blocked.`,
+          + `The reconcile preview shows both and writes nothing; resolve it with the user, apply it, then re-screen the file with foresights sources retry-held ${source} and foresights sync --source ${source} --no-pull. The rest of the source is not blocked.`,
         then: { argv: ['gbrain', 'sources', 'retry-held', source], consent: [], actor: 'agent', requires_exclusive: false,
           why: `Schedules ${record.path} for a re-screen on the next sync, after the page is reconciled.`, verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } },
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
@@ -922,7 +922,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       // #6517: a shared-origin delete kept the file for this surviving page, and its receipt names importing the file.
       const shared = record.meta.shared_origin === true, readOnly = record.read_only_checkout === true;
       return { argv: preview(shared || readOnly ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#file_drift',
-        why: readOnly ? `${held}The source is a read-only mirror, so gbrain never rewrites its files: keeping the database copy needs no repair, and this preview (writes nothing) imports the file into the page instead. ${decide}`
+        why: readOnly ? `${held}The source is a read-only mirror, so foresights never rewrites its files: keeping the database copy needs no repair, and this preview (writes nothing) imports the file into the page instead. ${decide}`
           : shared ? `${held}Page ${slug} survived a shared-origin delete that kept ${record.path} for it. This preview (writes nothing) imports the file into the page, as the delete's receipt says; `
           + `${preview('database').join(' ')} previews keeping the database copy and rewriting the file instead. ${decide}`
           : `${held}This preview (writes nothing) keeps the database copy and rewrites the file; ${preview('file').join(' ')} previews importing the file instead. ${decide}`,
@@ -942,8 +942,8 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         : `its ${kind} could not finish preparing${where}: the write owner gave up after ${stall?.attempts ?? 'the allowed'} attempt(s)`;
       return { argv: steps.status, consent: [], actor: 'agent', requires_exclusive: false, docs: gitHoldDocs(record.code),
         why: `${record.path} is held because ${cause} (request ${stall?.request_id ?? '(unknown)'}) and the rest of the source kept syncing. The file itself is not the problem, so no `
-          + `frontmatter or fence repair applies. Writer status (read-only) shows the owner process, its gbrain version${interrupted ? ', the load on its pool' : ''} and any write still stuck; fix what it names or upgrade `
-          + `gbrain, then schedule the re-screen and rerun the same sync.`,
+          + `frontmatter or fence repair applies. Writer status (read-only) shows the owner process, its foresights version${interrupted ? ', the load on its pool' : ''} and any write still stuck; fix what it names or upgrade `
+          + `foresights, then schedule the re-screen and rerun the same sync.`,
         then: { argv: steps.retry, consent: [], actor: 'agent', requires_exclusive: false, verify,
           why: `Schedules ${record.path} for a re-screen on the next sync of ${source}; nothing runs now.`,
           then: { argv: steps.sync, consent: [], actor: 'agent', requires_exclusive: false, verify,
@@ -952,12 +952,12 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
     }
     case 'file_too_large':
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'agent', requires_exclusive: false,
-        why: `${record.path} is over the page size limit. The size limit is fixed, and every page under it syncs and is searchable. Leave the file out of the source: read the current sync.exclude list, then run gbrain config set sync.exclude '<current list>,${record.path}'; or, if it must be in the brain, split it into files under the limit and commit. The next gbrain sync --source ${source} --no-pull clears the hold.`
-          + (record.meta.streamed ? ` Sync read the whole file to refuse it, so it does not read it again until it changes, gbrain is upgraded, or gbrain sources retry-held ${source} schedules it (after a setting its message names changes).` : ''),
+        why: `${record.path} is over the page size limit. The size limit is fixed, and every page under it syncs and is searchable. Leave the file out of the source: read the current sync.exclude list, then run foresights config set sync.exclude '<current list>,${record.path}'; or, if it must be in the brain, split it into files under the limit and commit. The next foresights sync --source ${source} --no-pull clears the hold.`
+          + (record.meta.streamed ? ` Sync read the whole file to refuse it, so it does not read it again until it changes, foresights is upgraded, or foresights sources retry-held ${source} schedules it (after a setting its message names changes).` : ''),
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'purged_content':
       return { argv: ['gbrain', 'pages', 'purges', 'list', '--source', source], consent: [], actor: 'user', requires_exclusive: false,
-        user_message: `${record.path} carries the content of a page the owner purged, so sync holds it. Delete or edit the file and commit; or, only if the purge was a mistake, clear it with gbrain pages unpurge <slug> --source ${source} on the brain host.`,
+        user_message: `${record.path} carries the content of a page the owner purged, so sync holds it. Delete or edit the file and commit; or, only if the purge was a mistake, clear it with foresights pages unpurge <slug> --source ${source} on the brain host.`,
         why: 'Purged content stays out of the brain until the owner clears its tombstone; the next sync re-screens the file, so an edit (a new content hash) or a cleared tombstone imports it normally.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_rejected':
@@ -967,51 +967,51 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
     case 'write_gate_rejected':
       return { argv: ['gbrain', 'config', 'get', 'write_gate.external_mode'], consent: [], actor: 'user', requires_exclusive: false,
         user_message: `${record.path} was refused by the write gate: its source is untrusted and it reads like an instruction to an agent, and write_gate.external_mode is reject. Decide whether to edit the file or switch the setting back to quarantine.`,
-        why: 'The operator chose to reject external instruction-like content; changing that setting is a user decision. The next sync re-screens the file: an edit committed, the setting switched, or an owner allow rule (gbrain trust allow) for the file clears the hold.' };
+        why: 'The operator chose to reject external instruction-like content; changing that setting is a user decision. The next sync re-screens the file: an edit committed, the setting switched, or an owner allow rule (foresights trust allow) for the file clears the hold.' };
     case 'managed_image_sync_unsupported':
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'user', requires_exclusive: false,
-        user_message: `Multimodal embedding is off, so managed sync holds ${record.path} and the rest of source ${source} keeps syncing. Keeping images held is fine; to import them, set GBRAIN_EMBEDDING_MULTIMODAL=true for the gbrain process (image embeddings can cost money) and sync again; to stop holding them, leave images out of the source with sync.exclude.`,
-        why: 'Whether images are embedded is the user\'s call (it costs provider calls). With GBRAIN_EMBEDDING_MULTIMODAL=true the next sync imports every held image; the hold also clears when the file is deleted or excluded, and is re-screened when it changes or on gbrain sources retry-held.',
+        user_message: `Multimodal embedding is off, so managed sync holds ${record.path} and the rest of source ${source} keeps syncing. Keeping images held is fine; to import them, set GBRAIN_EMBEDDING_MULTIMODAL=true for the foresights process (image embeddings can cost money) and sync again; to stop holding them, leave images out of the source with sync.exclude.`,
+        why: 'Whether images are embedded is the user\'s call (it costs provider calls). With GBRAIN_EMBEDDING_MULTIMODAL=true the next sync imports every held image; the hold also clears when the file is deleted or excluded, and is re-screened when it changes or on foresights sources retry-held.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'frontmatter_alias_limit':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `${record.path} nests YAML aliases in its frontmatter that expand past gbrain's size limit, so sync holds it and the rest of source ${source} keeps syncing. An older gbrain imported these bytes; this version refuses them on purpose. Reduce the alias nesting in its frontmatter (or write the values out), or remove the file, then commit and run gbrain sync --source ${source} --no-pull.`,
+        user_message: `${record.path} nests YAML aliases in its frontmatter that expand past foresights's size limit, so sync holds it and the rest of source ${source} keeps syncing. An older foresights imported these bytes; this version refuses them on purpose. Reduce the alias nesting in its frontmatter (or write the values out), or remove the file, then commit and run foresights sync --source ${source} --no-pull.`,
         why: 'The alias bound (#7018) stops a few hundred bytes of nested anchors from expanding into gigabytes; it is intended, so the page keeps its last imported version until the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'tag_too_long':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `${record.path} has a frontmatter tag longer than the ${TAG_MAX_BYTES} bytes a tag can be, so sync holds it and the rest of source ${source} keeps syncing. Shorten that tag or split it into shorter tags, commit, then run gbrain sync --source ${source} --no-pull.`,
+        user_message: `${record.path} has a frontmatter tag longer than the ${TAG_MAX_BYTES} bytes a tag can be, so sync holds it and the rest of source ${source} keeps syncing. Shorten that tag or split it into shorter tags, commit, then run foresights sync --source ${source} --no-pull.`,
         why: 'Tags are stored in an index whose entries have a fixed size limit; no frontmatter repair shortens a tag, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'visibility_noncanonical':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run gbrain sync --source ${source} --no-pull.`,
+        user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run foresights sync --source ${source} --no-pull.`,
         why: 'Page privacy reads only the exact lowercase visibility: private; no frontmatter repair rewrites a privacy request, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_null_bytes':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
+        user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run foresights sync --source ${source} --no-pull.`,
         why: 'Page text is stored as UTF-8 without NUL bytes, so these bytes cannot be imported as they stand; the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_filter_owned':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `${record.path} is stored in Git through a filter (git-crypt encryption or another clean/smudge driver), so its committed bytes are not the text in the checkout. gbrain does not run a repository's filter programs during sync, so sync holds it and the rest of source ${source} keeps syncing. Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then run gbrain sync --source ${source} --no-pull. If the filter is not in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${source}: a commit that changes only .gitattributes does not re-screen the file.`,
-        why: "Running a repository's filter programs would let the repository run code during sync, so the stored bytes cannot become the page; the hold re-screens when the file changes or on gbrain sources retry-held.",
+        user_message: `${record.path} is stored in Git through a filter (git-crypt encryption or another clean/smudge driver), so its committed bytes are not the text in the checkout. foresights does not run a repository's filter programs during sync, so sync holds it and the rest of source ${source} keeps syncing. Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then run foresights sync --source ${source} --no-pull. If the filter is not in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run foresights sources retry-held ${source}: a commit that changes only .gitattributes does not re-screen the file.`,
+        why: "Running a repository's filter programs would let the repository run code during sync, so the stored bytes cannot become the page; the hold re-screens when the file changes or on foresights sources retry-held.",
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'git_object_missing':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `The Git object of ${record.path}${record.meta.blob_oid ? ` (blob ${record.meta.blob_oid})` : ''} is missing from the checkout of source ${source}, and its working-tree copy differs or is gone, so sync holds it and the rest of the source keeps syncing. Sync fetches nothing, so in a partial clone (git clone --filter) fetch the blob with git cat-file -p ${record.meta.blob_oid ?? '<blob>'} in the checkout or check the file out; otherwise run git fsck in the checkout to see what is missing and restore it with git fetch (a shallow clone) or from a backup. Then run gbrain sync --source ${source} --no-pull.`,
+        user_message: `The Git object of ${record.path}${record.meta.blob_oid ? ` (blob ${record.meta.blob_oid})` : ''} is missing from the checkout of source ${source}, and its working-tree copy differs or is gone, so sync holds it and the rest of the source keeps syncing. Sync fetches nothing, so in a partial clone (git clone --filter) fetch the blob with git cat-file -p ${record.meta.blob_oid ?? '<blob>'} in the checkout or check the file out; otherwise run git fsck in the checkout to see what is missing and restore it with git fetch (a shallow clone) or from a backup. Then run foresights sync --source ${source} --no-pull.`,
         why: 'An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names; nothing is imported from a guess, and every sync re-tests the hold.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'path_not_utf8':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `The committed name of ${record.path} is not valid UTF-8 (U+FFFD marks the bytes that are not), so sync holds it and the rest of source ${source} keeps syncing. Rename the file to a UTF-8 name (git ls-files with core.quotePath shows the exact bytes; convmv -f latin1 -t utf8 converts a Latin-1 name), commit, then run gbrain sync --source ${source} --no-pull.`,
+        user_message: `The committed name of ${record.path} is not valid UTF-8 (U+FFFD marks the bytes that are not), so sync holds it and the rest of source ${source} keeps syncing. Rename the file to a UTF-8 name (git ls-files with core.quotePath shows the exact bytes; convmv -f latin1 -t utf8 converts a Latin-1 name), commit, then run foresights sync --source ${source} --no-pull.`,
         why: 'Page paths are UTF-8 text; a name that is not cannot be read back or written again by the name sync would record, so nothing is imported until the file is renamed (the rename clears the hold).',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'parser_regression':
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'user', requires_exclusive: false,
-        user_message: `gbrain refuses ${record.path}, whose exact bytes imported under an earlier version. This is a gbrain bug: report it with the gbrain version, the file and the code, then upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.`,
-        why: 'The same bytes imported before, so only gbrain changed; sync holds the file under GBRAIN_SYNC_PARSER_REGRESSION=hold.' };
+        user_message: `foresights refuses ${record.path}, whose exact bytes imported under an earlier version. This is a foresights bug: report it with the foresights version, the file and the code, then upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.`,
+        why: 'The same bytes imported before, so only foresights changed; sync holds the file under GBRAIN_SYNC_PARSER_REGRESSION=hold.' };
     case 'page_identity_changed': {
       const slugs = record.meta.identity_slugs ?? [], paths = record.meta.identity_paths ?? [], ids = record.meta.identity_ids;
       const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
@@ -1019,12 +1019,12 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         why: `Re-screens ${record.path} once its page identity is decided (this hold is re-screened on every sync); the file then imports.` };
       const user_message = record.meta.reason === 'several_tombstones'
         ? `Deleted pages ${slugs.map(slug => JSON.stringify(slug)).join(', ')} all record ${record.path} as their origin, so sync cannot tell which one the file is and held only this file; the rest of the source keeps syncing. `
-          + `Restore the page that is this file's (gbrain restore '<slug>' --source-id ${source}; a live page wins over the deleted ones) or purge the others, then run gbrain sync --source ${source} --no-pull.`
+          + `Restore the page that is this file's (foresights restore '<slug>' --source-id ${source}; a live page wins over the deleted ones) or purge the others, then run foresights sync --source ${source} --no-pull.`
         : record.meta.reason === 'spelling'
         ? `${record.path} and ${paths.length ? paths.join(', ') : 'another file'} differ only by letter case or separator, which another platform treats as one file, so sync held them rather than guess which is the page's; the rest of the source keeps syncing. `
-          + `Keep one spelling, rename or remove the others and commit, then run gbrain sync --source ${source} --no-pull.`
+          + `Keep one spelling, rename or remove the others and commit, then run foresights sync --source ${source} --no-pull.`
         : `${record.path} maps to page ${JSON.stringify(slugs[0] ?? record.slug ?? '')}, whose file is gone, but its frontmatter id ${JSON.stringify(ids?.file ?? '')} differs from the page's id ${JSON.stringify(ids?.page ?? '')}, so it is a different document and sync held it rather than give it that page's facts, links and history; the rest of the source keeps syncing. `
-          + `Give the file the page's id if it is the same document, or rename it so its slug differs, commit, then run gbrain sync --source ${source} --no-pull.`;
+          + `Give the file the page's id if it is the same document, or rename it so its slug differs, commit, then run foresights sync --source ${source} --no-pull.`;
       return { argv: verify.argv, consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code, record.meta.reason), user_message,
         why: 'Which page a file is cannot be decided when several deleted pages record it, when spellings another platform folds together collide, or when the ids say it is another document; sync never guesses a page identity.',
         then, verify };
@@ -1034,13 +1034,13 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
       return { argv: verify.argv, consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code, record.meta.reason),
         user_message: record.meta.reason === 'explicit_id_conflict'
-          ? `${record.path} folds to page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file, but the file's frontmatter id differs from that page's, so it is a different document and sync held it rather than give it that page's facts, links and history. `
-            + `If it is the same document, give the file the page's id; if not, rename the file to a name that folds to another slug (it imports as a new page), or remove the old page with gbrain delete --source ${source} -- '${slugs[0] ?? '<slug>'}' (recoverable for 72 h); then run gbrain sync --source ${source} --no-pull.`
+          ? `${record.path} folds to page ${JSON.stringify(slugs[0] ?? '')}, which an older foresights imported without recording its file, but the file's frontmatter id differs from that page's, so it is a different document and sync held it rather than give it that page's facts, links and history. `
+            + `If it is the same document, give the file the page's id; if not, rename the file to a name that folds to another slug (it imports as a new page), or remove the old page with foresights delete --source ${source} -- '${slugs[0] ?? '<slug>'}' (recoverable for 72 h); then run foresights sync --source ${source} --no-pull.`
           : slugs.length > 1
-          ? `${record.path} belongs to one of the pages ${slugs.map(slug => JSON.stringify(slug)).join(', ')}, which an older gbrain imported without recording their file, so sync held it rather than guess or create another page. `
-            + `Pick the page that is this file's and remove each other one with gbrain delete --source ${source} -- '<slug>' (recoverable for 72 h), or rename the file if none of them is its page, then run gbrain sync --source ${source} --no-pull.`
-          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file under a slug with capitals that sync cannot write and no gbrain command can address yet, so sync held the file rather than create a second page. `
-            + `Keep the file held (the rest of the source syncs), or rename it to a name that folds to another slug, which imports it as a new page beside the old one (the old page keeps its links), then run gbrain sync --source ${source} --no-pull.`,
+          ? `${record.path} belongs to one of the pages ${slugs.map(slug => JSON.stringify(slug)).join(', ')}, which an older foresights imported without recording their file, so sync held it rather than guess or create another page. `
+            + `Pick the page that is this file's and remove each other one with foresights delete --source ${source} -- '<slug>' (recoverable for 72 h), or rename the file if none of them is its page, then run foresights sync --source ${source} --no-pull.`
+          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older foresights imported without recording its file under a slug with capitals that sync cannot write and no foresights command can address yet, so sync held the file rather than create a second page. `
+            + `Keep the file held (the rest of the source syncs), or rename it to a name that folds to another slug, which imports it as a new page beside the old one (the old page keeps its links), then run foresights sync --source ${source} --no-pull.`,
         why: 'Which page a file is cannot be decided from the slugs alone, and sync never writes a slug it would have to change. Once one writable page is left, the next sync imports the file into it (same page id, links and history) and records the file as its origin; until then the rest of the source keeps syncing.',
         then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
           why: `Re-screens ${record.path} after the other pages are removed (this hold is re-screened on every sync).` },
@@ -1050,9 +1050,9 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#settle_mismatch',
         why: `Sync settled ${record.path} at the same level in ${record.meta.mismatch_streak ?? 3} passes in a row, but the next round never classified it settled, so sync held it instead of re-importing it every pass; the rest of the source synced. `
-          + `Doctor (read-only) names a broken writer, a stuck effect or a damaged record; gbrain sources writer status ${source} --json (read-only) shows the write owner. Report what they show with the gbrain version. Once the cause is fixed, retry-held re-tests the file.`,
+          + `Doctor (read-only) names a broken writer, a stuck effect or a damaged record; foresights sources writer status ${source} --json (read-only) shows the write owner. Report what they show with the foresights version. Once the cause is fixed, retry-held re-tests the file.`,
         then: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', source, '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
-          why: 'Shows the write owner, its gbrain version and any write still stuck (read-only).',
+          why: 'Shows the write owner, its foresights version and any write still stuck (read-only).',
           then: { argv: ['gbrain', 'sources', 'retry-held', source], consent: [], actor: 'agent', requires_exclusive: false, verify,
             why: `Schedules ${record.path} for a re-test on the next sync of ${source}; a mismatch that comes back is held again after three passes.` } },
         verify };
@@ -1071,11 +1071,11 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
             + `This preview writes nothing; its apply does the same now. The rest of the source is not blocked.`, then, verify };
       }
       const keep = claimants.find(page => page.slug === canonical);
-      const soft = claimants.filter(page => page !== keep).map(page => `gbrain delete --source-id ${source} --expected-revision ${page.revision} -- '${page.slug}'`);
+      const soft = claimants.filter(page => page !== keep).map(page => `foresights delete --source-id ${source} --expected-revision ${page.revision} -- '${page.slug}'`);
       return { argv: ['gbrain', 'get', '--source', source, '--', claimants[0]?.slug ?? canonical], consent: [], actor: 'user', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#origin_conflict',
         user_message: `Pages ${named} all record ${record.path} as their origin, and sync cannot prove they are one document (${record.meta.reason}), so it held only this file; the rest of the source keeps syncing. `
-          + `Read each page (gbrain get --source ${source} -- '<slug>'), pick the one that is this file's page and soft-delete each other one (the file stays, restorable for 72 h)`
-          + (soft.length ? `, for example: ${soft.join('; ')}` : '') + `; then run gbrain sync --source ${source} --no-pull. gbrain repair origin-twins --source ${source} lists the group and its commands.`,
+          + `Read each page (foresights get --source ${source} -- '<slug>'), pick the one that is this file's page and soft-delete each other one (the file stays, restorable for 72 h)`
+          + (soft.length ? `, for example: ${soft.join('; ')}` : '') + `; then run foresights sync --source ${source} --no-pull. foresights repair origin-twins --source ${source} lists the group and its commands.`,
         why: 'Which page owns a file cannot be decided when the pages differ, carry different frontmatter ids, or none is the page the path names; sync never deletes a page it cannot prove is a duplicate.', then, verify };
     }
     case 'rename_identity_unreadable': case 'rename_reconcile_failed':
@@ -1219,8 +1219,8 @@ export function holdsEscalated(policy: Pick<SyncHoldPolicy, 'escalateCount' | 'e
 
 /**
  * Import provenance of a page synced from a file: the exact bytes it imported
- * and the gbrain that validated them. A parser regression (held by default,
- * stopped under GBRAIN_SYNC_PARSER_REGRESSION=stop) is only a newer gbrain
+ * and the foresights that validated them. A parser regression (held by default,
+ * stopped under GBRAIN_SYNC_PARSER_REGRESSION=stop) is only a newer foresights
  * refusing bytes this record says imported validated.
  */
 export interface SyncImportProvenance {
@@ -1411,7 +1411,7 @@ export function fencesNormalizedReport(sourceId: string, tally: FencesTally | un
   return { count: tally.count, by_class: tally.by_class as FencesNormalized['by_class'], writers,
     ...(remote ? {} : { sample_paths: tally.sample_paths, common_prefix: prefix }),
     fix: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
-      why: `${tally.count} file(s)${!remote && prefix ? ` under ${prefix}/` : ''} had a malformed facts or takes fence that sync rewrote losslessly and committed (claims and existing row numbers unchanged); whatever writes them emits fences gbrain has to repair. ${STRUCTURED_WRITE_ADVICE} Re-read a normalized page before editing it.` } };
+      why: `${tally.count} file(s)${!remote && prefix ? ` under ${prefix}/` : ''} had a malformed facts or takes fence that sync rewrote losslessly and committed (claims and existing row numbers unchanged); whatever writes them emits fences foresights has to repair. ${STRUCTURED_WRITE_ADVICE} Re-read a normalized page before editing it.` } };
 }
 
 /**
@@ -1451,13 +1451,13 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   const runStalled = runHolds.filter(hold => stalledWeight(hold)).length;
   const escalation = runStalled * 2 > runHolds.length
     ? ' Escalated: more files are held than a source should carry, and most of them stalled while preparing, so the write owner (not the files) is the likely cause; inspect it with writer status before the backlog grows.'
-    : ' Escalated: more files are held than a source should carry, so a generator or a gbrain upgrade is likely writing or reading them wrong; fix the cause before the backlog grows.';
+    : ' Escalated: more files are held than a source should carry, so a generator or a foresights upgrade is likely writing or reading them wrong; fix the cause before the backlog grows.';
   const verify = { argv: ['gbrain', 'sources', 'status', input.sourceId, '--json'] };
   if (input.remote) return { held_count: runHolds.length, ...(needsHuman ? { held_needs_human: needsHuman } : {}), holds_fix: { argv: steps.argv, consent: [], actor: 'host_admin', requires_exclusive: false, verify,
     why: `${outstanding} file(s) in source ${input.sourceId} are held and not imported; only the brain host can inspect and repair them.`,
-    user_message: `Some files in source ${input.sourceId} could not be imported. Please run 'gbrain sources status ${input.sourceId}' on the brain host, then: ${steps.text}.` } };
+    user_message: `Some files in source ${input.sourceId} could not be imported. Please run 'foresights sources status ${input.sourceId}' on the brain host, then: ${steps.text}.` } };
   const fix: Action = { argv: steps.argv, consent: [], actor: 'agent', requires_exclusive: false, verify,
-    why: `${runHolds.length} file(s) held this run, ${outstanding} held in source ${input.sourceId}; they do not block sync. Inspect them with 'gbrain sources status ${input.sourceId}'; `
+    why: `${runHolds.length} file(s) held this run, ${outstanding} held in source ${input.sourceId}; they do not block sync. Inspect them with 'foresights sources status ${input.sourceId}'; `
       + (fences || stalled || concurrent || dirty || drift || slugConflicts ? `then ${steps.text}.` : 'the repair preview proposes each fix and writes nothing.')
       + (escalated ? escalation : '') };
   return { held: runHolds.slice(0, policy.cap).map(hold => gitHoldItem(hold, auto)), held_count: runHolds.length, ...(needsHuman ? { held_needs_human: needsHuman } : {}), holds_outstanding: outstanding,

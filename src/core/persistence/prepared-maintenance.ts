@@ -81,7 +81,7 @@ export async function maintenanceCallerPreflight(engine: BrainEngine, sourceId: 
   }
   const [source] = await engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
   if (!source || source.archived) throw opError('source_changed', 'The maintenance source is not active.',
-    `Source '${sourceId}' is missing or archived, so maintenance submitted nothing and no model was called. Check it with the command in fix; restore an archived source with gbrain sources restore ${sourceId} before running maintenance on it.`,
+    `Source '${sourceId}' is missing or archived, so maintenance submitted nothing and no model was called. Check it with the command in fix; restore an archived source with foresights sources restore ${sourceId} before running maintenance on it.`,
     { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   return true;
 }
@@ -99,7 +99,7 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw opError('source_changed', 'The maintenance source is not active.',
-    `Source '${sourceId}' is missing or archived, so maintenance submitted nothing. Check it with the command in fix; restore an archived source with gbrain sources restore ${sourceId} before running maintenance on it.`,
+    `Source '${sourceId}' is missing or archived, so maintenance submitted nothing. Check it with the command in fix; restore an archived source with foresights sources restore ${sourceId} before running maintenance on it.`,
     { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   const writer = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext,
     'submit_job', sourceId, source.incarnation, 'maintenance');
@@ -224,7 +224,7 @@ async function prepareMaintenanceAdmission(engine: BrainEngine, authority: Maint
 export function maintenanceDriftRefusal(sourceId: string, slug: string): OperationError {
   return opError('source_changed', FILE_DRIFT_MESSAGE,
     `Maintenance submitted nothing for ${slug} in '${sourceId}': its canonical file differs from the database copy, so the write would only add another conflict receipt. `
-    + `List every such page with ${auditConflictsCommand(sourceId)}, then preview the resolution with gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file (or --prefer database). Neither copy was changed.`,
+    + `List every such page with ${auditConflictsCommand(sourceId)}, then preview the resolution with foresights repair file-drift --source ${sourceId} --slug ${slug} --prefer file (or --prefer database). Neither copy was changed.`,
     { detail: 'file_database_drift', fix: readFix(`Lists the pages of source ${sourceId} whose writes keep refusing source_changed, grouped by slug; read-only.`,
       { argv: ['gbrain', 'sources', 'reconcile', sourceId, '--brain', 'host', '--audit', '--conflicts', '--json'] }) });
 }
@@ -241,7 +241,7 @@ export const PUBLISHES_WITHOUT_FILE: ReadonlySet<string> = new Set(['managed_mai
 export function maintenanceGhostRefusal(sourceId: string, slug: string): OperationError {
   return opError('source_changed', 'The canonical file was removed outside coordinated publication.',
     `Maintenance submitted nothing for ${slug} in '${sourceId}': the page's canonical file is missing, so the write would only add another conflict receipt. `
-    + `Import the deletion with gbrain sync --source ${sourceId}, or restore the file and preview the page with gbrain sources reconcile ${sourceId} ${slug} --brain host --preview. Neither copy was changed.`,
+    + `Import the deletion with foresights sync --source ${sourceId}, or restore the file and preview the page with foresights sources reconcile ${sourceId} ${slug} --brain host --preview. Neither copy was changed.`,
     { detail: CANONICAL_FILE_MISSING, docs: 'docs/guides/write-refusals.md#canonical_file_missing', fix: readFix(`Previews how page ${slug} and its missing canonical file reconcile; read-only.`,
       { argv: ['gbrain', 'sources', 'reconcile', sourceId, slug, '--brain', 'host', '--preview', '--json'] }) });
 }
@@ -321,7 +321,7 @@ export async function submitMaintenanceIntent(engine: BrainEngine, authority: Ma
 
 /**
  * A database-only maintenance request under a caller-chosen request id: a
- * preview-approved item (`gbrain repair extractor-facts`) replays its own id
+ * preview-approved item (`foresights repair extractor-facts`) replays its own id
  * after a crash. No worktree is bound, so no file is staged.
  */
 export async function submitDatabaseMaintenanceIntent(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
@@ -515,7 +515,7 @@ export async function submitFactFenceAdoption(engine: BrainEngine, authority: Ma
   const plan = await planFactFenceAdoption(engine, authority, slug, options);
   if (plan.kind === 'suppressed') {
     throw opError('fence_unrenderable', 'The same fact-fence adoption was already refused.',
-      `Fact-fence adoption request ${plan.prior.request_id} for ${slug} was refused with ${plan.prior.error_code} for the same inputs in the last day, so it was not submitted again; nothing changed. It is retried once a day has passed, or right away by a gbrain build whose adoption planner changed.`,
+      `Fact-fence adoption request ${plan.prior.request_id} for ${slug} was refused with ${plan.prior.error_code} for the same inputs in the last day, so it was not submitted again; nothing changed. It is retried once a day has passed, or right away by a foresights build whose adoption planner changed.`,
       { fix: receiptFix(plan.prior) });
   }
   return submitPlannedFactFenceAdoption(engine, authority, slug, plan, options.file);
@@ -536,7 +536,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   const facts = p.facts as FactFenceAssignment[];
   const held = p.kind === HELD_FACT_MOVE;
   if (p.source_incarnation !== row.source_incarnation) throw opError('source_changed', 'The fact adoption source changed.',
-    `Source ${row.source_id} was replaced after fact-fence adoption request ${row.request_id} for ${row.slug} was accepted, so nothing was published. Read the receipt with gbrain write-request -- ${row.request_id}; the next fact backfill run plans against the current source.`,
+    `Source ${row.source_id} was replaced after fact-fence adoption request ${row.request_id} for ${row.slug} was accepted, so nothing was published. Read the receipt with foresights write-request -- ${row.request_id}; the next fact backfill run plans against the current source.`,
     { fix: receiptFix(row) });
   if (new Set(facts.map(f => f.id)).size !== facts.length || new Set(facts.map(f => f.row_num)).size !== facts.length) {
     throw opError('invalid_params', MALFORMED_ADOPTION,
@@ -564,7 +564,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   }
   enterClaimStep(clock, 'adoption_parse_fence');
   const fence = new Map(parseFactsFenceFor(p.content as string, { slug: row.slug }).facts.map(f => [f.rowNum, f]));
-  // GST-2492 PR 2 (gbrain repair facts-home): a database-only fact with no entity, or whose entity has no page, is adopted
+  // GST-2492 PR 2 (foresights repair facts-home): a database-only fact with no entity, or whose entity has no page, is adopted
   // onto a holding page; its cell must name the fact's entity (none for a fact with no entity), so the projection keeps it.
   // A held move onto a holding page (a held row whose entity a folder rule now covers) keeps its entity the same way.
   const holdingAdoption = isHoldingSlug(row.slug);
@@ -591,7 +591,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
       const problem = fenceCellReadBackProblem(fence.get(assignment.row_num), { fact: String(fact.value.fact), visibility: String(fact.value.visibility) });
       if (problem) {
         throw opError('fence_unrenderable', 'The adopted fence row does not render its legacy fact.',
-          `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. Fence row ${assignment.row_num} does not read back as legacy fact ${assignment.id} (${READ_BACK_TEXT[problem]}). This is a gbrain planning defect, not caller input: report the request ID with the gbrain version; the legacy fact stays active and searchable and nothing is lost.`,
+          `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. Fence row ${assignment.row_num} does not read back as legacy fact ${assignment.id} (${READ_BACK_TEXT[problem]}). This is a foresights planning defect, not caller input: report the request ID with the foresights version; the legacy fact stays active and searchable and nothing is lost.`,
           { fix: receiptFix(row) });
       }
     }
@@ -623,7 +623,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
       WHERE f.source_id=$1 AND f.id=a.id AND ${held ? 'f.source_markdown_slug=$4' : 'f.row_num IS NULL'} RETURNING f.id`,
     [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num, fact: fence.get(row_num)!.claim }))), ...(held ? [fromSlug] : [])]);
     if (adopted.length !== facts.length) throw opError('revision_conflict', 'A legacy fact was adopted by another run.',
-      `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.request_id} was publishing, so its transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} for the final state before planning any new adoption.`,
+      `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.request_id} was publishing, so its transaction rolled back. Read the receipt with foresights write-request -- ${row.request_id} for the final state before planning any new adoption.`,
       { fix: receiptFix(row) });
     if (held) noteBelief({ kind: 'transferred', fromSlug, table: 'facts', ids: facts.map(f => f.id) });
     if (drop.length) await unhold(tx);
@@ -640,7 +640,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
  * keeps the entity page's tier (page-prepare's fence-edit rule).
  * #7918: a declaration that is present but unreadable publishes at `unknown`
  * (fail closed) with no input edges. #7917: a page the publication lowered
- * files a `lower_page` proposal the owner sees in `gbrain trust review`.
+ * files a `lower_page` proposal the owner sees in `foresights trust review`.
  */
 export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   const prepared = await prepareMaintenanceKind(engine, row, config, clock);
@@ -722,7 +722,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_resolve_origin_twin') return (await import('../repair/origin-twins.ts')).prepareOriginTwinResolve(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_fold_moved_page') return (await import('../repair/moved-pages.ts')).prepareMovedPageFold(engine, row, config);
   if (row.intent?.kind !== 'managed_maintenance_consolidate') throw opError('invalid_params', 'Unsupported maintenance request.',
-    `Request ${row.request_id} for ${row.slug} in ${row.source_id} carries a maintenance kind this gbrain version does not publish (likely queued by a newer release); nothing changed. Upgrade gbrain on the brain host, and read the receipt before submitting anything new.`,
+    `Request ${row.request_id} for ${row.slug} in ${row.source_id} carries a maintenance kind this foresights version does not publish (likely queued by a newer release); nothing changed. Upgrade foresights on the brain host, and read the receipt before submitting anything new.`,
     { fix: receiptFix(row) });
   const p = row.intent;
   const facts = p.facts as FactSnapshot[];
@@ -792,7 +792,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
       const [take] = await tx.executeRaw<{ id: number }>(
         "SELECT id FROM takes WHERE page_id=$1 AND claim=$2 AND kind='fact' AND holder='self' ORDER BY id LIMIT 1", [row.page_id, p.claim]);
       if (!take) throw opError('storage_error', 'The consolidated take did not commit.',
-        `Consolidation request ${row.request_id} on ${row.slug} in ${row.source_id} did not find its take inside the publication transaction, so the transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} and check the owner with gbrain sources writer status --source ${row.source_id} --json before any new consolidation.`,
+        `Consolidation request ${row.request_id} on ${row.slug} in ${row.source_id} did not find its take inside the publication transaction, so the transaction rolled back. Read the receipt with foresights write-request -- ${row.request_id} and check the owner with foresights sources writer status --source ${row.source_id} --json before any new consolidation.`,
         { fix: receiptFix(row) });
       const before = await factPreimages(tx, row.source_id, facts.map(f => f.id));
       for (const fact of facts) await tx.consolidateFact(fact.id, take.id);

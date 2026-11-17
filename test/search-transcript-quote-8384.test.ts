@@ -141,7 +141,7 @@ for (const backend of testBackends()) {
       for (const [op, params] of [['get_page', { slug }], ['fetch', { id: slug }]] as const) {
         __resetBackupNoticeForTests();
         const text = JSON.stringify((await call(op, params)).content);
-        expect([op, text.includes(MARKER), text.includes('quoted_unverified_origin'), text.includes('gbrain trust claim-sources')]).toEqual([op, true, true, true]);
+        expect([op, text.includes(MARKER), text.includes('quoted_unverified_origin'), text.includes('foresights trust claim-sources')]).toEqual([op, true, true, true]);
       }
       __resetBackupNoticeForTests();
       const agent = JSON.stringify((await call('get_page', { slug: AGENT_SLUG })).content);

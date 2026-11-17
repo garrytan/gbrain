@@ -43,9 +43,9 @@ context in the prompt. Also known in Japanese as 検索拡張生成 (RAG).
 - Chunk boundaries can split important context across fragments
 - No synthesis: retrieved chunks are raw fragments, not curated knowledge
 
-## GBrain's Approach
+## Foresights's Approach
 
-GBrain uses RAG as its core query mechanism but addresses several standard RAG
+Foresights uses RAG as its core query mechanism but addresses several standard RAG
 limitations through deliberate design choices:
 
 - **Compiled truth** pages mean retrieved content is pre-synthesized knowledge rather
@@ -63,7 +63,7 @@ limitations through deliberate design choices:
 
 ### 2025-02-15 — RAG Research
 
-Evaluated standard RAG patterns for GBrain. Identified the core tension: RAG works
+Evaluated standard RAG patterns for Foresights. Identified the core tension: RAG works
 best when retrieved documents are high quality and self-contained, but most note-taking
 systems produce fragmented, partially-overlapping content. This led to the compiled
 truth pattern as a write-time optimization for read-time retrieval quality.
@@ -71,6 +71,6 @@ truth pattern as a write-time optimization for read-time retrieval quality.
 ### 2025-03-28 — Hybrid Search Decision
 
 During weekly sync, decided to implement hybrid search (vector + keyword with RRF) for
-GBrain v0.3. Pure vector search was missing exact keyword matches, and pure keyword
+Foresights v0.3. Pure vector search was missing exact keyword matches, and pure keyword
 search was missing semantic near-matches. Hybrid search with Reciprocal Rank Fusion
 gives us the best of both approaches.

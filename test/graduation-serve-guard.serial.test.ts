@@ -1,12 +1,12 @@
 /**
  * Engine graduation and long-lived clients (plan §6.4): a serve relaunched
- * during a run exits 75 with graduation_in_progress (a real `gbrain serve`
+ * during a run exits 75 with graduation_in_progress (a real `foresights serve`
  * child), a stale config pointing at a tombstone gets status-only
  * `engine_graduated` with its one-step fix, a status-only/degraded serve
  * exits for relaunch when the engine identity changes, the resident serve
  * hand-off fires only for another live run, doctor's graduation finding and
  * pglite_leftovers report the run and the retained copy, and
- * `gbrain engine status --json` shows the graduation state. File fixtures
+ * `foresights engine status --json` shows the graduation state. File fixtures
  * follow the plan's marker and tombstone formats.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -76,7 +76,7 @@ describe('serve start during a run', () => {
     expect(graduationHandoffRequested(), 'the run itself never hands off to itself').toBeNull();
   }));
 
-  test('a relaunched `gbrain serve` exits 75 with the envelope and touches nothing', async () => {
+  test('a relaunched `foresights serve` exits 75 with the envelope and touches nothing', async () => {
     writeMarker({ pid: process.pid });
     const proc = Bun.spawn(['bun', CLI, 'serve'], {
       env: { ...process.env, GBRAIN_HOME: home, GBRAIN_DATABASE_URL: '', DATABASE_URL: '', GBRAIN_NO_UPDATE_CHECK: '1' },

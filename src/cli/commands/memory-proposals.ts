@@ -1,5 +1,5 @@
 /**
- * `gbrain memory-proposals`: post-connect dispatch (the owner's review of QM's proposed writes, GST-1158). The record
+ * `foresights memory-proposals`: post-connect dispatch (the owner's review of QM's proposed writes, GST-1158). The record
  * lives in src/cli/command-table.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';

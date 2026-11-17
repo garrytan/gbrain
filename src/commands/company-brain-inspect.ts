@@ -7,7 +7,7 @@ import { opError, OperationError } from '../core/ops/contract.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 
 export const COMPANY_BRAIN_INSPECT_HELP = `Inspect an existing company repository without importing it:
-  gbrain sources inspect <path> [--profile company-brain] [--json]
+  foresights sources inspect <path> [--profile company-brain] [--json]
                          [--include <glob>] [--exclude <glob>] [--out <file>]
 
 Only committed Markdown is inspected. Dirty and unsupported files are reported.
@@ -43,7 +43,7 @@ export function parseCompanyBrainInspectionArgs(args: string[]): CompanyBrainIns
     const flag = equal < 0 ? arg : arg.slice(0, equal);
     if (!['--profile', '--include', '--exclude', '--out'].includes(flag)) {
       throw opError('invalid_params', `Unknown inspect option ${JSON.stringify(flag)}.`,
-        'Inspect accepts --profile company-brain, --include, --exclude, --out, and --json; gbrain sources inspect --help lists them.');
+        'Inspect accepts --profile company-brain, --include, --exclude, --out, and --json; foresights sources inspect --help lists them.');
     }
     const value = equal < 0 ? args[++i] : arg.slice(equal + 1);
     if (!value || value.startsWith('--')) {
@@ -62,7 +62,7 @@ export function parseCompanyBrainInspectionArgs(args: string[]): CompanyBrainIns
     }
   }
   if (!result.path) {
-    throw opError('invalid_params', 'A local repository path is required.', 'Pass the path of a local Git checkout to inspect, for example: gbrain sources inspect ./company-wiki --profile company-brain --json.');
+    throw opError('invalid_params', 'A local repository path is required.', 'Pass the path of a local Git checkout to inspect, for example: foresights sources inspect ./company-wiki --profile company-brain --json.');
   }
   return result;
 }
@@ -97,7 +97,7 @@ export async function runCompanyBrainInspection(args: string[]): Promise<void> {
     json = options.json;
     if (isThinClient(loadConfig())) {
       throw opError('permission_denied', 'Company repository inspection runs locally on the brain host, not through a thin-client installation.',
-        `This installation is a thin client of a remote brain. Ask the user to run gbrain sources inspect on the machine that hosts the company brain, against a checkout of ${options.path} on that machine.`);
+        `This installation is a thin client of a remote brain. Ask the user to run foresights sources inspect on the machine that hosts the company brain, against a checkout of ${options.path} on that machine.`);
     }
     const plan = await inspectCompanyBrain(options);
     if (options.out) {
@@ -124,7 +124,7 @@ export async function runCompanyBrainInspection(args: string[]): Promise<void> {
     const code = known ? error.code : 'inspection_failed';
     const message = known ? error.message : 'Inspection could not complete. Check the local repository and retry.';
     if (json) await writeStdoutFinal(`${JSON.stringify({ schema_version: 1, status: 'blocked', code, message })}\n`);
-    else console.error(`Error [${code}]: ${message}\nRun: gbrain sources inspect --help`);
+    else console.error(`Error [${code}]: ${message}\nRun: foresights sources inspect --help`);
     setCliExitVerdict(code === 'invalid_params' ? 2 : 1);
   }
 }

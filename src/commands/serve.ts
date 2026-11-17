@@ -109,8 +109,8 @@ function idleUpkeepSlot(upkeep: IdleUpkeep): { run(engine: BrainEngine): Promise
 /** GBRA-156: each idle sweep names its start and its duration on stderr, so slow requests can be lined up with it. */
 async function loggedIdleSweep(log: (line: string) => void, run: () => Promise<unknown>): Promise<void> {
   const startedAt = Date.now();
-  log('[gbrain serve] idle sweep: started');
-  try { await run(); } finally { log(`[gbrain serve] idle sweep: finished in ${Date.now() - startedAt} ms`); }
+  log('[foresights serve] idle sweep: started');
+  try { await run(); } finally { log(`[foresights serve] idle sweep: finished in ${Date.now() - startedAt} ms`); }
 }
 
 // Small per-run budget for idle sweeps: the serve must snap back to
@@ -251,7 +251,7 @@ export async function finishHttpServe(
   };
 
   const deadline = setTimeout(() => {
-    log(`GBrain MCP server: cleanup deadline (${deadlineMs}ms) exceeded — forcing exit`);
+    log(`Foresights MCP server: cleanup deadline (${deadlineMs}ms) exceeded — forcing exit`);
     exitOnce(0);
   }, deadlineMs);
   deadline.unref?.();
@@ -259,7 +259,7 @@ export async function finishHttpServe(
   try {
     await engine.disconnect();
   } catch (err: unknown) {
-    log(`GBrain MCP server: cleanup error: ${err instanceof Error ? err.message : String(err)}`);
+    log(`Foresights MCP server: cleanup error: ${err instanceof Error ? err.message : String(err)}`);
   }
   clearTimeout(deadline);
   // `process.exit` never returns, so the guard is inert in production. It
@@ -268,7 +268,7 @@ export async function finishHttpServe(
   exitOnce(0);
 }
 
-/** gbrain serve (stdio and --http) runs in a local scope, so its own AI calls use the process gateway (engine-scope.ts). */
+/** foresights serve (stdio and --http) runs in a local scope, so its own AI calls use the process gateway (engine-scope.ts). */
 export function runServe(engine: BrainEngine, args: string[] = [], opts: ServeOptions = {}) {
   return withLocalScope(() => serveBrain(engine, args, opts));
 }
@@ -283,7 +283,7 @@ async function serveBrain(
   // middleware. Master's simpler startHttpTransport from v0.22.7 is superseded
   // — the OAuth provider in serve-http.ts handles bearer auth via
   // verifyAccessToken with legacy access_tokens fallback (so v0.22.7 callers
-  // that used `gbrain auth create` keep working unchanged).
+  // that used `foresights auth create` keep working unchanged).
   const isHttp = args.includes('--http');
   // Wakeshift (docs/guides/wakeshift.md): the 5 s wake drainer for stdio and HTTP alike; a no-op tick while reporting back is off.
   (await import('../core/wakeshift/drain.ts')).startWakeDrain(engine);
@@ -300,12 +300,12 @@ async function serveBrain(
   const resolved = isHttp ? resolveSurfaceWithSource(surfaceFlag, loadConfig()) : resolveStdioSurface(surfaceFlag, loadConfig());
   const surface = resolved.surface;
   if (isHttp && process.env.GBRAIN_SURFACE) {
-    console.error('[gbrain serve] GBRAIN_SURFACE is ignored with --http: the HTTP surface ceiling is set by --surface (or config mcp_surface); GBRAIN_MCP_FORCE_SURFACE narrows it.');
+    console.error('[foresights serve] GBRAIN_SURFACE is ignored with --http: the HTTP surface ceiling is set by --surface (or config mcp_surface); GBRAIN_MCP_FORCE_SURFACE narrows it.');
   }
   if (resolved.invalidEnv !== undefined) {
-    console.error(`[gbrain serve] ignoring GBRAIN_SURFACE="${resolved.invalidEnv}" (use verbs | starter | full)`);
+    console.error(`[foresights serve] ignoring GBRAIN_SURFACE="${resolved.invalidEnv}" (use verbs | starter | full)`);
   }
-  console.error(`[gbrain serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})${advertise ? ` advertise=${advertise}` : ''}`);
+  console.error(`[foresights serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})${advertise ? ` advertise=${advertise}` : ''}`);
   void (await import('../core/serve-behavior-notice.ts')).logServeBehaviorNotice(engine, loadConfig());
   // #6543 (A6): serve's stuck, desync and recovery events go to the pool-recovery audit `doctor --only pool_reap_health` reads.
   if (engine.kind === 'postgres') {
@@ -319,24 +319,24 @@ async function serveBrain(
   const restartRequiredExitSeconds = resolveRestartRequiredExitSeconds(process.env[SERVE_RESTART_REQUIRED_EXIT_ENV]);
   if (restartRequiredExitSeconds !== null) {
     installRestartRequiredExit(engine, restartRequiredExitSeconds, { log: (line) => console.error(line), exit: opts.exit ?? ((code: number) => { process.exit(code); }) });
-    console.error(`[gbrain serve] ${SERVE_RESTART_REQUIRED_EXIT_ENV}=${restartRequiredExitSeconds}: exits ${SERVE_UNHEALTHY_EXIT_CODE} after persistence_restart_required holds that long (at most 3 self-exits per hour)`);
+    console.error(`[foresights serve] ${SERVE_RESTART_REQUIRED_EXIT_ENV}=${restartRequiredExitSeconds}: exits ${SERVE_UNHEALTHY_EXIT_CODE} after persistence_restart_required holds that long (at most 3 self-exits per hour)`);
   }
   // #4768: stdio read-only access ceiling. HTTP refuses it: per-token grants
   // (auth rescope-token --operations / rescope-client) are its operation control.
   const access = parseAccessFlag(args);
   if (access === 'read-only' && isHttp) {
     throw new Error('--access read-only applies to stdio serve only; for HTTP narrow each token with ' +
-      'gbrain auth rescope-token <name> --operations <op,...> (see docs/mcp/ADMIN.md#read-only-stdio-serve)');
+      'foresights auth rescope-token <name> --operations <op,...> (see docs/mcp/ADMIN.md#read-only-stdio-serve)');
   }
   // GST-363: --stdio-member binds this one stdio server (the harness entry that starts it) to one member.
   const stdioMember = parseStdioMemberFlag(args);
   if (stdioMember !== undefined && isHttp) {
     throw new Error('--stdio-member binds a stdio serve only; over HTTP bind each key to its person with ' +
-      'gbrain auth create <name> --member <id> (or gbrain auth rescope --token <name> --member <id>)');
+      'foresights auth create <name> --member <id> (or foresights auth rescope --token <name> --member <id>)');
   }
   const sharedHarness = stdioMember !== undefined ? (await import('./setup-serves.ts')).sharedStdioHarness() : null;
   if (sharedHarness) {
-    throw new Error(`--stdio-member refused: ${sharedHarness} is installed on this host, and its sessions serve several people, so serve does not start a stdio server bound to one member here; remove the flag from this harness entry (gbrain setup claude-code|codex --no-stdio-member) and give each person their own key over HTTP (gbrain serve --http with gbrain auth create <name> --member <id>)`);
+    throw new Error(`--stdio-member refused: ${sharedHarness} is installed on this host, and its sessions serve several people, so serve does not start a stdio server bound to one member here; remove the flag from this harness entry (foresights setup claude-code|codex --no-stdio-member) and give each person their own key over HTTP (foresights serve --http with foresights auth create <name> --member <id>)`);
   }
 
   // --source-guard (plugin lanes, EV1): fail-closed write routing for
@@ -357,7 +357,7 @@ async function serveBrain(
     // operator who passed the flag believing fail-closed routing is active
     // must not discover otherwise silently.
     console.error(
-      '[gbrain serve] WARNING: --source-guard applies to the stdio lane only and is IGNORED with --http — ' +
+      '[foresights serve] WARNING: --source-guard applies to the stdio lane only and is IGNORED with --http — ' +
         'HTTP writes are scoped by per-token grants (access_tokens.permissions), not the tier guard.',
     );
   }
@@ -383,7 +383,7 @@ async function serveBrain(
 
     // F8 escape hatch: --log-full-params writes raw payloads to mcp_request_log
     // and the admin SSE feed instead of redacted summaries. Off by default
-    // (privacy-first); operators running gbrain on their own laptop can flip
+    // (privacy-first); operators running foresights on their own laptop can flip
     // it on for debug visibility. Loud startup warning fires in serve-http.ts
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
@@ -474,8 +474,8 @@ async function serveBrain(
     surface === 'verbs'
       // v0.45.7: count derives from VERB_NAMES (7 with context_pack + delta)
       // so the banner can't drift from the frozen set again.
-      ? `Starting GBrain MCP server (stdio) — serving ${VERB_NAMES.length} memory verbs (MEMORY_VERBS v1)...`
-      : `Starting GBrain MCP server (stdio${access === 'read-only' ? ', read-only' : ''})...`,
+      ? `Starting Foresights MCP server (stdio) — serving ${VERB_NAMES.length} memory verbs (MEMORY_VERBS v1)...`
+      : `Starting Foresights MCP server (stdio${access === 'read-only' ? ', read-only' : ''})...`,
   );
 
   // stdout is reserved for JSON-RPC frames from here on. Ops that run
@@ -511,7 +511,7 @@ async function serveBrain(
         .then(() => engine.disconnect())
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          log(`GBrain MCP server: boot-deadline cleanup error: ${msg}`);
+          log(`Foresights MCP server: boot-deadline cleanup error: ${msg}`);
         })
         .finally(() => {
           clearTimeout(cleanup);
@@ -567,7 +567,7 @@ function formatBootTimeout(timeoutMs: number, phase: string, engine: BrainEngine
   const fix = starved
     ? `export GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR} (and size the pooler for every resident process)`
     : 'check configured provider endpoints, or export GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=<seconds> (0 disables)';
-  return `GBrain MCP server: boot did not complete — no boot progress for ${timeoutMs}ms (${Math.round(elapsedMs / 1000)}s since boot started); releasing DB lock and exiting so other consumers unblock. `
+  return `Foresights MCP server: boot did not complete — no boot progress for ${timeoutMs}ms (${Math.round(elapsedMs / 1000)}s since boot started); releasing DB lock and exiting so other consumers unblock. `
     + `code=serve_boot_timeout phase=${phase}${poolText}; cause: ${starved ? 'the connection pool is too small or saturated for a resident serve' : `boot stalled in ${phase}`}; `
     + `fix: ${fix}; docs: docs/ENGINES.md#serve-boot-timeout`;
 }
@@ -581,7 +581,7 @@ function resolveBootTimeoutMs(): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) {
     console.error(
-      `[gbrain serve] ignoring invalid GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=${JSON.stringify(raw)} — using default ${DEFAULT_BOOT_TIMEOUT_SECONDS}s`,
+      `[foresights serve] ignoring invalid GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=${JSON.stringify(raw)} — using default ${DEFAULT_BOOT_TIMEOUT_SECONDS}s`,
     );
     return DEFAULT_BOOT_TIMEOUT_SECONDS * 1000;
   }
@@ -607,7 +607,7 @@ function installGraduationHandoff(engine: BrainEngine, opts: ServeOptions): Serv
     const request = graduationHandoffRequested();
     if (!request) return;
     clearInterval(timer);
-    log('GBrain MCP server: an engine graduation run asked for this brain; handing it over.');
+    log('Foresights MCP server: an engine graduation run asked for this brain; handing it over.');
     handoffExit = writeServeGraduationEnvelope(request, (s) => log(s.trimEnd()));
     shutdown('graduation-handoff');
   }, GRADUATION_HANDOFF_POLL_MS);
@@ -625,7 +625,7 @@ function installGraduationHandoff(engine: BrainEngine, opts: ServeOptions): Serv
  * bounded per run and per day. Activity is read from stdin 'data' chunks
  * through a listener attached on the first tick (same reason as the idle
  * sweep: never before the SDK transport attaches). Opt out with
- * `gbrain config set facts.extraction_enabled false`.
+ * `foresights config set facts.extraction_enabled false`.
  */
 function installFactsDrain(engine: BrainEngine, opts: ServeOptions, deps: StdioLifecycleDeps, shuttingDown: () => boolean): FactsDrainScheduler | null {
   if (opts.factsDrain === false || engine.kind !== 'pglite') return null;
@@ -709,7 +709,7 @@ function installStdioLifecycle(
     }
     idleUpkeep.stop();
 
-    deps.log(`GBrain MCP server: graceful exit (${reason})`);
+    deps.log(`Foresights MCP server: graceful exit (${reason})`);
 
     // Race the cleanup against a deadline. engine.disconnect() does a
     // PGLite WASM close + a synchronous rmSync on the lock dir; both
@@ -729,7 +729,7 @@ function installStdioLifecycle(
     const armDeadline = (ms: number): void => {
       deadline = setTimeout(() => {
         deps.log(
-          `GBrain MCP server: cleanup deadline (${ms}ms) exceeded — forcing exit`,
+          `Foresights MCP server: cleanup deadline (${ms}ms) exceeded — forcing exit`,
         );
         deps.exit(0);
       }, ms);
@@ -756,7 +756,7 @@ function installStdioLifecycle(
       .then(() => engine.disconnect())
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        deps.log(`GBrain MCP server: cleanup error: ${msg}`);
+        deps.log(`Foresights MCP server: cleanup error: ${msg}`);
       })
       .finally(() => {
         if (deadline) clearTimeout(deadline);
@@ -877,7 +877,7 @@ function installStdioLifecycle(
       // so boot time no longer eats into the idle window.
       armIdle();
     };
-    deps.log(`GBrain MCP server: stdio idle timeout = ${idleTimeoutSec}s`);
+    deps.log(`Foresights MCP server: stdio idle timeout = ${idleTimeoutSec}s`);
   }
 
   return activateIdleActivityTracking;

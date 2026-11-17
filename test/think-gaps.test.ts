@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { stripGapsSection } from '../src/core/think/index.ts';
 import { buildThinkSystemPrompt } from '../src/core/think/prompt.ts';
 
-// `gbrain think` returns gaps in the structured `gaps` array, which both the
+// `foresights think` returns gaps in the structured `gaps` array, which both the
 // CLI (`src/commands/think.ts`) and the persisted synthesis page
 // (`persistSynthesis`) render exactly once. Older prompts also asked for a
 // "Gaps" section inside the answer prose, so a model that still emits one made

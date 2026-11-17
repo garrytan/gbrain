@@ -14,7 +14,7 @@ export interface TopologyChange {
 export async function priorTopologyChange(engine:BrainEngine,principal:string,requestId:string,intent:unknown):Promise<TopologyChange|null> {
   const page=await engine.executeRaw("SELECT id FROM persistence_requests WHERE principal_kind='local_cli' AND principal_id=$1 AND request_id=$2::uuid",[principal,requestId]);
   if(page.length) throw opError('idempotency_conflict','This request_id belongs to a page mutation.',
-    `Request ${requestId} already names a page write, so this lifecycle change was not accepted. Submit it with a new request id, or omit the id so gbrain generates one.`);
+    `Request ${requestId} already names a page write, so this lifecycle change was not accepted. Submit it with a new request id, or omit the id so foresights generates one.`);
   const [prior]=await engine.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',[principal,requestId]);
   if(prior && prior.digest!==digest(intent)) throw opError('idempotency_conflict','This lifecycle request_id was accepted with different arguments.',
     `Request ${requestId} was accepted for a ${prior.operation} of source ${prior.source_id} with other arguments. Reuse it only to resubmit that identical command; give a different change a new request id.`);

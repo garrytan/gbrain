@@ -68,7 +68,7 @@ describe('POST /ingest over legacy job authority', () => {
     expect(Object.keys(body).sort()).toEqual(['docs_url', 'error', 'hint', 'message']);
     expect(body.error).toBe('permission_denied');
     expect(body.message).toContain(`job ${id} (ingest_capture, waiting)`);
-    expect(body.hint).toContain('gbrain jobs authorize-legacy --select "status=waiting|delayed|waiting-children|paused"');
+    expect(body.hint).toContain('foresights jobs authorize-legacy --select "status=waiting|delayed|waiting-children|paused"');
     expect(body.hint).toContain('--expect <hash> --yes');
     expect(body.docs_url).toBe('docs/guides/repair.md#legacy-job-authority');
   });

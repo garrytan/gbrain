@@ -1,5 +1,5 @@
 /**
- * v0.32 — `gbrain recall --rollup` correctness. Pure-function tests on
+ * v0.32 — `foresights recall --rollup` correctness. Pure-function tests on
  * `computeRollup` (no engine, no I/O).
  *
  * CRITICAL REGRESSIONS pinned here (Codex round 1 #8):

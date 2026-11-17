@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic import of upstream voice-agent source into gbrain's
+# Deterministic import of upstream voice-agent source into foresights's
 # recipes/agent-voice/code/ reference bundle.
 #
 # Usage:

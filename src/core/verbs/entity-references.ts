@@ -239,7 +239,7 @@ export function undeclaredRecordTypesNotice(types: string[]): Notice {
     code: 'record_types_undeclared', kind: 'info',
     why: `entity.record_types names ${shown}, which neither this source's schema pack declares nor any page here uses, so no record of that type is listed.`,
     fix: { argv: ['gbrain', 'config', 'get', 'entity.record_types'], consent: [], actor: 'user', requires_exclusive: false,
-      why: 'Shows the enrolled record types; set it to page types the schema pack declares (gbrain config set entity.record_types <types>).' },
+      why: 'Shows the enrolled record types; set it to page types the schema pack declares (foresights config set entity.record_types <types>).' },
   };
 }
 

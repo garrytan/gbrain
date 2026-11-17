@@ -11,12 +11,12 @@
  *     sources.chunker_version gate forces a full re-walk next sync on any
  *     source whose tree hasn't drifted, so normal usage rolls the new
  *     chunker shape over existing brains automatically. Users who want
- *     the full reindex NOW run `gbrain reindex-code --yes`.
+ *     the full reindex NOW run `foresights reindex-code --yes`.
  *
  * Phases:
- *   A. Schema — `gbrain init --migrate-only` applies v27 + v28.
+ *   A. Schema — `foresights init --migrate-only` applies v27 + v28.
  *   B. Backfill-prompt — emit a pending-host-work notice telling the user
- *      to choose between (1) `gbrain reindex-code --yes` for immediate full
+ *      to choose between (1) `foresights reindex-code --yes` for immediate full
  *      backfill, or (2) accepting gradual sync-driven re-chunk via the
  *      chunker_version gate. No DB side-effects; the orchestrator doesn't
  *      decide for the user.
@@ -56,12 +56,12 @@ function phaseBBackfillPrompt(opts: OrchestratorOpts): OrchestratorPhaseResult {
   console.log('');
   console.log('Two ways to roll the new chunker over existing code pages:');
   console.log('');
-  console.log('  1. AUTOMATIC (recommended): next `gbrain sync` detects the version');
+  console.log('  1. AUTOMATIC (recommended): next `foresights sync` detects the version');
   console.log('     mismatch via sources.chunker_version and forces a full re-walk.');
   console.log('     No action needed.');
   console.log('');
-  console.log('  2. IMMEDIATE: `gbrain reindex-code --dry-run` to preview cost, then');
-  console.log('     `gbrain reindex-code --yes` to reindex every code page now.');
+  console.log('  2. IMMEDIATE: `foresights reindex-code --dry-run` to preview cost, then');
+  console.log('     `foresights reindex-code --yes` to reindex every code page now.');
   console.log('');
   console.log('Either way, the new chunker ships: qualified symbol identity, chunk-grain');
   console.log('FTS with doc_comment Weight A, parent scope capture (Layer 6 pending),');
@@ -76,7 +76,7 @@ function phaseBBackfillPrompt(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'verify', status: 'skipped', detail: 'dry-run' };
   try {
-    // Round-trip the schema check through `gbrain doctor --json` if available,
+    // Round-trip the schema check through `foresights doctor --json` if available,
     // but gracefully degrade: the real verification is the migration runner
     // reporting success on v27/v28 SQL — this is a belt-and-suspenders check.
     // Cheap and optional; a non-zero exit here does not fail the orchestrator.
@@ -132,11 +132,11 @@ export const v0_21_0: Migration = {
   featurePitch: {
     headline: 'Code Cathedral II — chunk-grain FTS, qualified symbols, structural edges, 165-language lazy-load',
     description:
-      'v0.21.0 ships the biggest code-search upgrade in gbrain history. Chunk-grain FTS ' +
+      'v0.21.0 ships the biggest code-search upgrade in foresights history. Chunk-grain FTS ' +
       'with doc_comment Weight A ranks natural-language queries against docstrings above ' +
       'prose. CHUNKER_VERSION 3 → 4 folds into content_hash so every existing code page ' +
       're-chunks on next sync (via sources.chunker_version gate) or immediately via ' +
-      '`gbrain reindex-code --yes`. File classifier widened to 35 extensions. Markdown ' +
+      '`foresights reindex-code --yes`. File classifier widened to 35 extensions. Markdown ' +
       'fence extraction, sync --all cost preview, and reconcile-links batch command ' +
       'ship alongside the chunker upgrade.',
   },

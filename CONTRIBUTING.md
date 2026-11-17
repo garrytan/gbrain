@@ -1,10 +1,10 @@
-# Contributing to GBrain
+# Contributing to Foresights
 
 ## Setup
 
 ```bash
-git clone https://github.com/garrytan/gbrain.git
-cd gbrain
+git clone https://github.com/aimonk2025/gbrain.git
+cd foresights
 bun install --frozen-lockfile && bun run test && bun run verify
 ```
 
@@ -53,15 +53,15 @@ src/
     command-table.ts      One record per CLI-only command (phase, thin-client mode, lazy loader)
     commands/             Per-command dispatch modules each record loads (glue only)
   commands/               CLI-only command implementations (init, upgrade, import, export, etc.)
-    doctor.ts             gbrain doctor façade (flag parse, registry run, output)
+    doctor.ts             foresights doctor façade (flag parse, registry run, output)
     doctor/               registry.ts (ordered check registry) + checks/<topic>.ts entries
-    sync.ts               gbrain sync façade (re-exports performSync, performFullSync, ...)
+    sync.ts               foresights sync façade (re-exports performSync, performFullSync, ...)
     sync/                 Sync implementation: SyncRun state + phases (preflight, deletes, renames, imports, finalize)
-    jobs.ts, jobs/        gbrain jobs façade (subcommand table, registerBuiltinHandlers) + one module per subcommand
+    jobs.ts, jobs/        foresights jobs façade (subcommand table, registerBuiltinHandlers) + one module per subcommand
     serve-http.ts         HTTP server: buildServeHttpApp (shared context, mount order) + listen/shutdown
     serve-http-<area>.ts  mount<Area>(app, ctx) route modules (oauth, metrics, admin-api, spa, mcp, webhooks)
     autopilot*.ts         Autopilot mode table, daemon tick steps, dispatch, probes
-    migrations/           Versioned upgrade orchestrators (vX.Y.Z, gbrain apply-migrations)
+    migrations/           Versioned upgrade orchestrators (vX.Y.Z, foresights apply-migrations)
   core/
     operations.ts         Operation contract assembly (façade over ops/)
     ops/                  Contract types + security fences + the op domain modules
@@ -304,12 +304,12 @@ about ten seconds). It drives the four seams through real write paths: the tier
 stamp, the gate verdict, the owner confirm (and an agent's refusal) and purge
 with no residual or resurrection, and prints one line per check. The script
 header (`scripts/trust-smoke.ts`) names the focused test file for each seam.
-Then the end-to-end layer: `gbrain eval brainbench --suite trust,state-resolution,poisoning,deletion`
+Then the end-to-end layer: `foresights eval brainbench --suite trust,state-resolution,poisoning,deletion`
 (see `docs/eval/BRAINBENCH.md`), and the full gate.
 
 ### Local graduation smoke (PGLite → Postgres)
 
-A five-minute end-to-end check of `gbrain migrate --to postgres` on the E2E
+A five-minute end-to-end check of `foresights migrate --to postgres` on the E2E
 container conventions from [`docs/TESTING.md`](docs/TESTING.md) (pinned
 `pgvector/pgvector:pg16`, a database name carrying "test", tear down when done).
 It uses its own container name and port so it never touches `gbrain-test-pg`,
@@ -371,7 +371,7 @@ bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain src/cli.ts
 
 ## Adding a new operation
 
-GBrain uses a contract-first architecture. Add your operation to one domain module
+Foresights uses a contract-first architecture. Add your operation to one domain module
 and it automatically appears in the CLI, MCP server, and tools-json:
 
 1. Add your operation to the matching domain module under `src/core/ops/`
@@ -438,7 +438,7 @@ to a sibling module. Every row also adds a behavior test of its own; the
 | Schema migration | `bun run new:migration <snake_name>` writes `src/core/schema-migrations/v<NNN>-<name>.ts`; fresh-install DDL in `src/schema.sql` (or the TS fragment its region banner names); a forward-reference probe in `src/core/engine-sql/bootstrap.ts` only when the schema blob references a column older brains lack | `src/core/schema-migrations/registry.generated.ts` (generated) | `new:migration` already regenerates the registry; rerun `bun run build:schema-migrations` only after editing or renaming a migration file. `bun run build:schema` whenever `schema.sql` or a fragment changed. Every object a fresh install should have goes in `schema.sql` (or its fragment) as well as the migration; grep `src/schema.sql` first so you do not add a second index on the same columns | `bun test test/scripts/build-schema-migrations.test.ts test/migrate.test.ts`, then `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/migrations-golden.test.ts test/schema-catalog-golden.test.ts` and review the golden diff |
 | Doctor check | A `{ name, emits, run }` entry in the topic module under `src/commands/doctor/checks/` (a new topic gets a new file): `name` and `emits` are string literals, and `run` names a top-level `async function run<X>(ctx): Promise<Check[]>` in the same file that builds `const checks: Check[] = []` and calls `checks.push({ name: '<literal>', ... })` directly (the `emits` test walks that AST; helpers and returned array literals are invisible to it) | `DOCTOR_CHECK_REGISTRY` in `src/commands/doctor/registry.ts` (position = output order; `test/doctor-registry-golden.test.ts` pins `dangling_aliases` as the last check, so insert before `searchModeEntry`) and every emitted name in `src/core/doctor-categories.ts` | The doctor goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/doctor-registry-golden.test.ts test/doctor-json-golden.test.ts` | `test/doctor-<name>.test.ts` on in-memory PGLite (copy `test/doctor-slug-collisions.test.ts`), plus `bun test test/doctor-registry.test.ts` |
 | CLI-only command | The implementation in `src/commands/<name>.ts`; the dispatch module `src/cli/commands/<name>.ts`; a help line in `printHelp` (`src/cli.ts`, so raise its `module-size-limits.tsv` ceiling by one) | A record in `CLI_COMMANDS` (`src/cli/command-table.ts`): `phase: 'pre-connect'` when the command never touches the database, `'post-connect'` when its `run(engine, args, ctx)` needs an engine; `thinClient: 'none'` unless remote brains must refuse it (`'refuse'`, or `'route-then-refuse'` for subcommand routing); `selfHelp: true` when the command has flags or subcommands (its `run` then prints its own `--help`); optional `skipStartupHooks`; `load: () => import('<literal>')` | `bun run build:flag-registry`; the CLI goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/cli-goldens.test.ts test/cli-dispatch-phase.test.ts test/cli-dispatch-thin-client.test.ts` | `test/<name>.test.ts` spawning `bun src/cli.ts <name>` and asserting output and exit code, plus `bun test test/cli-command-table.test.ts test/cli-flag-validation.test.ts` |
-| HTTP route (`gbrain serve --http`) | The route inside `mount<Area>(app, ctx)` in `src/commands/serve-http-<area>.ts` (`/admin/api/*` goes in `serve-http-admin-api.ts`, `/mcp` in `serve-http-mcp.ts`, OAuth in `serve-http-oauth.ts`); a new area is a new module plus one mount call in `buildServeHttpApp` (`src/commands/serve-http.ts`). An `/admin` route takes `ctx.requireAdmin` before its handler | None for a route in an existing area; a new area adds its mount call in `buildServeHttpApp` (order matters) | The route goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/serve-http-route-golden.test.ts test/serve-http-route-runtime-golden.test.ts` | A behavior test (`test/serve-http-<area>-<route>.test.ts`: mount the area on a bare `express()` app with a stub ctx; `mountAdminApi` reads `requireAdmin`, `sseClients` and `mcpResourceUrl` at mount time) plus `bun test test/serve-http-admin-route-guard.test.ts`, which finds the new route by itself |
+| HTTP route (`foresights serve --http`) | The route inside `mount<Area>(app, ctx)` in `src/commands/serve-http-<area>.ts` (`/admin/api/*` goes in `serve-http-admin-api.ts`, `/mcp` in `serve-http-mcp.ts`, OAuth in `serve-http-oauth.ts`); a new area is a new module plus one mount call in `buildServeHttpApp` (`src/commands/serve-http.ts`). An `/admin` route takes `ctx.requireAdmin` before its handler | None for a route in an existing area; a new area adds its mount call in `buildServeHttpApp` (order matters) | The route goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/serve-http-route-golden.test.ts test/serve-http-route-runtime-golden.test.ts` | A behavior test (`test/serve-http-<area>-<route>.test.ts`: mount the area on a bare `express()` app with a stub ctx; `mountAdminApi` reads `requireAdmin`, `sseClients` and `mcpResourceUrl` at mount time) plus `bun test test/serve-http-admin-route-guard.test.ts`, which finds the new route by itself |
 | Sync phase | A module under `src/commands/sync/` taking `(run, Pick<SyncPlan, ...>, ...)` and returning `SyncResult \| undefined`; state it shares across awaits becomes a field on `SyncRun` (`src/commands/sync/sync-run.ts`). A value for the final summary flows `SyncRun` field -> `finalizeIncrementalSync` (`sync/finalize.ts`) -> `SyncResult` (`src/commands/sync.ts`, raise its ceiling) -> `printSyncResult` (`sync/report.ts`) when it should print | The phase call order in `performSyncInner` (`src/commands/sync/incremental.ts`) | Nothing | A case in `test/sync-run-ordering.serial.test.ts` (it has the git-repo + PGLite harness: `commitPages`, `performSync`), plus `bun test test/sync.test.ts test/sync-run-ordering.serial.test.ts` |
 | Release version and migration numbers | `changelog.d/<branch-slug>.md` (your entry, no version heading; /ship writes it) and one `behavior-changes.d/<id>.md` per new upgrade-notice row (with its `kind:`); a removal or rename of something stable keeps first adds a [`deprecations.d/<id>.md`](deprecations.d/README.md) record; number a new migration master's latest + 1 | None: the release PR writes every version stamp; never edit VERSION, the manifests or a released CHANGELOG section | On a migration-number collision, `bun run migrations:renumber`; a PR stamped the old way converts with `bun run release:unstamp` | `bun run verify` (check:regen-all builds the behavior-change table); `bun test test/scripts/release-restamp.test.ts test/scripts/build-behavior-changes.test.ts` when you change those scripts ([docs](docs/RELEASING.md#releases-per-batch)) |
 | Stress-test a touched test (flake hunt) | Nothing: `bun run test:stress [files…] [--iterations N] [--base <ref>] [--postgres]` (defaults: files changed versus `origin/master`, 10 iterations, a fresh database per iteration) | None | Nothing | The same command; a failing iteration prints its reproduce line |
@@ -461,7 +461,7 @@ why the output changed. Regenerate generated files instead of merging them
 | A blob storage backend (files, attachments; S3, Supabase Storage, local disk) | `src/core/storage/` behind `src/core/storage.ts` | `engine-sql/` (that is the database) |
 | Durable write-path protocol above the engine (requests, owner coordination, recovery, writer enforcement) | `src/core/persistence/` | `engine-sql/` (it holds statements, not protocols) |
 | A numbered DDL change applied on `initSchema` (`schema_version`) | `src/core/schema-migrations/` | `src/commands/migrations/` |
-| A versioned upgrade orchestrator run once per release (`gbrain apply-migrations`, host work) | `src/commands/migrations/` (agent notes in `skills/migrations/`) | `schema-migrations/` |
+| A versioned upgrade orchestrator run once per release (`foresights apply-migrations`, host work) | `src/commands/migrations/` (agent notes in `skills/migrations/`) | `schema-migrations/` |
 | One step of an incremental sync run that shares `SyncRun` state | `src/commands/sync/<phase>.ts` | `src/core/sync-*.ts` |
 | Sync logic other code reuses (cost gate, git helpers, locks, reconcile, status report) | `src/core/sync-*.ts` (no `SyncRun`) | `src/commands/sync/` |
 | SQL on OAuth, admin or auth tables outside `BrainEngine` (scalar binds only) | `sqlQueryForEngine` from `src/core/sql-query.ts` (`executeRawJsonb` for JSONB) | the engine-sql executor, which only engines hand out |
@@ -611,13 +611,13 @@ change:
 
 **Skills move with code.** A PR that renames or removes a command, subcommand,
 flag or operation updates every skill that names it in the same PR.
-`bun run check:skill-health` runs each `gbrain ...` invocation a skill shows
+`bun run check:skill-health` runs each `foresights ...` invocation a skill shows
 through the dispatcher's own subcommand and unknown-flag checks, checks that
 each operation-shaped `tools:` entry is a real operation, and fails with the
 file, line, nearest valid name and the edit to make:
 
 ```text
-SKILL_DRIFT_UNKNOWN_FLAG skills/x/SKILL.md:42 'gbrain doctor --jsn' (did you mean '--json'?)
+SKILL_DRIFT_UNKNOWN_FLAG skills/x/SKILL.md:42 'foresights doctor --jsn' (did you mean '--json'?)
     fix: doctor rejects --jsn; did you mean --json. Edit the line, or restore the flag in the CLI
 ```
 
@@ -639,7 +639,7 @@ loads, place every fact on its level, cut what the model already knows, and
 keep the slim version only if a blinded before/after eval on tasks written
 before cutting shows agents do at least as well. Then set its row's
 `last_diet_bytes` and lower the ceiling to the new size plus 10%.
-`gbrain skillpack health <skill>` applies the same limits to an installed
+`foresights skillpack health <skill>` applies the same limits to an installed
 copy and prints the fix for each finding.
 
 **Verify** by rerunning the case that prompted the change in a fresh session,
@@ -668,7 +668,7 @@ The original SQLite engine plan was superseded by PGLite (embedded Postgres 17 v
 
 ## CONTRIBUTOR_MODE — turn on the dev loop
 
-gbrain captures retrieval traffic so you can replay real queries against
+foresights captures retrieval traffic so you can replay real queries against
 your code changes before merging. **This is off by default** (production
 users get a quiet brain, no surprise data accumulation). Contributors turn
 it on with one shell rc line:
@@ -699,9 +699,9 @@ Resolution order (most explicit wins):
 Quick check that capture is actually running:
 
 ```bash
-gbrain query "anything" >/dev/null
+foresights query "anything" >/dev/null
 psql $DATABASE_URL -c 'SELECT count(*) FROM eval_candidates'
-# (or `gbrain doctor` — surfaces silent capture failures cross-process)
+# (or `foresights doctor` — surfaces silent capture failures cross-process)
 ```
 
 To disable capture even with the env var set, write
@@ -712,16 +712,16 @@ beats the env var both directions.
 
 If your PR touches retrieval — search ranking, RRF fusion, embeddings,
 intent classification, query expansion, source boost, or the `query` /
-`search` op handlers — run `gbrain eval replay` against a snapshot of
+`search` op handlers — run `foresights eval replay` against a snapshot of
 real traffic before merging. Requires `CONTRIBUTOR_MODE` (above) so you
 have captured rows to replay against.
 
 Quick loop:
 
 ```bash
-gbrain eval export --since 7d > baseline.ndjson    # snapshot before your change
+foresights eval export --since 7d > baseline.ndjson    # snapshot before your change
 # ... make your change ...
-gbrain eval replay --against baseline.ndjson       # diff retrieval, get Jaccard@k
+foresights eval replay --against baseline.ndjson       # diff retrieval, get Jaccard@k
 ```
 
 Three numbers come back: mean Jaccard@k between captured and current slug
@@ -744,8 +744,8 @@ without captured data can still replay), and cost considerations. The
 NDJSON wire format is documented in
 [`docs/eval-capture.md`](./docs/eval-capture.md).
 
-For public benchmark coverage on top of replay, `gbrain eval longmemeval
-<dataset.jsonl>` runs LongMemEval against gbrain's hybrid
+For public benchmark coverage on top of replay, `foresights eval longmemeval
+<dataset.jsonl>` runs LongMemEval against foresights's hybrid
 retrieval. One in-memory PGLite per question, runtime-enumerated
 `TRUNCATE` between questions, ground-truth scoring via LongMemEval's
 published `evaluate_qa.py`. Use it alongside replay when changes affect
@@ -765,7 +765,7 @@ accepted contribution is credited in `CHANGELOG.md`.
 
 ### gstack repo config (`.gstack/`)
 
-Two committed files tell gstack (1.98.0.0 or later) about gbrain's own gates;
+Two committed files tell gstack (1.98.0.0 or later) about foresights's own gates;
 gstack reads both from master, so a branch's edits take effect after it merges.
 
 - `.gstack/pregate.json`: `gstack-pregate run --allow-repo-commands` runs a
@@ -833,8 +833,8 @@ your work was turned down.
 A larger change is much easier to take when it shows:
 
 1. a way to reproduce the problem on current master, or a failing test;
-2. what goes wrong for someone using gbrain because of it;
-3. the version you saw it on (`gbrain version`).
+2. what goes wrong for someone using foresights because of it;
+3. the version you saw it on (`foresights version`).
 
 A limit of 3 open pull requests applies only to someone whose recent pull
 requests have mostly been closed without being taken. It never applies to
@@ -842,19 +842,19 @@ anyone who has had a pull request taken (merged or rebuilt) in the last 90 days.
 
 Replies on behalf of the project come from the Capy app (`capy-ai[bot]`) or
 a maintainer; a comment from any other account that calls itself triage does
-not speak for gbrain. Every outside issue gets a first reply from us within 48
+not speak for foresights. Every outside issue gets a first reply from us within 48
 hours. A bug report we could not reproduce gets one follow-up question after
 60 days, and is closed two weeks after that if nobody answers.
 
 The same three things make a bug report easy to act on. To see what the
 community has reported, without the issues our own agents and CI file, use the
-[community issues](https://github.com/garrytan/gbrain/issues?q=is%3Aissue%20is%3Aopen%20-label%3Aagent-filed)
+[community issues](https://github.com/aimonk2025/gbrain/issues?q=is%3Aissue%20is%3Aopen%20-label%3Aagent-filed)
 search: it lists open issues without the `agent-filed` label, which our CI
 scripts add to every issue they open and which we have added to the open
 issues our own agents filed.
 
 The **Fix-wave gate** check runs on every PR into master. It fails every PR
-whose head branch is not in `garrytan/gbrain` itself, and posts the comment
+whose head branch is not in `aimonk2025/gbrain` itself, and posts the comment
 above when the PR opens. A red gate on an outside PR is expected and is not a
 judgment of the work; a maintainer clears it when merging a documentation
 change. Maintainers' own branches (`capy/*`, `garrytan/*`) pass.

@@ -51,9 +51,9 @@ describe('doctor report status set (E2)', () => {
   test('fixes render for the transport: next, shell-quoted command, absolute docs; top_issues gain action', () => {
     const report = computeDoctorReport([{ name: 'sync_failures', status: 'warn', message: 'x', fix }]);
     const rendered = report.checks[0].fix as unknown as Record<string, unknown>;
-    expect(rendered).toMatchObject({ next: 'run', command: 'gbrain doctor --json', actor: 'agent' });
+    expect(rendered).toMatchObject({ next: 'run', command: 'foresights doctor --json', actor: 'agent' });
     expect(String(rendered.docs)).toMatch(/^https:\/\//);
-    expect(report.top_issues?.[0]).toMatchObject({ name: 'sync_failures', fix: 'x', action: { next: 'run', command: 'gbrain doctor --json' } });
+    expect(report.top_issues?.[0]).toMatchObject({ name: 'sync_failures', fix: 'x', action: { next: 'run', command: 'foresights doctor --json' } });
   });
 
   test('an MCP render context rewrites a CLI-only agent fix to tell_user_to_run', () => {
@@ -243,7 +243,7 @@ describe('#6758 agent_contract: events from other builds are history, counted ap
     expect(c.status).toBe('warn');
     expect(c.details).toMatchObject({ internal_errors: 3, builds: { this_build: 0, other_builds: 2, unknown_build: 1, versions: ['0.60.100.0', '0.60.200.0'] },
       incident: { scope: 'historical', since: older } });
-    expect(c.message).toContain('2 of 3 were recorded by another gbrain build (0.60.100.0 to 0.60.200.0)');
+    expect(c.message).toContain('2 of 3 were recorded by another foresights build (0.60.100.0 to 0.60.200.0)');
     expect(c.message).toContain('1 by a build that did not record its version');
   });
   test('a fault from this build is current', () => {

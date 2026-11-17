@@ -78,7 +78,7 @@ describe('recipe: zhipu', () => {
     expect(r.touchpoints.chat!.supports_prompt_cache).toBe(false);
   });
 
-  test('gbrain#4727 — GLM-4.5+/5.x declare thinking_by_default; older GLM ids do not', async () => {
+  test('foresights#4727 — GLM-4.5+/5.x declare thinking_by_default; older GLM ids do not', async () => {
     // GLM-4.5+ and the GLM-5.x series reason by default and bill reasoning
     // as output tokens. Without thinking_by_default, supportsThinking is
     // false and think caps max_tokens at 4000 instead of 16000 — the whole
@@ -95,7 +95,7 @@ describe('recipe: zhipu', () => {
     expect(getProviderCapabilities('zhipu:glm-3-turbo').supportsThinking).toBe(false);
   });
 
-  test('gbrain#4727 — informational models list carries the current glm-5.3 family', () => {
+  test('foresights#4727 — informational models list carries the current glm-5.3 family', () => {
     const r = getRecipe('zhipu')!;
     expect(r.touchpoints.chat!.models).toContain('glm-5.3');
     expect(r.touchpoints.chat!.models).toContain('glm-5.3-flash');

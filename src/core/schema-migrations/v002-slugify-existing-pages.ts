@@ -23,7 +23,7 @@ export const v002: Migration = {
       }
     }
     // Migration progress goes to stderr — stdout must stay clean for
-    // callers parsing JSON (e.g. `gbrain doctor --json | jq`); migrations
+    // callers parsing JSON (e.g. `foresights doctor --json | jq`); migrations
     // can run lazily inside ANY command's first DB connect.
     if (renamed > 0) process.stderr.write(`  Renamed ${renamed} slugs\n`);
   },

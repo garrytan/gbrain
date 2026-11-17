@@ -1,5 +1,5 @@
 /**
- * G6 (surface-verbs) — E2E: `gbrain serve --http --surface verbs` is a hard
+ * G6 (surface-verbs) — E2E: `foresights serve --http --surface verbs` is a hard
  * tool-surface CEILING over a real HTTP boot. Hermetic PGLite (no Postgres /
  * Docker / DATABASE_URL), same boot pattern as connect-bearer.test.ts.
  *

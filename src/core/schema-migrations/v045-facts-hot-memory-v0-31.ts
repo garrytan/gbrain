@@ -59,7 +59,7 @@ export const v045: Migration = {
           throw new Error(
             `Migration v40 (facts hot memory) requires the pgvector extension. ` +
             `Install it via\n  CREATE EXTENSION vector;\n` +
-            `then re-run \`gbrain apply-migrations --yes\`.`,
+            `then re-run \`foresights apply-migrations --yes\`.`,
           );
         }
         const v = vrows[0].extversion;

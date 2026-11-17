@@ -1,7 +1,7 @@
 /**
  * Consent for the paid markdown reindex (wave 12 W4.5).
  *
- * `gbrain reindex --markdown` re-chunks every page whose chunker version or
+ * `foresights reindex --markdown` re-chunks every page whose chunker version or
  * contextual-retrieval state lags and re-embeds it, which bills the embedding
  * provider per token (and, under a contextual-retrieval mode that writes
  * per-chunk synopses, a chat model per chunk). It used to start without
@@ -58,7 +58,7 @@ export async function requireReindexConsent(engine: BrainEngine, opts: {
   type: string | null;
   target: number;
   interactive?: boolean;
-  /** The approved command without `--yes` (default `gbrain reindex <args>`), and its free preview. */
+  /** The approved command without `--yes` (default `foresights reindex <args>`), and its free preview. */
   argv?: string[];
   preview_argv?: string[];
 }): Promise<{ auth: Authorization; plan: ReindexSpendPlan } | null> {

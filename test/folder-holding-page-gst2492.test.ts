@@ -10,7 +10,7 @@
  *    there but the note "moved". The owner reads every holding page as the product defines (the opt-in on, or named by
  *    the rules). A folder under storage.db_only or a path Git ignores gets a database-only holding page, never committed.
  *    An exact page rule on the entity refuses git_home_required (facts_lane) and an unreadable access state answers wait,
- *    never storage_error. gbrain repair facts-home moves older database-only facts of such entities to that page.
+ *    never storage_error. foresights repair facts-home moves older database-only facts of such entities to that page.
  * 2. Fails when: a ruled entity's fact stays database-only on a strict source, is named on the world-readable page, a
  *    caller outside the rules reads or learns of the holding page, a narrowing leaves a held row readable by a member it
  *    excludes, the owner is shut out, a database-only folder's holding page is committed, or a refusal reads storage_error.
@@ -656,7 +656,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     expect(scan.rows).toEqual([]);
   }, 'clients/'), 300_000);
 
-  test('the background fact writers hold a ruled entity\'s fact on its folder\'s page; gbrain repair facts-home moves older ones there', () => strict(async ({ engine, ctx, root }) => {
+  test('the background fact writers hold a ruled entity\'s fact on its folder\'s page; foresights repair facts-home moves older ones there', () => strict(async ({ engine, ctx, root }) => {
     await rules(engine, [rule('partners', 'partners/', ['alice-example']), rule('secret-plan', 'notes/secret-plan', ['alice-example'])]);
     const background = 'The deal notes were extracted from mail.';
     await writeSingleFact(engine, 'default', { fact: background, entity: ENTITY, provenance: 'mail 2026-11-12', remote: false } as never);
@@ -820,7 +820,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     const [pending] = await engine.executeRaw<{ request_id: string }>("SELECT request_id::text AS request_id FROM persistence_requests WHERE slug = 'notes/garden-plan' AND intent->>'kind' = 'managed_maintenance_move_held_fact' ORDER BY sequence");
     const request = pending!.request_id;
     expect(applied.held_facts).toEqual({ moved: 0, unmovable: [], complete: false, pending: [{ slug: 'notes/garden-plan', from: HOLD, request_id: request }] });
-    expect(words).toContain(`Incomplete: the move of held facts off ${HOLD} to notes/garden-plan is accepted and still pending (request ${request}; gbrain write-request ${request} shows it)`);
+    expect(words).toContain(`Incomplete: the move of held facts off ${HOLD} to notes/garden-plan is accepted and still pending (request ${request}; foresights write-request ${request} shows it)`);
     expect(upkeep.heldFactsMoved ?? 0).toBe(0);
     expect(upkeep.warnings.some(w => w.startsWith('HELD_FACT_PENDING: ') && w.includes(request))).toBe(true);
     await settleManagedGitEffects(engine);

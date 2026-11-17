@@ -1,5 +1,5 @@
 /**
- * #6696 C7: the `--only` / `--skip` path matcher of `gbrain repair file-drift`. A pattern with no `*` is an exact
+ * #6696 C7: the `--only` / `--skip` path matcher of `foresights repair file-drift`. A pattern with no `*` is an exact
  * source-relative path, as every other kind's `--only` is; a pattern with `*` is a glob (`*` within one path segment,
  * `**` across segments, `?` one character, sync's `matchesAnyGlob`). File-drift is the only kind that takes globs;
  * another kind adopts them by calling this helper.

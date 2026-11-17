@@ -134,13 +134,13 @@ export async function settleJobDrain(engine: BrainEngine, job: MinionJobContext,
       if ((job.signal.aborted || job.shutdownSignal?.aborted) && next.data?.continuation_of === job.id) { await new MinionQueue(engine).cancelJob(next.id).catch(() => undefined); continuationId = null; }
     } catch { /* best-effort: the next freshness tick or the resume command continues */ }
   }
-  const status = `gbrain sources status ${sourceId} --json`;
+  const status = `foresights sources status ${sourceId} --json`;
   if (continuationId !== null && fields.next) {
     // The successor owns the resume: every field observes it (no executable sync `fix` survives), polled after a short delay.
     out.next = { command: status, safe_to_loop: true, retry_after_ms: Math.max(30_000, Number(fields.next.retry_after_ms) || 0),
       eta_seconds: d.eta_seconds, rate_pages_per_min: d.rate_pages_per_min, ...(fields.next.docs ? { docs: fields.next.docs } : {}),
       why: `Follow-up sync job #${continuationId} continues from the cursor (${d.remaining ?? 'an unknown number of'} entries left); this job stopped ${d.stop_reason ?? d.outcome} with its cursor and accepted writes intact. `
-        + `Watch it with \`gbrain jobs get ${continuationId} --json\` or the source's cursor; running \`${resume}\` now would start a second drainer beside it.` };
+        + `Watch it with \`foresights jobs get ${continuationId} --json\` or the source's cursor; running \`${resume}\` now would start a second drainer beside it.` };
   } else if (!plan.trusted && fields.next) {
     // A remote job cannot run the host's CLI and may not queue its own successor: the host operator resumes, or the caller submits a new sync job.
     out.next = { command: status, safe_to_loop: false, retry_after_ms: 0, eta_seconds: d.eta_seconds, rate_pages_per_min: d.rate_pages_per_min,

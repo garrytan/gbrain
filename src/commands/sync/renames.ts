@@ -244,7 +244,7 @@ async function applyRename(
   // #6729: a dirty-tree rename keeps its page only for the bytes its verdict read; a file edited since then is left
   // for the next sync to re-check, and nothing moves.
   if (identityHead !== undefined && workingTreeIdentityHead(syncImportRoot, to) !== identityHead) {
-    failedFiles.push({ path: to, error: `${to} changed after sync confirmed it keeps the page of ${from}; nothing moved. Run gbrain sync again to re-check it.` });
+    failedFiles.push({ path: to, error: `${to} changed after sync confirmed it keeps the page of ${from}; nothing moved. Run foresights sync again to re-check it.` });
     serr(`  [sync] rename ${sanitizePathForDisplay(from)} -> ${sanitizePathForDisplay(to)}: the file changed after its identity was confirmed; nothing moved, the next sync re-checks it.`);
     progress.tick(1, newSlug);
     return undefined;
@@ -456,14 +456,14 @@ async function reconcileRenameFallback(
       (importResult.status === 'skipped' && !importResult.error && importResult.slug === newSlug);
     if (destMaterialized) {
       // Hoisted above the try so the failure record can name the exact
-      // row `gbrain delete` should remove when the DELETE itself failed
+      // row `foresights delete` should remove when the DELETE itself failed
       // (still unknown — recorded as `?` — when the probe threw first).
       //
       // ACTIVE rows only, considering EVERY row with the old path:
       // source_path is non-unique, and a one-row resolve could hand back
       // a soft-deleted row while a live duplicate sharing the path hides
       // behind it (#3479 review). Skipping already-soft-deleted rows is
-      // also what makes `gbrain delete` (a soft delete) the documented
+      // also what makes `foresights delete` (a soft delete) the documented
       // operator exit from a permanent delete-failure wedge (blocker 1):
       // retrying the hard delete against a row the operator already
       // removed would just re-fail and keep the sync blocked.
@@ -583,7 +583,7 @@ async function reconcileRenameFallback(
           // convergence, and 'unprovable' is not proof.
           // Deliberately NOT named: `staleSlug` feeds the sentinel's
           // "stale row X" slot and the blocked-run remedy tells the
-          // operator to `gbrain delete X`. An unprovable row may well be
+          // operator to `foresights delete X`. An unprovable row may well be
           // LIVE — that is the whole reason it was spared — so naming one
           // here would tell the operator to delete a page this very code
           // just refused to delete. Clearing it also drops whatever
@@ -599,7 +599,7 @@ async function reconcileRenameFallback(
           );
         }
       } catch (e: unknown) {
-        // GBRA-133 S-67: a failed delete keeps the sentinel (#3056/#3479: it converges, or `gbrain delete` is its exit), as do
+        // GBRA-133 S-67: a failed delete keeps the sentinel (#3056/#3479: it converges, or `foresights delete` is its exit), as do
         // the unprovable verdict and a transient database error; any other throw while finding the stale rows is
         // deterministic, so this rename is held and the rest of the source syncs.
         if (!deleting && await holdUnexpectedReconcileFailure(engine, plan.holds, { from, to, error: e })) return false;

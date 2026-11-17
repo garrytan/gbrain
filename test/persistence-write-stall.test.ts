@@ -1,7 +1,7 @@
 /**
  * #6176: a write whose publication hangs keeps its claim alive (the owner keeps renewing it), so every later
  * write on its root waits behind it and nothing reported it. The claim renewal now records the claim's phase
- * (claim-phase.ts), `gbrain sources writer status` names it, and doctor's `persistence_write_stall` warns once
+ * (claim-phase.ts), `foresights sources writer status` names it, and doctor's `persistence_write_stall` warns once
  * a claim is older than `persistence.max_claim_ms`. PGLite always; Postgres when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';

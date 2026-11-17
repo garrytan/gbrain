@@ -26,7 +26,7 @@ export const v123: Migration = {
   // under the new language. Skipped when the configured language is
   // 'english' (trigger output identical — re-tokenizing is wasted I/O).
   // To change language after this migration has run, use
-  // `gbrain reindex-search-vector`.
+  // `foresights reindex-search-vector`.
   sql: '',
   handler: async (engine) => {
     const lang = getFtsLanguage();

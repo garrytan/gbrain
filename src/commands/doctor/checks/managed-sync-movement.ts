@@ -15,11 +15,11 @@
  * #6712 PR 4b (design v3.2 §3.7): a non-company source's pending pass row
  * counts like a cursor; a pass that keeps stopping (`blocked`, a
  * `not_converged` or `settle_mismatch` streak) warns as not moving, with
- * `gbrain sync status` as the read-only fix (it also reads the checkout's HEAD).
+ * `foresights sync status` as the read-only fix (it also reads the checkout's HEAD).
  * #6712 PR 4b (design v3.1 §9, DX F14): with nothing else to report, it warns when a source's newest pass found no
  * change (`up_to_date`) but took longer than the §11 target for its kind and size: an idle tick 0.5 s (1 s over
  * 100,000 pages), a full round 2 s (15 s over 100,000 pages). The message names the pass's `timings_ms`; the fix is the
- * read-only `gbrain sync status --detail`. Never a fail.
+ * read-only `foresights sync status --detail`. Never a fail.
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
@@ -88,7 +88,7 @@ async function runManagedSyncMovementCheck(ctx: DoctorContext): Promise<Check[]>
       checks.push({ name: 'managed_sync_not_moving', status: 'warn', readiness_state: 'degraded', details,
         message: `${unknown.map(m => m.source_id).join(', ')}: the managed sync backlog could not be read (${unknown[0]!.unknown?.error ?? 'no detail'}), so whether sync data moves is unknown; this is not an all-clear.`,
         fix: agentFix(['gbrain', 'sources', 'writer', 'movement', unknown[0]!.source_id, '--json'],
-          'Read-only: reads the backlog again and judges movement over one window; if the read keeps failing, gbrain doctor --json checks the database.', 'managed_sync_not_moving', { docs: DOCS }) });
+          'Read-only: reads the backlog again and judges movement over one window; if the read keeps failing, foresights doctor --json checks the database.', 'managed_sync_not_moving', { docs: DOCS }) });
     } else if (slow.length) {
       checks.push({ name: 'managed_sync_not_moving', status: 'warn', details,
         message: `${slow.map(s => `${s.source_id} (its newest ${s.kind} pass found no change in ${s.duration_ms} ms, over the ${s.target_ms} ms target for a source `

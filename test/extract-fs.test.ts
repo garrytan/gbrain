@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain extract --source fs` (the default, FS-walking path).
+ * Tests for `foresights extract --source fs` (the default, FS-walking path).
  *
  * Companion to test/extract-db.test.ts. Specifically guards against the
  * v0.12.0 N+1 hang: extractLinksFromDir / extractTimelineFromDir used to
@@ -63,7 +63,7 @@ function writeFile(rel: string, content: string) {
   writeFileSync(full, content);
 }
 
-describe('gbrain extract links --source fs', () => {
+describe('foresights extract links --source fs', () => {
   test('first run inserts links, second run reports 0 (idempotent + truthful counter)', async () => {
     // Set up brain in DB matching the file structure
     await engine.putPage('people/alice', personPage('Alice'));
@@ -131,7 +131,7 @@ describe('gbrain extract links --source fs', () => {
   });
 });
 
-describe('gbrain extract timeline --source fs', () => {
+describe('foresights extract timeline --source fs', () => {
   test('first run inserts entries, second run reports 0 (idempotent + truthful counter)', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
 
@@ -160,7 +160,7 @@ title: Alice
   });
 });
 
-describe('gbrain extract --dir default resolution', () => {
+describe('foresights extract --dir default resolution', () => {
   // Pin the cwd-footgun fix: when --dir is not passed, extract resolves the
   // brain dir from the sources(local_path) row before falling back. The bare
   // `.` default would let a user running from a directory with a node_modules/

@@ -234,7 +234,7 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   if (process.env.GBRAIN_ALLOW_SHELL_JOBS !== '1') {
     const warning =
       `[shell] Job #${ctx.id} rejected: shell jobs are not enabled on this worker.\n` +
-      '        Start it with `gbrain jobs work --allow-shell-jobs` (or export GBRAIN_ALLOW_SHELL_JOBS=1\n' +
+      '        Start it with `foresights jobs work --allow-shell-jobs` (or export GBRAIN_ALLOW_SHELL_JOBS=1\n' +
       '        from your shell; a .env in the working directory cannot set it).';
     console.warn(warning);
     throw new UnrecoverableError(

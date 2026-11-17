@@ -52,8 +52,8 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
     return withSkippedSegmented({
       status: issues.length ? 'warn' : 'ok',
       message: issues.length ? `No core pages. ${issues.join('; ')}.`
-        : settings.enabled ? 'No core pages. Start one with gbrain core init, then fill it in with the user.'
-          : 'Core memory is off (opt-in). If the user wants a profile loaded in every session: gbrain config set memory.core.enabled true, then gbrain core init.',
+        : settings.enabled ? 'No core pages. Start one with foresights core init, then fill it in with the user.'
+          : 'Core memory is off (opt-in). If the user wants a profile loaded in every session: foresights config set memory.core.enabled true, then foresights core init.',
       details: { pages: 0, chars_used: 0, chars_limit: settings.maxChars, enabled: settings.enabled, bad_config: badConfig, compiled, docs: CORE_DOCS },
     }, skipped);
   }
@@ -63,10 +63,10 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
   const over = usage.chars - settings.maxChars;
   const largest = [...usage.pages].sort((a, b) => b.chars - a.chars)[0]!;
   if (over > 0) problems.push(`core is ${usage.chars} chars, over the ${settings.maxChars}-char budget by ${over}, so sessions get a truncated block; shorten the largest page (${largest.source_id}:${largest.slug}, ${largest.chars} chars) or raise memory.core.max_chars`);
-  if (!settings.enabled) problems.push(`${usage.pages.length} page(s) are marked core but core memory is off, so no session loads them; turn it on with gbrain config set memory.core.enabled true, or unmark them with gbrain core remove`);
+  if (!settings.enabled) problems.push(`${usage.pages.length} page(s) are marked core but core memory is off, so no session loads them; turn it on with foresights config set memory.core.enabled true, or unmark them with foresights core remove`);
   problems.push(...badConfig, ...compiled);
   if (withheld.length) problems.push(`${withheld.length} core page(s) withheld from delivery for sensitive content: ${withheld.map(w => `${w.source_id}:${w.slug}`).join(', ')}`);
-  if (notices.length) problems.push(`${notices.length} remote edit(s) to core pages await the user's review (gbrain core diff, then gbrain core ack)`);
+  if (notices.length) problems.push(`${notices.length} remote edit(s) to core pages await the user's review (foresights core diff, then foresights core ack)`);
   let delivered: boolean | null = null;
   if (settings.enabled) {
     try {
@@ -76,7 +76,7 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
       // Only hook-wired installs write heartbeats; with none at all, delivery is unknown rather than missing.
       if (!tail.some(e => e.event === 'session-start' && Date.parse(e.ts) >= cutoff)) delivered = null;
     } catch { delivered = null; }
-    if (delivered === false) problems.push('session-start hooks ran this week but none delivered core; restart the gbrain MCP server so the hook gets the core-aware serve');
+    if (delivered === false) problems.push('session-start hooks ran this week but none delivered core; restart the foresights MCP server so the hook gets the core-aware serve');
   }
   const details = {
     enabled: settings.enabled, pages: usage.pages.length, chars_used: usage.chars, chars_limit: settings.maxChars, remote_edit: settings.remoteEdit,

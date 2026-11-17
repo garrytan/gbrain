@@ -194,7 +194,7 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   await markReadOnlyMirrors(engine, reports, now);
   const unwatched = reports.some(r => r.ahead > 0 || tracked.has(r.root)) ? await unwatchedDurableRoots(engine) : new Map<string, string[]>();
   // Q1 (shape A): on a managed canonical checkout, name each commit the upstream lacks and break the porcelain down; a
-  // diverged one blocks gbrain sources refresh (refresh_diverged), so it warns at once.
+  // diverged one blocks foresights sources refresh (refresh_diverged), so it warns at once.
   for (const report of reports) {
     if (!isManagedFilesystemPath(report.root)) continue;
     report.managed = true;
@@ -243,10 +243,10 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   // #5808 (#5606 residue): a managed canonical worktree has no bulk push; its owner pushes page writes and the operator pushes the rest.
   const publishable = bad.filter(r => !r.mirror_read_only);
   const mirrors = bad.filter(r => r.mirror_read_only);
-  const mirrorNote = mirrors.length ? `${mirrors.map(r => r.root).join(', ')} ${mirrors.length === 1 ? 'is a read-only mirror' : 'are read-only mirrors'} (gbrain sources mirror-readonly): gbrain never publishes ${mirrors.length === 1 ? 'it' : 'them'} and the remote is authoritative, so make these changes in the upstream repository instead, or run gbrain sources mirror-writable <source> if this checkout should publish` : '';
+  const mirrorNote = mirrors.length ? `${mirrors.map(r => r.root).join(', ')} ${mirrors.length === 1 ? 'is a read-only mirror' : 'are read-only mirrors'} (foresights sources mirror-readonly): foresights never publishes ${mirrors.length === 1 ? 'it' : 'them'} and the remote is authoritative, so make these changes in the upstream repository instead, or run foresights sources mirror-writable <source> if this checkout should publish` : '';
   const remedy = [!publishable.length ? '' : publishable.some(r => isManagedFilesystemPath(r.root))
-    ? 'Commit and push them: on a managed canonical worktree the persistence owner commits and pushes page writes (gbrain sources writer status <source> --json shows parked pushes; gbrain sources writer git-durability <source> --enable turns them on), and files that are not pages are committed with gbrain git commit-push -m <msg> -- <paths> in the checkout, never pulled or rebased; elsewhere gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout'
-    : 'Commit and push them (gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout)', mirrorNote].filter(Boolean).join('. ');
+    ? 'Commit and push them: on a managed canonical worktree the persistence owner commits and pushes page writes (foresights sources writer status <source> --json shows parked pushes; foresights sources writer git-durability <source> --enable turns them on), and files that are not pages are committed with foresights git commit-push -m <msg> -- <paths> in the checkout, never pulled or rebased; elsewhere foresights sources push --path <root> for a bootstrap workspace, or git push in the checkout'
+    : 'Commit and push them (foresights sources push --path <root> for a bootstrap workspace, or git push in the checkout)', mirrorNote].filter(Boolean).join('. ');
   const stranded = publishable.filter(r => r.stranded);
   const status = bad.some(r => r.status === 'fail') ? 'fail' : 'warn';
   const uncommitted = stranded.find(r => r.uncommitted_pages);
@@ -255,7 +255,7 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
     const push: Action = { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', uncommitted.root], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Publishes the commit just made without moving the checkout, after scanning what the unpublished commits add for secrets.', verify: doctorVerify('git_convergence') };
     return { name: 'git_convergence', status, details,
-      message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${uncommitted.root} is a managed checkout with Git durability on, ${pages.length} tracked file(s) modified under its source root (${pages.slice(0, 5).join(', ')}${pages.length > 5 ? ', ...' : ''}) and no Git effect queued, running or parked, so no effect will commit them (#7091: earlier releases committed no edits to tracked pages when the source root sits below the repository top). Review them and commit them with gbrain git commit-push, then push with the keep-checkout publish. ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
+      message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${uncommitted.root} is a managed checkout with Git durability on, ${pages.length} tracked file(s) modified under its source root (${pages.slice(0, 5).join(', ')}${pages.length > 5 ? ', ...' : ''}) and no Git effect queued, running or parked, so no effect will commit them (#7091: earlier releases committed no edits to tracked pages when the source root sits below the repository top). Review them and commit them with foresights git commit-push, then push with the keep-checkout publish. ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
       fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--path', uncommitted.root, '-m', 'gbrain: persist canonical memory update', '--', ...pages], consent: [], actor: 'user', requires_exclusive: false,
         why: `These tracked files under a durable managed source root differ from the last commit and no Git effect will commit them; committing writes them to the checkout's history, so the user reviews them first.${stranded.length > 1 ? ` ${stranded.length - 1} other checkout(s) are stranded too, see details.roots (stranded).` : ''}`,
         user_message: `${pages.length} page file(s) in ${uncommitted.root} were edited but never committed (${pages.slice(0, 5).join(', ')}${pages.length > 5 ? ', ...' : ''}), so they are not on the remote. Commit them and push?`,
@@ -272,10 +272,10 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   const diverged = publishable.find(r => r.diverged);
   if (diverged) {
     return { name: 'git_convergence', status, details,
-      message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${diverged.root} is a managed checkout that diverged from its upstream, so gbrain sources refresh refuses (refresh_diverged) until its local commits are published merged with the upstream; details.roots lists each one (sha, author, date, paths). ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
+      message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${diverged.root} is a managed checkout that diverged from its upstream, so foresights sources refresh refuses (refresh_diverged) until its local commits are published merged with the upstream; details.roots lists each one (sha, author, date, paths). ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
       fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', diverged.root, '--json'], consent: [], actor: 'user', requires_exclusive: false,
-        why: `${diverged.root} holds ${diverged.ahead} commit(s) its upstream lacks while the upstream moved on; this merges the upstream into HEAD in memory, refuses on a conflict, pushes the merge and never moves the checkout, after which gbrain sources refresh fast-forwards. It publishes those commits, so the user reviews them first.`,
-        user_message: `${diverged.root} has ${diverged.ahead} local commit(s) that were never pushed (newest ${diverged.unpushed_commits?.[0]?.sha.slice(0, 7) ?? 'unknown'} by ${diverged.unpushed_commits?.[0]?.author ?? 'unknown'}) while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date?`,
+        why: `${diverged.root} holds ${diverged.ahead} commit(s) its upstream lacks while the upstream moved on; this merges the upstream into HEAD in memory, refuses on a conflict, pushes the merge and never moves the checkout, after which foresights sources refresh fast-forwards. It publishes those commits, so the user reviews them first.`,
+        user_message: `${diverged.root} has ${diverged.ahead} local commit(s) that were never pushed (newest ${diverged.unpushed_commits?.[0]?.sha.slice(0, 7) ?? 'unknown'} by ${diverged.unpushed_commits?.[0]?.author ?? 'unknown'}) while its remote moved on. Push them, merged with the remote, so foresights can bring the checkout up to date?`,
         verify: doctorVerify('git_convergence') } };
   }
   return { name: 'git_convergence', status, details,
@@ -317,9 +317,9 @@ export async function trackedOwnershipMarkerCheck(engine: BrainEngine): Promise<
   const first = tracked[0]!;
   return { name: 'tracked_ownership_marker', status: 'warn', details,
     message: `Ownership marker file(s) are tracked by Git: ${tracked.map(t => `${t.root}: ${t.paths.join(', ')}`).join(' | ')}. `
-      + 'They hold this machine\'s claim on the checkout and are not content; gbrain sources push refuses them, and an ignore rule cannot un-track a file already in the index.',
+      + 'They hold this machine\'s claim on the checkout and are not content; foresights sources push refuses them, and an ignore rule cannot un-track a file already in the index.',
     fix: { argv: ['git', '-C', first.root, 'rm', '--cached', ...first.paths], consent: [], actor: 'user', requires_exclusive: false,
-      why: 'Removes the marker from the Git index and the next commit while leaving the file on disk, where gbrain still reads it.',
+      why: 'Removes the marker from the Git index and the next commit while leaving the file on disk, where foresights still reads it.',
       user_message: `${first.root} tracks ownership marker file(s) (${first.paths.join(', ')}). Please run the command shown, commit, and push; `
         + `the files stay on disk.${tracked.length > 1 ? ` ${tracked.length - 1} other checkout(s) need the same, see details.tracked.` : ''}`,
       verify: doctorVerify('tracked_ownership_marker') } };

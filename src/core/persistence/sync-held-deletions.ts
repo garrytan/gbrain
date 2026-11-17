@@ -2,7 +2,7 @@
  * GBRA-133 wave 3: `sync.apply_held_deletions` (default `false`; per source `sync.apply_held_deletions.source.<id>`). A
  * managed pass holds a live page whose file a commit deleted when nothing proves the page still holds what the file held
  * (no import record or attestation of its revision: sync-classify.ts `delete_drift`, state `file_gone`), and
- * `gbrain repair file-drift --held --provenance deleted_by_commit` is how a person resolves it. With the switch on, the pass
+ * `foresights repair file-drift --held --provenance deleted_by_commit` is how a person resolves it. With the switch on, the pass
  * deletes such a page itself, and only when every one of these holds:
  *
  * - the newest commit of HEAD's history that deleted the file is known (`deleted_by_commit`, sync-origin-evidence.ts);

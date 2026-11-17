@@ -1,7 +1,7 @@
 /**
  * Regression: MCP file_upload must use the connected OperationContext engine.
  *
- * A long-running `gbrain serve` owns the PGLite connection. The handler must not
+ * A long-running `foresights serve` owns the PGLite connection. The handler must not
  * reach for the module-global db singleton, which is intentionally uninitialized
  * in the MCP dispatch path and throws "connect() has not been called".
  *

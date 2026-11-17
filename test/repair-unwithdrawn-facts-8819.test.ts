@@ -1,5 +1,5 @@
 /**
- * `gbrain repair unwithdrawn-facts` (#8819), PGLite; Postgres when DATABASE_URL is set.
+ * `foresights repair unwithdrawn-facts` (#8819), PGLite; Postgres when DATABASE_URL is set.
  *
  * Protects: facts a facts-fence generation retired although no fence of their page held them come back with their
  * original ids and lifecycle, also when that generation was the page's first (no predecessor to restore); a row a
@@ -96,7 +96,7 @@ async function retiredChess(engine: BrainEngine, sourceId: string): Promise<numb
   return chess;
 }
 
-describe('gbrain repair unwithdrawn-facts (#8819)', () => {
+describe('foresights repair unwithdrawn-facts (#8819)', () => {
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] managed: restores first-generation retirements no fence withdrew, never a withdrawn one, bound to the previewed revision`, async () => {
       let ids!: { chess: number; lisbon: number; marathon: number };
@@ -165,7 +165,7 @@ describe('gbrain repair unwithdrawn-facts (#8819)', () => {
  * Value: protects=classify never restores superseded, withdrawn, changed_since_retirement, active_duplicate or duplicate_candidate rows; fails_when=a classify guard is dropped or reordered; why_new=existing tests only reach fence_held and ambiguous; seam=none; no_claim=page_missing (needs a second page's generation; not seeded here)
  * Value: protects=--apply without --expect is invalid_params, an include_ambiguous mismatch is preview_changed, a taken row_num moves to max+1; fails_when=the expect guard, mismatch check or row_num CASE regresses; why_new=no test applies ambiguous rows or a taken row_num; seam=none; no_claim=unmanaged brains, where nothing is restorable (the unmanaged test above)
  */
-describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
+describe('foresights repair unwithdrawn-facts (#8819) coverage pass', () => {
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] exclusions: superseded, withdrawn, changed, active duplicate and duplicate candidate are listed, never restored`, async () => {
       await managedPage(databaseUrl, async (engine, s) => {

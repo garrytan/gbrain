@@ -1,5 +1,5 @@
 /**
- * #6377 `gbrain repair content` (src/commands/repair-content.ts), the
+ * #6377 `foresights repair content` (src/commands/repair-content.ts), the
  * content-repair lane as one command.
  *
  * Protects: `content` is parsed like a kind but is a lane, never a RepairKind
@@ -78,7 +78,7 @@ test('content parses like a kind but is a lane: its flags are accepted, the kind
   expect(CONTENT_LANE).toBe('content');
   const parsed = parseRepairArgs(['content', '--source', 'notes', '--only', 'a.md', '--skip', 'b.md', '--no-llm', '--max-usd', '0.5', '--apply', '--expect', 'h1,h2', '--json', '--diff']);
   expect(parsed).toMatchObject({ kind: 'content', source: 'notes', only: ['a.md'], skip: ['b.md'], noLlm: true, maxUsd: 0.5, apply: true, expect: 'h1,h2', json: true, diff: true });
-  expect(() => parseRepairArgs(['content', '--slug', 'people/a'])).toThrow(/--slug applies only to gbrain repair fences/);
+  expect(() => parseRepairArgs(['content', '--slug', 'people/a'])).toThrow(/--slug applies only to (?:foresights|gbrain) repair fences/);
   expect(() => parseRepairArgs(['content', '--yes'])).toThrow(/--yes/);
   expect(() => parseRepairArgs(['content', '--include-ambiguous'])).toThrow(/--include-ambiguous applies only/);
   expect(() => parseRepairArgs(['content', 'fences'])).toThrow(/at most one kind/);
@@ -109,15 +109,15 @@ test('preview runs the lane read-only and prints each kind\'s hash; --apply --ex
   expect(fences.kind).toBe('fences');
   expect(fences.preview_hash).toBe(hash);
   expect(fences.listing!.map(entry => [entry.item, entry.class]).sort()).toEqual([[`${f.id}:people/holder.md`, 'resolver'], [`${f.id}:people/manual.md`, 'enum_unmapped']]);
-  expect(preview.apply_command).toBe(`gbrain repair content --source ${f.id} --apply --expect ${both}`);
-  expect(fences.apply_command).toBe(`gbrain repair fences --source ${f.id} --apply --expect ${hash}`);
+  expect(preview.apply_command).toBe(`foresights repair content --source ${f.id} --apply --expect ${both}`);
+  expect(fences.apply_command).toBe(`foresights repair fences --source ${f.id} --apply --expect ${hash}`);
   expect(currentExitCode()).toBe(0);
 
   const human = await cli(['content', '--source', f.id]);
   expect(human).toContain(`lane content (fences, slug-conflicts)`);
   expect(human).toContain(`preview hashes: fences=${hash}`);
   expect(human).toContain(`slug-conflicts=${slugHash}`);
-  expect(human).toContain(`apply: gbrain repair content --source ${f.id} --apply --expect ${both}`);
+  expect(human).toContain(`apply: foresights repair content --source ${f.id} --apply --expect ${both}`);
   expectNoSecrets(human, ['Sentinelmanualrc77']);
 
   const applied = JSON.parse(await cli(['content', '--source', f.id, '--apply', '--expect', both, '--json'])) as LaneJson;

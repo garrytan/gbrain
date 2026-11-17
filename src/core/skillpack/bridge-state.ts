@@ -50,7 +50,7 @@ export interface BridgeEntry {
   last_mode: BridgeMode;
   /** Per-slug written-file ledger (wrote_new outcomes only). */
   written: Record<string, BridgeSlugRecord>;
-  /** gbrain VERSION at the most recent write. */
+  /** foresights VERSION at the most recent write. */
   gbrain_version: string;
   /** ISO 8601 UTC of the first install into this (harness, dest). */
   installed_at: string;
@@ -124,7 +124,7 @@ export function loadBridgeState(opts: { statePath?: string } = {}): BridgeState 
 
 export function saveBridgeState(state: BridgeState, opts: { statePath?: string } = {}): void {
   const path = opts.statePath ?? defaultBridgeStatePath();
-  // Unique tmp name: two concurrent gbrain processes must not rename each
+  // Unique tmp name: two concurrent foresights processes must not rename each
   // other's half-written tmp into place.
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   try {

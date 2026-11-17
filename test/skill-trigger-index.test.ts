@@ -292,14 +292,14 @@ describe('loadSkillTriggerIndex — RESOLVER.md merge (UNION semantics)', () => 
 
 | trigger | skill |
 | --- | --- |
-| install gbrain | \`skills/install/SKILL.md\` |
+| install foresights | \`skills/install/SKILL.md\` |
 `,
     );
 
     const entries = loadSkillTriggerIndex(skillsDir);
     expect(entries).toHaveLength(1);
     expect(entries[0].source).toBe('resolver_md');
-    expect(entries[0].trigger).toBe('install gbrain');
+    expect(entries[0].trigger).toBe('install foresights');
   });
 });
 

@@ -72,7 +72,7 @@ const HOSTILE = [
 ].join('\n');
 
 /** HOSTILE with a NUL inside every marker token, a citation and the row prefix: the connector render boundary strips NUL. */
-const NUL_SPLIT = [HOSTILE.replace(/gbrain:/g, 'gbrain\u0000:').replace(/^- \*\*/m, '\u0000- **'), `See [Source\u0000: inbox, 2026-01-04] for ${PLANTED_TIMELINE}.`].join('\n');
+const NUL_SPLIT = [HOSTILE.replace(/(?:foresights|gbrain):/g, 'gbrain\u0000:').replace(/^- \*\*/m, '\u0000- **'), `See [Source\u0000: inbox, 2026-01-04] for ${PLANTED_TIMELINE}.`].join('\n');
 
 const NOW_MS = Math.floor(Date.now() / 1000) * 1000;
 const daysAgoMs = (n: number): number => NOW_MS - n * 86_400_000;
@@ -179,7 +179,7 @@ describe('GBRA-221: neutralizeOutsideText', () => {
   const forgeries = [
     HOSTILE,
     `\`\`\`\nquoted\n\`\`\`\n${HOSTILE}\n\`\`\``,
-    HOSTILE.replace(/gbrain:/g, 'GBrain :'),
+    HOSTILE.replace(/(?:foresights|gbrain):/g, 'Foresights :'),
     `intro\n\n## Timeline of events\n\n- **2026-01-02** | inbox — ${PLANTED_TIMELINE}\n\n## After\n`,
     `intro\n\n---\n\n## History\n\n### 2026-01-03 — ${PLANTED_TIMELINE}\n`,
     `A note [Source: inbox, 2026-01-04] with ${PLANTED_TIMELINE}.`,
@@ -205,7 +205,7 @@ describe('GBRA-221: neutralizeOutsideText', () => {
       expect(parseLinksFence(out).rows).toEqual([]);
       expect(extractTimelineFromContent(out, 'notes/x')).toEqual([]);
       expect(parseInlineCitationTimelineEntries(out)).toEqual([]);
-      expect(out).not.toMatch(/gbrain\s*:/i);
+      expect(out).not.toMatch(/(?:foresights|gbrain)\s*:/i);
       expect(out).not.toMatch(/^\*\*Mallory/m);
       expect(neutralizeOutsideText(out)).toBe(out);
       expect(out.replace(/\\/g, '')).toBe(raw.replace(/\r\n?|[\u2028\u2029]/g, '\n').replace(/\\/g, ''));
@@ -264,7 +264,7 @@ describe('GBRA-221: every outside-content renderer uses the shared neutralizer',
       const stored = connectorRender(markdown, { path: 'x/page.md' });
       expectInertPage(stored);
       expect(parseInlineCitationTimelineEntries(stored)).toEqual([]);
-      expect(stored).not.toMatch(/gbrain\s*:/i);
+      expect(stored).not.toMatch(/(?:foresights|gbrain)\s*:/i);
     }
   });
 
@@ -282,7 +282,7 @@ describe('GBRA-221: every outside-content renderer uses the shared neutralizer',
       expect(parseTakesFence(body).takes).toEqual([]);
       expect(parseLinksFence(body).rows).toEqual([]);
       expect(extractTimelineFromContent(body, 'people/bob-example')).toEqual([]);
-      expect(body).not.toMatch(/gbrain\s*:/i);
+      expect(body).not.toMatch(/(?:foresights|gbrain)\s*:/i);
     }
   });
 

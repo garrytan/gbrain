@@ -1,5 +1,5 @@
 /**
- * #5764: `gbrain takes propose --accept` on a managed brain. The accept used
+ * #5764: `foresights takes propose --accept` on a managed brain. The accept used
  * to promote through the uncoordinated addTakeToPage, which a managed
  * worktree refuses with writer_coordinator_required, so no pending proposal
  * could ever be accepted there. It now promotes through a coordinated
@@ -80,7 +80,7 @@ for (const backend of testBackends()) test(`${backend}: a stranded accepted clai
 }, 180_000);
 
 // Codex review: an explicit --dir is validated against the source's canonical
-// root, as `gbrain takes add --dir` does, instead of being ignored.
+// root, as `foresights takes add --dir` does, instead of being ignored.
 for (const backend of testBackends()) test(`${backend}: accept with a --dir that is not the canonical root refuses and leaves the proposal pending`, async () => {
   await managedBrain(async ({ engine, ctx, root }) => {
     const slug = 'companies/acme-example';

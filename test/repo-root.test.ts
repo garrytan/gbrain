@@ -29,7 +29,7 @@ describe('findRepoRoot', () => {
     mkdirSync(join(dir, 'skills'), { recursive: true });
     writeFileSync(join(dir, 'skills', 'RESOLVER.md'), '# RESOLVER\n');
     mkdirSync(join(dir, 'src'), { recursive: true });
-    writeFileSync(join(dir, 'src', 'cli.ts'), '// gbrain marker\n');
+    writeFileSync(join(dir, 'src', 'cli.ts'), '// foresights marker\n');
   }
 
   function seedSkillsDir(dir: string): void {
@@ -94,7 +94,7 @@ describe('findRepoRoot', () => {
   });
 
   it('D-CX-4: $OPENCLAW_WORKSPACE wins over repo-root walk when explicitly set', () => {
-    // Prior priority (shadow bug): walking up from cwd found gbrain's
+    // Prior priority (shadow bug): walking up from cwd found foresights's
     // repo root first and silently ignored the env var. Post-D-CX-4:
     // explicit env wins. Unset env → repo-root walk still wins
     // (tested below).
@@ -220,12 +220,12 @@ describe('findRepoRoot', () => {
   it('v0.31.7 D3-4: autoDetectSkillsDirReadOnly install-path walk finds bundled skills', () => {
     // When primary detection returns null (no env, no openclaw, no repo
     // root walk-up, no ./skills), the read-only variant walks up from
-    // import.meta.url (the gbrain module's install path) and finds the
+    // import.meta.url (the foresights module's install path) and finds the
     // bundled skills/. This test runs from a tempdir cwd with no env vars
     // set; the only path that can succeed is the install-path fallback.
     const cwd = scratch();
     const found = autoDetectSkillsDirReadOnly(cwd, {});
-    // We're inside the gbrain repo when running the test, so the install
+    // We're inside the foresights repo when running the test, so the install
     // path resolves to the repo's skills dir.
     expect(found.dir).not.toBeNull();
     expect(found.source).toBe('install_path');
@@ -256,7 +256,7 @@ describe('findRepoRoot', () => {
 
   it('v0.31.7 D3-7: AUTO_DETECT_HINT_READ_ONLY adds install-path tier', () => {
     // Read-only hint must mention the install-path fallback so doctor's
-    // user can understand what gbrain found and where.
+    // user can understand what foresights found and where.
     expect(AUTO_DETECT_HINT_READ_ONLY).toContain('install path');
     expect(AUTO_DETECT_HINT_READ_ONLY).toContain('read-only');
     // And must include everything from the base hint.
@@ -316,7 +316,7 @@ describe('findRepoRoot', () => {
     // autoDetectSkillsDir is used by write-path callers (skillpack install,
     // skillify scaffold, post-install-advisory). If a future edit adds the
     // install-path fallback to the SHARED function, those write-path
-    // callers running from `~` would silently retarget the bundled gbrain
+    // callers running from `~` would silently retarget the bundled foresights
     // repo's skills/ instead of the user's actual workspace — a quiet
     // data-flow regression. This test asserts the shared function returns
     // null (not an install_path source) when no env or repo-root signal
@@ -324,7 +324,7 @@ describe('findRepoRoot', () => {
     const cwd = scratch(); // empty tempdir; no resolver anywhere up
     const found = autoDetectSkillsDir(cwd, {});
     // Either null (no skills dir found) or repo_root if test runs inside
-    // the gbrain repo. In either case, NEVER 'install_path' on the shared
+    // the foresights repo. In either case, NEVER 'install_path' on the shared
     // function — that variant is reserved for autoDetectSkillsDirReadOnly.
     expect(found.source).not.toBe('install_path');
   });

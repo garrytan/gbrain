@@ -40,7 +40,7 @@ async function runDerivationPurgeSweeps(ctx: DoctorContext): Promise<Check[]> {
     message: `${rows.length} fact purge sweep(s) of stored derivation results are not finished: ${listed}${rows.length > sweeps.length ? ` (first ${sweeps.length} of ${rows.length} shown)` : ''}. `
       + 'Until each ends, paid synopsis and fact extraction makes no call on the pages it covers (purge_sweep_pending). '
       + (busy ? 'A sweep marked scope_lock_busy has walked to its end and waits only for a write in its source that is still open (an import, sync or page edit): let that write finish, then continue it. ' : '')
-      + `Continue each with gbrain forget --purge --status --request-id <request_id> --continue.`,
+      + `Continue each with foresights forget --purge --status --request-id <request_id> --continue.`,
     ...(first ? { fix: { argv: continueSweepArgv(first), consent: [], actor: 'agent' as const, requires_exclusive: false, verify: doctorVerify('derivation_purge_sweeps'),
       why: 'Continues the purge\'s sweep (a stalled one is tried again) and reports its completion. It deletes the stored results in the sweep\'s scope that hold the claim the user already purged, and an unpaid result in that scope that alone cannot be read within the statement budget, unread, whether or not it holds the claim (unpaid results are derived again from the page at no cost; a paid one is never deleted unread). Run it for each request id listed until its completion is complete.' } }
       : { fix_unavailable_reason: 'operator_judgement' as const }),

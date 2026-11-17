@@ -37,7 +37,7 @@ const setup = ({ root }: { root: string }) => {
 const passRow = async (engine: BrainEngine) => (await engine.executeRaw<{ value: any }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1', [MANAGED_SYNC_PASS_OP]))[0]?.value ?? null;
 const page = async (engine: BrainEngine, slug: string) => (await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', ['default', slug])).length > 0;
 
-/** Turns the synced pages into pages an older gbrain imported whose body no longer matches the file: no import record, no pass row. */
+/** Turns the synced pages into pages an older foresights imported whose body no longer matches the file: no import record, no pass row. */
 async function differingLegacyPages(engine: BrainEngine): Promise<void> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {

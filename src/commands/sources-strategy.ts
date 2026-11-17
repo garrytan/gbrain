@@ -1,12 +1,12 @@
 /**
- * `gbrain sources set-strategy <id> <markdown|code|auto>` (#4899, PR #5955):
+ * `foresights sources set-strategy <id> <markdown|code|auto>` (#4899, PR #5955):
  * persist `sources.config.strategy`, the file strategy every sync of the
  * source uses when its caller passes no `--strategy` (`sync --all`, autopilot,
  * the dream cycle and the MCP `sync` op read it). Unset means `markdown`, under
  * which a changed code file's page is deleted rather than re-imported, so a
  * code repository needs `code` or `auto` recorded once. One writer, on
- * purpose: the stored key is the setting, `gbrain sources list --json` reads
- * it back, and an explicit `gbrain sync --strategy` still wins for that run.
+ * purpose: the stored key is the setting, `foresights sources list --json` reads
+ * it back, and an explicit `foresights sync --strategy` still wins for that run.
  *
  * Refuses while the source has an unfinished managed sync run ([R26]): that
  * run froze a manifest classified under the old strategy, and changing the
@@ -48,7 +48,7 @@ export async function unfinishedManagedSyncPass(engine: BrainEngine, sourceId: s
 export async function runSetStrategy(engine: BrainEngine, args: string[]): Promise<void> {
   const [id, strategy] = args;
   if (!id || id.startsWith('-') || !strategy) {
-    console.error(`Usage: gbrain sources set-strategy <id> <${SYNC_STRATEGIES.join('|')}>`);
+    console.error(`Usage: foresights sources set-strategy <id> <${SYNC_STRATEGIES.join('|')}>`);
     process.exit(2);
   }
   if (!isSyncStrategy(strategy)) {
@@ -57,7 +57,7 @@ export async function runSetStrategy(engine: BrainEngine, args: string[]): Promi
   }
   const [src] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [id]);
   if (!src) {
-    console.error(`Source "${id}" not found. List sources with: gbrain sources list`);
+    console.error(`Source "${id}" not found. List sources with: foresights sources list`);
     process.exit(4);
   }
   const config = parseSourceConfig(src.config);
@@ -70,7 +70,7 @@ export async function runSetStrategy(engine: BrainEngine, args: string[]): Promi
     const run = unfinished[0]!;
     console.error(`Error [sync_run_unfinished]: source "${id}" has ${unfinished.length} unfinished managed sync run(s) (cursor ${run.cursor_key.slice(0, 12)}${run.run_id ? `, run ${run.run_id.slice(0, 8)}` : ''}${run.index !== null ? `, at index ${run.index}` : ''}).`);
     console.error(`  Its frozen manifest was classified under the current strategy; changing it now would make the resumed run and the next full sync disagree about which files are pages.`);
-    console.error(`  Finish the run first (gbrain sync --source ${id} --no-pull resumes it; gbrain sync status --source ${id} --json shows what holds it), or retire a run nothing can resume (gbrain repair managed-sync-orphans --source ${id}), then set the strategy.`);
+    console.error(`  Finish the run first (foresights sync --source ${id} --no-pull resumes it; foresights sync status --source ${id} --json shows what holds it), or retire a run nothing can resume (foresights repair managed-sync-orphans --source ${id}), then set the strategy.`);
     process.exit(1);
   }
   const pass = config.strategy !== strategy ? await unfinishedManagedSyncPass(engine, id) : { lease: null, episode: null };
@@ -78,12 +78,12 @@ export async function runSetStrategy(engine: BrainEngine, args: string[]): Promi
     console.error(`Error [sync_run_unfinished]: source "${id}" has ${pass.lease ? `a sync running (${pass.lease})` : `an open full re-import (opened ${pass.episode!.opened_at})`}.`);
     console.error(pass.lease ? `  It classifies the checkout under the current strategy; changing it now would make the running pass and the next one disagree about which files are pages.`
       : `  It re-imports the source under the selection it was opened with, strategy included; changing the strategy now would leave it unable to close.`);
-    console.error(`  ${pass.lease ? 'Wait for the sync to finish' : `Finish it first (gbrain sync --source ${id} --no-pull continues it)`}; gbrain sync status --source ${id} --json shows where it stands. Then set the strategy.`);
+    console.error(`  ${pass.lease ? 'Wait for the sync to finish' : `Finish it first (foresights sync --source ${id} --no-pull continues it)`}; foresights sync status --source ${id} --json shows where it stands. Then set the strategy.`);
     process.exit(1);
   }
   await engine.updateSourceConfig(id, { strategy });
   console.log(`Source "${id}" now syncs with strategy ${strategy}.`);
   if (config.strategy !== strategy) {
-    console.log(`  Files unchanged since the last sync are re-classified only by a full sync: gbrain sync --source ${id} --full`);
+    console.log(`  Files unchanged since the last sync are re-classified only by a full sync: foresights sync --source ${id} --full`);
   }
 }

@@ -120,7 +120,7 @@ describe('v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL en
     // The eng.initSchema() call moved into src/commands/migrations/in-process.ts.
     const src = readFileSync('src/commands/migrations/v0_11_0.ts', 'utf8');
     expect(src).toContain('runMigrateOnlyCore()');
-    expect(src).not.toContain("execSync('gbrain init --migrate-only'");
+    expect(src).not.toContain("execSync('foresights init --migrate-only'");
     expect(src).toMatch(/await\s+phaseASchema/);
   });
 

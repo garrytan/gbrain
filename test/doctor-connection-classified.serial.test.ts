@@ -4,7 +4,7 @@
  *
  *   - 2c-bis dead-DB lane: engine=null + a captured connectError synthesizes
  *     the ONE classified fail shape (name 'connection', details.reason,
- *     details.fix_hint naming `gbrain db-repair`) so
+ *     details.fix_hint naming `foresights db-repair`) so
  *     checks[name=="connection"] exists in every failure shape.
  *   - 2c live-engine lane: an engine whose getStats rejects produces the
  *     SAME classified shape, and the URL-only pgbouncer_prepare check (hoisted
@@ -72,7 +72,7 @@ describe('dead-DB synthesized connection check (2c-bis)', () => {
     expect(conn!.status).toBe('fail');
     const details = conn!.details as { reason: string; transient: boolean; fix_hint: string };
     expect(details.reason).toBe('conn_refused');
-    expect(details.fix_hint).toContain('gbrain db-repair');
+    expect(details.fix_hint).toContain('foresights db-repair');
     // Redaction posture: the classified message is safe copy, not raw driver text.
     expect(typeof conn!.message).toBe('string');
   }, 60_000);
@@ -132,7 +132,7 @@ describe('live-engine connection catch (2c)', () => {
     expect(conn!.status).toBe('fail');
     const details = conn!.details as { reason: string; fix_hint: string };
     expect(details.reason).toBe('conn_refused');
-    expect(details.fix_hint).toContain('gbrain db-repair');
+    expect(details.fix_hint).toContain('foresights db-repair');
 
     // The URL-only lane is hoisted ABOVE the connection probe so it survives
     // a dead DB — assert both presence and ordering.

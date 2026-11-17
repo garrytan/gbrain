@@ -41,7 +41,7 @@ describe('stdio MCP source preflight', () => {
   test('well-formed but unregistered source refuses to serve, naming the value and the fix', async () => {
     const p = assertStdioSourceBindable(makeEngine(['default']), 'workspace');
     await expect(p).rejects.toThrow(/GBRAIN_SOURCE="workspace" is not a registered active source/);
-    await expect(assertStdioSourceBindable(makeEngine(['default']), 'workspace')).rejects.toThrow(/gbrain sources list/);
+    await expect(assertStdioSourceBindable(makeEngine(['default']), 'workspace')).rejects.toThrow(/(?:foresights|gbrain) sources list/);
   });
 
   test('archived source refuses to serve, same as a missing one', async () => {

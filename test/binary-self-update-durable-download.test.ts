@@ -17,7 +17,7 @@ afterEach(() => { globalThis.fetch = realFetch; });
 
 describe('binary self-update download durability', () => {
   test('writes and flushes through a writable descriptor (no read-only fsync)', async () => {
-    const bytes = Buffer.from('gbrain binary bytes\n');
+    const bytes = Buffer.from('foresights binary bytes\n');
     globalThis.fetch = (async () => new Response(bytes)) as unknown as typeof fetch;
     const dest = join(dir, 'gbrain.staged');
     const flush = simulateReadOnlyFsyncEperm();

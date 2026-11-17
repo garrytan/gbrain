@@ -77,7 +77,7 @@ for (const kind of testBackends()) {
       expect(out.isError).toBe(true);
       expect(out.json.error).toBe('scope_denied');
       expect(out.text).toContain('brain host');
-      expect(out.text).toContain(`gbrain forget ${id}`);
+      expect(out.text).toContain(`foresights forget ${id}`);
       expect(out.text).not.toContain('No fact with id');
       expect(await active(id)).toBe(true);
       const viaFact = await call('alice', 'forget_fact', { id: Number(id) });

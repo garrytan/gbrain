@@ -32,7 +32,7 @@ const versions = async (engine: BrainEngine) => (await engine.executeRaw<{ v: nu
   "SELECT (completed_keys->0->'meta'->>'drift_version')::int AS v FROM op_checkpoints WHERE op='sync-hold' AND completed_keys->0->>'code'='file_drift'"))
   .reduce((tally, { v }) => ({ ...tally, ['v' + (v ?? 0)]: (tally['v' + (v ?? 0)] ?? 0) + 1 }), {} as Record<string, number>);
 
-/** Every page drifted on both sides with no import record, each held by the version-1 screen: the holds an older gbrain left. */
+/** Every page drifted on both sides with no import record, each held by the version-1 screen: the holds an older foresights left. */
 async function versionOneHolds(engine: BrainEngine, root: string): Promise<void> {
   await performManagedSync(engine, OPTS);
   const coordinated = (sql: string) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql), TEST_WRITE_ATTRIBUTION));

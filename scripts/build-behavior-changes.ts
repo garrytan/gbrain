@@ -101,7 +101,7 @@ export function build(root: string): Built {
     const front = /^---\r?\n([\s\S]*?)\r?\n---\s*(\n|$)/.exec(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))?.[1] ?? '';
     const value = (re: RegExp) => re.exec(front)?.[1]?.replace(/\s+#.*$/, '').trim().replace(/^(['"])(.*)\1$/, '$2');
     const bump = value(/^\s*['"]?bump['"]?\s*:(.*)$/m);
-    if (bump !== undefined && bump !== 'patch') problems.push(`${CHANGELOG_FRAGMENT_DIR}/${f} says bump: ${bump}; gbrain releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`);
+    if (bump !== undefined && bump !== 'patch') problems.push(`${CHANGELOG_FRAGMENT_DIR}/${f} says bump: ${bump}; foresights releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`);
     const important = value(/^\s*['"]?important['"]?\s*:(.*)$/m);
     if (important !== undefined && !IMPORTANT_CLASSES.includes(important)) problems.push(`${CHANGELOG_FRAGMENT_DIR}/${f} says important: ${important}; stable takes the fast path only for security, regression (in a release that is on stable) or data-loss, so write one of those or delete the important: line (docs/RELEASING.md#daily-stable-check)`);
   }

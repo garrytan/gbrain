@@ -29,7 +29,7 @@ import { withEnv } from './helpers/with-env.ts';
 
 const base: SyncResult = { status: 'partial', reason: 'writer_yield', fromCommit: 'a', toCommit: 'b', added: 1, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0,
   pagesAffected: [], managedCursor: { index: 1, total: 3 } };
-const RESUME = 'gbrain sync --source s --no-pull';
+const RESUME = 'foresights sync --source s --no-pull';
 const exhausted = () => {
   const error = new OperationError('write_quota_exhausted', 'Write capacity exhausted: principal permanent request IDs (5 used of 5).', 'raise it');
   Object.assign(error, { reason: 'lifetime_ids', detail: 'principal_lifetime_ids',
@@ -45,7 +45,7 @@ describe('capacity_paused in the drain', () => {
       capacity_pause: { code: 'write_quota_exhausted', reason: 'lifetime_ids', fix: { argv: ['gbrain', 'config', 'set', 'persistence.limits.principal_lifetime_ids', '100'], actor: 'host_admin' } } } });
     const next = drainNext(result, RESUME, 's')!;
     expect(next).toMatchObject({ command: RESUME, code: 'capacity_paused', docs: ERROR_CATALOGUE.sync_drain_capacity_paused.docs });
-    expect(next.why).toContain('gbrain config set persistence.limits.principal_lifetime_ids 100');
+    expect(next.why).toContain('foresights config set persistence.limits.principal_lifetime_ids 100');
     expect(next.why).toContain('Request ids never free');
     const preflight = Object.assign(exhausted(), { capacityPreflight: true });
     await expect(runDrain({ backoffMs: 5, pass: async () => { throw preflight; } })).rejects.toBe(preflight);

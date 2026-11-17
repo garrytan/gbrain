@@ -14,7 +14,7 @@
  * NOT refuse the migration on low session settings — codex pass-2 #16).
  *
  * Pure library function — same code path used by the v0_29_1 orchestrator
- * AND the `gbrain reindex-frontmatter` CLI command (added in commit 4).
+ * AND the `foresights reindex-frontmatter` CLI command (added in commit 4).
  *
  * Note: the `import_filename` column stays NULL on backfilled rows. We
  * don't have the original filename for pre-v0.29.1 imports (codex pass-1
@@ -48,7 +48,7 @@ export interface BackfillOpts {
   slugPrefix?: string;
   /**
    * Optional source filter (one `sources.id`). The preview, the plan hash and
-   * the apply of `gbrain reindex-frontmatter --source` walk this one selection.
+   * the apply of `foresights reindex-frontmatter --source` walk this one selection.
    */
   sourceId?: string;
   /**

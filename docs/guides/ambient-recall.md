@@ -34,7 +34,7 @@ pure win. See the per-verb latency table in
 
 - **Pull (works everywhere, including Codex + Postgres/Supabase):** the harness
   calls `context_pack` / `delta` over MCP (they are on `--surface verbs`) or the
-  CLI (`gbrain context-pack`, `gbrain delta`) at the boundary and injects the
+  CLI (`foresights context-pack`, `foresights delta`) at the boundary and injects the
   returned `text` (or renders the structured arms). This is the portable path —
   no hooks required. It is the primary path for Codex and opencode (no wired hooks) and
   for Postgres brains (which have no local IPC socket).
@@ -61,7 +61,7 @@ cloud model, so **every arm is world-visibility by default.** To pull private
 facts in, pass `include_private` — and it is honored ONLY for trusted-local
 callers (`remote === false`, i.e. the CLI/hook path). A remote MCP caller never
 widens, even if it asks (fail-closed). The one exception is the brain owner's
-remote credentials (`gbrain access owner set <member>`): their hot facts in
+remote credentials (`foresights access owner set <member>`): their hot facts in
 `context_pack` and `delta` include private facts, except a fact taken from a
 page the owner cannot read, while entity cards, pages and threads stay
 world-only (see [access designations](access-designations.md)). When a pack
@@ -95,7 +95,7 @@ before a deadline) does not advance at all: the response carries
 `degraded_reason` and a `delta_incomplete` notice whose fix is to retry the same
 call in about 30 seconds (`fix.next: wait`); after three consecutive incomplete
 wakes on one session the fix becomes `report` (tell the user, run
-`gbrain doctor --json`). Neither arm advances past `now() - 2 s`, so a row
+`foresights doctor --json`). Neither arm advances past `now() - 2 s`, so a row
 delivered within the last two seconds can arrive once more on the next wake.
 Thread events are best-effort: they follow the pages' time cursor and are never
 budget-dropped. With no `session_id` you can still run a stateless delta:
@@ -143,8 +143,8 @@ MCP payloads:
 CLI equivalent:
 
 ```bash
-gbrain delta --since 2026-08-11T00:00:00.000000Z --entities acme-example --json
-gbrain delta --cursor "$NEXT_CURSOR" --entities acme-example --json
+foresights delta --since 2026-08-11T00:00:00.000000Z --entities acme-example --json
+foresights delta --cursor "$NEXT_CURSOR" --entities acme-example --json
 ```
 
 Expected result: the loop ends with `has_more: false` and no `degraded_reason`;
@@ -167,7 +167,7 @@ with `cursor`. Each response also carries `start_cursor`-equivalent detail in
 ## Example — a cold session start (pull)
 
 ```bash
-gbrain context-pack --entities "acme-example,alice-example" --budget-tokens 4000
+foresights context-pack --entities "acme-example,alice-example" --budget-tokens 4000
 ```
 
 Returns entity cards + open threads + hot facts, budget-packed, world-only. Inject

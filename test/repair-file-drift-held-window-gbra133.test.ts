@@ -1,5 +1,5 @@
 /**
- * GBRA-133: `gbrain repair file-drift --held` previews one bounded window of the selected holds, in held-path order.
+ * GBRA-133: `foresights repair file-drift --held` previews one bounded window of the selected holds, in held-path order.
  *   - a window stops at 200 pages, or starts no page once its time budget (or the run's deadline) has passed;
  *   - a partial window prints `next_cursor` and the next preview command, and its hash and apply command cover only it
  *     (the apply carries `--cursor`); the windows of one held set cover every page exactly once;
@@ -133,7 +133,7 @@ for (const backend of testBackends()) describe(`GBRA-133: a held file-drift prev
     expect(window(first)).toMatchObject({ previewed: 1, remaining: 2, complete: false });
     expect(first.residuals).toMatchObject({ after_window: 2 });
     const cursor = window(first).next_cursor!;
-    expect(window(first).next_command).toBe(`gbrain repair file-drift --source ${f.sourceId} --held --side deleted --state file_gone --cursor ${cursor} --prefer database`);
+    expect(window(first).next_command).toBe(`foresights repair file-drift --source ${f.sourceId} --held --side deleted --state file_gone --cursor ${cursor} --prefer database`);
     expect(first.warnings!.join('\n')).toContain(`preview the next one: ${window(first).next_command}`);
     expect(first.apply_command).not.toContain('--cursor');
 
@@ -162,9 +162,9 @@ for (const backend of testBackends()) describe(`GBRA-133: a held file-drift prev
     const hash = preview.preview_hash!;
     // Git durability is off in this fixture: the preview leads with what the next sync does to an uncommitted recreate.
     expect(preview.warnings![0]).toStartWith('The next sync undoes this repair unless the recreated files are committed');
-    expect(preview.warnings![0]).toEndWith(`Commit them right after the apply: gbrain git commit-push --path ${f.root} -m 'gbrain: repair file drift in ${f.sourceId}' -- ${slugs.map(slug => `${slug}.md`).join(' ')}`);
+    expect(preview.warnings![0]).toEndWith(`Commit them right after the apply: foresights git commit-push --path ${f.root} -m 'gbrain: repair file drift in ${f.sourceId}' -- ${slugs.map(slug => `${slug}.md`).join(' ')}`);
     expect(preview.details).toMatchObject({ undone_by_next_sync_unless_committed: { recreated: 3, removed: 0 } });
-    const command = `gbrain repair file-drift --source ${f.sourceId}`;
+    const command = `foresights repair file-drift --source ${f.sourceId}`;
     const first = readArtifact(hash, command);
     expect([...first.keys()]).toEqual(slugs);
     expect(readArtifact(hash, command)).toBe(first);

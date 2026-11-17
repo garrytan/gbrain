@@ -3,7 +3,7 @@
  * was unit-tested, but no command path ever called it. A path recorded as
  * `open` in the sync-failures ledger stayed `open` forever, even after the
  * exact same file imported cleanly on a later run — the ledger never
- * self-healed short of a manual `gbrain sync --skip-failed`.
+ * self-healed short of a manual `foresights sync --skip-failed`.
  *
  * Two-run scenario: a poison file fails run 1 (recorded), gets fixed, then
  * succeeds run 2 (must clear).

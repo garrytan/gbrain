@@ -76,7 +76,7 @@ async function withBrain(databaseUrl: string | undefined, run: (b: Brain) => Pro
 }
 
 const deferredForDrift = (outcome: string, slug = SLUG) => outcome.startsWith('revision_conflict: ') && outcome.includes(`${slug} (file_database_drift`)
-  && outcome.includes('gbrain sync --source default');
+  && outcome.includes('foresights sync --source default');
 
 for (const { backend, databaseUrl } of pathologicalArms()) {
   describe(`D-13 new concept and an unindexed file at its path (${backend})`, () => {

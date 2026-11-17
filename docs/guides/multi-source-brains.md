@@ -1,13 +1,13 @@
 # Multi-source brains
 
-**A single gbrain database can hold multiple knowledge repos.** Each one
+**A single foresights database can hold multiple knowledge repos.** Each one
 is a `source`: a logical brain-within-the-brain with its own slug
 namespace, its own sync state, and its own federation policy. The rest
 of this guide walks the three canonical scenarios.
 
 (Sources are the *within-one-database* axis. If you want to connect a
 whole separate database — a team-published brain with its own access
-policy — that's the *brain* axis: `gbrain mounts add`. See
+policy — that's the *brain* axis: `foresights mounts add`. See
 `docs/architecture/brains-and-sources.md` for the two-axis topology.)
 
 ## The three scenarios
@@ -21,15 +21,15 @@ the wiki or in a gstack plan.
 
 ```bash
 # Register the gstack source, federate so it joins cross-source search
-gbrain sources add gstack --path ~/.gstack --federated
+foresights sources add gstack --path ~/.gstack --federated
 
-# Pin the directory so `gbrain sync` knows which source it's walking
-cd ~/.gstack && gbrain sources attach gstack
+# Pin the directory so `foresights sync` knows which source it's walking
+cd ~/.gstack && foresights sources attach gstack
 
 # Initial sync
-gbrain sync --source gstack
+foresights sync --source gstack
 
-# Now `gbrain search "retry budgets"` returns hits from BOTH wiki and
+# Now `foresights search "retry budgets"` returns hits from BOTH wiki and
 # gstack. Each result includes source_id so the agent can cite properly.
 ```
 
@@ -45,16 +45,16 @@ content leaking into essay searches is a bug, not a feature.
 
 ```bash
 # Two sources, both isolated (federated=false)
-gbrain sources add news-desk --path ~/news-desk --no-federated
-gbrain sources add essays --path ~/writing --no-federated
+foresights sources add news-desk --path ~/news-desk --no-federated
+foresights sources add essays --path ~/writing --no-federated
 
 # Pin each checkout directory
-(cd ~/news-desk && gbrain sources attach news-desk)
-(cd ~/writing && gbrain sources attach essays)
+(cd ~/news-desk && foresights sources attach news-desk)
+(cd ~/writing && foresights sources attach essays)
 
 # Sync each independently
-gbrain sync --source news-desk
-gbrain sync --source essays
+foresights sync --source news-desk
+foresights sync --source essays
 ```
 
 Result: searching from neither directory returns the `default` source
@@ -66,26 +66,26 @@ To search across every source explicitly on demand (trusted local CLI;
 `--source` takes exactly one id):
 
 ```bash
-gbrain search "tech layoffs" --source-id __all__
+foresights search "tech layoffs" --source-id __all__
 ```
 
 ### 3. Mixed (wiki federated + sessions isolated)
 
 Your main wiki is federated with a few trusted sources. Your session
-transcripts (`gbrain transcripts` ingests them) land in a separate
+transcripts (`foresights transcripts` ingests them) land in a separate
 isolated source so they don't dominate every search result.
 
 ```bash
 # Federated sources
-gbrain sources add gstack --path ~/.gstack --federated
+foresights sources add gstack --path ~/.gstack --federated
 
 # Isolated source for session transcripts
-gbrain sources add sessions --path ~/.claude/sessions --no-federated
+foresights sources add sessions --path ~/.claude/sessions --no-federated
 ```
 
 ## Resolution priority
 
-When any command needs to pick a source, gbrain walks this list (highest
+When any command needs to pick a source, foresights walks this list (highest
 first):
 
 1. Explicit `--source <id>` flag.
@@ -93,11 +93,11 @@ first):
 3. `.gbrain-source` dotfile in CWD or any ancestor directory.
 4. A registered source whose `local_path` contains the CWD (longest
    prefix wins for nested checkouts).
-5. The brain-level default set via `gbrain sources default <id>`.
+5. The brain-level default set via `foresights sources default <id>`.
 6. The seeded `default` source.
 
 So inside `~/.gstack/plans/` on a brain that pinned `gstack` to
-`~/.gstack` via `.gbrain-source`, `gbrain put` implicitly writes to
+`~/.gstack` via `.gbrain-source`, `foresights put` implicitly writes to
 the `gstack` source. Outside any registered directory with no env/dotfile
 set, it writes to the default.
 
@@ -107,26 +107,26 @@ Every source row stores `config.federated: boolean` in its JSONB config.
 
 | Value | Meaning |
 |-------|---------|
-| `true` | Source participates in unqualified `gbrain search "X"` results. |
+| `true` | Source participates in unqualified `foresights search "X"` results. |
 | `false` or unset | Source only searched when explicitly named via `--source <id>` or qualified citation. |
 
 A new source added without `--federated` or `--no-federated` is federated on
 a brain only you use (`access.serves` is one, `brain.audience` reads personal,
 and you are not on a thin client). On a shared brain it stays unset, and
 `sources add` and `sync --source <id>` print a `source_not_in_default_search`
-notice whose fix is `gbrain sources federate <id>`. Sources you added before
+notice whose fix is `foresights sources federate <id>`. Sources you added before
 this change keep their setting.
 
 The seeded `default` source is `federated=true` so single-source brains
 behave as you'd expect — every page appears in search.
 
-Flip later with `gbrain sources federate <id>` / `unfederate <id>`. Federating
+Flip later with `foresights sources federate <id>` / `unfederate <id>`. Federating
 a source (or restoring it, which re-federates) lets every connection with no
 source grant read it, including pages a member-bound credential wrote there
 without `readable_by`. The command still federates, and it lists the pages a
 remote token or OAuth client wrote there without readers (count, a few slugs
 with the member each credential is bound to now, `pages_exposed` under `--json`)
-with `gbrain access who-can-read` to check one and `gbrain access rule add` to
+with `foresights access who-can-read` to check one and `foresights access rule add` to
 keep a folder to its member.
 
 ### An unscoped connection whose sources hold no pages
@@ -145,8 +145,8 @@ side. The check is one yes/no about the whole brain, independent of the query:
 whether another source holds pages. It never says another source matches the
 question, and it never names a source or page the connection cannot read. Its fix is host-side: the
 user picks the source these connections should read and the brain host runs
-`gbrain sources federate <source>`, or grants the connection its sources
-(`gbrain auth rescope --token <name> --sources <ids>`).
+`foresights sources federate <source>`, or grants the connection its sources
+(`foresights auth rescope --token <name> --sources <ids>`).
 
 Nothing else changes. A read whose sources hold pages but match nothing
 answers empty, as does a brain where no source holds a page. A token granted
@@ -155,9 +155,9 @@ sources, an OAuth client, a bound connection and a read that names
 call, never widens what it reads. Federating a source never shows its
 `visibility: private` pages to a remote connection.
 
-On a brain that is not managed, `gbrain sources add` without `--federated` or `--no-federated` warns on stderr that the new source is not federated, and
+On a brain that is not managed, `foresights sources add` without `--federated` or `--no-federated` warns on stderr that the new source is not federated, and
 when the sources an unscoped connection reads hold no page it also prints the
-next step on stdout (`next: gbrain sources federate <id>`), and as `next`
+next step on stdout (`next: foresights sources federate <id>`), and as `next`
 (`command`, `argv`, `why`) under `--json`. A managed brain's `sources add`
 prints its lifecycle receipt instead, without the warning or the next step.
 
@@ -174,10 +174,10 @@ still go to the bound source only.
 
 | Refusal hint | Why | Fix (on the brain host) |
 |--------------|-----|-------------------------|
-| `<id> is not federated` | The named source is not federated. | `gbrain sources federate <id>`, or start the connection without the binding. |
-| `<id> opted out of federation` | The named source was unfederated. | `gbrain sources federate <id>` if it should be readable from other sources. |
-| `<bound> opted out of federation …, so it reads no other source` | The bound source itself is isolated (`federated=false`), so it never reads another source. | `gbrain sources federate <bound>`, or start the connection without the binding. |
-| `Your token is not granted <id>` | An HTTP token or OAuth client whose grant does not include the source. | `gbrain auth rescope-client <client_id> --federated-read <ids>` for an OAuth client; `gbrain auth rescope-token <name> --sources <ids>` for a legacy bearer token. |
+| `<id> is not federated` | The named source is not federated. | `foresights sources federate <id>`, or start the connection without the binding. |
+| `<id> opted out of federation` | The named source was unfederated. | `foresights sources federate <id>` if it should be readable from other sources. |
+| `<bound> opted out of federation …, so it reads no other source` | The bound source itself is isolated (`federated=false`), so it never reads another source. | `foresights sources federate <bound>`, or start the connection without the binding. |
+| `Your token is not granted <id>` | An HTTP token or OAuth client whose grant does not include the source. | `foresights auth rescope-client <client_id> --federated-read <ids>` for an OAuth client; `foresights auth rescope-token <name> --sources <ids>` for a legacy bearer token. |
 
 `search_by_image`, `open_loops` and the code-intel tools keep their stricter
 rule: an explicit `source_id` must be inside the connection's own source or
@@ -223,17 +223,17 @@ member's token. This is the supported production setup today: one
 never learns who is asking from the request itself.
 
 ```bash
-gbrain auth create bot-alice-example --member alice-example
-gbrain auth rescope --token bot-alice-example --sources source-a
+foresights auth create bot-alice-example --member alice-example
+foresights auth rescope --token bot-alice-example --sources source-a
 # OAuth client instead of a bearer token:
-gbrain auth rescope --client <client_id> --sources source-a --member alice-example
+foresights auth rescope --client <client_id> --sources source-a --member alice-example
 ```
 
 Once the brain has two or more enabled members (or config `access.serves` is
 `several`), a remote read through a token, OAuth client or stdio server bound to
 no member is refused with
 [`requester_scope_required`](write-refusals.md#requester_scope_required), and
-`gbrain auth create` refuses an unbound token. A connection that existed when the
+`foresights auth create` refuses an unbound token. A connection that existed when the
 brain started serving several people reads for 14 more days, with a notice on
 every answer (`_meta.access.requester_scope`) naming the date and the command that
 binds it. Bind every member's token with `--member`. A brain for one person sees
@@ -249,7 +249,7 @@ per-member tokens for that, and `source_ids` to narrow further.
 
 A trusted system that names the person on each call (QM's `x-qm-actor`) can
 share one client instead: grant it every member's source and bind each source
-to its member (`gbrain access member source add alice-example dm-alice-example`).
+to its member (`foresights access member source add alice-example dm-alice-example`).
 An attested call then reads the grant minus sources bound to other members,
 and binding never adds a source to a grant
 ([QM guide](qm.md#each-persons-own-sources)).
@@ -259,7 +259,7 @@ and binding never adds a source to a grant
 Source grants are the coarse boundary: without page readers, two pages in one
 source are readable by exactly the same tokens. Inside one source, a page that
 names readers in frontmatter `readable_by` is read only by credentials bound to
-a listed member, and a folder rule (`gbrain access rule add`) does the same for
+a listed member, and a folder rule (`foresights access rule add`) does the same for
 a whole prefix ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape));
 both only narrow a grant, never widen it. Either way, put content in sources by
 who may read it, before any member's bot connects:
@@ -272,8 +272,8 @@ who may read it, before any member's bot connects:
   that member may read, and nothing else:
 
   ```bash
-  gbrain auth rescope --token bot-alice-example --sources private-alice-example,channel-a,team-a,public
-  gbrain auth rescope --client <client_id> --sources private-alice-example,channel-a,team-a,public
+  foresights auth rescope --token bot-alice-example --sources private-alice-example,channel-a,team-a,public
+  foresights auth rescope --client <client_id> --sources private-alice-example,channel-a,team-a,public
   ```
 
   The first id is the token's write source, so a member's saved memories land
@@ -299,7 +299,7 @@ who may read it, before any member's bot connects:
   `page_not_found` until the operator adds `readable_by` on the brain host.
   Before this release those
   pages named no readers, so other members and unbound tokens read them:
-  check pages a member wrote with `gbrain access who-can-read <slug>` and add
+  check pages a member wrote with `foresights access who-can-read <slug>` and add
   `readable_by` on the brain host to any that should stay private.
 - **Let each member read their own private pages (optional).** Remote
   reads hide every `visibility: private` page by default, even in a granted
@@ -307,8 +307,8 @@ who may read it, before any member's bot connects:
   grant names, and no others, opt that token or client in:
 
   ```bash
-  gbrain auth rescope --token bot-alice-example --private-pages granted-sources
-  gbrain auth rescope --client <client_id> --private-pages granted-sources
+  foresights auth rescope --token bot-alice-example --private-pages granted-sources
+  foresights auth rescope --client <client_id> --private-pages granted-sources
   ```
 
   A token with no source grant, a federated source the grant does not name,
@@ -321,10 +321,10 @@ who may read it, before any member's bot connects:
   `confidentiality`), atoms, concepts and events derived from private or
   unknown origins, and pages whose declared lineage is private; pinned
   questions stay owner-only. `--private-pages none` hides them again on the
-  next request, and `gbrain auth list` shows each token's setting. A harness
-  token rotation (`gbrain setup`, `gbrain bootstrap harness`) does not carry
+  next request, and `foresights auth list` shows each token's setting. A harness
+  token rotation (`foresights setup`, `foresights bootstrap harness`) does not carry
   the grant; it prints the rescope that grants it again.
-- **On a personal brain, name the owner instead.** `gbrain access owner set
+- **On a personal brain, name the owner instead.** `foresights access owner set
   <member>` lets every credential bound to that member read the private pages
   in all the sources its grant reads. What each designation means for each
   caller: [access designations](access-designations.md).
@@ -340,7 +340,7 @@ who may read it, before any member's bot connects:
 
 ### Links, backlinks and the graph across sources
 
-`gbrain links`, `gbrain backlinks` and `gbrain graph` (MCP: `get_links`,
+`foresights links`, `foresights backlinks` and `foresights graph` (MCP: `get_links`,
 `get_backlinks`, `traverse_graph`) read the same sources as `search` for the
 same caller:
 
@@ -352,10 +352,10 @@ same caller:
 | Remote agent with a grant | Its granted sources (never wider) | A granted source | Its granted sources |
 
 ```bash
-gbrain backlinks companies/acme-example                     # resolved scope
-gbrain backlinks companies/acme-example --source business   # one source
-gbrain links people/alice-example --all-sources --json      # every source
-gbrain graph people/alice-example --depth 2 --all-sources
+foresights backlinks companies/acme-example                     # resolved scope
+foresights backlinks companies/acme-example --source business   # one source
+foresights links people/alice-example --all-sources --json      # every source
+foresights graph people/alice-example --depth 2 --all-sources
 ```
 
 Each call returns at most 500 rows (`--limit N`, up to 5000), merged across
@@ -371,14 +371,14 @@ its grant or federated set gets `permission_denied` with the fix, even when that
 source is archived. Private pages stay hidden from remote agents exactly as in
 `search`.
 
-Graph output carries source ids: each `gbrain graph` node has `source_id`, and
+Graph output carries source ids: each `foresights graph` node has `source_id`, and
 each edge returned to agents has `from_source_id` / `to_source_id`. The same slug
 in two sources is two nodes or two edges.
 
 When a local unqualified read finds nothing but the page has links in a source
 outside the read (a non-federated source), the CLI prints the per-source counts
 and the exact rerun command on stderr, for example
-`gbrain backlinks companies/acme-example --source priv`; stdout stays the empty
+`foresights backlinks companies/acme-example --source priv`; stdout stays the empty
 result and `--json` prints no hint. Remote agents never get this hint, so a
 source they cannot read stays indistinguishable from an empty one.
 
@@ -396,68 +396,68 @@ predate unknown-parameter warnings cannot be detected; upgrade the host first.
 
 ## Commands
 
-The most-used subcommands (run `gbrain sources --help` for the full,
+The most-used subcommands (run `foresights sources --help` for the full,
 always-current reference — it also covers `status`, `current`,
 `set-cr-mode`, and the `push`/`pull` durability surface).
 
-Changing the contextual retrieval mode, per source with `gbrain sources
-set-cr-mode <id> <mode>` or brain-wide with `gbrain config set
+Changing the contextual retrieval mode, per source with `foresights sources
+set-cr-mode <id> <mode>` or brain-wide with `foresights config set
 search.contextual_retrieval <mode>`, does not restamp existing pages: each
 keeps the mode recorded when it was imported, and the new mode applies to
 pages imported from then on. Both commands print this after the write, with
-`gbrain repair contextual-mode [--source <id>] --apply` for pages that have no
+`foresights repair contextual-mode [--source <id>] --apply` for pages that have no
 recorded mode (preview it first without `--apply`; see
 [repair](repair.md)).
 
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
+foresights sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
                                registers a plain directory: sync imports its files without
                                Git, and a file removed from it keeps its page.
-gbrain sources add <id> --url <git-url> [--pat-file <p>] [--clone-dir <path>] [--no-harden]
+foresights sources add <id> --url <git-url> [--pat-file <p>] [--clone-dir <path>] [--no-harden]
                                Clone + register a remote repo in one step; auto-hardens
                                for durability when a PAT is provided (see "Durability" below).
-gbrain sources list [--json]   List all sources with page counts + federation state.
-gbrain sources archive <id>    Soft-delete: hide from search, keep data for a TTL
+foresights sources list [--json]   List all sources with page counts + federation state.
+foresights sources archive <id>    Soft-delete: hide from search, keep data for a TTL
                                grace window. Prefer this over `remove`.
-gbrain sources restore <id>    Un-archive. `gbrain sources archived` lists expiries;
-                               `gbrain sources purge` permanently deletes expired archives —
+foresights sources restore <id>    Un-archive. `foresights sources archived` lists expiries;
+                               `foresights sources purge` permanently deletes expired archives —
                                except sources still referenced by a registered OAuth client
                                (reported as `Blocked:`, sweep continues); revoke or rescope
-                               the client (`gbrain auth revoke-client <id>`) and re-run.
-gbrain sources remove <id> [--confirm-destructive] [--dry-run]
+                               the client (`foresights auth revoke-client <id>`) and re-run.
+foresights sources remove <id> [--confirm-destructive] [--dry-run]
                                Permanently cascade-delete a source (pages, chunks,
                                timeline). Shows an impact preview first.
-gbrain sources rename <id> <new-name>
+foresights sources rename <id> <new-name>
                                Change display name only; id is immutable.
-gbrain sources default <id>    Set the brain-level default.
-gbrain sources attach <id>     Write .gbrain-source in CWD (like kubectl context).
-gbrain sources detach          Remove .gbrain-source from CWD.
-gbrain sources federate <id>
-gbrain sources unfederate <id>
-gbrain sources mirror-readonly <id>
-gbrain sources mirror-writable <id>
-gbrain sources record-origin <id>... --remote|--local [--apply] [--json]
+foresights sources default <id>    Set the brain-level default.
+foresights sources attach <id>     Write .gbrain-source in CWD (like kubectl context).
+foresights sources detach          Remove .gbrain-source from CWD.
+foresights sources federate <id>
+foresights sources unfederate <id>
+foresights sources mirror-readonly <id>
+foresights sources mirror-writable <id>
+foresights sources record-origin <id>... --remote|--local [--apply] [--json]
                                Record who added older URL sources (doctor
                                url_source_origin); preview unless --apply. See
                                docs/guides/repair.md#url-source-origin.
-gbrain sources refresh <id> [--dry-run] [--resume|--abandon]   Managed brains: fast-forward the checkout and sync.
-gbrain sources set-strategy <id> <markdown|code|auto>
-gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
+foresights sources refresh <id> [--dry-run] [--resume|--abandon]   Managed brains: fast-forward the checkout and sync.
+foresights sources set-strategy <id> <markdown|code|auto>
+foresights sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
                                Include or exclude the source from automatic sync
-                               (config.syncEnabled; an explicit gbrain sync --source
+                               (config.syncEnabled; an explicit foresights sync --source
                                still runs). --dry-run prints the apply command, which
                                carries --expect; a moved state refuses preview_changed.
                                Off: autopilot cycles work only on pages changed since
                                the last cycle, so a file edited on disk is picked up
                                by the next explicit sync, not by the cycle.
-gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
+foresights sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                Managed brains: host a new, empty source in a bare
                                repository under <path> (see below). Previews without --expect.
-gbrain sources canonical <id> --to git|mixed [--dry-run [--list-out <file>] [--approval-out <file>] | --apply (--expect <hash> | --approved <file>)] [--decisions <file>] [--json]
+foresights sources canonical <id> --to git|mixed [--dry-run [--list-out <file>] [--approval-out <file>] | --apply (--expect <hash> | --approved <file>)] [--decisions <file>] [--json]
                                Managed brains: convert a source to git-canonical or back
                                to mixed. Previews without --apply (review list, decisions
                                and approvals: docs/guides/git-canonical.md); the apply prints progress
@@ -467,15 +467,15 @@ gbrain sources canonical <id> --to git|mixed [--dry-run [--list-out <file>] [--a
 
 ### Hosted repositories
 
-`gbrain sources host-repo` gives a new, empty source its own bare repository
+`foresights sources host-repo` gives a new, empty source its own bare repository
 (`<path>/repo.git`) that people clone and fetch from, and checks it out once
-as a linked worktree gbrain owns (`<path>/worktree`), claimed as the source's
+as a linked worktree foresights owns (`<path>/worktree`), claimed as the source's
 canonical worktree like any other. The source becomes git-canonical
 (`canonical: git`), so every page write, remote ones included, commits there
 through the door before the database indexes it. A pre-receive hook refuses
 every push into the repository; `--push-remote` names a repository of your own
 that the push effect publishes to once Git durability is enabled
-(`gbrain sources writer git-durability <id> --enable`).
+(`foresights sources writer git-durability <id> --enable`).
 
 It runs only from the trusted local CLI on the brain host. The preview says in
 words that the source becomes strict and prints the apply command with its
@@ -493,7 +493,7 @@ A source whose Git remote is the source of truth (a code or docs repository
 you keep current from upstream) can be marked a read-only mirror:
 
 ```bash
-gbrain sources mirror-readonly <id>
+foresights sources mirror-readonly <id>
 ```
 
 On a managed brain, sync then imports canonical metadata (a default title,
@@ -502,8 +502,8 @@ back into that checkout, so `git status` stays clean and the next fast-forward
 pull succeeds. A page write into the source (`put_page`, a timeline entry, a
 maintenance write) is stored database-only too; its receipt says
 `storage: "database_only"` with `write_through.skipped: "mirror_read_only"`.
-`gbrain sources list --json` shows `mirror_read_only` per source. Undo it with
-`gbrain sources mirror-writable <id>`; files are written again from the next
+`foresights sources list --json` shows `mirror_read_only` per source. Undo it with
+`foresights sources mirror-writable <id>`; files are written again from the next
 write on, except for pages created while the source was a mirror: those have
 no file in the checkout and stay database-only. Git effects of a mirror's
 writes (for example a `forget`) complete as skipped. The flag is off by default.
@@ -523,7 +523,7 @@ A managed brain never pulls inside a cycle. Advance a managed checkout with
 one command on its owner host:
 
 ```bash
-gbrain sources refresh <id>
+foresights sources refresh <id>
 ```
 
 It refuses new writes to every source that shares the checkout until queued
@@ -533,10 +533,10 @@ those sources without pulling. Sources bound to one checkout (for example
 merge rewrites files of all of them. `--dry-run` previews the incoming commit;
 refusals are listed under
 [worktree refresh refusals](write-refusals.md#worktree-refresh-refusals). A
-brain that is not managed keeps pulling inside `gbrain sync --source <id>`.
+brain that is not managed keeps pulling inside `foresights sync --source <id>`.
 
 The autopilot cycle syncs the checkout as it is and reports
-`upstream_refresh: "skipped_managed"`; `gbrain doctor` (`sync_freshness`) says
+`upstream_refresh: "skipped_managed"`; `foresights doctor` (`sync_freshness`) says
 "upstream unknown" when the checkout was not fetched in the last 24 hours. See
 [`managed_pull_skipped`](write-refusals.md#managed_pull_skipped).
 
@@ -549,14 +549,14 @@ a code file that changes. Record `code` (code only) or `auto` (Markdown and
 code) once for a code repository:
 
 ```bash
-gbrain sources set-strategy api code
-gbrain sync --source api --full   # re-classify files unchanged since the last sync
+foresights sources set-strategy api code
+foresights sync --source api --full   # re-classify files unchanged since the last sync
 ```
 
-`gbrain sources list --json` shows `strategy` per source (`null` when unset).
-An explicit `gbrain sync --strategy` still wins for that run. A source with an
+`foresights sources list --json` shows `strategy` per source (`null` when unset).
+An explicit `foresights sync --strategy` still wins for that run. A source with an
 unfinished managed sync run refuses the change (`sync_run_unfinished`) until
-the run finishes (`gbrain sync --source <id> --no-pull` resumes it) or is
+the run finishes (`foresights sync --source <id> --no-pull` resumes it) or is
 retired ([managed sync orphans](repair.md#managed-sync-orphans)): that run's
 frozen manifest was classified under the old strategy. Connector sources
 (GitHub, Google) materialize Markdown and take no strategy.
@@ -567,17 +567,17 @@ A plain folder that is not inside any git repository registers as is: sync
 imports its files without Git, so there is no git history, and a file you
 remove from the folder keeps its page. A `--path` inside a git repository
 (or a subdirectory of one) needs at least one committed, tracked file under
-that path. `gbrain sources add` validates this at registration time and
+that path. `foresights sources add` validates this at registration time and
 refuses a repository that doesn't qualify — a `git init` with no commit yet,
 or a commit made before `git add` — with an actionable error instead of silently registering a source that will fail
-(or worse, "succeed" while importing nothing) on its first `gbrain sync`.
+(or worse, "succeed" while importing nothing) on its first `foresights sync`.
 Fix it with:
 
 ```bash
 git -C <path> init
 git -C <path> add -A   # gbrain-allow-shared-tree-git: first commit of a brand-new repo nobody else writes yet
 git -C <path> commit -m "initial import"
-gbrain sources add <id> --path <path>
+foresights sources add <id> --path <path>
 ```
 
 Two details that are easy to miss:
@@ -589,16 +589,16 @@ Two details that are easy to miss:
   not just a resolvable `HEAD`, so this footgun is caught immediately
   instead of surfacing later as a sync that imports nothing. For files that
   are deliberately untracked or `.gitignore`d but should still sync, use
-  `gbrain sync --include-gitignored` — it forces a full filesystem walk so
+  `foresights sync --include-gitignored` — it forces a full filesystem walk so
   periodic syncs see ignored/untracked syncable content the git-object walk
-  skips (`gbrain import <dir> --include-gitignored` is the one-shot import
+  skips (`foresights import <dir> --include-gitignored` is the one-shot import
   equivalent). Doctor's `multi_source_drift` advice names this case:
   a slug stuck at `default` whose file is untracked won't be recreated by a
   plain re-sync, so reach for the flag (or commit the file) before any
   delete step.
 - **`--force` registers the source anyway**, skipping the check. Use this if
   you're registering a path before an automated pipeline gets around to
-  `git init`-ing it. GBrain never auto-`git init`s a `--path` source for
+  `git init`-ing it. Foresights never auto-`git init`s a `--path` source for
   you — it's your directory, not a gbrain-managed clone (same consent
   boundary as sync-time self-heal, which also never mutates a `--path`
   source without an explicit ask).
@@ -606,7 +606,7 @@ Two details that are easy to miss:
 **If sync ever reports a problem with the sync anchor** (`last_commit`) —
 after a force-push, a history rewrite, or a from-scratch `git init` on a
 directory that was synced before — you do not need to reset anything by
-hand. `gbrain sync` detects an unreachable or non-ancestor anchor
+hand. `foresights sync` detects an unreachable or non-ancestor anchor
 automatically and recovers: either a full reimport (anchor object missing)
 or a direct tree-to-tree diff against the orphaned bookmark (anchor present
 but rewritten), advancing the anchor to the new HEAD when it completes.
@@ -614,21 +614,21 @@ but rewritten), advancing the anchor to the new HEAD when it completes.
 ## Sources in a Git subfolder
 
 A `--path` source can point at a subfolder of a Git repository, for example
-`gbrain sources add vault-notes --path ~/vault/notes` where `~/vault` holds
+`foresights sources add vault-notes --path ~/vault/notes` where `~/vault` holds
 the `.git` directory. Such a source has two possible roots for its slugs and
 stored file paths, called its **slug-root mode**:
 
 | Mode | `~/vault/notes/people/alice-example.md` becomes | When it is chosen |
 | --- | --- | --- |
-| `source-root` | slug `people/alice-example`, stored path `people/alice-example.md` | The default for a new subfolder source: the same slugs a plain `gbrain import ~/vault/notes` would give. |
-| `git-root` | slug `notes/people/alice-example`, stored path `notes/people/alice-example.md` | When you sync with `gbrain sync --repo ~/vault --src-subpath notes` (you named the Git root as the base), or when the source already has pages whose slugs carry the `notes/` prefix. |
+| `source-root` | slug `people/alice-example`, stored path `people/alice-example.md` | The default for a new subfolder source: the same slugs a plain `foresights import ~/vault/notes` would give. |
+| `git-root` | slug `notes/people/alice-example`, stored path `notes/people/alice-example.md` | When you sync with `foresights sync --repo ~/vault --src-subpath notes` (you named the Git root as the base), or when the source already has pages whose slugs carry the `notes/` prefix. |
 
 The mode is decided once, by the first real sync or the first coordinated page
 write (such as `put_page`) that records a new file path, and pinned in the
 source's configuration. A few write paths, such as saved brainstorm
 ideas, follow an existing pin but do not set one. Every later sync,
 write and reader obeys the pin, so an existing brain never has its slugs
-renamed. `gbrain sync --dry-run` works out the mode without pinning it. A
+renamed. `foresights sync --dry-run` works out the mode without pinning it. A
 source at the root of its repository, or outside Git, has only one root and no
 mode to choose.
 
@@ -636,7 +636,7 @@ mode to choose.
 keep its slugs relative to that folder."*
 
 **Write-through.** When a write creates a page in a subfolder source,
-gbrain writes `<source path>/<slug>.md` and records the stored path in the
+foresights writes `<source path>/<slug>.md` and records the stored path in the
 source's mode. In `source-root` mode the next sync of that file finds the
 same page instead of creating a twin. In `git-root` mode the recorded path
 adds the subfolder prefix that the unprefixed slug lacks, so the next sync
@@ -653,7 +653,7 @@ rewrites it on the next import. No command is needed.
 files, for example `~/vault/notes/people/alice-example.md` and
 `~/vault/notes/notes/people/alice-example.md`, sync refuses instead of
 guessing. Rename or move one of the two files, commit, then run
-`gbrain sync --source vault-notes --no-pull`. The other
+`foresights sync --source vault-notes --no-pull`. The other
 refusal reasons are listed in [write refusal reasons](write-refusals.md).
 
 ## Citation format for agents
@@ -665,17 +665,17 @@ When agents receive multi-source results they MUST cite pages in
 > and [gstack:plans/multi-repo] for where this came from.
 
 The citation key is `sources.id` (immutable). Renaming a source via
-`gbrain sources rename` changes the display name only; existing
+`foresights sources rename` changes the display name only; existing
 citations keep working.
 
 ## Writing to a specific source
 
 ```bash
 # Pass --source explicitly
-gbrain put topics/ai ... --source wiki
+foresights put topics/ai ... --source wiki
 
 # Or rely on the dotfile / env / CWD match
-cd ~/.gstack && gbrain put plans/multi-repo ...
+cd ~/.gstack && foresights put plans/multi-repo ...
 # → source auto-resolves to gstack
 ```
 
@@ -686,13 +686,13 @@ source silently when ambiguous — it errors with a clear fix.
 Unscoped writes are also guarded against landing in the wrong place. On a
 brain with at least one other source and more pages outside `default` than
 in it, an unscoped
-`gbrain sync` refuses (pass `--source <id>` to redirect it), `gbrain import`
+`foresights sync` refuses (pass `--source <id>` to redirect it), `foresights import`
 warns, and MCP stdio prints a once-per-process advisory when a write actually
-resolves to the default tier. `gbrain sync --dry-run` previews the run and
+resolves to the default tier. `foresights sync --dry-run` previews the run and
 prints the same routing guidance instead of refusing;
 `GBRAIN_ALLOW_DEFAULT_WRITE=1` is the escape hatch when `default` really is
 the intended target. **Say to your agent:** *"Show me what a sync would do
-without writing anything"* — your agent runs `gbrain sync --dry-run`.
+without writing anything"* — your agent runs `foresights sync --dry-run`.
 
 ## Durability: keep a brain repo in sync (auto-harden)
 
@@ -700,34 +700,34 @@ This hardening path applies to unmanaged worktrees. After activating managed
 writers, Git effects belong to the persistence outbox; generated legacy push
 helpers refuse to run rather than bypass that ownership boundary. See the
 [concurrent-write guide](concurrent-writes.md). On a managed root the owner
-commits and pushes page writes (`gbrain sources writer git-durability <source>
+commits and pushes page writes (`foresights sources writer git-durability <source>
 --enable`), files that are not pages are committed with
-`gbrain git commit-push -m "<msg>" -- <paths>` and ride the owner's next push, the checkout is never pulled or rebased, and the durability
+`foresights git commit-push -m "<msg>" -- <paths>` and ride the owner's next push, the checkout is never pulled or rebased, and the durability
 block below is regenerated in its managed form by that verb; see
 [files that are not pages](../architecture/topologies.md#files-that-are-not-pages).
 
 A long-lived agent that writes to a knowledge-wiki git repo needs three
 things to never lose work: pull before it edits, push every write, and not
-go stale while it sits idle. `gbrain sources harden` installs all of that,
+go stale while it sits idle. `foresights sources harden` installs all of that,
 idempotently. The moment you add a brain repo with a token, it runs
 automatically:
 
 ```bash
 # Clone + register a GitHub repo, then auto-harden it for durability.
 # Use a fine-grained PAT scoped to just this repo.
-gbrain sources add wiki --url https://github.com/you/brain-wiki.git --pat-file ~/.secrets/wiki-pat
+foresights sources add wiki --url https://github.com/you/brain-wiki.git --pat-file ~/.secrets/wiki-pat
 #   → clones, then installs: local auto-push hook, scripts/brain-commit-push.sh,
 #     always-on durability rules in AGENTS.md/RESOLVER.md, a 30-min pull cron,
 #     and a repo-scoped credential. Verifies push works before declaring done.
 
 # Run the same audit on an existing source any time (idempotent):
-gbrain sources harden wiki --pat-file ~/.secrets/wiki-pat
+foresights sources harden wiki --pat-file ~/.secrets/wiki-pat
 
 # Pull on demand (the cron calls the --path form, which never opens the DB):
-gbrain sources pull wiki
+foresights sources pull wiki
 
 # Remove the durability scaffolding (also runs automatically on `sources remove`):
-gbrain sources unharden wiki
+foresights sources unharden wiki
 ```
 
 What hardening guarantees:
@@ -737,22 +737,22 @@ What hardening guarantees:
   fast-forwards, or for a diverged branch merges the remote commits in memory
   into a merge commit (`gbrain: merge origin/<branch> into <branch>`) and
   fast-forwards to it. A real conflict changes nothing and is flagged for
-  attention ([conflicts](shared-checkout-git.md#conflicts)). `gbrain sources
+  attention ([conflicts](shared-checkout-git.md#conflicts)). `foresights sources
   pull`, which the unattended 30-minute cron runs, keeps its conservative
   rule: a checkout with any local edit is skipped (`skipped_dirty`), so it
   never moves files under a writer, and a checkout whose writer lock is busy
   is skipped until the next run. An explicit `scripts/brain-commit-push.sh --pull`
-  (or `gbrain git commit-push --pull`) advances a dirty checkout unless a
+  (or `foresights git commit-push --pull`) advances a dirty checkout unless a
   dirty file is one the pull must change; then it changes nothing and its
-  notice names the files. `gbrain sources set-pull-strategy <id> <rebase|merge>`
+  notice names the files. `foresights sources set-pull-strategy <id> <rebase|merge>`
   is still accepted and recorded, but both strategies now integrate by merge,
   because the shared tree is never rebased. A force-pushed upstream is never
-  merged: `gbrain sync` reports `upstream_rewritten` and, after the user
-  agrees, `gbrain sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha>`
+  merged: `foresights sync` reports `upstream_rewritten` and, after the user
+  agrees, `foresights sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha>`
   moves the checkout to the new upstream and keeps the old history under a
   backup ref ([upstream rewritten](troubleshooting.md#upstream-rewritten)).
 - **Push is never deferred.** `scripts/brain-commit-push.sh "<msg>" <path>`
-  delegates to `gbrain git commit-push`: it takes the checkout's writer lock,
+  delegates to `foresights git commit-push`: it takes the checkout's writer lock,
   commits only the named paths, merges a rejected push in memory, and refuses
   to report success without a push the remote accepted. Other agents'
   uncommitted files are never staged, stashed or touched. The post-commit
@@ -773,7 +773,7 @@ probe, `--dry-run` reports what would change, `--json` emits a machine
 report, `--all` hardens every source with a remote (same-account only).
 `--no-harden` on `sources add` opts out of auto-harden.
 
-After upgrading GBrain, run `gbrain sources harden <source-id>` on each machine
+After upgrading Foresights, run `foresights sources harden <source-id>` on each machine
 with an already-hardened source to refresh its local hook and
 `scripts/brain-commit-push.sh`. Upgrading the CLI alone does not update those
 installed scripts. Existing repo-local credentials are reused; no new token
@@ -788,26 +788,26 @@ reachable only over a filesystem path, set `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1`
 
 ## Upgrading an existing brain
 
-`gbrain upgrade` runs the needed schema migrations automatically. Your
+`foresights upgrade` runs the needed schema migrations automatically. Your
 existing pages all live under `source_id='default'`. Behavior is
 unchanged until you add a second source.
 
 To add one:
 
 ```bash
-gbrain sources add gstack --path ~/.gstack --federated
-cd ~/.gstack && gbrain sources attach gstack && gbrain sync
+foresights sources add gstack --path ~/.gstack --federated
+cd ~/.gstack && foresights sources attach gstack && foresights sync
 ```
 
 Two commands. The existing default source is untouched.
 
 ## Related features that build on sources
 
-- **Session transcript ingest** — `gbrain transcripts` (server-private:
+- **Session transcript ingest** — `foresights transcripts` (server-private:
   raw chat exports stay on the host machine).
-- **Per-source retention** — `gbrain sources archive` / `archived` /
+- **Per-source retention** — `foresights sources archive` / `archived` /
   `purge` (soft-delete with a TTL grace window).
-- **One-shot remote bootstrap** — `gbrain sources add <id> --url <git-url>`
+- **One-shot remote bootstrap** — `foresights sources add <id> --url <git-url>`
   (clone + register + auto-harden).
-- **Access control across brains** — the *brain* axis (`gbrain mounts`);
+- **Access control across brains** — the *brain* axis (`foresights mounts`);
   see `docs/architecture/brains-and-sources.md`.

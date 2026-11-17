@@ -5,7 +5,7 @@
  * state and resolution, and keeps the unresolved denominator. The grouped
  * scorecard (`takes_scorecard {group_by}`) reads the same predictions.
  *
- * Trusted local only: the CLI (`gbrain takes journal`, `gbrain takes
+ * Trusted local only: the CLI (`foresights takes journal`, `foresights takes
  * scorecard --group-by`) and the local op path read it; a remote caller that
  * asks for groups gets `scorecard_group_by_local_only`
  * (src/core/ops/takes.ts).

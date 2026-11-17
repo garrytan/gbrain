@@ -1,5 +1,5 @@
 /**
- * System One inside `gbrain think`.
+ * System One inside `foresights think`.
  *
  * - S2 think question (`temporal | knowledge_update | other`) replaces
  *   `classifyIntent` as the trajectory-gating decision; the regex stays the

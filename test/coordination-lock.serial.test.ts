@@ -122,7 +122,7 @@ test('GBRAIN_COORDINATION_HOME changed after the reservation: the recorded lock 
     const lock = status.sources[0]!.coordination_lock!;
     expect(lock).toMatchObject({ path: claimed.coordination_path, rule: 'reservation' });
     expect(lock.coordination_home_ignored).toMatchObject({ configured_directory: expect.stringContaining(join(homeB, 'locks')), recorded_path: claimed.coordination_path });
-    expect(String((lock.coordination_home_ignored as { move_step: string }).move_step)).toContain('No gbrain command relocates a recorded lock');
+    expect(String((lock.coordination_home_ignored as { move_step: string }).move_step)).toContain('No foresights command relocates a recorded lock');
     const doctor = await checkCoordinationLockLocation(engine);
     expect(doctor.status).toBe('warn');
     expect(doctor.message).toContain(`records its lock at ${claimed.coordination_path}`);

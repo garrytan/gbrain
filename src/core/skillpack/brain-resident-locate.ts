@@ -48,7 +48,7 @@ export interface ResidentPackEntry {
   schema_pack_match: boolean | null;
   skills: ResidentPackSkill[];
   /**
-   * Git-source spec a thin client can `gbrain skillpack scaffold <spec>` on its
+   * Git-source spec a thin client can `foresights skillpack scaffold <spec>` on its
    * OWN machine. Null when the source has no git remote (local-only source —
    * the thin client cannot install it remotely; binary install is PR2 work).
    */

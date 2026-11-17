@@ -7,8 +7,8 @@
  * reports `restart_required` (a zombie publication), or a withdrawal-mirror effect recovery its own last attempt refused
  * `unexpected_file_bytes` whose file still matches neither recorded version (an edit made while the mirror was publishing;
  * recovery only finishes forward and never overwrites it), or a page write's publication recovery refused the same way (#6650;
- * `gbrain repair stuck-recovery` is its exit, for a page write and a shared-skill bundle alike), whether it blocks a queued head or is the head itself;
- * the effect recovery's exit is the same preview (`--keep withdrawn`); or an effect or request recovery record a newer gbrain wrote
+ * `foresights repair stuck-recovery` is its exit, for a page write and a shared-skill bundle alike), whether it blocks a queued head or is the head itself;
+ * the effect recovery's exit is the same preview (`--keep withdrawn`); or an effect or request recovery record a newer foresights wrote
  * (`recovery_version_unsupported`: an upgrade is its exit). Every other blocker is live and transient (a foreground publication,
  * a refresh or recovery making progress, a lapsed lease the next consumer reclaims), so the drain keeps its progress-aware wait.
  */
@@ -74,7 +74,7 @@ const requestRecoveryStuckFile = (request: RequestRecoveryRef): string | null =>
   const files = request.version === '1' ? [{ path: request.path, before: request.before, after: request.after }] : request.version === '2' ? request.files ?? [] : [];
   return files.find(file => stuckOnFile(request.blocked_reason, file.path, file.before, file.after))?.path ?? null;
 };
-/** A record a newer gbrain wrote (recovery-version.ts): no recovery here finishes it, so only an upgrade clears it. */
+/** A record a newer foresights wrote (recovery-version.ts): no recovery here finishes it, so only an upgrade clears it. */
 const newerRecord = (table: RecoveryTable, version: unknown) => !recoveryVersionKnown(table, { version: typeof version === 'string' && /^\d+$/.test(version) ? Number(version) : version });
 const newerBlocker = (predicate: 'effect_recovery' | 'request_recovery', ids: string[]): HeadBlocker =>
   ({ predicate, ids, state: 'recovery_version_unsupported', owner: null, intervention: true });
@@ -203,11 +203,11 @@ export function headBlockerAction(blocker: HeadBlocker, sourceId: string, resume
   if (blocker.state === 'recovery_version_unsupported') {
     const kind = blocker.predicate === 'effect_recovery' ? 'withdrawal-mirror effect' : 'write request';
     return { ...recoveryUpgradeFix(sourceId),
-      why: `A ${kind} recovery record on source ${sourceId}'s worktree (${blocker.ids.join(', ')}) was written by a newer gbrain, so this gbrain cannot finish it and every write there waits; `
-        + `waiting does not clear it. Upgrading gbrain on the owner host lets its writer finish the recovery; then rerun: ${resumeCommand}` };
+      why: `A ${kind} recovery record on source ${sourceId}'s worktree (${blocker.ids.join(', ')}) was written by a newer foresights, so this foresights cannot finish it and every write there waits; `
+        + `waiting does not clear it. Upgrading foresights on the owner host lets its writer finish the recovery; then rerun: ${resumeCommand}` };
   }
   if (blocker.predicate === 'zombie_publication') {
-    const who = `the gbrain ${blocker.owner?.kind ?? 'owner'} process${blocker.owner?.pid ? ` (pid ${blocker.owner.pid})` : ''}`;
+    const who = `the foresights ${blocker.owner?.kind ?? 'owner'} process${blocker.owner?.pid ? ` (pid ${blocker.owner.pid})` : ''}`;
     return { argv: status, consent: [], actor: 'host_admin', requires_exclusive: false,
       why: `Request ${blocker.ids[0]} ahead of the head is held by ${who}, which reports restart_required; its root stays held until that process exits. Status names it, read-only.`,
       user_message: `Restart ${who} on the brain host, then run: ${resumeCommand}`, verify: { argv: status } };
@@ -219,9 +219,9 @@ export function headBlockerAction(blocker: HeadBlocker, sourceId: string, resume
       why: `A write to ${path} (page ${slug}) was interrupted while publishing and the file was edited after that: it matches neither the bytes from before the write `
         + `nor the bytes the write published, so recovery will not overwrite it, every write to source ${sourceId} waits, and waiting does not clear it. `
         + 'The preview changes no page or canonical file (it writes only private diffs) and lists the file, its diff and the choices; which version to keep is the user\'s call.',
-      user_message: `${path} was edited while gbrain was writing page ${slug}, so gbrain will not touch the file and writes to source ${sourceId} are paused. `
+      user_message: `${path} was edited while foresights was writing page ${slug}, so foresights will not touch the file and writes to source ${sourceId} are paused. `
         + `Either undo the edit (put the file back as it was) and run: ${resumeCommand}. Or choose which version to keep with ${preview.join(' ')}, which shows the diff: `
-        + 'the bytes from before gbrain\'s write, or the edited bytes. Do not delete the file.',
+        + 'the bytes from before foresights\'s write, or the edited bytes. Do not delete the file.',
       verify: { argv: status } };
   }
   if (blocker.predicate === 'effect_recovery' && blocker.intervention && blocker.file) {
@@ -229,10 +229,10 @@ export function headBlockerAction(blocker: HeadBlocker, sourceId: string, resume
     const preview = ['gbrain', 'repair', 'stuck-recovery', '--source', sourceId, ...(requestId ? ['--request-id', requestId] : [])];
     return { argv: preview, consent: [], actor: 'agent', requires_exclusive: false,
       why: `Mirroring a fact withdrawal into ${path} (page ${slug}) stopped between writing the file and recording it, and the file was edited after that: `
-        + 'it matches neither the version from before the withdrawal nor the withdrawn version gbrain wrote. Recovery only finishes forward and never overwrites '
+        + 'it matches neither the version from before the withdrawal nor the withdrawn version foresights wrote. Recovery only finishes forward and never overwrites '
         + `bytes it cannot account for, so every write to source ${sourceId} waits and waiting does not clear it. The preview changes nothing (it writes only private diffs) `
         + 'and lists the file with its only choice, --keep withdrawn; applying it is the user\'s call.',
-      user_message: `${path} was edited while gbrain was removing a withdrawn fact from it, so gbrain will not touch the file and writes to source ${sourceId} are paused. `
+      user_message: `${path} was edited while foresights was removing a withdrawn fact from it, so foresights will not touch the file and writes to source ${sourceId} are paused. `
         + `Either restore the committed version (git -C ${dirname(path)} checkout -- ${basename(path)}) and run: ${resumeCommand}. Or run ${preview.join(' ')}, which shows the diff `
         + 'and offers --keep withdrawn: it backs the edited file up, then writes the version without the withdrawn fact. Do not delete the file. Either way, make the edit '
         + 'again afterwards, leaving the withdrawn fact out.',
@@ -306,8 +306,8 @@ export async function readQueuedHeadBlockers(engine: BrainEngine, rows: Array<{ 
       principal = await readLocalWriter(engine, 'cli').then(local => ({ kind: 'local_cli', id: local.id }), () => null);
     }
     const cancel = read.cancel && principal && read.cancel.principal_kind === principal.kind && read.cancel.principal_id === principal.id
-      ? `gbrain cancel-write-request ${read.cancel.request_id}` : null;
-    const action = headBlockerAction(read.blocker, source ?? '<source>', `gbrain sync --source ${source ?? '<source>'}`);
+      ? `foresights cancel-write-request ${read.cancel.request_id}` : null;
+    const action = headBlockerAction(read.blocker, source ?? '<source>', `foresights sync --source ${source ?? '<source>'}`);
     out.set(id, { fields: { claimable_here: false, blocked_by: read.blocker, ...(cancel ? { cancel_command: cancel } : {}) },
       advice: `Blocked by ${headBlockerText(read.blocker)}: ${action.user_message ?? action.why}${read.blocker.predicate === 'refresh_fence' || (read.blocker.predicate === 'request_recovery' && read.blocker.intervention) ? ` Run: ${action.argv!.join(' ')}.` : ''}`
         + `${cancel ? ` Cancelling the blocking request (it has not started publishing) also frees the head; a sync rerun admits it again: ${cancel}` : ''}` });

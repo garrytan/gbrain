@@ -3,7 +3,7 @@
  * read a page's body columns straight from SQL, against a segmented page
  * (compiled_truth and timeline NULL, body in segments).
  *
- * 1. Protects: `gbrain repair timeline` (preview and apply) never crashes on a
+ * 1. Protects: `foresights repair timeline` (preview and apply) never crashes on a
  *    segmented page carrying database-only timeline rows: it repairs the
  *    inline pages and reports the segmented page as a residual (count + slug),
  *    and doctor timeline_history counts it separately without recommending a
@@ -113,7 +113,7 @@ describe('repair scans over segmented pages', () => {
       await dbOnlyRow(engine, segmented);
       const check = await timelineHistoryCheck(engine, sourceId);
       expect(check.status).toBe('ok');
-      expect(check.message).not.toContain('gbrain repair timeline --apply');
+      expect(check.message).not.toContain('foresights repair timeline --apply');
       expect(check.message).toContain(`${sourceId}:notes/segmented-doctor`);
       expect(check.message).toContain('no command does yet');
       expect(check.details).toMatchObject({ materializable_rows: 0, segmented_pages: 1, segmented_sample: [`${sourceId}:notes/segmented-doctor`] });

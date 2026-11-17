@@ -2,7 +2,7 @@
  * System One S9 (`conflict`) labelled fact-pair generator.
  *
  * Writes docs/eval/system-one/datasets/s9-conflict/pairs.jsonl in the
- * `facts-fixtures` format (`gbrain decide dataset --slot conflict --from
+ * `facts-fixtures` format (`foresights decide dataset --slot conflict --from
  * facts-fixtures <path>`), one pair per line:
  *   {id, family, entity_slug, fact, candidate, kind, candidate_kind, label,
  *    slice, case, attribute, label_source, source_ref?}

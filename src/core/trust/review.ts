@@ -18,7 +18,7 @@
  * - the owner's active allow rules (`a<id>`) and the kill-switch state.
  *
  * Items are grouped by day and page (many agent edits to one page are one
- * item, ENG-22). `gbrain quarantine list` and `gbrain decide proposals` keep
+ * item, ENG-22). `foresights quarantine list` and `foresights decide proposals` keep
  * listing their own items. No content leaves this host: the CLI and the
  * resident owner's IPC administration are the only callers.
  */
@@ -300,7 +300,7 @@ export const renderArgv = (argv: readonly string[]): string => argv.map(shellWor
 export function renderTrustReview(review: TrustReview): string {
   const lines: string[] = [];
   if (review.kill_switch.state === 'disabled') {
-    lines.push(`Memory trust protections are OFF (gbrain trust disable --all, ${review.kill_switch.at}). Turn them back on: ${renderArgv(review.kill_switch.undo!)}`, '');
+    lines.push(`Memory trust protections are OFF (foresights trust disable --all, ${review.kill_switch.at}). Turn them back on: ${renderArgv(review.kill_switch.undo!)}`, '');
   }
   if (review.items.length === 0) lines.push('Nothing is waiting for your review.');
   const byRef = new Map(review.items.map(item => [item.ref, item]));
@@ -322,7 +322,7 @@ export function renderTrustReview(review: TrustReview): string {
   const c = review.counts;
   if (review.items.length) {
     lines.push('', `${review.items.length} item(s): ${c.proposal} proposal(s), ${c.lowered_page} lowered page(s), ${c.preference} unconfirmed preference(s), ${c.hold} held write(s)${c.contradiction ? `, ${c.contradiction} contradiction(s)` : ''}, ${c.flagged_page} flagged page(s).`,
-      'Confirming or releasing raises trust: run the command yourself in a terminal and type the token it asks for. Explain any item: gbrain trust explain <ref>.');
+      'Confirming or releasing raises trust: run the command yourself in a terminal and type the token it asks for. Explain any item: foresights trust explain <ref>.');
   }
   return lines.join('\n');
 }
@@ -353,7 +353,7 @@ export interface TrustExplanation {
 /**
  * A legacy `unknown` row in a claimed source whose lift has not finished is
  * labeled and explained as owner tier: the lift makes it so (or lower, by its
- * own signals; `gbrain trust claim-sources --resume` finishes it).
+ * own signals; `foresights trust claim-sources --resume` finishes it).
  */
 async function claimView(engine: BrainEngine, sourceId: string, tier: TrustTier, writeOrigin: unknown, gate: TrustExplanation['gate']):
   Promise<{ tier: TrustTier; label: string; claimed_source?: 'lift_pending'; user_said?: true }> {
@@ -414,7 +414,7 @@ export async function explainTrust(engine: BrainEngine, refOrQuery: string, opts
         ? 'SELECT id, source_id, trust_tier, write_origin, fact AS text FROM facts WHERE id = $1'
         : 'SELECT t.id, p.source_id, t.trust_tier, t.write_origin, t.claim AS text FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1';
       const [row] = await engine.executeRaw<{ source_id: string; trust_tier: string; write_origin: unknown; text: string }>(sql, [ref.id]);
-      if (!row) throw opError('not_found', `No ${ref.kind} ${formatTrustRef(ref)}.`, 'Check the ref; gbrain trust review lists items.');
+      if (!row) throw opError('not_found', `No ${ref.kind} ${formatTrustRef(ref)}.`, 'Check the ref; foresights trust review lists items.');
       const tier = storedTrustTier(row.trust_tier);
       const table = ref.kind === 'fact' ? 'facts' : 'takes';
       const gate = await gateReceipts(engine, table, ref.id);
@@ -440,14 +440,14 @@ export async function explainTrust(engine: BrainEngine, refOrQuery: string, opts
     }
     case 'hold': {
       const hold = await currentHoldStore().get(engine, ref.id);
-      if (!hold) throw opError('not_found', `No held write h${ref.id}.`, 'gbrain trust review lists held writes.');
+      if (!hold) throw opError('not_found', `No held write h${ref.id}.`, 'foresights trust review lists held writes.');
       return [{ ref: `h${hold.id}`, kind: 'hold', source_id: hold.source_id, tier: hold.tier, label: trustLabel(hold.tier), write_origin: null,
         gate: { verdict: 'quarantine', receipts: [] }, pending_proposals: [], text: snippet(hold.payload.fact ?? hold.payload.claim, 200),
         activation: hold.status === 'held' ? 'Held by the write gate: not in memory at all until you release it.' : `Decided: ${hold.status}.` }];
     }
     case 'proposal': {
       const p = await getTrustProposal(engine, ref.id);
-      if (!p) throw opError('not_found', `No trust proposal tp${ref.id}.`, 'gbrain trust review lists pending proposals.');
+      if (!p) throw opError('not_found', `No trust proposal tp${ref.id}.`, 'foresights trust review lists pending proposals.');
       const item = proposalItem(p, await pageOf(engine, p));
       return [{ ref: item.ref, kind: 'proposal', source_id: p.source_id, tier: item.tier, label: item.label, write_origin: { proposer: p.proposer, status: p.status, before: p.before_state, after: p.after_state },
         gate: { verdict: 'none', receipts: [] }, pending_proposals: p.status === 'pending' ? [{ ref: item.ref, action: p.action, commands: Object.entries(item.commands).filter(([k]) => k !== 'explain').map(([, v]) => v!) }] : [],

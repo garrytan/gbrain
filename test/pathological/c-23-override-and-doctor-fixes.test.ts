@@ -1,7 +1,7 @@
 /**
  * C-23 (#6948 sweep): owner overrides and doctor fixes that did not hold.
  *
- * #6919: `gbrain quarantine clear <slug> --force` records a
+ * #6919: `foresights quarantine clear <slug> --force` records a
  * `quarantine_override` and promised the page "stays cleared until its title,
  * type or body changes". On a page whose own frontmatter lowers a sync of its
  * file below the owner tier (`trust_tier`, `ingested_via`, ...), the next

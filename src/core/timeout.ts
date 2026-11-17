@@ -21,7 +21,7 @@
  *
  * Usage:
  *   try {
- *     const result = await withTimeout(longRunningThing(), 30_000, 'gbrain search');
+ *     const result = await withTimeout(longRunningThing(), 30_000, 'foresights search');
  *   } catch (e) {
  *     if (e instanceof OperationTimeoutError) {
  *       console.error(`${e.label} timed out after ${e.ms}ms. Override with --timeout=Ns.`);

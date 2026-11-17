@@ -1,5 +1,5 @@
 /**
- * #8740: gbrain access who-can-read accounts for folder rules.
+ * #8740: foresights access who-can-read accounts for folder rules.
  *
  * 1. Protects: who-can-read names the members the remote read path admits for a page a folder rule covers, instead
  *    of reporting it readable by every caller entitled to the source.

@@ -1,6 +1,6 @@
 /**
  * What unattended upkeep looks like right now (GBRA-438): one view behind
- * `gbrain maintain --status` and the `unattended_maintenance` doctor check,
+ * `foresights maintain --status` and the `unattended_maintenance` doctor check,
  * so the two can never disagree.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -70,14 +70,14 @@ export function upkeepFix(paid: boolean): Action {
 }
 
 /** Overdue means no serve ran upkeep: name both ways back. */
-const SCHEDULE_NOTE = ' It runs while an agent\'s gbrain serve is open and idle; run it now with gbrain maintain --unattended, or add the opt-in schedule with gbrain maintain --schedule.';
+const SCHEDULE_NOTE = ' It runs while an agent\'s foresights serve is open and idle; run it now with foresights maintain --unattended, or add the opt-in schedule with foresights maintain --schedule.';
 
 /** The second option: install the opt-in schedule, a persistent_install the user approves. */
 export function scheduleFix(): Action {
   return {
     argv: ['gbrain', 'maintain', '--schedule'], consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
     preview_argv: ['gbrain', 'maintain', '--schedule', '--dry-run'],
-    why: 'Installs an operating-system schedule (launchd, systemd user timer or crontab) that runs free upkeep every 6 hours when no gbrain serve is running; gbrain maintain --unschedule removes it.',
+    why: 'Installs an operating-system schedule (launchd, systemd user timer or crontab) that runs free upkeep every 6 hours when no foresights serve is running; foresights maintain --unschedule removes it.',
     verify: { argv: ['gbrain', 'doctor', '--only', 'unattended_maintenance', '--json'] },
   };
 }
@@ -95,10 +95,10 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
     paid_phases_opt_in: [...PAID_PHASES], embed_spend_today_usd: keyed ? spent : null, embed_daily_cap_usd: keyed ? cap : null,
   };
   const purgeNote = pending
-    ? ` Nothing deletes on its own: ${pending} deleted page(s) wait for you (preview: gbrain maintain --purge).`
+    ? ` Nothing deletes on its own: ${pending} deleted page(s) wait for you (preview: foresights maintain --purge).`
     : ' Nothing deletes on its own.';
   const spendNote = keyed ? ` Embedding catch-up: $${spent.toFixed(2)} of $${cap.toFixed(2)} today.` : '';
-  if (!enabled) return { ...base, state: 'off', message: 'Free upkeep is off (maintenance.auto is false); turn it back on with gbrain config set maintenance.auto true.' };
+  if (!enabled) return { ...base, state: 'off', message: 'Free upkeep is off (maintenance.auto is false); turn it back on with foresights config set maintenance.auto true.' };
   if (owner) return { ...base, state: 'autopilot', message: `An autopilot keeps this brain maintained (last brain-wide pass ${ago(nowMs - Date.parse(owner))} ago), so free upkeep stays out of its way.${purgeNote}` };
   const fix = upkeepFix(keyed && cap > 0);
   const failing = record?.consecutive_failures.find((f) => f.count >= UPKEEP_BACKOFF_FAILURES) ?? null;
@@ -109,7 +109,7 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
   if (!record) {
     const age = await brainAgeMs(engine, nowMs);
     if (age === null || age < UPKEEP_OVERDUE_MS) {
-      return { ...base, state: 'never', message: `Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge).${purgeNote}` };
+      return { ...base, state: 'never', message: `Free upkeep has not run on this brain yet; foresights maintain --unattended runs it (no model calls, no page purge).${purgeNote}` };
     }
     return { ...base, fix, alternative_fix: scheduleFix(), state: 'overdue', message: `No free upkeep run is recorded on this brain, which is ${ago(age)} old.${SCHEDULE_NOTE}${purgeNote}` };
   }
@@ -120,7 +120,7 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
   if (base.parked.length) {
     const named = base.parked.map((p) => `${p.key} after ${p.slices} slices`).join(', ');
     return { ...base, fix, alternative_fix: scheduleFix(), state: 'parked',
-      message: `Upkeep inside serve parked ${named}; serve tries it again next round, and gbrain maintain --unattended finishes it now.${purgeNote}${spendNote}` };
+      message: `Upkeep inside serve parked ${named}; serve tries it again next round, and foresights maintain --unattended finishes it now.${purgeNote}${spendNote}` };
   }
   const ran = record.steps.filter((s) => s.status === 'ok' || s.status === 'warn').length;
   const due = Date.parse(record.next_due_at) - nowMs;

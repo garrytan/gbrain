@@ -53,7 +53,7 @@ const FILES: Record<string, string> = {
   'src/commands/synthetic-example.ts': [
     'export async function runSyntheticExample(args: string[], connect: () => Promise<never>): Promise<void> {',
     "  if (args.includes('--help')) {",
-    "    console.log('Usage: gbrain synthetic-example [--frobnicate]');",
+    "    console.log('Usage: foresights synthetic-example [--frobnicate]');",
     '    return;',
     '  }',
     "  if (args.includes('--frobnicate')) await connect();",
@@ -99,7 +99,7 @@ describe('synthetic command registered through the table', () => {
     } finally {
       console.log = log;
     }
-    expect(lines).toEqual(['Usage: gbrain synthetic-example [--frobnicate]']);
+    expect(lines).toEqual(['Usage: foresights synthetic-example [--frobnicate]']);
     expect(connects).toBe(0);
     await expect(mod.run(['--frobnicate'], ctx)).rejects.toThrow('engine must not be touched');
     expect(connects).toBe(1);

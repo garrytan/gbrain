@@ -1,6 +1,6 @@
 /**
  * v0.32.3 — metric glossary module tests.
- * Pins the public surface that drives gbrain search stats / eval compare
+ * Pins the public surface that drives foresights search stats / eval compare
  * output AND the auto-generated METRIC_GLOSSARY.md doc.
  */
 import { describe, expect, test } from 'bun:test';

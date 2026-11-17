@@ -5,10 +5,10 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "gbrain <version> -- personal knowledge brain",
+        "foresights <version> -- personal knowledge brain",
         "",
         "USAGE",
-        "  gbrain <command> [options]",
+        "  foresights <command> [options]",
         "",
         "SETUP",
         "  mcp grant <name> --help           Grant hosted access; private credential handoff",
@@ -106,7 +106,7 @@
         "  extract links --source db --repair-attendance --source-id ID",
         "        [--limit 250] [--after-slug SLUG] [--json]",
         "        Apply: --apply-preview FILE --confirm DIGEST --yes --backup-verified --checkpoint FILE",
-        "  extract --explain <kind> [--json] Full details: gbrain extract --help",
+        "  extract --explain <kind> [--json] Full details: foresights extract --help",
         "  publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)",
         "  check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain",
         "  lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter",
@@ -115,7 +115,7 @@
         "  beliefs <enable|status|...>        Belief ledger coverage: enable, disable, status, reconcile, backfill",
         "  salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience",
         "  anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)",
-        "  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate",
+        "  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with foresights rate",
         "  transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)",
         "  dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).",
         "                                     See also: autopilot --install (continuous daemon).",
@@ -146,7 +146,7 @@
         "  lsd <question> [--json]            Lateral Synaptic Drift: inverted-judge brainstorm",
         "        [--save|--no-save] [--limit N]    rewarding far-from-obvious + axiomatic inversions",
         "  think \"<question>\" [--anchor <s>]  Multi-hop cited synthesis across pages + takes + graph",
-        "        [--save] [--source <id>]          Full flags: gbrain think --help",
+        "        [--save] [--source <id>]          Full flags: foresights think --help",
         "",
         "SOURCES (multi-repo / multi-brain)",
         "  sources list                       Show registered sources",
@@ -219,7 +219,7 @@
         "    --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)",
         "    --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)",
         "    --public-url URL                 Public issuer URL (required behind proxy/tunnel)",
-        "  connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)",
+        "  connect <mcp-url> --token <t>      Wire Claude Code to a remote foresights (bearer token)",
         "        [--install] [--json]         Print the paste-ready command, or --install to run it",
         "  auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients",
         "  auth --help                        Full subcommand list (register-client,",
@@ -230,7 +230,7 @@
         "  version                            Version info",
         "  --tools-json                       Tool discovery (JSON)",
         "",
-        "Run gbrain <command> --help for command-specific help.",
+        "Run foresights <command> --help for command-specific help.",
         ""
       ]
     },
@@ -239,10 +239,10 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "gbrain <version> -- personal knowledge brain",
+        "foresights <version> -- personal knowledge brain",
         "",
         "USAGE",
-        "  gbrain <command> [options]",
+        "  foresights <command> [options]",
         "",
         "SETUP",
         "  mcp grant <name> --help           Grant hosted access; private credential handoff",
@@ -340,7 +340,7 @@
         "  extract links --source db --repair-attendance --source-id ID",
         "        [--limit 250] [--after-slug SLUG] [--json]",
         "        Apply: --apply-preview FILE --confirm DIGEST --yes --backup-verified --checkpoint FILE",
-        "  extract --explain <kind> [--json] Full details: gbrain extract --help",
+        "  extract --explain <kind> [--json] Full details: foresights extract --help",
         "  publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)",
         "  check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain",
         "  lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter",
@@ -349,7 +349,7 @@
         "  beliefs <enable|status|...>        Belief ledger coverage: enable, disable, status, reconcile, backfill",
         "  salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience",
         "  anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)",
-        "  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate",
+        "  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with foresights rate",
         "  transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)",
         "  dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).",
         "                                     See also: autopilot --install (continuous daemon).",
@@ -380,7 +380,7 @@
         "  lsd <question> [--json]            Lateral Synaptic Drift: inverted-judge brainstorm",
         "        [--save|--no-save] [--limit N]    rewarding far-from-obvious + axiomatic inversions",
         "  think \"<question>\" [--anchor <s>]  Multi-hop cited synthesis across pages + takes + graph",
-        "        [--save] [--source <id>]          Full flags: gbrain think --help",
+        "        [--save] [--source <id>]          Full flags: foresights think --help",
         "",
         "SOURCES (multi-repo / multi-brain)",
         "  sources list                       Show registered sources",
@@ -453,7 +453,7 @@
         "    --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)",
         "    --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)",
         "    --public-url URL                 Public issuer URL (required behind proxy/tunnel)",
-        "  connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)",
+        "  connect <mcp-url> --token <t>      Wire Claude Code to a remote foresights (bearer token)",
         "        [--install] [--json]         Print the paste-ready command, or --install to run it",
         "  auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients",
         "  auth --help                        Full subcommand list (register-client,",
@@ -464,7 +464,7 @@
         "  version                            Version info",
         "  --tools-json                       Tool discovery (JSON)",
         "",
-        "Run gbrain <command> --help for command-specific help.",
+        "Run foresights <command> --help for command-specific help.",
         ""
       ]
     },
@@ -473,10 +473,10 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "gbrain <version> -- personal knowledge brain",
+        "foresights <version> -- personal knowledge brain",
         "",
         "USAGE",
-        "  gbrain <command> [options]",
+        "  foresights <command> [options]",
         "",
         "SETUP",
         "  mcp grant <name> --help           Grant hosted access; private credential handoff",
@@ -574,7 +574,7 @@
         "  extract links --source db --repair-attendance --source-id ID",
         "        [--limit 250] [--after-slug SLUG] [--json]",
         "        Apply: --apply-preview FILE --confirm DIGEST --yes --backup-verified --checkpoint FILE",
-        "  extract --explain <kind> [--json] Full details: gbrain extract --help",
+        "  extract --explain <kind> [--json] Full details: foresights extract --help",
         "  publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)",
         "  check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain",
         "  lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter",
@@ -583,7 +583,7 @@
         "  beliefs <enable|status|...>        Belief ledger coverage: enable, disable, status, reconcile, backfill",
         "  salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience",
         "  anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)",
-        "  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate",
+        "  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with foresights rate",
         "  transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)",
         "  dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).",
         "                                     See also: autopilot --install (continuous daemon).",
@@ -614,7 +614,7 @@
         "  lsd <question> [--json]            Lateral Synaptic Drift: inverted-judge brainstorm",
         "        [--save|--no-save] [--limit N]    rewarding far-from-obvious + axiomatic inversions",
         "  think \"<question>\" [--anchor <s>]  Multi-hop cited synthesis across pages + takes + graph",
-        "        [--save] [--source <id>]          Full flags: gbrain think --help",
+        "        [--save] [--source <id>]          Full flags: foresights think --help",
         "",
         "SOURCES (multi-repo / multi-brain)",
         "  sources list                       Show registered sources",
@@ -687,7 +687,7 @@
         "    --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)",
         "    --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)",
         "    --public-url URL                 Public issuer URL (required behind proxy/tunnel)",
-        "  connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)",
+        "  connect <mcp-url> --token <t>      Wire Claude Code to a remote foresights (bearer token)",
         "        [--install] [--json]         Print the paste-ready command, or --install to run it",
         "  auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients",
         "  auth --help                        Full subcommand list (register-client,",
@@ -698,7 +698,7 @@
         "  version                            Version info",
         "  --tools-json                       Tool discovery (JSON)",
         "",
-        "Run gbrain <command> --help for command-specific help.",
+        "Run foresights <command> --help for command-specific help.",
         ""
       ]
     },
@@ -707,7 +707,7 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "gbrain <version>"
+        "foresights <version>"
       ]
     },
     {
@@ -715,7 +715,7 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "gbrain <version>"
+        "foresights <version>"
       ]
     },
     {
@@ -723,8 +723,8 @@
       "exitCode": 2,
       "stderr": [
         "Error [unknown_command]: Unknown command: definitely-not-a-command",
-        "Fix: Run `gbrain --help` for available commands.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
+        "Fix: Run `foresights --help` for available commands.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
       ],
       "stdout": []
     },
@@ -733,8 +733,8 @@
       "exitCode": 2,
       "stderr": [
         "Error [unknown_command]: Unknown command: definitely-not-a-command",
-        "Fix: Run `gbrain --help` for available commands.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
+        "Fix: Run `foresights --help` for available commands.",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
       ],
       "stdout": []
     },
@@ -743,9 +743,9 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "Usage: gbrain query <query> [options]",
+        "Usage: foresights query <query> [options]",
         "",
-        "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.",
+        "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `foresights transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.",
         "",
         "Options:",
         "  <query>                    Question or topic (required unless image).",
@@ -783,8 +783,8 @@
         "  --explain-target           Expected page (slug or source:slug): why it is missing.",
         "",
         "Examples:",
-        "  gbrain query \"what changed at acme-example\" --types meeting --since 2026-01-01 --until 2026-03-31",
-        "  gbrain query \"open deals\" --where stage=seed,series-a --json --timings"
+        "  foresights query \"what changed at acme-example\" --types meeting --since 2026-01-01 --until 2026-03-31",
+        "  foresights query \"open deals\" --where stage=seed,series-a --json --timings"
       ]
     },
     {
@@ -792,7 +792,7 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "Usage: gbrain link-add <from> <to> [options]",
+        "Usage: foresights link-add <from> <to> [options]",
         "",
         "Create a typed link (edge) from one page to another in the same source. Use when recording a relationship (works_at, invested_in, mentions); remote page writes already link [[wikilinks]] to existing pages as mentions (receipt auto_links), so add only typed links or ones the text lacks. Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.",
         "",
@@ -812,18 +812,18 @@
       "exitCode": 0,
       "stderr": [],
       "stdout": [
-        "Usage: gbrain lint",
+        "Usage: foresights lint",
         "",
-        "gbrain lint - run gbrain --help for the full command list."
+        "foresights lint - run foresights --help for the full command list."
       ]
     },
     {
       "argv": "lint --definitely-not-a-flag",
       "exitCode": 2,
       "stderr": [
-        "Error [unknown_flag]: unknown flag --definitely-not-a-flag for 'gbrain lint'",
+        "Error [unknown_flag]: unknown flag --definitely-not-a-flag for 'foresights lint'",
         "Fix: gbrain lint --help",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_flag"
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unknown_flag"
       ],
       "stdout": []
     },
@@ -831,9 +831,9 @@
       "argv": "get",
       "exitCode": 2,
       "stderr": [
-        "Error [invalid_params]: Missing required parameter 'slug' for 'gbrain get'.",
-        "Fix: Usage: gbrain get <slug> (see `gbrain get --help`).",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
+        "Error [invalid_params]: Missing required parameter 'slug' for 'foresights get'.",
+        "Fix: Usage: foresights get <slug> (see `foresights get --help`).",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
       ],
       "stdout": []
     }

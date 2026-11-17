@@ -79,7 +79,7 @@ describe('importCodeFile — source_id stamped on extracted call-graph edges', (
 
   test('UNSCOPED import stamps edges with the schema-default source, not NULL', async () => {
     // The other door of the same bug: an import WITHOUT opts.sourceId (legacy
-    // unscoped callers — `gbrain reindex --code` with no --source) lands its
+    // unscoped callers — `foresights reindex --code` with no --source) lands its
     // pages under the schema default (pages.source_id DEFAULT 'default').
     // If its edges were stamped NULL, the matching scoped query
     // getCallersOf(sym, { sourceId: 'default' }) — a worktree pinned to

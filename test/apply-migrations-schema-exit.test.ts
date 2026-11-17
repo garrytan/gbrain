@@ -2,7 +2,7 @@
  * #6089 exit matrix off Postgres. PGLite keeps skipping the pre-flight (#1100)
  * and checks the schema version in-process after the orchestrators released
  * the datastore; an unreachable Postgres stays non-fatal (apply-migrations,
- * in-process `gbrain post-upgrade`) and says so with the
+ * in-process `foresights post-upgrade`) and says so with the
  * GBRAIN_DB_ACCESS marker. The Postgres cases live in
  * test/e2e/apply-migrations-schema-exit.test.ts.
  */
@@ -120,7 +120,7 @@ describe('apply-migrations with Postgres unreachable stays non-fatal and says so
     expect(r.log).toBe('');
   }, 120_000);
 
-  test('gbrain post-upgrade (in-process apply-migrations) is not failed by it', async () => {
+  test('foresights post-upgrade (in-process apply-migrations) is not failed by it', async () => {
     const home = postgresHome();
     const r = await run(home, { migrations: ['noop'], args: ['--json', '--no-autopilot-install'], entry: 'post-upgrade' });
     expect(r.code, r.out).toBe(0);

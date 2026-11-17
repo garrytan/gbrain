@@ -43,7 +43,7 @@ function readReceipt(root: string): NativeRouterReceipt | null {
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.size > 65_536) return conflict(`${path} is not a regular receipt file. Copy it aside for the user; with it moved away, the next join or refresh records a new one.`);
     const value = JSON.parse(readFileSync(path, 'utf8')) as NativeRouterReceipt;
-    if (value.version !== 1 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.name) || !['prepared', 'installed', 'removed'].includes(value.state)) return conflict(`${path} is not a native-router receipt this gbrain wrote. Copy it aside for the user; with it moved away, the next join or refresh records a new one.`);
+    if (value.version !== 1 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.name) || !['prepared', 'installed', 'removed'].includes(value.state)) return conflict(`${path} is not a native-router receipt this foresights wrote. Copy it aside for the user; with it moved away, the next join or refresh records a new one.`);
     checkedRoot(value.skills_dir);
     return value;
   } catch (error) {
@@ -55,7 +55,7 @@ function hashAt(path: string): string | null {
   assertNoSymlinks(path);
   if (!existsSync(path)) return null;
   const stat = lstatSync(path);
-  if (!stat.isFile() || stat.size > 256 * 1024) return conflict(`${path} is not the router file gbrain installed (a directory or an oversized file). Move it aside after the user confirms, then refresh.`);
+  if (!stat.isFile() || stat.size > 256 * 1024) return conflict(`${path} is not the router file foresights installed (a directory or an oversized file). Move it aside after the user confirms, then refresh.`);
   return sha256(readFileSync(path));
 }
 export function recordedNativeSkillsDirectory(stateRoot: string): string | undefined {
@@ -69,9 +69,9 @@ function validate(plan: NativeRouterPlan): NativeRouterReceipt | null {
   const current = hashAt(plan.path);
   const directory = confinedPath(plan.skills_dir, plan.name);
   if (!prior && existsSync(directory) && readdirSync(directory).length) return conflict(
-    `${directory} already holds files gbrain did not record. Have the user move that directory aside, then join again.`);
+    `${directory} already holds files foresights did not record. Have the user move that directory aside, then join again.`);
   if (current !== null && (!prior || ![prior.owned_hash, prior.pending?.before, prior.pending?.after].includes(current))) return conflict(
-    `${plan.path} was edited after gbrain installed it. Show the user the edit; once they keep a copy and restore or remove the file, refresh again.`);
+    `${plan.path} was edited after foresights installed it. Show the user the edit; once they keep a copy and restore or remove the file, refresh again.`);
   return prior;
 }
 
@@ -80,7 +80,7 @@ export function prepareNativeRouter(input: RouterIdentity & { state_root: string
   const skills_dir = checkedRoot(input.skills_dir);
   const name = `gbrain-shared-${sha256(JSON.stringify([input.brain_id, input.installation_id, input.adapter, input.connection_name])).slice(0, 24)}`;
   if (!input.content.startsWith('---\nname: gbrain-shared-router\n')) return conflict(
-    'The router content does not start with the gbrain-shared-router frontmatter; this gbrain build produced an unexpected router. Report it with gbrain --version.');
+    'The router content does not start with the gbrain-shared-router frontmatter; this foresights build produced an unexpected router. Report it with foresights --version.');
   const plan = { ...input, state_root, skills_dir, name, path: confinedPath(skills_dir, `${name}/SKILL.md`),
     content: input.content.replace('name: gbrain-shared-router\n', `name: ${name}\n`) };
   validate(plan);

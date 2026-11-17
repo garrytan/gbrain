@@ -335,10 +335,10 @@ describe('autoDetectSkillsDir — skills/ symlink confinement', () => {
   });
 });
 
-// gbrain#4103 — win32 shapes for the pure prefix core, runnable on POSIX CI
+// foresights#4103 — win32 shapes for the pure prefix core, runnable on POSIX CI
 // (no Windows runner exists; realpathSync can never produce backslash paths
 // here, so the extracted resolvedPrefixContained is the testable seam).
-describe('resolvedPrefixContained — win32 shapes (gbrain#4103)', () => {
+describe('resolvedPrefixContained — win32 shapes (foresights#4103)', () => {
   const BS = '\\';
 
   test('backslash subtree is contained (the exact pre-fix regression)', () => {
@@ -367,7 +367,7 @@ describe('resolvedPrefixContained — win32 shapes (gbrain#4103)', () => {
   });
 });
 
-// ── msysToNativePath — gbrain#2955 (Git Bash / MSYS local_path healing) ─────
+// ── msysToNativePath — foresights#2955 (Git Bash / MSYS local_path healing) ─────
 //
 // On Windows, a `sources add --path` run from Git Bash / MSYS records an
 // msys-style local_path like `/c/Users/Tiger/Vault`. Later,
@@ -377,7 +377,7 @@ describe('resolvedPrefixContained — win32 shapes (gbrain#4103)', () => {
 // function taking `platform` explicitly so the win32 branch is testable on
 // POSIX CI (same pattern as resolvedPrefixContained above).
 
-describe('msysToNativePath — gbrain#2955', () => {
+describe('msysToNativePath — foresights#2955', () => {
   test('win32: /c/… → C:\\… (the exact phantom-path shape)', () => {
     expect(msysToNativePath('/c/Users/Tiger/Vault', 'win32')).toBe('C:\\Users\\Tiger\\Vault');
   });

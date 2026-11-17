@@ -73,6 +73,6 @@ describe('#5198: activation-pending sync skip', () => {
     const message = activationPendingSkipMessage('alpha');
     expect(message).toContain('source=alpha');
     expect(message).toContain('writer_coordinator_required');
-    expect(message).toContain('gbrain sources writer status');
+    expect(message).toContain('foresights sources writer status');
   });
 });

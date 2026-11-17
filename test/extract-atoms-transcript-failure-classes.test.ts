@@ -1,7 +1,7 @@
 /**
  * v146 — extract_atoms failure classes for TRANSCRIPT items.
  *
- * The transcript half of gbrain#4148. Pre-fix `recordPageFailureCount` opened
+ * The transcript half of foresights#4148. Pre-fix `recordPageFailureCount` opened
  * with `if (item.kind !== 'page' ...) return null`, and both tombstone stamps
  * were gated `item.kind === 'page'`, so transcripts had:
  *   - no durable failure count,

@@ -1,22 +1,22 @@
 import { harnessAdapter } from '../core/harness/registry.ts';
 /**
- * `gbrain connect` — one-command coding-agent onboarding from a bearer token
+ * `foresights connect` — one-command coding-agent onboarding from a bearer token
  * (or OAuth 2.1 client credentials).
  *
  * Turns an MCP URL + credential into a paste-ready block (or wires it up
  * directly with --install) that connects a coding agent straight to a remote
- * `gbrain serve --http` and teaches it to self-orient via `get_brain_identity`
+ * `foresights serve --http` and teaches it to self-orient via `get_brain_identity`
  * + `list_skills`. Direct HTTP MCP — no local install or thin-client config
  * needed for the connection.
  *
- *   gbrain connect <mcp-url> [--token <bearer>] [--name gbrain]
+ *   foresights connect <mcp-url> [--token <bearer>] [--name foresights]
  *                  [--agent claude-code|codex|opencode|perplexity|generic]
  *                  [--oauth [--register | --client-id ID --client-secret SECRET] [--scopes "read write"]]
  *                  [--install] [--yes] [--json] [--show-token] [--force]
  *                  [--timeout-ms N]
  *
  * Auth:
- *   - Bearer (default): a `gbrain auth create` token. Simple; long-lived +
+ *   - Bearer (default): a `foresights auth create` token. Simple; long-lived +
  *     full-access. Best for local/personal use.
  *   - OAuth 2.1 client credentials (`--oauth`, perplexity/generic only): the
  *     correct path for anything exposed to a third-party cloud — least-privilege
@@ -132,7 +132,7 @@ export const LEARN_INSTRUCTION =
   '`list_skills` (everything it can do; if it errors, the host has not enabled skill ' +
   'publishing — these core tools still work: search, query, get_page, put_page, ' +
   'capture, think, find_experts). Then call `list_brain_skillpack`: if this brain ships ' +
-  'a skillpack, ask the user whether to install it (gbrain skillpack scaffold <spec>). ' +
+  'a skillpack, ask the user whether to install it (foresights skillpack scaffold <spec>). ' +
   'Prefer `capture` for quick notes (auto-slug + dedupe) and `put_page` for ' +
   'full-control writes. Always search the brain before answering or writing.';
 
@@ -145,22 +145,22 @@ const SECRET_NOTE =
 
 const PERPLEXITY_REMOTE_NOTE = [
   'Perplexity connects remotely, so the brain must be reachable over HTTPS. On the',
-  'host run: gbrain serve --http --bind 0.0.0.0 --public-url <your-https-url> (the',
+  'host run: foresights serve --http --bind 0.0.0.0 --public-url <your-https-url> (the',
   'default 127.0.0.1 bind refuses tunneled connections). See docs/mcp/PERPLEXITY.md.',
 ].join('\n');
 
-const HELP = `gbrain connect — wire a coding agent to a remote gbrain over MCP
+const HELP = `foresights connect — wire a coding agent to a remote foresights over MCP
 
 Usage:
-  gbrain connect <mcp-url> --harness <id> --credentials-file <private-file> --install
-  gbrain connect <mcp-url> [--token <bearer>] [flags]
+  foresights connect <mcp-url> --harness <id> --credentials-file <private-file> --install
+  foresights connect <mcp-url> [--token <bearer>] [flags]
 
 The private-handoff path separates host provisioning from installation here.
-Thin CLI adapters require --root <absolute-persistent-root>. See gbrain mcp --help.
+Thin CLI adapters require --root <absolute-persistent-root>. See foresights mcp --help.
 
 Prints a copy-paste setup block for your agent, or wires it up directly with
 --install (claude-code, codex + opencode). The MCP URL is your remote
-'gbrain serve --http' endpoint; a bare host is rejected — pass an explicit
+'foresights serve --http' endpoint; a bare host is rejected — pass an explicit
 https:// URL.
 
 Auth:
@@ -170,11 +170,11 @@ Auth:
                                  anything exposed to a third-party cloud
 
 Flags:
-  --token <bearer>     Bearer token (else $${ENV_VAR}; from 'gbrain auth create')
+  --token <bearer>     Bearer token (else $${ENV_VAR}; from 'foresights auth create')
   --name <id>          MCP server name in the agent (default: ${DEFAULT_NAME})
   --agent <kind>       claude-code (default) | codex | opencode | perplexity | generic
   --oauth              Use OAuth client credentials instead of a bearer token
-  --register           With --oauth: mint a client on the host (gbrain auth register-client)
+  --register           With --oauth: mint a client on the host (foresights auth register-client)
   --client-id <id>     With --oauth: use an existing OAuth client id
   --client-secret <s>  With --oauth: use an existing OAuth client secret
   --scopes "<s>"       With --oauth --register: client scopes (default: "${DEFAULT_SCOPES}")
@@ -185,10 +185,10 @@ Flags:
                        own instruction file (CLAUDE.md / AGENTS.md)
   --no-instructions    With --install, skip (and remove) the brain-first block
   --skill-loading M    With --install: off (default) or spring, a compact index of
-                       gbrain's bundled skills beside that block, each loaded on
-                       demand with gbrain bundled-skill <name>. Remembered.
-  --gbrain-bin PATH    With --skill-loading spring: the absolute gbrain the index
-                       names (default: this gbrain, else the one on PATH).
+                       foresights's bundled skills beside that block, each loaded on
+                       demand with foresights bundled-skill <name>. Remembered.
+  --gbrain-bin PATH    With --skill-loading spring: the absolute foresights the index
+                       names (default: this foresights, else the one on PATH).
   --yes                The user's approval for --install (writes a credential-
                        bearing MCP entry); without it a non-interactive run exits 3
   --force              On --install, replace an existing server of the same name
@@ -197,12 +197,12 @@ Flags:
   --timeout-ms <n>     Smoke-test timeout for --install (default: ${DEFAULT_TIMEOUT_MS})
 
 Examples:
-  gbrain connect https://brain.example.com/mcp --token gbrain_xxx
-  gbrain connect https://brain.example.com:3131 --install --yes
-  gbrain connect https://brain.example.com/mcp --token gbrain_xxx --agent codex
-  gbrain connect https://brain.example.com/mcp --token gbrain_xxx --agent opencode --install
-  gbrain connect https://brain.example.com/mcp --agent perplexity --oauth --register
-  gbrain connect https://brain.example.com/mcp --agent perplexity --oauth \\
+  foresights connect https://brain.example.com/mcp --token gbrain_xxx
+  foresights connect https://brain.example.com:3131 --install --yes
+  foresights connect https://brain.example.com/mcp --token gbrain_xxx --agent codex
+  foresights connect https://brain.example.com/mcp --token gbrain_xxx --agent opencode --install
+  foresights connect https://brain.example.com/mcp --agent perplexity --oauth --register
+  foresights connect https://brain.example.com/mcp --agent perplexity --oauth \\
     --client-id gbrain_cl_xxx --client-secret gbrain_cs_xxx
 `;
 
@@ -226,7 +226,7 @@ export function resolveToken(opts: { tokenFlag?: string | null; env?: string | n
   if (opts.mode === 'print') return { kind: 'placeholder' };
   return {
     kind: 'error',
-    error: `No token. Pass --token <bearer> or set ${ENV_VAR}. Create one on the host with: gbrain auth create "<name>"`,
+    error: `No token. Pass --token <bearer> or set ${ENV_VAR}. Create one on the host with: foresights auth create "<name>"`,
   };
 }
 
@@ -240,7 +240,7 @@ function claudeBlock(p: { name: string; url: string; token: string | null }): st
   const headerToken = p.token ?? PLACEHOLDER_TOKEN;
   const cmd = cmdString('claude', buildClaudeMcpAddArgv({ name: p.name, url: p.url, headerToken }));
   const lines = ['# Paste into Claude Code:', '', 'Connect my knowledge brain, then learn what it can do:', '', `  ${cmd}`, ''];
-  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "claude-code"\` on the host.`, '');
+  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`foresights auth create "claude-code"\` on the host.`, '');
   lines.push(LEARN_INSTRUCTION, '', SECRET_NOTE);
   return lines.join('\n');
 }
@@ -257,7 +257,7 @@ function codexBlock(p: { name: string; url: string; token: string | null }): str
     `  ${cmd}`,
     '',
   ];
-  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "codex"\` on the host.`, '');
+  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`foresights auth create "codex"\` on the host.`, '');
   lines.push(
     `Codex reads the token from $${ENV_VAR} at runtime — keep that variable set in your shell profile so new Codex sessions can reach the brain.`,
     '',
@@ -280,7 +280,7 @@ function opencodeBlock(p: { name: string; url: string; token: string | null }): 
     `  ${cmd}`,
     '',
   ];
-  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "opencode"\` on the host.`, '');
+  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`foresights auth create "opencode"\` on the host.`, '');
   lines.push(
     `The config stores the literal \`{env:${ENV_VAR}}\` interpolation — opencode resolves it at read time, ` +
       `so keep that variable exported in your shell profile; the token never lands in the config file. ` +
@@ -475,7 +475,7 @@ function defaultRunBinary(binary: string, argv: string[]): { code: number; stdou
   }
 }
 
-/** Mint an OAuth client by shelling to the host's `gbrain auth register-client`. */
+/** Mint an OAuth client by shelling to the host's `foresights auth register-client`. */
 function defaultRegisterOAuthClient(name: string, scopes: string): RegisterResult {
   const r = defaultRunBinary('gbrain', [
     'auth', 'register-client', name,
@@ -484,7 +484,7 @@ function defaultRegisterOAuthClient(name: string, scopes: string): RegisterResul
     '--token-endpoint-auth-method', 'client_secret_post',
   ]);
   if (r.code !== 0) {
-    return { ok: false, message: r.stderr || r.stdout || 'gbrain auth register-client failed' };
+    return { ok: false, message: r.stderr || r.stdout || 'foresights auth register-client failed' };
   }
   const clientId = r.stdout.match(/Client ID:\s+(\S+)/)?.[1];
   const clientSecret = r.stdout.match(/Client Secret:\s+(\S+)/)?.[1];
@@ -513,7 +513,7 @@ const defaultDeps: ConnectDeps = {
     if (!isBrainFirstHarness(agent)) return null;
     const target = brainFirstTarget(agent);
     if ('error' in target) return null;
-    const writer = `gbrain connect --agent ${agent} --install`;
+    const writer = `foresights connect --agent ${agent} --install`;
     const o = installerBrainFirst({ target, access: { kind: 'mcp', server: name }, writer, instructions: optOut ? false : undefined });
     const skills = installerSkillsBlock({ target, launcher: gbrainBin ?? indexLauncher() ?? 'gbrain', writer, brainFirstDeclined: o.decision.value === 'declined', skillLoading, audience: 'downstream' });
     const lines = [`${describeBrainFirstOutcome(o, false).trim()}${o.decision.value === 'accepted' ? ' (opt out with --no-instructions)' : ''}`];
@@ -529,19 +529,19 @@ const defaultDeps: ConnectDeps = {
     const lines = [describeTurnHookOutcome(outcome).trim()];
     if (!verdict || verdict.ok) return { lines: verdict ? [...lines, `verify   turn hook ${verdict.message}`] : lines, ok: true };
     const fix = turnHookFix(agent, rerun);
-    return { lines: [...lines, `error turn_hook_not_loaded (${verdict.reason}): the per-turn gbrain hook is not active: ${verdict.message}. Fix: ${rerun.join(' ')}. Verify: ${fix.verify?.argv?.join(' ')}${TURN_HOOK_NATIVE_INSPECT[agent] ? `; the harness's own check: ${TURN_HOOK_NATIVE_INSPECT[agent]}` : ''}.`], ok: false };
+    return { lines: [...lines, `error turn_hook_not_loaded (${verdict.reason}): the per-turn foresights hook is not active: ${verdict.message}. Fix: ${rerun.join(' ')}. Verify: ${fix.verify?.argv?.join(' ')}${TURN_HOOK_NATIVE_INSPECT[agent] ? `; the harness's own check: ${TURN_HOOK_NATIVE_INSPECT[agent]}` : ''}.`], ok: false };
   },
   writeOpencodeRemoteEntry: async (name, url, opts) => {
     // The writer's contract: callers hold acquireBootstrapLock on the config
     // dir (harness.ts [X11] parity) — the user-global file is shared across
-    // workspaces and homes, so concurrent gbrain writers serialize here.
+    // workspaces and homes, so concurrent foresights writers serialize here.
     const configPath = opencodeGlobalConfigPath();
     const cfgDir = dirname(configPath);
     mkdirSync(cfgDir, { recursive: true }); // the lock needs the dir; the writer mkdirs later anyway
     const lock = await acquireBootstrapLock(cfgDir);
     try {
       // Two-filename merge blind spot: opencode merges BOTH user-global
-      // filenames, so a same-name gbrain entry in the SIBLING file would
+      // filenames, so a same-name foresights entry in the SIBLING file would
       // survive this write as a shadow registration (ours → removed with a
       // note; foreign → refuse loudly naming both files).
       const sib = reconcileOpencodeSiblingGlobal(configPath, name, { url });
@@ -714,13 +714,13 @@ function resolveOAuthCreds(f: ParsedFlags, url: string, deps: ConnectDeps): OAut
     const r = deps.registerOAuthClient(f.name, f.scopes);
     if (!r.ok) {
       fail(`Could not register an OAuth client (run this on the brain host where the DB lives): ${r.message}\n` +
-        `Or mint one manually: gbrain auth register-client ${f.name} --grant-types client_credentials --scopes "${f.scopes}"`);
+        `Or mint one manually: foresights auth register-client ${f.name} --grant-types client_credentials --scopes "${f.scopes}"`);
     }
     return { issuer, clientId: r.clientId, clientSecret: r.clientSecret };
   }
   return fail(
     '--oauth needs an OAuth client. Either:\n' +
-    `  • --register  (mint one on the host: gbrain auth register-client ${f.name} --grant-types client_credentials --scopes "${f.scopes}")\n` +
+    `  • --register  (mint one on the host: foresights auth register-client ${f.name} --grant-types client_credentials --scopes "${f.scopes}")\n` +
     '  • --client-id <id> --client-secret <secret>  (use an existing client)',
   );
 }
@@ -801,7 +801,7 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
     }
     console.error(
       `Added MCP entry '${f.name}' -> ${url} in ${w.configPath}` +
-        `${w.replacedPrior ? ' (replaced the prior gbrain entry)' : ''}. Restart opencode (config is read at session start).`,
+        `${w.replacedPrior ? ' (replaced the prior foresights entry)' : ''}. Restart opencode (config is read at session start).`,
     );
     const ocInstructions = deps.writeInstructions(f.agent, f.name, f.noInstructions, f.skillLoading, f.gbrainBin);
     if (ocInstructions) console.error(ocInstructions);

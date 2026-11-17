@@ -298,7 +298,7 @@ describe('eval run-all with a suite it does not run (CLI)', () => {
     expect(existsSync(join(out, 'eval-results.jsonl'))).toBe(false);
   });
 
-  test('gbrain errors eval_suite_unwired explains the code', async () => {
+  test('foresights errors eval_suite_unwired explains the code', async () => {
     const r = await runCli(['errors', 'eval_suite_unwired']);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('eval_suite_unwired (caller, exit 1)');

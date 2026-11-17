@@ -1,5 +1,5 @@
 /**
- * `gbrain repair extractor-facts` (#5731, CEO-A9, ENG-O8, DX-O4, DX-T1):
+ * `foresights repair extractor-facts` (#5731, CEO-A9, ENG-O8, DX-O4, DX-T1):
  * restore conversation-extractor facts that the pre-fix canonical projection
  * expired.
  *
@@ -10,7 +10,7 @@
  *
  * Candidates: `source` starts with `cli:extract-conversation-facts`,
  * `expired_at` set, `row_num` NULL (the projection's signature), and not
- * retired by `gbrain repair conversation-labels` (its context marker). Each is
+ * retired by `foresights repair conversation-labels` (its context marker). Each is
  * classified, in this order:
  *   - excluded (listed, never restored): the page is missing or deleted; the
  *     fact was superseded (`superseded_by`, E-T5); its claim was withdrawn
@@ -213,7 +213,7 @@ function detail(fact: ExtractorFactCandidate): string {
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
   const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
-  return `gbrain repair extractor-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
+  return `foresights repair extractor-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
 function requestIdFor(hash: string, page: Pick<ExtractorFactsPage, 'source_id' | 'slug'>, attempt: number): string {
@@ -241,7 +241,7 @@ async function mixedVersionWarnings(engine: BrainEngine): Promise<string[]> {
     if (!hosts.has(host)) hosts.set(host, `${row.version_label}, last seen ${row.last_seen}`);
   }
   return [...hosts].map(([host, seen]) => `host ${host} still published writes with a consumer older than this release (${seen}); `
-    + `a consumer older than v${EXTRACTOR_FACTS_FIX_VERSION} expires restored extractor facts again. Upgrade and restart gbrain on that host before applying.`);
+    + `a consumer older than v${EXTRACTOR_FACTS_FIX_VERSION} expires restored extractor facts again. Upgrade and restart foresights on that host before applying.`);
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean, facts: ExtractorFactCandidate[]) {
@@ -302,7 +302,7 @@ export const extractorFactsRepair: RepairHandler = {
     }
     const command = await previewCommand(engine, scope, includeAmbiguous);
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair extractor-facts --apply restores only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair extractor-facts --apply restores only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

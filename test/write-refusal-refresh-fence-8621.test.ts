@@ -7,7 +7,7 @@
  * write waits out a short fence (bounded) and commits, past the cap it is refused and nothing is journaled; background
  * writes are not delayed; a database-only (repo-less) source is never fenced.
  * Regression it catches: master returned `{failed: 1}` with isError false and exit 0 (`undefined (fact #undefined)`),
- * rendered the refusal as class server with `fix: gbrain doctor`, and refused every write at once.
+ * rendered the refusal as class server with `fix: foresights doctor`, and refused every write at once.
  * Seams: the real refresh state machine paused at its drained boundary (`hooks.boundary`); the wait cap test seam.
  */
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';

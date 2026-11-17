@@ -99,7 +99,7 @@ function mergeHiddenFactRowsIntoBody(
   if (merge) {
     if (merge.renumbered.length > 0) {
       console.warn(
-        `[gbrain] #2044 merge on ${slug}: ${merge.renumbered.length} incoming fact row(s) reused ` +
+        `[foresights] #2044 merge on ${slug}: ${merge.renumbered.length} incoming fact row(s) reused ` +
         `row number(s) belonging to privacy-hidden row(s) and were renumbered ` +
         `(${merge.renumbered.map((r) => `#${r.from}->#${r.to}`).join(', ')}); ` +
         `the hidden row(s) keep their original numbers.`,
@@ -293,7 +293,7 @@ export async function importFromContent(
     /**
      * v0.32.7 CJK wave (codex post-merge F1): bypass the
      * `existing.content_hash === hash` short-circuit and ALWAYS re-chunk +
-     * re-embed. Used by `gbrain reindex --markdown` so a chunker version
+     * re-embed. Used by `foresights reindex --markdown` so a chunker version
      * bump actually reaches unchanged-source pages. Without this, the
      * sweep silently no-ops on every page whose markdown body hasn't
      * been edited since the last import — defeating the whole purpose of
@@ -412,7 +412,7 @@ export async function importFromContent(
     const { quarantined: pageQuarantined, flagged: pageFlagged, flagReason: pageFlagReason } = disposition;
 
     // v0.39.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter
-    // keys so identical body content from `gbrain capture` (which stamps
+    // keys so identical body content from `foresights capture` (which stamps
     // `captured_at` and `ingested_at` per call) produces a stable hash.
     // Pre-fix, every capture-cli invocation produced a fresh hash because
     // the timestamp changed, defeating:
@@ -710,7 +710,7 @@ export async function importFromContent(
     };
     // An embedding outage never blocks the text write: the page and its chunks
     // commit with NULL vectors and no embedding signature, and the stale sweep
-    // (`gbrain embed --stale`, sync's embed pass, the cycle) embeds them once
+    // (`foresights embed --stale`, sync's embed pass, the cycle) embeds them once
     // the provider recovers.
     let embeddingDeferred = largePage && !noEmbed && (chunks.length > 0 || (segmented !== null && !pageQuarantined));
     if (!opts.onPostCommitEmbedding && !largePage) {
@@ -725,7 +725,7 @@ export async function importFromContent(
         chunks.forEach((c, i) => { if (!reused.has(i)) { c.embedding = undefined; c.token_count = undefined; } });
         process.stderr.write(
           `[import] ${slug}: embedding failed (${err instanceof Error ? err.message : String(err)}); ` +
-          `text saved, chunks queued for \`gbrain embed --stale\`.\n`
+          `text saved, chunks queued for \`foresights embed --stale\`.\n`
         );
       }
     }
@@ -869,7 +869,7 @@ export async function importFromContent(
       // page, all in one statement (addCodeReferenceLinks). An edge whose code
       // page is missing is skipped — guides imported before their code repo
       // syncs are common, and the missing edges land later via
-      // `gbrain reconcile-links` (Layer 8 D3, v0.21.0).
+      // `foresights reconcile-links` (Layer 8 D3, v0.21.0).
       const codeRefs = extractCodeRefs(sanitizeRemoteBody(parsed.compiled_truth) + '\n' + sanitizeRemoteBody(parsed.timeline || ''));
       // For doc↔impl edges, both endpoints are within the same source as the
       // markdown page being imported. Cross-source edges (markdown in one
@@ -931,7 +931,7 @@ export async function importFromContent(
           const installed = await installPageEmbeddings(engine, persistedProjection, chunks, embeddingPartial ? undefined : signature ?? undefined);
           return { status: installed.complete ? 'embedded' : 'superseded' };
         } catch {
-          return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run gbrain embed --stale --source <source-id>.' };
+          return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run foresights embed --stale --source <source-id>.' };
         }
       }));
     }
@@ -1019,7 +1019,7 @@ export async function verifyPageReadable(
  * is only accepted when it matches `slugifyPath(relativePath)`. A mismatch is
  * rejected rather than silently honored — otherwise a file at `notes/random.md`
  * could declare `slug: people/elon` in frontmatter and overwrite the legitimate
- * `people/elon` page on the next `gbrain sync` or `gbrain import`. In shared
+ * `people/elon` page on the next `foresights sync` or `foresights import`. In shared
  * brains where PRs are mergeable, this is a silent page-hijack primitive.
  */
 export async function importFromFile(
@@ -1106,7 +1106,7 @@ export async function importFromFile(
   // This turns bare markdown files into fully-typed, dated, tagged pages
   // without requiring the user to manually add YAML headers.
   // The inference is applied to the in-memory content only; the file on disk
-  // is not modified. Use `gbrain frontmatter generate --fix` to write back.
+  // is not modified. Use `foresights frontmatter generate --fix` to write back.
   if (opts.inferFrontmatter !== false) {
     const { applyInference } = await import('./frontmatter-inference.ts');
     const { content: inferred, inferred: meta } = applyInference(relativePath, content);
@@ -1232,10 +1232,10 @@ export async function importFromFile(
  * predicate is the single place to update.
  *
  * Sibling decisions: `file_upload` doesn't write a page (uploads to
- * storage; the page itself is written via separate put_page); `gbrain
+ * storage; the page itself is written via separate put_page); `foresights
  * import` (bulk markdown import) intentionally skips the backstop to
  * avoid a cost spike on first-time imports of large brain repos. The
- * user runs `gbrain dream` or the consolidate phase to backfill facts
+ * user runs `foresights dream` or the consolidate phase to backfill facts
  * from bulk-imported pages.
  */
 export async function importCodeFile(
@@ -1368,7 +1368,7 @@ export async function importCodeFile(
       codeEmbeddingFailed = true;
       // #4616: keep the usable vectors of a partially refused batch.
       if (isEmbeddingZeroNormError(e)) needsEmbedIndexes.forEach((i, j) => { if (e.vectors[j]) chunks[i]!.embedding = e.vectors[j]!; });
-      console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[foresights] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -1485,7 +1485,7 @@ export async function importCodeFile(
       // Edge persistence is best-effort. A failed addCodeEdges must not
       // fail the overall import — the chunks + embeddings already
       // landed, which is the primary value.
-      console.warn(`[gbrain] edge extraction failed for ${slug}: ${edgeErr instanceof Error ? edgeErr.message : String(edgeErr)}`);
+      console.warn(`[foresights] edge extraction failed for ${slug}: ${edgeErr instanceof Error ? edgeErr.message : String(edgeErr)}`);
     }
   }
 
@@ -1506,7 +1506,7 @@ export type ImportFileResult = ImportResult;
  * HEIC/HEIF/AVIF need WASM decode to JPEG before Voyage will accept them.
  *
  * Other variants (BMP, TIFF, etc.) intentionally left out — they're rare in
- * the kinds of brains gbrain serves and adding them would expand the WASM
+ * the kinds of brains foresights serves and adding them would expand the WASM
  * decode surface meaningfully.
  */
 export const SUPPORTED_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif', '.avif'] as const;
@@ -1812,7 +1812,7 @@ async function maybeOcrGated(
   const overBudget = await ocrBudgetExceeded(engine);
   if (overBudget) {
     if (!_ocrRunBudget.warned) {
-      console.warn(`[gbrain] OCR skipped for the rest of this run: ${overBudget}`);
+      console.warn(`[foresights] OCR skipped for the rest of this run: ${overBudget}`);
       _ocrRunBudget.warned = true;
     }
     await bump('ocr_skipped_budget');
@@ -1830,7 +1830,7 @@ async function maybeOcrGated(
     try { ocrModel = getImageOcrModel(); } catch { /* unconfigured gateway */ }
     if (!ocrModel || !isAvailable('expansion', ocrModel)) {
       if (!_ocrWarnedThisSession) {
-        console.warn(`[gbrain] OCR opt-in is true but the OCR model (${ocrModel ?? 'gateway unconfigured'}) is unavailable; skipping OCR for this session`);
+        console.warn(`[foresights] OCR opt-in is true but the OCR model (${ocrModel ?? 'gateway unconfigured'}) is unavailable; skipping OCR for this session`);
         _ocrWarnedThisSession = true;
       }
       await bump('ocr_failed_no_key');
@@ -1842,7 +1842,7 @@ async function maybeOcrGated(
     return text;
   } catch (err) {
     if (!_ocrWarnedThisSession) {
-      console.warn(`[gbrain] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[foresights] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
       _ocrWarnedThisSession = true;
     }
     await bump('ocr_failed_other');
@@ -2047,7 +2047,7 @@ export async function importImageFile(
       // Cherry-3: path-proximity auto-link to a sibling text page. The first
       // matching candidate gets an image_of edge. Best-effort — addLink
       // throws when the target doesn't exist; we silently skip for now and
-      // let `gbrain reconcile-links` pick up later additions.
+      // let `foresights reconcile-links` pick up later additions.
       for (const candidate of imageOfCandidates(imageSlug)) {
         const sibling = await tx.getPage(candidate, sourceOpts);
         if (sibling) {

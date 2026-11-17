@@ -99,7 +99,7 @@ describe('lint --fix contains a page it cannot write', () => {
     const issue = result.pending_issues[0]!;
     expect(issue).toMatchObject({ file: 'readonly.md', rule: 'fix-not-writable', fixable: false, code: 'fix_not_writable', reason: 'eacces' });
     expect(issue.message).toBe('fix not applied: readonly.md is not writable (EACCES); the file was left unchanged.');
-    expect(issue.fix).toMatchObject({ actor: 'user', next: 'report', user_message: 'Make readonly.md writable for gbrain, or exclude it from lint.' });
+    expect(issue.fix).toMatchObject({ actor: 'user', next: 'report', user_message: 'Make readonly.md writable for foresights, or exclude it from lint.' });
     expect(issue.docs).toContain('docs/guides/repair.md#fix-not-writable');
     expect(readFileSync(join(root, 'writable.md'), 'utf8')).not.toContain('Of course');
     expect(readFileSync(join(root, 'readonly.md'), 'utf8')).toContain('Of course');

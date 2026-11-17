@@ -9,7 +9,7 @@
  *   "state":{name:text}, "inputs":{name:text}, "label":true|false|"<choice>",
  *   "rank"?:n, "protected"?:bool}
  *
- * Builders (`gbrain decide dataset --from <source>`) and adapters register per
+ * Builders (`foresights decide dataset --from <source>`) and adapters register per
  * slot; slot lanes add theirs next to their slot code.
  */
 import { createHash } from 'node:crypto';
@@ -56,7 +56,7 @@ export function parseDatasetJsonl(text: string): DatasetItem[] {
     try { raw = JSON.parse(line); } catch { throw new Error(`dataset line ${n + 1}: not JSON`); }
     const { id, family, slot, split, state, inputs, label } = raw as Record<string, unknown>;
     if (typeof id !== 'string' || typeof family !== 'string' || typeof slot !== 'string') throw new Error(`dataset line ${n + 1}: id, family and slot are required strings`);
-    if (split !== 'calibrate' && split !== 'eval') throw new Error(`dataset line ${n + 1}: split must be calibrate or eval (build with gbrain decide dataset)`);
+    if (split !== 'calibrate' && split !== 'eval') throw new Error(`dataset line ${n + 1}: split must be calibrate or eval (build with foresights decide dataset)`);
     if (typeof label !== 'boolean' && typeof label !== 'string') throw new Error(`dataset line ${n + 1}: label must be a boolean or a choice label`);
     items.push({
       id, family, slot: slot as DecideSlot, split, label,

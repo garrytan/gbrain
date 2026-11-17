@@ -13,7 +13,7 @@ enforces it programmatically.
 
 Much of the DB is a derived index over the markdown content. It exists to make
 search fast, to dedup embedding-similar claims, to materialize the
-cross-page graph. `gbrain sync && gbrain extract all` rebuilds the indexes
+cross-page graph. `foresights sync && foresights extract all` rebuilds the indexes
 represented by intact Markdown; it does not recover DB-only knowledge,
 credentials, page revision history, durable receipts, or the authoritative
 withdrawal ledger. Preserve those records in a database backup.
@@ -24,8 +24,8 @@ This means:
   corrupts, if Postgres eats itself, if PGLite's WASM lock wedges — you
   first verify your backups and which state exists only in the database.
   After preserving that state, you can wipe derived tables (on PGLite,
-  `gbrain reinit-pglite` wipes the whole embedded DB), re-import from
-  your brain repo with `gbrain sync`, and `gbrain extract all`
+  `foresights reinit-pglite` wipes the whole embedded DB), re-import from
+  your brain repo with `foresights sync`, and `foresights extract all`
   regenerates the derived state. See "Disaster recovery" below for the
   exact commands.
 - **Multi-machine sync is git.** Your brain is a repo. Push from one
@@ -90,7 +90,7 @@ also contain knowledge absent from canonical files and must be backed up.
 | `mcp_request_log` | Audit trail. Volatile by design; opt-in retention (`cycle.purge.mcp_request_log_retention_days`) prunes request rows past its window into the per-token tally `mcp_request_log_rollup` and keeps audit rows. |
 | `minion_jobs` / `minion_inbox` / `minion_attachments` | Job queue. Restarts re-enqueue or drop. |
 | `eval_candidates` / `eval_capture_failures` | Contributor-mode dev loop; opt-in capture. |
-| `dream_verdicts` | Scored triage cache (salience score, quotes, entities, judging model + prompt version). Rows carry a 30-day `expires_at` TTL: reads treat expired rows as misses and the synthesize phase sweeps them, so nothing lives forever. Rebuildable via `gbrain dream retriage --force`. |
+| `dream_verdicts` | Scored triage cache (salience score, quotes, entities, judging model + prompt version). Rows carry a 30-day `expires_at` TTL: reads treat expired rows as misses and the synthesize phase sweeps them, so nothing lives forever. Rebuildable via `foresights dream retriage --force`. |
 | `gbrain_cycle_locks` / migration ledger | Infrastructure. |
 | `op_checkpoint_paths` | Sync-resume checkpoint. Append-only progress banking; a completed sync makes it irrelevant. |
 | `config` (some keys) | Site-local routing config (e.g. `sync.repo_path`). |
@@ -159,7 +159,7 @@ Existing rows are never re-stamped, and snapshot rows are not rebuilt from
 
 ## Write attribution
 
-GBrain records write attribution: who wrote each page revision, page version,
+Foresights records write attribution: who wrote each page revision, page version,
 fact, take and timeline row, and who last changed each fact, take and timeline
 row. BEFORE ROW triggers copy three transaction-local settings into the row
 (`persistence/attribution-schema.ts`). `withCoordinatedWrite` sets them for
@@ -177,21 +177,21 @@ The stamps live in the database only (Markdown never carries them):
 
 Only the request id (`persistence_requests.id`) and the principal (kind, id)
 are stored. Names, operations and times are joined at read time by
-`get_write_attribution` (`gbrain attribution`), an `admin` operation; see
+`get_write_attribution` (`foresights attribution`), an `admin` operation; see
 [write attribution](../mcp/ADMIN.md#write-attribution). `get_versions` returns
 attribution only to trusted local and `admin` callers. A NULL request with a
 principal is a maintenance write; all NULL is `unrecorded`: written before
-attribution existed (older releases also left `gbrain extract` timeline walks,
+attribution existed (older releases also left `foresights extract` timeline walks,
 meeting timeline extraction and enrichment unattributed). Attribution names the creator and the last writer; it is not an audit
 log of every write in between.
 
-Nothing is inferred for older rows. `gbrain repair attribution-backfill` fills
+Nothing is inferred for older rows. `foresights repair attribution-backfill` fills
 only rows the write journal proves exactly (the page write whose recorded
 result is that revision, the `remember` that inserted that fact) and leaves the
 rest `unrecorded`. Attribution is not file-backed: rebuilding from Markdown
-loses it. Graduation (`gbrain migrate --to postgres` on a PGLite brain) copies
+loses it. Graduation (`foresights migrate --to postgres` on a PGLite brain) copies
 every attributed row verbatim, version history included. The legacy copier
-(`gbrain migrate --to pglite`, or graduation turned off) copies it verbatim only
+(`foresights migrate --to pglite`, or graduation turned off) copies it verbatim only
 for facts (pages, takes and timeline rows are re-created on the target and
 start `unrecorded`; version history is not copied).
 
@@ -205,7 +205,7 @@ start `unrecorded`; version history is not copied).
   timeline extraction, the legacy facts and takes helpers, cycle phases,
   schema-pack conversions, repairs and the remaining maintenance writers.
   Batch writers commit one bounded transaction per batch (for example 100 rows
-  per `gbrain extract timeline --source db` batch), never one transaction for a
+  per `foresights extract timeline --source db` batch), never one transaction for a
   whole run. A row such a writer changes keeps its creator and moves its last
   writer. The maintenance principal is the local CLI registration
   (`local_cli`), else this host's identity (`application`, `host:<id>`), else
@@ -218,11 +218,11 @@ start `unrecorded`; version history is not copied).
   link writers (extract, the remote auto-links effect and attendance repair)
   on any brain. Every other writer above changes beliefs unrecorded, so an
   unmanaged source's history is never certified; the drift check in
-  `gbrain doctor` and the cycle's extract phase find those changes and append
+  `foresights doctor` and the cycle's extract phase find those changes and append
   `reconcile` events.
 
 Agents: treat `NULL` attribution on an unmanaged brain as "written before
-attribution existed, or before `gbrain extract`, meeting timeline extraction
+attribution existed, or before `foresights extract`, meeting timeline extraction
 and enrichment were attributed (#5575)", not as evidence of tampering. When you add a direct writer, run it in
 `maintenanceTransaction(engine, fn)` (`persistence/attribution.ts`) or route it
 through the coordinator, then update these lists with the count
@@ -235,7 +235,7 @@ Attributed (inside a request, a coordinated scope or `maintenanceTransaction`,
 or a physical projection that leaves attribution untouched):
 
 <!-- write-attribution-covered:start -->
-- `src/commands/extract-timeline-db.ts` (2): `gbrain extract timeline --source db` commits one `maintenanceTransaction` per 100-row batch on unmanaged brains; managed brains publish per page through a maintenance request.
+- `src/commands/extract-timeline-db.ts` (2): `foresights extract timeline --source db` commits one `maintenanceTransaction` per 100-row batch on unmanaged brains; managed brains publish per page through a maintenance request.
 - `src/commands/migrate-engine.ts` (5): engine copy keeps the source rows' attribution values verbatim.
 - `src/commands/sync/holds.ts` (1): a full sync's move of a held rename (`updateSlug` and its `source_path`) runs in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/commands/sync/rename-collision.ts` (2): the legacy sync rename (`updateSlug`, and the tombstone re-key when the destination slug is a soft-deleted row, #5431) runs with its `source_path` repair in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
@@ -253,8 +253,8 @@ or a physical projection that leaves attribution untouched):
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
 - `src/core/extract/receipt-writer.ts` (1): the extraction receipt page runs in `maintenanceTransaction`.
 - `src/core/facts/backstop.ts` (1): the facts backstop's DB-only fallbacks insert each fact through one helper, in `maintenanceTransaction` at the extraction's derived tier; managed brains publish through the facts request preparer.
-- `src/core/facts/conversation-publication.ts` (6): the managed conversation-facts preparer clears each member page's prior rows and inserts its frozen entry (or a blocked outcome row) inside the coordinator publication of its admitted batch request, clearing only for a complete replacement (#7013); the unmanaged writer runs the same publication in `maintenanceTransaction`. Its page clear also expires the rows `gbrain facts relink --conversation` linked (after deleting the previous clear's expired copies), inside the same transaction (#6764). The segmented incremental run, unmanaged only, re-anchors moved windows' facts and stamps fresh rows' windows (`source_window`) in the same `maintenanceTransaction`.
-- `src/core/facts/conversation-relink.ts` (1): `gbrain facts relink --conversation`: a `managed_maintenance_conversation_relink` request on managed brains; the unmanaged relink runs in `writeDerivedFacts` (`maintenanceTransaction`).
+- `src/core/facts/conversation-publication.ts` (6): the managed conversation-facts preparer clears each member page's prior rows and inserts its frozen entry (or a blocked outcome row) inside the coordinator publication of its admitted batch request, clearing only for a complete replacement (#7013); the unmanaged writer runs the same publication in `maintenanceTransaction`. Its page clear also expires the rows `foresights facts relink --conversation` linked (after deleting the previous clear's expired copies), inside the same transaction (#6764). The segmented incremental run, unmanaged only, re-anchors moved windows' facts and stamps fresh rows' windows (`source_window`) in the same `maintenanceTransaction`.
+- `src/core/facts/conversation-relink.ts` (1): `foresights facts relink --conversation`: a `managed_maintenance_conversation_relink` request on managed brains; the unmanaged relink runs in `writeDerivedFacts` (`maintenanceTransaction`).
 - `src/core/facts/derivation-inputs.ts` (3): `hideDerivedRows` expires derived facts, deactivates derived takes and soft-deletes derived pages inside the purge's coordinated transaction, attributed to the purge request.
 - `src/core/facts/fence-fact-append.ts` (1): `prepareFenceFactAppend` inserts the facts row of a fence row the request's page file holds, in its caller's coordinated publication after the page row (remember and its callers).
 - `src/core/facts/fence-write.ts` (1): the markdown-first fence reconcile insert runs in `maintenanceTransaction` (its page body mirror goes through `facts/file-body-guard.ts`).
@@ -267,8 +267,8 @@ or a physical projection that leaves attribution untouched):
 - `src/core/facts/relink-publish.ts` (2): `relink_facts` request preparer.
 - `src/core/facts/unfenced-facts.ts` (1): the cycle and v0.32.2 fence of `row_num`-NULL facts: a maintenance request on managed brains; the unmanaged row-number stamp runs in `maintenanceTransaction` (the body mirror goes through `facts/file-body-guard.ts`).
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
-- `src/core/persistence/twin-merge.ts` (5): the #6948 twin merge runs in the `managed_maintenance_resolve_origin_twin` preparer's coordinated transaction on managed brains and in one `maintenanceTransaction` on unmanaged brains (`gbrain repair origin-twins` and the post-sync heal); `gbrain repair legacy-twins` calls it from a receipted `managed_maintenance_merge_legacy_twin` request on managed brains and from one `maintenanceTransaction` under both page locks on unmanaged brains.
-- `src/core/trust/timeline-projection.ts` (2): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback write through it: one `maintenanceTransaction` per page tier.
+- `src/core/persistence/twin-merge.ts` (5): the #6948 twin merge runs in the `managed_maintenance_resolve_origin_twin` preparer's coordinated transaction on managed brains and in one `maintenanceTransaction` on unmanaged brains (`foresights repair origin-twins` and the post-sync heal); `foresights repair legacy-twins` calls it from a receipted `managed_maintenance_merge_legacy_twin` request on managed brains and from one `maintenanceTransaction` under both page locks on unmanaged brains.
+- `src/core/trust/timeline-projection.ts` (2): `foresights extract` timeline walks (file, incremental, stale) and the per-entry fallback write through it: one `maintenanceTransaction` per page tier.
 - `src/core/facts/write-single.ts` (2): the legacy single-fact insert and its supersession link each run in `maintenanceTransaction`; managed brains publish through the fact request.
 - `src/core/generations/adapters/atoms.ts` (1): the unmanaged atom completion stamp (`source_hash`) runs inside the generation activation's `maintenanceTransaction` (`publish.ts`, GBRA-161).
 - `src/core/generations/adapters/chronicle-events.ts` (3): Life Chronicle event writes, their timeline projection rows and the retirement of dropped events run inside the generation activation's `maintenanceTransaction` (`publish.ts`) on unmanaged brains and inside the coordinated `managed_generation_activate` / `managed_generation_restore` requests on managed brains (GBRA-161 PR 3); a restore runs in the restore runner's (`repair.ts`).
@@ -289,7 +289,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.
 - `src/core/persistence/connector-sync.ts` (2): connector publication inside `withCoordinatedWrite`.
 - `src/core/persistence/derived-facts.ts` (1): the gated conversation fact insert (`insertDerivedFacts`) on unmanaged brains, in `writeDerivedFacts`' `maintenanceTransaction` at the page's derived tier.
-- `src/core/persistence/derived-retirement-hold.ts` (3): `retireDerivedPages` versions, soft-deletes and stamps retired derived pages (unmanaged extract_atoms stale atoms) in 500-page `maintenanceTransaction` chunks. `stampDerivedRetirement` is the one retirement stamp (`retired_by`, `retired_at`) every derived writer calls inside its own attributed or coordinated write (managed atom and generation retirements, `gbrain repair stale-atoms`, a journaled chronicle retire); it keeps the page's stored trust tier and write origin (#9456).
+- `src/core/persistence/derived-retirement-hold.ts` (3): `retireDerivedPages` versions, soft-deletes and stamps retired derived pages (unmanaged extract_atoms stale atoms) in 500-page `maintenanceTransaction` chunks. `stampDerivedRetirement` is the one retirement stamp (`retired_by`, `retired_at`) every derived writer calls inside its own attributed or coordinated write (managed atom and generation retirements, `foresights repair stale-atoms`, a journaled chronicle retire); it keeps the page's stored trust tier and write origin (#9456).
 - `src/core/persistence/facts-prepare.ts` (3): managed `extract_facts` request preparer.
 - `src/core/persistence/file-repair.ts` (3): `managed_file_repair` request preparer (#5988); a GST-1601 adoption tags the page_versions rows its import wrote with `change_reason = 'adopted_local_edit'` inside the same coordinated publication, attributed to the adoption request.
 - `src/core/persistence/links-maintenance.ts` (1): coordinated maintenance.
@@ -306,28 +306,28 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/sync-streamed.ts` (1): the streamed sync of a file over the single-string ceiling moves a renamed page (`updateSlug`) in its request's apply, inside the coordinated publication.
 - `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
 - `src/core/repair/agent-session-facts.ts` (2): a `managed_maintenance_agent_session_facts` request on managed brains (database-only fact re-attribution and take retirement); the unmanaged write runs in `maintenanceTransaction`.
-- `src/core/repair/atoms-restore.ts` (3): the unmanaged `gbrain repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
+- `src/core/repair/atoms-restore.ts` (3): the unmanaged `foresights repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
 - `src/core/repair/captured-facts.ts` (1): a request on managed brains; the unmanaged captured-facts expiry runs in `maintenanceTransaction`.
-- `src/core/repair/consolidate-ties.ts` (1): `gbrain repair consolidate-ties` reopens facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per fact on unmanaged brains.
-- `src/core/repair/duplicate-facts.ts` (2): `gbrain repair duplicate-facts` supersedes duplicate fact copies onto the kept row (the fenced copy, else the oldest) inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per group on unmanaged brains; a fenced copy is struck through a revision-bound `put_page` first.
+- `src/core/repair/consolidate-ties.ts` (1): `foresights repair consolidate-ties` reopens facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per fact on unmanaged brains.
+- `src/core/repair/duplicate-facts.ts` (2): `foresights repair duplicate-facts` supersedes duplicate fact copies onto the kept row (the fenced copy, else the oldest) inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per group on unmanaged brains; a fenced copy is struck through a revision-bound `put_page` first.
 - `src/core/repair/conversation-labels.ts` (4): a request on managed brains; the unmanaged label retirement runs in `maintenanceTransaction`.
 - `src/core/repair/purged-page-facts.ts` (1): a request on managed brains; the unmanaged expiry runs in `maintenanceTransaction`.
 - `src/core/repair/extractor-facts.ts` (1): a request on managed brains; the unmanaged extractor-facts restore runs in `maintenanceTransaction`.
-- `src/core/repair/fact-claim-dates.ts` (1): `gbrain repair fact-claim-dates` updates database-only facts' `valid_from` in one `maintenanceTransaction` on unmanaged brains only; fence rows move through revision-bound `put_page`, and a managed brain never takes the direct update.
-- `src/core/repair/facts-rehome.ts` (1): `gbrain repair facts-rehome` moves facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per slug on unmanaged brains.
+- `src/core/repair/fact-claim-dates.ts` (1): `foresights repair fact-claim-dates` updates database-only facts' `valid_from` in one `maintenanceTransaction` on unmanaged brains only; fence rows move through revision-bound `put_page`, and a managed brain never takes the direct update.
+- `src/core/repair/facts-rehome.ts` (1): `foresights repair facts-rehome` moves facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per slug on unmanaged brains.
 - `src/core/repair/frontmatter.ts` (1): a `managed_file_repair` request on managed sources; the unmanaged rename runs in `maintenanceTransaction`.
-- `src/core/repair/ghost-pages.ts` (2): `gbrain repair ghost-pages` retirement: a receipted `managed_maintenance_retire_ghost_page` request (a prepared `delete_page` with no file bytes) on managed brains; the unmanaged version and soft delete run in `maintenanceTransaction` after the same recheck.
-- `src/core/repair/moved-pages.ts` (1): `gbrain repair moved-pages` fold: a receipted `managed_maintenance_fold_moved_page` request on the old page that also holds the moved page's key, on managed brains; the unmanaged fold runs in `maintenanceTransaction` under both page locks after the same recheck.
+- `src/core/repair/ghost-pages.ts` (2): `foresights repair ghost-pages` retirement: a receipted `managed_maintenance_retire_ghost_page` request (a prepared `delete_page` with no file bytes) on managed brains; the unmanaged version and soft delete run in `maintenanceTransaction` after the same recheck.
+- `src/core/repair/moved-pages.ts` (1): `foresights repair moved-pages` fold: a receipted `managed_maintenance_fold_moved_page` request on the old page that also holds the moved page's key, on managed brains; the unmanaged fold runs in `maintenanceTransaction` under both page locks after the same recheck.
 - `src/core/repair/ontology-facts.ts` (1): a coordinated database-only write (`coordinatedDatabaseWrite`, the `ontology_propose` path) on managed brains; the unmanaged ontology-facts restore runs in `maintenanceTransaction`.
 - `src/core/repair/redacted-facts.ts` (1): a `managed_maintenance_restore_redacted_facts` request on managed brains; the unmanaged restore of database-only and conversation-extractor fact text runs in `maintenanceTransaction`.
-- `src/core/repair/rename-identity.ts` (5): `gbrain repair rename-identity` carry, unmanaged brains only (a managed brain refuses `managed_remedy_unavailable` before writing); the fence-row merge, the provisional page's retirement, the slug move and the import run in one `maintenanceTransaction` under both page locks after the plan-hash recheck.
-- `src/core/repair/secret-spans.ts` (1): `gbrain repair secret-spans` (GST-327) rewrites the credential spans of each preview-approved page under the page key: inside `withCoordinatedWrite` with maintenance attribution on managed brains, `withWriteAttribution` with maintenance attribution on unmanaged ones.
-- `src/core/repair/segmented-tiling.ts` (1): `gbrain repair segmented-tiling` (GST-1209) versions each preview-approved damaged page (`createVersion`) before republishing it from the file Git holds at HEAD, under the page key: inside `withCoordinatedWrite` with maintenance attribution on managed brains, `withWriteAttribution` with maintenance attribution on unmanaged ones.
-- `src/core/repair/take-supersession.ts` (1): `gbrain repair take-supersession` reprojection: a receipted `managed_maintenance_take_reproject` request on managed brains, `maintenanceTransaction` on unmanaged ones; fence edits go through a revision-bound `put_page`.
-- `src/core/repair/timeline-comments.ts` (1): `gbrain repair timeline-comments` row cleanup: `withCoordinatedWrite` under the page key on managed brains, `maintenanceTransaction` otherwise.
-- `src/core/repair/url-clone-fences.ts` (2): `gbrain repair url-clone-fences` (#6946), unmanaged brains only (a managed brain previews nothing); keeping the appended fence rows database-only (clearing `row_num`, inserting a row the database lost) runs in one `maintenanceTransaction` under the page lock after the preview recheck; HEAD's bytes then import through `importFromContent` (a HEAD that asks for private in a spelling page privacy does not read is held: not imported, and the apply reports `held`, #7897).
-- `src/core/repair/unwithdrawn-facts.ts` (1): `gbrain repair unwithdrawn-facts` (#8819) puts back the ledger preimage of each preview-approved fact a fence generation retired though no fence held it: a database-only `managed_maintenance_restore_unwithdrawn_facts` request on managed brains; unmanaged and repo-less brains list every candidate as `excluded:unmanaged_reconcile`, so their page-locked `maintenanceTransaction` only reclassifies a set previewed while the brain was managed and restores nothing.
-- `src/core/repair/visibility.ts` (2): `gbrain repair visibility --apply` tightening of database-only world facts from a private source: a receipted `managed_maintenance_tighten_fact_visibility` request on managed brains, `maintenanceTransaction` on unmanaged ones; fenced rows change through a revision-bound `put_page`, and on an unmanaged brain a more trusted world row the page write kept is made private in one `maintenanceTransaction`.
+- `src/core/repair/rename-identity.ts` (5): `foresights repair rename-identity` carry, unmanaged brains only (a managed brain refuses `managed_remedy_unavailable` before writing); the fence-row merge, the provisional page's retirement, the slug move and the import run in one `maintenanceTransaction` under both page locks after the plan-hash recheck.
+- `src/core/repair/secret-spans.ts` (1): `foresights repair secret-spans` (GST-327) rewrites the credential spans of each preview-approved page under the page key: inside `withCoordinatedWrite` with maintenance attribution on managed brains, `withWriteAttribution` with maintenance attribution on unmanaged ones.
+- `src/core/repair/segmented-tiling.ts` (1): `foresights repair segmented-tiling` (GST-1209) versions each preview-approved damaged page (`createVersion`) before republishing it from the file Git holds at HEAD, under the page key: inside `withCoordinatedWrite` with maintenance attribution on managed brains, `withWriteAttribution` with maintenance attribution on unmanaged ones.
+- `src/core/repair/take-supersession.ts` (1): `foresights repair take-supersession` reprojection: a receipted `managed_maintenance_take_reproject` request on managed brains, `maintenanceTransaction` on unmanaged ones; fence edits go through a revision-bound `put_page`.
+- `src/core/repair/timeline-comments.ts` (1): `foresights repair timeline-comments` row cleanup: `withCoordinatedWrite` under the page key on managed brains, `maintenanceTransaction` otherwise.
+- `src/core/repair/url-clone-fences.ts` (2): `foresights repair url-clone-fences` (#6946), unmanaged brains only (a managed brain previews nothing); keeping the appended fence rows database-only (clearing `row_num`, inserting a row the database lost) runs in one `maintenanceTransaction` under the page lock after the preview recheck; HEAD's bytes then import through `importFromContent` (a HEAD that asks for private in a spelling page privacy does not read is held: not imported, and the apply reports `held`, #7897).
+- `src/core/repair/unwithdrawn-facts.ts` (1): `foresights repair unwithdrawn-facts` (#8819) puts back the ledger preimage of each preview-approved fact a fence generation retired though no fence held it: a database-only `managed_maintenance_restore_unwithdrawn_facts` request on managed brains; unmanaged and repo-less brains list every candidate as `excluded:unmanaged_reconcile`, so their page-locked `maintenanceTransaction` only reclassifies a set previewed while the brain was managed and restores nothing.
+- `src/core/repair/visibility.ts` (2): `foresights repair visibility --apply` tightening of database-only world facts from a private source: a receipted `managed_maintenance_tighten_fact_visibility` request on managed brains, `maintenanceTransaction` on unmanaged ones; fenced rows change through a revision-bound `put_page`, and on an unmanaged brain a more trusted world row the page write kept is made private in one `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-alias.ts` (1): the page-to-alias conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-link.ts` (1): the page-to-link conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/retype.ts` (1): each bounded retype batch runs in `maintenanceTransaction`.
@@ -343,7 +343,7 @@ or a physical projection that leaves attribution untouched):
 <!-- write-attribution-covered:end -->
 
 Unattributed (on unmanaged brains these would write with `NULL` attribution).
-The list is empty: `gbrain extract` timeline walks, enrichment and meeting
+The list is empty: `foresights extract` timeline walks, enrichment and meeting
 timeline extraction run as tiered derivers since #5575 (I2). A new writer
 that cannot be attributed yet is declared here:
 
@@ -356,7 +356,7 @@ Private knowledge in a fence still lives in the markdown file. If the
 user commits the page to git, the private data lands in git too. This
 is the existing operational model — we don't infer git policy.
 
-For untrusted readers (remote MCP, subagent), gbrain applies a 3-layer
+For untrusted readers (remote MCP, subagent), foresights applies a 3-layer
 strip:
 
 1. **Layer A (chunker):** `src/core/chunkers/recursive.ts` calls
@@ -377,7 +377,7 @@ internal notes), mark the entity page's directory as `db_only` in
 
 ## The forget contract
 
-`gbrain forget <id>` and the MCP `forget_fact` operation commit withdrawal to
+`foresights forget <id>` and the MCP `forget_fact` operation commit withdrawal to
 the authoritative database ledger first. The transaction expires matching facts,
 adds claim-fingerprint overlays, advances affected page revisions and invalidates
 their retrieval projections. No filesystem owner is required. Stale imports and
@@ -403,10 +403,10 @@ does not erase the withdrawal ledger or promise physical erasure.
 
 The belief ledger is DB-only (see the exceptions above). The rebuild below
 keeps it, but every fact, take and link it deletes and re-derives is recorded
-as a change by the next `gbrain doctor --fix` or cycle (`reconcile` events,
+as a change by the next `foresights doctor --fix` or cycle (`reconcile` events,
 and the slugs stay uncertified for that interval), and dropping the database
 loses the history for good. After a database backup restore, replay the
-purges made after the backup (`gbrain doctor --only belief_ledger_coverage`
+purges made after the backup (`foresights doctor --only belief_ledger_coverage`
 names any restore whose replay was partial, unavailable or unverified).
 
 This example is only for a database whose affected facts, takes, links and
@@ -421,17 +421,17 @@ writer cannot safely replace the coordinator.
 ```bash
 # File-backed state only: verify restorable DB + source backups before proceeding.
 # Record counts for comparison; this is not a backup.
-gbrain stats > /tmp/before.txt
+foresights stats > /tmp/before.txt
 
 # Wipe and rebuild — delete the derived tables (pages + content_chunks
 # survive the CASCADE-safe design), then re-derive from the repo.
-# On PGLite, `gbrain reinit-pglite` wipes the whole embedded DB instead.
+# On PGLite, `foresights reinit-pglite` wipes the whole embedded DB instead.
 psql -c 'DELETE FROM facts; DELETE FROM takes; DELETE FROM links; DELETE FROM timeline_entries;'
-gbrain sync
-gbrain extract all
+foresights sync
+foresights extract all
 
 # Compare file-backed counts and investigate differences; full DB parity is not promised.
-gbrain stats > /tmp/after.txt
+foresights stats > /tmp/after.txt
 diff /tmp/before.txt /tmp/after.txt
 ```
 

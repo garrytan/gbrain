@@ -116,7 +116,7 @@ describe('runEvalCompare', () => {
     const path = join(tmp, 'does-not-exist.jsonl');
     const out = await captureRun(() => runEvalCompare(['--md', '--input', path]));
     expect(out).toContain('No eval-results.jsonl found');
-    expect(out).toContain('gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record');
+    expect(out).toContain('foresights eval longmemeval <dataset.jsonl> --mode <mode> --record');
   });
 
   test('--modes filter narrows the table', async () => {

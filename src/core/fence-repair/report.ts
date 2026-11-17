@@ -37,7 +37,7 @@ export function pageFencesNormalized(input: { sourceId: string; slug: string; fi
   const fixes = fenceFixesWire(input.fixes);
   const local = !input.remote && input.path ? { sample_paths: [input.path], common_prefix: input.path.split('/').slice(0, -1).join('/') } : {};
   return { count: 1, by_class: fixesByClass(input.fixes), writers: [{ writer: input.writer, count: 1 }], ...local, fixes,
-    fix: readFix(`gbrain normalized a facts or takes fence on page ${input.slug} (${describeFixes(input.fixes)}), so the stored page differs from what was sent. Re-read it with get_page before editing it. ${STRUCTURED_WRITE_ADVICE}`,
+    fix: readFix(`foresights normalized a facts or takes fence on page ${input.slug} (${describeFixes(input.fixes)}), so the stored page differs from what was sent. Re-read it with get_page before editing it. ${STRUCTURED_WRITE_ADVICE}`,
       { argv: ['gbrain', 'get', '--source', input.sourceId, '--', input.slug], mcp: { tool: 'get_page', arguments: { slug: input.slug, source_id: input.sourceId } } }) };
 }
 
@@ -63,7 +63,7 @@ export function describeFixes(fixes: ReadonlyArray<Pick<FenceFix, 'fence' | 'sec
 export function fenceNormalizedNotice(report: Pick<FencesNormalized, 'fixes' | 'fix' | 'by_class' | 'count'>, slug?: string): Notice {
   const what = report.fixes?.length ? describeFixes(report.fixes) : Object.entries(report.by_class).map(([cls, n]) => `${cls} x${n}`).join(', ');
   return { code: 'fence_normalized', kind: 'coaching', fix: report.fix,
-    why: `gbrain rewrote a malformed facts or takes fence${slug ? ` on ${slug}` : ` on ${report.count} page(s)`} (${what}); claims and existing row numbers are unchanged, but the stored page differs from what was sent. Re-read it with get_page before editing. ${STRUCTURED_WRITE_ADVICE}` };
+    why: `foresights rewrote a malformed facts or takes fence${slug ? ` on ${slug}` : ` on ${report.count} page(s)`} (${what}); claims and existing row numbers are unchanged, but the stored page differs from what was sent. Re-read it with get_page before editing. ${STRUCTURED_WRITE_ADVICE}` };
 }
 
 /** One `fences_normalized` for several page writes (put_pages): counts and classes summed, writers merged, the first page's fix. */
@@ -91,7 +91,7 @@ function commonDirectory(paths: readonly string[]): string {
 interface FenceResultFields { fences_normalized?: unknown; fence_issues?: unknown }
 
 /**
- * #6188: the file-by-file tally `gbrain import` and legacy sync report.
+ * #6188: the file-by-file tally `foresights import` and legacy sync report.
  * `fences_normalized` (D12) counts files whose fences Tier 1 rewrote;
  * `fence_issues` (T5) lists files a lenient import stored with a fence that
  * does not parse (their rows are not indexed until it is fixed).

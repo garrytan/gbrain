@@ -1,5 +1,5 @@
 /**
- * recall (MCP op) + `gbrain recall` (CLI) — audit checkpoint rows are
+ * recall (MCP op) + `foresights recall` (CLI) — audit checkpoint rows are
  * excluded from output.
  *
  * extract-conversation-facts writes durable audit checkpoint rows — source
@@ -18,7 +18,7 @@
  * This exercises the fix at BOTH trusted read surfaces:
  *   - the MCP `recall` op handler (src/core/operations.ts) via
  *     dispatchToolCall, and
- *   - the `gbrain recall` CLI's local (non-thin-client) path
+ *   - the `foresights recall` CLI's local (non-thin-client) path
  *     (src/commands/recall.ts `fetchRowsLocal`), which calls the engine
  *     directly and does NOT go through the op handler — so it needed its
  *     own excludeAuditRows wiring, not just operations.ts.
@@ -185,7 +185,7 @@ describe('recall op excludes extract-conversation-facts audit rows', () => {
   });
 });
 
-describe('gbrain recall CLI (local, non-thin-client path) excludes audit rows', () => {
+describe('foresights recall CLI (local, non-thin-client path) excludes audit rows', () => {
   const origWrite = process.stdout.write.bind(process.stdout);
 
   test('runRecall --json --limit 3 surfaces the real fact, not the audit rows', async () => {
@@ -270,7 +270,7 @@ describe('post-review fix: legacy (pre-v2) terminal audit rows are also excluded
   });
 });
 
-// #4394: countUnconsolidatedFacts feeds `gbrain recall --pending` and the
+// #4394: countUnconsolidatedFacts feeds `foresights recall --pending` and the
 // recall op's pending_consolidation_count. Audit checkpoint rows are written
 // without consolidated_at (extract-conversation-facts never consolidates its
 // own progress markers), so a bare `consolidated_at IS NULL AND expired_at

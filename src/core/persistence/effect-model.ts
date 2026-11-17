@@ -59,10 +59,10 @@ export type SettlementProof = { kind: 'db_only'; worktree_id: string; targets: S
   | { kind: 'superseded_remote'; former_worktree_id: string; worktree_id: string; targets: SettledTarget[] }
   | { kind: 'former_binding_retired'; reason: 'source_replaced' | 'page_moved'; former_worktree_id: string | null; former_incarnation: string;
     worktree_id: string; source_incarnation: string | null; targets: RetiredTarget[] };
-/** The disposition `gbrain sources writer settle-effects` records on a Git effect whose retry can never succeed. */
+/** The disposition `foresights sources writer settle-effects` records on a Git effect whose retry can never succeed. */
 export interface EffectSettlement { reason: SettlementProof['kind']; at: string; host_id: string; plan_hash: string; proof: SettlementProof }
 /** `page_body_segmented`: a segmented page an older binary's mirror or Git scan passed by; this one mirrors and commits it. */
-/** `preview_changed`: a `gbrain repair segmented-mirror` target whose file or render no longer has the hash its preview approved (`data.approved_file`). */
+/** `preview_changed`: a `foresights repair segmented-mirror` target whose file or render no longer has the hash its preview approved (`data.approved_file`). */
 export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' | 'page_body_segmented' | 'withdrawal_not_mirrored' | 'preview_changed' }
 /** The code a page behind a failed withdrawal mirror is parked with: its file may still hold the withdrawn text. */
 export const WITHHELD_BY_MIRROR = 'withdrawal_mirror_failed';
@@ -126,7 +126,7 @@ export interface PersistenceEffect {
     retried?: number;
     /** #5396: scan targets passed without a file publication (a sync-skip metafile, or a file with an uncoordinated local edit). */
     skipped?: SkippedTarget[];
-    /** A `gbrain repair segmented-mirror` target: the file and render SHA-256 its preview approved; the mirror rewrites the file only while both still match. */
+    /** A `foresights repair segmented-mirror` target: the file and render SHA-256 its preview approved; the mirror rewrites the file only while both still match. */
     approved_file?: { slug: string; file_sha256: string; expected_sha256: string };
     /** GBRA-130 A-12: pages whose file this withdrawal mirror rewrote, recorded by its recovery with the cursor step. */
     published?: string[];

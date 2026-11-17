@@ -1,12 +1,12 @@
-/** D3 curated help for `gbrain apply-migrations` (flags read by src/commands/apply-migrations.ts parseArgs). */
+/** D3 curated help for `foresights apply-migrations` (flags read by src/commands/apply-migrations.ts parseArgs). */
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
   summary: 'Run pending migration orchestrators (schema, data and host-file migrations).',
   usage: [
-    'gbrain apply-migrations [--yes | --non-interactive] [--dry-run [--json]] [--list] [--mode always|pain_triggered|off]',
-    'gbrain apply-migrations --migration <vX.Y.Z> | --force-retry <vX.Y.Z> | --force-orchestrator | --force-schema | --force',
-    'gbrain apply-migrations --migration 0.53.0 --export-db-only --content-root <path> [--export-source <id>] --dry-run --json',
+    'foresights apply-migrations [--yes | --non-interactive] [--dry-run [--json]] [--list] [--mode always|pain_triggered|off]',
+    'foresights apply-migrations --migration <vX.Y.Z> | --force-retry <vX.Y.Z> | --force-orchestrator | --force-schema | --force',
+    'foresights apply-migrations --migration 0.53.0 --export-db-only --content-root <path> [--export-source <id>] --dry-run --json',
   ].join('\n'),
   flags: [
     { name: '--yes', type: 'boolean', desc: 'Run without prompting (default mode pain_triggered); authorizes the Phase F autopilot install.', consent: ['persistent_install'] },
@@ -34,9 +34,9 @@ export const help: CliHelpSpec = {
     { name: '--accept-reviewed-inventory', type: 'string', desc: 'With --migration 0.53.0: accept a skill-pack change the user reviewed, as <source>=<digest> from the conflict message (repeatable; a later edit changes the digest).' },
   ],
   examples: [
-    'gbrain apply-migrations --dry-run --json',
-    'gbrain apply-migrations --yes',
-    'gbrain apply-migrations --yes --no-autopilot-install',
-    'gbrain apply-migrations --force-retry 0.53.0',
+    'foresights apply-migrations --dry-run --json',
+    'foresights apply-migrations --yes',
+    'foresights apply-migrations --yes --no-autopilot-install',
+    'foresights apply-migrations --force-retry 0.53.0',
   ],
 };

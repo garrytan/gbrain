@@ -5,7 +5,7 @@ import type { Recipe } from '../types.ts';
  * /v1/chat/completions API at https://api.moonshot.ai/v1.
  *
  * Verified against Kimi API docs and live /v1/models on 2026-06-23.
- * The recipe is local-production glue until upstream GBrain carries a native
+ * The recipe is local-production glue until upstream Foresights carries a native
  * Moonshot recipe; keep it registered in the local patch registry.
  */
 export const moonshot: Recipe = {
@@ -14,7 +14,7 @@ export const moonshot: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'kimi-k2.7-code',
     'kimi-k2.7-code-highspeed',
@@ -37,7 +37,7 @@ export const moonshot: Recipe = {
     chat: {
       models: ['kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k2.6', 'kimi-k2.5'],
       supports_tools: true,
-      // Kimi tool calling is enough for ordinary chat/tool calls. GBrain's
+      // Kimi tool calling is enough for ordinary chat/tool calls. Foresights's
       // subagent loop remains Anthropic-pinned because upstream requires stable
       // Anthropic-style tool_use_id behavior across crashes/replays.
       supports_subagent_loop: false,

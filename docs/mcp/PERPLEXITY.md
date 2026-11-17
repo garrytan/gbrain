@@ -1,27 +1,27 @@
-# Connect GBrain to Perplexity Computer
+# Connect Foresights to Perplexity Computer
 
-Perplexity Computer connects as a **remote** MCP client, so GBrain must be served
+Perplexity Computer connects as a **remote** MCP client, so Foresights must be served
 over HTTP and reachable at a public HTTPS URL. Perplexity does not run
-`gbrain serve` (stdio) the way Claude Code does — it needs a reachable endpoint:
+`foresights serve` (stdio) the way Claude Code does — it needs a reachable endpoint:
 
 ```
 Perplexity Computer
   → https://your-machine.your-tailnet.ts.net/mcp   (Tailscale Funnel; ngrok alternative)
-  → gbrain serve --http   (built-in OAuth 2.1 transport)
+  → foresights serve --http   (built-in OAuth 2.1 transport)
   → Postgres / PGLite
 ```
 
-## 1. Publish GBrain over HTTPS (host side)
+## 1. Publish Foresights over HTTPS (host side)
 
 Perplexity's runtime is in the vendor's cloud, so it needs the public shape:
 
 ```bash
-gbrain mcp expose --funnel
+foresights mcp expose --funnel
 ```
 
 **Say to your agent:** *"expose my brain over mcp"* — *"put my brain on tailscale"*.
 
-This starts `gbrain serve --http` as a user service on the default loopback
+This starts `foresights serve --http` as a user service on the default loopback
 bind, publishes it with Tailscale Funnel at
 `https://your-machine.your-tailnet.ts.net`, and sets `--public-url` to match —
 the OAuth issuer in the discovery metadata lines up with the URL Perplexity
@@ -41,7 +41,7 @@ ngrok http 3131 --url YOUR-DOMAIN.ngrok.app
 Keep it running, then start the brain server once in another terminal:
 
 ```bash
-gbrain serve --http --port 3131 --public-url https://YOUR-DOMAIN.ngrok.app
+foresights serve --http --port 3131 --public-url https://YOUR-DOMAIN.ngrok.app
 ```
 
 Only when the tunnel agent or reverse proxy runs on a different host does the
@@ -64,7 +64,7 @@ For a connection that accepts **machine client credentials**, the authorized
 administrator provisions a scoped handoff through the existing server:
 
 ```bash
-gbrain mcp grant perplexity-example --harness perplexity \
+foresights mcp grant perplexity-example --harness perplexity \
   --profile memory-writer --source default \
   --url https://your-machine.your-tailnet.ts.net/mcp \
   --admin-token-file ~/.gbrain/serve/admin-token \
@@ -75,7 +75,7 @@ Use `--dry-run` first to review the grant. Generate instructions for that actual
 registration:
 
 ```bash
-gbrain mcp admin setup CLIENT_ID --harness perplexity --flow client-credentials \
+foresights mcp admin setup CLIENT_ID --harness perplexity --flow client-credentials \
   --url https://your-machine.your-tailnet.ts.net/mcp \
   --admin-token-file ~/.gbrain/serve/admin-token --json
 ```
@@ -88,8 +88,8 @@ The generic/manual adapter produces instructions; it does not claim to install
 or activate Perplexity's native settings.
 
 For legacy bearer settings on PGLite, mint a scoped token before the server
-runs (`gbrain auth create perplexity-example --scopes read,write`), or provision
-through the running server's owner API. `gbrain auth create` opens the database
+runs (`foresights auth create perplexity-example --scopes read,write`), or provision
+through the running server's owner API. `foresights auth create` opens the database
 and fails with `live_serve` while the service holds its single-writer lock.
 Postgres allows concurrent local maintenance commands.
 
@@ -110,7 +110,7 @@ Postgres allows concurrent local maintenance commands.
 In a Perplexity conversation, ask it to use your brain:
 
 ```
-Use my GBrain to search for [topic]
+Use my Foresights to search for [topic]
 ```
 
 Have it call `get_brain_identity` (whose brain this is), then `list_skills`
@@ -123,7 +123,7 @@ setup file or a successful server probe does not establish native activation.
 
 - Perplexity Computer is available to Pro subscribers; both the Mac app and web
   version support remote MCP connectors.
-- The Mac app can also use a local MCP server (`gbrain serve` stdio) if you'd
+- The Mac app can also use a local MCP server (`foresights serve` stdio) if you'd
   rather not expose an HTTP endpoint.
-- A `gbrain auth create` token is a long-lived, full-access secret. Keep it
+- A `foresights auth create` token is a long-lived, full-access secret. Keep it
   private and prefer a scoped token where possible.

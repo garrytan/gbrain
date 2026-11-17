@@ -1,6 +1,6 @@
 /**
- * GBRA-377 PR A: `gbrain skills index build|status|remove` and
- * `gbrain skills resolve` as a process, the interface adapters call.
+ * GBRA-377 PR A: `foresights skills index build|status|remove` and
+ * `foresights skills resolve` as a process, the interface adapters call.
  *
  * 1. Protects: exit codes (0 success and no_skill, 1 runtime error, 0 with
  *    --fail-open, 2 usage), the JSON documents on stdout matching the
@@ -44,7 +44,7 @@ describe('routing', () => {
   });
 });
 
-describe('gbrain skills (CLI)', () => {
+describe('foresights skills (CLI)', () => {
   const home = tmp();
   test('build from stdin, resolve, dedupe after delivery, status and remove', () => {
     const b = cli(home, ['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-', '--json'], SKILLS);
@@ -117,7 +117,7 @@ describe('gbrain skills (CLI)', () => {
     const h = tmp();
     for (const args of [['skills', 'index', '--help'], ['skills', 'index'], ['skills', 'resolve', '--help']]) {
       const r = cli(h, args);
-      expect({ args, code: r.code, usage: r.out.includes('Usage: gbrain skills') }).toEqual({ args, code: 0, usage: true });
+      expect({ args, code: r.code, usage: r.out.includes('Usage: foresights skills') }).toEqual({ args, code: 0, usage: true });
     }
   }, 60_000);
 

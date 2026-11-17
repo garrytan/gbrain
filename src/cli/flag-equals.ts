@@ -287,7 +287,7 @@ export async function splitFlagEquals(command: string, args: readonly string[]):
   const readers = [...EQUALS_READERS[keyed] ?? [], ...EQUALS_READERS[`${keyed} ${sub}`] ?? []];
   let types: Map<string, string> | undefined;
   const out: string[] = [];
-  const where = args[0] && !args[0].startsWith('-') ? `gbrain ${command} ${args[0]}` : `gbrain ${command}`;
+  const where = args[0] && !args[0].startsWith('-') ? `foresights ${command} ${args[0]}` : `foresights ${command}`;
   let pastDashDash = false;
   let promptAt = -1;
   let tailAt = args.length;
@@ -302,7 +302,7 @@ export async function splitFlagEquals(command: string, args: readonly string[]):
     const dashAt = args.indexOf('--', promptAt);
     if (dashAt < 0) while (tailAt > promptAt && BOOLEAN_TAIL_FLAGS.has(args[tailAt - 1]!.split('=')[0]!) && !/\s/.test(args[tailAt - 1]!)) tailAt--;
     const stray = args.slice(promptAt, dashAt < 0 ? tailAt : dashAt).map(t => /^(--[a-z0-9][a-z0-9-]*)=([\s\S]*)$/.exec(t)).find(m => m !== null && (RUN_VALUE_FLAGS.has(m[1]!) || BOOLEAN_TAIL_FLAGS.has(m[1]!) && !/\s/.test(m[2]!)))?.[1];
-    if (stray) return { refusal: usageError(`gbrain agent: \`${stray}=…\`: agent run reads its flags before the prompt, so this would be prompt text.`, `Write ${RUN_VALUE_FLAGS.has(stray) ? `${stray} <value>` : stray} before the prompt and ahead of any word agent run does not read (such as --json or --yes), or put -- before the prompt to keep it as text.`) };
+    if (stray) return { refusal: usageError(`foresights agent: \`${stray}=…\`: agent run reads its flags before the prompt, so this would be prompt text.`, `Write ${RUN_VALUE_FLAGS.has(stray) ? `${stray} <value>` : stray} before the prompt and ahead of any word agent run does not read (such as --json or --yes), or put -- before the prompt to keep it as text.`) };
   }
   for (let i = 0; i < args.length; i++) {
     const token = args[i]!;
@@ -313,11 +313,11 @@ export async function splitFlagEquals(command: string, args: readonly string[]):
     const m = EQUALS_TOKEN.exec(token);
     const flag = m?.[1];
     if (flag !== undefined && !flag.startsWith('--') && !/\s/.test(token)) {
-      return { refusal: usageError(`gbrain ${command}: \`${flag}=…\`: a short flag takes no =.`, `Write ${flag} on its own, or ${flag} <value> with the value as the next argument.`) };
+      return { refusal: usageError(`foresights ${command}: \`${flag}=…\`: a short flag takes no =.`, `Write ${flag} on its own, or ${flag} <value> with the value as the next argument.`) };
     }
     const registered = flag !== undefined && (!legal || legal.includes(flag) || flag.startsWith('--no-') && legal.includes(`--${flag.slice(5)}`));
     const unvalidated = pastDashDash && !registered && /^--[^=\s]+=/.exec(token);
-    if (unvalidated) return { refusal: usageError(`gbrain ${command}: \`${unvalidated[0]}…\`: not a flag of this command, and its handler reads flags after --.`, 'Check the spelling: flags are lowercase words joined by hyphens.') };
+    if (unvalidated) return { refusal: usageError(`foresights ${command}: \`${unvalidated[0]}…\`: not a flag of this command, and its handler reads flags after --.`, 'Check the spelling: flags are lowercase words joined by hyphens.') };
     if (!m || !registered || readers.includes(flag)) { out.push(token); continue; }
     const value = m[2]!;
     if (flag === '--json' && value === 'true') { out.push(flag); continue; }
@@ -337,7 +337,7 @@ export async function splitFlagEquals(command: string, args: readonly string[]):
           : own === undefined
           ? [`this command takes ${flag} <value> as two arguments`, `Write ${flag} <value>, or ${flag} on its own if it is a switch.`]
           : null;
-    if (refusal) return { refusal: usageError(`gbrain ${command}: \`${flag}=…\`: ${refusal[0]}.`, refusal[1]!) };
+    if (refusal) return { refusal: usageError(`foresights ${command}: \`${flag}=…\`: ${refusal[0]}.`, refusal[1]!) };
     out.push(flag, value);
   }
   return { args: out };
@@ -371,7 +371,7 @@ export async function directEntryArgs(command: string, raw: string[]): Promise<{
   if ('refusal' in split) return split;
   const unknown = findUnknownFlag(split.args, new Set(CLI_FLAG_REGISTRY[command]));
   if (!unknown) return split;
-  const message = `unknown flag ${unknown} for 'gbrain ${command}'`;
+  const message = `unknown flag ${unknown} for 'foresights ${command}'`;
   const known = (await loadCuratedHelp(command))?.flags.map(f => f.name) ?? CLI_FLAG_REGISTRY[command] ?? [];
   return { refusal: unknownFlagError(command, unknown, message, known), legacy: { status: 'error', reason: 'invalid_flag', message } };
 }

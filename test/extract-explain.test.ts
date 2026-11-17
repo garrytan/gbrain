@@ -1,4 +1,4 @@
-// Regression test: `gbrain extract --explain <kind> --json` must not crash
+// Regression test: `foresights extract --explain <kind> --json` must not crash
 // on extract_rollup_7d's aggregate columns. Postgres's SUM(integer) returns
 // bigint (halt_count/eval_pass_count/eval_fail_count/round_completed_count
 // are all INT columns) — postgres.js surfaces that as JS `bigint`, which

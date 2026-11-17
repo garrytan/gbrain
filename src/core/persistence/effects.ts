@@ -551,7 +551,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
       await assertEmbeddingEffectEnabled(tx, config);
       signal.throwIfAborted();
       await pageLease.assertHeld(tx);
-      // A partially refused page keeps its signature unstamped so `gbrain embed --stale` finds the refused chunks.
+      // A partially refused page keeps its signature unstamped so `foresights embed --stale` finds the refused chunks.
       // A partial install (the page changed under the provider call) keeps the vectors whose chunk and input
       // still match and settles like a superseded one: the newer revision's own effect embeds the rest.
       const installed = (await installPageEmbeddings(tx, prepared, pending.map((chunk, i) => ({ chunk_index: chunk.chunk_index,
@@ -571,7 +571,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     });
     if (installed && refused) {
       // Terminal, never retried: the same input would return the same vector. A scan moves on to its next
-      // page; the page keeps no signature, so `gbrain embed --stale` finds it.
+      // page; the page keeps no signature, so `foresights embed --stale` finds it.
       if (targetedWithdrawalEffect(effect) || effect.data.source_scan) await finishPage(engine, effect, snapshot);
       else await failEffect(engine, effect, EMBEDDING_ZERO_NORM);
       return;
@@ -646,7 +646,7 @@ export async function assertEmbeddingEffectEnabled(engine: BrainEngine, config: 
   const disabled = await engine.getConfig('embedding_disabled').catch(error => { throw embeddingStorageFailure(error); });
   if (disabled !== null && disabled !== 'true' && disabled !== 'false') {
     throw opError('embedding_configuration', 'Selected brain embedding_disabled must be true or false.',
-      `The brain's embedding_disabled setting is neither true nor false, so embedding is paused. Read it, then have the user set it to true or false with gbrain config set embedding_disabled.`,
+      `The brain's embedding_disabled setting is neither true nor false, so embedding is paused. Read it, then have the user set it to true or false with foresights config set embedding_disabled.`,
       { fix: readFix('Shows the stored embedding_disabled value and the plane it comes from, read-only.', { argv: ['gbrain', 'config', 'get', 'embedding_disabled'] }) });
   }
   assertEmbeddingEnabled({ engine: engine.kind, ...config, embedding_disabled: disabled === 'true' });
@@ -739,8 +739,8 @@ interface DerivedFailures { run: ItemRun; counted: Array<{ effect: PersistenceEf
 
 /**
  * A links or facts-backstop failure counts toward PARK_AFTER_FAILURES. At the cap a links effect completes as
- * skipped with the code (its edges are derived; `gbrain extract --stale` recovers them) and a facts-backstop effect
- * fails with it (`gbrain sources writer retry-effects` authorizes one more attempt).
+ * skipped with the code (its edges are derived; `foresights extract --stale` recovers them) and a facts-backstop effect
+ * fails with it (`foresights sources writer retry-effects` authorizes one more attempt).
  */
 async function countDerivedFailure(engine: BrainEngine, effect: PersistenceEffect, code: string): Promise<void> {
   const failures = (effect.data.target_failures ?? 0) + 1;
@@ -766,7 +766,7 @@ const DEPENDENCY_CODES = ['recovery_required', 'owner_marker_missing', 'owner_un
 /**
  * A scan sets its failing target aside and moves on; a single-target effect,
  * or a failure outside any target, parks the whole effect. Parked work stays
- * retained until `gbrain sources writer retry-effects` authorizes another attempt.
+ * retained until `foresights sources writer retry-effects` authorizes another attempt.
  */
 async function parkEffectTarget(engine: BrainEngine, effect: PersistenceEffect, code: string, target: string | undefined, rule?: string): Promise<void> {
   const { target_failures: _failures, failing_target: _target, retry_slugs: retrying = [], ...data } = effect.data;

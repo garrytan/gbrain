@@ -1,5 +1,5 @@
 /**
- * v0.43 (#2095) — `gbrain watch` push transport: streaming loop, rolling
+ * v0.43 (#2095) — `foresights watch` push transport: streaming loop, rolling
  * window, session dedupe, --json shape, event logging on channel 'watch',
  * and clean EOF return. Hermetic PGLite + injected line/write deps (no
  * subprocess, no real stdin).
@@ -49,7 +49,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM pages');
 });
 
-describe('gbrain watch (#2095)', () => {
+describe('foresights watch (#2095)', () => {
   test('--help prints WATCH_HELP and touches nothing', async () => {
     const out = await watchRun([], ['--help']);
     expect(out.join('')).toBe(WATCH_HELP);
@@ -126,7 +126,7 @@ describe('gbrain watch (#2095)', () => {
   });
 });
 
-describe('gbrain watch — window + cap flags (ship coverage G4)', () => {
+describe('foresights watch — window + cap flags (ship coverage G4)', () => {
   test('--window-turns 1: fires on the mention turn itself; the pronoun follow-up adds nothing', async () => {
     await seed('people/alice-example', 'Alice Example', 'Alice is a founder.');
     const out = await watchRun(
@@ -154,7 +154,7 @@ describe('gbrain watch — window + cap flags (ship coverage G4)', () => {
   });
 });
 
-describe('gbrain watch — red-team hardening', () => {
+describe('foresights watch — red-team hardening', () => {
   test('starvation guard: an already-pushed slug never burns the --max-pages cap slot', async () => {
     await seed('people/alice-example', 'Alice Example', 'Founder.');
     await seed('people/bob-sample', 'Bob Sample', 'Engineer.');
@@ -200,7 +200,7 @@ describe('gbrain watch — red-team hardening', () => {
   });
 });
 
-describe('gbrain watch — per-turn fail-open (review hardening)', () => {
+describe('foresights watch — per-turn fail-open (review hardening)', () => {
   test('a transient DB error on one turn never kills the stream', async () => {
     await seed('people/alice-example', 'Alice Example', 'Alice is a founder.');
     // Fail the FIRST resolver query against pages (turn 1's resolution);

@@ -1,5 +1,5 @@
 /**
- * #6317 (B4, I2, T4): the movement reader and `gbrain sources writer movement`
+ * #6317 (B4, I2, T4): the movement reader and `foresights sources writer movement`
  * judge managed sync by committed pages and the head's step, never by a
  * renewed lease, a live lock or a green /health. Fixtures on in-memory PGLite:
  * one managed source (claimed worktree) with a pending `managed-sync` cursor,
@@ -93,7 +93,7 @@ afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true
 describe('readSourceMovement (B4)', () => {
   test('nothing pending, parked, not moving, moving by commit, moving by step, held', () => withEnv({ GBRAIN_HOME: home }, async () => {
     const f = await managedSource();
-    expect(await one(f)).toMatchObject({ source_id: f.id, movement_state: 'nothing_pending', data_moving: null, cursor: null, writer_status_command: `gbrain sources writer status --source ${f.id} --json` });
+    expect(await one(f)).toMatchObject({ source_id: f.id, movement_state: 'nothing_pending', data_moving: null, cursor: null, writer_status_command: `foresights sources writer status --source ${f.id} --json` });
 
     await cursor(f, 3, 10, { progress: { startedAt: Date.now() - 300_000, startIndex: 0, lastAt: Date.now() - 200_000, lastIndex: 3 } });
     await request(f, 'committed', { completedAt: ago(200_000) });
@@ -171,7 +171,7 @@ describe('movement watermark index', () => {
   }), 60_000);
 });
 
-describe('gbrain sources writer movement (I2, T4)', () => {
+describe('foresights sources writer movement (I2, T4)', () => {
   const fast = { pollMs: 100 };
 
   test('the default window never drops below one sync preparation budget and the flags parse', () => {
@@ -182,7 +182,7 @@ describe('gbrain sources writer movement (I2, T4)', () => {
     expect(parseMovementArgs(['--source=notes', '--wait=45'])).toMatchObject({ sourceId: 'notes', waitMs: 45_000 });
     expect(() => parseMovementArgs(['a', 'b'])).toThrow(/Specify the source once/);
     expect(() => parseMovementArgs(['--bogus'])).toThrow(/Unknown option/);
-    expect(MOVEMENT_SUPERVISOR_STEP).toBe('after restarting serve and the workers, run: gbrain sources writer movement');
+    expect(MOVEMENT_SUPERVISOR_STEP).toBe('after restarting serve and the workers, run: foresights sources writer movement');
   });
 
   test('a pending cursor nothing moves exits 1 with managed_sync_not_moving; moving exits 0; nothing pending skips the wait', () => withEnv({ GBRAIN_HOME: home }, async () => {
@@ -197,7 +197,7 @@ describe('gbrain sources writer movement (I2, T4)', () => {
     // Parked: pending and nothing live to move it (after a restart, the catch-up was not started again) → exit 1, resume command as the fix.
     const parked = await runMovementCheck(engine, { sourceId: f.id, waitMs: 1_000, ...fast });
     expect(parked).toMatchObject({ exit_code: 1, sources: [{ state: 'parked', exit: 1, code: 'managed_sync_not_moving', reason: 'movement_check' }] });
-    expect(parked.sources[0]!.fix).toMatchObject({ next: 'run', command: `gbrain sync --source ${f.id} --no-pull` });
+    expect(parked.sources[0]!.fix).toMatchObject({ next: 'run', command: `foresights sync --source ${f.id} --no-pull` });
     expect(parked.error).toMatchObject({ code: 'managed_sync_not_moving', reason: 'movement_check', class: 'server', retryable: false, contract_version: 1 });
     expect(parked.error!.fix).toMatchObject({ next: 'run', argv: ['gbrain', 'sources', 'writer', 'status', '--source', f.id, '--json'] });
     expect(parked.error!.docs).toContain('troubleshooting.md#managed-sync-not-moving');
@@ -208,7 +208,7 @@ describe('gbrain sources writer movement (I2, T4)', () => {
       const stuck = await runMovementCheck(engine, { sourceId: f.id, waitMs: 1_000, ...fast });
       expect(stuck).toMatchObject({ exit_code: 1, sources: [{ state: 'not_moving', exit: 1, code: 'managed_sync_not_moving', reason: 'movement_check' }] });
       expect(stuck.sources[0]!.why).toContain('no page committed and no step advance');
-      expect(stuck.sources[0]!.fix).toMatchObject({ next: 'run', command: `gbrain sources writer status --source ${f.id} --json` });
+      expect(stuck.sources[0]!.fix).toMatchObject({ next: 'run', command: `foresights sources writer status --source ${f.id} --json` });
       expect(stuck.sources[0]!.fix!.verify?.argv).toEqual(['gbrain', 'sources', 'writer', 'movement', f.id, '--json']);
       // The consumer commits during the window: moved, exit 0, and the window ends early.
       const started = Date.now();
@@ -282,8 +282,8 @@ describe('gbrain sources writer movement (I2, T4)', () => {
     // straddle a millisecond boundary made the not_moving pair read as `moved` (#6340 gate flake, root cause in the test).
     const sampledAt = ago(0), committedAt = ago(1_000);
     const base = (over: Record<string, unknown>) => ({ source_id: 's', sampled_at: sampledAt, movement_state: 'moving', data_moving: true, not_moving_since: null, last_commit_at: committedAt, last_progress_at: committedAt,
-      cursor: { index: 1, total: 4, remaining: 3, held: 0, last_progress_at: null, resume_command: 'gbrain sync --source s --no-pull' }, head: null, holds: { count: 0, stalled: 0, fences: 0, concurrent: 0, last_hold_at: null },
-      admitted: 1, live: { drain: true, drain_pid: 1, drain_job_id: null, consumer: null }, ceiling_ms: 600_000, owner_is_this_host: true, writer_status_command: 'gbrain sources writer status --source s --json', ...over }) as Parameters<typeof movementReport>[1];
+      cursor: { index: 1, total: 4, remaining: 3, held: 0, last_progress_at: null, resume_command: 'foresights sync --source s --no-pull' }, head: null, holds: { count: 0, stalled: 0, fences: 0, concurrent: 0, last_hold_at: null },
+      admitted: 1, live: { drain: true, drain_pid: 1, drain_job_id: null, consumer: null }, ceiling_ms: 600_000, owner_is_this_host: true, writer_status_command: 'foresights sources writer status --source s --json', ...over }) as Parameters<typeof movementReport>[1];
     const states: Array<[ReturnType<typeof judgeMovement>, Parameters<typeof movementReport>[0], Parameters<typeof movementReport>[1]]> = [
       ['nothing_pending', undefined, base({ movement_state: 'nothing_pending', cursor: null, data_moving: null })],
       ['moved', base({ last_commit_at: ago(100_000) }), base({})],
@@ -330,7 +330,7 @@ describe('doctor managed_sync_not_moving and the serve notice', () => {
       expect(warn!.fix).toMatchObject({ argv: ['gbrain', 'sources', 'writer', 'status', '--source', f.id, '--json'], actor: 'agent', consent: [] });
       await watch.tick(); await watch.tick();
       expect(lines.filter(line => line.startsWith('[gbrain notice managed_sync_not_moving kind=degraded]'))).toHaveLength(1);
-      expect(lines[0]).toContain(`gbrain sources writer status --source ${f.id} --json`);
+      expect(lines[0]).toContain(`foresights sources writer status --source ${f.id} --json`);
       await request(f, 'committed', { completedAt: ago(0) });
       await watch.tick();
       expect(lines[1]).toContain('moving again');

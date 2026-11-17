@@ -55,7 +55,7 @@ export interface Migration {
    *
    * Verify-hook coverage is OPT-IN per migration. Per X3 / codex C6 the
    * v0.30.1 surface ships verify hooks only on a small set of migrations;
-   * older migrations rely on `gbrain upgrade --force-schema` for recovery.
+   * older migrations rely on `foresights upgrade --force-schema` for recovery.
    */
   verify?: (engine: BrainEngine) => Promise<boolean>;
 }

@@ -63,7 +63,7 @@ function childEnv(home: string, extra: Record<string, string | undefined> = {}):
 async function cli(home: string, args: string[]): Promise<Record<string, unknown> | null> {
   const child = Bun.spawn([process.execPath, CLI, ...args], { cwd: home, env: childEnv(home), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  if (code !== 0) throw new Error(`gbrain ${args.join(' ')} exited ${code}\nstdout: ${stdout.slice(-1500)}\nstderr: ${stderr.slice(-1500)}`);
+  if (code !== 0) throw new Error(`foresights ${args.join(' ')} exited ${code}\nstdout: ${stdout.slice(-1500)}\nstderr: ${stderr.slice(-1500)}`);
   try { return JSON.parse(stdout); } catch { return null; }
 }
 function writeConfig(home: string, url: string): void {

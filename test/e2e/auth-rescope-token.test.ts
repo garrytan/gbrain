@@ -1,6 +1,6 @@
 /**
  * #5231 / #5893 (O-ENG-7) on real Postgres: `rescopeLegacyToken` (the
- * `gbrain auth rescope-token` core) stores real JSONB objects and arrays
+ * `foresights auth rescope-token` core) stores real JSONB objects and arrays
  * (postgres.js double-encode class), binds its source list as text[], and the
  * explicit no-source grant is enforced by both HTTP auth paths and by
  * publication reauthorization. PGLite and the real CLI subprocess are covered

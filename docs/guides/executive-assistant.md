@@ -11,12 +11,12 @@ Without this: the agent triages email mechanically ("you have 12 unread"), preps
 **Native pieces:** the email half of this pattern needs no hand-rolled
 collection or thread tracking. The google connector ingests Gmail/Calendar/
 Contacts (`docs/guides/google-connect.md`) and the open-loop engine
-(`docs/guides/open-loops.md`) maintains real loop rows behind `gbrain waiting`
+(`docs/guides/open-loops.md`) maintains real loop rows behind `foresights waiting`
 and the `open_loops` op. `context.open_threads` in the workflows below is
 backed by those rows — entity cards carry `direction`, `due`, and `loop_id`
 per thread. The daily-operation contract lives in `skills/google-loops/SKILL.md`.
 
-Before hand-rolling these: gbrain bundles the morning-briefing half of this
+Before hand-rolling these: foresights bundles the morning-briefing half of this
 pattern as the `briefing` skill (`skills/briefing/`) and the task-prep half
 as `daily-task-prep` (`skills/daily-task-prep/`). Use the workflows below to
 extend or customize what those skills already ship.
@@ -26,7 +26,7 @@ extend or customize what those skills already ship.
 on email_batch(emails):
     # Step 0: Load the open-loop state FIRST — who is already waiting on you
     #   (real loop rows: deterministic thread detector + commitment extractor)
-    waiting = gbrain waiting --json     # or the open_loops op over MCP
+    waiting = foresights waiting --json     # or the open_loops op over MCP
     #   Refuses on stale google sources by design — run the sync it names first
 
     for email in emails:
@@ -35,11 +35,11 @@ on email_batch(emails):
         #   the address in a person page's email frontmatter, else a person
         #   page whose title equals the display name. A search's top hit is
         #   NOT the sender; no exact match = unknown sender.
-        sender_page = gbrain whois "{email.sender_address}" --source-id __all__ --json
+        sender_page = foresights whois "{email.sender_address}" --source-id __all__ --json
         if not sender_page.matches:
-            sender_page = gbrain whois "{email.sender_name}" --source-id __all__ --json
+            sender_page = foresights whois "{email.sender_name}" --source-id __all__ --json
         if len(sender_page.matches) == 1:   # ambiguous or empty = unknown sender
-            context = gbrain get <sender_slug>
+            context = foresights get <sender_slug>
             #   Now you know: who they are, relationship history,
             #   what they care about, open threads
             #   context.open_threads entries are backed by loop rows and
@@ -66,22 +66,22 @@ on email_batch(emails):
             )
         # After the user sends a reply, the loop closes itself on the next
         # sync (closed_by: reply_detected); commitments close via
-        # `gbrain loops done <loop_id>`
+        # `foresights loops done <loop_id>`
 
 # WORKFLOW 2: Meeting Prep
 on upcoming_meeting(meeting):
     briefing = {}
     for attendee in meeting.attendees:
         # Resolve each attendee by exact email, else exact title (as above)
-        results = gbrain whois "{attendee.email}" --source-id __all__ --json
+        results = foresights whois "{attendee.email}" --source-id __all__ --json
         if len(results.matches) == 1:
-            page = gbrain get <attendee_slug>
+            page = foresights get <attendee_slug>
             briefing[attendee] = {
                 "compiled_truth": page.compiled_truth,
                 "last_interaction": page.timeline[0],     # most recent
                 "open_threads": page.open_threads,
                 "relationship_temperature": page.relationship,
-                "relevant_deals": gbrain call get_links '{"slug": "<attendee_slug>"}',
+                "relevant_deals": foresights call get_links '{"slug": "<attendee_slug>"}',
             }
         else:
             briefing[attendee] = "No brain page -- consider enriching"
@@ -95,23 +95,23 @@ on inbox_cleared():
     for email in processed_emails:
         if email.contained_new_information:
             # Update the sender's brain page with new signal
-            gbrain timeline-add <sender_slug> {date} \
+            foresights timeline-add <sender_slug> {date} \
                 "Email re: {subject}. Key info: {extracted_signal}" \
                 --source "email from {sender} re {subject}, {date}"
 
             # Update any mentioned entity pages too
             for entity in email.mentioned_entities:
-                gbrain timeline-add <entity_slug> {date} \
+                foresights timeline-add <entity_slug> {date} \
                     "{what_was_said_about_them}" \
                     --source "email from {sender}, {date}"
 
 # WORKFLOW 4: Scheduling Nudges
 on schedule_request(meeting):
     # The ranked source of truth for "who is owed what" is the loop engine:
-    waiting = gbrain waiting --json     # top counterparties, due dates, evidence
+    waiting = foresights waiting --json     # top counterparties, due dates, evidence
 
     for attendee in meeting.attendees:
-        page = gbrain get <attendee_slug>
+        page = foresights get <attendee_slug>
         if page.last_interaction > 6_weeks_ago:
             nudge("You haven't met with {attendee} in {weeks} weeks")
         for thread in page.open_threads:      # loop-backed entries
@@ -122,13 +122,13 @@ on schedule_request(meeting):
         if page.relationship_temperature == "cooling":
             nudge("Relationship with {attendee} may need attention")
         # When a nudge is resolved in the meeting, close it:
-        #   gbrain loops done <thread.loop_id>
+        #   foresights loops done <thread.loop_id>
 ```
 
 ## Tricky Spots
 
 1. **Search sender BEFORE reading the email.** This is counterintuitive but critical. Loading brain context first means you know who they are, what you're working on together, and what they care about -- before you even see the subject line. The triage is informed, not mechanical.
-2. **Identity is an exact match, never a top hit.** Accept a person page for a sender or attendee only when `gbrain whois` returns exactly one match for the address (or, with no address match, the name) ([identity rule](../../skills/conventions/brain-first.md#identity-exact-match)). A semantic search always returns something, so taking the first hit files strangers as known contacts and loads the wrong relationship into the reply.
+2. **Identity is an exact match, never a top hit.** Accept a person page for a sender or attendee only when `foresights whois` returns exactly one match for the address (or, with no address match, the name) ([identity rule](../../skills/conventions/brain-first.md#identity-exact-match)). A semantic search always returns something, so taking the first hit files strangers as known contacts and loads the wrong relationship into the reply.
 3. **Unknown senders with no brain page are almost always noise.** If no person page matches a sender exactly, they're probably not important. Classify as low priority unless the email content signals otherwise.
 4. **Meeting prep is the highest-leverage EA workflow.** The user walks into every meeting already briefed on each attendee: last interaction, open threads, relationship history. This is the difference between "you have a meeting at 3" and "you have a meeting at 3 with alice-example -- last time you discussed the Series B, she was concerned about burn rate."
 5. **Post-inbox brain updates are where the brain compounds.** Every email is signal. If you clear the inbox without updating brain pages, the information is lost. This is the step most agents skip.
@@ -136,11 +136,11 @@ on schedule_request(meeting):
 
 ## How to Verify
 
-1. Run meeting prep for tomorrow's calendar. For each attendee, confirm the agent ran `gbrain search` and loaded their brain page before generating the briefing.
+1. Run meeting prep for tomorrow's calendar. For each attendee, confirm the agent ran `foresights search` and loaded their brain page before generating the briefing.
 2. Triage 5 emails. Confirm the agent searched for each sender in the brain before classifying the email.
-3. After clearing an inbox, check 2 sender brain pages with `gbrain get <slug>`. Confirm new timeline entries were added with information from the emails.
+3. After clearing an inbox, check 2 sender brain pages with `foresights get <slug>`. Confirm new timeline entries were added with information from the emails.
 4. Check a scheduling suggestion. Confirm the agent referenced the attendee's brain page (last interaction date, open threads) in the nudge.
 5. Send a test email from someone with a brain page. Confirm the triage response references their relationship context, not just the email content.
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

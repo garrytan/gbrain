@@ -1,5 +1,5 @@
 /**
- * PR B Part 5: `gbrain sources guard` on a managed source's canonical worktree. Owner host only; enforce mode refuses a
+ * PR B Part 5: `foresights sources guard` on a managed source's canonical worktree. Owner host only; enforce mode refuses a
  * plain commit while the effect worker, the door and a refresh fast-forward pass; the install is worktree-local, so a
  * linked sibling worktree of the same repository keeps its own hooks. In-memory PGLite and real git repositories.
  */
@@ -97,8 +97,8 @@ test('owner host only; enforce refuses a plain commit; refresh, effect and door 
 
   writeFileSync(join(f.root, 'alpha', 'stray.md'), page('Stray', 'A plain commit.'));
   git(f.root, 'add', 'alpha/stray.md');
-  expect(() => git(f.root, 'commit', '-q', '-m', 'plain commit in the managed worktree')).toThrow(/gbrain commit guard/);
-  expect(() => git(f.root, 'commit', '-q', '--no-verify', '-m', 'no-verify')).toThrow(/gbrain commit guard/);
+  expect(() => git(f.root, 'commit', '-q', '-m', 'plain commit in the managed worktree')).toThrow(/(?:foresights|gbrain) commit guard/);
+  expect(() => git(f.root, 'commit', '-q', '--no-verify', '-m', 'no-verify')).toThrow(/(?:foresights|gbrain) commit guard/);
   git(f.root, 'restore', '--staged', 'alpha/stray.md');
   rmSync(join(f.root, 'alpha', 'stray.md'));
 
@@ -143,7 +143,7 @@ test('default mode guards only the owner worktree: a worktree added after the in
 
   writeFileSync(join(f.root, 'alpha', 'stray.md'), page('Stray', 'Refused in the owner worktree.'));
   git(f.root, 'add', 'alpha/stray.md');
-  expect(() => git(f.root, 'commit', '-q', '-m', 'plain commit in the managed worktree')).toThrow(/gbrain commit guard/);
+  expect(() => git(f.root, 'commit', '-q', '-m', 'plain commit in the managed worktree')).toThrow(/(?:foresights|gbrain) commit guard/);
   git(f.root, 'restore', '--staged', 'alpha/stray.md');
   rmSync(join(f.root, 'alpha', 'stray.md'));
   await sourcesGuard(f.engine, { sourceId: f.alpha, action: 'uninstall', mode: 'default' });
@@ -160,7 +160,7 @@ test('the install is worktree-local: a linked sibling keeps its hooks and commit
   git(sibling, 'commit', '-q', '-m', 'commit in the sibling worktree');
   writeFileSync(join(f.root, 'alpha', 'stray.md'), page('Stray', 'Refused here.'));
   git(f.root, 'add', 'alpha/stray.md');
-  expect(() => git(f.root, 'commit', '-q', '-m', 'refused in the managed worktree')).toThrow(/gbrain commit guard/);
+  expect(() => git(f.root, 'commit', '-q', '-m', 'refused in the managed worktree')).toThrow(/(?:foresights|gbrain) commit guard/);
   git(f.root, 'restore', '--staged', 'alpha/stray.md');
 
   const status = await sourcesGuard(f.engine, { sourceId: f.alpha, action: 'status', mode: 'default' });

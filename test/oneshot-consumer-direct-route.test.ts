@@ -1,5 +1,5 @@
 /**
- * A one-shot command that starts a persistence consumer (`gbrain repair <kind> --apply`, `gbrain cli`, ...) takes the
+ * A one-shot command that starts a persistence consumer (`foresights repair <kind> --apply`, `foresights cli`, ...) takes the
  * direct route when one is configured. Since the direct pool follows the command (#7312), a one-shot process routed
  * nothing direct until it took a lease, so a consumer it started ran its claims and scans through the transaction-mode
  * pooler even with GBRAIN_DIRECT_DATABASE_URL set, and printed the `reason=transaction_pooler` line. Starting a consumer

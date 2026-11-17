@@ -1,5 +1,5 @@
 /**
- * #7086: `gbrain sources mirror-readonly <id> --dry-run` and `mirror-writable <id> --dry-run` preview the change and write
+ * #7086: `foresights sources mirror-readonly <id> --dry-run` and `mirror-writable <id> --dry-run` preview the change and write
  * nothing, as `sources remove --dry-run` does. Up to v0.60.316.0 both ignored --dry-run and set or cleared
  * `sources.config.mirror_read_only`. Asserts the source row (config and updated state) is byte-identical after each dry
  * run and that the real command still writes. PGLite always, Postgres when DATABASE_URL is set

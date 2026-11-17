@@ -1,5 +1,5 @@
 /**
- * `gbrain serve --fail-fast` / `GBRAIN_SERVE_FAIL_FAST=1` (agent operator
+ * `foresights serve --fail-fast` / `GBRAIN_SERVE_FAIL_FAST=1` (agent operator
  * wave C10): for process supervisors. When serve cannot start (the brain is
  * missing, its lock is held by another serve, the database is unreachable),
  * it exits non-zero with the classified error envelope on stderr instead of

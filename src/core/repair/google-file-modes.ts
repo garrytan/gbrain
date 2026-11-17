@@ -1,8 +1,8 @@
 /**
- * `gbrain repair google-file-modes` (security fix wave): clear the group and
- * other bits of files and directories gbrain wrote under a Google source
+ * `foresights repair google-file-modes` (security fix wave): clear the group and
+ * other bits of files and directories foresights wrote under a Google source
  * directory outside `~/.gbrain` (see `src/core/google/file-modes.ts` for what
- * counts as gbrain's own layout). Never the user-chosen root, never through a
+ * counts as foresights's own layout). Never the user-chosen root, never through a
  * symlink, never another user's file. Filesystem only: no journal admission.
  * Each run re-scans, so a rerun after `--limit` or an interruption picks up
  * exactly the entries that are still loose.

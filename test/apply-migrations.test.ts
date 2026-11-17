@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain apply-migrations` — the migration runner CLI.
+ * Tests for `foresights apply-migrations` — the migration runner CLI.
  *
  * Unit-scope: exercises the pure helpers (parseArgs, indexCompleted, buildPlan,
  * statusForVersion). End-to-end integration against real orchestrators is

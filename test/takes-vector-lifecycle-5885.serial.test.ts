@@ -12,7 +12,7 @@
  * accepts the embedding write without a coordinated grant; doctor's
  * fact_take_vectors check warns with counts and fixes, and is "not
  * applicable" on a keyless brain.
- * Fails when: takes are embedded only by `gbrain takes embed`, vectors carry
+ * Fails when: takes are embedded only by `foresights takes embed`, vectors carry
  * no provenance, or the migration ignores takes.
  * Installs the process-global gateway transport seam, so this stays serial.
  */
@@ -153,7 +153,7 @@ for (const backend of testBackends()) describe(`#5885 take vector lifecycle (${b
     await seedTakes(engine, 'people/dana-example', ['Acme example opens an office']);
     const warn = await doctor(engine);
     expect(warn).toMatchObject({ name: 'fact_take_vectors', status: 'warn', details: { code: 'stale_vectors', takes: { stale: 1, missing_or_changed: 1, other_model: 0 } } });
-    expect((warn.details!.fix as string[])).toContain('gbrain embed --stale');
+    expect((warn.details!.fix as string[])).toContain('foresights embed --stale');
     await embedStaleTakes(engine, {});
     expect(await doctor(engine)).toMatchObject({ details: { takes: { stale: 0 } } });
     await engine.setConfig('embedding_model', OTHER_MODEL);

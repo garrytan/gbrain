@@ -8,15 +8,15 @@ five suggestions, at most 400 tokens) for the harness to put in front of the
 model.
 
 - **Off by default.** Nothing changes until you build a catalog and wire a
-  harness to call `gbrain skills resolve`, or turn on the hook lane with
-  `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw and
+  harness to call `foresights skills resolve`, or turn on the hook lane with
+  `foresights setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw and
   Pi: the plugin and extension below; Cursor: pinned skills only, below).
   Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
   network, no model, no clock, no randomness on the turn path.
 - **No brain needed.** It works on a keyless, repo-less or brainless install,
-  on a thin client, and while `gbrain serve` holds the PGLite lock. It never
+  on a thin client, and while `foresights serve` holds the PGLite lock. It never
   reads or writes the brain.
 
 ## Quick start (no brain needed)
@@ -24,11 +24,11 @@ model.
 ```bash
 mkdir -p skills-example/deploy
 printf -- '---\nname: deploy\ndescription: Ship a service to production after the tests pass\n---\nRun the tests, then deploy.\n' > skills-example/deploy/SKILL.md
-gbrain skills index build --catalog example --dir skills-example
-gbrain skills resolve --catalog example --text "deploy the api to production" --harness claude-code
-gbrain skills resolve --catalog example --text "deploy the api to production" --json
-gbrain skills index status --catalog example
-gbrain skills index remove --catalog example
+foresights skills index build --catalog example --dir skills-example
+foresights skills resolve --catalog example --text "deploy the api to production" --harness claude-code
+foresights skills resolve --catalog example --text "deploy the api to production" --json
+foresights skills index status --catalog example
+foresights skills index remove --catalog example
 ```
 
 ## Build a catalog per harness
@@ -38,14 +38,14 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 
 | Harness | Build | Notes |
 |---|---|---|
-| Claude Code | `gbrain skills index build --catalog claude-user --dir ~/.claude/skills --harness claude-code` | Plugin skills get their `<plugin>:` prefix from `.claude-plugin/plugin.json`. |
-| Claude Code plugins | `gbrain skills index build --catalog claude-code-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
-| Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
+| Claude Code | `foresights skills index build --catalog claude-user --dir ~/.claude/skills --harness claude-code` | Plugin skills get their `<plugin>:` prefix from `.claude-plugin/plugin.json`. |
+| Claude Code plugins | `foresights skills index build --catalog claude-code-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
+| Codex | `foresights skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
-| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. For Pi, `gbrain setup pi --skill-loading resolve` builds `pi-user` for you (see below); for Cursor, `gbrain setup cursor --skill-loading resolve` builds the project's `cursor-project-<16 hex>` catalog for pinned skills. |
-| OpenClaw | `openclaw skills list --json \| gbrain skills index build --catalog openclaw-main --from-json - --dir <skills dir> --harness openclaw` | The list builds as is: the name is the id, and a skill OpenClaw hides from the model is skipped as ineligible. Each listed skill takes its body, path and triggers from the `--dir` skill of the same name; folder-only skills stay out. |
-| Other adapters | `gbrain skills index build --catalog <name> --from-json - --harness <h>` | The adapter pipes its skill list (schema below) and owns rebuilds. |
-| gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
+| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. For Pi, `foresights setup pi --skill-loading resolve` builds `pi-user` for you (see below); for Cursor, `foresights setup cursor --skill-loading resolve` builds the project's `cursor-project-<16 hex>` catalog for pinned skills. |
+| OpenClaw | `openclaw skills list --json \| foresights skills index build --catalog openclaw-main --from-json - --dir <skills dir> --harness openclaw` | The list builds as is: the name is the id, and a skill OpenClaw hides from the model is skipped as ineligible. Each listed skill takes its body, path and triggers from the `--dir` skill of the same name; folder-only skills stay out. |
+| Other adapters | `foresights skills index build --catalog <name> --from-json - --harness <h>` | The adapter pipes its skill list (schema below) and owns rebuilds. |
+| foresights's own skills | `foresights skills index build --catalog foresights --bundled` | Rebuilt when the foresights version changes. |
 
 - `--dir` is repeatable; earlier directories win duplicate ids (the loser is
   listed in the receipt as `duplicate_id`). Symlinks that leave the root,
@@ -74,7 +74,7 @@ recorded in the receipt.
 
 ## Hook lane: Claude Code and Codex
 
-`gbrain setup claude-code --skill-loading resolve` (or `codex`) turns on a
+`foresights setup claude-code --skill-loading resolve` (or `codex`) turns on a
 per-turn hook that puts the block in front of the model on every prompt:
 
 1. It builds the user catalog `claude-code-user` from `~/.claude/skills` and
@@ -93,11 +93,11 @@ per-turn hook that puts the block in front of the model on every prompt:
 4. It prints a sample block and `skill resolver: on; N skills; fresh`.
 
 `--dry-run` lists every write, and re-running changes nothing. A bare
-`gbrain setup <harness>` refreshes a lane that is on.
+`foresights setup <harness>` refreshes a lane that is on.
 
-**Hermes**: `gbrain setup hermes --skill-loading resolve` builds `hermes-user`
+**Hermes**: `foresights setup hermes --skill-loading resolve` builds `hermes-user`
 from `$HERMES_HOME/skills` (nested category folders included) and adds the
-lane's `pre_llm_call` entry to gbrain's marked `hooks:` block in
+lane's `pre_llm_call` entry to foresights's marked `hooks:` block in
 `$HERMES_HOME/config.yaml`, the same block that carries the brain-first turn
 rule, approving it in `shell-hooks-allowlist.json`. Each lane owns only its
 own entry: `--no-instructions` drops the turn rule and keeps the resolver,
@@ -109,7 +109,7 @@ When config.yaml already has a `hooks:` section of yours, setup refuses with
 the entry to paste under it; once pasted, the next run approves and keeps it.
 `--skill-loading off` withdraws that approval but leaves your own section
 alone, so delete the pasted entry yourself. A Hermes with no SOUL.md still gets the resolver. `hermes hooks doctor` checks
-the entry on the Hermes host, and gbrain's doctor `skill_resolver` check
+the entry on the Hermes host, and foresights's doctor `skill_resolver` check
 covers Hermes.
 
 The lane reads `extra.user_message`, `session_id`, `cwd`, `extra.sender_id`,
@@ -121,14 +121,14 @@ never refused. Hermes compacts in place, keeping the session id, and tells
 hooks nothing, so a first turn, or a history shorter than the last turn saw,
 starts the session's dedupe fresh. To show suggestions only on turns from
 some senders (a group chat), list them:
-`gbrain config set skills.resolver.per_harness.hermes.owner_sender_ids <id>,<id>`;
+`foresights config set skills.resolver.per_harness.hermes.owner_sender_ids <id>,<id>`;
 a turn from anyone else, or with no sender, then gets no block.
 
-Pinned skills for Hermes (`gbrain skills pin add <id> --catalog hermes-user`)
+Pinned skills for Hermes (`foresights skills pin add <id> --catalog hermes-user`)
 go in a marked block in `$HERMES_HOME/SOUL.md` while the lane is on, so every
 turn sees them; with no pins there is no block, and SOUL.md is never created.
 
-The lane runs the resolver in the hook process (never through `gbrain serve`),
+The lane runs the resolver in the hook process (never through `foresights serve`),
 so it works with serve down and with no brain. Each block names the skill ids
 and gives the harness's own load line; Codex lines also carry the SKILL.md path.
 The lane always exits 0 and prints nothing when it cannot deliver:
@@ -142,9 +142,9 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   `skills.resolver.pinned` (skill ids the harness always loads itself, never
   suggested). `skills.resolver.per_harness.<harness>.top_k`, `.min_match`
   and `.top_gate` override one harness; what it leaves out falls back to the
-  global key, and an entry that is not an object counts as unset. Set them with `gbrain config set`; a bad value makes the lane
+  global key, and an entry that is not an object counts as unset. Set them with `foresights config set`; a bad value makes the lane
   log `skill_resolver_config_invalid` and deliver nothing.
-- **Extra skill directories:** `gbrain config set
+- **Extra skill directories:** `foresights config set
   skills.resolver.per_harness.claude-code.dirs /abs/dir,/abs/other` (or
   `.codex.dirs`; at most 32 absolute paths) adds directories to that
   harness's user catalog. Setup builds the catalog from the default directory
@@ -179,11 +179,11 @@ The lane always exits 0 and prints nothing when it cannot deliver:
 
 Each turn appends one line (outcome, error code, duration, catalogs; never
 turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
-kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
+kept 14 days and capped at 2 MB a day. `foresights doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. A hook from
 before the compaction reset (UserPromptSubmit without SessionStart) shows as
-`outdated` and warns with its fix, `gbrain setup codex --skill-loading
+`outdated` and warns with its fix, `foresights setup codex --skill-loading
 resolve` (or `claude-code`).
 
 Compiled binaries carry the lane's worker as a second entrypoint
@@ -195,7 +195,7 @@ so a compiled binary's build receipts record `gbrain_commit`.
 ## OpenClaw plugin
 
 OpenClaw runs its turns inside one long-lived gateway, so a per-turn CLI call
-is too slow there. `gbrain setup openclaw --skill-loading resolve --gbrain-bin <abs path>`
+is too slow there. `foresights setup openclaw --skill-loading resolve --gbrain-bin <abs path>`
 installs a separate plugin, `gbrain-skill-resolver`, that ranks inside the
 gateway's Node process instead:
 
@@ -254,12 +254,12 @@ defaults (3, `description` and the resolver's gate); the global `skills.resolver
 OpenClaw already loads, which are never suggested. The plugin reads these the
 way every lane does, so a bad value makes setup refuse with
 `skill_resolver_config_invalid` and write nothing; a change takes effect at
-the next `gbrain setup openclaw`.
+the next `foresights setup openclaw`.
 
 Each turn appends one line (agent, outcome, duration, error code, arm,
 suggested ids; never turn text) to
 `skill-index/logs/openclaw-<date>.jsonl`, and a `read` line when the model
-opens a skill, marked with whether it was suggested. `gbrain doctor --only
+opens a skill, marked with whether it was suggested. `foresights doctor --only
 skill_resolver` reports the plugin, the library, each agent's catalog and pins
 and, over the last 24 hours, the turns, outcomes, how many reads were of
 suggested skills and the deadline-miss rate. Above 5% over at least 20 turns
@@ -270,7 +270,7 @@ is under that on the real host.
 
 Pi runs extensions inside its own Node process, so the resolver goes there as
 an extension instead of a per-turn CLI call.
-`gbrain setup pi --skill-loading resolve --gbrain-bin <abs path>`:
+`foresights setup pi --skill-loading resolve --gbrain-bin <abs path>`:
 
 1. Builds one catalog, `pi-user`, from the skill directories Pi loads in every
    project: `$PI_CODING_AGENT_DIR/skills` (default `~/.pi/agent/skills`) and
@@ -305,13 +305,13 @@ nothing and is logged as `timeout`. Measured with Pi 1.5.2 on a 4-core cloud
 machine, a cold `pi -p` run waited 70 to 100 ms, and the whole run took about
 150 ms longer than with `--no-extensions`. Each run appends one line (outcome,
 duration, suggested ids; never the prompt) to
-`skill-index/logs/pi-<date>.jsonl`, and `gbrain doctor --only skill_resolver`
+`skill-index/logs/pi-<date>.jsonl`, and `foresights doctor --only skill_resolver`
 reports the extension, the library, the catalog and the last day's runs.
 
 Coverage is partial: Pi started with extensions off (`pi --no-extensions`, or
 a program that embeds Pi with `noExtensions`, as QM does) loads no extension,
-so those sessions get nothing, and doctor says so. `gbrain skills pin add <id>
---catalog pi-user` updates the pins from Pi's next run. `gbrain setup pi
+so those sessions get nothing, and doctor says so. `foresights skills pin add <id>
+--catalog pi-user` updates the pins from Pi's next run. `foresights setup pi
 --skill-loading off` removes the extension and the state; pins stay in
 config.json.
 
@@ -322,25 +322,25 @@ request, so there are no per-turn suggestions, and no check on this machine
 can see Cursor's request, so this route is unverified. Doctor reports Cursor
 as partial: pinned only, no per-turn hook, unverified.
 
-Run `gbrain setup cursor --skill-loading resolve` in the project:
+Run `foresights setup cursor --skill-loading resolve` in the project:
 
 1. Setup builds the project's catalog, `cursor-project-<16 hex>`, from the skill
    directories Cursor loads there: the project's `.agents/skills`,
    `.cursor/skills`, `.claude/skills` and `.codex/skills`, then the same four
    under your home directory. It records the project in
    `~/.gbrain/cursor-skill-pins.json`.
-2. Pins come from `gbrain skills pin add <id> --catalog <that catalog>` (setup
+2. Pins come from `foresights skills pin add <id> --catalog <that catalog>` (setup
    prints the name). A pin the catalog does not hold is left out. With no pins
    there is no rule file.
 3. The pins go in their own always-applied rule,
    `.cursor/rules/gbrain-pinned-skills.mdc`, with each skill's SKILL.md path.
-   Your own rules and gbrain's brain-first rule are never touched, and a file
-   at that path that gbrain did not write is left alone (setup exits 1).
+   Your own rules and foresights's brain-first rule are never touched, and a file
+   at that path that foresights did not write is left alone (setup exits 1).
 4. Inside a git repository the rule's path goes in the repository's
    `info/exclude` (never `.gitignore`), so it is never committed.
 
-`gbrain skills pin add|remove` rewrites the rule from any directory, and
-Cursor applies it from its next request. `gbrain setup cursor --skill-loading
+`foresights skills pin add|remove` rewrites the rule from any directory, and
+Cursor applies it from its next request. `foresights setup cursor --skill-loading
 off` in the project removes the rule, its exclude line and the record; pins
 stay in config.json. The pins sit beside the skills index that
 `--skill-loading spring` writes into the brain-first rule: resolve leaves that
@@ -348,15 +348,15 @@ index alone, and spring leaves the pins alone.
 
 ## Pinned skills
 
-Pins are the operator's always-on skills for one catalog. gbrain ships none,
+Pins are the operator's always-on skills for one catalog. foresights ships none,
 and a catalog with no pins gets no pinned block. They differ from
-`skills.resolver.pinned`: a pin is shown by gbrain on every turn, while a
-`pinned` skill is one the harness already shows, so gbrain only leaves it out.
+`skills.resolver.pinned`: a pin is shown by foresights on every turn, while a
+`pinned` skill is one the harness already shows, so foresights only leaves it out.
 
 ```bash
-gbrain skills pin add deploy-example --catalog openclaw-main --line "Before any production deploy"
-gbrain skills pin list --catalog openclaw-main
-gbrain skills pin remove deploy-example --catalog openclaw-main
+foresights skills pin add deploy-example --catalog openclaw-main --line "Before any production deploy"
+foresights skills pin list --catalog openclaw-main
+foresights skills pin remove deploy-example --catalog openclaw-main
 ```
 
 A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
@@ -437,7 +437,7 @@ without hiding many right ones. In ordinary use, one-word requests that match on
 where many skills share the request's words, score lower and are the first
 to lose their block. Set `skills.resolver.top_gate` (or
 `per_harness.<harness>.top_gate`) to tune it, or to `0` to turn it off.
-`gbrain skills resolve` reads only those two keys, and only when neither
+`foresights skills resolve` reads only those two keys, and only when neither
 `--top-gate` nor the input's `top_gate` is given. A bad value there exits 1
 with `skill_resolver_config_invalid`; under `--fail-open` it prints a warning
 on stderr and keeps the default.
@@ -494,7 +494,7 @@ home, at most 1,000 files a pass, with async I/O after the commit settles;
 the hook lane awaits a 64-file pass before it exits), and on each build and
 status.
 
-Measured block size at k=5 over the Step 1 test turns on gbrain's own skills:
+Measured block size at k=5 over the Step 1 test turns on foresights's own skills:
 median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
 (OpenClaw, both with paths); the largest was 366. The hard cap is 400.
 
@@ -504,12 +504,12 @@ median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
 existing index with `meta.index_stale: true` and writes `stale.stamp` once (a
 later stale turn leaves it alone; a `--from-json -` catalog, which only its
 adapter rebuilds, never gets one); the rebuild runs from
-`gbrain skills index build` (which prints the exact command in
+`foresights skills index build` (which prints the exact command in
 `skills index status`). For a `--dir` or `--claude-plugins` catalog the turn
 checks file sizes and mtimes, at most 1,024 per turn and a full sweep at most
 once a minute;
 `skills index status` re-reads the source and re-hashes the index. A bundled
-catalog is stale after a gbrain upgrade; a `--from-json` catalog is never
+catalog is stale after a foresights upgrade; a `--from-json` catalog is never
 rebuilt by gbrain: the adapter passes `expected_catalog_hash` and rebuilds
 on `skill_catalog_mismatch`. Set `GBRAIN_SKILLS_NO_AUTOREBUILD=1` (or
 `skills.resolver.auto_rebuild: false`) to stop stale stamps being written.
@@ -539,11 +539,11 @@ escaped.
 
 ## Turning it off
 
-Stop calling `gbrain skills resolve` from the harness, or set
+Stop calling `foresights skills resolve` from the harness, or set
 `skills.resolver.session_token_budget` to 0. For the hook lane,
-`gbrain setup <harness> --skill-loading off` (or `setup --remove`) removes the
+`foresights setup <harness> --skill-loading off` (or `setup --remove`) removes the
 hook, the config keys, that harness's catalogs and, once no harness is left,
-the session state and the lane log. `gbrain skills index remove --catalog <name>`
+the session state and the lane log. `foresights skills index remove --catalog <name>`
 deletes a catalog; deleting `skill-index/` removes everything.
 
 ## Latency
@@ -561,7 +561,7 @@ pull requests that touch the resolver.
 Bun. Node adapters load one dependency-free ES module built from the same
 source as the CLI:
 
-- `gbrain skills library --json` writes it from the installed gbrain to
+- `foresights skills library --json` writes it from the installed foresights to
   `GBRAIN_HOME/lib/gbrain-skill-resolver.mjs` (`--out <file.mjs>` for another
   path) and prints `{path, sha256, bytes, gbrain_version}`. Run it again
   after each upgrade; the module exports `GBRAIN_VERSION` so an adapter can
@@ -581,7 +581,7 @@ await r.commit();
 
 `RESOLVER_FEATURES` lists what this build supports beyond the first v1
 release (for example `min_match_strength`), so an adapter can check before
-it sends a field an older gbrain would refuse.
+it sends a field an older foresights would refuse.
 
 On an event loop that must not block, commit with async I/O instead:
 `if (r.pending) await commitSessionAsync(home, r.pending.key, r.pending.delta)`
@@ -622,12 +622,12 @@ one bounded pass that returns how many files it deleted.
 ### skill_index_missing
 
 The catalog was never built (or was removed). Build it with
-`gbrain skills index build --catalog <name> ...`; `--fail-open` turns proceed
+`foresights skills index build --catalog <name> ...`; `--fail-open` turns proceed
 without a block meanwhile.
 
 ### skill_index_incompatible
 
-The index or receipt was written by an incompatible gbrain or is corrupt. The
+The index or receipt was written by an incompatible foresights or is corrupt. The
 fix is the build command recorded in the receipt; a `--from-json -` catalog
 is rebuilt by its adapter.
 
@@ -645,7 +645,7 @@ holder is reclaimed when its lease expires.
 ### skill_resolve_timeout
 
 The turn ran past the caller's deadline. Nothing was committed. Check the
-catalog size with `gbrain skills index status`.
+catalog size with `foresights skills index status`.
 
 ### skill_index_removed
 
@@ -659,7 +659,7 @@ several catalogs and pass them together.
 ### skill_source_unreadable
 
 A `--dir` or `--routing` path does not exist or cannot be read, or
-`gbrain skills library` ran from a compiled binary, which carries no source to
+`foresights skills library` ran from a compiled binary, which carries no source to
 build the Node library from: download the release's `gbrain-skill-resolver.mjs`
 and its `.sha256` instead.
 
@@ -678,29 +678,29 @@ GBRAIN_HOME is not an absolute path.
 
 ### skill_resolver_config_unreadable
 
-`~/.gbrain/config.json` exists but is not a JSON object gbrain can read (or is
+`~/.gbrain/config.json` exists but is not a JSON object foresights can read (or is
 over 1 MB). Setup refuses and writes nothing, the hook lane prints nothing,
-and `gbrain config set skills.resolver.*` refuses; gbrain never rewrites the
-file. Fix or move it, then run `gbrain setup <harness> --skill-loading resolve`.
+and `foresights config set skills.resolver.*` refuses; foresights never rewrites the
+file. Fix or move it, then run `foresights setup <harness> --skill-loading resolve`.
 
 ### skill_resolver_setup_incomplete
 
-`gbrain setup <harness> --skill-loading resolve` found no model-invocable
+`foresights setup <harness> --skill-loading resolve` found no model-invocable
 skill in the directories it scanned (named in the message), the catalog build
-failed, or no absolute gbrain binary was found for the hook. Nothing was
+failed, or no absolute foresights binary was found for the hook. Nothing was
 written (an empty catalog is removed). Add a skill there, or pass
 `--gbrain-bin`, and run setup again; `--dry-run` shows what it would scan.
 
 ### skill_resolver_internal
 
 An unexpected failure; a scrubbed trace was written to
-`skill-index/logs/resolver-<UTC date>.log`. Run `gbrain skills index status` and report it
+`skill-index/logs/resolver-<UTC date>.log`. Run `foresights skills index status` and report it
 if it repeats.
 
 ### skill_catalog_unknown
 
 The catalog name is invalid, or several catalogs exist and none was named.
-`gbrain skills index status` lists them. Exit 2.
+`foresights skills index status` lists them. Exit 2.
 
 ### skill_resolve_no_input
 
@@ -714,15 +714,15 @@ unknown field, `top_k` outside 1-8, a bad session id). Exit 2.
 
 ### skill_resolver_plugin_not_installed
 
-`gbrain setup openclaw` wrote the plugin and its state, but OpenClaw has not
+`foresights setup openclaw` wrote the plugin and its state, but OpenClaw has not
 loaded it: no `openclaw` on PATH, an `openclaw` command failed (named in the
 message), or `plugins inspect` does not show it loaded. Exit 3. Run the
 commands the message lists on the OpenClaw host, restart the gateway, then
-`gbrain doctor --only skill_resolver`.
+`foresights doctor --only skill_resolver`.
 
 ### skill_resolver_host_not_local
 
-The plugin runs inside the gateway and needs this gbrain home, library and
+The plugin runs inside the gateway and needs this foresights home, library and
 binary on the same machine, but this machine has neither `openclaw` nor an
 OpenClaw state directory. Run setup on the OpenClaw host.
 
@@ -735,25 +735,25 @@ The message carries the library or worker code; fix that and run setup again.
 
 A pin names a skill that is not in its catalog. `pin add` refuses and writes
 nothing; an existing pin whose skill disappeared is left out of the block.
-Check the id with `gbrain skills pin list --catalog <c>`.
+Check the id with `foresights skills pin list --catalog <c>`.
 
 ### skill_resolver_library_missing
 
 No `~/.gbrain/lib/<sha256>.mjs` for the sha256 the plugin state names, so
-turns proceed without suggestions. Run `gbrain setup openclaw --skills-index-only`.
+turns proceed without suggestions. Run `foresights setup openclaw --skills-index-only`.
 
 ### skill_resolver_library_mismatch
 
 The library file is outside `~/.gbrain/lib`, not owned by the gateway's user,
 writable by group or others, or does not hash to the recorded sha256, so the
-plugin refused it. Run `gbrain setup openclaw --skills-index-only` and check
-what else writes the gbrain home.
+plugin refused it. Run `foresights setup openclaw --skills-index-only` and check
+what else writes the foresights home.
 
 ### skill_resolver_library_skew
 
-The installed gbrain is a different version from the library the plugin runs
+The installed foresights is a different version from the library the plugin runs
 and a refresh did not fix it; the plugin keeps the last good library and stops
-retrying for a day. Run `gbrain setup openclaw --skills-index-only` and read
+retrying for a day. Run `foresights setup openclaw --skills-index-only` and read
 its error.
 
 ### skill_resolver_worker_crash
@@ -764,7 +764,7 @@ suggestions and it restarts with backoff. Report it if it repeats.
 ### skill_resolver_worker_stuck
 
 The worker missed the deadline three turns in a row and was restarted. A
-loaded host misses more often; `gbrain doctor --only skill_resolver` shows the
+loaded host misses more often; `foresights doctor --only skill_resolver` shows the
 miss rate.
 
 ### skill_resolver_worker_unavailable
@@ -775,7 +775,7 @@ suggestions. Nothing to do when it is rare.
 ### skill_resolver_state_missing
 
 The plugin state has no entry for this agent, so the self-test had nothing to
-run. Run `gbrain setup openclaw --skill-loading resolve --agent <id>`.
+run. Run `foresights setup openclaw --skill-loading resolve --agent <id>`.
 
 ### skill_resolver_host_load_cut
 

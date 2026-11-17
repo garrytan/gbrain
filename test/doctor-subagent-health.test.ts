@@ -1,5 +1,5 @@
 /**
- * v0.41 Bug 2 / Eng D8 — `gbrain doctor` `subagent_health` check coverage.
+ * v0.41 Bug 2 / Eng D8 — `foresights doctor` `subagent_health` check coverage.
  *
  * Reads the last 24h of `minion_lease_pressure_log` (populated by the
  * Bug 2 worker bypass path) and classifies pressure into ok / warn / fail

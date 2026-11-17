@@ -1,5 +1,5 @@
 /**
- * #6696 B1: the ops-tier sections of `gbrain doctor --tier ops` — "what is
+ * #6696 B1: the ops-tier sections of `foresights doctor --tier ops` — "what is
  * wrong right now", answered in seconds. Each entry is tagged `tier: 'ops'`, so
  * the default run puts them first (registry order) and `--tier ops` runs only
  * them, under one absolute deadline (./budget.ts).

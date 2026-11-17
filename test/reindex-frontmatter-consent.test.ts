@@ -1,5 +1,5 @@
 /**
- * C3 (agent operator wave): `gbrain reindex-frontmatter` asks before it
+ * C3 (agent operator wave): `foresights reindex-frontmatter` asks before it
  * rewrites stored dates, and its preview, plan hash and apply share one
  * selection.
  *

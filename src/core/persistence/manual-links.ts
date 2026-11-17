@@ -45,7 +45,7 @@ async function storedFenceState(engine: BrainEngine, pageId: number): Promise<{ 
 function linkDatesUnattributed(edge: FencedEdge, rows: number, operation: string, reason: 'several_rows' | 'dates_do_not_fit') {
   const link = `${edge.to} (${edge.type || 'untyped'})`;
   const why = reason === 'several_rows'
-    ? `The link to ${link} has ${rows} rows on this page and dated statements stored before each row kept its own dates, so gbrain cannot tell which row each date belongs to.`
+    ? `The link to ${link} has ${rows} rows on this page and dated statements stored before each row kept its own dates, so foresights cannot tell which row each date belongs to.`
     : `The link to ${link} has dated statements stored before each row kept its own dates, and they do not fit its one row (more than one start or end, or an end before the start).`;
   const fix = `Add the page's ## Links section with edit_page, one row per source of ${edge.to} with that row's own valid_from and valid_until, then submit ${operation} again.`;
   return opError('link_dates_unattributed', `${why} Nothing was changed. ${fix}`, fix, { reason });

@@ -7,7 +7,7 @@
  * Scans the most recent conversation-type pages (50 per concrete type, granular aliases included),
  * runs parseConversation in dry mode, reports per-pattern hit counts +
  * unmatched count. Warn at >10% unmatched with paste-ready hint pointing at
- * `gbrain conversation-parser scan <slug>`.
+ * `foresights conversation-parser scan <slug>`.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import { ALLOWED_TYPES, isConversationFactsEligiblePage, pageTypesForAllowed, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
@@ -87,7 +87,7 @@ export async function computeConversationFormatCoverageCheck(
         message:
           `${unmatched}/${candidates} transcript-bearing conversation pages${sampleNote} (${unmatchedPct.toFixed(1)}%) match NO built-in pattern. ` +
           `Breakdown: ${breakdown}. ` +
-          `Investigate: gbrain conversation-parser scan <slug>`,
+          `Investigate: foresights conversation-parser scan <slug>`,
         details,
       };
     }

@@ -5,7 +5,7 @@ export const v0_46_3: Migration = {
   fresh_install_noop: true,
   featurePitch: {
     headline: 'Embedding provider migration is available with an explicit cost preview.',
-    description: 'Use gbrain migrate embeddings --status to inspect the stored identity and --dry-run to preview an explicit migration. No provider or vectors change automatically.',
+    description: 'Use foresights migrate embeddings --status to inspect the stored identity and --dry-run to preview an explicit migration. No provider or vectors change automatically.',
   },
   orchestrator: async () => ({
     version: '0.46.3',

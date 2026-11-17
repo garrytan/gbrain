@@ -10,7 +10,7 @@ Delta-run verdicts (H7 to H11) are in `../p5-delta-2026-10-05/verdicts.md`.
 | H2, written relation types reach the graph (template set B) | typed recall 0.811 → 1.000; 0 of 120 decoy types added | PASS | — |
 | H4, forward references heal (local writes) | edges lost 1,849/3,810 → 0/3,738; withheld-entity recall 0 → 1.000 | PASS | `wanted_pages.enabled` on by default |
 | H5a, similar-page hint on held-out name pools | lexical recall@3 0 → 0.980; hint on no-referent names 4.7% | PASS | H5b decides the default |
-| H5b, agent loop duplicates (Claude Sonnet 5.5 and `gpt-6.1-sol`, 60 held-out tasks each) | duplicate-page rate 3.06% → 2.22% (−27% relative; 95% CI of the difference [−2.8, +1.1] points, crosses 0); wrong-merge rate 2.50% → 3.75% (+1.25 points, 95% CI [−1.25, +3.75], against a bar of at most +1) | FAIL | `put_page.similar_pages` off by default; still available with `gbrain config set put_page.similar_pages true` |
+| H5b, agent loop duplicates (Claude Sonnet 5.5 and `gpt-6.1-sol`, 60 held-out tasks each) | duplicate-page rate 3.06% → 2.22% (−27% relative; 95% CI of the difference [−2.8, +1.1] points, crosses 0); wrong-merge rate 2.50% → 3.75% (+1.25 points, 95% CI [−1.25, +3.75], against a bar of at most +1) | FAIL | `put_page.similar_pages` off by default; still available with `foresights config set put_page.similar_pages true` |
 | H3, junk stays out (minted frame, amendment 2) | 18 of 696,295 list lines minted (0.026 per 1,000), all fact lines, no relation lines; precision 0/18 (Wilson 95% [0.00, 0.18]), both judges agreed on every line; zero-tolerance classes clean | FAIL | `line_grammar.enabled` off by default |
 | H6, typed lines help answers | | not run | the preregistration runs H6 only if H1 to H3 pass |
 

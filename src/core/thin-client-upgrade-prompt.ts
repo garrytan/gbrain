@@ -1,7 +1,7 @@
 /**
  * v0.31.11 (Issue: thin-client auto-upgrade): when a thin-client install detects
- * that the remote `gbrain serve --http` host is running a newer version (minor
- * or major drift), prompt the user interactively to run `gbrain upgrade`.
+ * that the remote `foresights serve --http` host is running a newer version (minor
+ * or major drift), prompt the user interactively to run `foresights upgrade`.
  *
  * Hook seam: called from `printIdentityBannerBestEffort` in `src/cli.ts` after
  * the banner prints. The function short-circuits in every non-applicable case
@@ -11,8 +11,8 @@
  * - D1 — On successful upgrade, exit 0 with a re-run message. Do NOT continue
  *   the original command on the stale in-memory binary.
  * - D2 — Exclusive non-blocking advisory lock around the prompt; loser no-ops.
- * - D5 — Re-read `gbrain --version` post-upgrade to verify the binary actually
- *   advanced. `gbrain upgrade` returns 0 even on bun catch-and-print
+ * - D5 — Re-read `foresights --version` post-upgrade to verify the binary actually
+ *   advanced. `foresights upgrade` returns 0 even on bun catch-and-print
  *   paths and on the `binary` install ("not yet implemented").
  * - D6 — Gate on both stdin AND stdout TTY; prompt writes to stderr.
  * - D7 — When `bannerSuppressed()` is true, emit nothing about upgrades.
@@ -274,9 +274,9 @@ export function _setVerifierForTest(fn: Verifier | null): void {
 
 function defaultVerifyUpgradeAdvanced(remoteVersion: string): { advanced: boolean; newVersion: string | null } {
   try {
-    // Spawn `gbrain --version` as a fresh subprocess so we read the NEW binary
+    // Spawn `foresights --version` as a fresh subprocess so we read the NEW binary
     // the upgrade just installed (not the old VERSION constant baked into the
-    // currently-running process). Output shape: "gbrain X.Y.Z" or just "X.Y.Z".
+    // currently-running process). Output shape: "foresights X.Y.Z" or just "X.Y.Z".
     const out = execFileSync('gbrain', ['--version'], { encoding: 'utf-8', timeout: 10_000 });
     const match = out.trim().match(/(\d+\.\d+\.\d+(?:\.\d+)?)/);
     if (!match) return { advanced: false, newVersion: null };
@@ -313,7 +313,7 @@ export function _setPromptReaderForTest(fn: PromptReader | null): void {
 export type UpgradeRunner = () => void;
 
 function defaultRunUpgrade(): void {
-  execSync('gbrain upgrade', { stdio: 'inherit' });
+  execSync('foresights upgrade', { stdio: 'inherit' });
 }
 
 let _upgradeRunner: UpgradeRunner = defaultRunUpgrade;
@@ -443,7 +443,7 @@ export async function maybePromptForUpgrade(
     if (!result.advanced) {
       writeStateBestEffort(state, mcpUrl, identity.version, 'failed', nowIso);
       log(
-        `gbrain upgrade did not actually advance the binary` +
+        `foresights upgrade did not actually advance the binary` +
         (result.newVersion ? ` (still on v${result.newVersion})` : '') +
         `. See the output above for manual steps.`,
       );

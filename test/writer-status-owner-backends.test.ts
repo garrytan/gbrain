@@ -1,8 +1,8 @@
 /**
  * #6317 (C1, reporter ask 3): `writer status --json` shows, per running
  * claim, the owner process's database backends from `pg_stat_activity`,
- * matched on the `application_name` every gbrain pool starts its connections
- * with (`gbrain <kind>:<pid>:<nonce8>`), with the statement label, ages,
+ * matched on the `application_name` every foresights pool starts its connections
+ * with (`foresights <kind>:<pid>:<nonce8>`), with the statement label, ages,
  * state and wait event, and says how far the mapping can be trusted
  * (`backend_visibility`: session, pooled, unavailable). The running claim also
  * ends with one `next` envelope, carries `last_sql` from the stamp and the
@@ -48,7 +48,7 @@ describe('claim stamp identity and last_sql', () => {
   test('the owner carries the nonce and pid namespace; the stamp carries last_sql; the triple text and the same-process check read them', () => {
     const owner = claimOwner();
     expect(owner).toMatchObject({ pid: process.pid, nonce: consumerIdentity().nonce });
-    expect(gbrainApplicationName()).toBe(`gbrain ${owner.kind}:${process.pid}:${owner.nonce!.slice(0, 8)}`);
+    expect(gbrainApplicationName()).toBe(`foresights ${owner.kind}:${process.pid}:${owner.nonce!.slice(0, 8)}`);
     expect(gbrainApplicationName().length).toBeLessThanOrEqual(63);
     expect(sqlLabel('SELECT r.id FROM persistence_requests r WHERE ...')).toBe('SELECT persistence_requests');
     expect(sqlLabel('  update "pages" set x=1')).toBe('UPDATE pages');

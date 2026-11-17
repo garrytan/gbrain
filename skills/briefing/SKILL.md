@@ -40,7 +40,7 @@ Run these BEFORE composing the briefing sections. All four pulls are read-only.
 0a. **Salience scan.** Surface pages with high emotional or activity salience:
 
    ```bash
-   gbrain salience --days 7
+   foresights salience --days 7
    ```
 
    Returns pages ranked by emotional weight and recent activity. Fold the top
@@ -51,7 +51,7 @@ Run these BEFORE composing the briefing sections. All four pulls are read-only.
 0b. **Anomaly detection.** Surface statistical anomalies in the brain:
 
    ```bash
-   gbrain anomalies
+   foresights anomalies
    ```
 
    Defaults to today against a 30-day baseline; widen with
@@ -64,7 +64,7 @@ Run these BEFORE composing the briefing sections. All four pulls are read-only.
    composing:
 
    ```bash
-   gbrain recall --query "current priorities and preferences" --json
+   foresights recall --query "current priorities and preferences" --json
    ```
 
    Use recall to pull personal context — dietary preferences, communication
@@ -74,7 +74,7 @@ Run these BEFORE composing the briefing sections. All four pulls are read-only.
 0d. **Hot memory pulse (v0.32).** Before composing anything else, run:
 
    ```bash
-   gbrain recall --since-last-run --supersessions --pending --rollup --json
+   foresights recall --since-last-run --supersessions --pending --rollup --json
    ```
 
    Fold the result into the briefing under a "Brain pulse" section at the top:
@@ -86,20 +86,20 @@ Run these BEFORE composing the briefing sections. All four pulls are read-only.
       entity from the rollup; include `kind`, `notability`, and `confidence`.
    4. **Pending consolidation footer** — when `pending_consolidation_count > 0`,
       note `N facts await dream-cycle consolidation` so the operator can decide
-      whether to run `gbrain dream` before reading further.
+      whether to run `foresights dream` before reading further.
 
    The `--since-last-run` flag advances `~/.gbrain/recall-cursors/<source>.json`
    so the next briefing picks up exactly where this one left off. If you're
    running this as a cron job, pass `--source <slug>` or set `GBRAIN_SOURCE`
    explicitly — cron doesn't start in your repo-root cwd, so dotfile resolution
-   may miss the right source. Thin-client installs (`gbrain init --mcp-only`)
+   may miss the right source. Thin-client installs (`foresights init --mcp-only`)
    route through the remote brain transparently.
 
 0e. **Open loops (when google sources exist).** Pull who is waiting on the
    user and what they promised:
 
    ```bash
-   gbrain waiting --json
+   foresights waiting --json
    ```
 
    Fold the top counterparties (what's owed, due dates, evidence quotes,
@@ -112,41 +112,41 @@ Run these BEFORE composing the briefing sections. All four pulls are read-only.
 ## Phases
 
 1. **Today's meetings.** For each meeting on the calendar:
-   - Search gbrain for each participant by name
-   - Read their pages from gbrain for compiled_truth context
+   - Search foresights for each participant by name
+   - Read their pages from foresights for compiled_truth context
    - Summarize: who they are, recent timeline, relationship to you
-2. **Active deals.** List deal pages in gbrain filtered to active status:
+2. **Active deals.** List deal pages in foresights filtered to active status:
    - Deadlines approaching in the next 7 days
    - Recent timeline entries (last 7 days)
 3. **Time-sensitive threads.** Open items from timeline entries:
    - Items with deadlines in the next 48 hours
    - Follow-ups that are overdue
 4. **Recent changes.** Pages updated in the last 24 hours:
-   - What changed and why (read timeline entries from gbrain)
-5. **People in play.** List person pages in gbrain sorted by recency:
+   - What changed and why (read timeline entries from foresights)
+5. **People in play.** List person pages in foresights sorted by recency:
    - Updated in last 7 days
    - Have high activity (many recent timeline entries)
-6. **Stale alerts.** From gbrain health check:
+6. **Stale alerts.** From foresights health check:
    - Pages flagged as stale that are relevant to today's meetings
 
 ## GBrain-Native Context Loading
 
-Before generating any briefing, load context from gbrain systematically.
+Before generating any briefing, load context from foresights systematically.
 
 ### Before a meeting
 
 For every attendee on the calendar invite:
-- Find their brain page by an exact match only: `gbrain whois <email> --json`,
-  then `gbrain whois "<name>" --json` when the address has no match; exactly
+- Find their brain page by an exact match only: `foresights whois <email> --json`,
+  then `foresights whois "<name>" --json` when the address has no match; exactly
   one match counts ([identity rule](../conventions/brain-first.md#identity-exact-match)).
   A search's top hit is not the attendee.
-- `gbrain get <slug>` -- load compiled truth, recent timeline, relationship context
+- `foresights get <slug>` -- load compiled truth, recent timeline, relationship context
 - If no page exists, note the gap ("No brain page for alice-example -- consider enrichment")
 
 ### Before an email reply
 
 Before drafting or triaging any email:
-- Resolve the sender with `gbrain whois <address> --json` (exact email, title
+- Resolve the sender with `foresights whois <address> --json` (exact email, title
   or alias; [identity rule](../conventions/brain-first.md#identity-exact-match)); no
   match, or an ambiguous one, means an unknown sender, not the nearest known contact
 - Read their compiled truth to understand who they are, what they care about, and
@@ -155,10 +155,10 @@ Before drafting or triaging any email:
 ### Daily briefing queries
 
 Run these queries to populate the briefing sections:
-- `gbrain query "active deals status"` -- deal pipeline snapshot
-- `gbrain query "meetings this week"` -- recent meeting pages with insights
-- `gbrain query "pending commitments follow-ups"` -- open threads and action items
-- `gbrain list --type person --sort updated_desc --limit 10` -- people in play
+- `foresights query "active deals status"` -- deal pipeline snapshot
+- `foresights query "meetings this week"` -- recent meeting pages with insights
+- `foresights query "pending commitments follow-ups"` -- open threads and action items
+- `foresights list --type person --sort updated_desc --limit 10` -- people in play
 
 ## Output Format
 
@@ -198,15 +198,15 @@ When presenting facts from brain pages, include inline citations:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain waiting` refuses on stale data: run the sync command it names (or tell the user to, when it needs the brain host), then retry. Do not build the "waiting on you" section from stale mail.
+- `foresights waiting` refuses on stale data: run the sync command it names (or tell the user to, when it needs the brain host), then retry. Do not build the "waiting on you" section from stale mail.
 - `recall` / `query` sections come back empty with a degraded notice: write "the brain is searching keywords only right now" in that section instead of "nothing happened".
 - One section's source fails (`rate_limited`, `timeout`): ship the rest of the briefing and name the missing section; never silently drop it.
 
 ## Anti-Patterns
 
-- **Briefing without brain queries.** Never generate a briefing from memory alone; always query gbrain for current data.
+- **Briefing without brain queries.** Never generate a briefing from memory alone; always query foresights for current data.
 - **Uncited facts.** Every claim must include `[Source: slug, updated DATE]`. A fact without a citation is unverifiable.
 - **Stale context presented as current.** If a page hasn't been updated in 30+ days, flag the staleness explicitly rather than presenting it as fresh.
 - **Modifying brain pages unprompted.** The briefing is read-only by default. Do not create or update pages unless the user explicitly requests it.
@@ -214,8 +214,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 ## Tools Used
 
-- Search gbrain by name (query)
-- Read a page from gbrain (get_page)
-- List pages in gbrain by type (list_pages)
-- Check gbrain health (get_health)
-- View timeline entries in gbrain (get_timeline)
+- Search foresights by name (query)
+- Read a page from foresights (get_page)
+- List pages in foresights by type (list_pages)
+- Check foresights health (get_health)
+- View timeline entries in foresights (get_timeline)

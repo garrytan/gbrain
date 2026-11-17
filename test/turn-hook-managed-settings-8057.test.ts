@@ -9,7 +9,7 @@ import { turnRuleHookYields } from '../src/core/setup/turn-hook.ts';
 
 // #8057: Claude Code also reads hooks from its managed settings
 // (managed-settings.json and managed-settings.d/*.json in the system
-// directory). A gbrain UserPromptSubmit hook there wires every session.
+// directory). A foresights UserPromptSubmit hook there wires every session.
 
 const promptHook = { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/opt/gbrain/bin/gbrain hook user-prompt', _gbrain: 'setup-v1' }] }] } };
 
@@ -23,7 +23,7 @@ function sandbox() {
 }
 
 describe('Claude Code managed-settings hooks (#8057)', () => {
-  test('a gbrain UserPromptSubmit hook in managed-settings.json counts as wired', async () => {
+  test('a foresights UserPromptSubmit hook in managed-settings.json counts as wired', async () => {
     const s = sandbox();
     writeFileSync(join(s.managed, 'managed-settings.json'), JSON.stringify(promptHook));
     await withEnv(s.env, async () => {

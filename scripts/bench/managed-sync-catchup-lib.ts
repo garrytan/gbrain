@@ -41,7 +41,7 @@ const PGBOUNCER_POOL = { POOL_MODE: 'transaction', DEFAULT_POOL_SIZE: '50', MAX_
  * With `poolerPort`, a transaction-mode `gbrain-bench-pgbouncer` (host network,
  * loopback, recreated each run) sits between toxiproxy and Postgres, so the
  * RTT stays on the client side of the pooler. It ignores the session-timeout
- * startup parameters gbrain sends, which stock PgBouncer refuses.
+ * startup parameters foresights sends, which stock PgBouncer refuses.
  */
 export async function startHarness(opts: { pgPort: number; proxyPort: number; apiPort: number; adminUrl?: string; keep: boolean; poolerPort?: number }): Promise<Harness> {
   const started: string[] = [];
@@ -335,7 +335,7 @@ export const classify = memo((sql: string): string => {
   const s = flatSql(sql);
   if (/^SELECT \* FROM persistence_requests WHERE id=\$1::uuid$/.test(s)) return 'wait-poll';
   if (/persistence_effects e (LEFT )?JOIN persistence_worktrees|page_projection_jobs|persistence_topology_changes c JOIN|DISTINCT ON \(local_path\)|shared_skill_packs|persistence_worktree_refreshes f JOIN|r\.recovery IS NOT NULL AND NOT\(r\.worktree_id|^WITH expired AS|writer_pool_capacity|^SELECT \( EXISTS|^SELECT EXISTS \(SELECT 1 FROM persistence_requests r LEFT JOIN|NOT compacted|brain_id,enabled,to_jsonb\(persistence_brain\)/.test(s)) return 'consumer-background';
-  if (/^(begin|commit|rollback|savepoint|release)/i.test(s) || /^SELECT set_config\('(gbrain\.persistence_protocol|synchronous_commit)'/.test(s)) return 'txn-control';
+  if (/^(begin|commit|rollback|savepoint|release)/i.test(s) || /^SELECT set_config\('((?:foresights|gbrain)\.persistence_protocol|synchronous_commit)'/.test(s)) return 'txn-control';
   if (/page_write_guards|persistence_counters|FROM pages WHERE source_id=\$1 AND slug=\$2 FOR UPDATE/.test(s)) return 'guards+counters';
   if (/op_checkpoints/.test(s)) return 'cursor';
   if (/persistence_requests/.test(s)) return 'journal';

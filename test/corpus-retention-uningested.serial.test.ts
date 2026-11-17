@@ -96,7 +96,7 @@ describe('E-N1: doctor memory_writeback names the un-extracted backlog before it
     expect(check.status).toBe('warn');
     expect(check.message).toContain('1 of 2 captured session file(s) are older than the 30-day corpus retention');
     expect(check.message).toContain('deleted at 90d');
-    expect(check.message).toContain('gbrain sweep --once');
+    expect(check.message).toContain('foresights sweep --once');
     expect(check.details?.corpus_backlog).toMatchObject({ pending: 2, past_retention: 1, oldest_pending_days: 40, deleted_after_days: 90 });
   });
 

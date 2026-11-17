@@ -26,7 +26,7 @@ describe('owner-delegated CLI refusals name their own next step', () => {
   test('applying fact repair without a cap names the preview and the approved cap', async () => {
     const env = envelopeFor(await caught(() => validateEmbedFactsOptions({ sourceId: 'notes', yes: true })));
     expect(env.code).toBe('invalid_params');
-    expect(env.suggestion).toContain('gbrain embed --stale --facts --source notes --dry-run');
+    expect(env.suggestion).toContain('foresights embed --stale --facts --source notes --dry-run');
   });
 
   test('an unsupported delegated sync flag lists the flags the owner accepts', async () => {

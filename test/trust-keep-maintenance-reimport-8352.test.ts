@@ -1,5 +1,5 @@
 /**
- * #8352: a gbrain maintenance re-import that rewrites only gbrain-owned frontmatter (the oversized backfill's
+ * #8352: a foresights maintenance re-import that rewrites only gbrain-owned frontmatter (the oversized backfill's
  * size-gate marker, a quarantine clear) keeps an owner note's trust tier (`operator_curated`), so remote readers do not
  * get it quoted (GST-687): the trust trigger leaves those markers out of its content comparison
  * (TRUST_EPHEMERAL_FRONTMATTER_KEYS). An undeclared content write still lowers the tier. PostgreSQL arm:

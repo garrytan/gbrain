@@ -1,5 +1,5 @@
 /**
- * `gbrain pages unsearchable` (#6696 B3): the read-only listing of embedding
+ * `foresights pages unsearchable` (#6696 B3): the read-only listing of embedding
  * state rows for one source. JSON shape (rows with slug/state/reason/chunks/
  * bytes and a rendered protocol fix, completeness flag, per-source counts),
  * `--state` filtering, bounded `--limit`, and `--state` validation
@@ -75,7 +75,7 @@ interface Listing {
     fix: { next: string; command?: string; argv?: string[]; consent: string[]; actor: string; why: string; requires_exclusive: boolean; docs?: string; verify?: { argv?: string[] } } | null }>;
 }
 
-describe('gbrain pages unsearchable', () => {
+describe('foresights pages unsearchable', () => {
   test('--json lists every non-embedded state in the source with reason, bytes and a protocol fix', async () => {
     const out = JSON.parse(await run(['--source', 'default', '--json'])) as Listing;
     expect(out).toMatchObject({ source_id: 'default', state: null, limit: 50, complete: true, active_column: 'embedding', unsearchable: 3 + 1 });
@@ -155,18 +155,18 @@ describe('gbrain pages unsearchable', () => {
     await engine.executeRaw("INSERT INTO sources(id,name) VALUES('notes-brain','notes-brain') ON CONFLICT DO NOTHING");
     await expect(run(['--source', 'notes'])).rejects.toThrow('Did you mean "notes-brain"?');
     await expect(run(['--source', 'defalt'])).rejects.toThrow('Did you mean "default"?');
-    await expect(run(['--source', 'zzzzzzzz'])).rejects.toThrow(/not found or is archived\. Available active sources: run `gbrain sources list` to see registered sources, or create\/restore "zzzzzzzz" before retrying\.$/);
+    await expect(run(['--source', 'zzzzzzzz'])).rejects.toThrow(/not found or is archived\. Available active sources: run `(?:foresights|gbrain) sources list` to see registered sources, or create\/restore "zzzzzzzz" before retrying\.$/);
   });
 
   test('human output names each row and its fix', async () => {
     const out = await run(['--source', 'default']);
     expect(out).toContain('pending');
     expect(out).toContain('notes/acme-example');
-    expect(out).toContain('fix (ask user): gbrain embed --stale --catch-up --source default --yes');
+    expect(out).toContain('fix (ask user): foresights embed --stale --catch-up --source default --yes');
   });
 });
 
-describe('gbrain pages unsearchable (CLI)', () => {
+describe('foresights pages unsearchable (CLI)', () => {
   test('an unknown --state exits 2 with one invalid_params envelope', async () => {
     const h = makeDoctorHome('pages-unsearchable');
     try {

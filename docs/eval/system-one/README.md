@@ -16,7 +16,7 @@ or better:
 - **The other slots** either didn't change results (S2) or could not pass the
   safety gate on our data (S3, S4, S6, S8). S5 was too small a test to call.
 
-`gbrain decide enable --recommended` therefore turns on S7 and S9 only. Both
+`foresights decide enable --recommended` therefore turns on S7 and S9 only. Both
 read private data (conversation windows and facts), so they need
 `decide.egress.private=allow`.
 
@@ -53,7 +53,7 @@ LLM-only labels to call); **not measured**.
 ### S7 triage (win, costs more)
 
 Matched pair on 109 eval-half transcripts (13 Cat 35 + 96 synthetic), through
-`runTriagePass`, the function `gbrain dream` calls. Off is today's Haiku 4.5
+`runTriagePass`, the function `foresights dream` calls. Off is today's Haiku 4.5
 judge plus the rescue band. On is Jev per-window probabilities at the
 calibrated 0.77 threshold; answers in the margin band go to the Haiku judge.
 
@@ -78,7 +78,7 @@ calibrated in absolute terms (routine windows score 0.6–0.8); the threshold,
 not the raw number, carries the meaning.
 
 **Preset end to end** (`enable --recommended` on a fresh brain, then
-`gbrain dream --phase synthesize`, 29 eval-half transcripts, the same corpus
+`foresights dream --phase synthesize`, 29 eval-half transcripts, the same corpus
 for both arms):
 
 | | all off | preset (S7 + S9) |
@@ -224,7 +224,7 @@ has no attacks, it demoted 93 of 11,402 candidates.
 
 ### Judge harness (eval-only)
 
-`gbrain decide judge-agreement`:
+`foresights decide judge-agreement`:
 
 - **LongMemEval answers:** Cohen's kappa 0.73 (95% CI 0.51–0.96) against the
   gpt-4o judge, 95% agreement, n=100.

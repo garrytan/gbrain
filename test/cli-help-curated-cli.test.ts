@@ -1,7 +1,7 @@
 /**
  * Agent contract v1 D3/D4 through the real CLI, on a machine with no brain.
  *
- * Protects: `gbrain <cmd> --help` / `-h` for the 7 ops-critical commands
+ * Protects: `foresights <cmd> --help` / `-h` for the 7 ops-critical commands
  * prints the curated spec (usage, every curated flag, examples) engine-free,
  * instead of the generic one-line stub or a "No brain configured" error;
  * `--help --json` prints exactly that spec as one JSON document on stdout;
@@ -42,8 +42,8 @@ describe('curated --help without a brain (D3)', () => {
       const spec = (await loadCuratedHelp(r.c))!;
       expect(r.code, `${r.c} ${r.flag}: ${r.stderr}`).toBe(0);
       expect(r.stdout + r.stderr).not.toContain('No brain configured');
-      expect(r.stdout).not.toContain('run gbrain --help for the full command list');
-      expect(r.stdout).toContain(`Usage: gbrain ${r.c}`);
+      expect(r.stdout).not.toContain('run foresights --help for the full command list');
+      expect(r.stdout).toContain(`Usage: foresights ${r.c}`);
       for (const f of spec.flags) expect(r.stdout, `${r.c} help lists ${f.name}`).toContain(f.name);
       expect(r.stdout).toContain(spec.examples[0]!);
     }

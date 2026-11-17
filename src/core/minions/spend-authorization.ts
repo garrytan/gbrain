@@ -203,7 +203,7 @@ export async function spendRefusal(
     const capped = resumeArgv(record, null);
     const rerun = capped ? shellQuote(capped) : `${record.command} with --yes instead of --max-usd`;
     const e = opError('no_context_ceiling',
-      `Job ${job.id} (${record.command}) stopped: ${cause.model} has a known price, but gbrain knows no context-token ceiling for it, so the most one call could cost under the user's $${record.cap_usd!.toFixed(2)} cap cannot be bounded. No provider call was made.`,
+      `Job ${job.id} (${record.command}) stopped: ${cause.model} has a known price, but foresights knows no context-token ceiling for it, so the most one call could cost under the user's $${record.cap_usd!.toFixed(2)} cap cannot be bounded. No provider call was made.`,
       `Do not retry unchanged and do not change the price (it is already known). Ask the user to choose: rerun without the user cap (${rerun}; the default cap then applies and this model runs unmetered with a warning), or have the brain-host operator supply ${cause.model}'s context size (its context-token ceiling from the provider's model page).`,
       { why: 'A user-set cap is enforced per provider attempt by reserving the most that attempt could cost, which needs the model\'s input ceiling as well as its price.',
         docs: 'docs/guides/write-refusals.md#no_context_ceiling',
@@ -216,8 +216,8 @@ export async function spendRefusal(
   }
   if (cause.kind === 'no_pricing') {
     const e = opError('no_pricing',
-      `Job ${job.id} (${record.command}) stopped: gbrain has no price for ${cause.model}, so the user's $${record.cap_usd!.toFixed(2)} cap cannot be enforced. No provider call was made.`,
-      `Look up ${cause.model}'s per-token rate, register it with \`gbrain pricing set\`, then run ${record.command} again.`,
+      `Job ${job.id} (${record.command}) stopped: foresights has no price for ${cause.model}, so the user's $${record.cap_usd!.toFixed(2)} cap cannot be enforced. No provider call was made.`,
+      `Look up ${cause.model}'s per-token rate, register it with \`foresights pricing set\`, then run ${record.command} again.`,
       { why: 'A user-set cap is enforced per provider attempt; an attempt with no known price could spend past it.',
         fix: { argv: ['gbrain', 'pricing', 'set', '--help'], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Shows how to register the model\'s rate so the cap can meter it.', verify: { argv: listArgv } } });
@@ -295,7 +295,7 @@ export async function runWithJobSpend<T>(
   handler: (ctx: MinionJobContext) => Promise<T>,
 ): Promise<T> {
   if (job.spend_authorization_invalid) {
-    throw new UnrecoverableError(`spend_authorization_invalid: job ${job.id} carries a malformed spend authorization, so it will not run. Cancel it (gbrain jobs cancel ${job.id}) and run the producing command again.`);
+    throw new UnrecoverableError(`spend_authorization_invalid: job ${job.id} carries a malformed spend authorization, so it will not run. Cancel it (foresights jobs cancel ${job.id}) and run the producing command again.`);
   }
   const record = job.spend_authorization ?? null;
   await logSpendBasis(engine, job, record).catch(() => {});
@@ -316,7 +316,7 @@ export async function runWithJobSpend<T>(
         warned = true;
         process.stderr.write(kind === 'no_context_ceiling'
           ? `[budget] BUDGET_TRACKER_NO_PRICING: model "${call.model}" has a known price but no known context-token ceiling; job ${job.id} runs it unmetered under its ${record.cap_source} $${record.cap_usd!.toFixed(2)} cap.\n`
-          : `[budget] BUDGET_TRACKER_NO_PRICING: model "${call.model}" has no known price; job ${job.id} runs it unmetered under its ${record.cap_source} $${record.cap_usd!.toFixed(2)} cap. Register its rate with \`gbrain pricing set\` to meter it.\n`);
+          : `[budget] BUDGET_TRACKER_NO_PRICING: model "${call.model}" has no known price; job ${job.id} runs it unmetered under its ${record.cap_source} $${record.cap_usd!.toFixed(2)} cap. Register its rate with \`foresights pricing set\` to meter it.\n`);
       }
     }
     let hold;
@@ -376,11 +376,11 @@ export function spendSubmitSummary(record: SpendAuthorization, jobs: MinionJob[]
     + `(${record.uncapped ? 'uncapped, spend ledgered' : `$${record.cap_usd!.toFixed(2)} ${record.cap_source} cap shared by the group`}).`];
   for (const k of kept.values()) {
     lines.push(`[spend] ${k.job_ids.length} job(s) (${k.job_ids.join(', ')}) keep their earlier authorization: group ${k.group_id}, `
-      + `${k.cap_usd === null ? 'uncapped' : `$${k.cap_usd.toFixed(2)} cap`}. To run them under the new cap: gbrain jobs cancel --group ${k.group_id}, then ${shellQuote(rerunArgv)}`);
+      + `${k.cap_usd === null ? 'uncapped' : `$${k.cap_usd.toFixed(2)} cap`}. To run them under the new cap: foresights jobs cancel --group ${k.group_id}, then ${shellQuote(rerunArgv)}`);
   }
   if (reused.length) lines.push(`[spend] ${reused.length} finished job(s) reused: ${reused.join(', ')}.`);
   if (!record.uncapped && record.cap_source !== 'user') {
-    lines.push(`[spend] A model with no known price runs unmetered under this ${record.cap_source} cap (it warns); register its rate with \`gbrain pricing set\` to meter it.`);
+    lines.push(`[spend] A model with no known price runs unmetered under this ${record.cap_source} cap (it warns); register its rate with \`foresights pricing set\` to meter it.`);
   }
   return { summary: { group_id: record.group_id, cap_usd: record.cap_usd, cap_source: record.cap_source, uncapped: record.uncapped === true,
     queued_job_ids: fresh, reused_job_ids: reused, kept: [...kept.values()] }, lines };

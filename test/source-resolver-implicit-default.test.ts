@@ -5,7 +5,7 @@
  *
  * Tier-5 posture (same as resolveLinkFallbackDefault): an invalid/stale
  * config value is treated as ABSENT — warn once on stderr, fall through to
- * the legacy sole-non-default routing — never a crash. Bare `gbrain dream`
+ * the legacy sole-non-default routing — never a crash. Bare `foresights dream`
  * (and any future bare-command caller) keeps working on a brain whose
  * default source went away.
  *
@@ -116,7 +116,7 @@ describe('resolveImplicitDefaultSourceId — stale sources.default is fail-open 
         soleNonDefault: 'solo',
       });
       // isValidSourceId rejects the value before any DB probe — no throw from
-      // the resolver-error path (which a bare `gbrain dream` would surface as
+      // the resolver-error path (which a bare `foresights dream` would surface as
       // exit 1), and the legacy sole-non-default routing takes over.
       await expect(resolveImplicitDefaultSourceId(engine)).resolves.toBe('solo');
       // Pinned current posture: the malformed value is skipped SILENTLY (it is

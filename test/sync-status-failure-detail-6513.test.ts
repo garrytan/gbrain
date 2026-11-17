@@ -1,7 +1,7 @@
 /**
  * Wave 16 G3.5 ([R13], #6513 comments, media-corpus): when a managed sync page
- * publication is refused by a database trigger gbrain does not know, the
- * failure the run records, the local ledger mirror, `gbrain sync status --json`
+ * publication is refused by a database trigger foresights does not know, the
+ * failure the run records, the local ledger mirror, `foresights sync status --json`
  * and the receipt all carry the bounded public detail (origin, sqlstate,
  * raiser, table, the closed `reason`), and none of them, nor the stored
  * receipt row, carries the trigger's message text. Before, the failure row and the status said only

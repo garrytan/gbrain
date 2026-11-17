@@ -176,8 +176,8 @@ for (const kind of testBackends()) describe(`physical root birth drift (${kind})
       expect(await put(f, `notes/drift-${delta < 0n ? `minus${-delta}` : delta}`)).toBe('recovery_required/relocated-root-exit');
       const refused = await refusal(binding);
       expect(refused).toMatchObject({ code: 'recovery_required', detail: 'physical_root_directory_changed' });
-      expect(refused!.suggestion).toContain(`gbrain sources writer transfer prepare ${f.source} --self-transfer --confirm-relocated-root`);
-      expect(refused!.suggestion).toContain(`gbrain sources writer transfer accept ${f.source} --path ${f.root} --expected-epoch ${binding.owner_epoch}`);
+      expect(refused!.suggestion).toContain(`foresights sources writer transfer prepare ${f.source} --self-transfer --confirm-relocated-root`);
+      expect(refused!.suggestion).toContain(`foresights sources writer transfer accept ${f.source} --path ${f.root} --expected-epoch ${binding.owner_epoch}`);
       expect(refused!.suggestion).toContain('--self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept');
       expect(readJson(f.marker)).toEqual({ ...stamped, birth: (BigInt(stamped.birth) + delta).toString() });
       writeJson(f.marker, stamped);

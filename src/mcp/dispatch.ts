@@ -132,7 +132,7 @@ export function __resetBackupNoticeForTests(): void {
  * thin clients — the host's backup posture is operational metadata their
  * token scope doesn't grant (the mcp.publish_advisor discipline), and a
  * remote-triggered record() must not spend the LOCAL notice budget. Local CLI
- * callers (`gbrain call`, opts.remote === false) are excluded too — the
+ * callers (`foresights call`, opts.remote === false) are excluded too — the
  * cli.ts startup rail owns that surface. The hourly recheck latch keeps the
  * healthy steady state at zero file reads per tool call.
  */
@@ -207,7 +207,7 @@ export interface DispatchOpts {
   agentLabel?: string;
   /** Configuration selected by the resident transport, never populated from wire params. */
   config?: OperationContext['config'];
-  /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
+  /** Defaults to true (remote/untrusted). Local CLI callers (`foresights call`) pass false. */
   remote?: boolean;
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
@@ -252,7 +252,7 @@ export interface DispatchOpts {
    */
   explicitReadBinding?: OperationContext['explicitReadBinding'];
   /**
-   * `gbrain serve --source-guard` (plugin lanes): when set, write/admin ops
+   * `foresights serve --source-guard` (plugin lanes): when set, write/admin ops
    * are blocked unless the source resolution tier proves the binding is
    * deliberate or unambiguous (see WRITE_SAFE_SOURCE_TIERS in
    * source-resolver.ts). The transport passes the tier that WON the
@@ -369,7 +369,7 @@ export interface DispatchOpts {
  * not named.
  *
  * Operators who want full payloads for debugging set `--log-full-params` on
- * `gbrain serve --http`; that path bypasses this helper and writes the raw
+ * `foresights serve --http`; that path bypasses this helper and writes the raw
  * JSON, with a loud startup warning.
  */
 export interface ParamSummary {
@@ -592,7 +592,7 @@ export function deferredWriteResult(e: unknown, notices: Notice[], opts: Dispatc
   if (opts.pendingAsError || !(e instanceof OperationError) || (e.code !== 'write_pending' && e.writeError !== 'write_pending') || !e.writeRequest?.deferred) return null;
   const receipt = publicWriteReceipt(e.writeRequest);
   return toolResultWithNotices({ status: 'pending', request_id: receipt.request_id, receipt, deferred: e.writeRequest.deferred,
-    next: { tool: 'get_write_request', arguments: { request_id: receipt.request_id }, cli: `gbrain write-request ${receipt.request_id}`, retry_after_ms: receipt.retry_after_ms } },
+    next: { tool: 'get_write_request', arguments: { request_id: receipt.request_id }, cli: `foresights write-request ${receipt.request_id}`, retry_after_ms: receipt.retry_after_ms } },
   admitNotices(notices, opts), dispatchRenderContext(opts));
 }
 
@@ -677,7 +677,7 @@ export function dispatchRenderContext(opts: DispatchOpts): RenderContext {
   };
 }
 
-/** `gbrain call`'s failure envelope: same normaliser, CLI render context, the op's own effect tags. */
+/** `foresights call`'s failure envelope: same normaliser, CLI render context, the op's own effect tags. */
 export function localCallErrorEnvelope(tool: string, e: unknown) {
   const op = operations.find(o => o.name === tool);
   return toAgentError(e, {
@@ -872,7 +872,7 @@ type ToolTail = Parameters<NonNullable<OperationContext['emitToolTail']>>[0];
 
 /**
  * Wakeshift's addition: its text (at most 2,000 characters) as the LAST text block, its meta merged into `_meta`
- * under gbrain's own keys, which it never replaces (a conversation credential: never logged).
+ * under foresights's own keys, which it never replaces (a conversation credential: never logged).
  */
 function appendToolTail(out: ToolResult, tail: ToolTail): void {
   if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 16_000) });
@@ -1113,7 +1113,7 @@ export async function dispatchToolCall(
 }
 
 /**
- * GST-359 C1: the refusal of a call that named an attested actor: gbrain's envelope (top-level `code` in the JSON text
+ * GST-359 C1: the refusal of a call that named an attested actor: foresights's envelope (top-level `code` in the JSON text
  * block) plus `structuredContent.error`, both of which QM reads. The single seam where memory_recall answers
  * actor_unlinked as a success instead (GST-359 D): empty content and structuredContent {facts: [], truncated: false,
  * code: 'actor_unlinked'}, the code also in `_meta.access`, so a person not yet linked reads nothing and QM's turn goes on.
@@ -1136,7 +1136,7 @@ function withStructuredError(out: ToolResult): ToolResult {
 }
 
 /**
- * GST-359 D: the refusal both HTTP transports give a request carrying x-qm-audience (a channel audience gbrain does
+ * GST-359 D: the refusal both HTTP transports give a request carrying x-qm-audience (a channel audience foresights does
  * not serve yet), before any work: the tools/call result (with structuredContent.error) and the JSON-RPC error for
  * every other method that would read (tools/list, resources).
  */
@@ -1274,7 +1274,7 @@ async function dispatchResolvedCall(
           `write/admin operations need an explicit source binding so they cannot land in the wrong source (resolution tier: ${opts.sourceGuardTier}).`,
         'Set GBRAIN_SOURCE=<source-id> in the environment that launches this MCP server ' +
           '(plugin installs pass it through — the user-global stdio serve binds the source from the env, not a flag). ' +
-          'List sources with `gbrain sources list`. Reads are unaffected.',
+          'List sources with `foresights sources list`. Reads are unaffected.',
         { fix: { argv: ['gbrain', 'sources', 'list'], consent: [], actor: 'user', why: 'Names the source id to bind with GBRAIN_SOURCE.', requires_exclusive: false } });
       if (isVerb) refusal.protocolVersion = MEMORY_VERBS_VERSION;
       return errorResult(refusal, opts, { op: name });
@@ -1337,11 +1337,11 @@ async function dispatchResolvedCall(
     return errorResult(opError('missing_source_scope',
       `Remote tool call '${name}' carries no resolved sourceId; refusing the shared 'default' source fallback. Pass an explicit sourceId resolved from the caller's grant.`,
       viaClient
-        ? `This connection has no source grant. The brain host operator binds one to this client (gbrain auth rescope-client ${opts.auth!.clientId} --source <source-id>), then the call works.`
+        ? `This connection has no source grant. The brain host operator binds one to this client (foresights auth rescope-client ${opts.auth!.clientId} --source <source-id>), then the call works.`
         : 'This MCP server resolved no source. Set GBRAIN_SOURCE to a registered source id in the environment that launches it, then restart it.',
       { fix: hostFix({ remote: true, transport: viaClient ? 'http' : 'stdio' },
         viaClient ? ['gbrain', 'auth', 'clients', '--json'] : ['gbrain', 'sources', 'list'],
-        viaClient ? 'Shows each OAuth client\'s write source; the operator binds this client to one with `gbrain auth rescope-client`.'
+        viaClient ? 'Shows each OAuth client\'s write source; the operator binds this client to one with `foresights auth rescope-client`.'
           : 'Lists the source ids GBRAIN_SOURCE can name.') }), opts, { op: name });
   }
 

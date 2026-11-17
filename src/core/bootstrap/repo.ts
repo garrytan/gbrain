@@ -1,5 +1,5 @@
 /**
- * `gbrain bootstrap repo` — private-repo creation with a hard privacy gate
+ * `foresights bootstrap repo` — private-repo creation with a hard privacy gate
  * [G8, CX2-1, plan D6]. Library module: the CLI dispatcher wires it later.
  *
  * Invariants (G8):
@@ -88,7 +88,7 @@ export interface RepoReceipt extends InstallReceipt {
 /** The one copy of the cloud repo-adoption instruction (two error sites). */
 export const CLOUD_ATTACH_FLOW_HINT =
   'Create the private repo from a normal machine (or github.com), open a cloud session ON that repo, ' +
-  'then run `gbrain bootstrap attach`.';
+  'then run `foresights bootstrap attach`.';
 
 /** GitHub repo-name slug: lowercase, alnum runs joined by '-'. */
 export function slugifyRepoName(name: string): string {
@@ -118,19 +118,19 @@ function requireInitializedManifest(workspaceDir: string): { state: ManifestStat
     case 'template':
       throw new BootstrapError(
         'TEMPLATE_UNINITIALIZED',
-        'this is an uninitialized template — run `gbrain bootstrap render` first',
+        'this is an uninitialized template — run `foresights bootstrap render` first',
       );
     case 'absent':
       throw new BootstrapError(
         'NOT_A_WORKSPACE',
-        `not an agent workspace (no agent.json in ${workspaceDir}) — run \`gbrain bootstrap render\` first`,
+        `not an agent workspace (no agent.json in ${workspaceDir}) — run \`foresights bootstrap render\` first`,
       );
     case 'invalid':
       throw new BootstrapError('MANIFEST_INVALID', `agent.json is invalid: ${state.reason}`);
     case 'newer_format':
       throw new BootstrapError(
         'NEWER_FORMAT',
-        `agent.json format_version ${state.manifest.format_version} is newer than this gbrain understands — upgrade gbrain first`,
+        `agent.json format_version ${state.manifest.format_version} is newer than this foresights understands — upgrade foresights first`,
       );
   }
 }
@@ -216,7 +216,7 @@ async function setRepoLocalIdentity(
   if (failed) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
-      `could not set the repo-local git identity (git config failed: ${failed.stderr.trim() || `exit ${failed.code}`}) — commits would fail; fix the git state and re-run \`gbrain bootstrap repo\``,
+      `could not set the repo-local git identity (git config failed: ${failed.stderr.trim() || `exit ${failed.code}`}) — commits would fail; fix the git state and re-run \`foresights bootstrap repo\``,
     );
   }
 }
@@ -246,7 +246,7 @@ async function assertAdoptableOrigin(
   if (ls.code !== 0) {
     throw new BootstrapError(
       'REMOTE_CHECK_FAILED',
-      `could not list ${owner}/${name} to confirm it is safe to adopt (git ls-remote failed: ${ls.stderr.trim() || `exit ${ls.code}`}) — nothing was pushed; re-run \`gbrain bootstrap repo\``,
+      `could not list ${owner}/${name} to confirm it is safe to adopt (git ls-remote failed: ${ls.stderr.trim() || `exit ${ls.code}`}) — nothing was pushed; re-run \`foresights bootstrap repo\``,
       { details: { owner, name } },
     );
   }
@@ -256,9 +256,9 @@ async function assertAdoptableOrigin(
   throw new BootstrapError(
     'ORIGIN_NOT_EMPTY',
     `${owner}/${name} already has content that bootstrap did not put there. ` +
-      '`gbrain bootstrap repo` adopts only an EMPTY repo you just created. ' +
+      '`foresights bootstrap repo` adopts only an EMPTY repo you just created. ' +
       'Create a new EMPTY private repo (no README/.gitignore/license) under your own account and point this workspace at it, ' +
-      'or run `gbrain bootstrap attach` if this is an existing agent workspace.',
+      'or run `foresights bootstrap attach` if this is an existing agent workspace.',
     { details: { owner, name } },
   );
 }
@@ -276,7 +276,7 @@ async function verifyRepoPrivate(runner: ExecRunner, owner: string, name: string
   if (login === null) {
     throw new BootstrapError(
       'VERIFY_UNAVAILABLE',
-      `could not read the authenticated GitHub user to verify ownership of ${owner}/${name} — check \`gh auth status\` and re-run \`gbrain bootstrap repo\`.`,
+      `could not read the authenticated GitHub user to verify ownership of ${owner}/${name} — check \`gh auth status\` and re-run \`foresights bootstrap repo\`.`,
       { details: { owner, name } },
     );
   }
@@ -285,7 +285,7 @@ async function verifyRepoPrivate(runner: ExecRunner, owner: string, name: string
       'ORIGIN_EXISTS',
       `${owner}/${name} is owned by ${owner}, not the authenticated GitHub user (${login}) — ` +
         'bootstrap only blesses repos it created under your own account. ' +
-        'If this is a clone of an existing agent workspace, run `gbrain bootstrap attach` instead.',
+        'If this is a clone of an existing agent workspace, run `foresights bootstrap attach` instead.',
       { details: { owner, name, login } },
     );
   }
@@ -300,7 +300,7 @@ async function verifyRepoPrivate(runner: ExecRunner, owner: string, name: string
       : isRateLimitOr5xx(res.stderr)
         ? 'GitHub API rate limit / server error'
         : `gh api failed: ${res.stderr.trim() || `exit ${res.code}`}`;
-    const nextStep = proxyBlocked ? CLOUD_ATTACH_FLOW_HINT : 'The repo may be fine — re-run `gbrain bootstrap repo` to verify.';
+    const nextStep = proxyBlocked ? CLOUD_ATTACH_FLOW_HINT : 'The repo may be fine — re-run `foresights bootstrap repo` to verify.';
     throw new BootstrapError(
       'VERIFY_UNAVAILABLE',
       `could not verify that ${owner}/${name} is private (${reason}). ` +
@@ -312,7 +312,7 @@ async function verifyRepoPrivate(runner: ExecRunner, owner: string, name: string
     throw new BootstrapError(
       'REPO_NOT_PRIVATE',
       `${owner}/${name} is NOT private (API said: ${res.stdout.trim() || 'empty'}). ` +
-        'Make it private in the GitHub settings (or delete it) before re-running `gbrain bootstrap repo`.',
+        'Make it private in the GitHub settings (or delete it) before re-running `foresights bootstrap repo`.',
       { details: { owner, name, answer: res.stdout.trim() } },
     );
   }
@@ -391,7 +391,7 @@ async function stagedAndUntrackedFiles(runner: ExecRunner, workspaceDir: string)
   if (res.code !== 0) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
-      `could not enumerate files for the pre-push secret scan (git ls-files failed: ${res.stderr.trim() || `exit ${res.code}`}) — nothing was committed or pushed; fix the git state and re-run \`gbrain bootstrap repo\``,
+      `could not enumerate files for the pre-push secret scan (git ls-files failed: ${res.stderr.trim() || `exit ${res.code}`}) — nothing was committed or pushed; fix the git state and re-run \`foresights bootstrap repo\``,
     );
   }
   return res.stdout.split('\0').filter((s) => s.length > 0);
@@ -404,7 +404,7 @@ async function trackedFiles(runner: ExecRunner, workspaceDir: string): Promise<s
   if (res.code !== 0) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
-      `could not enumerate tracked files for the pre-push secret scan (git ls-files failed: ${res.stderr.trim() || `exit ${res.code}`}) — nothing was pushed; fix the git state and re-run \`gbrain bootstrap repo\``,
+      `could not enumerate tracked files for the pre-push secret scan (git ls-files failed: ${res.stderr.trim() || `exit ${res.code}`}) — nothing was pushed; fix the git state and re-run \`foresights bootstrap repo\``,
     );
   }
   return res.stdout.split('\0').filter((s) => s.length > 0);
@@ -422,14 +422,14 @@ function secretScanOrThrow(workspaceDir: string, relFiles: string[]): void {
   if (findings.length > 0) {
     const sample = findings.slice(0, 5).map((f) => {
       const { since } = f as SecretFinding & { since?: string };
-      return `${f.file}:${f.line} [${f.pattern}${since ? ` since gbrain v${since.replace(/^v/, '')}` : ''}] ${f.fingerprint}`;
+      return `${f.file}:${f.line} [${f.pattern}${since ? ` since foresights v${since.replace(/^v/, '')}` : ''}] ${f.fingerprint}`;
     }).join('; ');
     throw new BootstrapError(
       'SECRET_SCAN_BLOCKED',
       `secret scan found ${findings.length} finding(s) before the first push: ${sample}` +
         `${findings.length > 5 ? '; …' : ''} — nothing was committed or pushed. ` +
         'Remove a real credential first; allowlist only a reviewed false positive by appending its fingerprint to ' +
-        `${shellQuote(resolve(workspaceDir, SCAN_ALLOW_FILENAME))} (${SECRET_SCAN_REFUSAL_DOCS}), then re-run \`gbrain bootstrap repo\`.`,
+        `${shellQuote(resolve(workspaceDir, SCAN_ALLOW_FILENAME))} (${SECRET_SCAN_REFUSAL_DOCS}), then re-run \`foresights bootstrap repo\`.`,
       { details: { findings: findings.length } },
     );
   }
@@ -477,7 +477,7 @@ export async function ensureWorkspaceCommit(runner: ExecRunner, workspaceDir: st
     if (hasCommit) return; // clean commit already exists; nothing new to add
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
-      'the workspace has no files to commit — render identity files first (`gbrain bootstrap render`), then re-run `gbrain bootstrap repo`',
+      'the workspace has no files to commit — render identity files first (`foresights bootstrap render`), then re-run `foresights bootstrap repo`',
     );
   }
 
@@ -527,7 +527,7 @@ async function assertOriginMatches(
       'ORIGIN_EXISTS',
       `origin now resolves to ${fetchUrl || '(unset)'}, not the verified-private ${owner}/${name} — refusing to push. ` +
         'The remote changed after the privacy verification; restore it (git remote set-url origin <the created repo>) ' +
-        'and re-run `gbrain bootstrap repo`.',
+        'and re-run `foresights bootstrap repo`.',
       { details: { which: 'fetch', expected: `${owner}/${name}`, actual: fetchUrl } },
     );
   }
@@ -544,7 +544,7 @@ async function assertOriginMatches(
         'ORIGIN_EXISTS',
         `origin push URL resolves to ${pushUrl}, not the verified-private ${owner}/${name} — refusing to push. ` +
           'A separate push URL (remote.origin.pushurl) points elsewhere; clear that config key ' +
-          'and re-run `gbrain bootstrap repo`.',
+          'and re-run `foresights bootstrap repo`.',
         { details: { which: 'push', expected: `${owner}/${name}`, actual: pushUrl } },
       );
     }
@@ -579,7 +579,7 @@ async function ensureRemoteHasWorkspace(
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
       `completing the deferred first push to ${owner}/${name} failed: ${push.stderr.trim() || `exit ${push.code}`} — ` +
-        'the repo exists and is private; commit your work and re-run `gbrain bootstrap repo`',
+        'the repo exists and is private; commit your work and re-run `foresights bootstrap repo`',
       { details: { branch: pushBranch, stderr: push.stderr } },
     );
   }
@@ -591,7 +591,7 @@ async function ensureRemoteHasWorkspace(
 
 export interface CreatePrivateRepoOptions {
   runner?: ExecRunner;
-  /** The gbrain home holding the install receipt (default: configDir()). */
+  /** The foresights home holding the install receipt (default: configDir()). */
   gbrainHomeDir?: string;
   /** The refusal for publishing `target` and its whole history (default: the range secret scan; a seam for runner fakes). */
   scanHistory?: HistoryScan;
@@ -601,7 +601,7 @@ export interface CreatePrivateRepoOptions {
 
 type HistoryScan = (workspaceDir: string, target: string) => OperationError | null;
 const scanWholeHistory = (timeoutMs?: number): HistoryScan => (workspaceDir, target) => stagedScanPublishRefusal(workspaceDir, '', target,
-  { timeoutMs, progress: line => process.stderr.write(`[gbrain] ${line}\n`), retryArgv: ['gbrain', 'bootstrap', 'repo'] });
+  { timeoutMs, progress: line => process.stderr.write(`[foresights] ${line}\n`), retryArgv: ['gbrain', 'bootstrap', 'repo'] });
 
 /**
  * #8902: a first push publishes the branch's whole history, including commits a script made with plain `git commit`
@@ -620,7 +620,7 @@ async function assertHistoryPublishable(runner: ExecRunner, workspaceDir: string
   const refusal = scan(workspaceDir, scanned);
   if (refusal) throw refusal;
   if (await tip() !== scanned) {
-    throw new BootstrapError('REPO_CREATE_FAILED', `branch ${branch} moved while its history was scanned — nothing was pushed; re-run \`gbrain bootstrap repo\``);
+    throw new BootstrapError('REPO_CREATE_FAILED', `branch ${branch} moved while its history was scanned — nothing was pushed; re-run \`foresights bootstrap repo\``);
   }
 }
 
@@ -661,7 +661,7 @@ export async function createPrivateRepo(
   if (ghVersion.code !== 0) {
     throw new BootstrapError(
       'GH_MISSING',
-      '`gh` (GitHub CLI) is not available on PATH — install it (https://cli.github.com), then re-run `gbrain bootstrap repo`',
+      '`gh` (GitHub CLI) is not available on PATH — install it (https://cli.github.com), then re-run `foresights bootstrap repo`',
       { exitCode: 2 },
     );
   }
@@ -686,7 +686,7 @@ export async function createPrivateRepo(
   if (ghAuth.code !== 0) {
     throw new BootstrapError(
       'GH_AUTH',
-      'GitHub CLI is not authenticated — run `gh auth login`, then re-run `gbrain bootstrap repo`',
+      'GitHub CLI is not authenticated — run `gh auth login`, then re-run `foresights bootstrap repo`',
       { exitCode: 2, details: { stderr: ghAuth.stderr } },
     );
   }
@@ -725,8 +725,8 @@ export async function createPrivateRepo(
       throw new BootstrapError(
         'ORIGIN_EXISTS',
         `this workspace already has an \`origin\` remote (${originUrl}) that bootstrap can neither adopt nor claim. ` +
-          '`gbrain bootstrap repo` creates a dedicated private repo, OR adopts an EMPTY private repo you created under your own account. ' +
-          'If this is a clone of an existing agent workspace, run `gbrain bootstrap attach` instead.',
+          '`foresights bootstrap repo` creates a dedicated private repo, OR adopts an EMPTY private repo you created under your own account. ' +
+          'If this is a clone of an existing agent workspace, run `foresights bootstrap attach` instead.',
         { details: { origin: originUrl } },
       );
     }
@@ -855,7 +855,7 @@ export async function createPrivateRepo(
   if (push.code !== 0) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
-      `git push to the verified-private repo failed: ${push.stderr.trim() || `exit ${push.code}`} — the repo exists and is private; commit your work and re-run \`gbrain bootstrap repo\``,
+      `git push to the verified-private repo failed: ${push.stderr.trim() || `exit ${push.code}`} — the repo exists and is private; commit your work and re-run \`foresights bootstrap repo\``,
       { details: { name, branch, stderr: push.stderr } },
     );
   }

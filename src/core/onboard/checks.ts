@@ -78,7 +78,7 @@ function entityTypesUnavailableResult(name: string, resolution: Extract<EntityTy
   return {
     check: {
       name, status: 'warn',
-      message: `Entity types unknown: could not resolve the active schema pack${where.length ? ` for source${where.length > 1 ? 's' : ''} ${where.map((id) => `'${id}'`).join(', ')}` : ''}, so ${name} cannot be graded. Run \`gbrain schema active --json\` to debug.`,
+      message: `Entity types unknown: could not resolve the active schema pack${where.length ? ` for source${where.length > 1 ? 's' : ''} ${where.map((id) => `'${id}'`).join(', ')}` : ''}, so ${name} cannot be graded. Run \`foresights schema active --json\` to debug.`,
       details: { code: 'entity_types_unavailable', entity_types_status: 'pack_unavailable', unresolved_sources: where },
       fix: { argv: ['gbrain', 'schema', 'active', '--json', ...(where.length ? ['--source', where[0]!] : [])], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Read-only: shows which pack is active, the tier it comes from and why it did not load.', verify: { argv: ['gbrain', 'doctor', '--only', name, '--json'] } },
@@ -120,7 +120,7 @@ export const TIMELINE_COVERAGE_FEATURE: CoverageFeature = { table: 'timeline_ent
  * One row `{ sample_size, matched }`: the visible entity pages (optionally
  * TABLESAMPLEd) and how many of them have `feature`. The coverage checks and
  * remediation impact capture both read coverage through this query, so a
- * `gbrain onboard --history` row measures the population the check grades.
+ * `foresights onboard --history` row measures the population the check grades.
  */
 export function visibleEntityCoverageSql(feature: CoverageFeature, filter: EntityTypeFilter, sampleClause = ''): { text: string; params: unknown[] } {
   return renderFragment(sqlFragment`WITH sampled_entities AS (
@@ -226,8 +226,8 @@ export async function checkEmbedStaleness(
       check: {
         name: 'embed_staleness',
         status: 'warn',
-        message: `Not verified: the stale-chunk count failed (${reason}). Fix the cause, then re-run \`gbrain doctor\`.`,
-        details: { code: 'not_verified', verified: false, reason, fix: 'gbrain doctor', docs: 'docs/guides/troubleshooting.md#not-verified-doctor-checks' },
+        message: `Not verified: the stale-chunk count failed (${reason}). Fix the cause, then re-run \`foresights doctor\`.`,
+        details: { code: 'not_verified', verified: false, reason, fix: 'foresights doctor', docs: 'docs/guides/troubleshooting.md#not-verified-doctor-checks' },
       },
       remediations: [],
     };
@@ -362,7 +362,7 @@ export async function checkEntityLinkCoverage(
   // v0.41.18.0: warn-only, never fail. Empty entity link coverage is "needs
   // work" not "broken" — doctor's exit code should not flip from a fresh
   // brain with entity pages but no auto-extracted links yet. Fail status
-  // would break `gbrain doctor exits 0` contract; the recommendation
+  // would break `foresights doctor exits 0` contract; the recommendation
   // surfaces the same fix via the onboard plan either way.
   if (coverage >= 0.7) {
     message = `Coverage ${pct}% ± ${ciPct}%${sampleNote}`;
@@ -394,7 +394,7 @@ export async function checkEntityLinkCoverage(
         + ' (add link_types[].inference.regex, or upgrade the pack)';
     } else {
       message += ' — no auto-fix: could not resolve the active schema pack, so NER'
-        + ' capability is unknown (see `gbrain doctor` schema_pack checks)';
+        + ' capability is unknown (see `foresights doctor` schema_pack checks)';
     }
   }
   return {
@@ -509,7 +509,7 @@ export async function checkTakesCount(
   } else if (takesCount === 0) {
     status = 'warn';
     if (bootstrapEnabled) {
-      message = `0 takes (bootstrap eligible — gbrain takes extract --from-pages)`;
+      message = `0 takes (bootstrap eligible — foresights takes extract --from-pages)`;
       remediations.push(makeRemediationStep({
         id: 'onboard.takes_bootstrap',
         job: 'extract-takes-from-pages',
@@ -529,7 +529,7 @@ export async function checkTakesCount(
           fix: {
             argv: ['gbrain', 'config', 'set', 'takes.bootstrap_enabled', 'true'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
             why: 'Takes (typed claims) are opt-in. Enabling the bootstrap lets maintenance extract them from existing pages with a chat model (about $5 on a typical brain), which feeds calibration.',
-            user_message: 'gbrain can extract typed claims ("takes") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?',
+            user_message: 'foresights can extract typed claims ("takes") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?',
             verify: { argv: ['gbrain', 'doctor', '--only', 'takes_count', '--json'] },
           },
         },
@@ -617,7 +617,7 @@ export async function checkPackUpgradeAvailable(
       return {
         check: {
           name: 'pack_upgrade_available', status: 'ok', severity: 'info', readiness_state: 'degraded',
-          message: `Active pack: ${active.identity}. Successor available: ${successor.identity}. On a managed brain unify-types switches the pack only when no page needs retyping, linking or aliasing; coordinated retype is not available yet, so do not submit the apply job while the preview shows pages to change. Preview: \`gbrain onboard --check --explain\``,
+          message: `Active pack: ${active.identity}. Successor available: ${successor.identity}. On a managed brain unify-types switches the pack only when no page needs retyping, linking or aliasing; coordinated retype is not available yet, so do not submit the apply job while the preview shows pages to change. Preview: \`foresights onboard --check --explain\``,
           fix: { argv: ['gbrain', 'onboard', '--check', '--explain'], consent: [], actor: 'agent', requires_exclusive: false,
             why: 'Previews the pack upgrade read-only. Applying it on a managed brain waits for coordinated retype unless the preview shows nothing to change.' },
         },
@@ -630,7 +630,7 @@ export async function checkPackUpgradeAvailable(
         status: 'warn',
         message:
           `Active pack: ${active.identity}. Successor available: ${successor.identity}. ` +
-          `Preview: \`gbrain onboard --check --explain\``,
+          `Preview: \`foresights onboard --check --explain\``,
       },
       remediations: [
         makeRemediationStep({
@@ -728,12 +728,12 @@ export async function checkTypeProliferation(
     return ` (source${g.pool.sources.size > 1 ? 's' : ''} ${[...g.pool.sources].sort().join(', ')}, pack ${g.pool.pack.manifest.name}${names ? `; undeclared: ${names}` : ''})`;
   };
   const notVerified = unresolved.size
-    ? ` Not verified: the schema pack for source${unresolved.size > 1 ? 's' : ''} ${[...unresolved].sort().join(', ')} does not resolve (run \`gbrain schema active --source <id>\`).`
+    ? ` Not verified: the schema pack for source${unresolved.size > 1 ? 's' : ''} ${[...unresolved].sort().join(', ')} does not resolve (run \`foresights schema active --source <id>\`).`
     : '';
   if (worst?.status === 'fail') {
     return result('fail',
       `${worst.n} distinct page types (pack declares ${worst.declared})${where(worst)}. ` +
-      `Run \`gbrain onboard --check --explain\` to preview a pack upgrade ` +
+      `Run \`foresights onboard --check --explain\` to preview a pack upgrade ` +
       `or define a custom pack with mapping_rules.${notVerified}`);
   }
   if (worst?.status === 'warn') {
@@ -750,8 +750,8 @@ export async function checkTypeProliferation(
  * Source-scoped JOINs prevent cross-source false positives.
  *
  * #6619: the two cases are reported apart. Aliases whose target has no page
- * row (purged or hard-deleted) are cleared by `gbrain repair aliases`, named
- * per source; aliases of a soft-deleted page are kept for `gbrain restore`
+ * row (purged or hard-deleted) are cleared by `foresights repair aliases`, named
+ * per source; aliases of a soft-deleted page are kept for `foresights restore`
  * and removed when that page is purged, so nothing is offered for them. The
  * alias tables carry the managed writer guard, so raw SQL is never offered.
  *
@@ -790,7 +790,7 @@ export async function checkDanglingAliases(
       + `preview their cleanup with ${commands.join('; ')}, then run the --apply command it prints. `
     : '';
   const softText = softTotal
-    ? `${softTotal} belong to soft-deleted pages and are kept for gbrain restore; purging the page removes them, so nothing needs running for those.`
+    ? `${softTotal} belong to soft-deleted pages and are kept for foresights restore; purging the page removes them, so nothing needs running for those.`
     : '';
   return {
     check: {

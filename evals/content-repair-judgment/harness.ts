@@ -22,7 +22,7 @@
  * with thinking off where the route allows, the production output ceiling,
  * no fallback model, the production parser). The harness adds nothing to
  * the call; it records the verdict, its grade, the tokens the provider
- * reported, the USD gbrain's own price table gives them, wall time and the
+ * reported, the USD foresights's own price table gives them, wall time and the
  * answer text. `llm_unavailable` is retried up to twice after a pause, as
  * the next maintenance run would; every other outcome stands. No ledger and
  * no memo: every pair is asked in every run.

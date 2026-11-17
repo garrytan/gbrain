@@ -1,8 +1,8 @@
 /**
  * Serve-delegated sync IPC — wire types + validation.
  *
- * A live `gbrain serve` holds a PGLite brain's single-writer connection for
- * its lifetime, so a concurrent `gbrain sync` process cannot open the brain.
+ * A live `foresights serve` holds a PGLite brain's single-writer connection for
+ * its lifetime, so a concurrent `foresights sync` process cannot open the brain.
  * These kinds let the sync CLI delegate the run to the serve process over the
  * existing resolve-IPC socket: the lock owner does the work, the CLI polls.
  * Same trust posture as turn_context — narrow typed requests, secret-gated,
@@ -299,7 +299,7 @@ export interface SyncAbortResponse {
 
 /**
  * GBRA-133 PR 2a: sync_nudge (secret-gated, protocol 2, versioned by `version`). A client that cannot sync now (
- * `gbrain sync trigger`, or a delegated sync the serve answered `busy`) records what it wants as a wanted marker
+ * `foresights sync trigger`, or a delegated sync the serve answered `busy`) records what it wants as a wanted marker
  * through the serve that holds the PGLite brain, which acknowledges with the marker and nudges its notifier. An
  * absent `intent` lets the serve pick (managed: freshness, classic: pull); a freshness marker with no `wantedHead`
  * takes the checkout's HEAD as the serve reads it. An older serve answers unknown_kind:sync_nudge.

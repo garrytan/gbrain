@@ -3,7 +3,7 @@
  *
  * The propose_takes cycle phase writes proposals to `take_proposals`, and the
  * D17 posture says explicit operator accept is the ONLY queue→canonical path.
- * Before this fix nothing implemented that path: `gbrain takes propose` fell
+ * Before this fix nothing implemented that path: `foresights takes propose` fell
  * through the dispatcher to the page-slug branch and printed
  * "No takes on propose." (exit 0), so proposals accumulated forever and
  * nothing ever wrote status='accepted'.
@@ -232,7 +232,7 @@ describe('acceptProposal', () => {
   test('reject refuses a claimed accept and names the resume command', async () => {
     const id = await insertProposal({ slug: 'people/strand-example', claim: 'claimed accept', status: 'accepted' });
     await expect(rejectProposal({ engine }, id)).rejects.toMatchObject({ code: 'not_pending' });
-    await expect(rejectProposal({ engine }, id)).rejects.toThrow(`gbrain takes propose --accept ${id}`);
+    await expect(rejectProposal({ engine }, id)).rejects.toThrow(`foresights takes propose --accept ${id}`);
   });
 
   test('source scope: accepting an out-of-scope proposal reads as not_found', async () => {

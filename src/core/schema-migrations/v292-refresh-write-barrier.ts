@@ -9,7 +9,7 @@ const PERSISTENCE_OPEN_INDEX = { name: 'persistence_requests_open', table: 'pers
 //
 // Convergence PR B (docs/designs/REFRESH_WRITE_BARRIER.md): the refresh write barrier.
 // - persistence_requests.state gains 'deferred': a page write admitted while a
-//   `gbrain sources refresh` holds its worktree waits there, invisible to every
+//   `foresights sources refresh` holds its worktree waits there, invisible to every
 //   claim, drain and head selector (old binaries included), until its refresh
 //   is released; deferred_refresh_id names that refresh.
 // - persistence_worktree_refreshes.released_at is set by trigger when the refresh

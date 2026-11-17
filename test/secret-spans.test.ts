@@ -1,5 +1,5 @@
 /**
- * GST-327: the pure span planner behind `gbrain repair secret-spans`. Spans come from the scanner's claims plus echoes
+ * GST-327: the pure span planner behind `foresights repair secret-spans`. Spans come from the scanner's claims plus echoes
  * of claimed values across a page's fields; the splice must equal `applyRedaction` byte for byte; a marker-only claim is
  * dropped, so redacted text is a fixed point; unknown rule names refuse before anything is scanned.
  */

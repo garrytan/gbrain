@@ -1,5 +1,5 @@
 /**
- * skillpack/init-brain-pack.ts — `gbrain skillpack init-brain-pack` scaffold.
+ * skillpack/init-brain-pack.ts — `foresights skillpack init-brain-pack` scaffold.
  *
  * Writes a starter brain-resident skillpack into a brain/source repo: skills
  * co-evolved with that brain, versioned in its repo, discovered by any harness
@@ -119,7 +119,7 @@ export function runInitBrainPack(opts: InitBrainPackOptions): InitBrainPackResul
       'triggers:',
       `  - example trigger phrase 1 for ${firstSlug}`,
       `  - example trigger phrase 2 for ${firstSlug}`,
-      '# tools: list gbrain ops this skill calls (e.g. [search, put_page]).',
+      '# tools: list foresights ops this skill calls (e.g. [search, put_page]).',
       '---',
       '',
       `# ${firstSlug}`,
@@ -145,7 +145,7 @@ export function runInitBrainPack(opts: InitBrainPackOptions): InitBrainPackResul
     content: [
       '# Bootstrap',
       '',
-      'Post-scaffold steps. gbrain displays this but does NOT auto-execute.',
+      'Post-scaffold steps. foresights displays this but does NOT auto-execute.',
       'The harness reads it and walks per-step at its own discretion.',
       '',
       `1. show user: "${opts.name} is installed. Try a trigger phrase from skills/${firstSlug}/SKILL.md."`,
@@ -173,7 +173,7 @@ export function runInitBrainPack(opts: InitBrainPackOptions): InitBrainPackResul
       'Ask the user first, then:',
       '',
       '```bash',
-      `gbrain skillpack scaffold <this-repo>`,
+      `foresights skillpack scaffold <this-repo>`,
       '```',
       '',
       '## 4. Conventions this brain expects',

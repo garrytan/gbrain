@@ -67,7 +67,7 @@ export function resolveRecipe(modelId: string): { parsed: ParsedModelId; recipe:
   if (!recipe) {
     throw new AIConfigError(
       `Unknown provider: "${parsed.providerId}"`,
-      `Known providers: ${[...knownProviderIds()].join(', ')}. For stored embeddings, run gbrain migrate embeddings --status and preview an explicit migration with ${renderCanonicalMigrationCommands().recommendedDryRun}. Do not relabel existing vectors or change only the configured model. For reranking, select a supported model with gbrain config set search.reranker.model voyage:rerank-2.5.`,
+      `Known providers: ${[...knownProviderIds()].join(', ')}. For stored embeddings, run foresights migrate embeddings --status and preview an explicit migration with ${renderCanonicalMigrationCommands().recommendedDryRun}. Do not relabel existing vectors or change only the configured model. For reranking, select a supported model with foresights config set search.reranker.model voyage:rerank-2.5.`,
     );
   }
   // Apply alias if the modelId matches an alias key. Canonical wins.
@@ -104,10 +104,10 @@ function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTou
  * This checks the PROVIDER's capability (anthropic has no embeddings; voyage
  * has no chat), never the model id. Recipe `models:` arrays are informational
  * — defaults for `--model <provider>` shorthand, guard-test fixtures for the
- * repo's own hardcoded defaults, display in `gbrain providers list` — not a
+ * repo's own hardcoded defaults, display in `foresights providers list` — not a
  * runtime allowlist. Frontier models ship weekly; any id the user names goes
  * to the provider, and a nonexistent one surfaces as the provider's own
- * `model_not_found` at call time (`gbrain models doctor` probes the configured
+ * `model_not_found` at call time (`foresights models doctor` probes the configured
  * models live for a pre-flight check).
  */
 export function assertTouchpoint(
@@ -178,7 +178,7 @@ export function embeddingDimsForModel(
 // and user-editable recipe model_dims tables can carry cased keys too.
 // Exact match first (zero behavior change for today's all-lowercase
 // tables), then a case-insensitive scan. Without this, a cased id fell
-// through to default_dims and `gbrain init` built a wrong-width column.
+// through to default_dims and `foresights init` built a wrong-width column.
 function lookupDims(
   table: Record<string, number> | undefined,
   key: string,

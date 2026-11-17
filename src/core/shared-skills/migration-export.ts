@@ -53,7 +53,7 @@ export interface DatabaseContentExportReceipt {
   pending_actions: string[];
   root_identity?: { device: number; inode: number };
   schema_policy?: { schema: ApprovedSchemaIdentity; source_config_sha256: string };
-  /** #8528: roots an earlier attempt of this checkpoint filled before it moved; gbrain no longer manages them. */
+  /** #8528: roots an earlier attempt of this checkpoint filled before it moved; foresights no longer manages them. */
   earlier_roots?: string[];
 }
 
@@ -64,7 +64,7 @@ const SOURCES_FIX = readFix('Lists the registered sources and whether each is ar
 
 function exportPath(page: Page): string {
   const path = page.source_path ?? `${page.slug}.md`;
-  if (path.length > 1024 || !path.endsWith('.md') || isAbsolute(path) || path.normalize('NFC') !== path || /[\\:\x00-\x1f\x7f]/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.')) || /^(skills|\.git|\.gbrain)(\/|$)/i.test(path)) {
+  if (path.length > 1024 || !path.endsWith('.md') || isAbsolute(path) || path.normalize('NFC') !== path || /[\\:\x00-\x1f\x7f]/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.')) || /^(skills|\.git|\.(?:foresights|gbrain))(\/|$)/i.test(path)) {
     throw opError('unsupported_export_data', 'An unsafe, reserved or non-Markdown source path requires a format-specific export.',
       `Page ${page.slug} stays database-only: its source path must be a plain relative .md path outside skills/, .git and .gbrain to be exported as Markdown.`);
   }
@@ -228,7 +228,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   }
   if (prior?.root_identity && !existsSync(root)) {
     throw opError('local_conflict', 'The verified exported root is missing. Restore it; migration will not silently create a replacement.',
-      `Restore ${root} from the user's copy of the verified export, then resume the same export; gbrain never recreates it silently.`);
+      `Restore ${root} from the user's copy of the verified export, then resume the same export; foresights never recreates it silently.`);
   }
   const fallback = options.sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null;
   if ((source.local_path || fallback) && (!prior || resolve(source.local_path || fallback!) !== root)) {
@@ -255,7 +255,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   if (!options.confirmQuiesced) receipt.pending_actions.push('Stop all memory/file writers and old skill servers, then pass --confirm-quiesced.');
   if (!options.backup) receipt.pending_actions.push('Verify an operational backup and pass --backup-confirmed, or explicitly choose --acknowledge-no-backup. Markdown is not a full database backup.');
   receipt.backup = options.backup ?? receipt.backup;
-  const earlier = receipt.earlier_roots?.length ? [`An earlier export of every page, private ones included, remains at ${receipt.earlier_roots.join(', ')}; gbrain no longer manages it. Ask the user whether to keep or delete it.`] : [];
+  const earlier = receipt.earlier_roots?.length ? [`An earlier export of every page, private ones included, remains at ${receipt.earlier_roots.join(', ')}; foresights no longer manages it. Ask the user whether to keep or delete it.`] : [];
   if (receipt.conflicts.length || options.dryRun || receipt.pending_actions.length) {
     receipt.status = receipt.conflicts.length ? 'conflict' : options.dryRun ? 'planned' : 'action_required';
     receipt.pending_actions.push(...earlier);

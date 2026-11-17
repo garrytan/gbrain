@@ -5,7 +5,7 @@ from pages on questions about what the assistant said? It ran on the baseline ex
 attribution setting) with the 30 LongMemEval-S single-session-assistant questions the decision kit selects with
 seed 42 (development split). The same fixed reader (the benchmark's pinned reader and judge) answered twice:
 once from the top five retrieved sessions (pages), and once from the saved facts of those sessions. The facts
-come from gbrain's conversation-facts extractor on dated conversation pages.
+come from foresights's conversation-facts extractor on dated conversation pages.
 
 | Answer source | Score | Context |
 |---|---|---|

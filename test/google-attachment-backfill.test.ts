@@ -194,7 +194,7 @@ test('withdrawal wins after receipt preparation but before real canonical public
     expect(claimed.id).toBe(admitted.id);
     const prepared = await prepareConnectorMutation(engine, claimed);
     const [fact] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 ORDER BY id LIMIT 1', [f.id]);
-    // A current forget queues behind the claimed request on its root; a gbrain before G4 sharing the brain still commits
+    // A current forget queues behind the claimed request on its root; a foresights before G4 sharing the brain still commits
     // its withdrawal database-first, at any moment (test/helpers/legacy-forget.ts).
     await legacyForget(ctx(engine, f.id), Number(fact.id));
     const result = await publishMutation(engine, claimed, prepared);

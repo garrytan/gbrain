@@ -1,5 +1,5 @@
 // v0.41.37.0 #1605 — migration schema phases run IN-PROCESS (was a
-// `gbrain init --migrate-only` subprocess that died with getaddrinfo ENOTFOUND
+// `foresights init --migrate-only` subprocess that died with getaddrinfo ENOTFOUND
 // on Windows+bun+Supabase). runMigrateOnlyCore is the single in-process path;
 // runGbrainSubprocess captures child stderr for the remaining backfill spawns.
 import { describe, test, expect } from 'bun:test';
@@ -51,7 +51,7 @@ describe('#1605 runMigrateOnlyCore (in-process schema)', () => {
     }
   });
 
-  // Regression coverage for #2775: `gbrain init --migrate-only` (this
+  // Regression coverage for #2775: `foresights init --migrate-only` (this
   // function, in-process) failed with `column "event_page_id" does not
   // exist` on any PGLite brain whose schema predates migration v121, because
   // `PGLiteEngine#initSchema` replayed the embedded schema blob — which
@@ -62,7 +62,7 @@ describe('#1605 runMigrateOnlyCore (in-process schema)', () => {
   // test. `test/bootstrap.test.ts` and `test/schema-bootstrap-coverage.test.ts`
   // already cover the bootstrap contract at the engine-method level; this
   // test closes the remaining gap by exercising the exact CLI-facing entry
-  // point (`runMigrateOnlyCore`, i.e. `gbrain init --migrate-only`) so a
+  // point (`runMigrateOnlyCore`, i.e. `foresights init --migrate-only`) so a
   // future regression in the wiring between the CLI and `initSchema()` would
   // still be caught even if the lower-level bootstrap contract stayed intact.
   test('brings a pre-v121 PGLite brain (missing timeline_entries.event_page_id) to head without spawning (#2775)', async () => {
@@ -98,7 +98,7 @@ describe('#1605 runMigrateOnlyCore (in-process schema)', () => {
           await rollback.disconnect();
         }
 
-        // The literal repro from #2775: re-running the `gbrain init
+        // The literal repro from #2775: re-running the `foresights init
         // --migrate-only` code path against the downgraded brain must NOT
         // throw `column "event_page_id" does not exist` — it must bring the
         // schema back to LATEST_VERSION.
@@ -150,10 +150,10 @@ describe('#1605 runGbrainSubprocess (stderr capture)', () => {
 });
 
 describe('#1605 structural guard: schema phases are in-process', () => {
-  test('no schema phase still execSyncs `gbrain init --migrate-only`', () => {
+  test('no schema phase still execSyncs `foresights init --migrate-only`', () => {
     for (const f of SCHEMA_PHASE_FILES) {
       const src = readFileSync(join(MIGRATION_DIR, `${f}.ts`), 'utf-8');
-      expect(src).not.toContain("execSync('gbrain init --migrate-only'");
+      expect(src).not.toContain("execSync('foresights init --migrate-only'");
     }
   });
 
@@ -169,7 +169,7 @@ describe('#1605 structural guard: schema phases are in-process', () => {
     }
   });
 
-  test('NO migration orchestrator anywhere spawns `gbrain init --migrate-only`', () => {
+  test('NO migration orchestrator anywhere spawns `foresights init --migrate-only`', () => {
     // All-files invariant (not just the 9): the subprocess spawn is the
     // Windows-ENOTFOUND bug class. Other files (v0_22_4, v0_28_0, v0_31_0,
     // v0_14_0, v0_32_2) define an in-process phaseASchema that never spawned —
@@ -177,7 +177,7 @@ describe('#1605 structural guard: schema phases are in-process', () => {
     const files = readdirSync(MIGRATION_DIR).filter(n => /^v\d/.test(n) && n.endsWith('.ts'));
     for (const n of files) {
       const src = readFileSync(join(MIGRATION_DIR, n), 'utf-8');
-      expect(src).not.toContain("execSync('gbrain init --migrate-only'");
+      expect(src).not.toContain("execSync('foresights init --migrate-only'");
     }
   });
 });

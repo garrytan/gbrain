@@ -2,9 +2,9 @@
  * v0.40.1.0 Track D / T6 — Nightly cross-modal quality probe phase.
  *
  * Once per 24h, runs the canonical quality pipeline:
- *   1. `gbrain eval longmemeval --by-type` against the committed nightly
+ *   1. `foresights eval longmemeval --by-type` against the committed nightly
  *      fixture (test/fixtures/longmemeval-nightly.jsonl) → JSONL output.
- *   2. `gbrain eval cross-modal --batch <jsonl> --max-usd $cap --yes`
+ *   2. `foresights eval cross-modal --batch <jsonl> --max-usd $cap --yes`
  *      → batch summary with verdict.
  *   3. Audit JSONL row recording outcome / cost / pass-fail counts, the
  *      judge panel, the non-passing questions with per-judge scores and
@@ -14,7 +14,7 @@
  * A collapsed judge panel is inconclusive, and a non-pass run keeps its
  * receipts under the audit dir (#5506, D12).
  *
- * Default: DISABLED. Opt-in via `gbrain config set
+ * Default: DISABLED. Opt-in via `foresights config set
  * autopilot.nightly_quality_probe.enabled true`. Doctor surfaces a
  * paste-ready enable hint when disabled.
  *
@@ -130,9 +130,9 @@ export interface NightlyProbeDeps {
 
 /**
  * Dual-plane flag resolution (same precedent as `mcp.publish_skills` in
- * serve-http.ts): the DB config row — what `gbrain config set` writes —
+ * serve-http.ts): the DB config row — what `foresights config set` writes —
  * wins when present; the file plane (~/.gbrain/config.json) is the
- * fallback. Doctor's paste-ready enable hint says `gbrain config set
+ * fallback. Doctor's paste-ready enable hint says `foresights config set
  * autopilot.nightly_quality_probe.enabled true`, so the gate MUST read
  * the DB plane — a file-only read turns that hint into a silent no-op.
  */
@@ -347,7 +347,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     // row says why instead of blaming a file in the user's brain repo.
     const detail =
       `the nightly fixture is not readable at ${fixturePath}, so the probe gave no quality signal. ` +
-      `Reinstall gbrain (bun install -g github:garrytan/gbrain) and run gbrain doctor. See docs/eval-bench.md#nightly-cross-modal-quality-probe-opt-in-autopilot`;
+      `Reinstall foresights (bun install -g github:aimonk2025/gbrain) and run foresights doctor. See docs/eval-bench.md#nightly-cross-modal-quality-probe-opt-in-autopilot`;
     process.stderr.write(`[nightly-quality-probe] ${detail}\n`);
     logQualityProbeEvent({
       outcome: 'skipped',
@@ -385,7 +385,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       reason,
       detail:
         `stopped by the run budget before a verdict (${reason}): ${tracker.exhausted.message} ` +
-        `No further paid call was made. Raise the cap with: gbrain config set autopilot.nightly_quality_probe.max_usd <usd>`,
+        `No further paid call was made. Raise the cap with: foresights config set autopilot.nightly_quality_probe.max_usd <usd>`,
     };
   };
   try {
@@ -525,7 +525,7 @@ function collapsedPanel(summary: CrossModalBatchSummary): string | undefined {
   const judged = models.flatMap((model, i) =>
     scored && !((scored[i] ?? 0) > 0) ? [] : [{ model, id: String.fromCharCode(65 + i) }]);
   const remedy =
-    'Set three different judge models: gbrain config set models.eval.cross_modal.slot_a <model> ' +
+    'Set three different judge models: foresights config set models.eval.cross_modal.slot_a <model> ' +
     '(and slot_b, slot_c; one provider is enough). See docs/eval-bench.md#nightly-cross-modal-quality-probe-opt-in-autopilot';
   if (panel.distinct_models < 2) {
     return `judge panel collapsed: ${plural(panel.distinct_models, 'distinct model')} judged, so there is no cross-check. ${remedy}`;

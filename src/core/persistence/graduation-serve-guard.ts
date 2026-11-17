@@ -3,7 +3,7 @@
  * the intent marker and tombstone through `inspectGraduationPath`, and the
  * durable config. Never a lock attempt, never a write.
  *
- * - `serveGraduationStartRefusal`: a `gbrain serve` (re)launched while a
+ * - `serveGraduationStartRefusal`: a `foresights serve` (re)launched while a
  *   graduation run owns the brain exits with `graduation_in_progress`
  *   (exit 75) instead of entering status-only mode and later reconnecting to
  *   the abandoned path.
@@ -83,17 +83,17 @@ export function exitOnEngineIdentityChange(startIdentity: string | null, opts: {
   // No config at start (status-only no_brain) or now: F4 recovers in place; only a config that names another engine relaunches.
   if (startIdentity === null || cfg === null) return;
   if (engineIdentity(cfg) !== startIdentity) {
-    log('gbrain serve: the brain\'s engine changed (an engine graduation or rollback flipped the config); exiting so the server is relaunched on the new engine. Restart the MCP client if it does not relaunch servers.\n');
+    log('foresights serve: the brain\'s engine changed (an engine graduation or rollback flipped the config); exiting so the server is relaunched on the new engine. Restart the MCP client if it does not relaunch servers.\n');
     exit(GRADUATION_SERVE_EXIT);
     return;
   }
   if (!opts.startedGraduated && pathState(cfg)?.state === 'graduated') {
-    log('gbrain serve: this PGLite brain was moved to Postgres; exiting so the server is relaunched on the new engine. Restart the MCP client if it does not relaunch servers.\n');
+    log('foresights serve: this PGLite brain was moved to Postgres; exiting so the server is relaunched on the new engine. Restart the MCP client if it does not relaunch servers.\n');
     exit(GRADUATION_SERVE_EXIT);
   }
 }
 
-/** `gbrain serve` startup: exit 75 with the envelope on stderr when another live run owns the host brain. */
+/** `foresights serve` startup: exit 75 with the envelope on stderr when another live run owns the host brain. */
 export function exitIfGraduationRunning(exit: (code: number) => void = (code) => { process.exit(code); }): void {
   const running = serveGraduationStartRefusal();
   if (running) exit(writeServeGraduationEnvelope(running));

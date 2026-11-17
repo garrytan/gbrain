@@ -23,7 +23,7 @@
  * Per D19: every PatternEntry declares `timezone_policy`.
  *
  * Per D16: arbitrary user regex is OUT. v1 only supports user-declared
- * `simple_pattern` (a structured spec compiled by gbrain to a known-
+ * `simple_pattern` (a structured spec compiled by foresights to a known-
  * safe regex). The simple_pattern shape lives in `simple-pattern.ts`.
  */
 
@@ -54,7 +54,7 @@ export type ParsePhase = 'regex_match' | 'polish' | 'llm_fallback' | 'no_match';
 
 /**
  * Verdict from the orchestrator. Surfaced in audit JSONL and the
- * `gbrain conversation-parser scan` debug command.
+ * `foresights conversation-parser scan` debug command.
  */
 export interface ParseResult {
   messages: MatchedMessage[];

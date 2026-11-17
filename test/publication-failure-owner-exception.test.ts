@@ -1,8 +1,8 @@
 /**
  * #5929: an unexpected exception inside the owner's preparation or publication
- * keeps a bounded identity (class, errno, repo-relative top gbrain frame, never
+ * keeps a bounded identity (class, errno, repo-relative top foresights frame, never
  * its message), so the attempt is stamped with the owner's build; remote
- * receipts expose only the allow-listed public keys; `gbrain write-request`
+ * receipts expose only the allow-listed public keys; `foresights write-request`
  * names an owner/CLI build mismatch with a restart fix.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -69,7 +69,7 @@ function withoutGeneratedIdentities(row: WriteRequest): string {
 
 describe('#5929 owner exceptions keep a bounded identity', () => {
   test('a TypeError is stored with its class and repo-relative frame, the attempt is stamped, and its message never leaves the owner', async () => {
-    // As thrown inside gbrain: a dependency frame first, then gbrain's own source under an absolute checkout path.
+    // As thrown inside gbrain: a dependency frame first, then foresights's own source under an absolute checkout path.
     const error = Object.assign(new TypeError('cannot read secret-value of undefined'), { stack: [
       'TypeError: cannot read secret-value of undefined',
       '    at parse (/home/alice-example/.bun/install/global/node_modules/yaml/dist/index.js:10:3)',
@@ -121,7 +121,7 @@ describe('#5929 owner exceptions keep a bounded identity', () => {
     const receipt = await withEnv({ GBRAIN_HOME: join(dir, 'home') }, () =>
       operationsByName.get_write_request.handler(ctx(), { request_id: row.request_id })) as Record<string, any>;
     expect(receipt.owner_build).toMatchObject({ owner: '0.60.1.0', cli: VERSION });
-    expect(receipt.owner_build.why).toContain('gbrain serve');
+    expect(receipt.owner_build.why).toContain('foresights serve');
     expect(receipt.owner_build.fix).toMatchObject({ actor: 'user', verify: { argv: ['gbrain', 'doctor', '--only', 'writer_version', '--json'] } });
   });
 });
@@ -135,7 +135,7 @@ describe('#6719 owner_exception diagnostics', () => {
     const failure = status.recent_failures.find(f => f.request_id === row.request_id)!;
     expect(failure.next_action).not.toContain('database trigger');
     expect(failure.next_action).toContain('owner exception');
-    expect(failure.next_action).toContain(`gbrain write-request ${row.request_id} --json`);
+    expect(failure.next_action).toContain(`foresights write-request ${row.request_id} --json`);
   });
 
   test('an origin that names no database refusal stays unknown instead of guessing a trigger; trigger and guard origins keep their hints', async () => {
@@ -148,7 +148,7 @@ describe('#6719 owner_exception diagnostics', () => {
     const unknown = await failureFor('pending_import');
     expect(unknown).not.toContain('database trigger');
     expect(unknown).toContain('not established');
-    expect(unknown).toContain(`gbrain write-request ${row.request_id} --json`);
+    expect(unknown).toContain(`foresights write-request ${row.request_id} --json`);
     expect(await failureFor('database_trigger')).toBe(DATABASE_TRIGGER_HINT);
     expect(await failureFor('database_guard')).toBe(DATABASE_REFUSAL_HINT);
   });

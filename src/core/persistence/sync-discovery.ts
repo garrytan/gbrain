@@ -102,7 +102,7 @@ export const COLON_REFUSAL_MESSAGES = { import: (path: string) => `${path} has a
 /** #5032: the named refusal of one Windows-unstorable ':' path (discovery and the pass, sync-pass.ts). */
 export function colonFileRefusal(sourceId: string, path: string, message: string): SyncFileRefusal {
   return { path, code: 'colon_slug_windows_write_through', message,
-    suggestion: `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync --source ${sourceId} --no-pull.`,
+    suggestion: `Rename it without ':' on a macOS or Linux checkout and commit, then run foresights sync --source ${sourceId} --no-pull.`,
     docs: ERROR_CATALOGUE.colon_slug_windows_write_through.docs };
 }
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
@@ -130,7 +130,7 @@ export function partialCloneTreeRefusal(gitRoot: string, sourceId: string, commi
   try { syncGit(gitRoot, ['ls-tree', '-r', '-d', '-z', commit]); return null; } catch { /* a tree is missing */ }
   return opError('git_object_missing', `A Git tree of commit ${commit} that source ${sourceId} syncs is missing from the repository.`,
     `The repository of source ${sourceId} is a partial clone (git clone --filter) that never fetched every tree of commit ${commit}, and sync fetches nothing from a remote, so it cannot list the commit's files; nothing was synced and no page was deleted. `
-      + `Fetch the trees in the checkout (git -C ${gitRoot} ls-tree -r -d ${commit} fetches them from the partial clone's remote) or use a clone without --filter, then run gbrain sync --source ${sourceId} --no-pull.`,
+      + `Fetch the trees in the checkout (git -C ${gitRoot} ls-tree -r -d ${commit} fetches them from the partial clone's remote) or use a clone without --filter, then run foresights sync --source ${sourceId} --no-pull.`,
     { detail: commit, fix: { argv: ['git', '-C', gitRoot, 'ls-tree', '-r', '-d', commit], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Fetches the commit\'s missing trees from the partial clone\'s remote, so the next sync can list its files.', verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] } } });
 }
@@ -144,7 +144,7 @@ export async function syncGitAsync(root: string, args: string[]): Promise<string
  * know no source id, so the read-only fix lists every registered root.
  */
 function syncTargetRefusal(code: RegistryCode, message: string, cause: string): OperationError {
-  return opError(code, message, `${cause} Nothing was written for it. Inspect the source on its owner (gbrain sources writer status --json lists every registered root), `
+  return opError(code, message, `${cause} Nothing was written for it. Inspect the source on its owner (foresights sources writer status --json lists every registered root), `
     + 'fix the checkout there, then sync that source again; do not bypass the check or change ownership to force it.', {
     fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows each source\'s registered root and owner to compare with the checkout.' },
@@ -258,7 +258,7 @@ export function assertSyncEntryOrigin(context: Pick<SyncDiscovery, 'root' | 'git
     tree = matches[0].object;
   }
 }
-/** A managed-sync `writer_coordinator_required` refusal whose fix is the supported `gbrain sync --no-pull --source <id>` run. */
+/** A managed-sync `writer_coordinator_required` refusal whose fix is the supported `foresights sync --no-pull --source <id>` run. */
 function managedSyncRefusal(sourceId: string, message: string, suggestion: string): OperationError {
   return opError('writer_coordinator_required', message, suggestion, {
     fix: managedSyncFix(sourceId, 'A managed brain syncs its registered checkout through the persistence coordinator: it imports local HEAD without git pull and keeps every ignored-file and failed-receipt guard.'),
@@ -270,15 +270,15 @@ export function readManagedSyncRows(engine: BrainEngine, sourceId: string): Prom
   return Promise.all([engine.executeRaw<ManagedSourceRow>('SELECT incarnation,archived,local_path,last_commit,config FROM sources WHERE id=$1', [sourceId]).then(rows => rows[0]),
     getWorktreeBinding(engine, sourceId)]);
 }
-/** #7973: the checkout's Git top level; a registered root with no Git checkout at or above it is a plain directory, which `gbrain sync` imports without Git. */
+/** #7973: the checkout's Git top level; a registered root with no Git checkout at or above it is a plain directory, which `foresights sync` imports without Git. */
 function managedGitTopLevel(root: string, sourceId: string): string {
   try { return realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim()); }
   catch (error) {
     for (let dir = root; ; dir = dirname(dir)) { if (existsSync(join(dir, '.git'))) throw error; if (dir === dirname(dir)) break; }
     throw opError('sync_not_applicable', `The managed Git sync path does not apply to source ${sourceId}: ${root} is a plain directory, not a Git checkout.`,
-      `Run gbrain sync --source ${sourceId} without --repo or --src-subpath; it imports the directory's files without Git (a file removed from it keeps its page). Nothing was synced.`,
+      `Run foresights sync --source ${sourceId} without --repo or --src-subpath; it imports the directory's files without Git (a file removed from it keeps its page). Nothing was synced.`,
       { reason: 'plain_directory', fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'Sync imports a plain-directory source the way gbrain import does on a repo-less brain.' } });
+        why: 'Sync imports a plain-directory source the way foresights import does on a repo-less brain.' } });
   }
 }
 /**
@@ -289,7 +289,7 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
   if (!rows) await assertManagedSyncActive(engine);
   const sourceId = opts.sourceId ?? 'default';
   if (!opts.noPull && !opts.dryRun) throw managedSyncRefusal(sourceId, 'Managed sync requires skipping the Git pull (CLI `--no-pull`, sync_brain `no_pull: true`); Git pull/rebase needs an explicit drained maintenance window.',
-    `Sync without pulling to import the checkout as it is (CLI: gbrain sync --no-pull --source ${sourceId}; MCP: sync_brain with no_pull: true), or fast-forward and sync the checkout with gbrain sources refresh ${sourceId}.`);
+    `Sync without pulling to import the checkout as it is (CLI: foresights sync --no-pull --source ${sourceId}; MCP: sync_brain with no_pull: true), or fast-forward and sync the checkout with foresights sources refresh ${sourceId}.`);
   const forbidden = managedForbiddenFlag(opts);
   if (forbidden) throw managedSyncFlagRefusal(forbidden, sourceId, ['--source', sourceId, '--no-pull']);
   const [read, binding] = await (rows ?? readManagedSyncRows(engine, sourceId));
@@ -309,8 +309,8 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
     throw opError('owner_unavailable', 'Sync must run on the active registered worktree owner.',
       unbound
         ? `Source ${sourceId} has a checkout path (${source.local_path}) but no canonical owner, so it is database-only and there is no checkout to sync; nothing changed. `
-          + `To make this host its owner (a brain-wide change: ask the user first), preview with gbrain sources writer claim ${sourceId} --path ${source.local_path} --dry-run --json, then ${unboundBindCommand(sourceId, source.local_path)}; afterwards run gbrain sync --no-pull --source ${sourceId}.`
-        : `Source ${sourceId} is archived, re-registered, or not bound to an active worktree owned by this host. Run its sync on the owner host that gbrain sources writer status --source ${sourceId} --json names; do not claim or transfer the source to make this host the owner.`,
+          + `To make this host its owner (a brain-wide change: ask the user first), preview with foresights sources writer claim ${sourceId} --path ${source.local_path} --dry-run --json, then ${unboundBindCommand(sourceId, source.local_path)}; afterwards run foresights sync --no-pull --source ${sourceId}.`
+        : `Source ${sourceId} is archived, re-registered, or not bound to an active worktree owned by this host. Run its sync on the owner host that foresights sources writer status --source ${sourceId} --json names; do not claim or transfer the source to make this host the owner.`,
       { ...(reason ? { reason } : {}), ...(deterministic ? { retryable: false } : {}),
         fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Shows the owning host, binding state and incarnation of the source.' } });
@@ -318,17 +318,17 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
   const registeredRoot = resolve(binding.local_path, binding.relative_path);
   const root = realpathSync(registeredRoot);
   if (root !== registeredRoot) throw opError('source_changed', 'The registered source root identity changed.',
-    `The registered root of ${sourceId} now resolves somewhere else (a symlink or a moved directory), so nothing was synced. Restore the directory on the owner, then run gbrain sync --no-pull --source ${sourceId}.`,
+    `The registered root of ${sourceId} now resolves somewhere else (a symlink or a moved directory), so nothing was synced. Restore the directory on the owner, then run foresights sync --no-pull --source ${sourceId}.`,
     { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows the root the owner registered, to compare with the directory on disk.' } });
   assertConfiguredSyncRoot(root, source.local_path);
   const gitRoot = managedGitTopLevel(root, sourceId);
   const requested = realpathSync(opts.srcSubpath ? resolve(opts.repoPath ?? gitRoot, opts.srcSubpath) : opts.repoPath ?? root);
   if (realpathSync.native(requested) !== realpathSync.native(root) || !isWriteTargetContained(realpathSync.native(root), realpathSync.native(gitRoot))) throw opError('source_changed', 'Sync path does not match this source binding.',
-    `The repository path or source subpath given for ${sourceId} does not resolve to its registered root. Run gbrain sync --no-pull --source ${sourceId} without --repo or --src-subpath so it uses the registered root.`,
+    `The repository path or source subpath given for ${sourceId} does not resolve to its registered root. Run foresights sync --no-pull --source ${sourceId} without --repo or --src-subpath so it uses the registered root.`,
     { fix: managedSyncFix(sourceId, 'Without a path override, sync reads the registered root of the source.') });
   if (source.config?.kind != null) throw opError('writer_coordinator_required', 'Connector sync requires its dedicated coordinator.',
-    `Source ${sourceId} is a connector source, so the Git sync path does not apply. Run gbrain sync --source ${sourceId} without --repo, --src-subpath or other Git options; it dispatches to the connector.`,
+    `Source ${sourceId} is a connector source, so the Git sync path does not apply. Run foresights sync --source ${sourceId} without --repo, --src-subpath or other Git options; it dispatches to the connector.`,
     { fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'The sync command routes a connector source to its own coordinator.' } });
   return { binding, root, gitRoot, sourceId, incarnation: source.incarnation, source };
@@ -412,7 +412,7 @@ async function keptWorkingTreePages(engine: BrainEngine, scope: { sourceId: stri
 function cutDiscoveryToSlice(discovered: SyncDiscovery, slicing: Pick<SyncSliceCursor, 'phase' | 'after'>, head: string): void {
   const cut = sliceEntries(discovered.entries, slicing, manifestFits);
   if (!manifestFits(cut.entries)) throw opError('request_too_large', 'One sync entry exceeds the bounded cursor size.',
-    `Entry ${cut.entries[0]?.path} of ${discovered.sourceId} alone exceeds the ${Math.round(cursorBound.bytes / 1024 ** 2)} MiB cursor bound; nothing was written. Exclude it with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${discovered.sourceId}.`);
+    `Entry ${cut.entries[0]?.path} of ${discovered.sourceId} alone exceeds the ${Math.round(cursorBound.bytes / 1024 ** 2)} MiB cursor bound; nothing was written. Exclude it with --exclude or the sync.exclude config, then run foresights sync --no-pull --source ${discovered.sourceId}.`);
   discovered.entries = cut.entries;
   discovered.slice = { phase: cut.phase, after: cut.after, head, target: discovered.target, done: cut.done };
   if (cut.done && discovered.target === head) delete discovered.stagedHead; else discovered.stagedHead = head;
@@ -508,7 +508,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const storable = <T extends { source_path: string | null }>(page: T) => page.source_path === null || !isWindowsColonTarget(page.source_path);
   const put = (path: string, action: SyncEntry['action'], working = false) => {
     if (process.platform === 'win32' && path.includes('\\')) throw opError('page_identity_changed', 'Git paths containing literal backslashes are not safe Windows sync targets.',
-      `${path} in ${sourceId} has a literal backslash in its name, which Windows cannot store; nothing was synced. Rename it on a macOS or Linux checkout and commit, then run gbrain sync --no-pull --source ${sourceId}.`);
+      `${path} in ${sourceId} has a literal backslash in its name, which Windows cannot store; nothing was synced. Rename it on a macOS or Linux checkout and commit, then run foresights sync --no-pull --source ${sourceId}.`);
     if (refuse(path, action)) return;
     if (eligible(path)) entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
   };
@@ -615,7 +615,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   // #5493: an image import is held at freeze (managed_image_sync_unsupported); an image deletion needs no importer.
   const unsupported = selected.find(e => e.action === 'import' && !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path) && (company || !isImageFilePath(e.path)));
   if (unsupported) throw opError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.',
-    `Managed sync of ${sourceId} imports only Markdown and code files, and this run selected others (for example ${unsupported.path}). Exclude them with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${sourceId}.`);
+    `Managed sync of ${sourceId} imports only Markdown and code files, and this run selected others (for example ${unsupported.path}). Exclude them with --exclude or the sync.exclude config, then run foresights sync --no-pull --source ${sourceId}.`);
   if (!manifestFits(selected) && !slicing) {
     // #6349: an incremental delta past the bound is synced in stages: the furthest first-parent commit whose delta fits,
     // then the next stage from there (the CLI loops; a scheduled sync takes one stage per run).
@@ -633,7 +633,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
       if ('oversized' in staged) return discoverManagedSync(engine, opts, context, { target: staged.oversized, head, slice: { phase: 'import', after: null } });
     }
     if (company) throw opError('request_too_large', 'Sync discovery exceeds the bounded cursor size.',
-      `This sync of ${sourceId} selected ${selected.length} entries, above the 100,000-entry and 16 MiB cursor bound; nothing was written. Narrow it with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${sourceId}.`);
+      `This sync of ${sourceId} selected ${selected.length} entries, above the 100,000-entry and 16 MiB cursor bound; nothing was written. Narrow it with --exclude or the sync.exclude config, then run foresights sync --no-pull --source ${sourceId}.`);
     // #6349 (P4.4): a first sync or a `--full` tree walk has no commit axis to stage on; the target is cut into path slices
     // (re-entered as a stage so the slices read the pinned tree alone, never the working tree).
     return discoverManagedSync(engine, opts, context ?? { binding, root, gitRoot, sourceId, incarnation, source }, { target, head, slice: { phase: 'import', after: null } }, walk);
@@ -671,7 +671,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     let slug = entry.slug ?? origin?.slug ?? resolveSlugForPath(entry.sourcePath);
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw opError('invalid_params', 'The imported file has no usable page slug.',
-      `${entry.sourcePath} in ${sourceId} yields no page slug from its path or frontmatter; nothing was written. Rename the file or set a frontmatter slug and commit, then run gbrain sync --no-pull --source ${sourceId}.`);
+      `${entry.sourcePath} in ${sourceId} yields no page slug from its path or frontmatter; nothing was written. Rename the file or set a frontmatter slug and commit, then run foresights sync --no-pull --source ${sourceId}.`);
     if (!company && entry.action === 'import' && !origin && !isCodeFilePath(entry.sourcePath)) {
       slug = await adoptLegacyPage(engine, discovered, identities, bySlug.get(slug), slug, entry);
       entry.slug = slug;
@@ -684,7 +684,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     const unownedDeletion = foreignOrigin && entry.action === 'delete' && !origin && !company;
     if (foreignOrigin && !unownedDeletion) {
       const error = new OperationError('page_identity_changed', 'A different origin occupies the imported slug.',
-        `Page ${slug} in source ${sourceId} records the origin '${page.source_path}', but sync found it at '${entry.sourcePath}'. On the brain host, rename or move one of the two files so each page has one origin, commit, then run gbrain sync --source ${sourceId} --no-pull.`);
+        `Page ${slug} in source ${sourceId} records the origin '${page.source_path}', but sync found it at '${entry.sourcePath}'. On the brain host, rename or move one of the two files so each page has one origin, commit, then run foresights sync --source ${sourceId} --no-pull.`);
       error.detail = 'sync_origin_mismatch';
       throw error;
     }
@@ -709,7 +709,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     const respelled = holderOrigin !== null && !holderOrigin.includes('\\') && deletions.has(holderOrigin);
     const spellings = [...(holderOrigin === null || respelled ? [] : [holderOrigin]), ...candidates.map(entry => syncOriginPath(entry.sourcePath))].map(spelling);
     if (new Set(spellings).size !== spellings.length) throw opError('page_identity_changed', 'Sync origins for one slug differ only by case or separator spelling.',
-      `Files mapping to page ${slug} in ${sourceId} differ only by case or separator spelling (${candidates.slice(0, 3).map(entry => entry.sourcePath).join(', ')}); nothing was written. Keep one spelling, rename or remove the others and commit, then run gbrain sync --no-pull --source ${sourceId}.`);
+      `Files mapping to page ${slug} in ${sourceId} differ only by case or separator spelling (${candidates.slice(0, 3).map(entry => entry.sourcePath).join(', ')}); nothing was written. Keep one spelling, rename or remove the others and commit, then run foresights sync --no-pull --source ${sourceId}.`);
     // A live page keeps its slug while its own file is still in the tree; the newcomer is the collision.
     const kept = holder && !deleted.has(holder.id) && holderOrigin !== null && !deletions.has(holderOrigin) ? holderOrigin : null;
     const winner = kept === null ? candidates.find(entry => /\.mdx?$/i.test(entry.sourcePath) && entry.sourcePath.replace(/\.mdx?$/i, '') === slug) ?? candidates[0] : null;
@@ -776,7 +776,7 @@ async function foldLegacyPages(engine: BrainEngine, identities: LegacyIdentity[]
 }
 /**
  * #6727: the slug a file with no recorded origin imports as. With no live page at its folded slug, exactly one legacy page
- * (an older gbrain imported it before the current fold) folding to it is the file's: it imports into that page (same id,
+ * (an older foresights imported it before the current fold) folding to it is the file's: it imports into that page (same id,
  * links and history). Several, or one whose slug the importer cannot write as it stands (`validateSlug` lowercases), keep
  * the folded slug and are named on the entry, so the freeze holds the file `legacy_slug_conflict`. #6729: so does the one
  * page when its explicit frontmatter id differs from the file's (`explicitIdVeto`): it is another document.
@@ -810,7 +810,7 @@ export function assertTakeoverIdentity(discovery: SyncDiscovery, winner: SyncEnt
   if (!explicitIdVeto(incoming, holder.fm_id)) return;
   throw opError('page_identity_changed', 'A file would take over a page whose frontmatter id differs from its own.',
     `${winner.sourcePath} in ${discovery.sourceId} maps to page ${holder.slug}, whose file is gone, but its frontmatter id '${incoming}' differs from the page's id '${holder.fm_id}', so it is a different document and must not inherit that page's facts, links and history; nothing was written. `
-    + `Give the file the page's id if it is the same document, or rename it so its slug differs, commit, then run gbrain sync --no-pull --source ${discovery.sourceId}.`,
+    + `Give the file the page's id if it is the same document, or rename it so its slug differs, commit, then run foresights sync --no-pull --source ${discovery.sourceId}.`,
     { detail: 'rename_identity_conflict' });
 }
 /** #6948: the frontmatter id of the file an entry imports (null: none), or undefined when it cannot be read: unreadable is never agreement. */
@@ -837,7 +837,7 @@ async function originConflictOf(engine: BrainEngine, discovery: SyncDiscovery, e
 export function ambiguousOriginRefusal(sourceId: string, sourcePath: string, named: Array<{ slug: string }>, ambiguous: 'several_live' | 'several_tombstones'): OperationError {
   return opError('page_identity_changed', 'Several pages claim the same imported origin.',
     `Pages ${named.map(page => page.slug).join(', ')} in ${sourceId} all record ${sourcePath} as their origin; nothing was written. `
-    + (ambiguous === 'several_live' ? `${sharedOriginExit(sourceId, named.map(page => page.slug))} Then` : 'Keep one, remove or re-point the others, then') + ` run gbrain sync --no-pull --source ${sourceId}.`,
+    + (ambiguous === 'several_live' ? `${sharedOriginExit(sourceId, named.map(page => page.slug))} Then` : 'Keep one, remove or re-point the others, then') + ` run foresights sync --no-pull --source ${sourceId}.`,
     { fix: { argv: ['gbrain', 'get', '--source', sourceId, '--', named[0]!.slug], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows one of the pages that claim the origin, to decide which one keeps it.' } });
 }
@@ -845,10 +845,10 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
   if (entry.working) {
     const bytes = readSyncFile(discovery.root, entry.path);
     if (bytes === null) throw opError('source_changed', 'The discovered working-tree file disappeared.',
-      `${entry.path} left the working tree of ${discovery.sourceId} between discovery and import, so nothing was imported from it. Run gbrain sync --no-pull --source ${discovery.sourceId} to rediscover the tree.`,
+      `${entry.path} left the working tree of ${discovery.sourceId} between discovery and import, so nothing was imported from it. Run foresights sync --no-pull --source ${discovery.sourceId} to rediscover the tree.`,
       { fix: managedSyncFix(discovery.sourceId, 'A new discovery reads the working tree as it is now.') });
     if (entry.identityHead && identityHeadDigest(bytes) !== entry.identityHead) throw opError('source_changed', 'A renamed working-tree file changed after its page identity was confirmed.',
-      `${entry.path} changed in the working tree of ${discovery.sourceId} after sync confirmed it keeps the page of its rename, so nothing was imported from it and no identity moved. Run gbrain sync --no-pull --working-tree --source ${discovery.sourceId} to re-check it.`,
+      `${entry.path} changed in the working tree of ${discovery.sourceId} after sync confirmed it keeps the page of its rename, so nothing was imported from it and no identity moved. Run foresights sync --no-pull --working-tree --source ${discovery.sourceId} to re-check it.`,
       { fix: { ...managedSyncFix(discovery.sourceId, 'A retry rediscovers the tree and re-checks the rename against the file as it is now.'),
         argv: ['gbrain', 'sync', '--no-pull', '--working-tree', '--source', discovery.sourceId] } });
     return bytes.toString('utf8');

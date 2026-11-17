@@ -102,7 +102,7 @@ describe('parseClaudeHookCommand (inverse of buildClaudeHookCommand)', () => {
       `env GBRAIN_HOOK_LANE=harness GBRAIN_SOURCE=default ${BIN} hook stop`,
       `env FOO=1 GBRAIN_HOOK_LANE=harness ${BIN} hook stop`,
       `env 'GBRAIN_SOURCE=default' GBRAIN_HOOK_LANE=harness ${BIN} hook stop`,
-      `env GBRAIN_HOOK_LANE=harness gbrain hook stop`,
+      `env GBRAIN_HOOK_LANE=harness foresights hook stop`,
       `env GBRAIN_HOOK_LANE=harness ${BIN} hook stop extra`,
       `env GBRAIN_HOOK_LANE=harness ${BIN} hook not-an-event`,
       `GBRAIN_HOOK_LANE=harness ${BIN} hook stop`,
@@ -287,7 +287,7 @@ describe('scanHarnessHookCarrier and groupsCarryGbrainHook (read-only probes)', 
     expect(scanHarnessHookCarrier(path, ME).state).toBe('unparseable');
   });
 
-  test('an unmarked harness command counts as a gbrain hook for carrier overlap', () => {
+  test('an unmarked harness command counts as a foresights hook for carrier overlap', () => {
     const event: ClaudeHookEvent = 'SessionStart';
     expect(groupsCarryGbrainHook([{ hooks: [entry(buildClaudeHookCommand(BIN, event, HARNESS_ENV))] }], event)).toBe(true);
     expect(groupsCarryGbrainHook([{ hooks: [entry('echo hi')] }], event)).toBe(false);

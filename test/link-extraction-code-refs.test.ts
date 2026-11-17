@@ -83,7 +83,7 @@ describe('extractCodeRefs — basic patterns', () => {
   });
 });
 
-describe('extractCodeRefs — integration with gbrain workflow', () => {
+describe('extractCodeRefs — integration with foresights workflow', () => {
   test('extracts multiple references from real markdown', () => {
     const guide = `# Sync Pipeline
 

@@ -1,5 +1,5 @@
 /**
- * #6604: after `gbrain upgrade` swaps the install in place, the old parent
+ * #6604: after `foresights upgrade` swaps the install in place, the old parent
  * process still has the old release's modules cached. A dynamic import there
  * loads new files into the old graph, so a changed named export throws and the
  * upgrade exits 1 after a successful install. Every module the post-swap tail

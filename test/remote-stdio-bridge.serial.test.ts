@@ -1,8 +1,8 @@
 /**
- * #8543 / GST-2104: on a thin client, plain `gbrain serve` is an engine-free
+ * #8543 / GST-2104: on a thin client, plain `foresights serve` is an engine-free
  * stdio MCP relay to the remote brain. These probes drive the real CLI: a
- * `gbrain serve --http` host on a keyless, repo-less PGLite home, OAuth
- * clients registered on it, and thin homes whose bare `gbrain serve` is
+ * `foresights serve --http` host on a keyless, repo-less PGLite home, OAuth
+ * clients registered on it, and thin homes whose bare `foresights serve` is
  * spoken to over stdio by the SDK client. The relay adds no privilege: every
  * answer is the host's answer for the stored credential.
  */
@@ -151,7 +151,7 @@ afterAll(async () => {
   for (const d of [hostHome, ...tempDirs]) if (d) rmSync(d, { recursive: true, force: true });
 });
 
-describe('thin-client gbrain serve relays stdio to the remote brain', () => {
+describe('thin-client foresights serve relays stdio to the remote brain', () => {
   test('a read-only client sees exactly the host listing, reads round-trip, refusals are the host\'s own', async () => {
     const home = thinHome(readCred);
     const b = await bridge(home);
@@ -332,7 +332,7 @@ describe('thin-client gbrain serve relays stdio to the remote brain', () => {
     } finally { await b.close(); proxy.stop(true); }
   }, 180_000);
 
-  test('with MCP_STDIO=1 the bridge outlives stdin end and SIGTERM ends it like any gbrain process (143)', async () => {
+  test('with MCP_STDIO=1 the bridge outlives stdin end and SIGTERM ends it like any foresights process (143)', async () => {
     const home = thinHome(readCred);
     const child = Bun.spawn([process.execPath, '--no-env-file', CLI, 'serve'], { cwd: home, env: childEnv(home, { MCP_STDIO: '1' }), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '1' } } }) + '\n');

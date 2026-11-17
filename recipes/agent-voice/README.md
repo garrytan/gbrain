@@ -1,19 +1,19 @@
 # agent-voice — reference bundle
 
-This directory is a **reference**, not a runtime gbrain dependency. The gbrain compiled binary does NOT load anything under `recipes/agent-voice/code/`, `recipes/agent-voice/skills/`, or `recipes/agent-voice/tests/`. Those exist to be COPIED into the operator's host agent repo via `gbrain integrations install agent-voice --target <host-repo>`.
+This directory is a **reference**, not a runtime foresights dependency. The foresights compiled binary does NOT load anything under `recipes/agent-voice/code/`, `recipes/agent-voice/skills/`, or `recipes/agent-voice/tests/`. Those exist to be COPIED into the operator's host agent repo via `foresights integrations install agent-voice --target <host-repo>`.
 
 ## The paradigm
 
 | Aspect                  | Legacy skillpack (`local-managed`)            | Reference skillpack (`copy-into-host-repo`)        |
 | ----------------------- | --------------------------------------------- | -------------------------------------------------- |
 | Where code lives        | `~/.gbrain/skills/<name>/`                    | `<host-repo>/services/voice-agent/`                |
-| Who owns edits          | gbrain (managed block)                        | Operator (host repo)                               |
+| Who owns edits          | foresights (managed block)                        | Operator (host repo)                               |
 | Update path             | Overwrite or skip                             | Diff-and-propose against manifest hashes           |
 | Resolver registration   | `~/.gbrain/skills/RESOLVER.md`                | `<host-repo>/RESOLVER.md` or `AGENTS.md`           |
-| Identity of updates     | gbrain pushes                                 | Operator pulls per release cadence                 |
-| Bisect / blame / history| gbrain's git history                          | Operator's host repo git history                   |
+| Identity of updates     | foresights pushes                                 | Operator pulls per release cadence                 |
+| Bisect / blame / history| foresights's git history                          | Operator's host repo git history                   |
 
-The `install_kind` discriminator in the recipe frontmatter routes between the two paths inside `gbrain integrations install`.
+The `install_kind` discriminator in the recipe frontmatter routes between the two paths inside `foresights integrations install`.
 
 ## Sibling-directory convention (for future copy-into-host-repo recipes)
 

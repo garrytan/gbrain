@@ -1,5 +1,5 @@
 /** Local administration is deliberately absent from the public operation registry. */
-/** Reserved brain-level config key set only by `gbrain sources writer lock|unlock`; generic config writes refuse it. */
+/** Reserved brain-level config key set only by `foresights sources writer lock|unlock`; generic config writes refuse it. */
 export const WRITER_ADMIN_LOCK_KEY = 'persistence.writer_admin_lock';
 export const PERSISTENCE_ADMIN_OPERATIONS = [
   'writer_status', 'writer_sync', 'writer_refresh', 'writer_extract_stale', 'writer_reindex_code', 'writer_retry_effects', 'writer_embed_facts', 'writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept',

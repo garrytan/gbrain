@@ -38,7 +38,7 @@ const setup = ({ root }: { root: string }) => {
   for (let i = 0; i < N; i++) writeFileSync(join(root, `notes/n${String(i).padStart(2, '0')}.md`), note(i));
   git(root, 'add', '-A'); git(root, 'commit', '-qm', 'notes');
 };
-/** Pages as an older gbrain left them: every chunk embedded for its text, and no contextual-mode stamp. */
+/** Pages as an older foresights left them: every chunk embedded for its text, and no contextual-mode stamp. */
 async function legacyEmbedded(engine: BrainEngine): Promise<void> {
   const [col] = await engine.executeRaw<{ t: string }>("SELECT format_type(atttypid, atttypmod) AS t FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding'");
   const dims = Number(col!.t.match(/\d+/)![0]);
@@ -63,7 +63,7 @@ const strictEvents = (seen: ConversionProgress[]) => seen.filter(progress => pro
 for (const backend of testBackends()) describe(`[${backend}] #7866: the conversion's strict passes`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
-  test('a no-change conversion of pages an older gbrain embedded makes no embedding effect and no write', () => managedBrain(async ({ engine }) => {
+  test('a no-change conversion of pages an older foresights embedded makes no embedding effect and no write', () => managedBrain(async ({ engine }) => {
     await firstSync(engine);
     await legacyEmbedded(engine);
     const before = await counts(engine);
@@ -133,7 +133,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7866: the conversi
     try { await runSourcesCanonical(engine, ['default', '--to', 'git', '--apply', '--expect', preview.preview_hash, '--no-extract']); }
     finally { console.log = log; process.stderr.write = write; _resetCliExitVerdictForTests(); process.exitCode = priorExitCode ?? 0; release(); await holder; }
     expect(out.at(-1)).toContain('Conversion refused (git_conversion_incomplete)');
-    expect(out.at(-1)).toContain('Next: gbrain sources canonical default --to git --dry-run --json');
+    expect(out.at(-1)).toContain('Next: foresights sources canonical default --to git --dry-run --json');
     expect(err.join('')).toContain(`[sources canonical] strict_pass_1: ${N} planned path(s), 0 group(s) committed`);
   }, { databaseUrl, setup }), 300_000);
 
@@ -254,7 +254,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7866: the conversi
     const taken: string[] = [];
     installFaultHook(async point => {
       if (point !== 'sync:after_freeze' || taken.length || seen.at(-1)?.phase !== 'strict_pass_1') return;
-      // A page write's publication takes the worktree writer lock; `gbrain git commit-push` takes the checkout's commit lock.
+      // A page write's publication takes the worktree writer lock; `foresights git commit-push` takes the checkout's commit lock.
       const worktree = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
       taken.push(worktree ? 'worktree' : 'worktree busy');
       await worktree?.release();

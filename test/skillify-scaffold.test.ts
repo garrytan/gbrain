@@ -424,7 +424,7 @@ describe('11-item scaffold contract (T9 + Phase 3 cross-modal eval)', () => {
     // T9 (plans/radiant-napping-lerdorf.md): non-mutating verification of
     // the 11-item contract bump. Calls planScaffold + applyScaffold against
     // an in-memory tempdir, then asserts the produced SKILL.md mentions
-    // cross-modal eval. No `gbrain skillify scaffold demo-eleven` shell-out
+    // cross-modal eval. No `foresights skillify scaffold demo-eleven` shell-out
     // (which would mutate the real repo and require --description).
     const { root, skillsDir } = scratchRepo();
     const plan = planScaffold({
@@ -444,7 +444,7 @@ describe('11-item scaffold contract (T9 + Phase 3 cross-modal eval)', () => {
     const body = readFileSync(skillMdPath, 'utf-8');
 
     expect(body).toContain('## Phase 3: Cross-modal eval');
-    expect(body).toContain('gbrain eval cross-modal');
+    expect(body).toContain('foresights eval cross-modal');
     expect(body).toContain('skills/phase-three-demo/SKILL.md');
     // Receipts naming convention is documented in the scaffold so the
     // implementer knows where to look.

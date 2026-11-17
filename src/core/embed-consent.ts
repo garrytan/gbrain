@@ -1,8 +1,8 @@
 /**
  * Consent for explicit embedding backfills (agent operator contract v1, A4).
  *
- * An explicit backfill (`gbrain embed --stale|--all|--catch-up|<slug>|--facts|--images`,
- * `gbrain jobs submit embed|embed-backfill|embed-catch-up`, `gbrain features --auto-fix`)
+ * An explicit backfill (`foresights embed --stale|--all|--catch-up|<slug>|--facts|--images`,
+ * `foresights jobs submit embed|embed-backfill|embed-catch-up`, `foresights features --auto-fix`)
  * spends money with the embedding provider, so a CLI handler calls
  * `requireEmbedBackfillConsent()` first: `--yes`, `--max-usd`, `spend.posture=tokenmax`
  * or a per-run preapproval authorize it; a non-interactive run without one exits 3.

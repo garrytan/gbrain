@@ -1,5 +1,5 @@
 /**
- * `gbrain repair content-receipt-root [--source <id>]` (C-7, #6892): rebind a gbrain-owned content source's
+ * `foresights repair content-receipt-root [--source <id>]` (C-7, #6892): rebind a gbrain-owned content source's
  * shared-skills content receipt that still names an old root after a writer transfer or relocation an older release
  * ran (newer accepts and set-paths rebind it themselves, `shared-skills/receipt-root.ts`). Explicit-only and
  * preview-bound: the preview classifies every stale receipt and hashes the result; `--apply --expect <hash>`
@@ -8,7 +8,7 @@
  * A receipt is rebound (class `rebind`) only on the owner host, when the owner binding's root (joined with the
  * source's relative_path) exists, is the source's local_path, and the owner's tree still hashes to the worktree
  * manifest the last transfer or rebind verified. Otherwise it is refused and listed with what to do first:
- * `not_owner_host`, `root_missing` (writer status), `source_path_mismatch` (`gbrain sources set-path`), or
+ * `not_owner_host`, `root_missing` (writer status), `source_path_mismatch` (`foresights sources set-path`), or
  * `tree_mismatch` (a self-transfer on the owner host re-verifies the tree and rebinds the receipt in its accept).
  * The apply rewrites only the receipt's `root` and `root_identity`, keeps the previous value under
  * `<receipt key>.backup`, and skips a receipt that changed since the preview.
@@ -30,16 +30,16 @@ type Verdict = { source_id: string; class: 'rebind' | 'not_owner_host' | 'root_m
   key: string; raw: string; next?: { root: string; root_identity: { device: number; inode: number } } };
 type ReceiptItem = RepairItem & { key: string; raw: string; next: NonNullable<Verdict['next']> };
 
-const previewCommand = (scope: RepairScope) => `gbrain repair content-receipt-root${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+const previewCommand = (scope: RepairScope) => `foresights repair content-receipt-root${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 const statusFix = (sourceId: string) => readFix(`Shows source ${sourceId}'s owner host, binding root and worktree state, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 
 /** #7900: a self-transfer moves the owner epoch, so where shared skills are on, their activation is repeated for the new epoch. */
 function selfTransferFix(sourceId: string, sharedSkills: boolean): Action {
   const intent = (phase: string) => ['--admin-intent', `writer_transfer_${phase}`, '--expected-state', '<admin_state>'];
-  const inputs = [{ name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host (read it again before the accept)` }];
+  const inputs = [{ name: 'admin_state', how: `admin_state from foresights sources writer status ${sourceId} --json on the owner host (read it again before the accept)` }];
   const reactivate: Action = { argv: ['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--shared-skills', '--admin-intent', 'writer_activate', '--expected-state', '<admin_state>'],
-    inputs: [{ name: 'admin_state', how: 'admin_state from gbrain sources writer status --json, read again after the accept' }], consent: [], actor: 'host_admin', requires_exclusive: false,
+    inputs: [{ name: 'admin_state', how: 'admin_state from foresights sources writer status --json, read again after the accept' }], consent: [], actor: 'host_admin', requires_exclusive: false,
     why: 'Registers shared-skill publication for the owner epoch the self-transfer moved to; until then shared skill writes refuse writer_not_quiesced.' };
   return { argv: ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--self-transfer', ...intent('prepare')], inputs, consent: [], actor: 'host_admin', requires_exclusive: false,
     why: `Records the manifest of source ${sourceId}'s current tree on the owner host; the self-transfer accept then re-verifies the tree and rebinds the content receipt in the same transaction.`,
@@ -94,7 +94,7 @@ export const contentReceiptRootRepair: RepairHandler = {
     const hash = previewHash({ kind: 'content-receipt-root-v1', brain_id: scope.brain_id, selection: scope.source_ids,
       verdicts: found.map(v => [v.source_id, v.class, createHash('sha256').update(v.raw).digest('hex'), v.next ?? null]) });
     if (opts?.apply && !opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair content-receipt-root --apply rebinds only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair content-receipt-root --apply rebinds only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`, 'docs/guides/repair.md#content-receipt-root');
     }
     if (opts?.apply && opts.expect !== hash) throw previewChangedError(opts.expect!, command);

@@ -1,4 +1,4 @@
-// `gbrain schema lint <name>` must lint the RESOLVED manifest.
+// `foresights schema lint <name>` must lint the RESOLVED manifest.
 //
 // The named-pack branch of runLintCmd loads the manifest with loadPackFromFile,
 // which returns the raw child with its `extends` chain unresolved. Every lint

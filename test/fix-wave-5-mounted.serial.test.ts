@@ -1,20 +1,20 @@
 /**
  * Fix wave 5 cross-lane journeys on a mounted PGLite brain (ENG-O14), with
- * real `gbrain serve` and CLI subprocesses under a sandboxed HOME and a
+ * real `foresights serve` and CLI subprocesses under a sandboxed HOME and a
  * non-default GBRAIN_HOME (so #5195 gives this brain its own autopilot job):
  *
  *   - #5237 + #5401 + #5195: a resident serve started in a `.gbrain-mount`
- *     project owns the mount; `gbrain projections drain` refuses with
+ *     project owns the mount; `foresights projections drain` refuses with
  *     projection_owner_resident naming the mount and printing stop/drain/
  *     restart steps with this brain's autopilot names; a CLI write commits
  *     through the mounted owner; the printed manual-serve steps drain it.
- *   - #5157 + #5237: `POST /ingest` on `gbrain serve --http` in that project
+ *   - #5157 + #5237: `POST /ingest` on `foresights serve --http` in that project
  *     returns 409 with the hint for a legacy live row of the mount, and after
  *     the printed recovery commands it returns 202.
  *
  * Serial: real serve children bind sockets and hold PGLite locks; each is
  * stopped in afterEach. A real launchd/systemd job is not installed: the
- * install id is minted the way `gbrain autopilot --install` mints it.
+ * install id is minted the way `foresights autopilot --install` mints it.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -60,7 +60,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-/** Starts `gbrain serve [args]` in the project and waits until `ready` holds. */
+/** Starts `foresights serve [args]` in the project and waits until `ready` holds. */
 async function startServe(args: string[], ready: () => Promise<boolean>) {
   serveStderr = '';
   serve = Bun.spawn(['bun', 'run', CLI, 'serve', ...args], { cwd: project, env: env(), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
@@ -93,7 +93,7 @@ async function cli(args: string[], extra: Record<string, string> = {}) {
   } finally { clearTimeout(timer); }
 }
 
-/** Runs a printed `gbrain …` command verbatim from the project. */
+/** Runs a printed `foresights …` command verbatim from the project. */
 async function printed(command: string) {
   const args = argv(command);
   expect(args[0]).toBe('gbrain');
@@ -146,18 +146,18 @@ describe('#5237 + #5401 + #5195 on a mounted PGLite resident', () => {
     expect(refused.exitCode).toBe(2);
     const body = JSON.parse(refused.stdout) as { error: string; message: string; suggestion: string };
     expect(body.error).toBe('projection_owner_resident');
-    expect(body.message).toContain(`The PGLite brain at ${mountDb} is held by gbrain serve (pid ${serve!.pid})`);
-    expect(body.suggestion).toContain(`gbrain doctor --brain ${MOUNT}`);
-    expect(body.suggestion).toContain(`launchctl bootout gui/$(id -u)/${job.launchdLabel} && { gbrain projections drain --brain ${MOUNT};`);
-    expect(body.suggestion).toContain(`systemctl --user stop ${job.systemdUnit} && { gbrain projections drain --brain ${MOUNT}; systemctl --user start ${job.systemdUnit}; }`);
-    expect(body.suggestion).not.toMatch(/com\.gbrain\.autopilot[ .]plist|gbrain-autopilot\.service/);
+    expect(body.message).toContain(`The PGLite brain at ${mountDb} is held by foresights serve (pid ${serve!.pid})`);
+    expect(body.suggestion).toContain(`foresights doctor --brain ${MOUNT}`);
+    expect(body.suggestion).toContain(`launchctl bootout gui/$(id -u)/${job.launchdLabel} && { foresights projections drain --brain ${MOUNT};`);
+    expect(body.suggestion).toContain(`systemctl --user stop ${job.systemdUnit} && { foresights projections drain --brain ${MOUNT}; systemctl --user start ${job.systemdUnit}; }`);
+    expect(body.suggestion).not.toMatch(/com\.(?:foresights|gbrain)\.autopilot[ .]plist|gbrain-autopilot\.service/);
 
     const put = await cli(['put', 'notes/mounted-example', '--content', '# Mounted example\n\nWritten through the resident owner.']);
     expect(put.stderr).not.toContain('owner_unavailable');
     expect(put.exitCode).toBe(0);
 
-    // The printed manual-serve steps, verbatim: stop it, run the drain, start gbrain serve again.
-    const manual = /a manual gbrain serve: stop it \(kill (\d+)\), run (gbrain projections drain --brain \S+), then start gbrain serve again/.exec(body.suggestion);
+    // The printed manual-serve steps, verbatim: stop it, run the drain, start foresights serve again.
+    const manual = /a manual (?:foresights|gbrain) serve: stop it \(kill (\d+)\), run ((?:foresights|gbrain) projections drain --brain \S+), then start (?:foresights|gbrain) serve again/.exec(body.suggestion);
     expect(manual?.[1]).toBe(String(serve!.pid));
     await stopServe();
     const drained = await printed(`${manual![2]} --json`);
@@ -176,7 +176,7 @@ describe('#5237 + #5401 + #5195 on a mounted PGLite resident', () => {
 
 describe('#5157 /ingest through a mounted serve owner', () => {
   test('a legacy live row of the mount gives 409 with the hint; after the printed recovery commands /ingest returns 202', async () => {
-    // `gbrain auth` opens the host config's brain even inside a .gbrain-mount project, while the mounted serve verifies
+    // `foresights auth` opens the host config's brain even inside a .gbrain-mount project, while the mounted serve verifies
     // tokens against the mount; so the token is minted with a config that names the mount's datastore.
     const tokenHome = join(root, 'token-home');
     mkdirSync(join(tokenHome, '.gbrain'), { recursive: true });
@@ -206,12 +206,12 @@ describe('#5157 /ingest through a mounted serve owner', () => {
     const body = await refused.json() as { error: string; message: string; hint: string; docs_url: string };
     expect(body).toMatchObject({ error: 'permission_denied', docs_url: 'docs/guides/repair.md#legacy-job-authority' });
     expect(body.message).toContain(`job ${jobId} (ingest_capture, waiting)`);
-    expect(body.hint).toStartWith('Stop producers (gbrain serve, gbrain autopilot) and workers');
+    expect(body.hint).toStartWith('Stop producers (foresights serve, foresights autopilot) and workers');
 
     const commands: string[] = [];
     await stopServe();
-    commands.push('stop gbrain serve');
-    const preview = /preview with (gbrain jobs authorize-legacy --select "[^"]+")/.exec(body.hint)?.[1];
+    commands.push('stop foresights serve');
+    const preview = /preview with ((?:foresights|gbrain) jobs authorize-legacy --select "[^"]+")/.exec(body.hint)?.[1];
     expect(preview).toBeDefined();
     const previewed = await printed(preview!);
     expect(previewed.exitCode).toBe(0);
@@ -222,7 +222,7 @@ describe('#5157 /ingest through a mounted serve owner', () => {
     expect((await printed(apply!)).exitCode).toBe(0);
     commands.push(apply!);
     await http();
-    commands.push('restart gbrain serve');
+    commands.push('restart foresights serve');
     const accepted = await ingest(content);
     expect(accepted.status).toBe(202);
     expect((await accepted.json() as { job_id: number }).job_id).toBe(jobId);

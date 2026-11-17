@@ -1,5 +1,5 @@
 /**
- * The `gbrain post-upgrade` recovery banner (fix wave 3, Lane D). Runs every
+ * The `foresights post-upgrade` recovery banner (fix wave 3, Lane D). Runs every
  * wave check once (the full checks, not `doctor --fast`) and, when any has a
  * finding, prints one `[AGENT] Relay this to your operator` block naming the
  * selected brain, the count per finding, the read-only preview command and
@@ -23,7 +23,7 @@ async function connectorRewalkNote(engine: BrainEngine): Promise<string | null> 
   const resumed = statuses.filter(status => status.upgrade_recovery === 'resumed').length;
   if (!rewalking && !resumed) return null;
   return `connector_rewalk: ${rewalking} connector source(s) re-walk their window once on the next run (a one-time admission spike, not new churn)`
-    + `${resumed ? `; ${resumed} resumed from a pre-upgrade checkpoint` : ''}. Check with: gbrain sources status`;
+    + `${resumed ? `; ${resumed} resumed from a pre-upgrade checkpoint` : ''}. Check with: foresights sources status`;
 }
 
 /**
@@ -50,7 +50,7 @@ export async function postUpgradeRecoveryBanner(engine: BrainEngine, brainLabel:
   const lines = ['', `[AGENT] Relay this to your operator: brain ${brainLabel} has residual state to review after the upgrade.`];
   for (const finding of findings) lines.push(bannerFindingLine(finding));
   for (const note of notes) lines.push(`[AGENT]   ${note}`);
-  lines.push('[AGENT] Preview (read-only): gbrain doctor --remediation-plan');
+  lines.push('[AGENT] Preview (read-only): foresights doctor --remediation-plan');
   lines.push('[AGENT] Ask the user before applying any repair; the plan prints the exact commands. Recipe: docs/guides/repair.md#recover-after-upgrading-to-this-release');
   return lines;
 }

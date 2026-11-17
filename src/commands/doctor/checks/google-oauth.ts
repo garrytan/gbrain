@@ -1,6 +1,6 @@
 /**
  * google_oauth doctor check — credential-vault health for the google
- * connector, zero-network (live refresh probes live in `gbrain google
+ * connector, zero-network (live refresh probes live in `foresights google
  * status`; doctor must stay fast and offline-safe).
  *
  * Surfaces, in order of severity:
@@ -25,7 +25,7 @@ export async function computeGoogleOauthCheck(): Promise<Check> {
       return {
         name: 'google_oauth',
         status: 'ok',
-        message: 'no Google accounts connected (gbrain google connect to start)',
+        message: 'no Google accounts connected (foresights google connect to start)',
       };
     }
     const now = Date.now();
@@ -50,7 +50,7 @@ export async function computeGoogleOauthCheck(): Promise<Check> {
         status: 'fail',
         message:
           `token refresh looks broken for ${failing.join(', ')} — ` +
-          `run \`gbrain google status\` for the exact cause, then \`gbrain google connect --reauth <email>\``,
+          `run \`foresights google status\` for the exact cause, then \`foresights google connect --reauth <email>\``,
       };
     }
     if (expiring.length > 0) {
@@ -60,7 +60,7 @@ export async function computeGoogleOauthCheck(): Promise<Check> {
         message:
           `${expiring.join(', ')} — publish the app to Production ` +
           `(https://console.cloud.google.com/auth/audience) or re-auth before it dies: ` +
-          `\`gbrain google connect --reauth <email>\``,
+          `\`foresights google connect --reauth <email>\``,
       };
     }
     return {
@@ -69,7 +69,7 @@ export async function computeGoogleOauthCheck(): Promise<Check> {
       // #5012: doctor never probes the network, so it cannot call a refresh token healthy;
       // a token revoked since the last successful refresh shows only on a live probe.
       message: `${metas.length} Google account(s) connected, recent refreshes succeeded (not probed online; ` +
-        '`gbrain google status` tests each refresh token)',
+        '`foresights google status` tests each refresh token)',
     };
   } catch (e) {
     return {

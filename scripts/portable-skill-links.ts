@@ -5,7 +5,7 @@
  *   bun scripts/portable-skill-links.ts          rewrite skills/**\/*.md in place
  *   bun scripts/portable-skill-links.ts --check  exit 1 when a rewrite is pending
  *
- * Skills are copied verbatim into host workspaces (`gbrain skillpack
+ * Skills are copied verbatim into host workspaces (`foresights skillpack
  * scaffold`), harness skill dirs and the generated plugin trees, so a
  * relative link that leaves `skills/` dangles in every copy. This script
  * rewrites each such link at the source:
@@ -18,7 +18,7 @@
  * Blob base: derived from `LLMS_REPO_BASE`, the fork override llms.txt uses
  * (a raw base `https://raw.githubusercontent.com/<owner>/<repo>/<ref>` maps to
  * `https://github.com/<owner>/<repo>/blob/<ref>`; any other value is used as
- * given). Unset → `https://github.com/garrytan/gbrain/blob/master`. A fork
+ * given). Unset → `https://github.com/aimonk2025/gbrain/blob/master`. A fork
  * re-running with its override also retargets links already written with the
  * default base. `scripts/check-skill-refs.mjs` fails on any outside-root link
  * and names this script as the fix.
@@ -28,7 +28,7 @@ import { join, posix, relative } from 'node:path';
 import { repoBaseOrThrow } from '../src/core/repo-base.ts';
 
 const ROOT = join(import.meta.dir, '..');
-export const DEFAULT_BLOB_BASE = 'https://github.com/garrytan/gbrain/blob/master';
+export const DEFAULT_BLOB_BASE = 'https://github.com/aimonk2025/gbrain/blob/master';
 export const PROTOCOL_SOURCE = 'docs/protocol/AGENT_OPERATOR_v1.md';
 export const BUNDLED_PROTOCOL = 'skills/conventions/agent-operator-protocol.md';
 

@@ -1,11 +1,11 @@
 /**
- * Deferred-setup sentinel → implicit --no-embed for `gbrain sync`.
+ * Deferred-setup sentinel → implicit --no-embed for `foresights sync`.
  *
- * `gbrain init --no-embedding` writes `embedding_disabled: true` to
+ * `foresights init --no-embedding` writes `embedding_disabled: true` to
  * config.json. init, import, and embed honor that sentinel via
  * `assertEmbeddingEnabled`, but sync's embed credential preflight
  * (v0.41.6.0 D1) only checked the `--no-embed` CLI flag — so every
- * `gbrain sync` on a keyless deferred-setup brain exited 1 with
+ * `foresights sync` on a keyless deferred-setup brain exited 1 with
  * "Embedding model ... requires <PROVIDER>_API_KEY", even when nothing
  * needed embedding. embed-preflight.ts's own skip protocol says the
  * sentinel is owned upstream of the credential check.

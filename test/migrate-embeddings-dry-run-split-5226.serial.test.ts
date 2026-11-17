@@ -1,6 +1,6 @@
 import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
- * #5226 (part 2): `gbrain migrate embeddings --dry-run` reports "to embed"
+ * #5226 (part 2): `foresights migrate embeddings --dry-run` reports "to embed"
  * and "to restamp" separately. A stale-signature page whose vectors are
  * already in the target space is only restamped by the live run (#5289), so
  * counting it as re-embed work overstated the preview. On a width change the

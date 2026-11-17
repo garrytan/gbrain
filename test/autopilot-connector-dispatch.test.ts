@@ -81,7 +81,7 @@ describe('#5673 connector dispatch gate', () => {
     await freshness(lines);
     await freshness(lines);
     expect((await jobs()).filter(job => job.data.sourceId === 'gmail-new')).toEqual([]);
-    const notices = lines.filter(line => line.includes('gbrain sync --source gmail-new'));
+    const notices = lines.filter(line => line.includes('foresights sync --source gmail-new'));
     expect(notices.length).toBe(1);
 
     await dispatchPerSource(engine, new MinionQueue(engine), { repoPath: dir, slot: 's', timeoutMs: 60_000, fanoutMax: 10, jsonMode: true, emit: () => {}, log: () => {} });

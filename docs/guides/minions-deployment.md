@@ -1,6 +1,6 @@
 # Minions Worker Deployment Guide
 
-Keep `gbrain jobs work` running across crashes, reboots, and Postgres
+Keep `foresights jobs work` running across crashes, reboots, and Postgres
 connection blips. Written for agents to execute line-by-line.
 
 ## The problem
@@ -17,15 +17,15 @@ most types; types with a waiting-TTL (`subagent` defaults to 48h, see the
 [queue operations runbook](queue-operations-runbook.md)) are eventually
 cancelled with an auditable reason rather than queueing forever. Either
 way the work doesn't happen. The canonical answer is
-`gbrain jobs supervisor` — a first-class CLI that spawns `gbrain jobs work`
+`foresights jobs supervisor` — a first-class CLI that spawns `foresights jobs work`
 as a child and auto-restarts it on crash.
 
 ## Worker supervision
 
 ### The canonical pattern
 
-`gbrain jobs supervisor` is an auto-restarting wrapper around
-`gbrain jobs work`. It writes a PID file, restarts the worker on crash
+`foresights jobs supervisor` is an auto-restarting wrapper around
+`foresights jobs work`. It writes a PID file, restarts the worker on crash
 with exponential backoff (1s → 60s cap), emits lifecycle events to an
 audit file, and drains gracefully on SIGTERM (35s worker-drain window
 before SIGKILL). Exit codes are documented so agents can branch on them.
@@ -34,22 +34,22 @@ before SIGKILL). Exit codes are documented so agents can branch on them.
 
 ```bash
 # Start in the foreground (blocks; Ctrl-C to stop).
-gbrain jobs supervisor --concurrency 4
+foresights jobs supervisor --concurrency 4
 
 # Start detached — returns {"event":"started","supervisor_pid":…} on stdout.
-gbrain jobs supervisor start --detach --json
+foresights jobs supervisor start --detach --json
 
 # Check liveness without reading log files.
-gbrain jobs supervisor status --json
+foresights jobs supervisor status --json
 
 # Graceful stop (SIGTERM + drain wait + SIGKILL fallback).
-gbrain jobs supervisor stop
+foresights jobs supervisor stop
 
 # Cap worker memory in MB (--max-rss). Without the flag the RSS watchdog is
 # still on, at a RAM-relative auto-sized cap. With --job-isolation process the
 # cap also covers each job child's process tree; size the host for
 # (concurrency + 1) × the cap.
-gbrain jobs supervisor --concurrency 4 --max-rss 4096
+foresights jobs supervisor --concurrency 4 --max-rss 4096
 ```
 
 **Exit codes:**
@@ -88,17 +88,17 @@ isn't:
 ```bash
 # Full concurrency, low priority. Propagates to the spawned worker and its
 # children (shell jobs, subagents) via OS niceness inheritance.
-gbrain jobs supervisor --concurrency 4 --nice 10
+foresights jobs supervisor --concurrency 4 --nice 10
 
 # Equivalent for a bare worker, or set it durably in the environment.
-GBRAIN_NICE=10 gbrain jobs work --concurrency 4
+GBRAIN_NICE=10 foresights jobs work --concurrency 4
 ```
 
 `--nice` takes a POSIX value from `-20` (highest priority) to `19`
 (nicest/lowest); positive values need no privilege, negative values need
 root. `GBRAIN_NICE` is the env equivalent (the flag wins). Confirm the
-effective value with `gbrain jobs stats`, `gbrain jobs supervisor status
---json`, or the `supervisor_niceness` check in `gbrain doctor` — the doctor
+effective value with `foresights jobs stats`, `foresights jobs supervisor status
+--json`, or the `supervisor_niceness` check in `foresights doctor` — the doctor
 check warns if what you asked for isn't what's actually running (e.g. a
 negative value denied without privilege, or an OS `RLIMIT_NICE` clamp). This
 is distinct from the concurrency / inflight cap and composes with it.
@@ -114,8 +114,8 @@ fewer than one; the other slots take everything else. The long set is
 `connector-sync` and `extract`. A worker at `--concurrency 1` is unaffected.
 
 ```bash
-gbrain config set minions.short_job_reserved_slots 2    # default 1; 0 turns it off
-gbrain config set minions.long_job_names sync,book-mirror   # added to the built-in set (comma list or JSON array)
+foresights config set minions.short_job_reserved_slots 2    # default 1; 0 turns it off
+foresights config set minions.long_job_names sync,book-mirror   # added to the built-in set (comma list or JSON array)
 ```
 
 The worker reads both keys at start, so restart the supervisor after changing
@@ -137,14 +137,14 @@ and the OS reclaims every leaked resource when the child dies:
 
 ```bash
 # Recommended for long-running LLM-bound handlers (subagent):
-gbrain jobs supervisor --concurrency 4 --job-isolation process
+foresights jobs supervisor --concurrency 4 --job-isolation process
 
 # Bare worker, or durably via env:
-GBRAIN_JOB_ISOLATION=process gbrain jobs work --concurrency 4
+GBRAIN_JOB_ISOLATION=process foresights jobs work --concurrency 4
 ```
 
 How it works: the worker keeps claim, lock renewal, and all result
-recording; the child (an internal `run-child` entrypoint of the same gbrain
+recording; the child (an internal `run-child` entrypoint of the same foresights
 binary) re-validates the claim, runs the handler with its own small engine
 pool, and reports one atomic outcome file. Handler-error semantics are
 preserved across the boundary (unrecoverable → dead, rate-lease → no attempt
@@ -200,9 +200,9 @@ usually want both.
 
 | Environment | Recommendation |
 |---|---|
-| **Container (Fly / Railway / Render / Heroku)** | `gbrain jobs supervisor` runs as PID 1. The platform restarts the container on OOM / host loss; supervisor restarts the worker on crash. See [Fly.io](#deployment-flyio) / [Render / Railway / Heroku](#deployment-render--railway--heroku). |
-| **Linux VM with systemd** | Two-layer recommended: systemd supervises `gbrain jobs supervisor`, which in turn supervises `gbrain jobs work`. Buys you automatic restart on reboot (systemd) plus fast crash recovery (supervisor). See [systemd](#deployment-systemd). |
-| **Dev laptop / macOS** | `gbrain jobs supervisor` in a terminal. Ctrl-C stops it. No system-level setup needed. |
+| **Container (Fly / Railway / Render / Heroku)** | `foresights jobs supervisor` runs as PID 1. The platform restarts the container on OOM / host loss; supervisor restarts the worker on crash. See [Fly.io](#deployment-flyio) / [Render / Railway / Heroku](#deployment-render--railway--heroku). |
+| **Linux VM with systemd** | Two-layer recommended: systemd supervises `foresights jobs supervisor`, which in turn supervises `foresights jobs work`. Buys you automatic restart on reboot (systemd) plus fast crash recovery (supervisor). See [systemd](#deployment-systemd). |
+| **Dev laptop / macOS** | `foresights jobs supervisor` in a terminal. Ctrl-C stops it. No system-level setup needed. |
 
 ### Variables used in this guide
 
@@ -210,8 +210,8 @@ Substitute these once before copy-pasting any snippet.
 
 | Variable | Meaning | Typical value |
 |---|---|---|
-| `$GBRAIN_BIN` | Absolute path to the `gbrain` binary | `$(command -v gbrain)` — often `/usr/local/bin/gbrain` or `~/.bun/bin/gbrain` |
-| `$GBRAIN_WORKER_USER` | OS user that owns the worker process | the same user that ran `gbrain init`; never `root` |
+| `$GBRAIN_BIN` | Absolute path to the `gbrain` binary | `$(command -v foresights)` — often `/usr/local/bin/gbrain` or `~/.bun/bin/gbrain` |
+| `$GBRAIN_WORKER_USER` | OS user that owns the worker process | the same user that ran `foresights init`; never `root` |
 | `$GBRAIN_WORKSPACE` | `cwd` for shell jobs submitted by this deployment | absolute path, e.g. `/srv/my-brain` |
 | `$GBRAIN_ENV_FILE` | Secrets file sourced by systemd / shell | `/etc/gbrain.env` (mode 600) |
 
@@ -220,18 +220,18 @@ Substitute these once before copy-pasting any snippet.
 Run these before any deployment step.
 
 ```bash
-# 1. gbrain is on PATH and resolves to an absolute location.
-command -v gbrain || { echo "gbrain not on PATH. Install, then retry."; exit 1; }
+# 1. foresights is on PATH and resolves to an absolute location.
+command -v foresights || { echo "foresights not on PATH. Install, then retry."; exit 1; }
 
 # 2. DATABASE_URL points at reachable Postgres.
 #    (Supervisor is Postgres-only. PGLite's exclusive file lock blocks the
 #    separate worker process. If `config.engine === 'pglite'` the CLI rejects
 #    with a clear error.)
-gbrain doctor --fast --json | jq '.checks[] | select(.name=="connection")'
+foresights doctor --fast --json | jq '.checks[] | select(.name=="connection")'
 
 # 3. Schema is up to date. If version=0 or status=="fail":
-#    gbrain apply-migrations --yes
-gbrain doctor --fast --json | jq '.checks[] | select(.name=="schema_version")'
+#    foresights apply-migrations --yes
+foresights doctor --fast --json | jq '.checks[] | select(.name=="schema_version")'
 
 # 4. If you plan to submit `shell` jobs, pass --allow-shell-jobs to the
 #    supervisor (or export GBRAIN_ALLOW_SHELL_JOBS=1 before starting).
@@ -244,20 +244,20 @@ Three-command pattern an agent can drive without shell archaeology:
 
 ```bash
 # Start (returns PIDs + pid_file on stdout as JSON, then detaches)
-gbrain jobs supervisor start --detach --json
+foresights jobs supervisor start --detach --json
 # → {"event":"started","supervisor_pid":1234,"pid_file":"/Users/you/.gbrain/supervisor-<brain-id>.pid","detached":true}
 
 # Check health (machine-parseable JSON, no log scraping)
-gbrain jobs supervisor status --json
+foresights jobs supervisor status --json
 # → {"running":true,"processing_ready":true,"processing_state":"ready","supervisor_pid":1234,"last_start":"2026-04-23T15:30:22Z","crashes_24h":0, ...}
 
 # Stop cleanly (SIGTERM + 35s drain + SIGKILL fallback)
-gbrain jobs supervisor stop
+foresights jobs supervisor stop
 ```
 
 Every lifecycle event (spawn, crash, backoff, health warning, max-crashes,
 shutdown) is also written to `${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/supervisor-YYYY-Www.jsonl`
-for historical inspection. `gbrain doctor` reads that file and surfaces
+for historical inspection. `foresights doctor` reads that file and surfaces
 a `supervisor` check in its health report.
 
 ### Watching jobs from an agent
@@ -271,20 +271,20 @@ Every `jobs get --json`, `jobs list --json`, `get_job` and `list_jobs` row carri
 
 An agent token without admin sees another principal only by kind: a foreign submitter, parent, slot holder or lock holder is never named, and another principal's children are left out of its spend.
 
-`gbrain jobs wait <id> [--timeout 10m] [--json]` blocks until the job ends and prints it. It exits 0 when the job completed, 1 when it failed, died or was cancelled, and 124 when the timeout elapsed and the job is still running (the job is not cancelled). MCP agents call `wait_job {id, timeout_s}`, which answers after at most 55 s with `terminal: true|false`; call it again while `terminal` is false.
+`foresights jobs wait <id> [--timeout 10m] [--json]` blocks until the job ends and prints it. It exits 0 when the job completed, 1 when it failed, died or was cancelled, and 124 when the timeout elapsed and the job is still running (the job is not cancelled). MCP agents call `wait_job {id, timeout_s}`, which answers after at most 55 s with `terminal: true|false`; call it again while `terminal` is false.
 
-To learn about every job that finished without polling each one, read the terminal event cursor: `gbrain jobs list --finished-since <ISO time> --json` (MCP: `list_jobs {finished_since}`) returns `{jobs, next_cursor}`, oldest first. Pass `next_cursor` back on the next call. Rows deleted on completion or pruned are not in it.
+To learn about every job that finished without polling each one, read the terminal event cursor: `foresights jobs list --finished-since <ISO time> --json` (MCP: `list_jobs {finished_since}`) returns `{jobs, next_cursor}`, oldest first. Pass `next_cursor` back on the next call. Rows deleted on completion or pruned are not in it.
 
 #### Terminal hook
 
 A worker can run a command each time a job it ran completes, fails, dies or is cancelled. It is off by default and lives only in the local file-plane config (`~/.gbrain/config.json`), never in the database config, MCP or job data:
 
 ```bash
-gbrain config set minions.terminal_hook '["/usr/local/bin/notify-job", "--quiet"]'
+foresights config set minions.terminal_hook '["/usr/local/bin/notify-job", "--quiet"]'
 # or, with a timeout: '{"argv": ["/usr/local/bin/notify-job"], "timeout_ms": 5000}'
 ```
 
-The value is an argv array whose first element is an absolute path; it is spawned without a shell, so nothing from the job is ever interpolated into a command line. The job arrives in `GBRAIN_JOB_ID`, `GBRAIN_JOB_NAME`, `GBRAIN_JOB_QUEUE` and `GBRAIN_JOB_STATUS`, and as one JSON object on stdin (id, name, queue, status, attempts_made, parent_job_id, created_at, started_at, finished_at, error_text; never the job's data or result: run `gbrain jobs get $GBRAIN_JOB_ID --json` for those). The hook runs as the gbrain process user with that process's environment, is killed after `timeout_ms` (default 10 s), and a failure is logged once on the worker's stderr and never retried; it never changes the job. Workers read it at start, so restart the supervisor after setting it. A job that died in another worker's stall sweep or was cancelled while waiting runs no hook; the event cursor above covers every terminal transition.
+The value is an argv array whose first element is an absolute path; it is spawned without a shell, so nothing from the job is ever interpolated into a command line. The job arrives in `GBRAIN_JOB_ID`, `GBRAIN_JOB_NAME`, `GBRAIN_JOB_QUEUE` and `GBRAIN_JOB_STATUS`, and as one JSON object on stdin (id, name, queue, status, attempts_made, parent_job_id, created_at, started_at, finished_at, error_text; never the job's data or result: run `foresights jobs get $GBRAIN_JOB_ID --json` for those). The hook runs as the foresights process user with that process's environment, is killed after `timeout_ms` (default 10 s), and a failure is logged once on the worker's stderr and never retried; it never changes the job. Workers read it at start, so restart the supervisor after setting it. A job that died in another worker's stall sweep or was cancelled while waiting runs no hook; the event cursor above covers every terminal transition.
 
 ## Deployment: systemd
 
@@ -292,12 +292,12 @@ For long-running Linux VMs with shell access.
 
 ```bash
 # Create the worker user if it doesn't exist.
-sudo useradd --system --home "$GBRAIN_WORKSPACE" --shell /usr/sbin/nologin gbrain \
+sudo useradd --system --home "$GBRAIN_WORKSPACE" --shell /usr/sbin/nologin foresights \
   2>/dev/null || true
 sudo mkdir -p "$GBRAIN_WORKSPACE" && sudo chown gbrain:gbrain "$GBRAIN_WORKSPACE"
 
 # Install the env file (secrets stay out of the unit file).
-sudo install -m 600 -o gbrain -g gbrain \
+sudo install -m 600 -o foresights -g gbrain \
   docs/guides/minions-deployment-snippets/gbrain.env.example /etc/gbrain.env
 sudoedit /etc/gbrain.env
 # Fill in DATABASE_URL, optional GBRAIN_ALLOW_SHELL_JOBS=1.
@@ -314,7 +314,7 @@ sudo systemctl status gbrain-worker
 journalctl -u gbrain-worker -n 50
 ```
 
-The shipped unit file invokes `gbrain jobs supervisor` (not `gbrain jobs work`
+The shipped unit file invokes `foresights jobs supervisor` (not `foresights jobs work`
 directly) so you get two-layer supervision: systemd restarts the supervisor
 on host reboot, supervisor restarts the worker on in-process crash.
 
@@ -335,14 +335,14 @@ cat docs/guides/minions-deployment-snippets/fly.toml.partial >> fly.toml
 fly secrets set DATABASE_URL='postgres://…' GBRAIN_ALLOW_SHELL_JOBS=1
 ```
 
-The `[processes]` block runs `gbrain jobs supervisor` as PID 1. Fly
+The `[processes]` block runs `foresights jobs supervisor` as PID 1. Fly
 restarts the container on host failure; the supervisor restarts the
 worker on in-process crash.
 
 ## Deployment: Render / Railway / Heroku
 
 Drop [`Procfile`](./minions-deployment-snippets/Procfile) at the repo
-root. The shipped Procfile calls `gbrain jobs supervisor`. Set
+root. The shipped Procfile calls `foresights jobs supervisor`. Set
 `DATABASE_URL` + optional `GBRAIN_ALLOW_SHELL_JOBS=1` via the platform's
 env UI or CLI.
 
@@ -356,14 +356,14 @@ just-submitted job reaches a terminal state (`completed` / `failed` /
 duration for scheduled work.
 
 ```bash
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
+GBRAIN_ALLOW_SHELL_JOBS=1 foresights jobs submit shell \
   --queue nightly-enrich \
   --params "{\"cmd\":\"$GBRAIN_BIN embed --stale\",\"cwd\":\"$GBRAIN_WORKSPACE\"}" \
   --follow \
   --timeout-ms 600000
 ```
 
-Replace `gbrain embed --stale` with whichever gbrain subcommand you're
+Replace `foresights embed --stale` with whichever foresights subcommand you're
 scheduling (`sync`, `extract`, `orphans`, `doctor`, `check-backlinks`,
 `lint`, `autopilot`). For strict single-job semantics on shared queues,
 use a dedicated queue name like `nightly-enrich` above.
@@ -373,7 +373,7 @@ use a dedicated queue name like `nightly-enrich` above.
 ### From `minion-watchdog.sh`
 
 If a cron-driven bash watchdog (`minion-watchdog.sh`) is still keeping
-your worker alive, replace it with `gbrain jobs supervisor`, which covers
+your worker alive, replace it with `foresights jobs supervisor`, which covers
 the same job plus atomic PID locking, structured audit events,
 queue-scoped health checks, and graceful drain on SIGTERM.
 
@@ -388,30 +388,30 @@ crontab -e   # delete the "*/5 * * * * /usr/local/bin/minion-watchdog.sh" line
 
 # 2. Start the supervisor (systemd users: reinstall the unit from
 #    docs/guides/minions-deployment-snippets/systemd.service, which
-#    calls `gbrain jobs supervisor`).
-gbrain jobs supervisor start --detach --json
+#    calls `foresights jobs supervisor`).
+foresights jobs supervisor start --detach --json
 # Or: sudo systemctl restart gbrain-worker
 
 # 3. Verify.
-gbrain jobs supervisor status --json
-gbrain doctor   # 'supervisor' check should report running=true
+foresights jobs supervisor status --json
+foresights doctor   # 'supervisor' check should report running=true
 ```
 
 ### Schema / migration hygiene
 
 Regardless of which deployment path you're upgrading from:
 
-1. **Stop the worker before upgrading.** `gbrain jobs supervisor stop`
+1. **Stop the worker before upgrading.** `foresights jobs supervisor stop`
    (or `sudo systemctl stop gbrain-worker`). Skipping this risks an
    in-flight job landing partial schema.
-2. **Run `gbrain upgrade`**. Then `gbrain apply-migrations --yes` if
-   `gbrain doctor` reports any migration as `partial` or `pending`.
+2. **Run `foresights upgrade`**. Then `foresights apply-migrations --yes` if
+   `foresights doctor` reports any migration as `partial` or `pending`.
 3. **If you run shell jobs:** pass `--allow-shell-jobs` to the
    supervisor (or keep `GBRAIN_ALLOW_SHELL_JOBS=1` in
    `/etc/gbrain.env`). Submitters don't need the flag; only the worker
    does.
-4. **Verify.** `gbrain doctor` should report zero `pending` or `partial`
-   migrations plus a healthy `supervisor` check. `gbrain jobs stats`
+4. **Verify.** `foresights doctor` should report zero `pending` or `partial`
+   migrations plus a healthy `supervisor` check. `foresights jobs stats`
    should show no unexplained growth in `dead` between pre- and
    post-upgrade.
 
@@ -443,7 +443,7 @@ up to lease + grace + one sweep interval before requeue, and the stall
 detector still dead-letters after `max_stalled` genuine misses (schema
 column default 5).
 
-**Tune per-job.** `gbrain jobs submit` accepts `--max-stalled N`,
+**Tune per-job.** `foresights jobs submit` accepts `--max-stalled N`,
 `--backoff-type fixed|exponential`, `--backoff-delay <ms>`,
 `--timeout-ms N`, `--lock-duration-ms N` (lock lease, clamped to
 [5 s, 1 h]), and `--backoff-jitter 0..1` as first-class flags.
@@ -456,7 +456,7 @@ documented in the [queue operations runbook](queue-operations-runbook.md).
 
 It's a no-op. The stall detector reads the row's `max_stalled` column
 (set at submit time), not the worker opt in `src/core/minions/worker.ts`.
-Use `gbrain jobs submit --max-stalled N` per-job instead.
+Use `foresights jobs submit --max-stalled N` per-job instead.
 
 ### Zombie shell children
 
@@ -470,16 +470,16 @@ over relying on hard kills.
 
 ```bash
 # Supervisor alive, and admitting work?
-gbrain jobs supervisor status --json | jq '{running, processing_ready, processing_state, reason_code}'
+foresights jobs supervisor status --json | jq '{running, processing_ready, processing_state, reason_code}'
 
 # Aggregate queue health.
-gbrain jobs stats
+foresights jobs stats
 
 # Jobs currently stalled (still `active` with expired lock_until, pre-requeue).
-gbrain jobs list --status active --limit 10
+foresights jobs list --status active --limit 10
 
 # Dead-lettered jobs.
-gbrain jobs list --status dead --limit 10
+foresights jobs list --status dead --limit 10
 
 # Shell jobs enabled on the worker? There is no supervisor-status JSON field
 # for this — the gate is the worker's opt-in (the handler is always registered
@@ -487,19 +487,19 @@ gbrain jobs list --status dead --limit 10
 # GBRAIN_ALLOW_SHELL_JOBS=1 exported) passes `--allow-shell-jobs` on the
 # worker's command line AND sets the env var on it. Inspect the worker
 # process directly (args + environment):
-for pid in $(pgrep -f 'gbrain jobs work'); do ps eww -p "$pid"; done \
+for pid in $(pgrep -f 'foresights jobs work'); do ps eww -p "$pid"; done \
   | grep -o -e '--allow-shell-jobs' -e 'GBRAIN_ALLOW_SHELL_JOBS=[^ ]*' | sort -u \
   || echo "shell jobs not enabled"
 # An unflagged worker that claims a shell job dead-letters it instantly:
-gbrain jobs list --status dead --json | jq '[.[] | select(.name == "shell")][:3]'
+foresights jobs list --status dead --json | jq '[.[] | select(.name == "shell")][:3]'
 ```
 
 ## Uninstall
 
-**`gbrain jobs supervisor`** (foreground or `--detach`):
+**`foresights jobs supervisor`** (foreground or `--detach`):
 
 ```bash
-gbrain jobs supervisor stop
+foresights jobs supervisor stop
 ```
 
 **systemd:**

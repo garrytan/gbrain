@@ -421,7 +421,7 @@ for (const failure of ['commit', 'withdrawal'] as const) {
       const prepared = await prepareMaintenanceMutation(engine, row, { engine: engine.kind, embedding_disabled: true });
       if (failure === 'withdrawal') {
         const [fact] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 ORDER BY id LIMIT 1', [sourceId]);
-        // A current forget queues behind the claimed request on its root; a gbrain before G4 sharing the brain still commits
+        // A current forget queues behind the claimed request on its root; a foresights before G4 sharing the brain still commits
         // its withdrawal database-first, at any moment (test/helpers/legacy-forget.ts).
         await legacyForget({ engine, sourceId, remote: false, config: { engine: engine.kind }, dryRun: false,
           logger: { info() {}, warn() {}, error() {} } }, Number(fact.id));

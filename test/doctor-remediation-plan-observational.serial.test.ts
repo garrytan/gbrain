@@ -1,5 +1,5 @@
 /**
- * ENG-6: `gbrain doctor --remediation-plan` is observational. On a brain whose
+ * ENG-6: `foresights doctor --remediation-plan` is observational. On a brain whose
  * schema is behind, it connects probe-only, leaves the schema version
  * unchanged, and reports the pending migrations as a `migrations_pending`
  * safety notice whose fix applies them (the remediate consent path already
@@ -52,7 +52,7 @@ describe('doctor --remediation-plan on a pending-migration brain', () => {
     const r = await gb(home, ['doctor', '--remediation-plan']);
     expect(r.exitCode, r.stderr.slice(-2000)).toBe(0);
     expect(r.stdout).toContain('Schema migrations pending');
-    expect(r.stdout).toContain('apply: gbrain apply-migrations --yes');
+    expect(r.stdout).toContain('apply: foresights apply-migrations --yes');
     await withBrain(home, async engine => expect(await engine.getConfig('version')).toBe(pending));
   }, 150_000);
 

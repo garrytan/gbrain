@@ -150,7 +150,7 @@ describeMaybe('phantom-redirect E2E (Postgres)', () => {
       writeMd(brainDir, 'alice', STUB);
 
       const engine = getEngine();
-      // Take the gbrain-sync lock manually (simulates concurrent gbrain sync).
+      // Take the gbrain-sync lock manually (simulates concurrent foresights sync).
       // tryAcquireDbLock uses pid from the current process; we acquire here,
       // then run runExtractFacts in the same process — the second acquire
       // would still see the row as held (different "logical" holder via the

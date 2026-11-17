@@ -1,7 +1,7 @@
 /**
  * Mode-switch UX (v0.40.3.0 — D3)
  *
- * When the user runs `gbrain config set search.mode <X>`, this module
+ * When the user runs `foresights config set search.mode <X>`, this module
  * surfaces a banner explaining the consequences and offers follow-up
  * actions.
  *
@@ -11,7 +11,7 @@
  *
  *   2. runModeSwitchUx(opts) — the orchestrator. Prints the banner, and for
  *      tokenmax_opt_in on a TTY previews the per-chunk synopsis sweep
- *      (`gbrain reindex --synopsis`, #8744: import, sync and
+ *      (`foresights reindex --synopsis`, #8744: import, sync and
  *      `reindex --markdown` embed at the title tier, so only that sweep
  *      writes synopses) and runs it in this process when the user answers
  *      yes. The yes is the consent; the sweep's spend cap applies.
@@ -93,13 +93,13 @@ export function summarizeTransition(
     return {
       kind: 'tokenmax_opt_in',
       reindex_required: true,
-      reindex_command: 'gbrain reindex --synopsis',
+      reindex_command: 'foresights reindex --synopsis',
       cost_estimate_per_query_cents: 0.06, // ~$0.0006: rerank-3-lite at 50 candidates (gbrain-evals #148)
       callout_lines: [
         `Switched to tokenmax. Per-chunk Haiku synopsis enabled.`,
         `Backfill cost (one-time): ~$1-5 per 10K pages via Anthropic Haiku.`,
         `Per-query overhead: ~$0.0006 (reranker + slightly larger payload).`,
-        `Existing pages stay on the title tier until the synopsis sweep runs: preview it with \`gbrain reindex --synopsis\`, run it with --yes.`,
+        `Existing pages stay on the title tier until the synopsis sweep runs: preview it with \`foresights reindex --synopsis\`, run it with --yes.`,
       ],
     };
   }
@@ -146,7 +146,7 @@ function narrowness(mode: SearchMode): number {
 }
 
 /**
- * Orchestrator. Called by `gbrain config set search.mode <X>` after the
+ * Orchestrator. Called by `foresights config set search.mode <X>` after the
  * config write lands. Honors GBRAIN_NO_MODE_SWITCH_UX=1 (full skip) and
  * non-TTY / --yes (no prompt; prints the paste-ready preview command).
  */

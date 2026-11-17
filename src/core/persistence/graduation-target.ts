@@ -112,7 +112,7 @@ const SEED_ROW_LIMITS: Readonly<Record<string, number>> = {
 /** Each engine's own schema writes these; they never count against emptiness. */
 const SCHEMA_OWNED_TABLES = new Set(['config', 'file_migration_ledger', 'persistence_graduation', 'trust_policy_state']);
 /**
- * Rows a `gbrain doctor` run leaves on an initialised brain (#7142: its last known results and the queued
+ * Rows a `foresights doctor` run leaves on an initialised brain (#7142: its last known results and the queued
  * refresh, `commands/doctor/last-known.ts`). They are diagnostics about that database, not brain data; the
  * copy replaces both tables.
  */
@@ -121,7 +121,7 @@ const DOCTOR_ROWS: Readonly<Record<string, string>> = {
 };
 
 /**
- * A target counts as empty when it has no public tables, or a gbrain schema whose
+ * A target counts as empty when it has no public tables, or a foresights schema whose
  * tables hold only the initSchema seed rows (config, the `default` source, the
  * disabled persistence identity and the singleton clocks). Read-only.
  */
@@ -291,7 +291,7 @@ export function targetProbeBlockers(probe: TargetProbe, routes: Pick<TargetRoute
   return blockers;
 }
 
-/** What a DBA runs once on a target whose gbrain role is not a superuser (the v35 objects, owned by that role). */
+/** What a DBA runs once on a target whose foresights role is not a superuser (the v35 objects, owned by that role). */
 function AUTO_RLS_DBA_SQL(role: string): string {
   return `CREATE OR REPLACE FUNCTION public.auto_enable_rls() RETURNS event_trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $f$ DECLARE obj record; BEGIN FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands() WHERE object_type = 'table' AND schema_name = 'public' LOOP EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity); END LOOP; END; $f$; `
     + `ALTER FUNCTION public.auto_enable_rls() OWNER TO ${role}; `

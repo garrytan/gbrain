@@ -27,7 +27,7 @@ export const v090: Migration = {
   //   fall through to global mode. CLI-write-only per D15 security.
   // sources.trust_frontmatter_overrides — per-source mount-frontmatter
   //   trust gate (D15). FALSE for mounted sources by default; flipped
-  //   explicitly via `gbrain mounts trust-frontmatter <source>`. Host
+  //   explicitly via `foresights mounts trust-frontmatter <source>`. Host
   //   source (id='default') is always trusted regardless of this column.
   // query_cache.page_generations — JSONB map {page_id: corpus_generation}
   //   tagged at write time per D27 P1-5. Lookup query LEFT JOINs against

@@ -3,14 +3,14 @@
  * concepts without an explicit `visibility`, and ones stored looser than their
  * origin (a transcript or missing origin counts as private, as in the repair).
  * Remote reads treat unstamped rows as private; the warning names the
- * tighten-only backfill `gbrain repair visibility` that stamps the stored rows.
+ * tighten-only backfill `foresights repair visibility` that stamps the stored rows.
  *
  * It also counts what is labelled wider than a private source: Life Chronicle
  * events whose origin is private, pages that carry a privacy alias
  * (`access: private`, ...) but no `visibility`, and active `world` facts held
  * in or extracted from a private page. Facts a remote caller can recall today
  * are listed by id (first 50); slugs stay out of the check, which remote
- * callers may run. `gbrain repair visibility` previews every row.
+ * callers may run. `foresights repair visibility` previews every row.
  *
  * The fact count, the only class remote callers can read today, runs first; each
  * statement is bounded by PLAN_STATEMENT_MS, and derived-page counts that overrun
@@ -34,7 +34,7 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
     const factDetails = { world_facts_from_private_sources: facts.length, world_facts_remotely_readable: readable.length,
       remotely_readable_fact_ids: readable.slice(0, FACT_SAMPLE).map(f => String(f.id)), fact_ids_truncated: readable.length > FACT_SAMPLE };
     const factPart = `${facts.length} active world fact(s) are held in or were extracted from a private page; ${readable.length} of them are readable by remote callers (ids in details.remotely_readable_fact_ids).`;
-    const preview = 'Preview: gbrain repair visibility (it lists one window, remotely readable facts first, and prints the --apply --expect command for it; run that after the user agrees).';
+    const preview = 'Preview: foresights repair visibility (it lists one window, remotely readable facts first, and prints the --apply --expect command for it; run that after the user agrees).';
     let counts;
     try {
       counts = await engine.executeRaw<{ unstamped_atoms: number; unstamped_concepts: number; looser_atoms: number; looser_concepts: number; looser_events: number; alias_pages_without_visibility: number }>(
@@ -60,7 +60,7 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
     } catch (e) {
       if ((e as { code?: string } | null)?.code !== '57014') throw e;
       return { name, status: 'warn', details: { ...factDetails, derived_counts: 'unknown', count: 'lower_bound', truncated: true, repair: 'visibility' },
-        message: [...(facts.length ? [factPart] : []), `Derived page counts did not finish within ${PLAN_STATEMENT_MS} ms; preview them with gbrain repair visibility --class lineage.`, preview].join(' ') };
+        message: [...(facts.length ? [factPart] : []), `Derived page counts did not finish within ${PLAN_STATEMENT_MS} ms; preview them with foresights repair visibility --class lineage.`, preview].join(' ') };
     }
     const row = counts[0]!;
     const details = { ...row, ...factDetails, count: 'exact', truncated: false, repair: 'visibility' };
@@ -73,7 +73,7 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
     if (unstamped + looser) parts.push(`${unstamped} derived page(s) have no explicit visibility (${row.unstamped_atoms} atoms, ${row.unstamped_concepts} concepts) `
       + `and ${looser} are stored looser than their origin (${row.looser_events} chronicle events); remote reads treat the unstamped ones as private.`);
     if (row.alias_pages_without_visibility) parts.push(`${row.alias_pages_without_visibility} page(s) mark themselves private with a privacy alias (access, confidentiality) but carry no visibility. `
-      + (aliasesHonored ? 'Remote page reads hide them (to show them: gbrain config set visibility.honor_aliases false).' : 'visibility.honor_aliases is false, so remote page reads show them.'));
+      + (aliasesHonored ? 'Remote page reads hide them (to show them: foresights config set visibility.honor_aliases false).' : 'visibility.honor_aliases is false, so remote page reads show them.'));
     if (facts.length) parts.unshift(factPart);
     parts.push(preview);
     return { name, status: 'warn', details, message: parts.join(' ') };

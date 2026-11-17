@@ -100,7 +100,7 @@ describe('checkEmbeddingPlane (#4287)', () => {
     expect(check.detail).toContain(`returns ${emit}d vectors`);
     expect(check.detail).toContain(`${colDim}d`);
     expect(check.detail).toContain(`expected ${colDim} dimensions, not ${emit}`);
-    expect(check.detail).toContain('gbrain migrate embeddings');
+    expect(check.detail).toContain('foresights migrate embeddings');
   });
 
   test('keyed + dead probe: warn, never a false certification', async () => {

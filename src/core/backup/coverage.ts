@@ -1,7 +1,7 @@
 /**
  * backup/coverage.ts — engine-side compute for the monthly backup-coverage
  * check. Answers "if this disk died right now, could the user recreate their
- * agent?" across every asset class gbrain knows about, and persists the
+ * agent?" across every asset class foresights knows about, and persists the
  * verdict to the engine-free cache in backup/status-file.ts.
  *
  * Trust boundary (D4, extraction-sync.ts:870): git subprocesses against
@@ -75,7 +75,7 @@ function pushAsset(assets: BackupAssetVerdict[], a: BackupAssetVerdict): void {
  * an unmanaged connector's non-Git (or missing) directory is a Markdown cache.
  * Both are recovered by a full re-sync from the provider, so they are an info
  * row and never an unrecoverable repository that keeps the check in warn.
- * `gbrain export` is not offered: `gbrain sync --source <id>` on a Google or
+ * `foresights export` is not offered: `foresights sync --source <id>` on a Google or
  * GitHub source runs the connector sync, which rebuilds pages from the provider
  * and never reads a Markdown dump, so an export is an archive for that source,
  * not a restore path.
@@ -169,10 +169,10 @@ export async function computeBackupCoverage(
           id: receipt.workspace_dir,
           state: 'no_remote',
           detail:
-            'bootstrap workspace has no private repo yet — run `gbrain bootstrap repo` to create one ' +
+            'bootstrap workspace has no private repo yet — run `foresights bootstrap repo` to create one ' +
             '(this is the right command for a truly empty/unconfigured origin). If this workspace was ' +
             'already pushed to an existing repo out-of-band, `bootstrap repo` will refuse — run ' +
-            '`gbrain bootstrap attach` instead to reconcile the receipt.',
+            '`foresights bootstrap attach` instead to reconcile the receipt.',
           // No single command is correct here without a git subprocess (coverage.ts is deliberately
           // file-plane only): an empty/unconfigured origin needs `bootstrap repo`, an already-pushed
           // one needs `bootstrap attach`, and this check can't tell which case it's in. Leave fix_argv
@@ -277,7 +277,7 @@ export async function computeBackupCoverage(
           detail:
             'db_only dirs configured: those pages are not in git and the DB file is deliberately not backed up. ' +
             'Dump them somewhere OUTSIDE the gitignored dirs (--restore-only is the wrong direction for a backup); ' +
-            'run gbrain doctor (undeclared_db_only_pages) for the page-level audit.',
+            'run foresights doctor (undeclared_db_only_pages) for the page-level audit.',
           // One source per dump directory: an unscoped export refuses when two
           // sources share a slug, and a second dump refuses an occupied dir.
           // BACKUP_DIR is a placeholder with no shell metacharacters, so a
@@ -370,7 +370,7 @@ export async function computeBackupCoverage(
         state: 'info',
         detail:
           `Postgres contains ${pageCount} pages; database placement and external backups were not verified — ` +
-          'add a source repo (gbrain sources add) or dump with gbrain export',
+          'add a source repo (foresights sources add) or dump with foresights export',
         fix_argv: ['gbrain', 'bootstrap', 'repo'],
       });
     } else {
@@ -379,7 +379,7 @@ export async function computeBackupCoverage(
         kind: 'db_content',
         id: 'brain database',
         state: 'no_remote',
-        detail: `${pageCount} pages live ONLY in the local DB — a disk loss loses all of them (gbrain sources add / gbrain bootstrap repo)`,
+        detail: `${pageCount} pages live ONLY in the local DB — a disk loss loses all of them (foresights sources add / foresights bootstrap repo)`,
         fix_argv: ['gbrain', 'bootstrap', 'repo'],
       });
     }

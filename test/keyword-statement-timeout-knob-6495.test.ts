@@ -132,7 +132,7 @@ describe('search.keyword_statement_timeout_ms: the resolver', () => {
   });
 });
 
-describe('gbrain config set search.keyword_statement_timeout_ms', () => {
+describe('foresights config set search.keyword_statement_timeout_ms', () => {
   async function configSet(value: string): Promise<{ errs: string; exit: number | null; written: Array<[string, string]> }> {
     const written: Array<[string, string]> = [];
     const engine = {
@@ -162,7 +162,7 @@ describe('gbrain config set search.keyword_statement_timeout_ms', () => {
       expect(exit, bad).toBe(2);
       expect(written, bad).toEqual([]);
       expect(errs).toContain(`Error [invalid_params]: ${KEYWORD_STATEMENT_TIMEOUT_KEY} must be an integer number of milliseconds from 1000 to 60000 (got '${bad}'). Nothing was written.`);
-      expect(errs).toContain(`Fix: gbrain config get ${KEYWORD_STATEMENT_TIMEOUT_KEY}`);
+      expect(errs).toContain(`Fix: foresights config get ${KEYWORD_STATEMENT_TIMEOUT_KEY}`);
       expect(errs).toContain('Why: The Postgres engine reads the keyword statement timeout once per connection');
     }
   });

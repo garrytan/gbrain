@@ -51,4 +51,4 @@ never scored).
 
 Per the North Star eval discipline: this scores FEATURE value — does the
 classifier produce correct, correctly-attributed, correctly-weighted takes
-rows for gbrain users — not a model bake-off.
+rows for foresights users — not a model bake-off.

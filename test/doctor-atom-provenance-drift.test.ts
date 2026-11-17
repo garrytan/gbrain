@@ -383,6 +383,6 @@ describe('computeAtomProvenanceDriftCheck', () => {
     const c = await computeAtomProvenanceDriftCheck(engine);
     expect(c.status).toBe('warn');
     expect(c.details).toMatchObject({ drifted: 30, source_changed: 30 });
-    expect(c.message).toContain('gbrain repair stale-atoms');
+    expect(c.message).toContain('foresights repair stale-atoms');
   }, 60_000);
 });

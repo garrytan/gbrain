@@ -1,6 +1,6 @@
 /**
  * default_source_local_path doctor check (#4739, narrowed) +
- * `gbrain sources set-path` repair command.
+ * `foresights sources set-path` repair command.
  *
  * The upstream PR warned on EVERY null default.local_path — but that is the
  * DESIGNED fallback topology (resolvePageWriteTarget nests default under

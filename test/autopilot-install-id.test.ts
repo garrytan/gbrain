@@ -243,8 +243,8 @@ describe('#5195 crontab line ownership', () => {
       const marked = `*/5 * * * * '${a.wrapperPath}' >> '${a.logPath}' 2>&1 ${a.cronMarker}`;
       const legacyA = `*/5 * * * * '${a.wrapperPath}' >> '${home}/.gbrain/autopilot.log' 2>&1`;
       const legacyDefault = `*/5 * * * * '${home}/.gbrain/autopilot-run.sh' >> '${home}/.gbrain/autopilot.log' 2>&1`;
-      const direct = '*/5 * * * * gbrain autopilot --repo /data/brain';
-      const monitor = '*/10 * * * * gbrain autopilot --status --json >> health.log';
+      const direct = '*/5 * * * * foresights autopilot --repo /data/brain';
+      const monitor = '*/10 * * * * foresights autopilot --status --json >> health.log';
 
       expect(cronLineBelongsToBrain(marked, a)).toBe(true);
       expect(cronLineBelongsToBrain(marked, b)).toBe(false);

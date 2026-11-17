@@ -128,7 +128,7 @@ export class OpencodeRunner implements AgentRunner {
   /**
    * Loud tripwire for the global-config contamination channel: when the
    * config dir opencode will resolve carries an mcp.gbrain entry, a live
-   * turn routes gbrain tool calls at the operator's REAL brain while the
+   * turn routes foresights tool calls at the operator's REAL brain while the
    * oracle probes the hermetic one. Warning only (live mode deliberately
    * runs the operator's agent); the hermetic lane is the door e2e. Checks
    * BOTH filenames — opencode merges opencode.json AND opencode.jsonc.
@@ -145,7 +145,7 @@ export class OpencodeRunner implements AgentRunner {
         // Loose containment probe, not a parse: the global config is JSONC
         // (comments legal), and a substring hit is enough for a warning.
         const text = readFileSync(p, 'utf-8');
-        if (/"gbrain"\s*:/.test(text) && /"mcp"\s*:/.test(text)) {
+        if (/"(?:foresights|gbrain)"\s*:/.test(text) && /"mcp"\s*:/.test(text)) {
           console.warn(
             `[opencode-runner] WARNING: ${p} carries an mcp.gbrain entry. opencode reads the ` +
               "user-global config on every run, so this live turn may bind the OPERATOR'S REAL " +

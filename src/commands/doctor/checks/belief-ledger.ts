@@ -36,7 +36,7 @@ async function runBeliefLedger(ctx: DoctorContext): Promise<Check[]> {
       checks.push(infoCheck('belief_ledger_coverage', 'The belief ledger is off: no source records what this brain had recorded, and when.', 'disabled_by_choice',
         { argv: ['gbrain', 'beliefs', 'enable', '--source', scope?.[0] ?? 'default'], consent: [], actor: 'agent', ask_user: true, requires_exclusive: false, docs: DOCS,
           why: 'Enabling baselines every page of the source and records each later change; only a managed source is certified.',
-          user_message: 'Do you want gbrain to keep a belief ledger (a recorded history of facts, takes and links) for this source?',
+          user_message: 'Do you want foresights to keep a belief ledger (a recorded history of facts, takes and links) for this source?',
           verify: doctorVerify('belief_ledger_coverage') }));
       return checks;
     }

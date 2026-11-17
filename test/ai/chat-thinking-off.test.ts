@@ -4,7 +4,7 @@
  *
  * Drives the real gateway against a local stub of the Anthropic Messages and
  * OpenAI-compatible chat completions APIs and asserts the request body that
- * leaves gbrain, per route: native Anthropic (a configured thinking object is
+ * leaves foresights, per route: native Anthropic (a configured thinking object is
  * replaced, cache control survives), DeepSeek, OpenRouter DeepSeek, a route
  * with no switch that does not think (unchanged), and a route with no switch
  * that thinks by default (keeps thinking, gets the thinking output headroom).

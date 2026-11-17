@@ -1,5 +1,5 @@
 /**
- * `gbrain repair loop-facts` (#5869): retires the commitment facts that
+ * `foresights repair loop-facts` (#5869): retires the commitment facts that
  * `loops_close` left active before this release (its raw expiry was refused
  * on managed brains and never struck the fence row anywhere).
  *
@@ -23,7 +23,7 @@ interface LoopFactItem extends RepairItem { loop: DriftedLoop; hash: string; las
 interface ApprovedLoop extends DriftedLoop { selection: string[] }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair loop-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair loop-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 function item(loop: DriftedLoop, hash: string, last: boolean): LoopFactItem {
@@ -48,7 +48,7 @@ export const loopFactsRepair: RepairHandler = {
           detail: `loop ${loop.status}; commitment fact #${loop.fact_id} still active${loop.slug ? ` on ${loop.slug}` : ''}` })) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair loop-facts --apply retires only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair loop-facts --apply retires only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

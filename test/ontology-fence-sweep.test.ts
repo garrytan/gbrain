@@ -1,6 +1,6 @@
 /**
  * #6264: the maintenance sweep must not fence ontology observations onto an
- * entity page's Facts table, and `gbrain repair ontology-facts` restores the
+ * entity page's Facts table, and `foresights repair ontology-facts` restores the
  * ones it already moved.
  *
  * Protects: after an `ontology_propose`, a sweep, an ordinary rewrite of the
@@ -191,7 +191,7 @@ for (const backend of testBackends()) {
 
       const check = await ontologyFactsCheck(engine, ['default']);
       expect(check).toMatchObject({ name: 'ontology_facts_fenced', status: 'warn', details: { fenced: 1, retired: 1, excluded: 2 } });
-      expect(check.message).toContain('gbrain repair ontology-facts');
+      expect(check.message).toContain('foresights repair ontology-facts');
 
       const preview = await repair(engine, ['--source', 'default']);
       expect(preview).toMatchObject({ affected: 2, applied: 0, residuals: { fenced: 1, retired: 1, excluded_withdrawn: 1, excluded_duplicate: 1 } });

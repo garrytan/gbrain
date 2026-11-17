@@ -1,4 +1,4 @@
-/** `gbrain jobs authorize-legacy` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs authorize-legacy` (dispatched by runJobs in src/commands/jobs.ts). */
 import { paidJobNames, parseFlag, reportJobsError, selectionSummaryLines, type JobsCommandContext } from './shared.ts';
 import { applyLegacySelection, authorizeLegacyJobs, parseLegacyJobIds, previewLegacySelection } from '../../core/minions/authorize-legacy.ts';
 import { parseLegacyJobSelection } from '../../core/minions/legacy-selection.ts';
@@ -17,7 +17,7 @@ export async function runJobsAuthorizeLegacy({ args, engine }: JobsCommandContex
       return;
     }
     if (args.includes('--ids')) {
-      throw catalogueError('legacy_job_selection_invalid', 'Pass either --ids or --select, not both.', 'gbrain jobs authorize-legacy --select "status=waiting"');
+      throw catalogueError('legacy_job_selection_invalid', 'Pass either --ids or --select, not both.', 'foresights jobs authorize-legacy --select "status=waiting"');
     }
     const selection = parseLegacyJobSelection(select, 'authorize-legacy');
     const expected = parseFlag(args, '--expect');

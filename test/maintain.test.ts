@@ -45,7 +45,7 @@ describe('cycle freshness source extraction', () => {
       {
         name: 'cycle_freshness',
         status: 'fail',
-        message: "Source 'brain-sync-remote-teffur' last cycled 40h ago. Run `gbrain dream --source <id>`.",
+        message: "Source 'brain-sync-remote-teffur' last cycled 40h ago. Run `foresights dream --source <id>`.",
       },
       {
         name: 'cycle_freshness',
@@ -70,7 +70,7 @@ describe('cycle freshness source extraction', () => {
   });
 });
 
-// `gbrain maintain --json` owns the report: every embedded helper it runs must
+// `foresights maintain --json` owns the report: every embedded helper it runs must
 // stay off stdout, or the JSON document is no longer parseable by the caller.
 describe('runMaintain --json keeps stdout a single JSON document', () => {
   let engine: PGLiteEngine;

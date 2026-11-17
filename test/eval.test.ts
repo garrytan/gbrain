@@ -266,7 +266,7 @@ describe('parseQrels', () => {
 
 describe('parseQrels (#4608) — gate-shape aliases + per-entry validation', () => {
   test("gate legacy shape (relevant_slugs + first_relevant_slug) parses; keys map onto 'relevant'", () => {
-    // The exact shape of gbrain's own committed gate fixture — pre-fix this
+    // The exact shape of foresights's own committed gate fixture — pre-fix this
     // crashed inside buildGradesMap AFTER a live search+rerank was billed.
     const input = JSON.stringify({
       schema_version: 1,
@@ -314,7 +314,7 @@ describe('parseQrels (#4608) — gate-shape aliases + per-entry validation', () 
         { query: 'q', relevant: [{ source_id: 'vault-a', slug: 'topic/page-a' }] },
       ],
     });
-    expect(() => parseQrels(input)).toThrow(/gbrain eval gate/);
+    expect(() => parseQrels(input)).toThrow(/(?:foresights|gbrain) eval gate/);
     expect(() => parseQrels(input)).toThrow(/entry 0/);
   });
 

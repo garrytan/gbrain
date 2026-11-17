@@ -1,6 +1,6 @@
 /**
- * Persistent user service for `gbrain serve --http` — installed by
- * `gbrain mcp expose`, torn down by `--remove`.
+ * Persistent user service for `foresights serve --http` — installed by
+ * `foresights mcp expose`, torn down by `--remove`.
  *
  * Mirrors the hardening of the autopilot installer (src/commands/autopilot.ts)
  * without importing it: single-quote-escaped paths in the wrapper, plist
@@ -114,7 +114,7 @@ export function refuseSymlink(path: string, what: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// gbrain CLI resolution for the wrapper
+// foresights CLI resolution for the wrapper
 // ---------------------------------------------------------------------------
 
 export interface ResolveGbrainCommandDeps {
@@ -126,18 +126,18 @@ export interface ResolveGbrainCommandDeps {
   fileExists?: (path: string) => boolean;
 }
 
-/** Bun's own runtime binary (`bun`, `bun-profile`, `bun.exe`), as opposed to a compiled gbrain. */
+/** Bun's own runtime binary (`bun`, `bun-profile`, `bun.exe`), as opposed to a compiled foresights. */
 const BUN_RUNTIME_RE = /(^|[\\/])bun(-[a-z0-9-]+)?(\.exe)?$/i;
 /** A compiled binary's embedded entrypoint: `/$bunfs/root/...` (POSIX) or `B:\~BUN\...` (Windows). */
 const VIRTUAL_ENTRY_RE = /\$bunfs|~BUN/;
 
 /**
- * argv prefix baked into the wrapper: `[<gbrain shim>]`, or `[<execPath>]`
- * when the running binary is a compiled gbrain (whatever its basename — a
+ * argv prefix baked into the wrapper: `[<foresights shim>]`, or `[<execPath>]`
+ * when the running binary is a compiled foresights (whatever its basename — a
  * compiled Bun binary reports its embedded sources under `/$bunfs/` and has
  * no real script in `argv[1]`), else `[<bun>, <abs cli.ts>]` when that
  * `cli.ts` exists on disk; without it, `[<execPath>]` again rather than a
- * path that cannot run. The wrapper falls back to `type -P gbrain` at run
+ * path that cannot run. The wrapper falls back to `type -P foresights` at run
  * time when argv[0] is gone.
  */
 export function resolveServeGbrainCommand(deps: ResolveGbrainCommandDeps = {}): string[] {
@@ -181,7 +181,7 @@ export function serveCommandArgv(p: ServeCommandParams): string[] {
 }
 
 export interface WrapperParams extends ServeCommandParams {
-  /** From resolveServeGbrainCommand: `[gbrain]` or `[bun, cli.ts]`. */
+  /** From resolveServeGbrainCommand: `[foresights]` or `[bun, cli.ts]`. */
   gbrainCommand: string[];
   adminTokenPath: string;
   /** `~/.gbrain/env` (absolute). */
@@ -282,7 +282,7 @@ export function systemdArg(s: string): string {
 
 export function renderServeSystemdUnit(p: SystemdParams): string {
   return `[Unit]
-Description=GBrain MCP server (gbrain serve --http)
+Description=Foresights MCP server (foresights serve --http)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300

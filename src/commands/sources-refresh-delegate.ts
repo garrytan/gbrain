@@ -10,8 +10,8 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { parseRefreshArgs, printRefreshOutcome } from './sources-refresh.ts';
 
 /**
- * A live PGLite owner (`gbrain serve`) holds the database and its writer
- * lock; `gbrain sources refresh` runs inside that owner over the local
+ * A live PGLite owner (`foresights serve`) holds the database and its writer
+ * lock; `foresights sources refresh` runs inside that owner over the local
  * persistence socket instead of waiting on or failing at the lock. Output and
  * refusals print exactly as a local refresh's do.
  */
@@ -28,7 +28,7 @@ export async function maybeDelegateSourcesRefresh(hostConfig: GBrainConfig | nul
       ...(options.fetchTimeoutMs !== undefined ? { fetch_timeout_ms: options.fetchTimeoutMs } : {}),
     }, config, { timeoutMs: 86_400_000 });
     if (!delegated.handled) throw new OperationError('owner_unavailable', 'The registered PGLite owner stopped before the refresh started.',
-      'Run the same gbrain sources refresh command again; nothing was fetched or merged.');
+      'Run the same foresights sources refresh command again; nothing was fetched or merged.');
     printRefreshOutcome({ result: delegated.result as WorktreeRefreshResult }, json);
     return true;
   } catch (error) {

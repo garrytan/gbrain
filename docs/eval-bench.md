@@ -1,6 +1,6 @@
-# Running real-world eval benchmarks against your gbrain changes
+# Running real-world eval benchmarks against your foresights changes
 
-Audience: gbrain maintainers and contributors. If you're touching retrieval
+Audience: foresights maintainers and contributors. If you're touching retrieval
 (search, ranking, embeddings, intent classification, query expansion, source
 boost, hybrid fusion), this is the doc.
 
@@ -11,7 +11,7 @@ that lives on top of that format.
 If you're touching **memory behavior** rather than retrieval ranking — the
 Retrieval Reflex push path, conversation→facts write-back, cross-session
 continuity, source isolation — the gate for that layer is **BrainBench**
-(`gbrain eval brainbench`): see [`eval/BRAINBENCH.md`](./eval/BRAINBENCH.md).
+(`foresights eval brainbench`): see [`eval/BRAINBENCH.md`](./eval/BRAINBENCH.md).
 The two stack: this doc's capture→baseline→replay loop gates query-level
 result sets; BrainBench gates the memory behaviors above them, with its own
 committed baseline (`evals/brainbench/baselines/main.json`) compared against
@@ -52,14 +52,14 @@ Before repeating an approach, read its measured outcome and limitations:
 
 - [What actually helps an AI use its memory?](research/answer-evidence/compendium.md)
   explains the relevant research in plain English, separates published findings
-  from GBrain's measured failures, and ranks narrowly testable next experiments.
+  from Foresights's measured failures, and ranks narrowly testable next experiments.
   Its [source index](research/answer-evidence/index.md) records primary citations,
   per-paper summaries and limits on what the results establish.
 
 - [Intact-evidence reading replication](eval/READING_NOTES_REPLICATION.md)
-  records a frozen follow-up: 361 fresh GBrain comparisons and the full
+  records a frozen follow-up: 361 fresh Foresights comparisons and the full
   500-question, four-condition published reading comparison. The completed
-  [GBrain results](eval/READING_NOTES_RESULTS.md) improved from 308/361 to
+  [Foresights results](eval/READING_NOTES_RESULTS.md) improved from 308/361 to
   324/361 under automated judging, with source-verified wins, grading caveats
   and nine truncated notes responses. The completed paper replication improved
   from 424/500 to 463/500; notes helped in both formats, while JSON alone did
@@ -67,7 +67,7 @@ Before repeating an approach, read its measured outcome and limitations:
 
 ## The eval gate loop
 
-`gbrain bench publish` + `gbrain eval gate` stitch captured eval rows into
+`foresights bench publish` + `foresights eval gate` stitch captured eval rows into
 a pass/fail gate. Two gates:
 
 - **Regression gate** (`--baseline X.baseline.ndjson`): replays a baseline
@@ -85,14 +85,14 @@ one is required.
 
 ```bash
 # 1. Capture (one-time; uses queries already in eval_candidates)
-gbrain eval export --limit 200 --tool query > /tmp/captured.ndjson
+foresights eval export --limit 200 --tool query > /tmp/captured.ndjson
 
 # 2. Publish a baseline
 mkdir -p ~/.gbrain/baselines
-gbrain bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/personal.baseline.ndjson --label "personal-$(date +%Y%m%d)"
+foresights bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/personal.baseline.ndjson --label "personal-$(date +%Y%m%d)"
 
 # 3. Gate against it
-gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
+foresights eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
 ```
 
 ### Privacy posture
@@ -106,7 +106,7 @@ from a real user's `eval_candidates` table.
 
 ### Deterministic-pipeline disclosure
 
-`gbrain eval gate --qrels` uses bare `hybridSearch` (not the production
+`foresights eval gate --qrels` uses bare `hybridSearch` (not the production
 `query` op handler). This is deliberate: gates need to be deterministic in
 CI. Production retrieval differs via the query cache, salience freshness,
 expansion, etc. The gate measures retrieval quality with a fixed pipeline;
@@ -129,7 +129,7 @@ in the `verify` battery — the unit-matrix twin already gates it). Honest
 scope: semantic-embedding regressions remain the keyed eval suites' job.
 Reproduce locally with `bun run scripts/run-eval-canary.ts` (`--record`
 appends to the `.gbrain-evals/eval-results.jsonl` ledger, a local file that is
-gitignored; `gbrain eval compare` reads it).
+gitignored; `foresights eval compare` reads it).
 
 ### `.qrels.json` shape
 
@@ -181,7 +181,7 @@ jobs:
       - run: bun install
       - run: |
           # Run both gates; CI fails on any breach.
-          gbrain eval gate \
+          foresights eval gate \
             --baseline gbrain-evals/baselines/v0.41-launch.baseline.ndjson \
             --qrels gbrain-evals/qrels/v0.41-launch.qrels.json \
             --json | tee /tmp/gate.json
@@ -202,7 +202,7 @@ export GBRAIN_CONTRIBUTOR_MODE=1
 Verify:
 
 ```bash
-gbrain query "anything" >/dev/null
+foresights query "anything" >/dev/null
 psql $DATABASE_URL -c 'SELECT count(*) FROM eval_candidates'   # should be > 0
 ```
 
@@ -215,17 +215,17 @@ capture contract.
 ```bash
 # ① Capture: writes to eval_candidates whenever CONTRIBUTOR_MODE is set.
 #   Inspect what's been collected:
-gbrain doctor                                     # surfaces capture failures
+foresights doctor                                     # surfaces capture failures
 psql $DATABASE_URL -c 'SELECT count(*) FROM eval_candidates'
 
 # ② Snapshot: freeze a baseline before your code change.
-gbrain eval export --since 7d > baseline.ndjson
+foresights eval export --since 7d > baseline.ndjson
 
 # ③ Code change: do whatever you want — tune RRF_K, swap embed model, edit
 #    hybrid.ts, add a new boost source, change the intent classifier.
 
 # ④ Replay: re-run every captured query against the current build.
-gbrain eval replay --against baseline.ndjson
+foresights eval replay --against baseline.ndjson
 ```
 
 Output:
@@ -257,7 +257,7 @@ Three numbers tell you whether the change is safe to land:
 
 ## What it actually does
 
-`gbrain eval replay` reads your NDJSON snapshot and, for each row:
+`foresights eval replay` reads your NDJSON snapshot and, for each row:
 
 1. Re-executes the same op (`searchKeyword` for `tool_name='search'`,
    `hybridSearch` for `tool_name='query'`) with the captured `detail` and
@@ -269,13 +269,13 @@ Three numbers tell you whether the change is safe to land:
 
 It does NOT compute MRR or nDCG — those need ground-truth relevance labels,
 not a baseline comparison. For metric-against-truth eval, use
-`gbrain eval gate --qrels <path>` (the correctness gate above). The
+`foresights eval gate --qrels <path>` (the correctness gate above). The
 replay tool answers a different question: "did my code change move
 retrieval, and which queries did it move most?"
 
 For a third evaluation axis — public benchmark, ground-truth labels, full
-question-answer pipeline (not just retrieval) — `gbrain eval longmemeval
-<dataset.jsonl>` runs the LongMemEval benchmark against gbrain's
+question-answer pipeline (not just retrieval) — `foresights eval longmemeval
+<dataset.jsonl>` runs the LongMemEval benchmark against foresights's
 hybrid retrieval. Each question gets a clean in-memory PGLite, its haystack
 imported, the question asked, the hypothesis emitted as JSONL — exactly the
 shape LongMemEval's `evaluate_qa.py` consumes. Your `~/.gbrain` brain is
@@ -302,7 +302,7 @@ Pair them with manual inspection of the top regressions.
 ## Cost
 
 Every `query` row in the snapshot embeds the query string via OpenAI to run
-the vector half of `hybridSearch`. Cost is identical to a normal `gbrain
+the vector half of `hybridSearch`. Cost is identical to a normal `foresights
 query` invocation — text-embedding-3-large at OpenAI list price, batched
 inside a single replay row.
 
@@ -312,16 +312,16 @@ enough to catch direction; expand for the final pre-merge run.
 
 ```bash
 # Iteration mode — 50 most recent queries
-gbrain eval replay --against baseline.ndjson --limit 50
+foresights eval replay --against baseline.ndjson --limit 50
 
 # Pre-merge — full snapshot
-gbrain eval replay --against baseline.ndjson --top-regressions 20
+foresights eval replay --against baseline.ndjson --top-regressions 20
 ```
 
 ## CI integration
 
 ```bash
-gbrain eval replay --against baseline.ndjson --json > replay.json
+foresights eval replay --against baseline.ndjson --json > replay.json
 jq -e '.summary.mean_jaccard >= 0.85' replay.json || exit 1
 jq -e '.summary.top1_stability_rate >= 0.85' replay.json || exit 1
 ```
@@ -374,10 +374,10 @@ week before merging), you can hand-author an NDJSON file:
 {"schema_version":1,"id":2,"tool_name":"search","query":"acme deal","retrieved_slugs":["deals/acme-seed","companies/acme"],"latency_ms":0,"remote":false}
 ```
 
-Then run `gbrain eval replay --against handcrafted.ndjson` to confirm the
+Then run `foresights eval replay --against handcrafted.ndjson` to confirm the
 authoritative slugs come back. This is the seam between the BrainBench-Real
 pipeline (replay against live captures) and the BrainBench fixed-fixture
-pipeline (`gbrain eval gate --qrels` with the sibling
+pipeline (`foresights eval gate --qrels` with the sibling
 [gbrain-evals](https://github.com/garrytan/gbrain-evals) corpus).
 
 ## Off-switch
@@ -394,7 +394,7 @@ Or force off regardless of the env var via `~/.gbrain/config.json`:
 {"eval": {"capture": false}}
 ```
 
-Existing `eval_candidates` rows stay until you `gbrain eval prune
+Existing `eval_candidates` rows stay until you `foresights eval prune
 --older-than 0d` (or just drop the table).
 
 ## Failure modes
@@ -409,8 +409,8 @@ Existing `eval_candidates` rows stay until you `gbrain eval prune
 
 ## Public benchmarks: LongMemEval
 
-`gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
-benchmark directly against gbrain's hybrid retrieval. Different evaluation
+`foresights eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
+benchmark directly against foresights's hybrid retrieval. Different evaluation
 axis from `eval replay`: public dataset with ground-truth labels, end-to-end
 question-answer pipeline, hermetic per-question brains.
 
@@ -421,8 +421,8 @@ distinct retrieved sessions), joins on the dataset's raw session ids, drops the
 pins the reranker and autocut per run (see "Download and run" and "Flags").
 
 **Say to your agent:** *"Run the public LongMemEval benchmark like-for-like
-against my gbrain retrieval"* (no skill backs this; your agent runs
-`gbrain eval longmemeval <dataset> --retrieval-only --top-k 5 --by-type --no-trajectory --mode balanced --reranker off --autocut off`)
+against my foresights retrieval"* (no skill backs this; your agent runs
+`foresights eval longmemeval <dataset> --retrieval-only --top-k 5 --by-type --no-trajectory --mode balanced --reranker off --autocut off`)
 — *"Run LongMemEval at my brain's shipped default search path"* (your agent runs
 the same command with `--reranker on --autocut off`, the release default; add
 `--autocut on --capture-pool` to reproduce the autocut floor replay).
@@ -444,7 +444,7 @@ distinct retrieved sessions; retrieval only, no reader model. Any-hit
   recall denominator, as the official `print_retrieval_metrics.py` does, so
   470 are scored. The ceiling at k=5 is 99.4%: 3 questions carry 6 gold
   sessions and cannot fit in a top-5 list.
-- **Measured:** 2026-09-06 at gbrain v0.48.4.0 with `gbrain eval longmemeval`
+- **Measured:** 2026-09-06 at foresights v0.48.4.0 with `foresights eval longmemeval`
   (this repo; the sibling runner's 2026-09-02 receipt is reproduced by the A1
   parity row: 439 vs 438 of 470, 469 of 470 rows agree per question, any-hit
   identical), k=5, embedder `openai:text-embedding-3-large` at 1536 dims
@@ -512,9 +512,9 @@ What the arms say:
 - **`tokenmax` as released scores 436/470 (92.77%).** With the reranker on
   and autocut off, expansion costs thirteen questions against `balanced`
   (+2 / −15: multi-session −7, temporal −5) plus the Haiku call per query.
-  `gbrain config set search.mode balanced` keeps the reranker and drops
-  expansion (`gbrain query` no longer expands under `balanced` unless `--expand`);
-  `gbrain config set search.expansion_variant_budget 0.25`
+  `foresights config set search.mode balanced` keeps the reranker and drops
+  expansion (`foresights query` no longer expands under `balanced` unless `--expand`);
+  `foresights config set search.expansion_variant_budget 0.25`
   recovers most of the loss if you keep it on.
 - **Slot starvation is not the miss class** (from the 2026-09-02 sibling run;
   no in-repo arm yet): session-diverse over-fetch fills every top-5 to 5.00
@@ -531,12 +531,12 @@ our own recomputations from MemPalace's committed rankings (85.7% raw,
 gold labels, so loosely comparable). The 90-96% figures from Mem0, Mastra,
 MemCog, Zep, Hindsight, ByteRover and Supermemory are LLM-judged answer
 accuracy, a different quantity that moves with the reader and judge model.
-gbrain's own judged answer-accuracy lane (`--judge`, "Judged answer accuracy"
+foresights's own judged answer-accuracy lane (`--judge`, "Judged answer accuracy"
 below) uses the official prompts and judge model with full protocol
 disclosure. Its current number is **468/500 (93.6%)** with a Sonnet 5.5
-benchmark notes reader on the release retrieval at gbrain `c5fb0201`
+benchmark notes reader on the release retrieval at foresights `c5fb0201`
 (v0.60.95.0, official gpt-4o judge), and Opus 5.5 answers 474/500 on the
-frozen 2026-09-29 retrieval (`a7cb37b`). Both use gbrain's benchmark reader,
+frozen 2026-09-29 retrieval (`a7cb37b`). Both use foresights's benchmark reader,
 not production `think`. The lane's first number, 86.6% (433/500, v0.48.4.0),
 is invalid: its reader saw `answer_` session ids that mark the evidence (432/500
 with the leak removed). No SOTA claim either way, because other systems'
@@ -571,7 +571,7 @@ export GBRAIN_EMBEDDING_DIMENSIONS=1536
 # schema-v2 summary: strict recall_all@5 per type + aggregate, any-hit as the
 # diagnostic, the 30 _abs questions excluded from the denominator, and run_config
 # (pins, embedder, dataset sha256, knobs hash, embed-cache receipt).
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+foresights eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --retrieval-only --top-k 5 --by-type --no-trajectory \
   --mode balanced --reranker off --autocut off \
   --output ~/lme-receipts/hybrid.ndjson
@@ -585,7 +585,7 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
 # already holds un-reranked rows exits 1; pass --reranker off for a reranker-free run. A run
 # where every question errored also exits 1. Note the 95.53% row above was
 # reranker on with autocut OFF (`--reranker on --autocut off`).
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+foresights eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --retrieval-only --top-k 5 --by-type --no-trajectory \
   --mode balanced --reranker on --autocut off \
   --output ~/lme-receipts/default.ndjson
@@ -593,7 +593,7 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
 # Through the real operation instead of the core library: --via-operation query|search
 # runs each question as an agent's stdio MCP call would (remote, stdio, source
 # `default`), at the operation's own default limit and under the brain's resolved
-# search mode, so a receipt reproduces from a tagged gbrain. `query` expands by the
+# search mode, so a receipt reproduces from a tagged foresights. `query` expands by the
 # mode (off by default in all three modes) unless --op-expand on|off says otherwise. Each row's
 # `via_operation` records the context, the `expand` sent, model calls per
 # touchpoint, latency, the CRAG grade and the expansion outcome;
@@ -603,7 +603,7 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
 # --capture-pool are refused with it. The operation applies the remote page cap
 # (search.remote_page_cap, default 3), so recall past 3 pages is not comparable with
 # receipts from before it; set the cap to 0 to measure the uncapped list.
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+foresights eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --retrieval-only --top-k 5 --by-type --no-trajectory \
   --mode balanced --reranker on --via-operation query --op-expand off \
   --output ~/lme-receipts/query-balanced-noexpand.ndjson
@@ -619,14 +619,14 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
 # each question from the retrieved sessions (a chat key for the reader model) and
 # the in-repo judge grades every answer with LongMemEval's official evaluate_qa.py
 # prompts (OPENAI_API_KEY for the gpt-4o judge). --max-usd caps JUDGE spend only.
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+foresights eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --top-k 5 --no-trajectory --mode balanced --reranker on \
   --judge --judge-model openai:gpt-4o --max-usd 5 --yes \
   --output ~/lme-receipts/judged.ndjson
 
 # Re-judge until judge_errors and skipped_budget are both 0: a judge-only backfill
 # (no reader calls) under the same retrieval pins; FILE is rewritten in place.
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+foresights eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --top-k 5 --no-trajectory --mode balanced --reranker on \
   --judge --resume-from ~/lme-receipts/judged.ndjson --output ~/lme-receipts/judged.ndjson
 
@@ -646,7 +646,7 @@ the K largest sessions of each haystack); caches and retries are not subtracted.
 Lanes it cannot bound (`--decide*`, `--via-operation`) refuse.
 
 ```bash
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+foresights eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --mode tokenmax --judge --call-plan ~/lme-receipts/tokenmax-judge.calls
 ```
 
@@ -681,7 +681,7 @@ verdict is unaffected. Gold and hypothesis sit inside a data-boundary wrapper
 (disclosed deviation). Every row carries the provider-reported reader and
 judge snapshot ids and the reader prompt sha.
 
-**Current result (2026-10-06, gbrain `c5fb0201` / v0.60.95.0, measured in gbrain-evals):**
+**Current result (2026-10-06, foresights `c5fb0201` / v0.60.95.0, measured in gbrain-evals):**
 468/500 (93.6%, exact 95% interval 91.1–95.6%) under the official judge with a
 `claude-sonnet-5-5` benchmark notes reader (3,500 output tokens, low effort),
 opaque session ids, release retrieval. Opus 5.5 on the frozen 2026-09-29
@@ -694,7 +694,7 @@ retrieval: 474/500; GPT-6.1 Sol: 464/500. Benchmark reader, not production
 The reader saw `answer_` session ids that mark the evidence; with opaque ids
 the same configuration scores 432/500
 ([correction](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-29-longmemeval-opaque-qa.md)).
-Do not cite this table as gbrain's answer accuracy:
+Do not cite this table as foresights's answer accuracy:
 
 | Slice | Correct | Accuracy |
 |---|---|---|
@@ -724,12 +724,12 @@ The second lane. Instead of asking whether the gold sessions were retrieved,
 it asks whether the READER's answer was right: the reader answers each
 question from the retrieved sessions, and an LLM judge grades that answer
 against the dataset's gold with LongMemEval's own scorer prompts. The lane is
-the in-repo `gbrain eval longmemeval --judge`, so the retrieval pins, the
+the in-repo `foresights eval longmemeval --judge`, so the retrieval pins, the
 reader pins and the judge pins all land on one receipt.
 
 **Say to your agent:** *"Score my brain's answer accuracy on LongMemEval"*
 (no skill backs this; your agent runs
-`gbrain eval longmemeval <file> --judge --no-trajectory`).
+`foresights eval longmemeval <file> --judge --no-trajectory`).
 
 **Protocol — what every receipt discloses.**
 
@@ -797,7 +797,7 @@ reader pins and the judge pins all land on one receipt.
   judge nondeterminism, dataset revision or prompt drift.
 - **No SOTA claim.** The 90-96% judged-accuracy figures other systems publish
   differ in context construction, reader prompt, judge, aggregation and
-  dataset revision, so they are protocol-unmatched. gbrain's number is
+  dataset revision, so they are protocol-unmatched. foresights's number is
   published as its first judged result with the disclosure line above and a
   "not directly comparable" label; the only path to a comparative claim is a
   protocol-matched replication of one competitor's setup.
@@ -903,12 +903,12 @@ Unknown flags exit 1 before any work starts.
 | `--expansion-replay FILE` | off | Serve the `expansion_variants` recorded in FILE (a prior `--expansion` run) instead of calling the LLM, so cells differ only in their knobs; implies `--expansion`. A question missing from FILE is an `expansion_replay_miss` error row and the run exits 1 |
 | `--expansion-variant-budget B` | not pinned | Pin `search.expansion_variant_budget`: `legacy` (every RRF list weight 1) or a number in (0, 4] — the total RRF weight shared by the expansion variant lists (the original list always keeps weight 1) |
 | `--top-k K` | 8 | Retrieve K chunk rows per question; `recall_*@k` is scored over the distinct sessions among those K rows (the published rows use `--top-k 5`) |
-| `--reader-mode direct\|notes` | notes | Notes-first evidence extraction and reasoning followed by a concise answer; `direct` preserves the original v3 reader prompt and 512-token output cap. This is an eval-reader default, not a `gbrain think` change |
+| `--reader-mode direct\|notes` | notes | Notes-first evidence extraction and reasoning followed by a concise answer; `direct` preserves the original v3 reader prompt and 512-token output cap. This is an eval-reader default, not a `foresights think` change |
 | `--reader-max-tokens N` | 1024 for notes; 512 for direct | Positive integer reader output cap; notes with 512 reproduces the measured treatment's original budget, including cutoff risk. `max_tokens` completions fail rather than scoring partial text |
 | `--mode M` | `balanced` (or an injected config snapshot) | Search mode `conservative` / `balanced` / `tokenmax`, resolved through `src/core/search/mode.ts` so retrieval matches production under that mode. No mode implies `--expansion` |
 | `--reranker on\|off` | not pinned (bundle decides) | Pin `search.reranker.enabled` for the run (beats any injected snapshot and any `--search-pin` on the key). The reranker gate keys on the RESOLVED pin — flag, `--search-pin`, snapshot or bundle: whenever the run resolves to reranker on, readiness is preflighted (exit 2 with the fix if it cannot run) and the run exits non-zero if any row fell through un-reranked (`reranker_skipped_rows`). A `balanced`/`tokenmax` run with no `VOYAGE_API_KEY` therefore refuses to start (exit 2 with the fix text; a resume holding un-reranked rows exits 1) — pass `--reranker off` or set the key. A run in which every question errored also exits 1 |
 | `--autocut on\|off` | not pinned (bundle decides) | Pin `search.autocut` for the run (beats any injected snapshot) |
-| `--search-pin KEY=VALUE` | none | Pin any `search.*` config key for the run (repeatable, e.g. `--search-pin search.metadata_boost_gate=always`). The raw pin map folds into `retrieval_config_hash` (so a resumed file cannot mix pin sets); the knobs hash covers only the mode knobs the pins resolve into. Explicit flags (`--mode`, `--reranker`, `--autocut`, `--expansion-variant-budget`) win over a `--search-pin` on the same key. Unknown keys are set verbatim — check `gbrain search modes` to confirm a key exists |
+| `--search-pin KEY=VALUE` | none | Pin any `search.*` config key for the run (repeatable, e.g. `--search-pin search.metadata_boost_gate=always`). The raw pin map folds into `retrieval_config_hash` (so a resumed file cannot mix pin sets); the knobs hash covers only the mode knobs the pins resolve into. Explicit flags (`--mode`, `--reranker`, `--autocut`, `--expansion-variant-budget`) win over a `--search-pin` on the same key. Unknown keys are set verbatim — check `foresights search modes` to confirm a key exists |
 | `--output FILE` | stdout | Write JSONL to FILE |
 | `--resume-from FILE` | off | Skip `question_id`s already present in FILE (usually the `--output` path, which then appends). Prior rows are re-scored from their `retrieved[]` + the dataset gold; different reader mode, model, prompt or token budget is always refused. Use `--reader-mode direct` for historical direct receipts |
 | `--allow-mixed-run-config` | off | Resume even when FILE rows carry a different `retrieval_config_hash`; never overrides the reader configuration guard |
@@ -924,10 +924,10 @@ Unknown flags exit 1 before any work starts.
 | `--eval-pool-depth N` | off | Eval-only recall experiment: every retrieval arm fetches N candidates (N ≤ 300; production caps each arm at 100, unchanged) and `search.reranker.top_n_in` is pinned to N unless a `--search-pin` sets it. Folds into `retrieval_config_hash` and `run_config.eval_pool_depth` |
 | `--decide SLOT=MODE` | all off | System One arm (repeatable; `off`, `on`, `shadow`). See "System One arms" below |
 | `--decide-provider ID` | `typesafe:jev-1.13.0` | Decide provider written into the benchmark brain |
-| `--decide-calibration FILE\|ref:ID` | none | Calibration row(s) for `on` slots: `gbrain decide calibrate --slot X --json` or `decide calibrations list --json` output (object, array or JSONL), or a reference id; inserted and adopted in each benchmark brain |
+| `--decide-calibration FILE\|ref:ID` | none | Calibration row(s) for `on` slots: `foresights decide calibrate --slot X --json` or `decide calibrations list --json` output (object, array or JSONL), or a reference id; inserted and adopted in each benchmark brain |
 | `--decide-threshold SLOT=X` | none | Operator threshold override (the action-precision gate still applies) |
 | `--decide-force-on SLOT` | off | Bypass the action-precision gate for SLOT (loud stderr WARN, recorded in `run_config.decide.force_on`) |
-| `--decide-dataset JSONL` | none | The frozen labelled dataset (`gbrain decide dataset`): the run keeps only question ids in its eval half, and refuses (exit 1, `split_mismatch`) a calibration whose `split_hash` differs or whose `calibrate_only` is false |
+| `--decide-dataset JSONL` | none | The frozen labelled dataset (`foresights decide dataset`): the run keeps only question ids in its eval half, and refuses (exit 1, `split_mismatch`) a calibration whose `split_hash` differs or whose `calibrate_only` is false |
 | `--record` | off | Append an `EvalRunRecord` (suite `longmemeval`, params = `run_config`, error text secret-redacted) to `.gbrain-evals/eval-results.jsonl` |
 | `--judge` | off | LLM-judge each reader answer against the gold with the official LongMemEval `evaluate_qa.py` prompts (temperature 0, max_tokens 16 — the official 10 is below the OpenAI API minimum; a one-token verdict is unaffected). Implies `--by-type` (the summary gains `qa_accuracy`, whose headline scores judge errors as incorrect); incompatible with `--retrieval-only`. With `--resume-from FILE`: judge-only backfill of rows lacking a settled verdict (no reader call; `judge_error` rows are re-judged), then `qa_accuracy` is rebuilt from ALL rows and FILE is rewritten with the judged rows |
 | `--judge-model M` | `openai:gpt-4o` | Judge model (the official scorer's model); a bare id is read as an `openai` model |
@@ -955,7 +955,7 @@ frozen development split only.
 | Flag | Default | Purpose |
 |---|---|---|
 | `--fact-keys chunk\|page` | off | Merge each session's extracted facts into its chunks' embedding input and re-embed (chunk = each fact on its best-matching chunk; page = all facts on every chunk). Retrieval still returns raw sessions; rows carry `fact_keys` |
-| `--fact-extractor paper\|production` | paper | `paper` = the benchmark's published user-turn fact prompt; `production` = gbrain's facts extractor as shipped (8,000-character input) |
+| `--fact-extractor paper\|production` | paper | `paper` = the benchmark's published user-turn fact prompt; `production` = foresights's facts extractor as shipped (8,000-character input) |
 | `--fact-keys-model M` | utility tier (haiku); production extractor: `facts.extraction_model` | Extraction model |
 | `--fact-keys-max-usd N` | 20 | Cap on uncached extraction spend; extractions are cached by content hash under `~/.cache/gbrain-eval/fact-keys-*.jsonl` |
 | `--time-scope reserved\|partition` | off | Re-order a widened pool by the question's explicit time range (resolved against `question_date`) using each session's date and the dates it mentions. `reserved` keeps the top half of k in place; `partition` moves every in-range session first |
@@ -988,27 +988,27 @@ Kill gates, sealed bars and budgets are fixed in
 
 ### System One arms (`--decide`)
 
-`gbrain eval longmemeval`, `gbrain eval brainbench` and `gbrain eval
+`foresights eval longmemeval`, `foresights eval brainbench` and `foresights eval
 retrieval-quality` accept the same flags, so matched runs differ only in the
 slot under test:
 
 ```bash
 # Baseline and S3 arm (same commit, data and pins; both --no-trajectory, see below)
-gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --reranker off --by-type --output base.jsonl
-gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --reranker off --by-type --output s3.jsonl \
+foresights eval longmemeval data.jsonl --retrieval-only --no-trajectory --reranker off --by-type --output base.jsonl
+foresights eval longmemeval data.jsonl --retrieval-only --no-trajectory --reranker off --by-type --output s3.jsonl \
   --decide evidence=on --decide-calibration evidence-cal.json --decide-dataset evidence.jsonl
 
 # S1: --decide rerank=on also pins search.reranker.model typesafe:jev-1.13.0 and enables the reranker
-gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --decide rerank=on --by-type --output s1.jsonl
+foresights eval longmemeval data.jsonl --retrieval-only --no-trajectory --decide rerank=on --by-type --output s1.jsonl
 
 # Recall experiment: a fused pool of 300, reranked with top_n_in 300, with pool_recall per row
-gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --decide rerank=on --eval-pool-depth 300 --capture-pool --output deep.jsonl
+foresights eval longmemeval data.jsonl --retrieval-only --no-trajectory --decide rerank=on --eval-pool-depth 300 --capture-pool --output deep.jsonl
 
 # S4: the harness reader abstains when the S4 verdict is abstain (scored by --judge on the _abs questions)
-gbrain eval longmemeval data.jsonl --no-trajectory --judge --decide answerable=on --decide-calibration answerable-cal.json
+foresights eval longmemeval data.jsonl --no-trajectory --judge --decide answerable=on --decide-calibration answerable-cal.json
 
-gbrain eval brainbench --suite know-to-ask --decide recall_needed=on --decide-calibration s6-cal.json --out bb.json
-gbrain eval retrieval-quality fixture.jsonl --json --decide evidence=on
+foresights eval brainbench --suite know-to-ask --decide recall_needed=on --decide-calibration s6-cal.json --out bb.json
+foresights eval retrieval-quality fixture.jsonl --json --decide evidence=on
 ```
 
 - The flags merge over an inherited `GBRAIN_DECIDE_SLOTS` (flags win), set it
@@ -1040,7 +1040,7 @@ gbrain eval retrieval-quality fixture.jsonl --json --decide evidence=on
   `recall_needed` at the claude-code turn-context seam) and a result-level
   `decide` block, and refuses `--update-baseline`; retrieval-quality `--json`
   adds `decide` with per-query receipts.
-- Judge agreement (eval-only, no brain needed): `gbrain decide
+- Judge agreement (eval-only, no brain needed): `foresights decide
   judge-agreement --suite longmemeval --input judged.jsonl` (a `--judge`
   output) or `--suite grounding --input grounding-labels.jsonl` asks Jev one
   question per item and reports n, raw agreement, Cohen's kappa with a 95%
@@ -1057,7 +1057,7 @@ LLM latency.
 
 ## Measuring brain consistency over time
 
-`gbrain eval suspected-contradictions` is a complementary measurement
+`foresights eval suspected-contradictions` is a complementary measurement
 instrument: it samples retrieval results for unmarked semantic
 contradictions (e.g., compiled_truth vs chat content, intra-page chunk
 vs active take). Where LongMemEval measures retrieval correctness on a
@@ -1070,19 +1070,19 @@ The probe is not part of the dream cycle or autopilot (the cycle only reads
 the latest run), so schedule it yourself (cron, launchd or a systemd timer).
 It needs queries: either write your own list (`--queries-file`, JSONL or one
 query per line; nothing creates `~/.gbrain/queries.jsonl` for you), or turn
-on query capture (`gbrain config set eval.capture true`; capture is off by
+on query capture (`foresights config set eval.capture true`; capture is off by
 default) and use `--from-capture` once real queries have been recorded.
 
 ```bash
 # Once a day, against queries you maintain:
-gbrain eval suspected-contradictions \
+foresights eval suspected-contradictions \
   --queries-file ~/.gbrain/queries.jsonl \
   --top-k 5 \
   --budget-usd 5 \
   --output ~/.gbrain/probe-runs/$(date +%Y-%m-%d).json
 
 # Or, with eval.capture on, against captured queries:
-gbrain eval suspected-contradictions --from-capture --top-k 5 --budget-usd 5 \
+foresights eval suspected-contradictions --from-capture --top-k 5 --budget-usd 5 \
   --output ~/.gbrain/probe-runs/$(date +%Y-%m-%d).json
 ```
 
@@ -1090,11 +1090,11 @@ Persistent cache (`eval_contradictions_cache`) makes re-runs near-zero
 cost until you bump `PROMPT_VERSION`. Trend-track via:
 
 ```bash
-gbrain eval suspected-contradictions trend --days 30
+foresights eval suspected-contradictions trend --days 30
 ```
 
 The ASCII bar chart shows total flagged per day. Headline % surfaces in
-`gbrain doctor`'s `contradictions` check with paste-ready resolution
+`foresights doctor`'s `contradictions` check with paste-ready resolution
 commands per high-severity finding.
 
 ### See also
@@ -1106,13 +1106,13 @@ commands per high-severity finding.
 
 Three further eval surfaces, and the dev loop that uses them.
 
-### `gbrain eval longmemeval --by-type` — per-question-type `recall_all@k` / `recall_any@k` breakdown
+### `foresights eval longmemeval --by-type` — per-question-type `recall_all@k` / `recall_any@k` breakdown
 
 LongMemEval computes per-question-type recall internally, and surfaces it in
 machine-readable form:
 
 1. Every per-question JSONL row includes `question: string` (so the
-   `gbrain eval cross-modal --batch` consumer below can read it without joining
+   `foresights eval cross-modal --batch` consumer below can read it without joining
    back against the dataset), `question_type`, `abstention`, `recall_all_hit`
    (every gold session among the top-k distinct sessions), `recall_any_hit`
    (at least one), `recall_hit` — a DEPRECATED alias of `recall_any_hit` kept
@@ -1173,12 +1173,12 @@ Default: informational only.
 
 ```bash
 # Diagnose per-type ranking quality after a search-touching change.
-gbrain eval longmemeval ~/datasets/longmemeval_s.jsonl \
+foresights eval longmemeval ~/datasets/longmemeval_s.jsonl \
   --by-type --output /tmp/run.jsonl
 tail -1 /tmp/run.jsonl | jq .   # summary line
 
 # Strict gate in a CI script.
-gbrain eval longmemeval test/fixtures/longmemeval-mini.jsonl \
+foresights eval longmemeval test/fixtures/longmemeval-mini.jsonl \
   --by-type --by-type-floor 0.80 --output /tmp/run.jsonl
 echo "exit=$?"  # 1 if any type fell below 0.80
 ```
@@ -1232,19 +1232,19 @@ GBRAIN_REPLAY_GATE_RECALL_FLOOR=0.90 \
 
 Use to tighten or loosen the gate as the qrels fixture matures.
 
-### `gbrain eval cross-modal --batch` — batch quality scoring
+### `foresights eval cross-modal --batch` — batch quality scoring
 
 Single-task cross-modal eval scores one (task, output) pair. Batch mode runs
 the same scoring over an entire LongMemEval JSONL output, with cost guardrails.
 
 ```bash
 # Step 1: produce LongMemEval hypotheses (real cost: depends on model + N).
-gbrain eval longmemeval ~/datasets/longmemeval_s.jsonl \
+foresights eval longmemeval ~/datasets/longmemeval_s.jsonl \
   --limit 10 --output /tmp/run.jsonl
 
 # Step 2: batch-score those hypotheses (real cost: ~$0.70 for 10 questions,
 # 1 cycle, 3 model slots at default --max-usd 5 budget cap).
-gbrain eval cross-modal --batch /tmp/run.jsonl \
+foresights eval cross-modal --batch /tmp/run.jsonl \
   --limit 10 --cycles 1 --concurrent 3 --max-usd 5 --json
 echo "exit=$?"  # 0=all-pass, 1=any-fail, 2=any-error-or-inconclusive
 ```
@@ -1281,7 +1281,7 @@ echo "exit=$?"  # 0=all-pass, 1=any-fail, 2=any-error-or-inconclusive
 API spend. Enable per-host:
 
 ```bash
-gbrain config set autopilot.nightly_quality_probe.enabled true
+foresights config set autopilot.nightly_quality_probe.enabled true
 ```
 
 The autopilot scheduler invokes the probe on its tick cadence when the
@@ -1301,10 +1301,10 @@ benchmark brain, with your search mode, reranker and model routes, and has
 three judges grade the answers. It uses the direct reader (`--reader-mode
 direct`, the original terse prompt and 512-token budget), because the judges
 grade directness and the default notes reader's notes and reasoning would be
-graded as the answer (#6627). Standalone `gbrain eval longmemeval` runs keep
+graded as the answer (#6627). Standalone `foresights eval longmemeval` runs keep
 the notes default. A PASS says the retrieval-plus-answer
 pipeline and the judges work end to end tonight; it says nothing about the
-pages in your own brain. The fixture is embedded in the gbrain binary, so
+pages in your own brain. The fixture is embedded in the foresights binary, so
 source checkouts and compiled installs run the same probe.
 
 #### Model routes
@@ -1313,7 +1313,7 @@ The probe runs inside the autopilot daemon, which holds your brain. Right
 before each run it refreshes the daemon's AI gateway from the brain (the way
 queued jobs do), resolves every model against the brain, and passes the
 result to the two eval commands, which open no brain of their own.
-`gbrain models` prints the same routes under "Nightly quality probe", each
+`foresights models` prints the same routes under "Nightly quality probe", each
 with its source. It judges provider keys from the shell you run it in: a key
 that only `~/.gbrain/env` holds (the daemon's launcher sources that file)
 reads there as missing, so a slot default it serves shows as a substitute and
@@ -1321,9 +1321,9 @@ a key-aware default can differ from the daemon's.
 
 | Route | Resolution (first one set wins) | Reaches |
 |---|---|---|
-| Reader | `models.eval.longmemeval` → `models.tier.reasoning` → `models.default` → `GBRAIN_MODEL` → key-aware reasoning default | `gbrain eval longmemeval --model` |
+| Reader | `models.eval.longmemeval` → `models.tier.reasoning` → `models.default` → `GBRAIN_MODEL` → key-aware reasoning default | `foresights eval longmemeval --model` |
 | Trajectory extractor | `models.tier.utility` → `models.default` → `GBRAIN_MODEL` → key-aware utility default | the claim extractor; the rows' `methodology_note` names it |
-| Judge slot A / B / C | `models.eval.cross_modal.slot_a` / `slot_b` / `slot_c` (aliases expand), else the panel default `openai:gpt-5.2` / `anthropic:claude-opus-4-7` / `deepseek:deepseek-v4-pro` | `gbrain eval cross-modal --slot-<x>-model` |
+| Judge slot A / B / C | `models.eval.cross_modal.slot_a` / `slot_b` / `slot_c` (aliases expand), else the panel default `openai:gpt-5.2` / `anthropic:claude-opus-4-7` / `deepseek:deepseek-v4-pro` | `foresights eval cross-modal --slot-<x>-model` |
 
 A slot key always wins, even when its provider has no key here (that slot
 then errors at call time). An unset slot whose default provider has no key on
@@ -1337,17 +1337,17 @@ grade their own answers.
 
 **No metered chat calls on a subscription-only brain.** Route the reader and
 the extractor through tiers on `claude-cli`, and set the three slot keys to
-three *different* models, none of them the reader (`gbrain models` shows it),
+three *different* models, none of them the reader (`foresights models` shows it),
 so no judge grades its own answers. One provider is enough, for example three
 claude-cli models from different families:
 
 ```bash
-gbrain config set models.tier.reasoning claude-cli:claude-opus-5-5
-gbrain config set models.tier.utility claude-cli:claude-sonnet-5
-gbrain config set models.eval.cross_modal.slot_a claude-cli:claude-fable-5-1
-gbrain config set models.eval.cross_modal.slot_b claude-cli:claude-sonnet-5-5
-gbrain config set models.eval.cross_modal.slot_c claude-cli:claude-haiku-4-5-20251001
-gbrain models   # the "Nightly quality probe" block shows every route and its source
+foresights config set models.tier.reasoning claude-cli:claude-opus-5-5
+foresights config set models.tier.utility claude-cli:claude-sonnet-5
+foresights config set models.eval.cross_modal.slot_a claude-cli:claude-fable-5-1
+foresights config set models.eval.cross_modal.slot_b claude-cli:claude-sonnet-5-5
+foresights config set models.eval.cross_modal.slot_c claude-cli:claude-haiku-4-5-20251001
+foresights models   # the "Nightly quality probe" block shows every route and its source
 ```
 
 Query embeddings still go to your embedding provider.
@@ -1355,8 +1355,8 @@ Query embeddings still go to your embedding provider.
 **Say to your agent:** *"Make the nightly quality probe judge with three
 different Claude subscription models, none of them the model that answers the
 questions, so it stops spending on API keys."* (the
-agent runs `gbrain config set models.eval.cross_modal.slot_<a|b|c> <model>`
-and checks the result with `gbrain models`).
+agent runs `foresights config set models.eval.cross_modal.slot_<a|b|c> <model>`
+and checks the result with `foresights models`).
 
 Observability:
 - `~/.gbrain/audit/quality-probe-YYYY-Www.jsonl` — one event per run with
@@ -1366,7 +1366,7 @@ Observability:
   audit). The row also carries the evidence behind its verdict, in the
   optional fields below (rows written by older releases lack them and
   still read).
-- `gbrain doctor` surfaces `nightly_quality_probe_health`:
+- `foresights doctor` surfaces `nightly_quality_probe_health`:
   - SKIPPED (disabled) — with paste-ready enable command.
   - OK (enabled, no events yet) — autopilot hasn't fired its first run.
   - OK (last 7d all PASS) — with timestamp of latest run.
@@ -1389,7 +1389,7 @@ Observability:
   models judged, the run is `inconclusive` with `reason: panel_collapsed`,
   whatever the batch's verdict was: one model voting twice is not a cross
   check. The `detail` names the model and slots, keeps the batch verdict,
-  and gives the next step (`gbrain config set
+  and gives the next step (`foresights config set
   models.eval.cross_modal.slot_a <model>`, and `slot_b`, `slot_c`).
 - **Receipts.** A run that did not pass keeps its batch summary and
   LongMemEval output under `~/.gbrain/audit/nightly-probe/<timestamp>/`
@@ -1411,7 +1411,7 @@ Observability:
 
 **Say to your agent:** *"Why did last night's quality probe fail?"* (the
 agent reads the `detail` and `failures` of the latest
-`quality-probe-*.jsonl` row and runs `gbrain doctor`).
+`quality-probe-*.jsonl` row and runs `foresights doctor`).
 
 Cost: two numbers that cover different calls, so neither bounds the other.
 - `est_cost_usd` is the batch's pre-flight estimate for its judge calls
@@ -1439,7 +1439,7 @@ paid call (no judging when LongMemEval used it up), and records
 spend-control rule: under the default cap a model with no price on file
 warns and runs (counted in `unpriced_chat_calls`); once you set `max_usd`
 yourself, an unpriced model is refused with the `no_pricing` guidance, which
-names the `gbrain pricing set` command that registers its rate (or add it to
+names the `foresights pricing set` command that registers its rate (or add it to
 `pricing.overrides`). A typical run on priced API models costs well under a
 dollar of metered chat (`chat_cost_usd`), plus query embeddings.
 
@@ -1455,7 +1455,7 @@ by any test runner; run them when touching the code they measure.
 current extraction contract: meeting attendance from the meeting's
 frontmatter `attendees:` (edges person -> meeting, type `attended`), founders
 from the person's frontmatter `founded:`, and employment, advising and
-investment from prose links. After `gbrain extract links --source db
+investment from prose links. After `foresights extract links --source db
 --include-frontmatter` and `extract timeline`, it scores link recall and
 precision, type accuracy, timeline recall and precision, typed and relational
 traversal, idempotent re-extraction, multi-hop traversal, a top-N aggregate,

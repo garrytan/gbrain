@@ -98,9 +98,9 @@ export async function protectNewBackupPath(path: string, kind: 'directory' | 'fi
   } catch {
     // A protection launch killed at its 15 s bound says nothing about this destination's permissions: Windows
     // PowerShell did not start in time (a cold runner's first starts measured 30 s and more, after the warm-up).
-    if (timedOut) throw new AgentInstallError('private_backup_protection_timeout', "Windows PowerShell did not start within 15 seconds, so GBrain could not establish owner-only access (plus SYSTEM) on this new path. No payload was written to it. This is usually a slow first start of PowerShell on this machine; run the backup again. Existing files and parent permissions were not changed.");
+    if (timedOut) throw new AgentInstallError('private_backup_protection_timeout', "Windows PowerShell did not start within 15 seconds, so Foresights could not establish owner-only access (plus SYSTEM) on this new path. No payload was written to it. This is usually a slow first start of PowerShell on this machine; run the backup again. Existing files and parent permissions were not changed.");
     // #5312 B(i): the text names what was observed (protection attempted and verified by the script above, and it
     // did not hold here), not a categorical rule about drive roots; the user profile is the destination that works.
-    throw new AgentInstallError('private_backup_path_unavailable', "This destination's permissions prevented GBrain from establishing owner-only access (plus SYSTEM); use a new path inside your user profile. No payload was written to this new path. The destination must be on a local filesystem with Windows ACL support, with built-in Windows PowerShell available and permitted. Existing files and parent permissions were not changed.");
+    throw new AgentInstallError('private_backup_path_unavailable', "This destination's permissions prevented Foresights from establishing owner-only access (plus SYSTEM); use a new path inside your user profile. No payload was written to this new path. The destination must be on a local filesystem with Windows ACL support, with built-in Windows PowerShell available and permitted. Existing files and parent permissions were not changed.");
   }
 }

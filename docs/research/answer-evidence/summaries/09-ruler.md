@@ -19,7 +19,7 @@ using evidence amid distractors or aggregating multiple facts.
 RULER’s inputs are synthetic, not conversational; its threshold is a chosen proxy and
 cannot establish user-facing quality. It does not contradict the possibility that
 retrieved evidence helps; it warns that success on simple retrieval can overstate robust
-evidence use. GBrain should measure both answer accuracy and evidence-grounded behavior
+evidence use. Foresights should measure both answer accuracy and evidence-grounded behavior
 under realistic conversational distractors, while treating needle-style checks as only
 one test tier.
 

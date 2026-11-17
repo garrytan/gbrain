@@ -15,7 +15,7 @@
  * whose checkpoint no source loads, are excluded from the 7-day checkpoint
  * purge, so every cycle since the stamp was added left one behind. Cleanup
  * keeps rows touched after it started and rows referenced by a non-terminal
- * request or a recorded pending set. `gbrain repair connector-checkpoints` and
+ * request or a recorded pending set. `foresights repair connector-checkpoints` and
  * the doctor count reuse the same predicate with a 7-day age floor, because an
  * older binary may still be using an old key during a mixed-version window.
  */
@@ -163,7 +163,7 @@ export async function migrateConnectorCheckpoints(engine: Sql, log: (line: strin
     if (recovery.upgrade_recovery === 'resumed') {
       report.rekeyed.push({ source_id: source.id, resumed_from: recovery.resumed_from! });
       log(`  ${source.id}: resumed from pre-upgrade checkpoint of ${recovery.resumed_from}`);
-      log(`    content selection since then is unverified; to re-walk: gbrain sync --source ${source.id} --reset-checkpoint`);
+      log(`    content selection since then is unverified; to re-walk: foresights sync --source ${source.id} --reset-checkpoint`);
     } else report.rewalking.push(source.id);
   }
   report.removed = await deleteOrphanConnectorCheckpoints(engine, await orphanConnectorCheckpoints(engine, { before: start }), { before: start });

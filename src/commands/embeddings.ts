@@ -1,5 +1,5 @@
 /**
- * `gbrain embeddings enable`: turn on embeddings for a brain in place,
+ * `foresights embeddings enable`: turn on embeddings for a brain in place,
  * including a mounted brain (`--brain <id>`), where `init --force` cannot be
  * used because it would repoint the host config at the mount's datastore.
  *
@@ -8,12 +8,12 @@
  * from another model (clear next step, nothing changed), then writes the
  * host file-plane embedding model and dimensions and clears the keyless
  * marker. Pages, facts and keyword search are untouched; chunks and facts
- * without vectors stay queued for `gbrain embed --stale`.
+ * without vectors stay queued for `foresights embed --stale`.
  *
- * `gbrain embeddings prewarm`: load a Postgres brain's HNSW indexes into
+ * `foresights embeddings prewarm`: load a Postgres brain's HNSW indexes into
  * shared_buffers when they fit (core/vector-prewarm.ts). It lives here because
  * this is the command group for a brain's vector side that opens the selected
- * brain's own engine and that thin clients already refuse; `gbrain search`
+ * brain's own engine and that thin clients already refuse; `foresights search`
  * takes a free-text query, so `search prewarm` would be a search.
  */
 import { existsSync } from 'node:fs';
@@ -62,17 +62,17 @@ function parseEnableArgs(args: string[]): EnableOpts {
     const a = args[i];
     if (a === '--json') continue;
     if (a !== '--embedding-model' && a !== '--embedding-dimensions') {
-      throw opError('invalid_params', `Unknown option '${a}' for gbrain embeddings enable.`, 'Run `gbrain embeddings --help` for the accepted options.');
+      throw opError('invalid_params', `Unknown option '${a}' for foresights embeddings enable.`, 'Run `foresights embeddings --help` for the accepted options.');
     }
     const value = args[++i];
     if (!value || value.startsWith('-')) throw opError('invalid_params', `${a} requires a value.`, a === '--embedding-model'
-      ? 'Pass the model as provider:model right after --embedding-model; `gbrain providers list` shows the embedding models whose key is configured.'
+      ? 'Pass the model as provider:model right after --embedding-model; `foresights providers list` shows the embedding models whose key is configured.'
       : 'Pass the vector width as a positive integer, e.g. `--embedding-dimensions 1536`, or omit the flag to keep the brain\'s width.');
     if (a === '--embedding-model') model = value;
     else if (/^\d+$/.test(value) && Number(value) > 0) dims = Number(value);
     else throw opError('invalid_params', '--embedding-dimensions must be a positive integer.', 'Pass the width of the brain\'s vector column, or omit it to use that width.');
   }
-  if (!model) throw opError('invalid_params', '--embedding-model <provider:model> is required.', 'Run `gbrain providers list` to see embedding models whose key is configured.');
+  if (!model) throw opError('invalid_params', '--embedding-model <provider:model> is required.', 'Run `foresights providers list` to see embedding models whose key is configured.');
   return { model, dims, json: args.includes('--json') };
 }
 
@@ -80,7 +80,7 @@ function targetConfig(host: GBrainConfig, brainId: string): GBrainConfig {
   if (brainId === 'host') return host;
   const mount = loadMounts().find(m => m.id === brainId || m.alias === brainId);
   if (!mount || mount.enabled === false) {
-    throw opError('not_found', `Brain '${brainId}' is not an enabled mount.`, 'Run `gbrain mounts list` to see mounted brains.');
+    throw opError('not_found', `Brain '${brainId}' is not an enabled mount.`, 'Run `foresights mounts list` to see mounted brains.');
   }
   return { ...host, engine: mount.engine, database_path: mount.database_path, database_url: mount.database_url };
 }
@@ -96,7 +96,7 @@ async function assertSameIdentity(engine: BrainEngine, model: string): Promise<v
     const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL) AS present`);
     if (row?.present) {
       throw opError('embedding_model_mismatch', 'This brain already holds vectors from a different or unrecorded embedding model; enabling cannot change their identity.',
-        'Read `gbrain migrate embeddings --status --json`, then preview an explicit migration with --dry-run.',
+        'Read `foresights migrate embeddings --status --json`, then preview an explicit migration with --dry-run.',
         { fix: { argv: ['gbrain', 'migrate', 'embeddings', '--status', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'A model switch with existing vectors is a re-embed migration, previewed first.' } });
     }
   }
@@ -110,7 +110,7 @@ function resolveWidth(model: string, requested: number | undefined, column: numb
     ? { argv: ['gbrain', 'embeddings', 'enable', ...brainArgs(brainId), '--embedding-model', model, '--embedding-dimensions', String(column)],
       consent: ['credentials', 'paid'], actor: 'agent', requires_exclusive: true, why: `Uses the brain's existing ${column}d width, which ${model} supports.` }
     : { argv: ['gbrain', 'migrate', 'embeddings', '--status', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
-      why: `Changing the vector width is a re-embed through \`gbrain migrate embeddings --to <provider:model> --dim <N> --dry-run\` (pages and facts are kept); read the status first.` };
+      why: `Changing the vector width is a re-embed through \`foresights migrate embeddings --to <provider:model> --dim <N> --dry-run\` (pages and facts are kept); read the status first.` };
   throw opError('embedding_width_mismatch',
     column !== null
       ? `This brain's vector column is ${column}d; ${model}${requested !== undefined ? ` at ${requested}d` : ''} cannot fill it.${check.ok ? '' : ` ${check.error}`}`
@@ -121,7 +121,7 @@ function resolveWidth(model: string, requested: number | undefined, column: numb
 
 async function enable(opts: EnableOpts): Promise<Record<string, unknown>> {
   const host = loadConfigFileOnly();
-  if (!host) throw opError('config_error', 'No gbrain config file found.', 'Run `gbrain init` first.');
+  if (!host) throw opError('config_error', 'No foresights config file found.', 'Run `foresights init` first.');
   if (host.remote_mcp) throw opError('config_error', 'This is a thin-client install; embeddings are configured on the remote brain host.', 'Run this command on the brain host.');
   const brainId = resolveBrainId(getCliOptions().brain);
   const target = targetConfig(host, brainId);
@@ -131,7 +131,7 @@ async function enable(opts: EnableOpts): Promise<Record<string, unknown>> {
       `Re-run with --embedding-model ${hostModel}.`);
   }
   if (target.engine === 'pglite' && (!target.database_path || !existsSync(target.database_path))) {
-    throw opError('not_found', `No PGLite brain exists at the selected datastore${target.database_path ? ` (${target.database_path})` : ''}.`, 'Run `gbrain init` (or check `gbrain mounts list`).');
+    throw opError('not_found', `No PGLite brain exists at the selected datastore${target.database_path ? ` (${target.database_path})` : ''}.`, 'Run `foresights init` (or check `foresights mounts list`).');
   }
   const engine = await createEngine(toEngineConfig(target));
   await engine.connect(toEngineConfig(target));
@@ -159,9 +159,9 @@ async function enable(opts: EnableOpts): Promise<Record<string, unknown>> {
 
 async function writePrewarm(args: string[], json: boolean): Promise<void> {
   const unknown = args.find(a => a !== '--json' && a !== '--dry-run');
-  if (unknown) throw opError('invalid_params', `Unknown option '${unknown}' for gbrain embeddings prewarm.`, 'Run `gbrain embeddings --help` for the accepted options.');
+  if (unknown) throw opError('invalid_params', `Unknown option '${unknown}' for foresights embeddings prewarm.`, 'Run `foresights embeddings --help` for the accepted options.');
   const host = loadConfigFileOnly();
-  if (!host) throw opError('config_error', 'No gbrain config file found.', 'Run `gbrain init` first.');
+  if (!host) throw opError('config_error', 'No foresights config file found.', 'Run `foresights init` first.');
   if (host.remote_mcp) throw opError('config_error', 'This is a thin-client install; prewarm runs on the brain host.', 'Run this command on the brain host.');
   const target = targetConfig(host, resolveBrainId(getCliOptions().brain));
   if (target.engine !== 'postgres') throw vectorPrewarmUnsupported();
@@ -189,7 +189,7 @@ export async function runEmbeddings(args: string[]): Promise<void> {
   const json = args.includes('--json');
   try {
     if (sub === 'prewarm') return await writePrewarm(rest, json);
-    if (sub !== 'enable') throw opError('invalid_params', `Unknown embeddings subcommand '${sub}'.`, 'The subcommands are enable (`gbrain embeddings enable --embedding-model <provider:model>`) and prewarm.');
+    if (sub !== 'enable') throw opError('invalid_params', `Unknown embeddings subcommand '${sub}'.`, 'The subcommands are enable (`foresights embeddings enable --embedding-model <provider:model>`) and prewarm.');
     const result = await enable(parseEnableArgs(rest));
     const next = (result.next_command as string[]).join(' ');
     await writeStdoutFinal(json ? `${JSON.stringify(result, null, 2)}\n`

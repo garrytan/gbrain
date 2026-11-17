@@ -12,7 +12,7 @@
  * Rules:
  *   suggestionless-operation-error  new OperationError(code, msg) without a suggestion (use opError)
  *   throw-new-error-in-ops          `throw new Error` in src/core/ops/**, src/mcp/** or an op `handler:` body
- *   hand-built-command              a `fix` / `next_action` value written as a 'gbrain …' string (build argv; shellQuote renders)
+ *   hand-built-command              a `fix` / `next_action` value written as a 'foresights …' string (build argv; shellQuote renders)
  *   legacy-advice-key               a legacy advice key (next_action, fix_argv, hint, docs_url, …) outside the alias allowlist
  *   interactive-io                  raw stdin/readline/raw-mode reads outside interaction.ts / consent.ts and INTERACTIVE_IO_ALLOW (streams/TUI, with a reason)
  *   yes-rerun-string                a raw "re-run with --yes" string outside consent.ts
@@ -20,7 +20,7 @@
  *   marker-literal                  [AGENT] / [SHOW USER] / "ACTION FOR THE AGENT:" outside agent-output.ts / agent-markers.ts
  *   verify-not-read-only            a fix `verify.argv` naming a command not declared read_only
  *   flag-in-mcp-text                a bare `--flag` in MCP-visible error text or an op description (src/core/ops, src/mcp)
- *                                   outside a full `gbrain …` command; render per surface with paramUse()/invalidParam()
+ *                                   outside a full `foresights …` command; render per surface with paramUse()/invalidParam()
  *   in-scope-placeholder            a `<placeholder>` in a fix argv without declared `inputs`, or in an error suggestion
  *                                   (fill the value from scope; only genuinely unknown values are `inputs`;
  *                                   an op's `cliOnly.argv` template is exempt: cliOnlyRefusal declares its inputs)
@@ -94,7 +94,7 @@ const SUGGESTION_PARAM = /(?:suggestion|hint)$/i;
 const SUGGESTION_SINK = /^(opError|OperationError|usageError|invalidParam|hostOnlyError)$/;
 const SUGGESTION_ARG: Readonly<Record<string, number>> = { opError: 2, OperationError: 2, verbError: 2, usageError: 1 };
 const GENERIC_SUGGESTION: readonly RegExp[] = [
-  /^(?:please )?(?:see|check|read|consult|run|use)(?: with)?(?: the)? (?:gbrain(?: [a-z][a-z0-9-]*)* )?--help(?: (?:output|for usage|for details|for options))?$/,
+  /^(?:please )?(?:see|check|read|consult|run|use)(?: with)?(?: the)? (?:(?:foresights|gbrain)(?: [a-z][a-z0-9-]*)* )?--help(?: (?:output|for usage|for details|for options))?$/,
   /^(?:please )?(?:check|verify|fix|correct|review) (?:your|the) (?:input|arguments|parameters|params|request|options)$/,
   /^(?:please )?(?:try again|retry)(?: later)?$/,
   /^(?:please )?(?:see|check|read) (?:the )?(?:docs|documentation)$/,
@@ -413,7 +413,7 @@ export function scan(root: string = ROOT): Hit[] {
         for (const arg of texts) {
           const t = stringText(arg);
           if (t === undefined) continue;
-          if (isOpsOrMcp && FLAG_RE.test(t) && !t.includes('gbrain ')) add('flag-in-mcp-text', arg);
+          if (isOpsOrMcp && FLAG_RE.test(t) && !/\b(?:foresights|gbrain) /.test(t)) add('flag-in-mcp-text', arg);
         }
         const suggestion = n.expression.getText(sf) === 'hostOnlyError' ? undefined : stringText((n.arguments ?? [])[2] ?? n);
         if (suggestion !== undefined && (n.arguments ?? [])[2] && PLACEHOLDER_RE.test(suggestion)) add('in-scope-placeholder', n.arguments![2]!);
@@ -428,14 +428,14 @@ export function scan(root: string = ROOT): Hit[] {
       if (isOpsOrMcp && path.startsWith('src/core/ops/') && ts.isPropertyAssignment(n) && propName(n) === 'description'
         && ts.isObjectLiteralExpression(n.parent) && literalProp(n.parent, 'handler') !== undefined) {
         const t = flatText(n.initializer, sf);
-        if (t !== undefined && FLAG_RE.test(t) && !t.includes('gbrain ')) add('flag-in-mcp-text', n);
+        if (t !== undefined && FLAG_RE.test(t) && !/\b(?:foresights|gbrain) /.test(t)) add('flag-in-mcp-text', n);
       }
       if (ts.isThrowStatement(n) && n.expression && ts.isNewExpression(n.expression) && n.expression.expression.getText(sf) === 'Error'
         && (isOpsOrMcp || insideHandler(n))) add('throw-new-error-in-ops', n);
       if (ts.isPropertyAssignment(n)) {
         const name = propName(n);
         const value = stringText(n.initializer);
-        if ((name === 'fix' || name === 'next_action') && value !== undefined && /(^|`|\s)gbrain /.test(value)) add('hand-built-command', n);
+        if ((name === 'fix' || name === 'next_action') && value !== undefined && /(^|`|\s)(?:foresights|gbrain) /.test(value)) add('hand-built-command', n);
         if (name && LEGACY_ADVICE_KEYS.has(name)) add('legacy-advice-key', n);
         if (name === 'stdio' && value === 'inherit' && path !== 'src/core/cli-force-exit.ts') add('stdio-inherit', n);
         if (name === 'verify' && ts.isObjectLiteralExpression(n.initializer)) {

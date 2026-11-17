@@ -7,7 +7,7 @@
  * later run superseded) and keeps what the loop still owns (a live pending
  * request, a cursor the live writer can resume). Doctor's `sync_failures`
  * names the repair for the orphans instead of a retry that never clears.
- * `gbrain repair managed-sync-orphans` is explicit-only and preview-bound and
+ * `foresights repair managed-sync-orphans` is explicit-only and preview-bound and
  * retires exactly the previewed set, atomically, leaving the kept rows alone.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -87,9 +87,9 @@ test('orphans are classified by what nothing current can do, doctor names the re
   expect(check.status).not.toBe('ok');
   expect(check.message).toContain('3 of these');
   expect(check.message).toContain('cannot be resumed or cleared by any sync');
-  expect(check.message).toContain(`gbrain repair managed-sync-orphans --source ${SOURCE}`);
+  expect(check.message).toContain(`foresights repair managed-sync-orphans --source ${SOURCE}`);
   expect(check.message).toContain('ck-legacy'.slice(0, 12) + ' principal_unadoptable');
-  expect(check.message).toContain(`Fix the cause, then run gbrain sync --source ${SOURCE} --no-pull`);
+  expect(check.message).toContain(`Fix the cause, then run foresights sync --source ${SOURCE} --no-pull`);
   expect(check.message).not.toContain('--retry-failed');
   expect((check.details as { orphans: unknown[] }).orphans).toHaveLength(3);
   const remote = (await checkSyncFailures(engine, { remote: true, sourceIds: [SOURCE] }))!;

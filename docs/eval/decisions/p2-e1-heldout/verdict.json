@@ -3,7 +3,7 @@
  "hypothesis": "P2 E1 search.hub_dampening (H = 32) on sealed hub-world seeds 2 and 3",
  "computed_by": "second custodian (gbra49), P0 unresponsive; from P0's custody/p2-hub and vmjobs/hubC pull",
  "builds": {
-  "candidate": "gbrain#6020 af1225d7b (arms off, 32, graph-off)",
+  "candidate": "foresights#6020 af1225d7b (arms off, 32, graph-off)",
   "rival_remove": "31a792c94 (BACKLINK_BOOST_COEF = 0)",
   "rival_cap": "4e2bd760e (backlink and graph-signal factors capped at 1.02)"
  },

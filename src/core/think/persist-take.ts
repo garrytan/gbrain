@@ -1,5 +1,5 @@
 /**
- * #2556 — persist a take row from a think synthesis (`gbrain think --take`).
+ * #2556 — persist a take row from a think synthesis (`foresights think --take`).
  *
  * The `--take` flag has been documented since v0.28 ("appends a take row to
  * the anchor page") but `RunThinkOpts.take` was never read anywhere in the
@@ -176,13 +176,13 @@ async function assertTakeFileCanonical(engine: BrainEngine, slug: string, source
   if (!resolved.ok) {
     throw new TakesWriteError('mirror_unavailable',
       `${slug} has no canonical markdown file (${resolved.skipped}), so the take was not written: a takes file there would be imported over the database page.`,
-      `Add it with gbrain takes add ${slug} --source ${sourceId}, which puts a database-only page's take in its database body.`);
+      `Add it with foresights takes add ${slug} --source ${sourceId}, which puts a database-only page's take in its database body.`);
   }
   const path = resolved.target.filePath;
   if (!existsSync(path)) {
     throw new TakesWriteError('mirror_unavailable',
       `${slug} has no checkout file, so the take was not written: a takes-only file would be imported over the database page.`,
-      `Restore the page's file first (gbrain get ${slug} --source ${sourceId}, then gbrain put ${slug} --source-id ${sourceId} with write-through on), then rerun the take.`);
+      `Restore the page's file first (foresights get ${slug} --source ${sourceId}, then foresights put ${slug} --source-id ${sourceId} with write-through on), then rerun the take.`);
   }
   const file = mirroredBody(readFileSync(path, 'utf-8'), slug);
   if (bodyOutsideTakes(file.compiled_truth, file.timeline) !== bodyOutsideTakes(stored.compiled_truth, stored.timeline)) {

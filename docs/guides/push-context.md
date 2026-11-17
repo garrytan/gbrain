@@ -10,12 +10,12 @@ The push channels share one zero-LLM core (`src/core/context/volunteer.ts`):
 | Channel | Surface | When to use |
 |---|---|---|
 | `reflex` | automatic, inside the context engine | default-on for plugin hosts; nothing to call |
-| `op` | `gbrain volunteer-context` / MCP `volunteer_context` | agents without the plugin; one call per turn |
-| `watch` | `gbrain watch` | stream a transcript in, volunteered pages stream out |
-| `claude-code` / `codex` / `opencode` | `gbrain hook user-prompt` (registered by `gbrain bootstrap`) | per-prompt injection inside a harness; see "Harness hooks" below |
+| `op` | `foresights volunteer-context` / MCP `volunteer_context` | agents without the plugin; one call per turn |
+| `watch` | `foresights watch` | stream a transcript in, volunteered pages stream out |
+| `claude-code` / `codex` / `opencode` | `foresights hook user-prompt` (registered by `foresights bootstrap`) | per-prompt injection inside a harness; see "Harness hooks" below |
 
 Push context is READ-side. Its WRITE-side sibling — the opt-in ambient
-memory writeback channel (`gbrain hook stop` banking gated user turns for
+memory writeback channel (`foresights hook stop` banking gated user turns for
 serve-side extraction, `memory.auto_writeback`) — is documented in
 [ambient-writeback.md](./ambient-writeback.md).
 
@@ -43,13 +43,13 @@ serve-side extraction, `memory.auto_writeback`) — is documented in
 ```bash
 # one-shot: pipe recent turns (oldest → newest)
 printf 'user: ask alice-example about the deal\nassistant: noted\nuser: what did she say?\n' \
-  | gbrain volunteer-context
+  | foresights volunteer-context
 
 # streaming: volunteered pages print as the transcript flows
-some-transcript-feed | gbrain watch --json
+some-transcript-feed | foresights watch --json
 
 # the feedback loop: how often were volunteered pages actually opened?
-gbrain volunteer-context --stats
+foresights volunteer-context --stats
 ```
 
 Stats are **approximate** by design: "used" means the page's last retrieval
@@ -58,8 +58,8 @@ Stats are **approximate** by design: "used" means the page's last retrieval
 and unrelated reads of the same page cause false positives. Use the per-arm
 precision to tune `min_confidence`, not as an exact metric.
 
-**PGLite + `gbrain watch`:** PGLite is single-connection, and watch holds its
-connection for the whole session — a concurrent `gbrain serve` or any write
+**PGLite + `foresights watch`:** PGLite is single-connection, and watch holds its
+connection for the whole session — a concurrent `foresights serve` or any write
 path blocks until watch exits. On a PGLite brain, run watch in bursts (piped
 input exits at EOF) or use the ambient reflex channel instead, which routes
 through a running serve's resolve socket rather than taking the lock. Routing
@@ -68,7 +68,7 @@ brains are unaffected.
 
 ## Harness hooks (the prompt-time channel)
 
-`gbrain bootstrap` registers `gbrain hook user-prompt` as a Claude Code
+`foresights bootstrap` registers `foresights hook user-prompt` as a Claude Code
 `UserPromptSubmit` hook: every prompt is assembled into a per-turn context
 block (reflex pointers + volunteered pages + hot facts) through a running
 serve's IPC socket and injected as `additionalContext`. Two properties make
@@ -86,8 +86,8 @@ this channel production-grade rather than spammy-and-invisible:
 - **The feedback loop.** The serve logs each DELIVERED block's volunteered
   pages and pointers to `context_volunteer_events` under the hook's channel
   (`claude-code` by default; a codex hook registration passes
-  `--harness codex` / `--harness opencode`). `gbrain volunteer-context --stats` then shows
-  per-harness precision, and `gbrain doctor`'s `volunteer_channels` check
+  `--harness codex` / `--harness opencode`). `foresights volunteer-context --stats` then shows
+  per-harness precision, and `foresights doctor`'s `volunteer_channels` check
   shows which channels actually fire, with guidance for the two quiet cases:
   "hook installed but never registered (restart the session)" and "registered
   but quiet". Logging happens at the delivery point only — a block abandoned
@@ -98,7 +98,7 @@ this channel production-grade rather than spammy-and-invisible:
 
 The hook lane rides the running serve's IPC socket on PGLite and Postgres alike
 (the listener is engine-uniform and keys its socket off the connection URL), so
-the hook stays quiet only while no `gbrain serve` for the brain is running, and
+the hook stays quiet only while no `foresights serve` for the brain is running, and
 on a thin-client install, where pull-mode retrieval covers it.
 
 Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
@@ -107,7 +107,7 @@ Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 
 Wave 5 D5. Before a meeting or a reply, the brain can hand the agent at most
 three dated items about the counterparty it did not ask for. It is off until
-the owner turns it on with `gbrain config set context.proactive_brief true`;
+the owner turns it on with `foresights config set context.proactive_brief true`;
 with the key unset, no hook output and no `context_pack` response changes. It
 stays off by default until the D6 evaluation shows the agent does better work
 with it.
@@ -199,7 +199,7 @@ log to that rung is a filed follow-up in TODOS.md).
 your agent sets `retrieval_reflex_volunteer` to `false` (or exports
 `GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER=off` when config is unreachable — env wins
 over config as the incident lever). *"How often are volunteered pages actually
-used?"* — your agent runs `gbrain volunteer-context --stats`.
+used?"* — your agent runs `foresights volunteer-context --stats`.
 
 ## Config
 
@@ -211,9 +211,9 @@ used?"* — your agent runs `gbrain volunteer-context --stats`.
 | `retrieval_reflex_max_pointers` | 3 | pointer cap per turn |
 | `retrieval_reflex_lexical_arms` | true | the lowercase-alias + surname recall arms (env: `GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS`); off = disables both arms |
 | `context.hot_memory.session_only` | off | hot facts on the turn and session-start hooks come from the current session only, with no fallback to other sessions' recent facts (DB-plane; see [ambient writeback](ambient-writeback.md#hot-memory-and-other-sessions)) |
-| `context.proactive_brief` | off | the proactive brief ("Before you start") on the SessionStart and UserPromptSubmit hooks (DB-plane: `gbrain config set context.proactive_brief true`) |
+| `context.proactive_brief` | off | the proactive brief ("Before you start") on the SessionStart and UserPromptSubmit hooks (DB-plane: `foresights config set context.proactive_brief true`) |
 
-Per-call knobs: `max_pages` + `min_confidence` on both the op and `gbrain watch`
+Per-call knobs: `max_pages` + `min_confidence` on both the op and `foresights watch`
 (`--max-pages` / `--min-confidence`, plus `--window-turns` / `--source` on watch);
 on the op only: `prior_context` (text whose already-surfaced slugs are suppressed),
 `session_id` / `turn` attribution params (watch stamps its own per-session id and

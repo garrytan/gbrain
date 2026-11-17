@@ -81,7 +81,7 @@ export function startCosineReScore(
         } catch (err) {
           const sqlstate = (err as { code?: unknown } | null)?.code;
           warnOncePerProcess('cosine-rescore-sql-fallback',
-            `[gbrain] cosine re-score in SQL failed (SQLSTATE ${typeof sqlstate === 'string' ? sqlstate : 'unknown'}); computing it in JavaScript for this process's failing searches.`);
+            `[foresights] cosine re-score in SQL failed (SQLSTATE ${typeof sqlstate === 'string' ? sqlstate : 'unknown'}); computing it in JavaScript for this process's failing searches.`);
           onFallback?.();
           cosines = await jsCosines(engine, chunkIds, column, queryEmbedding);
         }

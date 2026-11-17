@@ -1,5 +1,5 @@
 /**
- * `gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]` (G7b-2):
+ * `foresights sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]` (G7b-2):
  * the CLI face of src/core/persistence/hosted-repo.ts. Without --expect it previews; the apply is the command the preview
  * prints. Trusted local CLI only (no operation exposes it), and every run on a production source needs the user's yes.
  */
@@ -9,7 +9,7 @@ import { OperationError, opError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { hostRepo, type HostRepoOptions, type HostRepoPlan } from '../core/persistence/hosted-repo.ts';
 
-const USAGE = 'gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]';
+const USAGE = 'foresights sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]';
 
 export function parseHostRepoArgs(args: string[]): HostRepoOptions {
   const positional: string[] = [];

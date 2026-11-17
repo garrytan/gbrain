@@ -1,5 +1,5 @@
 /**
- * A keyless PGLite init ends with "More: bulk-load notes \`gbrain import <dir>\`".
+ * A keyless PGLite init ends with "More: bulk-load notes \`foresights import <dir>\`".
  * On a brain initialized with --no-embedding that printed command must work as
  * written instead of refusing with embedding_disabled.
  */

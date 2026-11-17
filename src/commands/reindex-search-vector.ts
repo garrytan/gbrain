@@ -1,5 +1,5 @@
 /**
- * `gbrain reindex-search-vector` — recreate FTS trigger functions,
+ * `foresights reindex-search-vector` — recreate FTS trigger functions,
  * backfill existing rows and replace the facts keyword index
  * (`idx_facts_fts`, migration v237) under the language configured via
  * GBRAIN_FTS_LANGUAGE.
@@ -37,7 +37,7 @@
  * the new language and un-backfilled rows in the old one, silently splitting
  * keyword search. The command therefore stamps `fts.reindex_in_progress`
  * (= target language) in the config table BEFORE the DDL and clears it only
- * after both backfills return; `gbrain doctor` fails (`fts_reindex_incomplete`)
+ * after both backfills return; `foresights doctor` fails (`fts_reindex_incomplete`)
  * while it is set. Each batch persists its keyset cursor under the shared
  * `backfill.<name>.last_id` convention, so re-running with the same language
  * resumes where the killed run stopped (a different language starts over).
@@ -120,7 +120,7 @@ export async function runReindexSearchVector(
     } else {
       console.log(`[dry-run] Would recreate 2 trigger functions with language='${lang}'`);
       console.log(`[dry-run] Would backfill ${pagesCount} pages + ${chunksCount} chunks and rebuild the facts keyword index`);
-      console.log(`[dry-run] Skipping all DB writes. Applying needs the user's approval (gbrain reindex-search-vector asks).`);
+      console.log(`[dry-run] Skipping all DB writes. Applying needs the user's approval (foresights reindex-search-vector asks).`);
     }
     return result;
   }
@@ -137,7 +137,7 @@ export async function runReindexSearchVector(
     what: `Rebuild the keyword search index in language '${lang}'`,
     why: `Recreates the full-text trigger functions with language '${lang}' (from GBRAIN_FTS_LANGUAGE) and re-tokenizes ${pagesCount} page(s) and ${chunksCount} chunk(s), so keyword search matches that language.`,
     risk: `Rewrites the stored keyword index of every page and chunk; keyword search uses '${lang}' rules afterwards and is split until the run finishes `
-      + '(an interrupted run resumes with the same command; gbrain doctor reports fts_reindex_incomplete meanwhile). Page text is not touched. '
+      + '(an interrupted run resumes with the same command; foresights doctor reports fts_reindex_incomplete meanwhile). Page text is not touched. '
       + 'Undo: run this command again with GBRAIN_FTS_LANGUAGE set to the previous language.',
     user_message: `Rebuild the keyword search index of ${pagesCount} page(s) in '${lang}'? It can take minutes on a large brain; page text is not changed.`,
     argv: ['gbrain', 'reindex-search-vector', ...(opts.json ? ['--json'] : [])],

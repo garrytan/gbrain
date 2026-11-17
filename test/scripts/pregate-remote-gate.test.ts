@@ -1,5 +1,5 @@
 /**
- * scripts/pregate-remote-gate.sh — gbrain's gstack-pregate remote gate.
+ * scripts/pregate-remote-gate.sh — foresights's gstack-pregate remote gate.
  *
  * Protects: the receipt gstack-pregate --remote reads to clear the
  * requires-remote obligation on a small machine (PREGATE_REMOTE: tree=…

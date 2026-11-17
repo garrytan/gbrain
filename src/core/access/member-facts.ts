@@ -46,7 +46,7 @@ export function memberFactPage(ctx: Pick<OperationContext, 'remote'>): string | 
   const slug = memberPageSlug(member);
   if (slugifyPath(slug) !== slug) {
     throw opError('invalid_params', `Member id ${member} cannot hold member facts: its page ${slug} would be stored as ${slugifyPath(slug)}.`,
-      'Nothing was saved. The brain host gives this person a member id without repeated, leading or trailing separators (gbrain access member add) and links it instead.');
+      'Nothing was saved. The brain host gives this person a member id without repeated, leading or trailing separators (foresights access member add) and links it instead.');
   }
   return slug;
 }

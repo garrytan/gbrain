@@ -18,7 +18,7 @@
  * The coordinator persists only the code and message, so the hint is rebuilt
  * by one formatter from a fresh read of the index state plus the request's
  * recorded source and processing options, for the sync summary and for
- * `gbrain write-request` / MCP `get_write_request`.
+ * `foresights write-request` / MCP `get_write_request`.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -29,7 +29,7 @@ import type { SyncCursorOptions } from './sync-prepare.ts';
 
 export const CHECKPOINT_VALIDATION_TIMEOUT = 'checkpoint_validation_timeout';
 export const CHECKPOINT_VALIDATION_TIMEOUT_MESSAGE = 'The sync checkpoint validation timed out on a large request table; the checkpoint did not commit.';
-export const REQUEST_INDEXES_REPAIR_COMMAND = 'gbrain repair request-indexes --apply';
+export const REQUEST_INDEXES_REPAIR_COMMAND = 'foresights repair request-indexes --apply';
 
 const SYNC_PAGE_KINDS = "r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete')";
 /**
@@ -181,7 +181,7 @@ const shellWord = (value: string) => /^[\w./@:=+-]+$/.test(value) ? value : `'${
  * PR 3 (L7): a plain sync retries a recorded failure by itself, so the command carries no retry flag.
  */
 export function checkpointRetryCommand(input: { sourceId: string; processingOptions?: Partial<SyncProcessingOptions> | null; syncOptions?: SyncCursorOptions | null; repoPath?: string | null }): string {
-  const base = `gbrain sync --source ${shellWord(input.sourceId)} --no-pull`;
+  const base = `foresights sync --source ${shellWord(input.sourceId)} --no-pull`;
   // A compacted receipt (intent cleared) or a checkpoint admitted before the options were recorded
   // cannot name its cursor; never print assumed defaults for it.
   if (!input.syncOptions) return `${base} with the same options as the failed run (this receipt no longer records them)`;
@@ -205,14 +205,14 @@ export function formatCheckpointTimeoutHint(indexes: RequestIndexState[], input:
   if (building.length) return { ...base, detail: 'index_building',
     suggestion: `This release's request-index build is still running (${building.map(index => `${index.name}: ${index.progress?.phase ?? 'building'}`
       + `${index.progress?.blocks_total ? `, ${index.progress.blocks_done}/${index.progress.blocks_total} blocks` : ''}`).join('; ')}). `
-      + `Wait for it to finish (gbrain doctor shows persistence_request_indexes), then run: ${retry}` };
+      + `Wait for it to finish (foresights doctor shows persistence_request_indexes), then run: ${retry}` };
   const broken = indexes.filter(index => index.state === 'missing' || index.state === 'invalid');
   if (broken.length) return { ...base, detail: 'index_missing',
     suggestion: `The request index ${broken.map(index => `${index.name} is ${index.state === 'invalid' ? 'INVALID' : 'missing'}`).join(' and ')}. `
       + `Rebuild it: ${REQUEST_INDEXES_REPAIR_COMMAND} — then run: ${retry}` };
   return { ...base, detail: 'indexes_valid',
     suggestion: `The request indexes are valid, so there is nothing to wait for. Run: ${retry}. If it times out again, report request `
-      + `${input.requestId ?? '<request-id>'} and attach the persistence_request_indexes and persistence_request_growth entries of gbrain doctor --json.` };
+      + `${input.requestId ?? '<request-id>'} and attach the persistence_request_indexes and persistence_request_growth entries of foresights doctor --json.` };
 }
 
 export async function checkpointTimeoutHint(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>, input: Parameters<typeof formatCheckpointTimeoutHint>[1]): Promise<CheckpointTimeoutHint> {

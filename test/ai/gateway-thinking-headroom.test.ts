@@ -8,7 +8,7 @@ import {
 } from '../../src/core/ai/gateway.ts';
 import { getProviderCapabilities } from '../../src/core/ai/capabilities.ts';
 
-// gbrain#4172: reasoning bills as output and counts against max_tokens. A
+// foresights#4172: reasoning bills as output and counts against max_tokens. A
 // thinking-by-default model handed the 4096 non-thinking default spends the
 // whole budget reasoning and returns empty content with finish_reason
 // "length", so callers relying on the default see truncated or blank output.

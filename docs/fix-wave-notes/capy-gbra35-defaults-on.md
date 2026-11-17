@@ -4,7 +4,7 @@ Contributor branch for the next fix wave. No migration, no VERSION or CHANGELOG 
 
 ## CHANGELOG text
 
-- **Atom extraction covers Gmail and Calendar pages again, by default (#5856 follow-up).** v0.60.32.0 made atom extraction of connector `email`/`meeting` pages opt-in, which also stopped it on brains that already extracted them. It is on by default again, on every brain, still bounded by the per-attempt auto-drain budget and the structural-refusal and fair-dispatch fixes from v0.60.32.0. To keep connector mail and calendar text away from the `extract_atoms` model: `gbrain config set cycle.extract_atoms.connector_pages false` (`gbrain config unset cycle.extract_atoms.connector_pages` returns to the default). `gbrain config set autopilot.auto_drain.enabled false` still stops all automatic atom drains.
+- **Atom extraction covers Gmail and Calendar pages again, by default (#5856 follow-up).** v0.60.32.0 made atom extraction of connector `email`/`meeting` pages opt-in, which also stopped it on brains that already extracted them. It is on by default again, on every brain, still bounded by the per-attempt auto-drain budget and the structural-refusal and fair-dispatch fixes from v0.60.32.0. To keep connector mail and calendar text away from the `extract_atoms` model: `foresights config set cycle.extract_atoms.connector_pages false` (`foresights config unset cycle.extract_atoms.connector_pages` returns to the default). `foresights config set autopilot.auto_drain.enabled false` still stops all automatic atom drains.
 
 ## Evidence
 

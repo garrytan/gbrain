@@ -98,7 +98,7 @@ export function slackText(text: string, userName: (id: string) => string): strin
 
 /** Outside text on one line: whitespace collapsed, then neutralized. */
 const inline = (text: string) => neutralizeOutsideText(text.replace(/\s+/g, ' ').trim());
-/** A speaker name inside gbrain's own anchor: no emphasis, colon, bracket or parenthesis can break out of it. */
+/** A speaker name inside foresights's own anchor: no emphasis, colon, bracket or parenthesis can break out of it. */
 const speakerName = (text: string) => inline(text.replace(/[*:()[\]]/g, ' ')) || 'Unknown';
 
 function anchorTime(ts: string): string {

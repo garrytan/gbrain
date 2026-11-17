@@ -18,7 +18,7 @@ import type { DiscoveredTranscript } from '../src/core/cycle/transcript-discover
 const TICKS = '```';
 const fence = (body: string, tag = 'json') => `${TICKS}${tag}\n${body}\n${TICKS}`;
 const quotedRun = `paste ${TICKS}sh\ngbrain sync --source wiki\n${TICKS} into the terminal`;
-const inlineRun = `run ${TICKS}gbrain doctor --json${TICKS} before filing`;
+const inlineRun = `run ${TICKS}foresights doctor --json${TICKS} before filing`;
 const clippedQuote = `the snippet opened with ${TICKS}python and was cut`;
 const judged = (quote: string) => ({
   score: 0.71,

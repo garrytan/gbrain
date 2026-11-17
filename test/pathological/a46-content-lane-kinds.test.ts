@@ -1,6 +1,6 @@
 /**
  * GBRA-130 A-46: the content-repair lane runs fences, then slug-conflicts
- * (src/core/repair/content-lane.ts runContentLane), for \`gbrain repair
+ * (src/core/repair/content-lane.ts runContentLane), for \`foresights repair
  * content\`, the cycle's content_repair phase and \`sync unblock --apply\`.
  *
  * Protects: a kind whose plan or apply throws item-scoped is recorded in the
@@ -72,7 +72,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const result = await expectUnitNotAborted(() => lane(stubs));
       expect(result.stopped.length).toBe(1);
       const stopped = result.stopped[0]!;
-      expectItemFailure({ key: stopped.kind, code: stopped.reason, fix: stopped.fix }, { key: 'fences', code: 'error', fix: /"gbrain","repair","fences"/ });
+      expectItemFailure({ key: stopped.kind, code: stopped.reason, fix: stopped.fix }, { key: 'fences', code: 'error', fix: /"(?:foresights|gbrain)","repair","fences"/ });
       expect(stopped.message).toContain('fence census refused one file');
       expect(result.results.map((r: RepairResult) => r.kind)).toEqual(KINDS);
       expect(result.results[1]).toMatchObject({ kind: 'slug-conflicts', applied: 2, complete: true });

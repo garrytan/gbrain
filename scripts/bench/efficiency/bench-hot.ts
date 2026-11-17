@@ -6,9 +6,9 @@
  *       [--n 20] [--warmup 3] [--only search,query_expand,...] [--sync-dir <dir>] [--out results/hot.jsonl]
  *
  * Runs against the brain bench-import.ts built at $BENCH_WORK/engines/<engine>-<label>.
- *   cold  one fresh `gbrain <cmd>` process per sample (what a CLI user or a
+ *   cold  one fresh `foresights <cmd>` process per sample (what a CLI user or a
  *         shell-out agent pays: bun start, config, engine connect, op, exit)
- *   warm  one long-lived `gbrain serve` stdio MCP process, N tool calls after
+ *   warm  one long-lived `foresights serve` stdio MCP process, N tool calls after
  *         --warmup calls (what an MCP-connected agent pays per call)
  * Also: MCP stdio startup + first tool call, HTTP serve startup + first tool
  * call (fresh server per sample, bearer token), doctor, and a one-page sync.
@@ -35,7 +35,7 @@ rmSync(usageFile, { force: true });
 const M = machine();
 const want = (k: string) => !only || only.includes(k);
 
-/** Minimal newline-delimited JSON-RPC client for `gbrain serve` over stdio. */
+/** Minimal newline-delimited JSON-RPC client for `foresights serve` over stdio. */
 class StdioMcp {
   proc: ReturnType<typeof Bun.spawn>;
   private buf = '';
@@ -168,7 +168,7 @@ async function main() {
   // Cold: one fresh CLI process per sample.
   for (const p of paths) {
     if (!want(p.key)) continue;
-    add(`gbrain ${p.cli(0)[0]}${p.key === 'query_noexpand' ? ' --no-expand' : ''}${p.cli(0)[0] === 'call' ? ' ' + p.tool : ''}`, 'cold', await sample(N, async (i) => {
+    add(`foresights ${p.cli(0)[0]}${p.key === 'query_noexpand' ? ' --no-expand' : ''}${p.cli(0)[0] === 'call' ? ' ' + p.tool : ''}`, 'cold', await sample(N, async (i) => {
       const res = await runCli(p.cli(i), { ...env, BENCH_USAGE_LOG: usageFile }, { preload: true, timeoutMs: 120_000 });
       if (res.code !== 0) throw new Error(`exit ${res.code}`);
     }));
@@ -176,7 +176,7 @@ async function main() {
 
   if (want('doctor')) {
     for (const args of [['doctor', '--json'], ['doctor', '--fast', '--json']]) {
-      add(`gbrain ${args.join(' ')}`, 'cold', await sample(Math.min(N, Number(flag('doctor-n', String(N)))), async () => {
+      add(`foresights ${args.join(' ')}`, 'cold', await sample(Math.min(N, Number(flag('doctor-n', String(N)))), async () => {
         const res = await runCli(args, env, { timeoutMs: 300_000 });
         if (res.code !== 0 && res.code !== 1) throw new Error(`exit ${res.code}`);
       }));
@@ -231,16 +231,16 @@ async function main() {
     const syncArgs = ['sync', '--source', 'syncbench', '--no-pull', '--no-embed', '--json'];
     await runCli(['sources', 'add', 'syncbench', '--path', syncDir, '--no-federated'], env);
     const first = await runCli(syncArgs, env, { timeoutMs: 900_000 });
-    add('gbrain sync --source (first sync of a git source, --no-embed)', 'once', { ms: first.code === 0 ? [first.ms] : [], errors: first.code === 0 ? 0 : 1 }, { source_pages: (await new Response(Bun.spawn(['git', '-C', syncDir, 'ls-files', '*.md'], { stdout: 'pipe' }).stdout).text()).split('\n').filter(Boolean).length });
+    add('foresights sync --source (first sync of a git source, --no-embed)', 'once', { ms: first.code === 0 ? [first.ms] : [], errors: first.code === 0 ? 0 : 1 }, { source_pages: (await new Response(Bun.spawn(['git', '-C', syncDir, 'ls-files', '*.md'], { stdout: 'pipe' }).stdout).text()).split('\n').filter(Boolean).length });
     const files = (await new Response(Bun.spawn(['git', '-C', syncDir, 'ls-files', '*.md'], { stdout: 'pipe' }).stdout).text()).split('\n').filter(Boolean);
-    add('gbrain sync (1-page change, --no-embed)', 'cold', await sample(N, async (i) => {
+    add('foresights sync (1-page change, --no-embed)', 'cold', await sample(N, async (i) => {
       const f = join(syncDir, files[Math.floor(r() * files.length)]!);
       appendFileSync(f, `\nBench edit ${i} ${Date.now()}.\n`);
       await git('commit', '-q', '-am', `bench edit ${i}`);
       const res = await runCli(syncArgs, env, { timeoutMs: 300_000 });
       if (res.code !== 0) throw new Error(`exit ${res.code}`);
     }));
-    add('gbrain sync (no change)', 'cold', await sample(Math.min(N, 10), async () => {
+    add('foresights sync (no change)', 'cold', await sample(Math.min(N, 10), async () => {
       const res = await runCli(syncArgs, env, { timeoutMs: 300_000 });
       if (res.code !== 0) throw new Error(`exit ${res.code}`);
     }));

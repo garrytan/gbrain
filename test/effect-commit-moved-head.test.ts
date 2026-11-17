@@ -154,7 +154,7 @@ describe('commitGitTargets when another commit lands before update-ref', () => {
   test('a porcelain commit of the same file wins: the target is superseded and the checkout is clean', async () => {
     const root = repo({ 'notes/a.md': 'a\n' });
     before(() => committedByHand(root, 'notes/a.md', 'a, by hand\n'));
-    put(root, 'notes/a.md', 'a, by gbrain\n');
+    put(root, 'notes/a.md', 'a, by foresights\n');
     const outcome = (await commitGitTargets(root, ['notes/a.md'])).get('notes/a.md');
     expect(outcome).toEqual({ git: 'superseded', reason: 'committed_by_another_writer' });
     expect(git(root, 'log', '-1', '--format=%s')).toBe('another commit');
@@ -165,20 +165,20 @@ describe('commitGitTargets when another commit lands before update-ref', () => {
   test('a plumbing commit that leaves the effect\'s bytes on disk is retried, and the retry commits on the new HEAD', async () => {
     const root = repo({ 'notes/a.md': 'a\n' });
     before(() => plumbingCommit(root, 'notes/a.md', 'a, elsewhere\n'));
-    put(root, 'notes/a.md', 'a, by gbrain\n');
+    put(root, 'notes/a.md', 'a, by foresights\n');
     const outcome = (await commitGitTargets(root, ['notes/a.md'])).get('notes/a.md');
     expect(outcome).toBeInstanceOf(OperationError);
     expect((outcome as OperationError).code).toBe('git_unavailable');
     expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, elsewhere');
     expect((await commitGitTargets(root, ['notes/a.md'])).get('notes/a.md')).toEqual({ git: 'committed' });
     expect(git(root, 'log', '-2', '--format=%s').split('\n')[1]).toBe('another commit');
-    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, by gbrain');
+    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, by foresights');
   });
 
   test('a plumbing commit that also changed the file supersedes it, and the index goes back to HEAD', async () => {
     const root = repo({ 'notes/a.md': 'a\n' });
     before(() => { plumbingCommit(root, 'notes/a.md', 'a, elsewhere\n'); put(root, 'notes/a.md', 'a, elsewhere\n'); });
-    put(root, 'notes/a.md', 'a, by gbrain\n');
+    put(root, 'notes/a.md', 'a, by foresights\n');
     expect((await commitGitTargets(root, ['notes/a.md'])).get('notes/a.md')).toMatchObject({ git: 'superseded' });
     expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, elsewhere');
     expect(git(root, 'status', '--porcelain')).toBe('');
@@ -187,23 +187,23 @@ describe('commitGitTargets when another commit lands before update-ref', () => {
   test('in a group, only the moved file is superseded; the untouched one is put back and commits on retry', async () => {
     const root = repo({ 'notes/a.md': 'a\n', 'notes/b.md': 'b\n' });
     before(() => committedByHand(root, 'notes/a.md', 'a, by hand\n'));
-    put(root, 'notes/a.md', 'a, by gbrain\n'); put(root, 'notes/b.md', 'b, by gbrain\n');
+    put(root, 'notes/a.md', 'a, by foresights\n'); put(root, 'notes/b.md', 'b, by foresights\n');
     const outcomes = await commitGitTargets(root, ['notes/a.md', 'notes/b.md']);
     expect(outcomes.get('notes/a.md')).toMatchObject({ git: 'superseded' });
     expect(outcomes.get('notes/b.md')).toBeInstanceOf(OperationError);
     expect(git(root, 'diff', '--cached', '--name-only')).toBe('');
     expect((await commitGitTargets(root, ['notes/b.md'])).get('notes/b.md')).toEqual({ git: 'committed' });
     expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, by hand');
-    expect(git(root, 'show', 'HEAD:notes/b.md')).toBe('b, by gbrain');
+    expect(git(root, 'show', 'HEAD:notes/b.md')).toBe('b, by foresights');
     expect(git(root, 'status', '--porcelain')).toBe('');
   });
 
   test('a commit that swept in the effect\'s staged file is not a move: the retry finds it unchanged', async () => {
     const root = repo({ 'notes/a.md': 'a\n', 'notes/b.md': 'b\n' });
     before(() => { put(root, 'notes/b.md', 'b, by hand\n'); git(root, 'commit', '-qam', 'another commit'); });
-    put(root, 'notes/a.md', 'a, by gbrain\n');
+    put(root, 'notes/a.md', 'a, by foresights\n');
     expect((await commitGitTargets(root, ['notes/a.md'])).get('notes/a.md')).toBeInstanceOf(OperationError);
-    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, by gbrain');
+    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, by foresights');
     expect((await commitGitTargets(root, ['notes/a.md'])).get('notes/a.md')).toEqual({ git: 'unchanged' });
     expect(git(root, 'status', '--porcelain')).toBe('');
   });

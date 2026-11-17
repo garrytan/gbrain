@@ -1,10 +1,10 @@
 /**
- * `gbrain bundled-skill [<name>] [--asset <path>] [--json]`: print one of
- * gbrain's bundled skills (or one file it names) from the binary itself.
+ * `foresights bundled-skill [<name>] [--asset <path>] [--json]`: print one of
+ * foresights's bundled skills (or one file it names) from the binary itself.
  * The on-demand half of the spring-loaded skill resolver: the skills index
- * that `gbrain setup <harness> --skill-loading spring` writes names this
+ * that `foresights setup <harness> --skill-loading spring` writes names this
  * command, so the index and the text it loads always come from the same
- * gbrain. Engine-free: it opens no brain, needs no MCP server or skill
+ * foresights. Engine-free: it opens no brain, needs no MCP server or skill
  * publication, and works on a thin client and from a compiled binary.
  *
  * Audience: on a thin-client install (not the brain host) the host-only
@@ -19,17 +19,17 @@ import { bundledCatalogId, bundledSkillAsset, bundledSkillDescription, bundledSk
 import { VERSION } from '../../version.ts';
 import { exitCliError, usageError } from '../cli-error.ts';
 
-const HELP = `Usage: gbrain bundled-skill [<name>] [--asset <path>] [--json]
+const HELP = `Usage: foresights bundled-skill [<name>] [--asset <path>] [--json]
 
-Print a skill gbrain ships (the procedure an agent follows for a task), read
-from this gbrain itself. No brain connection is needed.
+Print a skill foresights ships (the procedure an agent follows for a task), read
+from this foresights itself. No brain connection is needed.
 
-  gbrain bundled-skill                      every bundled skill, one line each
-  gbrain bundled-skill <name>               the skill's SKILL.md, then the files it names
-  gbrain bundled-skill <name> --asset <p>   one file the skill names (as listed)
+  foresights bundled-skill                      every bundled skill, one line each
+  foresights bundled-skill <name>               the skill's SKILL.md, then the files it names
+  foresights bundled-skill <name> --asset <p>   one file the skill names (as listed)
   --json                                    machine-readable output
 
-The skills index written by \`gbrain setup <harness> --skill-loading spring\`
+The skills index written by \`foresights setup <harness> --skill-loading spring\`
 tells agents to run this command when a task matches a skill.
 `;
 
@@ -54,17 +54,17 @@ export async function run(args: string[]): Promise<void> {
       if (v === undefined || v === '' || v.startsWith('--')) exitCliError(usageError('--asset requires a file path the skill lists.', 'Run the same command without --asset to see the files the skill names.'), 'bundled-skill');
       asset = v;
     } else if (a.startsWith('-')) {
-      exitCliError(usageError(`unknown flag ${a} for gbrain bundled-skill.`, 'Usage: gbrain bundled-skill [<name>] [--asset <path>] [--json]', { code: 'unknown_flag' }), 'bundled-skill');
+      exitCliError(usageError(`unknown flag ${a} for foresights bundled-skill.`, 'Usage: foresights bundled-skill [<name>] [--asset <path>] [--json]', { code: 'unknown_flag' }), 'bundled-skill');
     } else {
       names.push(a);
     }
   }
-  if (names.length > 1) exitCliError(usageError(`gbrain bundled-skill takes one skill name, got ${names.length}.`, 'Usage: gbrain bundled-skill [<name>] [--asset <path>] [--json]'), 'bundled-skill');
+  if (names.length > 1) exitCliError(usageError(`foresights bundled-skill takes one skill name, got ${names.length}.`, 'Usage: foresights bundled-skill [<name>] [--asset <path>] [--json]'), 'bundled-skill');
   const name = names[0];
   const audience = bundledSkillAudience();
 
   if (name === undefined) {
-    if (asset !== undefined) exitCliError(usageError('--asset needs a skill name.', 'Usage: gbrain bundled-skill <name> --asset <path>'), 'bundled-skill');
+    if (asset !== undefined) exitCliError(usageError('--asset needs a skill name.', 'Usage: foresights bundled-skill <name> --asset <path>'), 'bundled-skill');
     const skills = await Promise.all(bundledSkills(audience).map(async s => ({ name: s.name, description: await bundledSkillDescription(s) })));
     await writeStdoutFinal(json
       ? `${JSON.stringify({ schema_version: 1, gbrain_version: VERSION, catalog: bundledCatalogId(), skills }, null, 2)}\n`
@@ -75,8 +75,8 @@ export async function run(args: string[]): Promise<void> {
   const skill = findBundledSkill(name, audience);
   if (!skill) {
     const nearest = suggestNearest(name, bundledSkills(audience).map(s => s.name));
-    exitCliError(opError('skill_not_found', `gbrain ${VERSION} has no bundled skill named ${name}${audience === 'downstream' ? ' for this thin-client install' : ''}.${nearest ? ` Did you mean "${nearest}"?` : ''}`,
-      `Run the same command with no name to list them. A skills index from another gbrain version may name a renamed skill; refresh it with ${audience === 'downstream' ? 'the gbrain connect … --install command in the index header (it rewrites GBRAIN-INSTRUCTIONS.md)' : '`gbrain setup <harness> --skills-index-only`'}.`), 'bundled-skill');
+    exitCliError(opError('skill_not_found', `foresights ${VERSION} has no bundled skill named ${name}${audience === 'downstream' ? ' for this thin-client install' : ''}.${nearest ? ` Did you mean "${nearest}"?` : ''}`,
+      `Run the same command with no name to list them. A skills index from another foresights version may name a renamed skill; refresh it with ${audience === 'downstream' ? 'the foresights connect … --install command in the index header (it rewrites GBRAIN-INSTRUCTIONS.md)' : '`foresights setup <harness> --skills-index-only`'}.`), 'bundled-skill');
   }
 
   if (asset !== undefined) {

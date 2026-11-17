@@ -1,6 +1,6 @@
 # decide: the System One capability contract
 
-`decide` is GBrain's provider-agnostic decision layer: typed questions over
+`decide` is Foresights's provider-agnostic decision layer: typed questions over
 typed evidence, answered by TypeSafe's Jev (the first provider) or by any
 configured chat model (`llm:<provider:model>`), with receipts, calibration,
 qualification, drift protection and one egress contract. Code owns every
@@ -26,7 +26,7 @@ eval run) get no defaults. Call sites that read live config pass
 `on` that cannot act (no calibration, drift, a changed policy, the
 action-precision gate, missing consent) runs with **off behavior** for that
 call, writes a receipt with the reason, and shows `on (inactive: <reason>)`
-plus the one fix command in `gbrain decide status` and `gbrain doctor`.
+plus the one fix command in `foresights decide status` and `foresights doctor`.
 
 ## API
 
@@ -215,7 +215,7 @@ pins this table to the code.
 ## Egress (one contract for every path)
 
 `egress.ts` `checkEgress`: a third-party provider receives a data class only
-with consent (`decide.egress.typesafe.<class>`, written by `gbrain decide
+with consent (`decide.egress.typesafe.<class>`, written by `foresights decide
 enable` after it shows what leaves the machine; for S1 `on`, the reranker
 selection is the consent for query and candidate text, as with Voyage).
 `decide.egress.deny_sources` applies to every provider. Private content never
@@ -240,7 +240,7 @@ omission.
 ## Trust
 
 `decide` is not an MCP operation. Remote callers reach slots only through
-`query`/`think`; their spend is counted as remote. `gbrain decide` is local
+`query`/`think`; their spend is counted as remote. `foresights decide` is local
 CLI only (`thinClient: 'refuse'`); calibrate, receipts review and proposal
 acceptance never run for a remote caller.
 
@@ -270,7 +270,7 @@ acceptance never run for a remote caller.
 | S4 k | min(10, evidence count), shrunk to fit 32k | no (`ANSWERABLE_MAX_K`) |
 | S5 demotion floor | the S3 `min_keep` cut (default 3) | via `decide.slots.evidence.min_keep` |
 | S6 budgets, S8 window count, S7 window size/cap | per slot lane | documented with each slot |
-| Eval pool depth (recall experiment) | per-arm cap 100 (`MAX_SEARCH_LIMIT`) | eval-only: `gbrain eval longmemeval --eval-pool-depth N` (N ≤ 300, `src/core/search/eval-pool-depth.ts`); no config key |
+| Eval pool depth (recall experiment) | per-arm cap 100 (`MAX_SEARCH_LIMIT`) | eval-only: `foresights eval longmemeval --eval-pool-depth N` (N ≤ 300, `src/core/search/eval-pool-depth.ts`); no config key |
 
 ## Extension points for slot lanes
 
@@ -288,7 +288,7 @@ acceptance never run for a remote caller.
   synchronous even when S3 is shadow.
 - `registerDatasetAdapter(adapter)` / `registerDatasetBuilder(source, builder)`
   (`dataset.ts`): production-shaped requests, harmful-action reducers, and
-  `gbrain decide dataset --from <source>` builders.
+  `foresights decide dataset --from <source>` builders.
 - `registerDecideSubcommand(name, run, help)` (`src/commands/decide.ts`):
   `proposals`, `sweep`, `judge-agreement`. Lane modules that register
   subcommands, what-if reducers or dataset adapters are imported by

@@ -9,7 +9,7 @@
  *
  * NOTE on funnel/heartbeat rows (coverage item 1e): runGoogleSync writes NO
  * heartbeat.jsonl rows — the funnel (`appendGoogleHeartbeat`) belongs to the
- * COMMANDS layer (gbrain google connect), asserted in
+ * COMMANDS layer (foresights google connect), asserted in
  * test/google-connect-cmd.serial.test.ts. The sweep-side observable here is
  * the enqueue-cap drop log on stderr, asserted below.
  *

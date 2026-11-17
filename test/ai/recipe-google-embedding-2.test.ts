@@ -3,7 +3,7 @@
  *
  * `models` is informational since v0.44.1.0 (assertTouchpoint no longer
  * enforces model membership), so the load-bearing assertion is the catalog
- * one: the GA model must be listed so `gbrain providers list` and the docs
+ * one: the GA model must be listed so `foresights providers list` and the docs
  * advertise it. The last test pins that dimsProviderOptions() keeps
  * forwarding outputDimensionality for the new id exactly as for
  * gemini-embedding-001 (dims.ts prefix-matches `gemini-embedding`).

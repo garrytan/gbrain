@@ -11,7 +11,7 @@
  * (`GBRAIN_DOCTOR_FENCE_TIMEOUT_MS`, default 10 s), then reports the stored
  * summary. A census the scan did not finish is `partial` and never reports
  * ok; the next run resumes where it stopped. The fix is the read-only
- * `gbrain repair fences --source <id>` preview for holds, stored pages and
+ * `foresights repair fences --source <id>` preview for holds, stored pages and
  * files alike; what the next maintenance run repairs automatically is said
  * so (only while one is active and `fences.repair.enabled` is on), and why
  * model-tier fences wait when `fences.repair.llm` is off or today's budget is
@@ -26,7 +26,7 @@
  * nothing is lost, so the finding has no command (`next: report`) and never
  * suggests `forget_fact`; its verify re-counts the rows. A `duplicate_claim`
  * row (its page's fence already carries the claim) is the exception: the fix
- * is the read-only `gbrain repair duplicate-facts --source <id>` preview,
+ * is the read-only `foresights repair duplicate-facts --source <id>` preview,
  * which keeps the fence row and supersedes the copy onto it (GBRA-190).
  *
  * #6610: it also lists `unbound_legacy_facts`, the unfenced rows of a classic
@@ -90,13 +90,13 @@ function automaticRepair(auto: FenceAutoRepair): string {
 }
 
 /**
- * The next step for one source: the read-only `gbrain repair fences --source <id>` preview for holds, stored pages and files alike.
+ * The next step for one source: the read-only `foresights repair fences --source <id>` preview for holds, stored pages and files alike.
  * With no active maintenance run, `then` applies the plan (the preview prints the `--expect <hash>` form).
  */
 function sourceFix(census: SourceCensus, auto: FenceAutoRepair) {
   const preview = fencePreviewArgv(census.source_id);
   const manual = census.by_tier.manual;
-  const why = `Previews the repair of each malformed fence of ${census.source_id} (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. `
+  const why = `Previews the repair of each malformed fence of ${census.source_id} (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence foresights will not guess; it prints the apply command with --expect <hash>. `
     + (auto.active ? `Everything but the manual ones is ${automaticRepair(auto)}, so no action is needed for those.` : `They are ${automaticRepair(auto)}, so apply the plan with the command the preview prints.`)
     + (manual ? ` ${manual} need a manual edit: make the edit the preview names in the file (or the page), commit, then sync.` : '');
   return agentFix(preview, why, 'fence_integrity', { docs: 'docs/guides/repair.md#fences',
@@ -105,11 +105,11 @@ function sourceFix(census: SourceCensus, auto: FenceAutoRepair) {
 
 /** Why model-tier fences wait, or the caps when nothing stops them. */
 function modelRepairSentence(caps: { perPageUsd: number; perDayUsd: number }, today: { committedUsd: number; reservedUsd: number } | null, auto: FenceAutoRepair, llm: number): string {
-  if (!auto.llm) return `Model repair (Tier 3) is off (fences.repair.llm false), so ${llm} model-tier fence(s) wait for a manual edit; turning it on is the user's call (gbrain config set fences.repair.llm true).`;
+  if (!auto.llm) return `Model repair (Tier 3) is off (fences.repair.llm false), so ${llm} model-tier fence(s) wait for a manual edit; turning it on is the user's call (foresights config set fences.repair.llm true).`;
   if (caps.perDayUsd === 0) return 'Model repair spend is off (fences.repair.max_usd_per_day 0).';
   if (today && today.committedUsd + today.reservedUsd >= caps.perDayUsd) {
     return `Today's model repair budget is spent ($${today.committedUsd.toFixed(2)} of $${caps.perDayUsd.toFixed(2)}), so ${llm} model-tier fence(s) wait until after 00:00 UTC; `
-      + 'raising it is the user\'s call (gbrain config set fences.repair.max_usd_per_day <usd>).';
+      + 'raising it is the user\'s call (foresights config set fences.repair.max_usd_per_day <usd>).';
   }
   return `Model repair caps: $${caps.perPageUsd.toFixed(2)} per page, $${caps.perDayUsd.toFixed(2)} per day${today ? ` ($${today.committedUsd.toFixed(2)} spent today)` : ''}.`;
 }
@@ -147,12 +147,12 @@ function unrenderableSentence(found: Omit<UnrenderableLegacyFacts, 'unbound'>): 
   const duplicates = found.pages.reduce((sum, page) => sum + page.rows.filter(row => row.reason === 'duplicate_claim').length, 0);
   const sources = duplicateClaimSources(found);
   return `${found.total} legacy fact row(s) on ${found.pages.length} page(s) cannot be adopted into their facts fence: ${pages}${found.pages.length > 5 ? '; …' : ''}. `
-    + 'They stay active and searchable and nothing is lost: the fence codec would change their text (or the page already carries the claim), so gbrain leaves them as legacy rows '
+    + 'They stay active and searchable and nothing is lost: the fence codec would change their text (or the page already carries the claim), so foresights leaves them as legacy rows '
     + 'and those pages skip destructive fact reconciliation. '
-    + (duplicates ? `${duplicates} of them copy a claim their page's facts table already carries (duplicate_claim): ${sources.map(id => `gbrain repair duplicate-facts --source ${id}`).join('; ')} previews retiring each copy onto its fence row (read-only; applying it needs the user's agreement), and the page then reconciles again. ` : '')
-    + (duplicates < found.total ? 'For the other rows there is no safe automatic fix; report the pages and reason classes with the gbrain version. ' : '')
+    + (duplicates ? `${duplicates} of them copy a claim their page's facts table already carries (duplicate_claim): ${sources.map(id => `foresights repair duplicate-facts --source ${id}`).join('; ')} previews retiring each copy onto its fence row (read-only; applying it needs the user's agreement), and the page then reconciles again. ` : '')
+    + (duplicates < found.total ? 'For the other rows there is no safe automatic fix; report the pages and reason classes with the foresights version. ' : '')
     + 'Do not forget or expire a row to clear this count.'
-    + (found.complete ? '' : ' The scan did not finish within its time budget, so more rows may be affected; run gbrain doctor --only fence_integrity again.');
+    + (found.complete ? '' : ' The scan did not finish within its time budget, so more rows may be affected; run foresights doctor --only fence_integrity again.');
 }
 
 /**
@@ -216,21 +216,21 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
   if (uncommitted.length) {
     const bySource = [...new Set(uncommitted.map(n => n.source_id))];
     sentences.push(`${uncommitted.length} fence repair(s) on legacy source(s) ${bySource.join(', ')} are written and imported but not committed; `
-      + `gbrain sources status ${bySource[0]} prints each file's exact gbrain git commit-push step, which commits and pushes only that file (the backup of the original is kept).`);
+      + `foresights sources status ${bySource[0]} prints each file's exact foresights git commit-push step, which commits and pushes only that file (the backup of the original is kept).`);
   }
   if (partial.length) {
     sentences.push(`PARTIAL CENSUS: the scan of ${partial.map(c => c.source_id).join(', ')} did not finish within ${timeoutMs / 1000}s, so more fences may be malformed; `
-      + 'run gbrain doctor --only fence_integrity again to resume it (raise GBRAIN_DOCTOR_FENCE_TIMEOUT_MS for a larger share per run).');
+      + 'run foresights doctor --only fence_integrity again to resume it (raise GBRAIN_DOCTOR_FENCE_TIMEOUT_MS for a larger share per run).');
   }
   if (unrenderable.total || !unrenderable.complete) sentences.push(unrenderable.total ? unrenderableSentence(unrenderable)
-    : 'The scan for legacy fact rows the fence cannot render did not finish within its time budget; run gbrain doctor --only fence_integrity again.');
+    : 'The scan for legacy fact rows the fence cannot render did not finish within its time budget; run foresights doctor --only fence_integrity again.');
   if (unbound.length) sentences.push(unboundRefusedSentence(unbound));
   const first = waiting[0];
   const fix = first ? sourceFix(first, auto)
     : partial.length || (!unrenderable.total && !unrenderable.complete) ? agentFix(['gbrain', 'doctor', '--only', 'fence_integrity', '--json'], 'Resumes the fence census where the last scan stopped and reports what it found.', 'fence_integrity', { docs: DOCS })
       : noisy.length ? agentFix(['gbrain', 'sources', 'status', noisy[0]!.source_id, '--json'], `Shows ${noisy[0]!.source_id}'s recent sync result, including fences_normalized with sample paths, so you can find what writes the malformed fences.`,
         'fence_integrity', { docs: DOCS })
-        : uncommitted.length ? agentFix(['gbrain', 'sources', 'status', uncommitted[0]!.source_id], 'Lists the uncommitted fence repairs of this legacy source with the exact gbrain git commit-push step for each file.',
+        : uncommitted.length ? agentFix(['gbrain', 'sources', 'status', uncommitted[0]!.source_id], 'Lists the uncommitted fence repairs of this legacy source with the exact foresights git commit-push step for each file.',
           'fence_integrity', { docs: DOCS })
           : duplicateClaimSources(unrenderable).length ? agentFix(['gbrain', 'repair', 'duplicate-facts', '--source', duplicateClaimSources(unrenderable)[0]!, '--json'],
             `Previews, read-only, the groups of active copies of one fact in ${duplicateClaimSources(unrenderable)[0]} and the row each keeps: a legacy copy of a claim its page's facts table carries keeps the fence row and is superseded onto it. Show the preview to the user; it prints the apply command with --expect <hash>, which runs only with their agreement.`,
@@ -238,10 +238,10 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
           : unbound.length && !unrenderable.total ? agentFix(['gbrain', 'config', 'set', UNBOUND_WRITE_KEY, 'database_only'],
             `Allows database-only writes to sources with a checkout but no canonical owner, so the next extract_facts run fences these rows into their database pages. It is brain-wide (every database-only page of such a source stays database-only after binding), so ask the user first.`,
             'fence_integrity', { ask_user: true, docs: UNBOUND_SOURCE_DOCS,
-              user_message: `Some saved facts sit on database-only pages of an unbound source and are not in those pages' facts tables yet. I can allow database-only writes to unbound sources (gbrain config set ${UNBOUND_WRITE_KEY} database_only) so the next maintenance run adds them; those pages then stay database-only even after the source is bound.` })
+              user_message: `Some saved facts sit on database-only pages of an unbound source and are not in those pages' facts tables yet. I can allow database-only writes to unbound sources (foresights config set ${UNBOUND_WRITE_KEY} database_only) so the next maintenance run adds them; those pages then stay database-only even after the source is bound.` })
           // No command to run: the rows stay as they are, so the fix is a report; verify re-counts them.
           : { consent: [], actor: 'agent' as const, requires_exclusive: false, docs: UNRENDERABLE_DOCS, verify: doctorVerify('fence_integrity'),
-            why: `Nothing to run: ${unrenderable.total} legacy fact row(s) stay active and searchable because their text cannot be written into a facts fence unchanged. Tell the user which pages are listed under unrenderable_legacy_facts and report them with the gbrain version; the verify re-counts the rows.` };
+            why: `Nothing to run: ${unrenderable.total} legacy fact row(s) stay active and searchable because their text cannot be written into a facts fence unchanged. Tell the user which pages are listed under unrenderable_legacy_facts and report them with the foresights version; the verify re-counts the rows.` };
   return withSkippedSegmented({ status: 'warn', details: { ...details, auto_repair: auto }, fix, message: sentences.join(' ') }, skipped);
 }
 
@@ -258,7 +258,7 @@ async function runFenceIntegrity(ctx: DoctorContext): Promise<Check[]> {
     checks.push({ name: 'fence_integrity', ...await fenceIntegrityResult(engine, { deadlineAt: scanDeadline(ctx, fenceScanTimeoutMs()) }) });
   } catch (error) {
     checks.push({ name: 'fence_integrity', status: 'warn', fix_unavailable_reason: 'check_errored', details: { health: 'unknown' },
-      message: `The fence census could not run: ${error instanceof Error ? error.message : String(error)}. Fence health is unknown; run gbrain doctor --only fence_integrity again.` });
+      message: `The fence census could not run: ${error instanceof Error ? error.message : String(error)}. Fence health is unknown; run foresights doctor --only fence_integrity again.` });
   }
   return checks;
 }

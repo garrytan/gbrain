@@ -3,7 +3,7 @@
  *
  * Reads three variant resolver files + two fixture corpora, runs each
  * (fixture, variant, seed in {1,2,3}) through Anthropic Opus 4.7 via
- * gbrain's gateway, scores the response, writes one JSONL row per call,
+ * foresights's gateway, scores the response, writes one JSONL row per call,
  * computes per-variant accuracy mean + 95% CI, prints a summary table.
  *
  * Receipts bind (model, prompt_template_hash, fixtures_hash, ts, seed)

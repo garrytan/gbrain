@@ -5,7 +5,7 @@ hub-heavy world. It has 32,652 pages and 77,489 links; inbound degree p50 is 7, 
 hubs of 5,000, 10,000, 20,000 and 30,000 inbound links.
 
 The runner is gbrain-evals `eval/runner/hub-world-arms.ts` (branch `capy/p2-hub-world-arms`). It builds one shared index
-per gbrain build and runs every read-time arm on it. Each search must report the arm's half degree in its telemetry.
+per foresights build and runs every read-time arm on it. Each search must report the arm's half degree in its telemetry.
 The path is keyword-only, with RELATIONAL_PINS and relational retrieval off.
 
 Families:
@@ -56,7 +56,7 @@ but carries one-hop and hub-as-answer recall. No change to it is proposed here.
 
 ## Frozen held-out configuration
 
-- **Candidate build:** gbrain#6020 at af1225d7b.
+- **Candidate build:** foresights#6020 at af1225d7b.
 - **Arms:**
   - off;
   - H = 32, the dev choice with the highest primary;
@@ -68,9 +68,9 @@ but carries one-hop and hub-as-answer recall. No change to it is proposed here.
 Runs:
 
 ```bash
-bun eval/runner/hub-world-arms.ts --corpus-dir <seed-dir> --gbrain <gbrain>@af1225d7b --arms off,32,graph-off --output <dir>
-bun eval/runner/hub-world-arms.ts --corpus-dir <seed-dir> --gbrain <gbrain>@31a792c94 --arms off --output <dir>
-bun eval/runner/hub-world-arms.ts --corpus-dir <seed-dir> --gbrain <gbrain>@4e2bd760e --arms off --output <dir>
+bun eval/runner/hub-world-arms.ts --corpus-dir <seed-dir> --gbrain <foresights>@af1225d7b --arms off,32,graph-off --output <dir>
+bun eval/runner/hub-world-arms.ts --corpus-dir <seed-dir> --gbrain <foresights>@31a792c94 --arms off --output <dir>
+bun eval/runner/hub-world-arms.ts --corpus-dir <seed-dir> --gbrain <foresights>@4e2bd760e --arms off --output <dir>
 ```
 
 Add `--embed openai --paid --budget-run-id <id>` for the hybrid cells.

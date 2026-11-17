@@ -152,7 +152,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
               {fix:cloneStatusFix(record.sourceId)});
           if(record.operation==='reclone'&&await topologyCanonicalStamp(tx,record.worktreeId)!==record.canonicalStamp)
             throw opError('source_changed','The logical source changed while cloning; retry after its mirrors finish.',
-              `Pages in source ${record.sourceId} changed while it recloned, so the clone is rolled back and the original checkout kept. Wait until writer status shows no blocking effects for ${record.sourceId}, then run gbrain sources reclone ${record.sourceId} again under a new request id.`,
+              `Pages in source ${record.sourceId} changed while it recloned, so the clone is rolled back and the original checkout kept. Wait until writer status shows no blocking effects for ${record.sourceId}, then run foresights sources reclone ${record.sourceId} again under a new request id.`,
               {fix:cloneStatusFix(record.sourceId)});
           await settleTopologyRequests(tx,sources,[record.worktreeId],row.principal_id);
           assertStagingOwned(record);

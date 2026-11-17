@@ -7,7 +7,7 @@ workload (3 seeds, embeddings on), turning the key on lifted `query` + reader at
 lowered no question's recall in the existing evals that cover `query`, but on their as-written questions it
 never fired, so that pass shows only that nothing else moves.
 
-Measured build: gbrain 2fa44f149 (the `capy/mpw-integration` branch). c4add4176 moves the op seam into
+Measured build: foresights 2fa44f149 (the `capy/mpw-integration` branch). c4add4176 moves the op seam into
 `entity-anchor.ts` with no change in behavior. Stage: dev.
 
 ## The change
@@ -117,12 +117,12 @@ context_pack's entity cards. Neither is built. Each needs its own gate.
    - NamedThingBench and the relational retrieval-quality fixture (`test/fixtures/retrieval-quality/`),
      hermetic and keyword-only.
    - The LongMemEval nightly fixture (`test/fixtures/longmemeval-nightly.jsonl`), ingested the way
-     `gbrain eval longmemeval` ingests it.
+     `foresights eval longmemeval` ingests it.
    - **Rule:** with the key on, no question's top-10 recall is lower than with the key off.
-   - The `gbrain eval longmemeval` command itself calls `hybridSearch` directly, so the key cannot change it.
+   - The `foresights eval longmemeval` command itself calls `hybridSearch` directly, so the key cannot change it.
 3. **Harness lane.** This is run by the harness lane, not here: dev slices (LongMemEval knowledge-update,
    PersonaMem, BEAM dev), then confirmation on validation. The harness must retrieve through the `query` op
-   (or `gbrain query`) with `search.entity_anchoring=true` for the change to apply.
+   (or `foresights query`) with `search.entity_anchoring=true` for the change to apply.
 
 **Decision.** The key becomes default-on only if gates 1 and 2 pass here and gate 3 passes in the harness
 lane. Until then it stays off. The cap for gates 1 and 2 is $10.

@@ -50,7 +50,7 @@ test('a registered source whose directory is missing is unverified in the audit 
     expect(check.status).toBe('warn');
     expect(check.message).toContain(absent);
     expect(check.message).toContain('missing');
-    expect(check.message).toContain('gbrain sources set-path');
+    expect(check.message).toContain('foresights sources set-path');
     expect(check.message).not.toContain('timeout');
     expect(check.message).not.toContain('GBRAIN_DOCTOR_FM_TIMEOUT_MS');
     expect(check.fix_unavailable_reason).toBe('operator_judgement');

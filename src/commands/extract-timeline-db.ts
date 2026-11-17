@@ -1,8 +1,8 @@
 /**
- * `gbrain extract timeline --source db` (#5904 probe, E28).
+ * `foresights extract timeline --source db` (#5904 probe, E28).
  *
  * `timeline_entries` is a guarded table: on a managed brain (every fresh
- * `gbrain init` brain is one) a raw batch insert is refused by
+ * `foresights init` brain is one) a raw batch insert is refused by
  * `managed_writer_guard`. Managed brains therefore publish each page that
  * needs a change as one database-only maintenance request
  * (`managed_maintenance_timeline_extract`, owner-checked by
@@ -230,7 +230,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
     console.error(
       `[extract timeline] refused: ${result.refusal_codes.join(', ')}; ${result.refused} ${unit} not written, ${result.created} written. ` +
       `Existing timeline rows are untouched (import already stored the rows of each page it wrote). ` +
-      `Recovery: gbrain extract --stale${opts.sourceIdFilter ? ` --source-id ${opts.sourceIdFilter}` : ''}. Docs: ${TIMELINE_REFUSAL_DOCS}`,
+      `Recovery: foresights extract --stale${opts.sourceIdFilter ? ` --source-id ${opts.sourceIdFilter}` : ''}. Docs: ${TIMELINE_REFUSAL_DOCS}`,
     );
   }
   return result;
@@ -377,7 +377,7 @@ export async function publishManagedPageTimeline(engine: BrainEngine, slug: stri
 /** Preparer for `managed_maintenance_timeline_extract`: a database-only publication on the page key. */
 function timelinePageChanged(row: WriteRequest, message: string): OperationError {
   return opError('page_identity_changed', message,
-    `Page ${row.slug} in source ${row.source_id} changed before its queued timeline extraction ran, so this page was skipped. Read the page that holds the slug now; gbrain extract timeline --source db --source-id ${row.source_id} extracts it again under a new request.`,
+    `Page ${row.slug} in source ${row.source_id} changed before its queued timeline extraction ran, so this page was skipped. Read the page that holds the slug now; foresights extract timeline --source db --source-id ${row.source_id} extracts it again under a new request.`,
     { fix: readFix(`Shows which page holds ${row.slug} now and its revision.`, { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug], mcp: { tool: 'get_page', arguments: { slug: row.slug, source_id: row.source_id } } }) });
 }
 

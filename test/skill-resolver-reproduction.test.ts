@@ -7,7 +7,7 @@
  * 2. Fails when: the tokenizer, a constant, the summation order or the tie
  *    rule drifts from the prototype.
  * 3. Fixture: test/fixtures/skill-resolver/step1-golden-gbrain.json.gz holds
- *    gbrain's own skills as the eval pinned them (this repository's text,
+ *    foresights's own skills as the eval pinned them (this repository's text,
  *    MIT) and the Step 1 test-split turns (placeholders only), with the
  *    prototype's top-5 per turn. No third-party skill text is vendored (F6).
  *    The tolerance is zero: none of these texts contains CJK, the one place
@@ -65,7 +65,7 @@ describe('the product ranker reproduces the Step 1 prototype', () => {
       const home = mkdtempSync(join(tmpdir(), 'skres-repro-'));
       try {
         const skills = G.skills.map(s => ({ ...s, ...(variant === 'D' ? { triggers: [], routing: [] } : {}) }));
-        // Variant T needs a quarter of the catalog to carry triggers; gbrain's own skills all do.
+        // Variant T needs a quarter of the catalog to carry triggers; foresights's own skills all do.
         const f = join(home, 'cat.json');
         writeFileSync(f, JSON.stringify(skills));
         const receipt = await buildSkillIndex({ catalog: 'golden', fromJson: f }, { home });

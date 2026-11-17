@@ -1,5 +1,5 @@
 /**
- * #3194 — `gbrain migrate` must not silently drop pages while reporting
+ * #3194 — `foresights migrate` must not silently drop pages while reporting
  * success.
  *
  * Two things are pinned here:

@@ -1,9 +1,9 @@
 /**
- * GBRA-150: what gbrain did with each file path of a source, by gbrain's own rules, so a harness (a landing check, an
+ * GBRA-150: what foresights did with each file path of a source, by foresights's own rules, so a harness (a landing check, an
  * agent that just committed a page) never re-implements slugging or the skip lists and drifts from them.
  *
- * A landing check that copies gbrain rules drifts in exactly this way: a copy of the path→slug rule that only
- * lowercased (gbrain also strips leading and trailing hyphens), a deleted mixed-case file whose lowercase twin still
+ * A landing check that copies foresights rules drifts in exactly this way: a copy of the path→slug rule that only
+ * lowercased (foresights also strips leading and trailing hyphens), a deleted mixed-case file whose lowercase twin still
  * owns the slug (a delete must be checked by the page's origin, never by its slug), and a nested `index.md` that sync
  * skips as folder scaffolding (a page that will never exist). Resolving through here answers each with its reason.
  *
@@ -12,7 +12,7 @@
  *   - `state`, one of RESOLVE_PATH_STATES, read in this order:
  *       not_synced_yet  the file at the checkout's HEAD differs from the last synced commit (added, changed or removed since);
  *       skipped         sync never imports this path (`skipped.reason`: a metafile, an excluded or pruned path, the strategy);
- *       held            a sync hold waits on the file (`hold.code`; `gbrain sync status` carries its fix);
+ *       held            a sync hold waits on the file (`hold.code`; `foresights sync status` carries its fix);
  *       deleted         the file is gone from the synced commit and no live page records it as its origin (a live page
  *                       that only shares the slug, a case-folded twin, is named in `slug_owner` and is not a failure);
  *       stale_page      the file is gone from the synced commit but its page is still live;
@@ -125,13 +125,13 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   if (!source || source.archived) throw opError('not_found', `Source ${sourceId} is not registered or is archived.`, 'List the registered sources and pass one of their ids.',
     { fix: readFix('Lists the registered sources.', ['gbrain', 'sources', 'list', '--json'], ['gbrain', 'sources', 'list', '--json']) });
   if (source.local_path && !isHostAbsolutePath(source.local_path)) throw opError('sync_anchor_relative', `Source ${sourceId} has a relative local_path, which names no fixed directory, so its paths cannot be resolved.`,
-    'Ask the user which directory holds the checkout, then run gbrain sources set-path on the host that holds it.',
+    'Ask the user which directory holds the checkout, then run foresights sources set-path on the host that holds it.',
     { fix: { argv: ['gbrain', 'sources', 'set-path', sourceId, '<dir>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
       inputs: [{ name: 'dir', how: "The absolute path of the directory that holds this source's checkout, from the user; never the current directory by default." }],
-      user_message: `Source "${sourceId}" has a relative path as its directory, so gbrain cannot tell which folder holds its files. Which directory holds them? I'll point the source there (gbrain sources set-path ${sourceId} <absolute-directory>).`,
+      user_message: `Source "${sourceId}" has a relative path as its directory, so foresights cannot tell which folder holds its files. Which directory holds them? I'll point the source there (foresights sources set-path ${sourceId} <absolute-directory>).`,
       why: 'Points the source at an absolute directory; it only updates the pointer, no file or page changes.', verify: { argv: status }, docs: DOCS } });
   if (!source.local_path || !existsSync(source.local_path)) throw opError('not_found', `Source ${sourceId} has no Git checkout on this host, so its paths cannot be resolved here.`,
-    'Run this on the host that holds the checkout (gbrain sources status names its path).', { fix: readFix('Shows where the source checkout lives.', status, status) });
+    'Run this on the host that holds the checkout (foresights sources status names its path).', { fix: readFix('Shows where the source checkout lives.', status, status) });
   const root = realpathSync(source.local_path);
   let top: string;
   try {
@@ -232,7 +232,7 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
     if (skippedBy) {
       const typed = skippedBy === 'metafile' && content !== undefined ? frontmatter.type != null || frontmatter.title != null : undefined;
       push('skipped', live ? liveSearch : false, skippedBy === 'metafile'
-        ? `Sync never imports ${p.rootPath.split('/').pop()} files: they are folder scaffolding (SYNC_SKIP_FILES), so this path has no page by design${typed ? ', even though its frontmatter has a type: or title: (sync.metafile_pages is off; gbrain config set sync.metafile_pages typed imports it)' : ''}.`
+        ? `Sync never imports ${p.rootPath.split('/').pop()} files: they are folder scaffolding (SYNC_SKIP_FILES), so this path has no page by design${typed ? ', even though its frontmatter has a type: or title: (sync.metafile_pages is off; foresights config set sync.metafile_pages typed imports it)' : ''}.`
         : `Sync does not import this path (${skippedBy}); it has no page by design.`, null, { skipped: { reason: skippedBy, ...(typed !== undefined ? { typed_frontmatter: typed } : {}) } });
       continue;
     }

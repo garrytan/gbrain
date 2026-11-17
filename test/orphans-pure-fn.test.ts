@@ -2,14 +2,14 @@
  * IRON RULE regression test (per D1 from /plan-eng-review for v0.42.0.0).
  *
  * Pins byte-identical output between:
- *   - `gbrain orphans --json` (CLI orchestrator `runOrphans`)
+ *   - `foresights orphans --json` (CLI orchestrator `runOrphans`)
  *   - `findOrphans(engine, opts)` (canonical pure data fn)
  *   - `getOrphansData(engine, opts)` (v0.42.0.0 alias for findOrphans)
  *
  * If a future refactor lets the CLI filter results differently after
  * `findOrphans` returns, this test catches the drift. Doctor's
  * `orphan_ratio` check imports `getOrphansData`; this test guarantees
- * the doctor count cannot disagree with `gbrain orphans --count`.
+ * the doctor count cannot disagree with `foresights orphans --count`.
  *
  * Hermetic via PGLite. No DATABASE_URL needed.
  */

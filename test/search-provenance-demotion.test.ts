@@ -1,5 +1,5 @@
 /**
- * Provenance-aware ranking (Cat 40 Hard fix wave, F3): pages gbrain generated
+ * Provenance-aware ranking (Cat 40 Hard fix wave, F3): pages foresights generated
  * (frontmatter `dream_generated: true`, `type: extract_receipt`) rank below a
  * primary record about the same entity that matches the same query, and only
  * then; corrections are never demoted.

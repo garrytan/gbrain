@@ -146,7 +146,7 @@ describe('suppression notice (DX-10)', () => {
     expect(n.code).toBe('memory_suppressed');
     expect(n.why).toContain('2 unconfirmed agent-written memories');
     expect(n.fix?.argv).toEqual(['gbrain', 'trust', 'review']);
-    expect(suppressionSummary(1)).toEqual({ withheld: 1, review: 'gbrain trust review' });
+    expect(suppressionSummary(1)).toEqual({ withheld: 1, review: 'foresights trust review' });
     expect(suppressionSummary(0)).toBeUndefined();
   });
 });

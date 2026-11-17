@@ -2,7 +2,7 @@
  * stale_embedding_effects doctor check (#5629, #5734): embedding effects of
  * committed writes that are queued and unclaimed an hour later, or failed.
  * They block receipt compaction and activation (`writer_not_quiesced`).
- * `gbrain repair embedding-effects` settles them; an effect it re-queued for
+ * `foresights repair embedding-effects` settles them; an effect it re-queued for
  * its owner stays counted as pending until it commits.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
@@ -24,8 +24,8 @@ export async function staleEmbeddingEffectsCheck(engine: BrainEngine, sourceIds?
       `SELECT e.id::text AS effect_id,r.source_id,r.slug,r.request_id::text AS request_id,e.state,e.updated_at::text AS updated_at FROM persistence_effects e
        JOIN persistence_requests r ON r.id=e.request_id WHERE ${where} ORDER BY e.id LIMIT ${SAMPLE}`, params);
     const sources = [...new Set(rows.map(row => row.source_id))];
-    const repair = sources.length === 1 ? `gbrain repair embedding-effects --source ${sources[0]}` : 'gbrain repair embedding-effects';
-    const effects = rows.map(row => ({ ...row, kind: 'embedding', inspect: `gbrain sources writer status ${row.source_id} --json` }));
+    const repair = sources.length === 1 ? `foresights repair embedding-effects --source ${sources[0]}` : 'foresights repair embedding-effects';
+    const effects = rows.map(row => ({ ...row, kind: 'embedding', inspect: `foresights sources writer status ${row.source_id} --json` }));
     const details: Record<string, unknown> = { stale_effects: Number(count), failed_effects: Number(failed), retry_queued_effects: Number(requeued), count: 'exact',
       truncated: Number(count) > rows.length, effects, resolution: 'repairable', repair: 'embedding-effects', command: repair,
       docs: 'docs/guides/repair.md#stale-queued-embedding-effects' };

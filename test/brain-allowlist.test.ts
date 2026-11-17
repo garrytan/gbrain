@@ -286,7 +286,7 @@ describe('sanitizeToolName', () => {
 // #4852: trusted-workspace subagents (dream synth agentic lane, patterns,
 // delegated jobs) author page content model-side and mint types no bundled
 // pack declares (`reflection` / `original` / `pattern`); the reverse-write puts
-// that type on disk as explicit frontmatter and every `gbrain sync` warns.
+// that type on disk as explicit frontmatter and every `foresights sync` warns.
 // The oneshot lane already pins its output to 'note' (F5); the seam extends
 // that rule: an EXPLICIT undeclared type rewrites to 'note' + legacy_type.
 describe('brain_put_page pins undeclared model-authored types (#4852)', () => {

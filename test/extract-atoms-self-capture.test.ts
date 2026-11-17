@@ -1,6 +1,6 @@
 /**
  * #5820: dream extract_atoms discovers session-corpus transcripts, so a corpus
- * file captured from gbrain's own claude-cli call must be skipped there exactly
+ * file captured from foresights's own claude-cli call must be skipped there exactly
  * as synthesize skips it (`selfCaptureSessionIds`), or each one costs another
  * extraction call.
  *
@@ -33,7 +33,7 @@ function reply(): ChatResult {
     model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic' } as ChatResult;
 }
 
-describe('extract_atoms skips gbrain claude-cli self-captures (#5820)', () => {
+describe('extract_atoms skips foresights claude-cli self-captures (#5820)', () => {
   test('a self-capture corpus file never reaches the model; an ordinary session does', async () => {
     root = mkdtempSync(join(tmpdir(), 'gb-atoms-self-'));
     const corpusDir = join(root, 'corpus');

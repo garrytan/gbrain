@@ -2,7 +2,7 @@
 /**
  * Skill health guard: drift and size.
  *
- * Drift: every `gbrain ...` invocation a skill shows (shell fences and inline
+ * Drift: every `foresights ...` invocation a skill shows (shell fences and inline
  * code) must pass the dispatcher's own subcommand and unknown-flag checks, and
  * every operation-shaped frontmatter `tools:` entry must be a real operation
  * (src/core/skill-drift.ts against src/cli/skill-surface.ts). A PR that renames
@@ -116,7 +116,7 @@ for (const file of skillFiles) {
 }
 for (const skill of rows.keys()) if (!present.has(skill)) failures.push(`SKILL_BUDGET_ROW_STALE skills/skill-budgets.tsv '${skill}' names no skill\n    fix: delete the row`);
 
-const coverage = `${invocations} gbrain invocations in ${files.length} files; flags checked for all; ${unverified} name a subcommand of ${undeclared.size} command(s) that declare none, so only their flags were checked (scripts/skill-drift-undeclared-subcommands.txt)`;
+const coverage = `${invocations} foresights invocations in ${files.length} files; flags checked for all; ${unverified} name a subcommand of ${undeclared.size} command(s) that declare none, so only their flags were checked (scripts/skill-drift-undeclared-subcommands.txt)`;
 if (failures.length) {
   console.error(`FAIL: ${failures.length} skill health violation(s) (${coverage}):`);
   for (const f of failures) console.error(`  ${f}`);

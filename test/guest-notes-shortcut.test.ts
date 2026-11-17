@@ -2,7 +2,7 @@
  * Guest notes (GBRA-504): no config key can hide a guest source.
  *
  * Protects: whether a read stamps guest notes is decided from the sources themselves, never from a separate marker, so
- * a source marked guest by a config edit alone (no `gbrain guests init`), or listed in guest_sources after its config
+ * a source marked guest by a config edit alone (no `foresights guests init`), or listed in guest_sources after its config
  * lost the guest key (a restored database, a config rewrite), still has its pages marked when a remote caller reads
  * them; and a failed guest-source check marks or refuses the read, never returns it bare.
  *

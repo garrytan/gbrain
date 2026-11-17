@@ -2,14 +2,14 @@
  * Adoption funnel (D8): a local, opt-in record of how far one install got.
  *
  * Off by default. Recording happens only while `~/.gbrain/funnel.jsonl` (under GBRAIN_HOME when set)
- * exists, and only `gbrain status --funnel --enable` creates it; with no file,
+ * exists, and only `foresights status --funnel --enable` creates it; with no file,
  * every recorder below is a single `existsSync` and writes nothing.
- * `gbrain status --funnel --delete` removes the file, which turns recording off.
+ * `foresights status --funnel --delete` removes the file, which turns recording off.
  *
  * Each line is `{event, at, session}`: an event name, when it happened and
  * when the recording process started. Never content, queries, slugs, ids or
  * names. Nothing here touches the network; the user decides whether to share
- * `gbrain status --funnel --json`, which reports counts, never rates.
+ * `foresights status --funnel --json`, which reports counts, never rates.
  *
  * Appends are one short line each (POSIX O_APPEND keeps concurrent writers
  * line-atomic); `save` and `recall` are written at most once per process, so
@@ -134,7 +134,7 @@ const day = (iso: string) => iso.slice(0, 10);
 
 /**
  * Counts per stage:
- * - clean_install: `gbrain init` runs that created a new brain;
+ * - clean_install: `foresights init` runs that created a new brain;
  * - import_useful_data: imports that saved at least one page;
  * - recall_new_session: sessions whose read returned something, started after
  *   an earlier session saved, imported or corrected memory (correctness is

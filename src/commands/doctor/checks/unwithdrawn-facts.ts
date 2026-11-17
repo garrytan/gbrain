@@ -22,8 +22,8 @@ export async function unwithdrawnFactsCheck(engine: BrainEngine, sourceIds?: str
     return { name: 'unwithdrawn_facts', status: 'warn', details,
       message: `${details.evidenced + details.ambiguous} fact(s) were retired by a facts-fence generation although no fence of their page held them `
         + `(${details.evidenced} evidenced, ${details.ambiguous} ambiguous); recall no longer returns them. `
-        + 'Preview the restore on the brain host: gbrain repair unwithdrawn-facts — then run the apply command it prints after the user agrees '
-        + '(ambiguous rows only with gbrain repair unwithdrawn-facts --include-ambiguous).' };
+        + 'Preview the restore on the brain host: foresights repair unwithdrawn-facts — then run the apply command it prints after the user agrees '
+        + '(ambiguous rows only with foresights repair unwithdrawn-facts --include-ambiguous).' };
   } catch (error) {
     return { name: 'unwithdrawn_facts', status: 'warn',
       message: `Facts retired by facts-fence generations could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,

@@ -9,7 +9,7 @@
  * `referenced_by` reports. Bounded by NEWER_MENTIONS_CAP rows and
  * NEWER_MENTIONS_CARD_CHARS rendered characters per card; the pack caps all
  * cards together at NEWER_MENTIONS_PACK_CHARS. On by default; the off switch
- * is `gbrain config set mentions.newer_on_cards false`.
+ * is `foresights config set mentions.newer_on_cards false`.
  *
  * #5575: the referrer read applies the pack's eligibility and leaves
  * quarantined pages out unless an authorized include_quarantined asked; each

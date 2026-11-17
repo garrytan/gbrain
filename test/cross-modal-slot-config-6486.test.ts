@@ -1,5 +1,5 @@
 /**
- * #6486 — `gbrain eval cross-modal` resolves each judge slot as
+ * #6486 — `foresights eval cross-modal` resolves each judge slot as
  * `--slot-<x>-model` flag → brain config `models.eval.cross_modal.slot_<x>`
  * → `DEFAULT_SLOTS`. The config keys already existed for the nightly probe
  * (`nightly-probe-routes.ts`) but the CLI read only the flags, so an
@@ -73,7 +73,7 @@ describe('readCrossModalSlotConfig (shared with the nightly probe)', () => {
   });
 });
 
-describe('gbrain eval cross-modal --batch honours the brain slot pins (#6486)', () => {
+describe('foresights eval cross-modal --batch honours the brain slot pins (#6486)', () => {
   let dir: string;
   let batchPath: string;
   let summaryPath: string;

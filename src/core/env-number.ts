@@ -11,7 +11,7 @@
  *
  * One module, one memo, imported by both planes.
  *
- * The warning prefix is `[gbrain]` rather than `[gbrain doctor]` because these vars are
+ * The warning prefix is `[foresights]` rather than `[foresights doctor]` because these vars are
  * now read outside doctor. No test asserted the old prefix (verified before the move).
  */
 
@@ -38,7 +38,7 @@ export function resolveEnvNumber(
     if (!_envNumberWarned.has(varName)) {
       _envNumberWarned.add(varName);
       console.warn(
-        `[gbrain] Ignoring invalid ${varName}=${raw}; using default ${fallback}${opts?.unit ?? ''}.`,
+        `[foresights] Ignoring invalid ${varName}=${raw}; using default ${fallback}${opts?.unit ?? ''}.`,
       );
     }
     return fallback;

@@ -81,7 +81,7 @@ describe('a moved PGLite brain and the pending-write contract', () => {
     expect(receipt).toMatchObject({ request_id: id, diagnostic: { reason: 'owner_unavailable', next_action: 'inspect_owner' } });
     expect(Number.isFinite(Date.parse(receipt.diagnostic.owner.last_active))).toBe(true);
     expect(pending.stderr).toContain('quiet past the stale window');
-    expect(pending.stderr).toContain('gbrain doctor --only owner_host_stale --json');
+    expect(pending.stderr).toContain('foresights doctor --only owner_host_stale --json');
 
     const viaEnv = await cli(['put', 'notes/moved', '--request-id', id, '--wait', '0', '--json'], page('Moved body.'), { GBRAIN_ACCEPT_PENDING: '1' });
     expect({ code: viaEnv.code, stderr: viaEnv.stderr }).toMatchObject({ code: PENDING_WRITE_EXIT_CODE });

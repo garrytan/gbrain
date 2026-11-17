@@ -26,7 +26,7 @@ import { OperationError, opError } from './contract.ts';
 import { hostFix, invalidParam } from './op-fix.ts';
 
 /** stdio and legacy bearer tokens have no per-client surface row: the server's own start flag decides. */
-const NO_CLIENT_SURFACE = 'no per-client surface on this transport; the server surface is set on the host with `gbrain serve --surface <verbs|starter|full>`';
+const NO_CLIENT_SURFACE = 'no per-client surface on this transport; the server surface is set on the host with `foresights serve --surface <verbs|starter|full>`';
 import { opAllowedForBoundClient } from './context.ts';
 
 // --- WP4 (T9): request_tools — discovery + pull-based per-client unlock ---
@@ -126,11 +126,11 @@ async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'st
   const session = ctx.stdioSurface!;
   const { clampSurface, sessionWidenAllowed, surfaceWiderThan } = await import('../../mcp/surface.ts');
   session.widenAllowed = await sessionWidenAllowed(ctx.engine, ctx.config);
-  const persistent = `For a lasting change, set GBRAIN_SURFACE=${requested} in the env of this harness's MCP server entry for gbrain (or re-register the server with --surface ${requested}) and start a new session.`;
+  const persistent = `For a lasting change, set GBRAIN_SURFACE=${requested} in the env of this harness's MCP server entry for foresights (or re-register the server with --surface ${requested}) and start a new session.`;
   if (!session.widenAllowed) {
     throw opError('permission_denied',
       'Session widening is off on this brain (mcp.allow_session_widen is false), so request_tools cannot add tools to this stdio session.',
-      `${persistent} The user can turn session widening back on with \`gbrain config set mcp.allow_session_widen true\`.`,
+      `${persistent} The user can turn session widening back on with \`foresights config set mcp.allow_session_widen true\`.`,
       { fix: hostFix(ctx, ['gbrain', 'config', 'set', 'mcp.allow_session_widen', 'true'],
         `Turns stdio session widening back on (the brain owner turned it off). ${persistent}`) });
   }
@@ -212,7 +212,7 @@ const request_tools: Operation = {
         const e = opError(
           'permission_denied',
           `surface '${requested}' is above this server's ceiling '${ceiling}' (D2: per-client surfaces narrow, never widen).`,
-          `The brain host's operator caps this server at surface '${ceiling}'; a wider surface needs that server restarted with \`gbrain serve --surface ${requested}\`. Tools outside '${ceiling}' stay unavailable on this connection until then.`,
+          `The brain host's operator caps this server at surface '${ceiling}'; a wider surface needs that server restarted with \`foresights serve --surface ${requested}\`. Tools outside '${ceiling}' stay unavailable on this connection until then.`,
           { fix: hostFix(ctx, ['gbrain', 'serve', '--surface', requested], 'The surface ceiling is a server start flag; only the host that runs the server can widen it.') },
         );
         e.detail = `ceiling=${ceiling}`; // amendment 4 key=value denial grammar; ENG-11 assign-after
@@ -241,7 +241,7 @@ const request_tools: Operation = {
         const e = opError(
           'permission_denied',
           "this client's surface is operator-pinned and cannot be self-changed (amendment 19).",
-          `Ask the brain operator to change it: gbrain auth rescope-client ${clientId} --surface ${requested}`,
+          `Ask the brain operator to change it: foresights auth rescope-client ${clientId} --surface ${requested}`,
           { fix: hostFix(ctx, ['gbrain', 'auth', 'rescope-client', clientId, '--surface', requested],
             'The operator pinned this client\'s surface; only the brain host\'s operator can change a pin.') },
         );

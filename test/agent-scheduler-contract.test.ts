@@ -3,9 +3,9 @@
  *
  * SCOPE, stated honestly: the downstream agent platforms documented at
  * docs/guides/live-sync.md:62-81 (the cron-registration examples) have zero
- * detection code in gbrain and no runner in this repo. Their ENTIRE
- * integration is an external cron that shells out to the gbrain CLI and reads
- * exit codes — "/cron add ... gbrain sync --repo X && gbrain embed --stale"
+ * detection code in foresights and no runner in this repo. Their ENTIRE
+ * integration is an external cron that shells out to the foresights CLI and reads
+ * exit codes — "/cron add ... foresights sync --repo X && foresights embed --stale"
  * (live-sync.md) and INSTALL_FOR_AGENTS.md Step 7. This file pins that
  * consumer contract through a REAL /bin/sh, because the `&&` short-circuit IS
  * the contract; argv arrays cannot exercise it.
@@ -17,8 +17,8 @@
  * Anti-vacuity: the fixture commits a real page and every read-back asserts
  * pages >= 1 — an empty repo would satisfy every other assertion here.
  *
- * Explicitly OUT of scope (same docs, separate surfaces): `gbrain
- * check-update --json` (network), and the nightly keyless `gbrain dream`
+ * Explicitly OUT of scope (same docs, separate surfaces): `foresights
+ * check-update --json` (network), and the nightly keyless `foresights dream`
  * contract — the cycle's embed phase has the same EmbeddingDisabledError
  * class risk this file's chain case pins for embed; filed as a TODO rather
  * than smoke-tested here.
@@ -54,7 +54,7 @@ describe.skipIf(SKIP)('agent-scheduler shell-chain contract', () => {
   }
 
   function statusSyncSection(): { last_sync_at: string | null; staleness_class: string; pages: number } {
-    const r = sh('gbrain status --json --section sync', 90_000);
+    const r = sh('foresights status --json --section sync', 90_000);
     expect(r.exitCode).toBe(0);
     const report = JSON.parse(r.stdout.trim().split('\n').pop()!);
     const src = report.sync.sources.find((s: { source_id: string }) => s.source_id === 'default')
@@ -134,7 +134,7 @@ describe.skipIf(SKIP)('agent-scheduler shell-chain contract', () => {
     // exited 1 (EmbeddingDisabledError -> blanket process.exit(1)), breaking
     // the documented agent-scheduler cron on every keyless brain. The fix is
     // load-bearing for this exact spelling.
-    const r = sh('gbrain sync --repo "$SCHED_REPO" --no-pull && gbrain embed --stale', 150_000);
+    const r = sh('foresights sync --repo "$SCHED_REPO" --no-pull && foresights embed --stale', 150_000);
     expect(r.exitCode).toBe(0);
     expect(r.stderr).toContain('Embeddings are disabled');
 
@@ -148,7 +148,7 @@ describe.skipIf(SKIP)('agent-scheduler shell-chain contract', () => {
   test('2. quiet re-run: sync itself reports up_to_date; heartbeat strictly advances', async () => {
     // Cross-second so the strict > below cannot alias on same-second stamps.
     await new Promise((r) => setTimeout(r, 1_100));
-    const r = sh('gbrain sync --repo "$SCHED_REPO" --no-pull && gbrain embed --stale', 150_000);
+    const r = sh('foresights sync --repo "$SCHED_REPO" --no-pull && foresights embed --stale', 150_000);
     expect(r.exitCode).toBe(0);
     // The run's OWN verdict, not a timestamp tautology: a crashed second run
     // would satisfy t2 >= t1; it cannot print "Already up to date."
@@ -163,7 +163,7 @@ describe.skipIf(SKIP)('agent-scheduler shell-chain contract', () => {
   test('3. the documented weekly chain (doctor --json && embed --stale) exits 0 keyless', () => {
     // Runs BEFORE the poisoned-clone case: that one appends real rows to this
     // brain's sync-failures ledger, which doctor reads and may warn on.
-    const r = sh('gbrain doctor --json && gbrain embed --stale', 240_000);
+    const r = sh('foresights doctor --json && foresights embed --stale', 240_000);
     if (r.exitCode !== 0) {
       // A keyless-first-class bug in its own right — surface the failing checks.
       const doc = (() => { try { return JSON.parse(r.stdout.trim().split('\n').pop()!); } catch { return null; } })();
@@ -192,7 +192,7 @@ describe.skipIf(SKIP)('agent-scheduler shell-chain contract', () => {
     // source the first run imports the working tree and exits 0
     // warn-and-continue; it takes a second, quiet run to surface the wedge —
     // both shapes converge on "a permanently failing pull cannot stay green".)
-    const run1 = sh('gbrain sync --repo "$SCHED_CLONE" --source default && gbrain embed --stale', 150_000);
+    const run1 = sh('foresights sync --repo "$SCHED_CLONE" --source default && foresights embed --stale', 150_000);
     if (run1.exitCode !== 1) {
       throw new Error(`expected pull_failed exit 1, got ${run1.exitCode}\nstderr:\n${run1.stderr.slice(-2500)}\nstdout:\n${run1.stdout.slice(-800)}`);
     }
@@ -200,7 +200,7 @@ describe.skipIf(SKIP)('agent-scheduler shell-chain contract', () => {
     expect(run1.stderr).not.toContain('Embeddings are disabled');
 
     // And it stays red on repeat — a wedged pull is not a one-off blip.
-    const run2 = sh('gbrain sync --repo "$SCHED_CLONE" --source default && gbrain embed --stale', 150_000);
+    const run2 = sh('foresights sync --repo "$SCHED_CLONE" --source default && foresights embed --stale', 150_000);
     expect(run2.exitCode).toBe(1);
     expect(run2.stderr).not.toContain('Embeddings are disabled');
   }, 450_000);

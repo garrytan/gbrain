@@ -1,5 +1,5 @@
 /**
- * `gbrain models` — advisory newer-available hint and source attribution
+ * `foresights models` — advisory newer-available hint and source attribution
  * derived from resolveModelDetailed (models.tier.* attributed before
  * models.default). Serial: captures process.stdout and clears GBRAIN_MODEL.
  */
@@ -55,7 +55,7 @@ afterEach(() => {
   else process.env.GBRAIN_MODEL = savedModelEnv;
 });
 
-describe('gbrain models — newer-available hint', () => {
+describe('foresights models — newer-available hint', () => {
   test('an older configured sonnet prints the hint and the config command', async () => {
     const engine = new StubConfigEngine();
     engine.set('models.tier.reasoning', 'anthropic:claude-sonnet-4-6');
@@ -64,13 +64,13 @@ describe('gbrain models — newer-available hint', () => {
     expect(report.tiers.reasoning.newer_available).toEqual({
       family: 'sonnet',
       model: 'claude-sonnet-5-5',
-      command: 'gbrain config set models.tier.reasoning anthropic:claude-sonnet-5-5',
+      command: 'foresights config set models.tier.reasoning anthropic:claude-sonnet-5-5',
     });
 
     const text = await capture(engine, []);
     const row = text.split('\n').find((l) => l.includes('tier.reasoning'))!;
     expect(row).toContain('[newer sonnet available: claude-sonnet-5-5]');
-    expect(row).toContain('gbrain config set models.tier.reasoning anthropic:claude-sonnet-5-5');
+    expect(row).toContain('foresights config set models.tier.reasoning anthropic:claude-sonnet-5-5');
   });
 
   test('current, newer-than-recipe, dated/undated-equal and non-Anthropic models get no hint', async () => {
@@ -94,7 +94,7 @@ describe('gbrain models — newer-available hint', () => {
 
     const report = await reportOf(engine);
     const drift = report.per_task.find((r) => r.key === 'models.drift')!;
-    expect(drift.newer_available?.command).toBe('gbrain config set models.drift anthropic:claude-sonnet-5-5');
+    expect(drift.newer_available?.command).toBe('foresights config set models.drift anthropic:claude-sonnet-5-5');
     const think = report.per_task.find((r) => r.key === 'models.think')!;
     expect(think.resolved).toBe('anthropic:claude-opus-4-7');
     expect(think.newer_available).toBeUndefined();
@@ -102,7 +102,7 @@ describe('gbrain models — newer-available hint', () => {
   });
 });
 
-describe('gbrain models — source attribution', () => {
+describe('foresights models — source attribution', () => {
   test('models.tier.* is attributed before models.default on tier and per-task rows', async () => {
     const engine = new StubConfigEngine();
     engine.set('models.default', 'anthropic:claude-sonnet-5');

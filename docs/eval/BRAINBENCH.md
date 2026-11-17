@@ -1,6 +1,6 @@
 # BrainBench — cross-harness memory conformance methodology
 
-BrainBench generalizes gbrain's internal eval surface into a reproducible,
+BrainBench generalizes foresights's internal eval surface into a reproducible,
 cross-harness benchmark for agent memory. It operationalizes the four failure
 modes of the agent-memory thesis: **know-to-ask** (nobody has a push path),
 **push precision/recall** (the intrusion budget must be enforced),
@@ -21,11 +21,11 @@ Every scoreboard row carries a `seam` column:
 | Harness | Seam | What the row actually measures |
 |---|---|---|
 | `openclaw` | **production** | The shipped OpenClaw context-engine pipeline, byte-for-byte (`extractCandidates` → `resolveEntitiesToPointers`, 3-pointer budget, prior-context suppression, markdown pointer block), **plus the volunteer arm**: a 4-turn window (`DEFAULT_WINDOW_TURNS` parity) drives the SAME `volunteerStage` primitive production runs (0.7 confidence gate, ≤3 pages, deduped against the turn's pointers) and the SAME `renderReflexAddition` wire shape — the VOLUNTEER-STAGE logic cannot drift between bench and production because both consume one primitive. **Bench-pinned deviations (disclosed):** (a) the harness replays USER turns only — assistant turns fold into `priorContext` — so the adapter's 4-turn window is the last 4 *user* turns while production's `getWindowTurns` windows the last 4 *mixed-role* turns; assistant-introduced entities (a designed volunteer input) are therefore exercised as suppression input, not window input, and per-window user-content depth runs ~2x production; (b) the parity claim is scoped to Arm 2 — bench Arm 1 uses per-turn `extractCandidates` + `'prior-context'` suppression where production's windowed lane uses window extraction + `'slug-only'`. Both deviations apply equally to every banked baseline, so deltas between baselines are internally valid; assistant-role window fidelity is a filed harness change (TODOS) that requires its own rebank. Orchestration differences (config gate, heartbeat, 1500ms timeout wrapper) are deliberately ungraded. |
-| `claude-code` | **production** | The shipped Claude Code integration end-to-end: fixture turns become `UserPromptSubmit` stdin JSON; `gbrain hook user-prompt` executes for real (stdin parse → synthesized-transcript window parse → cross-turn dedupe via `hook_additional_context` attachments → IPC `turn_context` over a real unix socket with the real shared secret → `additionalContext`). The row measures the shipped pointer budget, the volunteer layer, and the transcript dedupe. Bench-pinned deviations (disclosed): generous `userPromptDeadlineMs` (10s vs 800ms — CI-load flake control; deadline behavior is hook-suite territory), the push-failure banner suppressed, heartbeat telemetry writes disabled, and the hook's config pointed at the run-scoped bench brain (operator-environment isolation; parallel-test safe). |
+| `claude-code` | **production** | The shipped Claude Code integration end-to-end: fixture turns become `UserPromptSubmit` stdin JSON; `foresights hook user-prompt` executes for real (stdin parse → synthesized-transcript window parse → cross-turn dedupe via `hook_additional_context` attachments → IPC `turn_context` over a real unix socket with the real shared secret → `additionalContext`). The row measures the shipped pointer budget, the volunteer layer, and the transcript dedupe. Bench-pinned deviations (disclosed): generous `userPromptDeadlineMs` (10s vs 800ms — CI-load flake control; deadline behavior is hook-suite territory), the push-failure banner suppressed, heartbeat telemetry writes disabled, and the hook's config pointed at the run-scoped bench brain (operator-environment isolation; parallel-test safe). |
 | `codex` | **contract** | The fragments model: a static entity-index preamble (computed once, slugs not counted as injections) + at most ONE per-turn fragment. Fixture conversations round-trip through the REAL rollout format + the shipped parser (`src/core/transcripts/codex.ts`) for turn selection, so parser drift tanks the row visibly. Fragment DELIVERY is a harness-shaped assumption (there is no shipped codex injection path); the full production flip is a filed follow-up. |
 
 **Contract rows do NOT measure third-party harness behavior.** They measure
-gbrain's primitives under each harness's injection-shape constraints. The rows
+foresights's primitives under each harness's injection-shape constraints. The rows
 are comparable because fixtures, brain, and gold are identical — only the seam
 varies. Also not graded, by design: the production orchestrator's
 config gate, integration heartbeat, and 1500 ms timeout wrapper.
@@ -189,7 +189,7 @@ fixture bug to fix, not a tolerance to average over.
 ## Interop
 
 - **Foreign runners (gbrain-evals):** the subprocess contract is
-  `gbrain eval brainbench --fixtures DIR --gold DIR --json --out FILE`;
+  `foresights eval brainbench --fixtures DIR --gold DIR --json --out FILE`;
   schemas in `evals/brainbench/schema/`. The sibling gbrain-evals repo wires
   this as `eval/runner/brainbench-memory.ts` with a published scorecard.
 - **Memory-verbs conformance kit:** conformance scenarios convert to

@@ -1,5 +1,5 @@
 /**
- * `gbrain autopilot --install` consent (agent-first operator wave E9).
+ * `foresights autopilot --install` consent (agent-first operator wave E9).
  *
  * The install is a persistent_install: a non-TTY caller without `--yes` (or
  * the user's consent.preapprove.persistent_install) gets exit 3 with the
@@ -62,7 +62,7 @@ describe('autopilot --install consent', () => {
     const payload = JSON.parse(r.stdout);
     expect(payload).toMatchObject({ status: 'confirmation_required', code: 'confirmation_required', effects: ['persistent_install'] });
     expect(payload.fix.argv).toContain('--yes');
-    expect(payload.user_message).toContain('gbrain autopilot --uninstall');
+    expect(payload.user_message).toContain('foresights autopilot --uninstall');
   });
 
   test('--dry-run prints the plan and writes nothing', async () => {

@@ -58,7 +58,7 @@ test('lost mutation response is unknown and never retried; read failures stay re
     mutations++;
     throw new Error(`socket closed with ${owner}`);
   }) as unknown as typeof fetch });
-  const inspection = 'gbrain mcp admin client fixture --url https://brain.example.com';
+  const inspection = 'foresights mcp admin client fixture --url https://brain.example.com';
   try {
     await client.request('/admin/api/clients/fixture/lifecycle', { method: 'POST', body: {}, mutation: true, nextAction: inspection });
     throw new Error('mutation unexpectedly succeeded');
@@ -165,7 +165,7 @@ test('expired consent retains the server restart remedy and redacts its credenti
 test('unknown mutations retain the caller inspection command over a server retry remedy', async () => {
   const client = createMcpAdminHttp({ url: base, bootstrapToken: owner, fetchImpl: (async (url: RequestInfo | URL) => String(url).endsWith('/admin/login')
     ? login() : Response.json({ error: 'administration_unavailable', outcome: 'unknown', next_action: 'Repeat the mutation' }, { status: 503 })) as unknown as typeof fetch });
-  const nextAction = `gbrain mcp admin client fixture --url ${base}`;
+  const nextAction = `foresights mcp admin client fixture --url ${base}`;
   await expect(client.request('/admin/api/clients/fixture/lifecycle', { method: 'POST', mutation: true, nextAction }))
     .rejects.toMatchObject({ outcome: 'unknown', nextAction });
 });

@@ -3,7 +3,7 @@
  * page be skipped during embedding?"
  *
  * Why a shared module (D4):
- *   gbrain has 5 sites that filter the stale-chunk / all-pages query
+ *   foresights has 5 sites that filter the stale-chunk / all-pages query
  *   for embedding:
  *
  *     1. src/commands/embed.ts:350 (--stale CLI path)
@@ -14,7 +14,7 @@
  *     4. src/core/postgres-engine.ts (listStaleChunks/countStaleChunks)
  *     5. src/core/pglite-engine.ts equivalent
  *
- *   Inline-filtering across 5 sites is the exact bug class gbrain has
+ *   Inline-filtering across 5 sites is the exact bug class foresights has
  *   been bitten by repeatedly — see CLAUDE.md `cjk.ts`, `sql-ranking.ts`,
  *   `audit-writer.ts` for sibling shared modules. Extracting the
  *   predicate here means the 5 sites all import from one place.
@@ -120,7 +120,7 @@ export function isEmbedSkipped(frontmatter: Record<string, unknown> | null | und
 
 /** JS-side filter for arrays of in-memory page objects. Returns a new
  *  array with embed-skipped pages excluded. Mirrors the SQL filter
- *  for callers that walk pages JS-side (e.g. `gbrain embed --all`
+ *  for callers that walk pages JS-side (e.g. `foresights embed --all`
  *  walks pages directly rather than going through listStaleChunks). */
 export function filterOutEmbedSkipped<T extends { frontmatter?: Record<string, unknown> | null }>(
   pages: ReadonlyArray<T>,

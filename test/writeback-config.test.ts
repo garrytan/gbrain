@@ -1,7 +1,7 @@
 /**
  * Ambient-writeback WP1: the pure ttl-parse leaf, the dual-plane config
  * resolver (fail-closed off, mode_valid/ttl_valid flags, F5 visibility
- * semantics, last-known-good bundle), and `gbrain config set memory.*`'s
+ * semantics, last-known-good bundle), and `foresights config set memory.*`'s
  * dual-plane write/unset routing (OV2-5).
  */
 import { describe, test, expect, spyOn, afterEach } from 'bun:test';

@@ -1,5 +1,5 @@
 /**
- * `gbrain embed`: post-connect dispatch, run by handleCliOnly with the
+ * `foresights embed`: post-connect dispatch, run by handleCliOnly with the
  * engine connectEngine() opened. Moved verbatim from the src/cli.ts
  * handleCliOnly switch (refactor wave 1, W4 cli); the record lives in
  * src/cli/command-table.ts.
@@ -86,9 +86,9 @@ async function authorizeEmbed(engine: BrainEngine, args: string[]): Promise<{ au
   }
 }
 
-/** `gbrain embed --help` (answered without a brain) and the usage error. */
+/** `foresights embed --help` (answered without a brain) and the usage error. */
 const EMBED_USAGE = [
-  'Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--source <id>] [--yes | --max-usd N] [--json] | --stale --images | --stale --facts --source <id>',
+  'Usage: foresights embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--source <id>] [--yes | --max-usd N] [--json] | --stale --images | --stale --facts --source <id>',
   '  Embeds chunks without a vector (--stale; --catch-up keeps going until the backlog is empty) or re-embeds pages (--all, a slug, --slugs).',
   '  --stale covers pages, not facts saved with remember: embed those with --stale --facts --source <id> (--dry-run, then --yes --max-cost-usd N).',
   '  A page over 1 MiB spends at most embed.max_usd_per_page (default $2) and embeds its newest chunks first. --held --dry-run lists, for every',

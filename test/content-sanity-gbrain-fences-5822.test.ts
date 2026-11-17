@@ -1,7 +1,7 @@
 /**
- * #5822: gbrain's own facts/takes fences do not count as markup.
+ * #5822: foresights's own facts/takes fences do not count as markup.
  *
- * Protects: a page whose body is mostly the facts (or takes) fence gbrain
+ * Protects: a page whose body is mostly the facts (or takes) fence foresights
  * wrote is not flagged `markup_heavy` on import, while the same table shape
  * written as ordinary page markup still is.
  * Fails when: the prose pass measures fence rows as table markup, so the
@@ -52,7 +52,7 @@ describe('prose pass', () => {
     expect(assessContentSanity({ compiled_truth: TAKES_BODY, timeline: '', title: 'Example Co' }).flag_reason).toBeNull();
   });
 
-  test('the same table outside a gbrain fence is still markup_heavy, and bytes still count the fence', () => {
+  test('the same table outside a foresights fence is still markup_heavy, and bytes still count the fence', () => {
     const unfenced = FACTS_BODY.replace(FACTS_FENCE_BEGIN, '').replace(FACTS_FENCE_END, '');
     expect(assessContentSanity({ compiled_truth: unfenced, timeline: '', title: 'Example Co' }).flag_reason).toBe('markup_heavy');
     expect(assessContentSanity({ compiled_truth: FACTS_BODY, timeline: '', title: 'Example Co' }).bytes).toBe(Buffer.byteLength(FACTS_BODY));

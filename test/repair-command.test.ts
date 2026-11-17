@@ -1,5 +1,5 @@
 /**
- * `gbrain repair` core: dry run by default, --apply writes through coordinated
+ * `foresights repair` core: dry run by default, --apply writes through coordinated
  * page writes, --limit + resume, the shared scope resolver, the 90% capacity
  * stop, the thin-client refusal, and the timeline_history doctor signal.
  */
@@ -88,7 +88,7 @@ async function pageWithHistory(engine: BrainEngine, sourceId: string, slug: stri
 const markedPages = async (engine: BrainEngine, sourceId: string) => (await engine.executeRaw<{ slug: string }>(
   `SELECT slug FROM pages WHERE source_id=$1 AND timeline LIKE '%gbrain:materialized%' ORDER BY slug`, [sourceId])).map(r => r.slug);
 
-describe('gbrain repair timeline', () => {
+describe('foresights repair timeline', () => {
   test('previews without writing, applies, and a second apply changes nothing', async () => {
     await brain(async (engine, [source]) => {
       await pageWithHistory(engine, source, 'notes/a');
@@ -96,7 +96,7 @@ describe('gbrain repair timeline', () => {
       expect(scope.source_ids).toEqual([source]);
       const preview = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: false });
       expect(preview).toMatchObject({ mode: 'dry_run', affected: 1, sample: [`${source}:notes/a`], cost: { lifetime_ids: 1, receipt_bytes: 16_384 },
-        apply_command: 'gbrain repair timeline --apply' });
+        apply_command: 'foresights repair timeline --apply' });
       expect(await markedPages(engine, source)).toEqual([]);
       const applied = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
       expect(applied).toMatchObject({ applied: 1, complete: true });
@@ -155,7 +155,7 @@ describe('gbrain repair timeline', () => {
       const scope = await resolveRepairScope(engine, a);
       expect(scope.source_ids).toEqual([a]);
       const preview = await runRepair(ctxFor(engine, a), timelineRepair, scope, { apply: false, sourceFlag: a });
-      expect(preview).toMatchObject({ affected: 1, sample: [`${a}:notes/same`], apply_command: `gbrain repair timeline --source ${a} --apply` });
+      expect(preview).toMatchObject({ affected: 1, sample: [`${a}:notes/same`], apply_command: `foresights repair timeline --source ${a} --apply` });
       await runRepair(ctxFor(engine, a), timelineRepair, scope, { apply: true, sourceFlag: a });
       expect(await markedPages(engine, a)).toEqual(['notes/same']);
       expect(await markedPages(engine, b)).toEqual([]);
@@ -172,7 +172,7 @@ describe('gbrain repair timeline', () => {
       const stopped = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
       expect(stopped.applied).toBe(0);
       expect(stopped.stopped?.reason).toBe('capacity');
-      expect(stopped.stopped?.message).toMatch(/gbrain config set persistence\.limits\.brain_lifetime_ids \d+/);
+      expect(stopped.stopped?.message).toMatch(/(?:foresights|gbrain) config set persistence\.limits\.brain_lifetime_ids \d+/);
       const needed = stopped.stopped!.message.match(/brain_lifetime_ids (\d+)/)![1];
       await engine.executeRaw("UPDATE config SET value=$1 WHERE key='persistence.limits.brain_lifetime_ids'", [needed]);
       const resumed = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
@@ -260,7 +260,7 @@ describe('#6185: repair --apply waits with the CLI write wait', () => {
         async () => (await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('timeline', scope)));
       expect(stopped.applied).toBe(0);
       expect(stopped.stopped).toEqual({ reason: 'write_pending', message: `The repair of ${source}:notes/a was accepted and is still pending publication. `
-        + 'Rerun `gbrain repair timeline --apply` to resume; the same request is replayed.' });
+        + 'Rerun `foresights repair timeline --apply` to resume; the same request is replayed.' });
       const resumed = await (await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('timeline', scope);
       expect(resumed).toMatchObject({ complete: true });
       expect(await markedPages(engine, source)).toEqual(['notes/a']);
@@ -307,7 +307,7 @@ describe('timeline_history doctor check', () => {
       const full = await timelineHistoryCheck(engine, source);
       expect(full.status).toBe("warn");
       expect(full.details).toMatchObject({ materializable_rows: 2, kept_unrenderable_rows: 1, pages_affected: 2, count: 'exact', truncated: false });
-      expect(full.message).toContain('gbrain repair timeline');
+      expect(full.message).toContain('foresights repair timeline');
       const capped = await timelineHistoryCheck(engine, source, { pageCap: 1 });
       expect(capped.status).toBe('warn');
       expect(capped.details).toMatchObject({ materializable_rows: 1, count: 'lower_bound', truncated: true });
@@ -321,13 +321,13 @@ describe('timeline_history doctor check', () => {
 });
 
 describe('thin clients', () => {
-  test('gbrain repair refuses with a run-on-the-brain-host hint', async () => {
+  test('foresights repair refuses with a run-on-the-brain-host hint', async () => {
     const home = mkdtempSync(join(dataDir, 'thin-'));
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres', remote_mcp: {
       issuer_url: 'https://brain-host.example', mcp_url: 'https://brain-host.example/mcp', oauth_client_id: 'cid', oauth_client_secret: 'csecret' } }));
     const result = await runCli(['repair', 'timeline'], { home, env: { GBRAIN_REMOTE_CLIENT_SECRET: undefined } });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('Run `gbrain repair` on the brain host');
+    expect(result.stderr).toContain('Run `foresights repair` on the brain host');
   }, 60_000);
 });

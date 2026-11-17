@@ -5,10 +5,10 @@
  * the stamp (warn), for a week or more (fail), or passes stamp past a phase
  * that keeps failing (warn). Names the phase, its blocker key and the command
  * that runs it in the foreground (for a synthesize triage deferral,
- * `gbrain dream retriage`, #7307, since a foreground rerun stops at the same
+ * `foresights dream retriage`, #7307, since a foreground rerun stops at the same
  * `dream.triage.max_ms` window); without a phase streak, the failed job to
  * inspect. The verdict comes from core/minions/global-maintenance-stall.ts,
- * which also drives the `gbrain autopilot --status` exit code.
+ * which also drives the `foresights autopilot --status` exit code.
  */
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';

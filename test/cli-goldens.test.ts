@@ -1,7 +1,7 @@
 /**
  * Refactor wave 1 W0 (A16b): CLI help / tools-json / unknown-command goldens.
  *
- * Protects: the public CLI surface a script or agent parses: `gbrain --help`
+ * Protects: the public CLI surface a script or agent parses: `foresights --help`
  * text, `--version`, `--tools-json` bytes, the unknown-command and
  * unknown-flag exit codes and messages, and where `--help` is answered
  * (op help, alias help, the generic CLI-only stub, an unknown verb).
@@ -91,7 +91,7 @@ describe('A16b CLI goldens', () => {
 
   test('the scrubbed version is exactly package.json version', () => {
     const byArgv = new Map(ROWS.map((argv, i) => [argv.join(' '), results[i]!]));
-    expect(byArgv.get('--version')!.stdout).toBe(`gbrain ${PACKAGE_VERSION}\n`);
-    expect(byArgv.get('--help')!.stdout.startsWith(`gbrain ${PACKAGE_VERSION} -- `)).toBe(true);
+    expect(byArgv.get('--version')!.stdout).toBe(`foresights ${PACKAGE_VERSION}\n`);
+    expect(byArgv.get('--help')!.stdout.startsWith(`foresights ${PACKAGE_VERSION} -- `)).toBe(true);
   });
 });

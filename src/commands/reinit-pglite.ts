@@ -1,7 +1,7 @@
 import { backupUnmanagedPglite } from '../core/persistence/maintenance.ts';
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 /**
- * `gbrain reinit-pglite` — wipe-and-reinit PGLite brain in one command.
+ * `foresights reinit-pglite` — wipe-and-reinit PGLite brain in one command.
  *
  * Last-resort width change on PGLite (PGLite cannot `ALTER COLUMN TYPE
  * vector(N)` — pgvector ships as WASM): moves the datastore aside to
@@ -10,7 +10,7 @@ import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-gua
  * the moved-aside datastore). Turning embeddings on for a keyless brain never
  * needs this: readiness's `embeddingEnablement` enables in place and keeps
  * everything; a width change with preserved data is
- * `gbrain migrate embeddings --to <model> --dim <N>`.
+ * `foresights migrate embeddings --to <model> --dim <N>`.
  *
  * Destructive. Consent via requireConsent (A4): a TTY prompt, or
  * `--yes --expect <plan_hash>` (bound to this brain and target); non-TTY
@@ -43,7 +43,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
     fail(
       opts.jsonOutput,
       'not_pglite',
-      `gbrain reinit-pglite is for PGLite brains only (current engine: ${cfg?.engine || 'none'}). ` +
+      `foresights reinit-pglite is for PGLite brains only (current engine: ${cfg?.engine || 'none'}). ` +
         `For Postgres, see docs/embedding-migrations.md for the in-place ALTER recipe.`,
     );
   }
@@ -59,7 +59,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
     fail(
       opts.jsonOutput,
       'no_brain',
-      `No PGLite brain found at ${dbPath}. Run \`gbrain init --pglite\` to create one.`,
+      `No PGLite brain found at ${dbPath}. Run \`foresights init --pglite\` to create one.`,
     );
   }
 
@@ -73,7 +73,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   // Show plan.
   if (!opts.jsonOutput) {
     console.log('');
-    console.log('gbrain reinit-pglite — wipe and re-create the PGLite brain.');
+    console.log('foresights reinit-pglite — wipe and re-create the PGLite brain.');
     console.log('');
     console.log('  Active brain:        ' + dbPath + (sizeMb > 0 ? ` (${sizeMb} MB)` : ''));
     console.log('  Backup destination:  ' + dbPath + '.bak');
@@ -112,7 +112,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
     why: `PGLite cannot change the vector width in place, so the brain is moved aside and re-initialized at ${opts.embeddingDimensions} dimensions for ${opts.embeddingModel}.`,
     risk: `Every page, chunk and embedding is removed from the active brain; DB-only pages and remember facts are NOT carried over `
       + `(they stay only in the backup). The brain is first moved to ${bakPath}; restore with: mv ${bakPath} ${dbPath}. `
-      + `To keep everything instead, use gbrain migrate embeddings --to <model> --dim <N>.`,
+      + `To keep everything instead, use foresights migrate embeddings --to <model> --dim <N>.`,
     user_message: `Wipe and re-create your brain (${sizeMb > 0 ? `${sizeMb} MB, ` : ''}${dbPath}) for ${opts.embeddingModel}? `
       + `DB-only pages and remembered facts are not carried over; a backup is kept at ${bakPath}.`,
     argv: reinitArgv,
@@ -174,7 +174,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
       const { createEngine } = await import('../core/engine-factory.ts');
       const newCfg = loadConfig();
       if (!newCfg) {
-        if (!opts.jsonOutput) console.error('Warning: no config after reinit; skipping sync. Run `gbrain sync` manually.');
+        if (!opts.jsonOutput) console.error('Warning: no config after reinit; skipping sync. Run `foresights sync` manually.');
         return;
       }
       const engine = await createEngine({ engine: 'pglite' });
@@ -189,7 +189,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
       if (!opts.jsonOutput) {
         console.error('');
         console.error(`Warning: sync after reinit failed (${e instanceof Error ? e.message : String(e)}).`);
-        console.error('The brain is initialized but empty. Run \`gbrain sync\` to populate it.');
+        console.error('The brain is initialized but empty. Run \`foresights sync\` to populate it.');
       }
     }
   }
@@ -287,7 +287,7 @@ function parseArgs(args: string[]): ReinitOpts {
 }
 
 function printHelp(): void {
-  console.log(`Usage: gbrain reinit-pglite [options]
+  console.log(`Usage: foresights reinit-pglite [options]
 
 Wipe the PGLite brain and re-init with new embedding model/dimensions.
 This is the canonical path for switching embedding providers on PGLite
@@ -308,25 +308,25 @@ Optional:
   --path <path>                        Active brain path (default: ~/.gbrain/brain.pglite).
   --yes --expect <plan_hash>           Authorize the wipe without a prompt, only after the user
                                        approved it (the refusal prints the exact command).
-  --no-sync                            Skip the post-init \`gbrain sync\`.
+  --no-sync                            Skip the post-init \`foresights sync\`.
   --json                               Emit structured JSON output on stdout.
 
 Examples:
   # Switch from OpenAI/1536 to Voyage/1024:
-  gbrain reinit-pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024
+  foresights reinit-pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024
 
   # Skip the sync step (do it later):
-  gbrain reinit-pglite --embedding-model openai:text-embedding-3-large \\
+  foresights reinit-pglite --embedding-model openai:text-embedding-3-large \\
     --embedding-dimensions 1536 --no-sync
 
   # Rebuild with the model/dimensions already in the config file (prints
   # the plan and asks; non-interactive callers get the approved command):
-  gbrain reinit-pglite
+  foresights reinit-pglite
 
 The old brain is preserved as \`<path>.bak\`. To roll back, mv it back.
 
 See also:
-  gbrain doctor                        Diagnose dim mismatches before/after.
+  foresights doctor                        Diagnose dim mismatches before/after.
   docs/embedding-migrations.md         Full background + Postgres recipe.
 `);
 }

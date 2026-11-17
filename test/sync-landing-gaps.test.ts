@@ -1,5 +1,5 @@
 /**
- * GBRA-150: `gbrain sync status --detail` names, per page, what a managed sync committed more than the freshness target
+ * GBRA-150: `foresights sync status --detail` names, per page, what a managed sync committed more than the freshness target
  * ago that search still cannot fully see, with the reason and the fix: chunks with no vector (found by keyword only), a
  * page a write outside sync removed after it synced, and on a brain keyless by choice nothing for missing vectors. A plain
  * status does not read it and says so. Red on master: there is no `landing` block.

@@ -22,8 +22,8 @@ const hostSyncFix = (sourceId: string, actor: 'user' | 'host_admin'): Action => 
   argv: ['gbrain', 'sync', '--no-pull', '--source', sourceId], consent: [], actor, requires_exclusive: false,
   why: `Bulk filesystem sync of source ${sourceId} runs under the brain host's CLI writer, which reads its registered checkout without git pull.`,
   user_message: actor === 'user'
-    ? `Syncing source ${sourceId} needs the gbrain CLI. Please run the command shown in a terminal on this machine.`
-    : `Syncing source ${sourceId} needs the gbrain CLI on the machine that hosts the brain. Please ask whoever runs that server to run the command shown.`,
+    ? `Syncing source ${sourceId} needs the foresights CLI. Please run the command shown in a terminal on this machine.`
+    : `Syncing source ${sourceId} needs the foresights CLI on the machine that hosts the brain. Please ask whoever runs that server to run the command shown.`,
 });
 /** A shared-secret caller never gains durable CLI authority across activation. */
 export function withLegacySyncDelegation<T>(run: () => T): T { return legacyDelegation.run(true, run); }
@@ -62,16 +62,16 @@ async function preActivationClaimRefusal(engine: BrainEngine, sourceId: string):
   const state = await writerAdminState(engine);
   return opError('writer_coordinator_required', 'Claimed-source sync, including connectors, requires explicit persistence activation.',
     `Source ${sourceId} is claimed by a managed writer, but managed persistence was never activated on this brain, so classic sync is fenced and nothing was synced. `
-      + 'This is a topology decision for the user: release the claim so classic sync resumes (the command in fix; preview it first with gbrain sources writer deactivate --dry-run --json), '
-      + 'or stop older writers on every host and activate managed persistence (gbrain sources writer activate --confirm-quiesced --admin-intent writer_activate --expected-state <admin_state>, see docs/architecture/topologies.md).',
+      + 'This is a topology decision for the user: release the claim so classic sync resumes (the command in fix; preview it first with foresights sources writer deactivate --dry-run --json), '
+      + 'or stop older writers on every host and activate managed persistence (foresights sources writer activate --confirm-quiesced --admin-intent writer_activate --expected-state <admin_state>, see docs/architecture/topologies.md).',
     { fix: { argv: ['gbrain', 'sources', 'writer', 'deactivate', '--admin-intent', 'writer_deactivate', '--expected-state', state],
       preview_argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
-      why: 'Releases every source claimed before activation (bindings removed, worktrees retired, a topology change recorded); the brain stays classic and the next gbrain sync runs in classic mode.',
+      why: 'Releases every source claimed before activation (bindings removed, worktrees retired, a topology change recorded); the brain stays classic and the next foresights sync runs in classic mode.',
       user_message: `Source ${sourceId} was claimed for managed writes, but managed persistence was never turned on, so sync is blocked. Release the claim and go back to classic sync, or turn managed persistence on?`,
       verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }, docs: 'docs/architecture/topologies.md#deactivate-runbook' } });
 }
 const inactiveCoordinator = () => new OperationError('writer_coordinator_required', 'Sync cannot publish through an inactive persistence coordinator.',
-  'Stop older writers and review gbrain sources writer status, then explicitly activate persistence before retrying. Claiming a source alone does not exclude running legacy writers.');
+  'Stop older writers and review foresights sources writer status, then explicitly activate persistence before retrying. Claiming a source alone does not exclude running legacy writers.');
 export async function assertManagedSyncActive(engine: BrainEngine, lock = false): Promise<void> {
   if (!await readManagedMode(engine, lock ? { lock: 'share' } : {})) throw inactiveCoordinator();
 }
@@ -105,7 +105,7 @@ export async function managedSyncAuthority(engine: BrainEngine, sourceId: string
   // An unverified CLI caller registers its writer (if needed) and is verified from the same read.
   const writer = verified ? await authorize() : await withRegisteredLocalWriter(engine, 'cli', authorize, brainId);
   if (writer.slugPrefixes !== null) throw opError('permission_denied', 'Bulk sync requires a source-wide local grant.',
-    `This CLI writer's grant covers only some slug prefixes of source ${sourceId}, and bulk sync can touch any page, so nothing was synced. Review the grant with the command in fix; widening it (gbrain auth local-writer register cli --replace with the complete intended grant) is the user's decision.`,
+    `This CLI writer's grant covers only some slug prefixes of source ${sourceId}, and bulk sync can touch any page, so nothing was synced. Review the grant with the command in fix; widening it (foresights auth local-writer register cli --replace with the complete intended grant) is the user's decision.`,
     { fix: readFix('Lists the local writer registrations with their sources, operations and slug-prefix grants, read-only.', { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] }) });
   return { writer };
 }

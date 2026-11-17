@@ -105,7 +105,7 @@ export function reverseWriteCases(id: string, phase: string, reverseWrite: Rever
         const bodyBefore = await b.body();
         const result = await expectUnitNotAborted(() => b.run());
         const held = heldFor(result.held);
-        expect({ written: result.written, held: held.length, fix: held.some(h => h.includes('gbrain sync --source default')) })
+        expect({ written: result.written, held: held.length, fix: held.some(h => h.includes('foresights sync --source default')) })
           .toEqual({ written: 0, held: 1, fix: true });
         expect({ file: b.file() === edited, body: (await b.body()) === bodyBefore }).toEqual({ file: true, body: true });
       });

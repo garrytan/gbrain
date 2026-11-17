@@ -1,6 +1,6 @@
 /**
  * #5007: docs/mcp/DEPLOY.md names the owner login-link request and the existing
- * mint endpoint, anchored to the real route registration. The `gbrain auth --help`
+ * mint endpoint, anchored to the real route registration. The `foresights auth --help`
  * half of this contract is asserted on spawned output in
  * test/cli-help-discoverability.test.ts.
  */
@@ -17,7 +17,7 @@ describe('DEPLOY.md documents the owner magic-link flow (#5007)', () => {
   const server = surfaceSource('serve-http');
 
   test('documents the owner request and the existing mint endpoint', () => {
-    expect(deploy).toContain('Give me the GBrain admin login link');
+    expect(deploy).toContain('Give me the Foresights admin login link');
     expect(deploy).toContain('POST /admin/api/issue-magic-link');
     expect(server).toContain("app.post('/admin/api/issue-magic-link'");
   });

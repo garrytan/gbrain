@@ -5,11 +5,11 @@
  * frontmatter (company, investors, attendees, key_people, etc.), not just
  * `[Name](path)` markdown refs. This migration:
  *
- *   A. Schema — `gbrain init --migrate-only` triggers migrate.ts v11 which
+ *   A. Schema — `foresights init --migrate-only` triggers migrate.ts v11 which
  *               adds link_source + origin_page_id + origin_field columns,
  *               swaps the unique constraint to include them, and creates
  *               new indexes.
- *   B. Backfill — `gbrain extract links --source db --include-frontmatter`
+ *   B. Backfill — `foresights extract links --source db --include-frontmatter`
  *               walks every page and emits the frontmatter-derived edges.
  *               Uses the batch-mode resolver (pg_trgm only, no LLM).
  *   C. Verify — Query the links table and confirm link_source='frontmatter'
@@ -68,7 +68,7 @@ function phaseBBackfill(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // `--include-frontmatter` is the v0.13 flag that enables the canonical
     // frontmatter link extractor. Default-OFF in the CLI for back-compat;
     // the migration explicitly opts in because this is the canonical backfill.
-    runGbrainSubprocess('gbrain extract links --source db --include-frontmatter', { timeoutMs: 1_800_000 });
+    runGbrainSubprocess('foresights extract links --source db --include-frontmatter', { timeoutMs: 1_800_000 });
     return { name: 'frontmatter_backfill', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -82,14 +82,14 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'verify', status: 'skipped', detail: 'dry-run' };
   try {
     // Query frontmatter edge count via get_stats + a secondary --json call
-    // to `gbrain graph-query` as a smoke test: extract one random page and
+    // to `foresights graph-query` as a smoke test: extract one random page and
     // confirm it has at least one edge. Non-blocking.
     //
     // We intentionally do NOT fail on 0 frontmatter edges: fresh installs,
     // docs-only brains, and brains with no entity pages legitimately
     // produce 0. Phase B's own stdout shows `Links: created N` which is
     // the authoritative signal — user sees it during upgrade.
-    const out = execSync(gbrainChildCommand('gbrain call get_stats'), {
+    const out = execSync(gbrainChildCommand('foresights call get_stats'), {
       encoding: 'utf-8', timeout: 60_000, env: process.env,
     });
     const parsed = JSON.parse(out) as { link_count?: number; page_count?: number };
@@ -154,7 +154,7 @@ export const v0_13_0: Migration = {
       'v0.13 extends the knowledge graph to project typed edges from YAML frontmatter. ' +
       'Every `company: X`, `investors: [A, B]`, `attendees: [Pedro, Garry]`, `key_people`, ' +
       '`partner`, `lead`, and `related` field you already wrote now surfaces in ' +
-      '`gbrain graph`. Direction semantics respect subject-of-verb (Pedro → meeting, ' +
+      '`foresights graph`. Direction semantics respect subject-of-verb (Pedro → meeting, ' +
       'not meeting → Pedro). The migration backfills every existing page in ~2-5 min ' +
       'on a 46K-page brain. Uses pg_trgm fuzzy-match for name resolution (zero LLM ' +
       'cost, zero API calls). Unresolvable names surface in the extract summary so you ' +

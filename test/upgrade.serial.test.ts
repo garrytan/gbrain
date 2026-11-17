@@ -22,7 +22,7 @@ describe('upgrade command', () => {
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain upgrade');
+    expect(stdout).toContain('Usage: foresights upgrade');
     expect(stdout).toContain('Detects install method');
     expect(exitCode).toBe(0);
   });
@@ -35,7 +35,7 @@ describe('upgrade command', () => {
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain upgrade');
+    expect(stdout).toContain('Usage: foresights upgrade');
     expect(exitCode).toBe(0);
   });
 });
@@ -84,13 +84,13 @@ describe('detectInstallMethod — package-install classification (in-process)', 
     const r = detectFrom({ name: 'gbrain', version: '1.3.0' }, 'dist/cli.js');
     expect(r.method).toBe('bun');
     expect(r.warnings).toContain('WARNING');
-    expect(r.warnings).toContain('git clone https://github.com/garrytan/gbrain.git');
-    expect(r.warnings).toContain('https://github.com/garrytan/gbrain/releases');
+    expect(r.warnings).toContain('git clone https://github.com/aimonk2025/gbrain.git');
+    expect(r.warnings).toContain('https://github.com/aimonk2025/gbrain/releases');
     expect(r.warnings).toContain('#658');
   });
 
   test('node_modules is checked before the compiled-binary execPath name', () => {
-    const r = detectFrom({ name: 'gbrain', repository: 'github:garrytan/gbrain' }, 'dist/cli.js', '/opt/bin/gbrain');
+    const r = detectFrom({ name: 'gbrain', repository: 'github:aimonk2025/gbrain' }, 'dist/cli.js', '/opt/bin/gbrain');
     expect(r.method).toBe('bun');
   });
 
@@ -200,7 +200,7 @@ describe('post-upgrade behavior (post v0.12.0 merge)', () => {
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
-    expect(stdout).toContain('Usage: gbrain post-upgrade');
+    expect(stdout).toContain('Usage: foresights post-upgrade');
   });
 });
 
@@ -295,7 +295,7 @@ describe('runUpgrade target verification (#4366)', () => {
     mkdirSync(driverDir, { recursive: true });
     if (globalInstall) {
       writeFileSync(join(home, 'global', 'package.json'), '{}');
-      writeFileSync(join(home, 'global', 'node_modules', 'gbrain', 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:garrytan/gbrain' }));
+      writeFileSync(join(home, 'global', 'node_modules', 'gbrain', 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:aimonk2025/gbrain' }));
       if (!opts.recordGitAndBun) {
         writeFileSync(join(bin, 'bun'), '#!/bin/sh\nexit 0\n');
         chmodSync(join(bin, 'bun'), 0o755);
@@ -359,7 +359,7 @@ describe('runUpgrade target verification (#4366)', () => {
       // No false JUST_UPGRADED breadcrumb for an upgrade that never happened.
       expect(existsSync(join(home, '.gbrain', 'just-upgraded-from'))).toBe(false);
       // The operator gets the exact-tag reinstall remediation.
-      expect(stderr).toContain(`github:garrytan/gbrain#v${TARGET}`);
+      expect(stderr).toContain(`github:aimonk2025/gbrain#v${TARGET}`);
 
       const errPath = join(home, '.gbrain', 'upgrade-errors.jsonl');
       const records = existsSync(errPath)
@@ -399,7 +399,7 @@ describe('runUpgrade target verification (#4366)', () => {
   });
 
   // A failed binary swap must still name the release it attempted. With no
-  // caller target (plain `gbrain upgrade`), to_version comes from the release
+  // caller target (plain `foresights upgrade`), to_version comes from the release
   // tag runBinarySelfUpdate resolved — never '' — so doctor can say which
   // version failed to install.
   for (const [reason, error] of [
@@ -426,7 +426,7 @@ describe('runUpgrade target verification (#4366)', () => {
 
   // ── install-method detection + upgrade commands (PATH-shimmed) ──────────
 
-  // #8464: `clawhub update gbrain` installs whatever skill anyone publishes as gbrain, so a working clawhub CLI on
+  // #8464: `clawhub update foresights` installs whatever skill anyone publishes as foresights, so a working clawhub CLI on
   // PATH must never become the install method, for a renamed release asset or any other undetected install.
   for (const execName of ['gbrain-linux-x64', 'bun']) {
     test(`an undetected install run as ${execName} never runs clawhub, even when the clawhub CLI works`, async () => {
@@ -469,7 +469,7 @@ describe('runUpgrade target verification (#4366)', () => {
       recordGitAndBun: true,
       setup: (h) => {
         mkdirSync(join(h, repoDir, '.git'), { recursive: true });
-        writeFileSync(join(h, repoDir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/GarryTan/GBrain.git\n');
+        writeFileSync(join(h, repoDir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/GarryTan/Foresights.git\n');
       },
     });
     try {
@@ -488,20 +488,20 @@ describe('runUpgrade target verification (#4366)', () => {
     }
   });
 
-  test('bun global install: `bun update --backend=copyfile gbrain` runs in the bun global root', async () => {
+  test('bun global install: `bun update --backend=copyfile foresights` runs in the bun global root', async () => {
     const { home, stdout } = await runUpgradeAgainstFakeInstall({
       observedVersion: OLD,
       driverDir: join('global', 'node_modules', 'gbrain', 'src'),
       recordGitAndBun: true,
       setup: (h) => {
         writeFileSync(join(h, 'global', 'package.json'), '{}');
-        writeFileSync(join(h, 'global', 'node_modules', 'gbrain', 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:garrytan/gbrain' }));
+        writeFileSync(join(h, 'global', 'node_modules', 'gbrain', 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:aimonk2025/gbrain' }));
       },
     });
     try {
       expect(stdout).toContain('Detected install method: bun');
       const calls = readFileSync(join(home, 'calls.log'), 'utf-8').trim().split('\n');
-      expect(calls).toEqual([`${realpathSync(join(home, 'global'))}|update --backend=copyfile gbrain`]);
+      expect(calls).toEqual([`${realpathSync(join(home, 'global'))}|update --backend=copyfile foresights`]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

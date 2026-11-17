@@ -8,7 +8,7 @@
  *
  * Only trusted local callers materialize or archive the page, through the
  * persistence coordinator; a remote pin waits for the owner's next local
- * `gbrain questions` call or cycle.
+ * `foresights questions` call or cycle.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -42,7 +42,7 @@ export async function readQuestionPage(engine: BrainEngine, pin: Pick<PinRow, 's
   return row ? { page_id: row.id, generation: Number(row.generation), revision: row.revision ?? '', compiled_truth: row.compiled_truth ?? '', archived: row.archived } : null;
 }
 
-/** The owner's claims: every sentence of the page body except the heading and gbrain's comments. */
+/** The owner's claims: every sentence of the page body except the heading and foresights's comments. */
 export function ownerClaims(compiledTruth: string): string[] {
   const body = compiledTruth
     .replace(/<!--[\s\S]*?-->/g, ' ')
@@ -67,7 +67,7 @@ function renderPage(pin: PinRow, status: 'pinned' | 'archived', ownerBody: strin
       `# ${pin.question}`,
       '',
       OWNER_NOTE_MARKER,
-      `<!-- Write your own claims about this question below; each sentence is kept in the answer as your claim and goes stale when you edit it until the next refresh. The generated answer is not stored in this file: gbrain questions status ${id} -->`,
+      `<!-- Write your own claims about this question below; each sentence is kept in the answer as your claim and goes stale when you edit it until the next refresh. The generated answer is not stored in this file: foresights questions status ${id} -->`,
       '',
     ].join('\n'),
     timeline: '',

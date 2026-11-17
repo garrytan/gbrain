@@ -20,7 +20,7 @@ describe('#3944 chatApiKeyConfigured', () => {
   test('no env, no file key → false (a DB-only key is invisible by design)', async () => {
     await withEnv({ ANTHROPIC_API_KEY: undefined }, () => {
       // The helper takes NO engine — the DB plane cannot influence it. A
-      // DB-only `gbrain config set anthropic_api_key` therefore reads as
+      // DB-only `foresights config set anthropic_api_key` therefore reads as
       // not-configured, matching doctor's file-plane verdict.
       expect(chatApiKeyConfigured(null)).toBe(false);
       expect(chatApiKeyConfigured(undefined)).toBe(false);

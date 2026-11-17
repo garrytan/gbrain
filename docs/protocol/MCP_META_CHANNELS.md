@@ -1,6 +1,6 @@
 # MCP `_meta` channels
 
-Normative conventions for `ToolResult._meta` on gbrain's MCP surfaces.
+Normative conventions for `ToolResult._meta` on foresights's MCP surfaces.
 `_meta` is the structured, out-of-band
 channel for tool-call responses; the response BODY contract never changes
 shape for it.
@@ -43,8 +43,8 @@ shape for it.
 The brain's recent facts, attached to tool results so a harness can keep them
 in front of the model without a separate call.
 
-**When it is sent.** On a successful tool call over stdio (`gbrain serve`) and
-over HTTP (`gbrain serve --http`), except `recall`, `extract_facts` and
+**When it is sent.** On a successful tool call over stdio (`foresights serve`) and
+over HTTP (`foresights serve --http`), except `recall`, `extract_facts` and
 `forget_fact`, which already return facts, and except a call that names its own
 sources (a non-empty `source_ids`, or a `source_id` other than the connection's
 source), so a narrowed request never carries another source's facts. It is absent when there is nothing
@@ -120,8 +120,8 @@ Adding a key: register it in the table above, one producer, additive-forever.
 
 ## `brain_hot_memory`: when it appears and how to turn it off
 
-**When.** On every successful tool call over stdio (`gbrain serve`) and
-HTTP (`gbrain serve --http`), except `recall`, `extract_facts` and
+**When.** On every successful tool call over stdio (`foresights serve`) and
+HTTP (`foresights serve --http`), except `recall`, `extract_facts` and
 `forget_fact`, whenever the source below has facts to show. Errors never carry
 it.
 

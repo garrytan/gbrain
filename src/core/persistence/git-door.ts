@@ -386,7 +386,7 @@ async function refuseIgnored(session: GitSession, root: string, fresh: Target[])
 /** The notice a write carries when the door restored index entries an interrupted refresh after its own commit left behind. */
 export function indexRestoredNotice(paths: string[]): Notice {
   return { code: 'git_index_restored', kind: 'info',
-    why: `gbrain restored index to HEAD after an interrupted door refresh for ${paths.join(', ')}: the index still held the version before an earlier gbrain commit (its update of the index had failed), so this write replaced that stale entry. Nothing was lost; the earlier version is in Git history.` };
+    why: `foresights restored index to HEAD after an interrupted door refresh for ${paths.join(', ')}: the index still held the version before an earlier foresights commit (its update of the index had failed), so this write replaced that stale entry. Nothing was lost; the earlier version is in Git history.` };
 }
 
 /** The targets whose file no longer holds its planned state (its bytes, or no file for a removal) refuse as `git_target_changed`. */
@@ -397,7 +397,7 @@ function refuseChanged(root: string, targets: Iterable<Target>): void {
 
 function targetChanged(root: string, moved: string[], what: string): OperationError {
   return opError('git_target_changed', `${moved.join(', ')} in ${root} ${what}, so nothing was committed and the write was not published.`,
-    'Another process changed the file during the write. If the file now holds neither this write\'s bytes nor the version before it, recovery leaves it as it is and holds the write, so the source\'s later writes wait: preview with gbrain repair stuck-recovery --json (--source with the write\'s source lists only its held writes), ask the user which version to keep, then apply that choice with the --keep, --expect and --apply --yes flags the preview lists (--keep disk keeps the edit). If it holds the version before the write, nothing is held and the write failed. If it holds this write\'s bytes again by the time recovery runs, recovery restores the version before it and the write failed, with nothing held. After a failure, read the page before resubmitting it with a new request_id.', { detail: moved.join(',') });
+    'Another process changed the file during the write. If the file now holds neither this write\'s bytes nor the version before it, recovery leaves it as it is and holds the write, so the source\'s later writes wait: preview with foresights repair stuck-recovery --json (--source with the write\'s source lists only its held writes), ask the user which version to keep, then apply that choice with the --keep, --expect and --apply --yes flags the preview lists (--keep disk keeps the edit). If it holds the version before the write, nothing is held and the write failed. If it holds this write\'s bytes again by the time recovery runs, recovery restores the version before it and the write failed, with nothing held. After a failure, read the page before resubmitting it with a new request_id.', { detail: moved.join(',') });
 }
 
 /**
@@ -413,9 +413,9 @@ function indexConflict(root: string, staged: Target[], atHead: boolean): Operati
       : 'Commit the staged change, or unstage it (git restore --staged -- <path> keeps the file on disk), then retry the write with a new request_id.', {
       detail: paths.join(','),
       fix: { ask_user: true, argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(paths)], consent: [], actor: 'user', requires_exclusive: false,
-        why: 'The door commits a path only while its index entry equals HEAD\'s, so a staged change is never overwritten or committed under a gbrain commit. Unstaging keeps the file on disk; committing it publishes that change.',
-        user_message: atHead ? `${paths.join(', ')} in ${root} has a staged change that is not committed; gbrain's write is already in HEAD. Commit the staged change, or unstage it (its bytes stay on disk)?`
-          : `${paths.join(', ')} in ${root} has a staged change that is not committed, so gbrain did not commit its write there. Commit the staged change, or unstage it (its bytes stay on disk), then retry the write?`,
+        why: 'The door commits a path only while its index entry equals HEAD\'s, so a staged change is never overwritten or committed under a foresights commit. Unstaging keeps the file on disk; committing it publishes that change.',
+        user_message: atHead ? `${paths.join(', ')} in ${root} has a staged change that is not committed; foresights's write is already in HEAD. Commit the staged change, or unstage it (its bytes stay on disk)?`
+          : `${paths.join(', ')} in ${root} has a staged change that is not committed, so foresights did not commit its write there. Commit the staged change, or unstage it (its bytes stay on disk), then retry the write?`,
         verify: { argv: ['git', '-C', root, 'diff', '--cached', '--name-only', '--', ...literalPathspecs(paths)] } },
     });
 }

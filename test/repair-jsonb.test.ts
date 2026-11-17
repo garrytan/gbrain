@@ -1,5 +1,5 @@
 /**
- * Unit tests for `gbrain repair-jsonb`.
+ * Unit tests for `foresights repair-jsonb`.
  *
  * The actual repair logic runs against real Postgres in
  * test/e2e/postgres-jsonb.test.ts (covers the round-trip + the migration

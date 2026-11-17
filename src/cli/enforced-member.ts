@@ -378,8 +378,8 @@ export async function memberPageView(engine: BrainEngine, ea: EnforcedAccess, so
 }
 
 const LABEL_KEYS = ['visibility', 'readable_by', 'access', 'confidentiality', 'pinned_question', 'derived_from'] as const;
-/** A gbrain fence marker (<!--- gbrain:takes:begin -->, three dashes; any dash count and spacing). */
-const FENCE_MARKER_RE = /<!--+\s*gbrain\s*:/i;
+/** A foresights fence marker (<!--- gbrain:takes:begin -->, three dashes; any dash count and spacing). */
+const FENCE_MARKER_RE = /<!--+\s*(?:foresights|gbrain)\s*:/i;
 const LABEL_TEXT_RE = new RegExp(/readable_by|visibility|confidentiality|pinned_question|derived_from|\bprivate\b|^\s*(access|type)\s*:|^\s*---\s*$/.source + '|' + FENCE_MARKER_RE.source, 'im');
 
 /** The protected-fence text a remote reader never sees (private fact rows and takes), which the member cannot change. */
@@ -462,7 +462,7 @@ export async function checkEnforcedWrite(engine: BrainEngine, command: string, o
   }
 }
 
-export const REMEMBER_RETRY = 'gbrain remember "<one fact>" --entity <exact slug of a page you can read, from gbrain find or gbrain search> --provenance "<where you learned it>"';
+export const REMEMBER_RETRY = 'foresights remember "<one fact>" --entity <exact slug of a page you can read, from foresights find or foresights search> --provenance "<where you learned it>"';
 
 /**
  * Where a remember may save under the mode, decided here and nowhere else: one fact on --entity, the exact slug of a
@@ -489,7 +489,7 @@ async function receiptLedgerPath(): Promise<string> {
 
 /**
  * Records the request ids an accepted write under the mode returned (its result, or the pending receipt on its error),
- * so gbrain write-request can answer the member's own receipts and nothing else. A failed record only makes the
+ * so foresights write-request can answer the member's own receipts and nothing else. A failed record only makes the
  * receipt answer as unknown.
  */
 export async function recordEnforcedReceipts(opName: string, value: unknown, params: Record<string, unknown>): Promise<void> {

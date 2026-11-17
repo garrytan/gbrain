@@ -84,7 +84,7 @@ export function readRows(file: string): Row[] {
 
 export interface RunResult { ms: number; code: number; stdout: string; stderr: string }
 
-/** Run the gbrain CLI as a fresh process. `preload` adds the bench instrumentation. */
+/** Run the foresights CLI as a fresh process. `preload` adds the bench instrumentation. */
 export async function runCli(args: string[], env: Record<string, string>, opts: { preload?: boolean; cpuProf?: string; stdin?: string; timeoutMs?: number } = {}): Promise<RunResult> {
   const bunArgs = [process.execPath];
   if (opts.cpuProf) bunArgs.push('--cpu-prof', `--cpu-prof-dir=${opts.cpuProf}`);
@@ -105,7 +105,7 @@ export async function runCli(args: string[], env: Record<string, string>, opts: 
   return { ms: performance.now() - t0, code, stdout, stderr };
 }
 
-/** Last JSON object printed on stdout (gbrain --json prints one document). */
+/** Last JSON object printed on stdout (foresights --json prints one document). */
 export function lastJson(stdout: string): any {
   const start = stdout.lastIndexOf('\n{');
   const text = start >= 0 ? stdout.slice(start + 1) : stdout.trim().startsWith('{') ? stdout.trim() : '';

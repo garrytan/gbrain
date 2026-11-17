@@ -1,9 +1,9 @@
-/** D3 curated help for `gbrain inbox` (flags read by src/commands/inbox.ts runInbox). */
+/** D3 curated help for `foresights inbox` (flags read by src/commands/inbox.ts runInbox). */
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
   summary: 'Turn files dropped into the inbox folder (~/.gbrain/inbox) into pages; originals move to .archived/<date>/.',
-  usage: 'gbrain inbox [status | run [--once]] [--dir <path>] [--source <id>] [--json]',
+  usage: 'foresights inbox [status | run [--once]] [--dir <path>] [--source <id>] [--json]',
   flags: [
     { name: '--once', type: 'boolean', desc: 'With run: capture every file waiting now, then exit (a file is archived only after its capture landed).' },
     { name: '--dir', type: 'string', desc: 'The inbox folder (default ~/.gbrain/inbox).' },
@@ -11,9 +11,9 @@ export const help: CliHelpSpec = {
     { name: '--json', type: 'boolean', desc: 'One JSON document on stdout (status: waiting files; run --once: captured, left unreadable, failed, skipped).' },
   ],
   examples: [
-    'gbrain inbox',
-    'gbrain inbox run --once',
-    'gbrain inbox run --once --source notes --json',
-    'gbrain inbox run',
+    'foresights inbox',
+    'foresights inbox run --once',
+    'foresights inbox run --once --source notes --json',
+    'foresights inbox run',
   ],
 };

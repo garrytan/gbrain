@@ -12,12 +12,12 @@ triggers:
 
 # reference-pack
 
-This is the canonical reference for a third-party gbrain skillpack. Read
+This is the canonical reference for a third-party foresights skillpack. Read
 its tree once and you know how to author one.
 
 ## What this skill does
 
-When the user asks how third-party gbrain skillpacks work, this skill
+When the user asks how third-party foresights skillpacks work, this skill
 points them at the four artifacts every pack ships:
 
 - `skillpack.json` — declares pack metadata + which artifacts the
@@ -26,7 +26,7 @@ points them at the four artifacts every pack ships:
 - `skills/<name>/SKILL.md` — frontmatter (name, description, mutating,
   triggers) plus markdown body. Agents route on `triggers:`; the body
   is the in-context instruction set.
-- `runbooks/bootstrap.md` — agent-readable post-scaffold steps. gbrain
+- `runbooks/bootstrap.md` — agent-readable post-scaffold steps. foresights
   DISPLAYS this after `scaffold` lands; the agent walks per-step at
   its own discretion. No auto-executor (codex T1 supply-chain hardening).
 - `CHANGELOG.md` — Keep-a-Changelog shape. The doctor's `changelog_
@@ -64,7 +64,7 @@ Tier eligibility:
 - `experimental` — all 5 core + < 3 badges
 - `blocked` — any core fails
 
-Run `gbrain skillpack doctor <pack-dir>` to see exactly which
+Run `foresights skillpack doctor <pack-dir>` to see exactly which
 dimensions a candidate pack passes and the paste-ready fix for each
 failure. `--fix --yes` auto-scaffolds the dimensions flagged
 `auto_fixable: true` (routing-eval stubs, CHANGELOG entries,
@@ -75,7 +75,7 @@ license stub, bootstrap stub, test stubs).
 The triggers above route any "what is a skillpack" / "how do third-
 party packs work" user phrasing to THIS skill. The agent reads the
 markdown body, then either answers the user's question directly or
-calls `gbrain skillpack info <name>` / `search <query>` for live
+calls `foresights skillpack info <name>` / `search <query>` for live
 registry data.
 
 ## Test + eval coverage
@@ -94,8 +94,8 @@ registry data.
 Before pushing, the publisher runs:
 
 ```
-gbrain skillpack doctor . --quick --json
-gbrain skillpack pack
+foresights skillpack doctor . --quick --json
+foresights skillpack pack
 ```
 
 The first hits the rubric and prints paste-ready fixes for any failed

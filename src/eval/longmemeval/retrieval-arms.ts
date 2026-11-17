@@ -1,11 +1,11 @@
 /**
- * retrieval-arms.ts — eval-only retrieval arms for `gbrain eval longmemeval`:
+ * retrieval-arms.ts — eval-only retrieval arms for `foresights eval longmemeval`:
  * fact keys and time scope. Nothing here runs in production; the arms let
  * a dev-split run measure a mechanism before any product code depends on it.
  *
  * Fact keys (`--fact-keys chunk|page`): after a question's sessions are
  * imported, each session's facts are extracted (`--fact-extractor paper` —
- * the benchmark's published user-turn fact prompt; `production` — gbrain's
+ * the benchmark's published user-turn fact prompt; `production` — foresights's
  * own facts extractor, 8,000-char input as shipped), merged into the
  * embedding input of that session's chunks (src/core/fact-keys.ts), and the
  * chunks are re-embedded in place. `chunk_text` is untouched, so retrieval
@@ -269,7 +269,7 @@ export const LME_RETRIEVAL_ARM_FLAGS: Array<{ name: string; arg?: string; help: 
     apply: (o, v) => { if (v !== 'chunk' && v !== 'page') throw new Error(`--fact-keys must be chunk|page (got: ${v})`); o.arms.factKeys = v; } },
   { name: '--fact-extractor', arg: 'paper|production', help: [
       'Fact source for --fact-keys: paper = the benchmark\'s published user-turn',
-      'fact prompt; production = gbrain\'s facts extractor as shipped (default: paper).'],
+      'fact prompt; production = foresights\'s facts extractor as shipped (default: paper).'],
     apply: (o, v) => { if (v !== 'paper' && v !== 'production') throw new Error(`--fact-extractor must be paper|production (got: ${v})`); o.arms.factExtractor = v; } },
   { name: '--fact-keys-model', arg: 'MODEL', help: ['Extraction model for --fact-keys (default: the utility tier, haiku).'],
     apply: (o, v) => { o.arms.factKeysModel = v; } },

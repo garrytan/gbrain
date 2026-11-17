@@ -43,14 +43,14 @@ export async function formatLockBusyMessage(engine: BrainEngine, lockKey: string
   if (!snap) {
     return (
       `Another sync is in progress (lock ${lockKey} held). ` +
-      `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`
+      `Wait for it to finish, or run 'foresights doctor' if it has been more than 30 minutes.`
     );
   }
 
   const ageHuman = formatAgeHuman(snap.age_ms);
   const breakHint = lockKey.startsWith('gbrain-sync:')
-    ? `gbrain sync --break-lock --source ${lockKey.slice('gbrain-sync:'.length)}`
-    : `gbrain sync --break-lock`;
+    ? `foresights sync --break-lock --source ${lockKey.slice('gbrain-sync:'.length)}`
+    : `foresights sync --break-lock`;
   const ttlNote = snap.ttl_expired ? ' [TTL expired]' : '';
   return (
     `Another sync is in progress (lock ${lockKey} held by pid ${snap.holder_pid} on ${snap.holder_host}, ` +
@@ -62,7 +62,7 @@ export async function formatLockBusyMessage(engine: BrainEngine, lockKey: string
 }
 
 /**
- * v0.41.6.0 D3: `gbrain sync --break-lock` / `--force-break-lock` worker.
+ * v0.41.6.0 D3: `foresights sync --break-lock` / `--force-break-lock` worker.
  * Returns the process exit code (0 = lock cleared or absent; 1 = refused).
  *
  * Safe path (`force=false`): refuses unless the holder is on this host
@@ -110,7 +110,7 @@ export async function runBreakLock(
       const wedgeHint =
         `No lock is held on ${lockKey} — nothing to break. If a sync still ` +
         `appears wedged, the cause is not a held lock; inspect checkpoint/resume ` +
-        `state with \`gbrain sync --source ${sourceId}\` or \`gbrain doctor\`.`;
+        `state with \`foresights sync --source ${sourceId}\` or \`foresights doctor\`.`;
       if (opts.json) {
         emitJson(JSON.stringify({ status: 'absent', lock: lockKey, source_id: sourceId, wedge_hint: wedgeHint }));
       } else {
@@ -167,7 +167,7 @@ export async function runBreakLock(
       // Distinguish the two cases for the operator.
       if (snap.last_refreshed_at === null) {
         console.error(`Lock ${lockKey} has NULL last_refreshed_at (pre-v98 brain or migration window).`);
-        console.error('Run `gbrain apply-migrations --yes` to land v98, OR use --force-break-lock if you know the holder is dead.');
+        console.error('Run `foresights apply-migrations --yes` to land v98, OR use --force-break-lock if you know the holder is dead.');
       } else {
         const ageStr = snap.ms_since_last_refresh != null ? formatAgeHuman(snap.ms_since_last_refresh) : 'unknown';
         console.error(`Refusing to break lock ${lockKey}: last refresh was ${ageStr} ago, within --max-age=${opts.maxAgeSeconds}s window.`);
@@ -188,7 +188,7 @@ export async function runBreakLock(
       }));
     } else if (deleted) {
       console.log(`Force-broke lock ${lockKey} (was held by pid ${snap.holder_pid} on ${snap.holder_host}, age ${formatAgeHuman(snap.age_ms)}).`);
-      console.log('WARNING: the holder may still be writing. Verify with `gbrain doctor` before re-running.');
+      console.log('WARNING: the holder may still be writing. Verify with `foresights doctor` before re-running.');
     } else {
       console.log(`Lock ${lockKey} was already cleared by another process between our check and DELETE (race-safe).`);
     }

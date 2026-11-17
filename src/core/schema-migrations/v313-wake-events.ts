@@ -7,8 +7,8 @@ import type { Migration } from './types.ts';
 // gbrain.cron.finished, the shared-brain agreement step and forget-on-remove.
 //   - wake_subscriptions.target_ref: the persistence_requests row a
 //     write.settled watch points at (request ids are unique per principal only);
-//   - wake_crons: cron names the owner registered with gbrain wakeshift cron add;
-//   - wake_cron_runs: (name, status, time) recorded by gbrain wakeshift emit,
+//   - wake_crons: cron names the owner registered with foresights wakeshift cron add;
+//   - wake_cron_runs: (name, status, time) recorded by foresights wakeshift emit,
 //     which the drainer reconciles, so a cron script never waits on Wakeshift;
 //   - wake_terms_acceptances: a principal's acceptance of the operator's terms
 //     version (a hash of the two links) on a brain with access members;

@@ -232,7 +232,7 @@ export async function runTier3(target: FenceTarget, initial: Extract<FenceAnalys
     for (const req of analysis.tails) {
       const budget = tailTokenBudget(req, deps.model);
       const quote = estimateChatCallUsd({ model: deps.model, inputTokens: budget.inputTokens, maxOutputTokens: budget.maxOutputTokens, overrides: deps.overrides, capSource: deps.capSource });
-      if (!quote.ok) return transient('no_pricing', `A spend cap is set but gbrain has no price for ${deps.model}; no call was made.`, { guidance: quote.guidance });
+      if (!quote.ok) return transient('no_pricing', `A spend cap is set but foresights has no price for ${deps.model}; no call was made.`, { guidance: quote.guidance });
       const estimate = quote.quote.usd;
       if (spent + estimate > deps.perPageUsd + 1e-9) return transient('budget_exhausted', `The estimated model cost ($${estimate.toFixed(4)}) exceeds fences.repair.max_usd_per_page ($${deps.perPageUsd.toFixed(2)}).`);
       if (deps.allowanceUsd !== undefined && spent + estimate > deps.allowanceUsd + 1e-9) {
@@ -284,7 +284,7 @@ export async function runTier3(target: FenceTarget, initial: Extract<FenceAnalys
       const prior = correction ? tables.get(index)!.text : undefined;
       const budget = tier3TokenBudget(req, deps.model, prior !== undefined ? { answer: prior } : undefined);
       const quote = estimateChatCallUsd({ model: deps.model, inputTokens: budget.inputTokens, maxOutputTokens: budget.maxOutputTokens, overrides: deps.overrides, capSource: deps.capSource });
-      if (!quote.ok) return transient('no_pricing', `A spend cap is set but gbrain has no price for ${deps.model}; no call was made.`, { guidance: quote.guidance });
+      if (!quote.ok) return transient('no_pricing', `A spend cap is set but foresights has no price for ${deps.model}; no call was made.`, { guidance: quote.guidance });
       const estimate = quote.quote.usd;
       if (spent + estimate > deps.perPageUsd + 1e-9) {
         if (correction) return reject(GATE_REASONS[correction.gate], `The model's repair failed gate ${correction.gate} and a corrective re-ask would exceed the per-page cap.`, correction.gate, correction.rows);

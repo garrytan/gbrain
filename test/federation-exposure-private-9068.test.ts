@@ -87,8 +87,8 @@ describe('#9068 the federation exposure warning applies the read paths\' privacy
       const out = await sources(engine, ['federate', SRC, '--json']);
       expect({ engine: engine.kind, exposed: JSON.parse(out.stdout).pages_exposed }).toEqual({ engine: engine.kind, exposed: {
         count: 1, examples: [{ slug: open, member: 'alice-example' }],
-        check: 'gbrain access who-can-read ' + open + ' --source ' + SRC,
-        restrict: 'gbrain access rule add --prefix notes/ --readers alice-example --source ' + SRC } });
+        check: 'foresights access who-can-read ' + open + ' --source ' + SRC,
+        restrict: 'foresights access rule add --prefix notes/ --readers alice-example --source ' + SRC } });
       expect((await call(engine, 'public', 'get_page', { slug: open, include_content: true })).text).toContain('Open ' + canary + '.');
       expect((await call(engine, 'public', 'get_page', { slug: hidden, include_content: true })).text).not.toContain('Private ' + canary + '.');
 

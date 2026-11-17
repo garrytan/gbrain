@@ -1,15 +1,15 @@
 ---
-title: "T-Mem: failed validation for GBrain"
+title: "T-Mem: failed validation for Foresights"
 date: 2026-09-24
 status: mothballed
 tags: [research, retrieval, t-mem, negative-result, postmortem]
 ---
 
-# T-Mem: failed validation for GBrain
+# T-Mem: failed validation for Foresights
 
 [Research index](../README.md)
 
-**Decision: mothball the custom integration in [gbrain#5374](https://github.com/garrytan/gbrain/pull/5374), and preserve the research without shipping that feature.** This does not establish that the paper's idea is false. Our implementation failed to complete its comparison, and the later released-code pilot did not demonstrate an answer-quality gain.
+**Decision: mothball the custom integration in [foresights#5374](https://github.com/garrytan/gbrain/pull/5374), and preserve the research without shipping that feature.** This does not establish that the paper's idea is false. Our implementation failed to complete its comparison, and the later released-code pilot did not demonstrate an answer-quality gain.
 
 ## In plain English
 
@@ -60,17 +60,17 @@ These differences were recorded before inference, not invented to explain the ou
 
 ## Disposition of #5374 and the companion work
 
-[gbrain#5374](https://github.com/garrytan/gbrain/pull/5374) is **mothballed, closed without merging**. Its branch is retained as historical source, not maintained as a merge-ready feature. The published prototype head is [4f5382a](https://github.com/garrytan/gbrain/commit/4f5382a65f8aef96ab6c04ea7e6c32062da849ad). Its passing implementation tests never supplied the missing end-to-end retrieval result, so neither those tests nor the small released-code signal justify landing it.
+[foresights#5374](https://github.com/garrytan/gbrain/pull/5374) is **mothballed, closed without merging**. Its branch is retained as historical source, not maintained as a merge-ready feature. The published prototype head is [4f5382a](https://github.com/garrytan/gbrain/commit/4f5382a65f8aef96ab6c04ea7e6c32062da849ad). Its passing implementation tests never supplied the missing end-to-end retrieval result, so neither those tests nor the small released-code signal justify landing it.
 
 The disposition separates three changes:
 
-- [gbrain#5453](https://github.com/garrytan/gbrain/pull/5453) preserves this postmortem, the protocol, measured results and reproducible evidence. It does not introduce the feature's runtime code.
+- [foresights#5453](https://github.com/garrytan/gbrain/pull/5453) preserves this postmortem, the protocol, measured results and reproducible evidence. It does not introduce the feature's runtime code.
 - [gbrain-evals#34](https://github.com/garrytan/gbrain-evals/pull/34) preserves the evaluation harness independently. Its pinned [939232f prototype](https://github.com/garrytan/gbrain/commit/939232f1746381b4e932d620d6c709e29198f14c) belongs to the unmerged experimental lineage, not the current production release. Landing that harness does not establish a capability gain or authorize another paid experiment.
 - #5374 remains unmerged. Its conflicts are not being repaired to prepare it for shipping, and the later unpublished prototype work is not being folded into either archival PR.
 
 ## Conditions for reopening
 
-Reopening needs new evidence or a materially clearer experimental protocol, not another schema/repair iteration: obtain the exact paper runner or explicitly label a reconstruction; test memory constructed before the query if that is the intended GBrain behavior; complete a preselected matched comparison that measures both retrieval and answers; and audit judge reliability without replacing unfavorable primary results after the fact.
+Reopening needs new evidence or a materially clearer experimental protocol, not another schema/repair iteration: obtain the exact paper runner or explicitly label a reconstruction; test memory constructed before the query if that is the intended Foresights behavior; complete a preselected matched comparison that measures both retrieval and answers; and audit judge reliability without replacing unfavorable primary results after the fact.
 
 Reopening #5374 also requires an explicit new decision to resume the feature. Preserving its branch, documentation and evaluator is not that decision.
 
@@ -84,4 +84,4 @@ Reopening #5374 also requires an explicit new decision to resume the feature. Pr
 - [Original paper, arXiv 2606.15405v2](https://arxiv.org/abs/2606.15405v2), audited 2026-09-24.
 - [Released source at dd9e152](https://github.com/Sherlockwz/T-Mem/tree/dd9e1527bc75908485809580c9520af5a9a42879).
 
-The original-code work cost $9.224531784 in reported charges, with $0.1653932 retained for three unresolved requests. Historical custom-implementation costs are separate. No paid rerun was started to create this archive. [SHA256SUMS](SHA256SUMS) covers the files in this directory; verify from this directory with `sha256sum -c SHA256SUMS`. The compressed bundle is frozen evidence, not an installed GBrain component or maintained provider gateway. Its own manifest covers its extracted contents.
+The original-code work cost $9.224531784 in reported charges, with $0.1653932 retained for three unresolved requests. Historical custom-implementation costs are separate. No paid rerun was started to create this archive. [SHA256SUMS](SHA256SUMS) covers the files in this directory; verify from this directory with `sha256sum -c SHA256SUMS`. The compressed bundle is frozen evidence, not an installed Foresights component or maintained provider gateway. Its own manifest covers its extracted contents.

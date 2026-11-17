@@ -1,5 +1,5 @@
 /**
- * #2120 — `gbrain config get` must resolve the file/env plane, not just the
+ * #2120 — `foresights config get` must resolve the file/env plane, not just the
  * DB plane. Pre-fix, `get` called only `engine.getConfig(key)`, so a
  * runtime-effective key in ~/.gbrain/config.json reported not-found while
  * the runtime happily used it.

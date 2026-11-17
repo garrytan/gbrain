@@ -141,7 +141,7 @@ function makeWarnCache(assetId: string): BackupStatus {
 // ── Local (trusted) path: probes run ─────────────────────────────────────────
 
 describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
-  test('no-origin source repo → warn naming the asset, points at gbrain backup status', async () => {
+  test('no-origin source repo → warn naming the asset, points at foresights backup status', async () => {
     const repo = makeNoOriginRepo('src-a');
     const check = await checkBackupCoverage(makeEngine([{ id: 'src-a', local_path: repo }]), {
       localOnly: true,
@@ -149,7 +149,7 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
 
     expect(check.name).toBe('backup_coverage');
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain backup status');
+    expect(check.message).toContain('foresights backup status');
     expect(check.message).toContain('src-a');
     expect(check.message).toContain('no git remote');
 
@@ -194,7 +194,7 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
     expect(check.message).toContain('src-dirty (dirty)');
     expect(check.message).toContain('src-plain (not_a_git_repo)');
     expect(check.message).not.toContain('no git remote');
-    expect(check.message).toContain('gbrain backup status');
+    expect(check.message).toContain('foresights backup status');
   });
 
   test('more than five blocking assets → the first five are named, the rest counted', async () => {
@@ -235,7 +235,7 @@ describe('checkBackupCoverage — remote surface (no localOnly)', () => {
     expect(check.name).toBe('backup_coverage');
     expect(check.status).toBe('warn');
     expect(check.message).toContain('not checked from this surface');
-    expect(check.message).toContain('gbrain backup check');
+    expect(check.message).toContain('foresights backup check');
   });
 
   test('warn cache → AGGREGATE-ONLY warn from cache; zero git subprocesses, zero engine calls', async () => {
@@ -253,7 +253,7 @@ describe('checkBackupCoverage — remote surface (no localOnly)', () => {
     expect(check.message).toContain('1 of 1'); // aggregate counts
     expect(check.message).not.toContain(repo); // NEVER the asset id / local path
     expect(check.message).not.toContain('real-repo-dir');
-    expect(check.message).toContain('gbrain backup status');
+    expect(check.message).toContain('foresights backup status');
 
     const details = check.details as { note?: string; computed_by?: string; cache_age?: string };
     expect(details.note).toBe('cache-only (remote surface never probes git; aggregate counts only)');

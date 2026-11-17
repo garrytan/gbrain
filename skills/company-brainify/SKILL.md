@@ -29,7 +29,7 @@ writes_to:
   - projects/
   - analysis/
 upstream: company-brainify@fc834ee
-# Brain-first in its native form: Phase-1 discovery runs through gbrain
+# Brain-first in its native form: Phase-1 discovery runs through foresights
 # retrieval (query/search/takes search/recall), and every edit is grounded
 # in a full read of the actual page. writes_to lists the scan scope the
 # skill edits IN PLACE — it does not create new pages there, except the
@@ -63,7 +63,7 @@ three surfaces: pages, takes/facts, and history.
 Connecting or indexing an existing company repository without editing it is not
 sanitization. For “connect our company brain” or “import an existing company
 brain,” use the migrate (host-side) company workflow. On the trusted brain host,
-start with `gbrain sources inspect <path> --profile company-brain`; follow
+start with `foresights sources inspect <path> --profile company-brain`; follow
 `docs/guides/company-brain-ingestion.md` for destination preview and approval.
 Do not strip metadata or purge history merely to make an existing repository
 searchable.
@@ -86,7 +86,7 @@ searchable.
 | **Management strategy** | How-to-manage-someone sections, "the hard conversation" notes, scope/title management plans |
 | **Internal political dynamics** | Who doesn't like whom, who's nervous about whom, adversarial relationships, power dynamics |
 | **Personal PII** | Phone numbers, personal email addresses, home addresses, family or medical details, personal legal matters, personal-life details |
-| **Takes/facts** | Any take or fact referencing the above categories — performance, comp, retention, weakness, management risk. Fact rows are DELETED from the page's Facts fence, never merely expired with `gbrain forget` |
+| **Takes/facts** | Any take or fact referencing the above categories — performance, comp, retention, weakness, management risk. Fact rows are DELETED from the page's Facts fence, never merely expired with `foresights forget` |
 
 ### Always keep
 
@@ -107,9 +107,9 @@ Sensitive content leaks far beyond people pages. The scan scope is:
 - `meetings/` — transcripts and minutes with candid assessments
 - `daily/` — daily notes referencing comp/performance/retention conversations
 - `companies/`, `projects/`, `analysis/` — cross-references to removed content
-- **Takes** — evaluative claims in page takes fences (`gbrain takes search`)
-- **Facts** — hot-memory facts (`gbrain recall --grep`)
-- **Back-links** — after edits, `gbrain check-backlinks check` confirms no page
+- **Takes** — evaluative claims in page takes fences (`foresights takes search`)
+- **Facts** — hot-memory facts (`foresights recall --grep`)
+- **Back-links** — after edits, `foresights check-backlinks check` confirms no page
   still points at removed sections
 
 A pass that only covers `people/` will certify a brain that still leaks.
@@ -119,7 +119,7 @@ A pass that only covers `people/` will certify a brain that still leaks.
 All paths below are relative to the brain repo root:
 
 ```bash
-BRAIN="$(gbrain config get sync.repo_path)"
+BRAIN="$(foresights config get sync.repo_path)"
 cd "$BRAIN"
 ```
 
@@ -129,11 +129,11 @@ cd "$BRAIN"
    keyword pattern will:
 
    ```bash
-   gbrain query "compensation, equity, or salary discussions about team members" --limit 50
-   gbrain query "performance concerns, underperformance, or who is struggling" --limit 50
-   gbrain query "considering leaving, retention conversations, departure rumors" --limit 50
-   gbrain takes search "performance" --limit 50
-   gbrain recall --grep "salary"
+   foresights query "compensation, equity, or salary discussions about team members" --limit 50
+   foresights query "performance concerns, underperformance, or who is struggling" --limit 50
+   foresights query "considering leaving, retention conversations, departure rumors" --limit 50
+   foresights takes search "performance" --limit 50
+   foresights recall --grep "salary"
    ```
 
    Resolve every returned slug to its repo-relative file path and write the
@@ -247,21 +247,21 @@ subagents. Per file:
 Use `Edit` for surgical removal of a few sections; `Write` the whole file
 only when sensitive content is interwoven throughout.
 
-**Facts: `forget` is NOT removal.** `gbrain forget <fact-id>` only expires a
+**Facts: `forget` is NOT removal.** `foresights forget <fact-id>` only expires a
 fact: the row stays struck through in the Facts fence and the DB still serves
-it via `--include-expired`. Find sensitive facts (`gbrain recall --grep`) and
+it via `--include-expired`. Find sensitive facts (`foresights recall --grep`) and
 delete the row from the page's Facts fence (step 5), like a take.
 
 - **Staging-copy path:** editing the copied markdown is the removal; the team
   DB is built fresh from the export in Phase 5 Step 0.
-- **In-place shared-brain path:** run `gbrain sync` (re-imports the page), then
+- **In-place shared-brain path:** run `foresights sync` (re-imports the page), then
   reconcile the facts index: sync's convergence contract covers page import
   only (`src/commands/sync.ts`, "CONVERGENCE CONTRACT"), so the DB serves the
-  deleted row until the extract-facts reconcile runs. Trigger it (`gbrain sweep`,
-  or wait for the serve-resident sweep) and confirm with `gbrain recall --grep`
+  deleted row until the extract-facts reconcile runs. Trigger it (`foresights sweep`,
+  or wait for the serve-resident sweep) and confirm with `foresights recall --grep`
   that the row is gone.
 
-Either way, run `gbrain check-backlinks check` for pages still pointing at
+Either way, run `foresights check-backlinks check` for pages still pointing at
 removed content.
 
 ### Phase 4: Verify
@@ -295,9 +295,9 @@ the sanitized brain/source (scope with `--source <team-source-id>` when the
 shared source is mounted alongside personal content):
 
 ```bash
-gbrain query "what is alice-example's compensation" --limit 10
-gbrain query "who is underperforming or at risk of leaving" --limit 10
-gbrain takes search "weakness" --limit 20
+foresights query "what is alice-example's compensation" --limit 10
+foresights query "who is underperforming or at risk of leaving" --limit 10
+foresights takes search "weakness" --limit 20
 ```
 
 Every one of these must come back empty or with only keep-category content.
@@ -329,11 +329,11 @@ cd "$STAGING"
 git init -b main
 git add -A && git commit -m "Initial import — sanitized team brain"  # gbrain-allow-shared-tree-git: first commit of a fresh single-writer export repo
 git remote add origin <TEAM_REPO_URL>
-gbrain git commit-push --push-only
+foresights git commit-push --push-only
 ```
 
 The first commit is plain git because `$STAGING` is a brand-new repo only
-this run writes. `gbrain git commit-push --push-only` pushes to `origin/main`
+this run writes. `foresights git commit-push --push-only` pushes to `origin/main`
 and fails loudly if the push does not land. On a non-zero exit, stop and relay
 the error: usually `git_push_unavailable` (fix the URL or credentials, rerun),
 or a team repo that already has commits (this export needs an empty one; ask
@@ -348,7 +348,7 @@ brain). Clone it to a durable work dir, stay there for every step below, and
 assert the target is not the personal repo first.
 
 ```bash
-PERSONAL="$(gbrain config get sync.repo_path)"
+PERSONAL="$(foresights config get sync.repo_path)"
 mkdir -p "$HOME/.gbrain/backups" && chmod 700 "$HOME/.gbrain/backups"
 WORK="$HOME/.gbrain/backups/brainify-purge-$(date +%Y%m%d-%H%M%S)"
 git clone <SHARED_REPO_URL> "$WORK/shared"
@@ -366,7 +366,7 @@ for d in people meetings daily companies projects analysis; do
 done
 SANITIZED=""
 for d in people meetings daily companies projects analysis; do [ -d "$d" ] && SANITIZED="$SANITIZED $d"; done
-gbrain git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
+foresights git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
 
 # Mirror-clone backup = the card's recoverability line. Capture the path NOW
 # and reuse it verbatim: never recompute $(date) later.
@@ -416,7 +416,7 @@ Proceed? (yes/no)
 
 Per data-loss-gate: require a typed **"yes"** or **"do it"** ("ok", "sure",
 "go ahead" are not consent). If the user asks a question, answer and re-present
-the card. Nothing in gbrain mechanically blocks `git filter-repo`, so the
+the card. Nothing in foresights mechanically blocks `git filter-repo`, so the
 agent must never skip this gate.
 
 **Step 3 — purge (only after the explicit typed yes).** Requires
@@ -483,8 +483,8 @@ backup lives.
 - Hosts may cache unreachable commits for months; use the provider's
   sensitive-data removal process for immediate removal (for private repos,
   unreachable from every ref is usually enough)
-- A sync cursor on a rewritten-away SHA makes the next `gbrain sync` error or
-  rescan fully; run `gbrain doctor` if it doesn't settle
+- A sync cursor on a rewritten-away SHA makes the next `foresights sync` error or
+  rescan fully; run `foresights doctor` if it doesn't settle
 - **Backup retention:** once the team has re-cloned and sync settled, keep the
   mirror backup ~30 days, then delete it (it holds the pre-sanitization
   history): `rm -rf ~/.gbrain/backups/shared-brain-history-backup-<date>.git`,
@@ -492,9 +492,9 @@ backup lives.
 - Re-verify remotes and any push hooks survived the rewrite before handoff
 
 **Hand the repo to the team — stamp it shared first.** On either path, run
-`gbrain config set brain.audience shared` against the TEAM brain (never the
+`foresights config set brain.audience shared` against the TEAM brain (never the
 personal one), so the ambient writeback consent nudge, a personal-brain ask,
-never fires on it. A team member who runs `gbrain init` before the stamp
+never fires on it. A team member who runs `foresights init` before the stamp
 exists prefixes that command with `GBRAIN_NO_ONBOARD_NUDGE=1`: an un-stamped
 brain classifies personal and the fire-once nudge would ask the wrong question.
 
@@ -504,7 +504,7 @@ Sensitive data re-accumulates (meeting transcripts, enrichment, candid
 writes); one clean pass is a snapshot, not a state. Schedule a monthly re-audit
 (weekly for high-ingest brains) that re-runs Phases 1, 2 and 4 report-only
 (scan and flag, no edits) for human review. Wire it per
-[conventions/cron-via-minions.md](../conventions/cron-via-minions.md) (`gbrain jobs submit`;
+[conventions/cron-via-minions.md](../conventions/cron-via-minions.md) (`foresights jobs submit`;
 `skills/cron-scheduler/SKILL.md`, `skills/minion-orchestrator/SKILL.md`). A
 human or a gated follow-up run does the removal.
 
@@ -524,7 +524,7 @@ human or a gated follow-up run does the removal.
   their own team). These need the most careful review.
 - **Meeting notes:** meeting pages referencing employee performance need the
   same treatment as people pages — they are in scope, not an afterthought.
-- **Cross-references:** `gbrain check-backlinks check` plus a grep for the
+- **Cross-references:** `foresights check-backlinks check` plus a grep for the
   removed section titles across meetings, companies and dailies.
 - **Aliases and nicknames:** grep for the person's short name and initials,
   not just the slug — candid content rarely uses full names.
@@ -559,7 +559,7 @@ This skill guarantees:
   takes, facts and back-links; the export ships only scanned directories,
   verified (Phase 4 greps + retrieval) before the first push.
 - Sensitive fact rows are deleted from the Facts fence and, in place,
-  re-synced and reconciled (verified with `gbrain recall --grep`); `forget`
+  re-synced and reconciled (verified with `foresights recall --grep`); `forget`
   never certifies clean.
 - Every strip decision is a per-file judgment on a full read; grep only
   triages and verifies.
@@ -597,11 +597,11 @@ Three artifacts:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A bulk redaction or delete needs the data-loss-gate card; if the CLI exits 3 or asks for confirmation, stop and show the user the recoverability card first.
 - The retrieval-first scope scan is empty with a degraded notice: keyword-only search under-counts sensitive pages. Keep the structural pass and tell the user the scan was keyword-only.
-- `forget` / `put_page` returns `write_pending` (exit 10): poll `gbrain write-request <request_id>`; do not report a page sanitized until its receipt commits.
+- `forget` / `put_page` returns `write_pending` (exit 10): poll `foresights write-request <request_id>`; do not report a page sanitized until its receipt commits.
 
 ## Anti-Patterns
 
@@ -609,7 +609,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   paths
 - ❌ Calling clean working-tree files done: history keeps every version
 - ❌ Exporting the whole repo: nothing unscanned ships
-- ❌ Using `gbrain forget` as sanitization: delete the fence row and re-sync
+- ❌ Using `foresights forget` as sanitization: delete the fence row and re-sync
 - ❌ `git filter-repo` / force-push without the verified mirror backup and the
   typed confirmation, or in `sync.repo_path`
 - ❌ Stripping the personal brain in place to stand up a NEW team brain

@@ -23,7 +23,7 @@
  *   });
  *
  * The harness deliberately does NOT spin up a PGLite brain — that's what
- * `gbrain ingest test --watch` is for (CLI-side ephemeral brain for the
+ * `foresights ingest test --watch` is for (CLI-side ephemeral brain for the
  * full daemon-roundtrip iteration loop). The harness is for fast unit
  * tests against the source contract in isolation.
  */

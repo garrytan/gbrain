@@ -1,5 +1,5 @@
 /**
- * #3390 — `gbrain migrate embeddings` END-TO-END on PGLite.
+ * #3390 — `foresights migrate embeddings` END-TO-END on PGLite.
  *
  * The full command flow with a fake embedding transport:
  *   1. Disposable brain seeded via the REAL embed pipeline on a fake 1024d
@@ -42,7 +42,7 @@ import {
 const FROM_DIMS = 1024;
 const TO_DIMS = 1536;
 const PAGES = ['page-1', 'page-2', 'page-3', 'page-4', 'page-5', 'page-6'];
-const PROBE_TEXT = 'gbrain embedding migration probe';
+const PROBE_TEXT = 'foresights embedding migration probe';
 
 let engine: PGLiteEngine;
 let tmpHome: string;

@@ -1,5 +1,5 @@
 /**
- * `gbrain decide receipts`: aggregate receipt statistics only (counts, outcome
+ * `foresights decide receipts`: aggregate receipt statistics only (counts, outcome
  * mix, probability distribution, latency); never text. `--what-if-threshold`
  * recomputes the outcome mix a different threshold would have produced from
  * stored answers, protection, rank and min_keep, with no provider call, for
@@ -38,7 +38,7 @@ export async function runReceiptsCommand(engine: BrainEngine, args: string[]): P
   const whatIf = flagValue(args, '--what-if-threshold');
   if (whatIf !== undefined) {
     const t = Number(whatIf);
-    if (!slot || !Number.isFinite(t) || t < 0 || t > 1) { console.error('Usage: gbrain decide receipts --slot <slot> --what-if-threshold <0..1>'); return 1; }
+    if (!slot || !Number.isFinite(t) || t < 0 || t > 1) { console.error('Usage: foresights decide receipts --slot <slot> --what-if-threshold <0..1>'); return 1; }
     const reducer = whatIfReducers.get(slot);
     if (!reducer || !SLOT_SPECS[slot].whatIfReproducible) { console.error(`${slot}: not reproducible from receipts (its reducer depends on more than the stored answers)`); return 1; }
     const state = await loadDecideState(engine);

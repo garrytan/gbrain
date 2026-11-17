@@ -1,5 +1,5 @@
 /**
- * Owner actions on ambiguous-band review proposals (`gbrain decide proposals`).
+ * Owner actions on ambiguous-band review proposals (`foresights decide proposals`).
  *
  * withdraw: accepting re-checks that the anchor is still withdrawn and the
  * candidate is still active with unchanged text, then withdraws the candidate
@@ -104,7 +104,7 @@ export async function undoReviewProposal(engine: BrainEngine, id: number): Promi
   if (!p) return { id: ref, action: 'undo', status: 'not_found' };
   if (p.kind === 'withdraw') {
     return { id: ref, action: 'undo', status: 'refused', reason: 'withdrawal_is_durable',
-      fix: 'The withdrawal ledger is durable by design. To state the claim again, remember a corrected wording with new provenance (gbrain remember "<corrected claim>" --provenance "<source>").' };
+      fix: 'The withdrawal ledger is durable by design. To state the claim again, remember a corrected wording with new provenance (foresights remember "<corrected claim>" --provenance "<source>").' };
   }
   return { id: ref, action: 'undo', status: 'refused', reason: 'undo_unsupported', fix: 'Duplicate verdicts have no undo here; reverse the merge or link with the subsystem that applied it.' };
 }

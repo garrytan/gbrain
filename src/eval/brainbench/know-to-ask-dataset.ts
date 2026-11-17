@@ -1,5 +1,5 @@
 /**
- * `gbrain decide dataset --slot recall_needed --from know-to-ask <dir>`: S6
+ * `foresights decide dataset --slot recall_needed --from know-to-ask <dir>`: S6
  * labelled items from BrainBench know-to-ask gold turns. `<dir>` holds
  * `fixtures/` and `gold/` (the committed corpus is `evals/brainbench`).
  *

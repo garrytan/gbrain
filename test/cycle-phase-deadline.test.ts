@@ -1,5 +1,5 @@
 /**
- * gbrain#4168 — phase deadlines must clamp to the owning job's absolute
+ * foresights#4168 — phase deadlines must clamp to the owning job's absolute
  * deadline (claim-time timeout_at), or the clean partial-exit path is dead
  * code: at the default installed-daemon interval the autopilot-cycle timeout
  * floor (1_800_000ms) EQUALS propose_takes' 30-min phase default, and since
@@ -53,7 +53,7 @@ function proposeEngine(pageCount: number): BrainEngine {
   } as unknown as BrainEngine;
 }
 
-describe('effectivePhaseDeadlineMs (gbrain#4168)', () => {
+describe('effectivePhaseDeadlineMs (foresights#4168)', () => {
   const NOW = 1_755_300_000_000;
   const DEFAULT = 30 * 60 * 1000;
 

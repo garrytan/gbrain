@@ -1,6 +1,6 @@
 # Agent Bootstrap — Implementation Plan (normative)
 
-The engineering source of truth for `gbrain bootstrap` — the paste-in install that
+The engineering source of truth for `foresights bootstrap` — the paste-in install that
 turns Claude Code / Codex desktop apps into a persistent personal agent (identity +
 memory + skills + session-triggered schedules + private-repo persistence + local
 PGLite brain). Product scope/sequencing source of truth:
@@ -46,7 +46,7 @@ The shipped implementation matches the plan except for these deltas:
 
 ## Post-design-review deltas (2026-08-07, /office-hours APPROVED — these override below)
 
-Product: **"GBrain for Codex" + "GBrain for Claude Code"** (names contingent on
+Product: **"Foresights for Codex" + "Foresights for Claude Code"** (names contingent on
 trademark review) — the free desktop tier of the hosted-gbrain ladder (the hosted service is the
 graduation path; the desktop ceiling is the mechanic, not a bug). Target surfaces are
 the DESKTOP APPS; **Codex door ships first** (named pilot user is a non-developer
@@ -54,7 +54,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
 
 **Build order (replaces the PR1/FF phasing below where they conflict):**
 0. **Spike (gates door-1 ship; starts immediately, before build):** clean-machine
-   reproduction of Garry's working Codex-in-ChatGPT + gbrain prototype. Exit questions
+   reproduction of Garry's working Codex-in-ChatGPT + foresights prototype. Exit questions
    with pass bars: (#1 blocking) reliable per-turn/per-session WRITE trigger — 0
    durable-write failures in 20 sessions across ≥3 days on a non-founder machine, else
    extend to 50; causes logged. (#2) per-turn READ seam — context block present at turn
@@ -64,9 +64,9 @@ ChatGPT-app user). CLIs come along via shared machinery.
    ≤10% of weekly Max/Pro quota; failure = scope change to "session-agent, no schedules
    by default" BEFORE schedule build effort. Codex CLI is NOT spike-gated.
 1. **Shared body + engine machinery (PR1):** everything in this plan's PR1 (bootstrap
-   family, gbrain hook + IPC turn_context, templates, question bank, secret scan,
+   family, foresights hook + IPC turn_context, templates, question bank, secret scan,
    sources push, skillpack scaffold wiring, doctor checks) PLUS: `agent.json` repo
-   manifest with `format_version: 1` (the ladder contract — the hosted gbrain service mounts this
+   manifest with `format_version: 1` (the ladder contract — the hosted foresights service mounts this
    format; compatibility is a test, not a hope); wire EXISTING import + entity
    extraction + backlinks + graph-aware query into install/verify (funds design
    Premises 4/6 — new verify check: ≥1 entity extracted, ≥1 backlink resolved, one
@@ -88,7 +88,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
    WITH the hosted mount (never point at a destination that can't accept the repo).
 
 **New v1 requirements from the design review (fold into implementation):**
-- Binary install is tag-pinned: `bun install -g github:garrytan/gbrain#<release-tag>`,
+- Binary install is tag-pinned: `bun install -g github:aimonk2025/gbrain#<release-tag>`,
   same stamp as the runbook, so `bootstrap status` skew check is meaningful.
 - Non-terminal-buyer error channel: every blocking condition (scan block, lock
   collision, partial install, verify fail) surfaces through the agent's reply channel
@@ -119,7 +119,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
   the ChatGPT door (resolves design OQ2 = yes). Same rendered file set, published;
   kept in sync with templates/ by extending scripts/check-bootstrap-templates.sh to
   diff the template repo content. Build order 2.
-- **`gbrain bootstrap uninstall`** in v1 (was fast-follow): removes MCP registration +
+- **`foresights bootstrap uninstall`** in v1 (was fast-follow): removes MCP registration +
   hooks + bootstrap-created state (confirm-gated), leaves the repo ("the body remains
   yours"). [Scope superseded by CX2-12 + as-shipped delta 2: `~/.gbrain` is never
   deleted wholesale — only receipt-enumerated bootstrap-created state.]
@@ -134,7 +134,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
   prompts (who am I to you / remember X then restart / what do you know about
   <project>) — makes week-one compounding visible (design Premise 4).
 - **Deferred to TODOS.md in the PR** (must land as TODOS entries with the cathedral
-  PR): `gbrain quota` meter command (release-gate measurement ships as script+doc
+  PR): `foresights quota` meter command (release-gate measurement ships as script+doc
   first; productize once the per-harness token-count method is proven); networked
   Docker paste-flow e2e.
 
@@ -298,7 +298,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
   with no API key. Keyless e2e asserts it.
 - [CX2-5 P0] **Graph-floor verify made deterministic:** verify cannot command the
   host's serve (stdio owned by the desktop app). Fix: the sweep gets a trusted
-  local-only CLI entry (`gbrain sweep --once`, CLI_ONLY, never over MCP), and
+  local-only CLI entry (`foresights sweep --once`, CLI_ONLY, never over MCP), and
   `bootstrap verify` runs BEFORE host registration on its own transient serve/engine:
   write via op → `sweep --once` → edge query. No timing nondeterminism.
   [Sequencing superseded by as-shipped delta 1: verify shipped as the LAST phase,
@@ -355,7 +355,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
   recovery test; export `LiveServeLockError` (currently unexported, pglite-lock.ts:28)
   so the planned class assertion can import it.
 - [CX2-17 P2] **Format-aware host-config writers:** JSON has no comment-marker
-  boundary — settings.local.json gets a structural JSON merger (gbrain entries keyed
+  boundary — settings.local.json gets a structural JSON merger (foresights entries keyed
   by a `_gbrain` marker property, semantic dup detection surviving reordering);
   config.toml gets a TOML-aware writer; both atomic write+backup; the
   frontmatter-install-hook replace/backup idiom applies only to whole-file targets.
@@ -438,7 +438,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
   doctor reports last verify timestamp/status/deltas.
 - [B3] Hook heartbeat records outcome + reason on EVERY invocation; trailing-20
   failure rate over threshold → one visible line inside the injected context block
-  ("brain context unavailable for the last N turns — run `gbrain doctor`").
+  ("brain context unavailable for the last N turns — run `foresights doctor`").
 - [B4] `~/.gbrain/bootstrap/push-status.json`; doctor fails when last successful push
   >48h old with a dirty tree; surfaced in the SessionStart digest.
 - [B5] `bootstrap status --json` emits a support blob (workspace, binary version,
@@ -459,7 +459,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
 - [C1 = D6-A, decided by Garry] **Distribution ref: single `latest-stable` ref.** The
   release job force-updates `latest-stable` to the just-verified release commit as its
   FINAL step (after binary assets publish + provenance attestation). README paste
-  block, runbook URL, and `bun install -g github:garrytan/gbrain#stable` all
+  block, runbook URL, and `bun install -g github:aimonk2025/gbrain#stable` all
   reference it permanently — no per-release tag pins, no 404 window, no per-ship
   README edits. The fetched runbook embeds the concrete VERSION it was cut from;
   `bootstrap status` compares that stamp to the installed binary (skew check intact).
@@ -477,9 +477,9 @@ ChatGPT-app user). CLIs come along via shared machinery.
   prompt; installs an opt-in background push job") linking to docs/guides/bootstrap.md
   which owns the full security/consent posture together with the rendered
   ACCESS_POLICY.md; zero plan IDs / review-round references.
-- [C7] Public product names ("GBrain for Codex"/"GBrain for Claude Code") are a
+- [C7] Public product names ("Foresights for Codex"/"Foresights for Claude Code") are a
   pre-merge checklist item owned by Garry (trademark review); all committed copy uses
-  the neutral `gbrain bootstrap` verb until sign-off.
+  the neutral `foresights bootstrap` verb until sign-off.
 - [C8] Zero-migration release confirmed (facts/context_volunteer_events already
   exist); ALL new bootstrap telemetry stays on the filesystem — the moment it moves
   into a table it becomes migration v126 + bootstrap-coverage + engine-parity
@@ -492,7 +492,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
 
 **ACCEPTED — product-critical (the two the whole review chain missed):**
 - [CX-P0.5 **Keyless mode is a first-class design requirement.**] The named pilot user
-  has ChatGPT Pro but NO API keys — and gbrain's embeddings + extract_facts (Haiku)
+  has ChatGPT Pro but NO API keys — and foresights's embeddings + extract_facts (Haiku)
   are API-metered. Bootstrap MUST work with zero API keys: the HARNESS AGENT is the
   subsidized LLM, so AGENTS.md instructs it to author facts/timeline/links explicitly
   through write ops (zero API cost); search degrades to BM25 keyword (no embeddings);
@@ -539,7 +539,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
   (default balanced) — preserves the INSTALL_FOR_AGENTS consent contract without
   another stop; the spike's TTFM measurement counts every stop.
 - [CX-P1.9] Non-circular error surface: README + GITHUB.md carry the one recovery
-  command ("if it seems broken: `gbrain doctor`"); doctor covers hook/push/serve
+  command ("if it seems broken: `foresights doctor`"); doctor covers hook/push/serve
   health independent of the possibly-broken agent loop.
 - [CX-P1.10] Forget semantics documented honestly in ACCESS_POLICY.md/GITHUB.md: the
   repo is append-only history; true deletion = documented history-rewrite procedure;
@@ -585,7 +585,7 @@ URL **pinned to a release tag**, same mechanism as INSTALL_FOR_AGENTS.md) and dr
 
 preflight → interview (chat, 12Q/6-required, hard gate) → render identity files → skills →
 MCP + hooks wiring → sources add/sync/embed → private GitHub repo (created, privacy-verified,
-pushed) → `gbrain bootstrap verify` (exit-code contract) → completion manifest.
+pushed) → `foresights bootstrap verify` (exit-code contract) → completion manifest.
 
 Human actions: paste, answer interview in chat, `gh auth login` if needed, ~2 consent
 questions. Target ≤15 min. Definition of done includes the magic moment: after restart, the
@@ -601,7 +601,7 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
 - **D1 Topology: single private repo.** Workspace root = identity files (SOUL.md, USER.md,
   MEMORY.md, AGENTS.md, CLAUDE.md, HEARTBEAT.md, GITHUB.md, ACCESS_POLICY.md) + `skills/` +
   `memory/` (daily notes + README) + `state/` + **`brain/`** (people/ companies/ meetings/
-  concepts/ daily/). **Only `brain/` is registered as the gbrain source** (critique: indexing
+  concepts/ daily/). **Only `brain/` is registered as the foresights source** (critique: indexing
   the whole repo puts the contract files into the retrieval corpus — noise + self-referential
   injection surface). `.gbrain-source` dotfile at root routes CLI calls. PGLite DB is NEVER
   in the repo (`.gitignore` renders first: `*.pglite`, `.env*`, `state/*.local`, corpus paths,
@@ -609,7 +609,7 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
 - **D2 Workspace = the cwd the user pasted in.** Guard: if cwd is an existing code project
   (tracked files/remote), ask ONE relocation question. DB default: global `~/.gbrain` host
   brain (workspace is a source); `--isolated` escape hatch per resolved D2.
-- **D3 Delivery: hybrid.** New `gbrain bootstrap` command family (deterministic, idempotent,
+- **D3 Delivery: hybrid.** New `foresights bootstrap` command family (deterministic, idempotent,
   exit-coded) + fetched runbook (judgment: interview wording, read-backs, consent). Bootstrap
   is **CLI-only like init/connect — NOT an operation**; zero new `ctx.remote` surface (a
   remote-triggerable `gh repo create` + filesystem render is forbidden by the trust model).
@@ -629,9 +629,9 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
   `skills/soul-audit/SKILL.md` becomes the re-run/deepen surface over the same bank
   (`interview --set` + `render --only SOUL.md`) — one bank, CI-guarded against drift.
 - **D5 Per-turn context (critique-decided; the PGLite lock is the constraint).**
-  `gbrain serve` holds the PGLite single-writer lock for its lifetime (#2348: live holders
+  `foresights serve` holds the PGLite single-writer lock for its lifetime (#2348: live holders
   are never stolen) — so hooks must NEVER open the engine on PGLite. New engine-free
-  `gbrain hook <event>` command (no-engine dispatch branch in cli.ts) talks ONLY to serve's
+  `foresights hook <event>` command (no-engine dispatch branch in cli.ts) talks ONLY to serve's
   existing resolve-IPC unix socket (`src/core/context/resolve-ipc.ts`), widened with
   back-compat `kind: 'resolve' | 'turn_context'`. `turn_context` request carries
   {window, priorContextText, sourceId}; serve assembles server-side (new
@@ -642,21 +642,21 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
   - Claude Code hooks (written to **`.claude/settings.local.json`** — gitignored; committed
     hooks with absolute paths are a portability trap + persistence-of-execution surface;
     `bootstrap hooks --repair` re-renders on a new machine):
-    - SessionStart → `gbrain hook session-start`: zero-DB file reads (date/tz, MEMORY.md
+    - SessionStart → `foresights hook session-start`: zero-DB file reads (date/tz, MEMORY.md
       open-commitments, ops/tasks.md if present) + best-effort socket warm probe. ≤1.5s.
-    - UserPromptSubmit → `gbrain hook user-prompt`: stdin hook JSON → tail last 4 turns from
+    - UserPromptSubmit → `foresights hook user-prompt`: stdin hook JSON → tail last 4 turns from
       transcript_path → socket turn_context → stdout additionalContext block.
       **800ms hard self-deadline**, fail-open (exit 0, empty stdout), heartbeat JSONL at
       `~/.gbrain/integrations/hooks/` for doctor.
-    - Stop → `gbrain hook stop`: append turn to live per-session buffer (pure file append).
-    - SessionEnd → `gbrain hook session-end`: parse full transcript .jsonl → corpus .txt in
+    - Stop → `foresights hook stop`: append turn to live per-session buffer (pure file append).
+    - SessionEnd → `foresights hook session-end`: parse full transcript .jsonl → corpus .txt in
       `dream.synthesize.session_corpus_dir` (default `~/.gbrain/transcripts/corpus/`, 0700,
       never in the repo) + fire scan-gated commit+push (D6). Closes the transcript gap in PR1.
     - Absolute binary path everywhere; `GBRAIN_HOOKS=0` kill switch.
   - Codex: honest pull model per turn. Rendered AGENTS.md carries adapted per-message
     gates 0–7 (entity lookup = "call recall/volunteer_context with recent window";
     receipts; WRITE IT DOWN same turn via extract_facts/put_page) +
-    `codex mcp add gbrain -- gbrain serve`. [STALE-SECTION REFRESH, Memorable wave +
+    `codex mcp add foresights -- foresights serve`. [STALE-SECTION REFRESH, Memorable wave +
     ambient-writeback wave: codex DOES have hooks now — SessionEnd only, trust-gated
     via `hooks.json` + config.toml (`src/core/bootstrap/codex-hooks.ts`,
     `CODEX_HAS_HOOKS = true`); the old "FF2 notify sweeper" idea is superseded by the
@@ -670,12 +670,12 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
     by editing brain/ files directly — file edits are invisible to retrieval until a sync
     can run, and sync can't run while serve holds the lock. MEMORY.md/memory/ file edits are
     fine (file-plane, loaded by path not retrieval).
-- **D6 Private repo + persistence.** `gbrain bootstrap repo` = TS port of
+- **D6 Private repo + persistence.** `foresights bootstrap repo` = TS port of
   setup-private-repo.mjs: gh-auth exit-2 gate (only human step: `gh auth login`), slugified
   `<agent-name>-workspace` collision probe, `gh repo create --private --source . --push`,
   **privacy verified via `gh api ... --jq .private` (hard fail)**. Sync: extract secret scan
   to `src/core/secret-scan.ts` (sk-/gh[pousr]_/github_pat_/xox[baprs]-/PEM; blocks commit);
-  new `gbrain sources push [<id>|--path]` = scan-gated add+commit+push, refuses public
+  new `foresights sources push [<id>|--path]` = scan-gated add+commit+push, refuses public
   remotes, pushes even on clean tree. `hardenBrainRepo` gains the scan as a step (its
   existing post-commit hook + cron machinery is reused, NOT a parallel sync system).
   Cadence per resolved D3: 15-min cron installed after an explicit consent question;
@@ -692,7 +692,7 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
   note), ACCESS_POLICY.md, HEARTBEAT.md (quiet hours, verify-time-first, silence contract,
   jobs disabled), GITHUB.md, memory/README.md, brain/ dirs + READMEs, .gitignore,
   state/interview.json, state/mcp.json (portable snippet). Skills via existing
-  `gbrain skillpack scaffold --all` (resolved D4) + inert-skill report (skillpack check
+  `foresights skillpack scaffold --all` (resolved D4) + inert-skill report (skillpack check
   wired into verify AND into the completion manifest's next-steps block with the exact API
   keys to add). ALL templates REWRITTEN generic (privacy IRON RULE —
   never copy codex-as-agent prose verbatim; CI placeholder assertion). TOOLS.md deferred
@@ -714,12 +714,12 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
   `claude -p`/`codex exec`) ship rendered-but-disabled with the enable-one-at-a-time ritual.
 - **D10 Phasing.**
   - **PR1 (complete usable experience):** BOOTSTRAP_FOR_AGENTS.md + README paste block;
-    `gbrain bootstrap` family; `gbrain hook` + IPC v2 turn_context; new templates + question
+    `foresights bootstrap` family; `foresights hook` + IPC v2 turn_context; new templates + question
     bank; secret-scan + `sources push` + harden integration; SessionEnd transcript ingest
     (Claude Code .jsonl parser); skillpack scaffold wiring; soul-audit re-run update; doctor
     checks (hooks heartbeat, dual-serve report, sync check); docs; unit + e2e (incl.
     hook-under-serve + lock-contention pins); CI guards.
-  - **FF2:** Codex notify sweeper + ~/.codex/sessions parser. **FF3:** `gbrain serve
+  - **FF2:** Codex notify sweeper + ~/.codex/sessions parser. **FF3:** `foresights serve
     --attach` stdio proxy (two harnesses fully concurrent on one PGLite brain). **FF4:**
     cron fleet + cron-doctor port + heartbeat activation. **FF5:** Docker fresh-machine e2e
     in CI, _meta surfacing experiments, per-turn-context BrainBench eval, upgrade re-render
@@ -750,7 +750,7 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
 | `BOOTSTRAP_FOR_AGENTS.md` | NEW root runbook (fetched by paste block) |
 | `README.md` | dedicated "For Codex" / "For Claude Code" paste-block sections, ordered Codex → Claude Code → OpenClaw/Hermes at equal weight (user decision 2026-08-09, supersedes D5's ordering; both platform paths preserved) |
 | `src/commands/bootstrap.ts` (+ `src/commands/bootstrap/*.ts`) | NEW dispatcher + subcommands |
-| `src/commands/hook.ts` | NEW `gbrain hook session-start|user-prompt|stop|session-end` |
+| `src/commands/hook.ts` | NEW `foresights hook session-start|user-prompt|stop|session-end` |
 | `src/cli.ts` | CHANGED: `bootstrap`+`hook` in no-engine dispatch branch |
 | `src/core/bootstrap/{interview,render,private-repo,verify}.ts` | NEW (TS ports) |
 | `src/core/secret-scan.ts` | NEW (shared: sources push, harden, verify) |
@@ -767,7 +767,7 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
 | `docs/architecture/KEY_FILES.md`, `CLAUDE.md` (+build:llms) | CHANGED |
 | `test/bootstrap-*.test.ts`, `test/hook-command.test.ts`, `test/secret-scan.test.ts`, `test/e2e/bootstrap-lifecycle.test.ts`, IPC back-compat tests | NEW |
 
-### Port map (codex-as-agent → gbrain)
+### Port map (codex-as-agent → foresights)
 
 interview.mjs → core/bootstrap/interview.ts · render-templates.mjs → core/bootstrap/render.ts
 · setup-private-repo.mjs → core/bootstrap/private-repo.ts · verify-install.mjs (+
@@ -795,7 +795,7 @@ settings.local.json + config.toml writers (single module owns each host format).
 - **D1 = A. MCP scope: project scope default, user-scope opt-in** (consent question during
   bootstrap; threat named in ACCESS_POLICY.md).
 - **D2 = C. DB: global `~/.gbrain` default + documented `--isolated` escape hatch.**
-  `gbrain bootstrap --isolated` threads `GBRAIN_HOME=<workspace>/.gbrain` through init, MCP
+  `foresights bootstrap --isolated` threads `GBRAIN_HOME=<workspace>/.gbrain` through init, MCP
   registration env (`claude mcp add -e` / codex config env), and the hook commands in
   settings.local.json. Port install-gbrain.mjs's guards: GBRAIN_HOME does NOT isolate
   `sync.repo_path` (set it explicitly), strip ambient GBRAIN_DATABASE_URL/DATABASE_URL/
@@ -816,11 +816,11 @@ settings.local.json + config.toml writers (single module owns each host format).
   accuracy suffers in practice.
 - **D5 = Codex/Claude-Code-scoped placement.** [Superseded by the 2026-08-09 user
   decision — see as-shipped delta 6 and the artifact table's README row.] This is NOT the new headline install —
-  most users still use GBrain with OpenClaw/Hermes, so `INSTALL_FOR_AGENTS.md` remains the
+  most users still use Foresights with OpenClaw/Hermes, so `INSTALL_FOR_AGENTS.md` remains the
   primary paste path at the top of the README. The bootstrap paste block becomes the
   flagship "For Codex" / "For Claude Code" README sections, ahead of the OpenClaw/Hermes path at equal weight (and
   docs/tutorials/connect-coding-agent.md cross-links it). Command name stays
-  `gbrain bootstrap`; paste block is pinned to a release tag (supply-chain integrity).
+  `foresights bootstrap`; paste block is pinned to a release tag (supply-chain integrity).
   BOOTSTRAP_FOR_AGENTS.md opens with a scope note: "For Claude Code / Codex. Running
   OpenClaw or Hermes? Use INSTALL_FOR_AGENTS.md instead."
 

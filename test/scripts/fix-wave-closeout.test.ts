@@ -18,7 +18,7 @@ import {
 } from '../../scripts/fix-wave-closeout.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
-const REPO = { id: 1, full_name: 'garrytan/gbrain' };
+const REPO = { id: 1, full_name: 'aimonk2025/gbrain' };
 
 function wave(body: string, over: Partial<NonNullable<CloseoutEvent['pull_request']>> = {}): CloseoutEvent {
   return { action: 'closed', pull_request: { number: 9000, title: 'v0.60.70.0 fix wave 9', merged: true, body, head: { repo: REPO }, base: { repo: REPO, ref: 'master' }, ...over } };
@@ -114,7 +114,7 @@ describe('fix-wave closeout run', () => {
       wave('Supersedes #1', { merged: false }),
       wave('Supersedes #1', { head: { repo: forkRepo } }),
       wave('Supersedes #1', { head: { repo: null } }),
-      wave('Supersedes #1', { head: { repo: { id: 2, full_name: 'garrytan/gbrain' } } }),
+      wave('Supersedes #1', { head: { repo: { id: 2, full_name: 'aimonk2025/gbrain' } } }),
     ]) {
       const { client, calls } = fakeClient({ 1: open(1) });
       expect(isMergedWave(event)).toBe(false);
@@ -152,7 +152,7 @@ describe('fix-wave-closeout workflow', () => {
     expect(wf.on.pull_request_target!.types).toEqual(['closed']);
     const job = wf.jobs['close-superseded']!;
     expect(job.if).toContain('github.event.pull_request.merged == true');
-    expect(job.if).toContain("github.event.pull_request.head.repo.full_name == 'garrytan/gbrain'");
+    expect(job.if).toContain("github.event.pull_request.head.repo.full_name == 'aimonk2025/gbrain'");
   });
 
   test('checks out only the script, never PR code, with least privilege', () => {

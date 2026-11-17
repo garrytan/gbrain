@@ -8,7 +8,7 @@
 //
 // Writes nothing to the user's brain. Writes candidates to
 // `~/.gbrain/audit/schema-candidates-YYYY-Www.jsonl` (T15 audit).
-// Reviewed via `gbrain schema review-candidates`.
+// Reviewed via `foresights schema review-candidates`.
 
 import type { BrainEngine } from '../engine.ts';
 import { runSuggest } from '../schema-pack/suggest.ts';

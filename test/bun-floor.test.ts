@@ -82,27 +82,27 @@ describe('release package.json', () => {
   });
 
   test('a GitHub spec maps to package.json at the ref it installs; other specs are unreadable', () => {
-    expect(rawPackageUrlForSpec('github:garrytan/gbrain')).toBe('https://raw.githubusercontent.com/garrytan/gbrain/HEAD/package.json');
-    expect(rawPackageUrlForSpec('github:garrytan/gbrain#v0.51.0')).toBe('https://raw.githubusercontent.com/garrytan/gbrain/v0.51.0/package.json');
+    expect(rawPackageUrlForSpec('github:aimonk2025/gbrain')).toBe('https://raw.githubusercontent.com/aimonk2025/gbrain/HEAD/package.json');
+    expect(rawPackageUrlForSpec('github:aimonk2025/gbrain#v0.51.0')).toBe('https://raw.githubusercontent.com/aimonk2025/gbrain/v0.51.0/package.json');
     expect(rawPackageUrlForSpec('git+https://github.com/acme-example/gbrain-fork.git#main')).toBe('https://raw.githubusercontent.com/acme-example/gbrain-fork/main/package.json');
     expect(rawPackageUrlForSpec('^1.3.0')).toBeNull();
-    expect(rawPackageUrlForSpec('github:garrytan/gbrain#../../x')).toBeNull();
+    expect(rawPackageUrlForSpec('github:aimonk2025/gbrain#../../x')).toBeNull();
   });
 
   test('the package reader fetches the pinned ref of the global install and fails closed', async () => {
     const root = tmp('global');
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { gbrain: 'github:garrytan/gbrain#v0.70.0' } }));
-    expect(globalGbrainSpec(root)).toBe('github:garrytan/gbrain#v0.70.0');
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { gbrain: 'github:aimonk2025/gbrain#v0.70.0' } }));
+    expect(globalGbrainSpec(root)).toBe('github:aimonk2025/gbrain#v0.70.0');
     const fetched: string[] = [];
     globalThis.fetch = (async (url: any) => {
       fetched.push(String(url));
       return new Response(JSON.stringify({ version: '0.70.0.0', engines: { bun: '>=1.6.0' } }));
     }) as typeof fetch;
     expect(await readPackageTarget(globalGbrainSpec(root))).toEqual({ ok: true, floor: '1.6.0', version: '0.70.0.0' });
-    expect(fetched).toEqual(['https://raw.githubusercontent.com/garrytan/gbrain/v0.70.0/package.json']);
+    expect(fetched).toEqual(['https://raw.githubusercontent.com/aimonk2025/gbrain/v0.70.0/package.json']);
 
     globalThis.fetch = (async () => new Response('Not Found', { status: 404 })) as unknown as typeof fetch;
-    expect(await readPackageTarget(null)).toEqual({ ok: false, failedRead: 'GET https://raw.githubusercontent.com/garrytan/gbrain/HEAD/package.json returned HTTP 404' });
+    expect(await readPackageTarget(null)).toEqual({ ok: false, failedRead: 'GET https://raw.githubusercontent.com/aimonk2025/gbrain/HEAD/package.json returned HTTP 404' });
     globalThis.fetch = (async () => { throw new Error('network down'); }) as unknown as typeof fetch;
     expect((await readPackageTarget(null)).ok).toBe(false);
     expect((await readPackageTarget('^1.3.0')).ok).toBe(false);
@@ -160,12 +160,12 @@ describe('refusal wording', () => {
     expect(verdict).toEqual({
       ok: false,
       kind: 'unmet',
-      message: 'gbrain 0.61.0.0 requires Bun >=1.4.0; bun on PATH (/opt/bun/bin/bun) is 1.3.14. Fix: bun upgrade, then gbrain upgrade. Docs: docs/guides/upgrades-auto-update.md#bun-floor',
-      auditReason: `gbrain 0.61.0.0 requires Bun >=1.4.0; bun on PATH is 1.3.14. ${BUN_FLOOR_FIX}`,
+      message: 'foresights 0.61.0.0 requires Bun >=1.4.0; bun on PATH (/opt/bun/bin/bun) is 1.3.14. Fix: bun upgrade, then foresights upgrade. Docs: docs/guides/upgrades-auto-update.md#bun-floor',
+      auditReason: `foresights 0.61.0.0 requires Bun >=1.4.0; bun on PATH is 1.3.14. ${BUN_FLOOR_FIX}`,
     });
     expect(evaluateBunFloor({ ok: true, floor: '1.4.0', version: null }, { label: 'bun on PATH', path: '/b', version: '1.4.0' })).toEqual({ ok: true });
     const unreadable = evaluateBunFloor({ ok: false, failedRead: '`git fetch` in the source clone failed' }, null, '0.99.0.0');
-    expect(unreadable.ok || unreadable.message).toBe('Could not read the Bun floor of gbrain 0.99.0.0: `git fetch` in the source clone failed. Docs: docs/guides/upgrades-auto-update.md#bun-floor');
+    expect(unreadable.ok || unreadable.message).toBe('Could not read the Bun floor of foresights 0.99.0.0: `git fetch` in the source clone failed. Docs: docs/guides/upgrades-auto-update.md#bun-floor');
     const noBun = evaluateBunFloor({ ok: true, floor: '1.4.0', version: '0.61.0.0' }, null);
     expect(noBun.ok || noBun.kind).toBe('unreadable');
     expect(noBun.ok || noBun.message).toContain('could not run `bun --version` on PATH');

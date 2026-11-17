@@ -1,6 +1,6 @@
 /**
  * #6712 PR 2 (L5): the public category of a fault, a small closed vocabulary an operator or agent can branch on without
- * knowing gbrain's internal codes. It sits beside the existing `category` (`terminal-classify.ts` `TerminalCategory`, the
+ * knowing foresights's internal codes. It sits beside the existing `category` (`terminal-classify.ts` `TerminalCategory`, the
  * diagnosis vocabulary), which is unchanged. The mapping is total: every terminal category, every `SYNC_FAULT_TABLE` code
  * and every registry code has one (a code this build does not know is `defect`), so `public_category` is never absent.
  *
@@ -13,7 +13,7 @@
  *   config           a setting, a cap or a choice on the brain host decides
  *   superseded       another run or request made this one moot; nothing to fix
  *   transient        retry: a connection, a lease, back-pressure or a stalled preparation
- *   defect           a gbrain fault to report (or a cause this build cannot name)
+ *   defect           a foresights fault to report (or a cause this build cannot name)
  */
 import { CODES } from '../error-registry.ts';
 import type { TerminalCategory } from './terminal-classify.ts';

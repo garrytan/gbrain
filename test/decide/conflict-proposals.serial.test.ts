@@ -1,6 +1,6 @@
 /**
  * System One S9 proposal review on an unmanaged PGLite brain with a real
- * source file: `gbrain decide proposals list|accept|reject|undo`.
+ * source file: `foresights decide proposals list|accept|reject|undo`.
  *
  * Protects: accept supersedes old with new as one unit (expired_at,
  * valid_until, superseded_by, the struck `## Facts` row in the file and the
@@ -246,7 +246,7 @@ describe('list', () => {
     const text = await cli(['list']);
     expect(text.out).toContain('new #2: Alice leads design');
     expect(text.out).toContain('old #1: Alice leads research');
-    expect(text.out).toContain('gbrain decide proposals undo <id>');
+    expect(text.out).toContain('foresights decide proposals undo <id>');
     const json = await cli(['list', '--status', 'all', '--json']);
     expectGolden('decide/proposals-list-json', JSON.parse(json.out), defineNormalizer('decide-proposals-v1', (v: any) => ({
       ...v, proposals: v.proposals.map((p: any) => ({ ...p, created_at: '<ts>' })),

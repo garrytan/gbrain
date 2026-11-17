@@ -1,5 +1,5 @@
 /**
- * v0.40.3.0 — gbrain sources set-cr-mode <id> <mode>
+ * v0.40.3.0 — foresights sources set-cr-mode <id> <mode>
  *
  * D5 + T7 + idempotent-pebble Failure-Modes critical-gap closure.
  *
@@ -16,7 +16,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runSources } from '../src/commands/sources.ts';
 
-describe('gbrain sources set-cr-mode', () => {
+describe('foresights sources set-cr-mode', () => {
   let engine: PGLiteEngine;
   let origExit: typeof process.exit;
   let exitCode: number | null;

@@ -111,7 +111,7 @@ for (const kind of testBackends()) {
       expect(warned.message).toContain(`principal ${admitted.principal_kind}:${admitted.principal_id}`);
       expect(warned.message).toContain(UNSTAMPED_WRITER);
       expect(warned.message).toContain('A writer older than v0.60.5.0 may still delete database-only timeline rows');
-      expect(warned.message).toContain('Run `gbrain upgrade` on that host');
+      expect(warned.message).toContain('Run `foresights upgrade` on that host');
       expect(warned.message).toContain('observation, not prevention');
       expect(warned.details).toMatchObject({ count: 2, truncated: false });
       expect(warned.details!.hosts).toContainEqual(expect.objectContaining({ host_id: localHostId(), role: 'consumer', consumer_version: UNSTAMPED_WRITER }));

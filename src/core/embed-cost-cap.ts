@@ -1,5 +1,5 @@
 /**
- * The approved spend cap of a foreground `gbrain embed` run (fix wave 13
+ * The approved spend cap of a foreground `foresights embed` run (fix wave 13
  * P1.18, from PR #6400). Consent returns an Authorization with `cap_usd`; the
  * run spends under a BudgetTracker holding that cap, so every embedding,
  * multimodal and OCR call reserves before it is sent. The first refused

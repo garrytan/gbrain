@@ -1,5 +1,5 @@
 /**
- * GBRA-130 A-41 (hardening): `gbrain maintain --safe` runs one dream cycle per
+ * GBRA-130 A-41 (hardening): `foresights maintain --safe` runs one dream cycle per
  * stale source. A cycle that throws for one source used to end maintain and
  * skip every later source; now that source is reported blocked with its code
  * and the rest still cycle, while a run-scoped error still stops maintain.
@@ -70,7 +70,7 @@ describe('A-41 maintain isolates one source whose cycle throws', () => {
           const blocked = bySource(report, 'src-a');
           expect(blocked?.status).toBe('blocked');
           expectItemFailure({ key: blocked?.details?.source_id as string, code: blocked?.details?.code as string, fix: blocked?.details?.fix },
-            { key: 'src-a', code: 'internal', fix: /^gbrain dream --source src-a$/ });
+            { key: 'src-a', code: 'internal', fix: /^(?:foresights|gbrain) dream --source src-a$/ });
           expect(bySource(report, 'src-b')?.status).toBe('applied');
           expectOthersUnchanged(before, await snapshotItems(engine, 'src-a'));
           const [b] = await engine.executeRaw<{ at: string | null }>(`SELECT config->>'last_full_cycle_at' AS at FROM sources WHERE id='src-b'`);

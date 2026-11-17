@@ -49,7 +49,7 @@ function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
 }
 
 /**
- * The exact context `gbrain serve --http` builds for a legacy bearer token
+ * The exact context `foresights serve --http` builds for a legacy bearer token
  * with no operator source grant: remote, scalar 'default', and the federated
  * set populated by the transport (never by caller params).
  */

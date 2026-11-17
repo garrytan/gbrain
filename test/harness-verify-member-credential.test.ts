@@ -1,5 +1,5 @@
 /**
- * GST-2543: gbrain mcp verify's write check passes for a credential bound to a member, writes its fixture the way that
+ * GST-2543: foresights mcp verify's write check passes for a credential bound to a member, writes its fixture the way that
  * credential may (a member's fact stays private on its own member page, never shared), reads it back and withdraws it.
  * 1. Protects: fact mode and page mode for a non-owner member, the owner and an unbound credential, on a repo-less brain.
  * 2. Fails when: the verifier's remember sends visibility "world", which a member credential is refused

@@ -1,11 +1,11 @@
 /**
- * #4472 — transcript discovery must not re-ingest gbrain's own claude-cli
+ * #4472 — transcript discovery must not re-ingest foresights's own claude-cli
  * subprocess sessions.
  *
  * The claude-cli provider spawns `claude --print` with
  * cwd = <tmpdir>/gbrain-claude-cli-cwd-<pid>; Claude Code records each call
  * as a session under ~/.claude/projects/<slugified-cwd>/. Discovery picked
- * those up like any other project — a self-ingestion feedback loop (gbrain's
+ * those up like any other project — a self-ingestion feedback loop (foresights's
  * prompt scaffolding + page content re-entering the brain as
  * "conversations"). Pins:
  *
@@ -46,7 +46,7 @@ beforeAll(() => {
   const userProject = join(projectsRoot, '-Users-alice-code-myapp');
   mkdirSync(userProject, { recursive: true });
   writeFileSync(join(userProject, 'session-user.jsonl'), '{"type":"user"}\n', 'utf-8');
-  // gbrain's own claude-cli scratch-cwd session (slugified per Claude Code:
+  // foresights's own claude-cli scratch-cwd session (slugified per Claude Code:
   // /private/tmp/gbrain-claude-cli-cwd-12345 → -private-tmp-gbrain-claude-cli-cwd-12345).
   const selfProject = join(projectsRoot, `-private-tmp-${CLAUDE_CLI_CWD_PREFIX}12345`);
   mkdirSync(selfProject, { recursive: true });

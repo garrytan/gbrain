@@ -49,7 +49,7 @@ afterAll(async () => { await engine?.disconnect(); });
 
 /** Every text block an agent sees, never `_meta`. */
 const visible = (res: ToolResult) => res.content.map(c => c.text);
-const countLine = (res: ToolResult) => visible(res).find(t => t.startsWith('[gbrain search] ')) ?? '';
+const countLine = (res: ToolResult) => visible(res).find(t => t.startsWith('[foresights search] ')) ?? '';
 const mcp = (args: Record<string, unknown>) => withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, 'search', args, REMOTE));
 /** The `next` object exactly as the model reads it from the count line. */
 const nextFromLine = (line: string) => {
@@ -180,8 +180,8 @@ describe('MCP: model-visible counts and paging (content blocks only, no _meta)',
     const res = await mcp({ query: TERM, limit: 3 });
     expect(JSON.parse(res.content[0].text).length).toBeGreaterThan(0);
     const line = countLine(res);
-    expect(line).toBe(`[gbrain search] Rows are a ranked top-K, not proof of coverage. Keyword matches: ${matching.length} pages (pages matching the query's keywords, not a count of these rows). List every keyword match with match: "keyword".`);
-    expect(visible(res).filter(t => t.startsWith('[gbrain search] ')).length).toBe(1);
+    expect(line).toBe(`[foresights search] Rows are a ranked top-K, not proof of coverage. Keyword matches: ${matching.length} pages (pages matching the query's keywords, not a count of these rows). List every keyword match with match: "keyword".`);
+    expect(visible(res).filter(t => t.startsWith('[foresights search] ')).length).toBe(1);
     expect(visible(res).indexOf(line)).toBe(1);
   });
 
@@ -191,7 +191,7 @@ describe('MCP: model-visible counts and paging (content blocks only, no _meta)',
     expect(countLine(hybrid)).toContain('Keyword matches: 0 pages');
     const keyword = await mcp({ query: 'nonexistentterm', match: 'keyword' });
     expect(JSON.parse(keyword.content[0].text)).toEqual([]);
-    expect(countLine(keyword)).toBe('[gbrain search] Keyword matches: 0 pages; none on this page. No more keyword matches.');
+    expect(countLine(keyword)).toBe('[foresights search] Keyword matches: 0 pages; none on this page. No more keyword matches.');
   });
 
   test('a keyword walk driven only by the visible next recovers every page', async () => {
@@ -205,7 +205,7 @@ describe('MCP: model-visible counts and paging (content blocks only, no _meta)',
       first ||= countLine(res);
       args = nextFromLine(countLine(res));
     }
-    expect(first).toStartWith(`[gbrain search] Keyword matches: ${matching.length} pages; showing 1-4, keyword-score order. More: call search with next = {`);
+    expect(first).toStartWith(`[foresights search] Keyword matches: ${matching.length} pages; showing 1-4, keyword-score order. More: call search with next = {`);
     expect([...seen].sort()).toEqual([...matching].sort());
   });
 
@@ -290,7 +290,7 @@ describe('MCP: model-visible counts and paging (content blocks only, no _meta)',
     expect(hybridOffset.isError).toBeUndefined();
   });
 
-  test('every new code is in the gbrain errors catalogue', () => {
+  test('every new code is in the foresights errors catalogue', () => {
     for (const code of ['search_cursor_requires_keyword', 'search_mode_local_only', 'search_offset_over_cap']) {
       expect(errorCodeRow(code)?.class).toBe('caller');
     }
@@ -372,7 +372,7 @@ describe('count unavailable: a degraded stage, never a number', () => {
     expect(countLine(hybrid)).toContain('Keyword match count unavailable (timed out; not a count of zero)');
     expect((hybrid._meta as { retrieval: { degraded: unknown[] } }).retrieval.degraded).toContainEqual({ stage: 'keyword_count_unavailable', reason: 'timeout' });
     const keyword = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(e, 'search', { query: TERM, match: 'keyword', limit: 3 }, REMOTE));
-    expect(countLine(keyword)).toStartWith('[gbrain search] Keyword match count unavailable (timed out; not a count of zero); showing 1-3');
+    expect(countLine(keyword)).toStartWith('[foresights search] Keyword match count unavailable (timed out; not a count of zero); showing 1-3');
     expect(nextFromLine(countLine(keyword))).toBeDefined();
   });
 

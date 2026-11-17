@@ -76,7 +76,7 @@ export function shouldForceExitAfterMain(
   // Resolve the command the same way main() does — parseGlobalFlags strips
   // global flags INCLUDING space-separated values (`--timeout 30s`), so the
   // command here always matches the dispatched one. The old first-non-dash
-  // heuristic saw `30s` as the command for `gbrain --timeout 30s serve` and
+  // heuristic saw `30s` as the command for `foresights --timeout 30s serve` and
   // (post-#2084, where this gates an unconditional process.exit) would have
   // killed the daemon ~250ms after boot. Cross-model adversarial finding.
   let command: string | undefined;
@@ -861,7 +861,7 @@ function writeJsonFallbackIfMissing(exitCode: number): void {
     message: signalled ? `The command was interrupted by a signal (exit ${exitCode}) before it wrote its JSON result. Nothing was read, so this is not an empty result.`
       : `The command exited with status ${exitCode} without writing its JSON result.`,
     suggestion: signalled ? 'Re-run the same command with a longer timeout; large brains can take minutes.'
-      : 'Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.',
+      : 'Re-run without --json to read the error on stderr, or run `foresights doctor --json`.',
     exit_code: exitCode,
     contract_version: 1,
   };

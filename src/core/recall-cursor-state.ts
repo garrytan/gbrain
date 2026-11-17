@@ -1,5 +1,5 @@
 /**
- * v0.32 — Per-source last-run cursor for `gbrain recall --since-last-run`.
+ * v0.32 — Per-source last-run cursor for `foresights recall --since-last-run`.
  *
  * Two cursor variants per source (Codex round 2 #8):
  *   'briefing' → ~/.gbrain/recall-cursors/<source>.json
@@ -17,7 +17,7 @@
  * #6945: the record stays schema_version 1. After a full --limit window it
  * also carries after_created_at/after_id, the keyset of the newest fact shown,
  * and last_run_iso holds that fact's created_at. Files without the keyset
- * (all older ones) read as an inclusive wall-clock cursor; an older gbrain
+ * (all older ones) read as an inclusive wall-clock cursor; an older foresights
  * reading a keyset file uses last_run_iso. Either way the worst case is a
  * repeat, never a skipped fact.
  */

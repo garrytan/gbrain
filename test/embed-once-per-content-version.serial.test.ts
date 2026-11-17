@@ -1,7 +1,7 @@
 /**
  * PR 4 E (gbrain-evals#180, N14): a chunk's text goes to the embedder once per content version.
  *
- * 1. Protects: the post-write embedding effect and a concurrent `gbrain embed --stale` drain never both send the same
+ * 1. Protects: the post-write embedding effect and a concurrent `foresights embed --stale` drain never both send the same
  *    chunk to the provider. Whichever path reaches a page first holds its embedding lease (page-embedding-lease.ts)
  *    through its install; the other waits, reads again and finds nothing left to embed. Embedder inputs equal the
  *    page's new (vector-less) chunks, each sent once.

@@ -6,8 +6,8 @@ import { embeddedSettingsRecord } from './embedded-engine.ts';
 /**
  * StorageBackend — pluggable interface for binary file storage.
  *
- * GBrain is agnostic about where files live. The setup skill picks
- * the backend (Supabase Storage or S3/R2/MinIO), gbrain doesn't care.
+ * Foresights is agnostic about where files live. The setup skill picks
+ * the backend (Supabase Storage or S3/R2/MinIO), foresights doesn't care.
  */
 
 export interface StorageBackend {

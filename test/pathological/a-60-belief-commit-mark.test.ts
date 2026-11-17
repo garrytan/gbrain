@@ -4,7 +4,7 @@
  * purge-deleted.ts, with no counter or receipt. Verdict: not a silent loss. A missing mark is exactly the state a
  * crash between commit and mark leaves, and the ledger already detects and repairs it: `unmarkedPublications` lists
  * the publication, doctor `belief_ledger_coverage` warns "N publication(s) without a commit mark" with the
- * `gbrain beliefs reconcile` fix, and the cycle's extract phase (`cycleBeliefReconcile`) fills it.
+ * `foresights beliefs reconcile` fix, and the cycle's extract phase (`cycleBeliefReconcile`) fills it.
  * This probe fails every mark statement (a trigger on belief_commit_marks) through a page write and a remember
  * (memory-mutations.ts), and pins that chain.
  * Managed brain with certified coverage; PGLite, and Postgres when DATABASE_URL is set.

@@ -1,6 +1,6 @@
 /**
  * GBRA-438 PR 2, done item 2: free upkeep runs inside the agent's own
- * \`gbrain serve\` on a fresh keyless, repo-less PGLite brain, black-box
+ * \`foresights serve\` on a fresh keyless, repo-less PGLite brain, black-box
  * through the real CLI. init, import and remember; start a stdio serve with a
  * one-second GBRAIN_SWEEP_IDLE_INTERVAL_MS and leave it idle past due. While it
  * runs, a scheduled run exits 0 because the serve owns upkeep (the real

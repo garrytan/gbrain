@@ -49,7 +49,7 @@
  *    `bun scripts/release-channel.ts backfill --apply`, which sets it.
  *
  * Clients read the record at
- * https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json
+ * https://raw.githubusercontent.com/aimonk2025/gbrain/stable-record/stable.json
  * (src/core/stable-channel.ts: no API call, no git) and an explicit upgrade
  * checks it against `refs/tags/stable^{}` and `v<VERSION>`. Records carry the
  * soak run and, from the matrix gate on, matrix_run; clients require matrix_run
@@ -274,7 +274,7 @@ export function checkOrder(next: string, current: string | null, rollback: boole
 
 export function renderTagMessage(f: TagFields): string {
   return [
-    `gbrain stable channel: v${f.version}`,
+    `foresights stable channel: v${f.version}`,
     '',
     `version: ${f.version}`,
     `commit: ${f.commit}`,
@@ -297,7 +297,7 @@ export function renderTagMessage(f: TagFields): string {
  * backfilled from when the current stable is promoted again (recordCurrentStable).
  */
 export function parseTagMessage(message: string): TagFields | null {
-  if (!message.startsWith('gbrain stable channel: v')) return null;
+  if (!/^(?:foresights|gbrain) stable channel: v/.test(message)) return null;
   const kv = new Map<string, string>();
   for (const line of message.split('\n')) {
     const m = /^([a-z_]+): (.+)$/.exec(line);

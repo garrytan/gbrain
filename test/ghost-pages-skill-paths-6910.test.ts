@@ -1,11 +1,11 @@
 /**
- * #6910: `gbrain repair ghost-pages` on a source with an adopted shared skillpack.
+ * #6910: `foresights repair ghost-pages` on a source with an adopted shared skillpack.
  *
  * Before the fix the knowledge guard refused the retirement of any ghost under `skills/` (`skill_bundle_required`) and the
  * apply stopped there, so nothing past the first such page in page-id order was retired. Protects: a legacy page under
  * `skills/` that is not a pack member is retired with the other ghosts as a database-only soft delete (no pack file changes);
  * a ghost on a pack member's path (the pack's own file missing) is listed apart with code `ghost_skill_pack_member` and its
- * exact restore command, never approved, and still refused by the guard; doctor `ghost_pages` and `gbrain pages ghosts`
+ * exact restore command, never approved, and still refused by the guard; doctor `ghost_pages` and `foresights pages ghosts`
  * count it apart; and a per-item `caller` refusal during the apply is recorded `refused` with its code while the rest of
  * the approved set still applies. Every case drives a real PGLite brain with a claimed canonical worktree and a really
  * adopted pack.

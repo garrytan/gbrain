@@ -1,13 +1,13 @@
 /**
  * #6828 / #6718: the auto channel targeted master's VERSION (unpublished,
- * ahead of the latest-stable tag the install follows), `bun update gbrain`
+ * ahead of the latest-stable tag the install follows), `bun update foresights`
  * changed nothing, the swap still reported "swapped; exiting for supervisor
  * relaunch", and the relaunched (unchanged) binary recorded the never-installed
  * version known-bad, so the release it later became was never auto-installed.
  *
- * Drives the real `attemptAutopilotSelfUpgrade` and the real `gbrain upgrade
+ * Drives the real `attemptAutopilotSelfUpgrade` and the real `foresights upgrade
  * --swap-only` (runUpgrade) in spawned drivers on a stock Bun global install
- * of `github:garrytan/gbrain#latest-stable`, then the relaunch's
+ * of `github:aimonk2025/gbrain#latest-stable`, then the relaunch's
  * `reconcileSelfUpgradeAtBoot`. Bun resolves child PATH at process start, so
  * the `bun`, `git` and `gbrain` shims sit on the driver's startup PATH (see
  * test/autopilot-bun-floor.test.ts).
@@ -40,7 +40,7 @@ afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true 
 interface Harness { root: string; home: string; shims: string; argvLog: string; driver: string; bootDriver: string; bunInstall: string }
 
 /**
- * A stock Bun global install following `spec`. `installed` is what `gbrain
+ * A stock Bun global install following `spec`. `installed` is what `foresights
  * --version` reports after `bun update` (VERSION = the no-op); `helpExit` is
  * the post-swap smoke's exit (non-zero = the installed release does not start).
  */
@@ -62,8 +62,8 @@ function harness(label: string, opts: { spec?: string; cache?: string } = {}): H
   const globalRoot = join(bunInstall, 'install', 'global');
   const pkgDir = join(globalRoot, 'node_modules', 'gbrain');
   mkdirSync(join(pkgDir, 'src'), { recursive: true });
-  writeFileSync(join(globalRoot, 'package.json'), JSON.stringify({ dependencies: { gbrain: opts.spec ?? 'github:garrytan/gbrain#latest-stable' } }));
-  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'git+https://github.com/garrytan/gbrain.git' } }));
+  writeFileSync(join(globalRoot, 'package.json'), JSON.stringify({ dependencies: { gbrain: opts.spec ?? 'github:aimonk2025/gbrain#latest-stable' } }));
+  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'git+https://github.com/aimonk2025/gbrain.git' } }));
 
   const driver = join(pkgDir, 'src', 'cli.ts');
   writeFileSync(driver, [
@@ -87,7 +87,7 @@ function harness(label: string, opts: { spec?: string; cache?: string } = {}): H
   // The supervisor's relaunch: the binary on disk boots and reconciles the breadcrumb.
   const bootDriver = join(pkgDir, 'src', 'boot.ts');
   writeFileSync(bootDriver, `const { reconcileSelfUpgradeAtBoot } = await import(${JSON.stringify(AUTOPILOT_TS)});\nreconcileSelfUpgradeAtBoot();\n`);
-  // The real `gbrain upgrade` the channel shells out to, run from inside the global install.
+  // The real `foresights upgrade` the channel shells out to, run from inside the global install.
   const upgradeDriver = join(pkgDir, 'src', 'upgrade-driver.ts');
   writeFileSync(upgradeDriver, [
     `const { runUpgrade } = await import(${JSON.stringify(UPGRADE_TS)});`,
@@ -102,7 +102,7 @@ function harness(label: string, opts: { spec?: string; cache?: string } = {}): H
   mkdirSync(shims);
   const argvLog = join(root, 'argv.log');
   writeFileSync(argvLog, '');
-  // `bun update gbrain` on a moving tag whose head is already installed: exit 0, nothing changes.
+  // `bun update foresights` on a moving tag whose head is already installed: exit 0, nothing changes.
   writeFileSync(join(shims, 'bun'), [
     '#!/usr/bin/env bash',
     `if [ "$1" = "update" ]; then printf 'bun %s\\n' "$*" >> "${argvLog}"; echo 'Checked 353 installs across 360 packages (no changes) [6.60s]'; exit 0; fi`,
@@ -112,9 +112,9 @@ function harness(label: string, opts: { spec?: string; cache?: string } = {}): H
   writeFileSync(join(shims, 'git'), `#!/usr/bin/env bash\ncase "$1" in ls-remote) echo "aaa\trefs/tags/v${VERSION}"; exit 0;; esac\nexit 1\n`, { mode: 0o755 });
   writeFileSync(join(shims, 'gbrain'), [
     '#!/usr/bin/env bash',
-    `printf 'gbrain %s\\n' "$*" >> "${argvLog}"`,
+    `printf 'foresights %s\\n' "$*" >> "${argvLog}"`,
     'case "$1" in',
-    '  --version) echo "gbrain ${FAKE_INSTALLED_VERSION}"; exit 0;;',
+    '  --version) echo "foresights ${FAKE_INSTALLED_VERSION}"; exit 0;;',
     '  --help) exit "${FAKE_HELP_EXIT:-0}";;',
     `  upgrade) shift; exec "${process.execPath}" "${upgradeDriver}" "$@";;`,
     'esac',
@@ -172,7 +172,7 @@ describe('#6828: auto-update while master is ahead of latest-stable', () => {
     expect(tick.cache).toBe(`UP_TO_DATE ${VERSION}`);
     expect(tick.out).toContain('RETURNED');
     expect(tick.out).not.toContain('EXIT_CALLED');
-    expect(tick.calls.filter((c) => c.includes('update --backend=copyfile gbrain') || c.startsWith('gbrain upgrade'))).toEqual([]);
+    expect(tick.calls.filter((c) => c.includes('update --backend=copyfile foresights') || c.startsWith('foresights upgrade'))).toEqual([]);
     expect(tick.audit.some((e) => e.reason === 'swapped; exiting for supervisor relaunch')).toBe(false);
 
     const boot = await run(h, h.bootDriver);
@@ -188,7 +188,7 @@ describe('#6828: auto-update while master is ahead of latest-stable', () => {
     const h = harness('noop', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
     const tick = await run(h, h.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD });
     expect(tick.code, tick.err).toBe(0);
-    expect(tick.calls).toContain('bun update --backend=copyfile gbrain');
+    expect(tick.calls).toContain('bun update --backend=copyfile foresights');
     expect(tick.out).toContain('RETURNED');
     expect(tick.out).not.toContain('EXIT_CALLED');
     expect(tick.out).not.toContain('Upgrade complete');
@@ -202,7 +202,7 @@ describe('#6828: auto-update while master is ahead of latest-stable', () => {
     expect(tick.audit.at(-1).reason).toContain('nothing newer was installed');
 
     const again = await run(h, h.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD });
-    expect(again.calls.filter((c) => c === 'bun update --backend=copyfile gbrain')).toHaveLength(1);
+    expect(again.calls.filter((c) => c === 'bun update --backend=copyfile foresights')).toHaveLength(1);
     expect(again.su.failed_versions).toBeUndefined();
 
     const boot = await run(h, h.bootDriver);
@@ -210,7 +210,7 @@ describe('#6828: auto-update while master is ahead of latest-stable', () => {
   }, 90_000);
 
   test('an exact-tag pin in auto mode (bun update keeps the pin) is held, not known-bad', async () => {
-    const h = harness('pin', { spec: `github:garrytan/gbrain#v${VERSION}`, cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
+    const h = harness('pin', { spec: `github:aimonk2025/gbrain#v${VERSION}`, cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
     const tick = await run(h, h.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD });
     expect(tick.out).not.toContain('EXIT_CALLED');
     expect(tick.su.failed_versions).toBeUndefined();
@@ -250,7 +250,7 @@ describe('#6828 review replays', () => {
     // A directory where the receipt goes: the swap cannot write it and the channel cannot read one.
     mkdirSync(join(h.home, '.gbrain', 'swap-receipt.json'));
     const tick = await run(h, h.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD });
-    expect(tick.calls).toContain('bun update --backend=copyfile gbrain');
+    expect(tick.calls).toContain('bun update --backend=copyfile foresights');
     expect(tick.out).not.toContain('EXIT_CALLED');
     expect(tick.su.attempting_version).toBeUndefined();
     expect(tick.su.failed_versions).toBeUndefined();
@@ -263,10 +263,10 @@ describe('#6828 review replays', () => {
     const h = harness('throttle', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
     setConfig(h, { last_check_ts: Date.now() - 25 * 60 * 60 * 1000 });
     const tick = await run(h, h.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD });
-    expect(tick.calls).toContain('bun update --backend=copyfile gbrain');
+    expect(tick.calls).toContain('bun update --backend=copyfile foresights');
     setConfig(h, { last_check_ts: Date.now() - 23 * 60 * 60 * 1000 });
     const held = await run(h, h.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD });
-    expect(held.calls.filter((c) => c === 'bun update --backend=copyfile gbrain')).toHaveLength(1);
+    expect(held.calls.filter((c) => c === 'bun update --backend=copyfile foresights')).toHaveLength(1);
   }, 90_000);
 
   test('the version the install would get is checked against known-bad, not only the checked version', async () => {
@@ -274,7 +274,7 @@ describe('#6828 review replays', () => {
     const h = harness('gate-installed', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
     setConfig(h, { failed_versions: [delivered] });
     const tick = await run(h, h.driver, { FAKE_TARGET_VERSION: delivered });
-    expect(tick.calls.filter((c) => c === 'bun update --backend=copyfile gbrain')).toEqual([]);
+    expect(tick.calls.filter((c) => c === 'bun update --backend=copyfile foresights')).toEqual([]);
     expect(tick.audit.at(-1)).toMatchObject({ action: 'known_bad', outcome: 'skipped', latest: MASTER_AHEAD });
     expect(tick.audit.at(-1).reason).toContain(delivered);
   }, 90_000);

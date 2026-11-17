@@ -1,9 +1,9 @@
 /**
  * Friction reporter — JSONL-backed signal capture for the claw-test feedback loop.
  *
- * The friction CLI (`gbrain friction log/render/list/summary/diff`) writes
+ * The friction CLI (`foresights friction log/render/list/summary/diff`) writes
  * and reads here. The claw-test harness reads here. The agent calls
- * `gbrain friction log` directly when it hits something confusing, missing,
+ * `foresights friction log` directly when it hits something confusing, missing,
  * or wrong; `friction diff` compares two runs cross-agent.
  *
  * Storage shape: append-only JSONL files under `$GBRAIN_HOME/.gbrain/friction/`

@@ -1,7 +1,7 @@
 /**
- * GBRA-150: `sources_resolve_path` / `gbrain sources resolve-path` answers what gbrain did with each file path by gbrain's
+ * GBRA-150: `sources_resolve_path` / `foresights sources resolve-path` answers what foresights did with each file path by foresights's
  * own rules. The three shapes a copied slug rule gets wrong: a path whose slug
- * gbrain folds (trailing hyphen), a deleted file whose case-folded twin owns the slug (checked by origin, never slug), and a
+ * foresights folds (trailing hyphen), a deleted file whose case-folded twin owns the slug (checked by origin, never slug), and a
  * nested `index.md` sync skips as folder scaffolding. Plus the states a harness must tell apart: missing (a real gap),
  * held, not synced yet. Red on master: the module and the operation do not exist there.
  */
@@ -80,7 +80,7 @@ const TWIN_LOWER = 'sources/meetings/2026-10-19-call-abcdefghxyz.md';
 const TWIN_MIXED = 'sources/meetings/2026-10-19-call-AbCdEfGhXyZ.md';
 const NESTED_INDEX = 'projects/acme-example/index.md';
 
-test('the slug gbrain folds a trailing hyphen into resolves to the indexed page, not a missing one', () => each(async engine => {
+test('the slug foresights folds a trailing hyphen into resolves to the indexed page, not a missing one', () => each(async engine => {
   const s = await source(engine, { [HYPHEN]: note('Headline') });
   await s.sync();
   const [p] = (await s.resolve(HYPHEN)).paths;

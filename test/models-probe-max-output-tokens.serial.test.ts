@@ -1,5 +1,5 @@
 /**
- * #3657(a) — `gbrain models doctor` must probe chat models with a
+ * #3657(a) — `foresights models doctor` must probe chat models with a
  * max-output-tokens value the provider will actually accept.
  *
  * Pre-fix, probeModel() sent `maxTokens: 1`. OpenAI rejects
@@ -10,7 +10,7 @@
  * healthy one both reported unreachable, and the surrounding sunset/upgrade
  * guidance keyed off that verdict.
  *
- * The floor is a property of the provider's API, not of gbrain, so the mock
+ * The floor is a property of the provider's API, not of foresights, so the mock
  * enforces it exactly as OpenAI documents it: reject when the request's
  * max-output-tokens field is present and < 16, otherwise answer normally.
  * That makes this test fail against the old `maxTokens: 1` and pass against

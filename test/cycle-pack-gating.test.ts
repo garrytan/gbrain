@@ -79,7 +79,7 @@ describe('v0.41 T9 R-GATE: dispatch consults the active pack', () => {
       expect(r?.summary).toContain('gbrain-creator');
     }
     const atoms = report.phases.find(p => p.phase === 'extract_atoms');
-    expect(atoms?.summary).toContain('gbrain dream --phase extract_atoms --drain');
+    expect(atoms?.summary).toContain('foresights dream --phase extract_atoms --drain');
   }, 60_000);
 
   test('a pack that declares the phases (gbrain-creator) opens the gate', async () => {

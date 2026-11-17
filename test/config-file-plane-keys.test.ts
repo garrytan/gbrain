@@ -80,7 +80,7 @@ describe('config set — file-plane bootstrap hook-lane keys [D18]', () => {
 /**
  * backup.* keys are FILE-plane canonical for the same reason as the hook-lane
  * keys: their readers (backupCheckDisabled / backupIntervalMs in
- * src/core/backup/status-file.ts) are engine-free — `gbrain hook`, the cli.ts
+ * src/core/backup/status-file.ts) are engine-free — `foresights hook`, the cli.ts
  * startup rail, and the MCP dispatch notice all resolve through
  * loadConfigFileOnly, which never sees the DB plane. These tests pin the write
  * half (runConfig routes the nested keys to ~/.gbrain/config.json) AND the
@@ -180,7 +180,7 @@ describe('config set — backup.* file-plane keys', () => {
  *
  * `buildGatewayConfig` folds credentials into the gateway env from the file
  * plane (config.json) + process env ONLY — it never reads the DB plane. So
- * `gbrain config set openai_api_key sk-...` writing the DB was a silent
+ * `foresights config set openai_api_key sk-...` writing the DB was a silent
  * no-op: it printed "Set openai_api_key = ***", exited 0, and `config get`
  * read it straight back, while every provider call still failed with
  * "requires OPENAI_API_KEY".
@@ -315,7 +315,7 @@ describe('config set integrations.memorable.enabled — the disclosure consent g
       expect(r.out).toContain('Consent recorded');
       expect(r.out).toContain('Set integrations.memorable.enabled = true');
       // The enable banner names the off switches — the env kill switch is
-      // documented nowhere else in gbrain's own output. (#4743 pin)
+      // documented nowhere else in foresights's own output. (#4743 pin)
       expect(r.out).toContain('Turn off:');
       expect(r.out).toContain('GBRAIN_MEMORABLE=0');
       const stamp = await readMemorableConsent();

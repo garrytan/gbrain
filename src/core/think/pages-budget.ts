@@ -9,7 +9,7 @@
  * pages either: `think.excerpt_ceiling_chars` (2 400 by default) still caps
  * each excerpt. A caller who wants whole pages raises both.
  *
- * Both keys are DB-plane (`gbrain config set`). A value outside its range, or
+ * Both keys are DB-plane (`foresights config set`). A value outside its range, or
  * not an integer, is ignored for that call: the default applies and the
  * result warns `THINK_BUDGET_CONFIG_IGNORED:<key>`, so a typo never silently
  * changes what the model sees.
@@ -68,7 +68,7 @@ export async function readThinkPagesBudget(engine: Pick<BrainEngine, 'getConfig'
   return { totalChars, ceilingChars };
 }
 
-/** `gbrain config set` validation: the refusal text for a bad value, or null when it is acceptable. */
+/** `foresights config set` validation: the refusal text for a bad value, or null when it is acceptable. */
 export function pagesBudgetConfigError(key: keyof typeof THINK_PAGES_BUDGET_BOUNDS, value: string): string | null {
   if (parsePagesBudgetValue(key, value) !== null) return null;
   const { min, max } = THINK_PAGES_BUDGET_BOUNDS[key];

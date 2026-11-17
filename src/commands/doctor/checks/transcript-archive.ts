@@ -5,12 +5,12 @@
  * readers this machine has, the archive ledger and what the last run read; no reader runs, so no session is read and
  * no Gateway is called) and the maintenance record (transcripts.archive.last_maintenance), and warns when:
  *   - a harness's newest archived day is more than transcripts.archive.stale_days (default 2) behind the newest
- *     session day the last run read: fix gbrain transcripts archive run, or backfill --from <first missing day> when
+ *     session day the last run read: fix foresights transcripts archive run, or backfill --from <first missing day> when
  *     that day is older than one run's window;
  *   - no run has read a reader successfully in stale_days (a maintenance pass that keeps stopping at its deadline
- *     before that reader): fix gbrain transcripts archive run;
+ *     before that reader): fix foresights transcripts archive run;
  *   - no maintenance pass has run the archive in stale_days (or ever, on a brain older than that): fix
- *     gbrain autopilot --install (persistent, so ask the user first);
+ *     foresights autopilot --install (persistent, so ask the user first);
  *   - days are held (listed with their codes), a reader failed, or the last pass recorded an error.
  * A harness with no readable sessions, or one no run has read yet, is informational.
  */
@@ -70,7 +70,7 @@ export async function checkTranscriptArchiveFreshness(
       if (!fix) {
         fix = firstMissing < addDays(today, -runWindow)
           ? agentFix(['gbrain', 'transcripts', 'archive', 'backfill', '--from', firstMissing],
-            'Archives the missing days from ' + firstMissing + ', newest first, one capped run at a time (transcripts.archive.backfill_days_per_run); their embedding is held until the owner approves its cost (gbrain embed --held --dry-run).', name)
+            'Archives the missing days from ' + firstMissing + ', newest first, one capped run at a time (transcripts.archive.backfill_days_per_run); their embedding is held until the owner approves its cost (foresights embed --held --dry-run).', name)
           : agentFix(['gbrain', 'transcripts', 'archive', 'run'], 'Archives the last ' + (runWindow + 1) + ' local days from every readable harness now.', name);
       }
     }
@@ -89,7 +89,7 @@ export async function checkTranscriptArchiveFreshness(
     if (passStale) {
       problems.push('no maintenance pass has run the archive in ' + staleDays + ' day(s)' + (record ? ' (last ' + record.at + ', ' + record.runner + ')' : ''));
       fix ??= agentFix(['gbrain', 'autopilot', '--install'],
-        'Installs the background maintenance daemon, which runs the conversation archive with the rest of upkeep; a persistent install, so ask the user first. Without it the archive runs while an agent\'s gbrain serve is idle.',
+        'Installs the background maintenance daemon, which runs the conversation archive with the rest of upkeep; a persistent install, so ask the user first. Without it the archive runs while an agent\'s foresights serve is idle.',
         name, { consent: ['persistent_install'] });
     }
     const details = {
@@ -102,7 +102,7 @@ export async function checkTranscriptArchiveFreshness(
     const idle = [...new Set(status.harnesses.filter(h => h.info).map(h => h.harness))];
     const unread = [...new Set(status.harnesses.filter(h => !h.info && !h.read_at && !h.newest_session_day).map(h => h.harness))];
     const idleNote = [
-      ...(idle.length ? ['no readable sessions for ' + idle.join(', ') + ' (gbrain transcripts archive status names each reader)'] : []),
+      ...(idle.length ? ['no readable sessions for ' + idle.join(', ') + ' (foresights transcripts archive status names each reader)'] : []),
       ...(unread.length ? ['not read by an archive run yet: ' + unread.join(', ')] : []),
     ].join('; ');
     if (!readable.length) return infoCheck(name, 'Conversation archive is on; ' + (idleNote || 'no harness has readable sessions yet') + '.', 'not_applicable', undefined, details);

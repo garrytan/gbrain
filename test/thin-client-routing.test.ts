@@ -317,7 +317,7 @@ describe('routeThinClientCommand — wakeshift watch (Wakeshift report-back over
       return { content: [{ type: 'text', text: JSON.stringify(result) }, ...extra] };
     });
   }
-  const watching = { watching: true, watch: 3, job: 812, event: 'gbrain.job.finished', status: 'active', already_finished: false, expires_in: '7d', fallback: 'If no wake arrives, call wait_job 812 (or run gbrain jobs wait 812).' };
+  const watching = { watching: true, watch: 3, job: 812, event: 'gbrain.job.finished', status: 'active', already_finished: false, expires_in: '7d', fallback: 'If no wake arrives, call wait_job 812 (or run foresights jobs wait 812).' };
 
   test('watch job routes to watch_job with the caller params as given, and the tail is the last stdout line', async () => {
     respond(watching, [{ type: 'text', text: TAIL }]);
@@ -340,7 +340,7 @@ describe('routeThinClientCommand — wakeshift watch (Wakeshift report-back over
     expect(calls.at(-1)).toEqual({ tool: 'watch_cron', args: { name: 'nightly-digest' } });
   });
 
-  test('--json prints the result as one JSON line, then the tail last; a gbrain notice block is never taken for the tail', async () => {
+  test('--json prints the result as one JSON line, then the tail last; a foresights notice block is never taken for the tail', async () => {
     respond(watching, [{ type: 'text', text: TAIL }]);
     expect(await routeThinClientCommand(cfg, 'wakeshift', ['watch', 'job', '812', '--json'])).toBe(true);
     expect(JSON.parse(logs[0]!)).toEqual(watching);

@@ -1,7 +1,7 @@
 # Baseline for the 2026-10-04 test, eval and CI wave
 
 Three full pull-request runs of the master tree plus only the executed-test
-receipts and ledger (no behavior change), on garrytan/gbrain#6013. Every job ran
+receipts and ledger (no behavior change), on aimonk2025/gbrain#6013. Every job ran
 on attempt 1; Bun 1.4.2.
 
 | Run | Commit | Test run | E2E run | PR time to green | Ubicloud vCPU-min | Unit shard max / mean | Selected E2E shard max / mean |

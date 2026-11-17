@@ -36,14 +36,14 @@ describe('autopilot self-upgrade static-shape regressions', () => {
     expect(AUTOPILOT_SRC).not.toMatch(/execvp\s*\(/);
   });
   test('the silent channel does swap-only, never a blocking full post-upgrade in the tick', () => {
-    expect(AUTOPILOT_SRC).toContain("execSync('gbrain upgrade --swap-only'");
+    expect(AUTOPILOT_SRC).toContain("execSync('foresights upgrade --swap-only'");
     // The tick must not invoke the (up-to-30-min) post-upgrade inline.
-    expect(AUTOPILOT_SRC).not.toContain("execSync('gbrain post-upgrade'");
+    expect(AUTOPILOT_SRC).not.toContain("execSync('foresights post-upgrade'");
   });
   test('boot reconciles the breadcrumb and the tick attempts the channel', () => {
     expect(AUTOPILOT_SRC).toContain('reconcileSelfUpgradeAtBoot()');
     expect(AUTOPILOT_SRC).toContain('attemptAutopilotSelfUpgrade(engine, engineType, lockPath, () => !configurationBlocked())');
-    expect(SELF_UPGRADE_SRC).toMatch(/if \(!mayContinue\(\)\) return;[\s\S]*?execSync\('gbrain upgrade --swap-only'/);
+    expect(SELF_UPGRADE_SRC).toMatch(/if \(!mayContinue\(\)\) return;[\s\S]*?execSync\('(?:foresights|gbrain) upgrade --swap-only'/);
   });
   test('apply path unlinks the lock before exit so the relaunched binary does not self-exit on a stale lock', () => {
     // The exit-for-relaunch block unlinks lockPath then process.exit(0).

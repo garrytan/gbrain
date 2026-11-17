@@ -68,7 +68,7 @@ export interface StrictViolation {
   model: string;
   source: ModelSource;
   origin: string;
-  /** Copy-paste remediation (a `gbrain config set` line, or the embedding config path). */
+  /** Copy-paste remediation (a `foresights config set` line, or the embedding config path). */
   fix: string;
 }
 
@@ -201,7 +201,7 @@ async function embeddingEntry(engine: BrainEngine): Promise<ModelsPlanEntry> {
   } catch (err) {
     return unknown(sanitizeEcho(`embedding column unresolved: ${err instanceof Error ? err.message : String(err)}`));
   }
-  if (!column.embeddingModel) return unknown('unverified embedding identity (gbrain migrate embeddings --status)');
+  if (!column.embeddingModel) return unknown('unverified embedding identity (foresights migrate embeddings --status)');
   const model = sanitizeEcho(column.embeddingModel);
   if (column.name !== DEFAULT_COLUMN_NAME) {
     return { touchpoint: 'embedding', model, source: 'config_key', origin: sanitizeEcho(`search_embedding_column=${column.name} (embedding_columns)`), active: true };
@@ -295,9 +295,9 @@ const FIX_KEY: Record<Exclude<PlanTouchpoint, 'embedding'>, string> = {
 
 function fixFor(entry: ModelsPlanEntry): string {
   if (entry.touchpoint === 'embedding') {
-    return `set embedding_model in ~/.gbrain/config.json or export GBRAIN_EMBEDDING_MODEL=${entry.model} (changing the embedding model needs a migration: gbrain migrate embeddings --status)`;
+    return `set embedding_model in ~/.gbrain/config.json or export GBRAIN_EMBEDDING_MODEL=${entry.model} (changing the embedding model needs a migration: foresights migrate embeddings --status)`;
   }
-  return `gbrain config set ${FIX_KEY[entry.touchpoint]} ${entry.model}`;
+  return `foresights config set ${FIX_KEY[entry.touchpoint]} ${entry.model}`;
 }
 
 export function strictVerdict(
@@ -371,7 +371,7 @@ export function modelsStrictError(verdict: StrictVerdict): Error {
     class: 'ModelsStrict',
     code: 'models_strict_violation',
     message: describeStrictVerdict(verdict),
-    hint: `run the listed commands, or turn strict mode off (drop --models-strict; gbrain config set ${MODELS_STRICT_CONFIG_KEY} false)`,
+    hint: `run the listed commands, or turn strict mode off (drop --models-strict; foresights config set ${MODELS_STRICT_CONFIG_KEY} false)`,
   });
 }
 

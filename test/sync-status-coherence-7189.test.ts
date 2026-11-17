@@ -1,5 +1,5 @@
 /**
- * #7189 (status half): `gbrain sync status` contradicted itself while a large source fell behind. Each case below is
+ * #7189 (status half): `foresights sync status` contradicted itself while a large source fell behind. Each case below is
  * red on master:
  * - freshness counted only commits that already synced (`commits`, `unresolved_commits: 0`, a healthy p50) while
  *   commits sat unsynced on HEAD; it now reports `behind` (commits after the last synced one, the oldest one's age);

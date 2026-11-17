@@ -1,5 +1,5 @@
 /**
- * `gbrain wakeshift emit cron.finished` is the last line of a user's cron script, so a brain it cannot open (a live
+ * `foresights wakeshift emit cron.finished` is the last line of a user's cron script, so a brain it cannot open (a live
  * serve holding the PGLite lock, a Postgres outage) must not fail that script: one stderr line, exit 0. A bad
  * argument list still exits 2. Spawns the real CLI against an unreachable Postgres, so the connect itself fails.
  *
@@ -43,6 +43,6 @@ describe('wakeshift emit when the brain cannot be opened', () => {
   test('a malformed emit still exits 2 with the usage line', async () => {
     const r = await emit(['cron.finished', '--name', 'nightly-example']);
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain('Usage: gbrain wakeshift emit cron.finished');
+    expect(r.stderr).toContain('Usage: foresights wakeshift emit cron.finished');
   }, 60_000);
 });

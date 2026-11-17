@@ -6,7 +6,7 @@
  * behave per transport: HTTP-remote enforces the gate, local CLI bypasses it,
  * scope shapes the D7 tool split, and the frontmatter allowlist holds end to end.
  *
- * Config is driven via the DB plane (engine.setConfig) — the plane `gbrain
+ * Config is driven via the DB plane (engine.setConfig) — the plane `foresights
  * config set` writes and the plane the gate reads first. GBRAIN_HOME is pinned
  * to a tmp dir so loadConfig()'s file plane can't leak the dev's real config in.
  */
@@ -171,7 +171,7 @@ describe('list_skills over dispatch', () => {
     });
   });
 
-  test('DB-plane disable wins (gbrain config set mcp.publish_skills false)', async () => {
+  test('DB-plane disable wins (foresights config set mcp.publish_skills false)', async () => {
     await withEnv({ GBRAIN_HOME: home }, async () => {
       await engine.setConfig('mcp.publish_skills', 'false');
       const r = await call('list_skills', {}, { remote: true, auth: { token: 't', clientId: 'c', scopes: ['read'] } });

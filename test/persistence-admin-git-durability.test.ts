@@ -298,7 +298,7 @@ describe('GST-2767 the durability block the verb writes is never left untracked 
     expect((await gitAsync(root, 'rev-parse', 'HEAD')).trim()).toBe(head);
     // The block is already current on the next run, and the untracked file still gets the command (it used to get nothing).
     const again = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, ...await reviewedWriterIntent(engine, 'writer_git_durability') }) as Record<string, any>;
-    expect(again.agents).toMatchObject({ status: 'ok', commit_argv: argv, commit: expect.stringContaining('gbrain git commit-push') });
+    expect(again.agents).toMatchObject({ status: 'ok', commit_argv: argv, commit: expect.stringContaining('foresights git commit-push') });
     const run = await runCli(argv.slice(1), { home, cwd: root, timeoutMs: 120_000 });
     expect(run.exitCode).toBe(0);
     expect((await gitAsync(root, 'status', '--porcelain', '--untracked-files=all', '--', 'AGENTS.md')).trim()).toBe('');

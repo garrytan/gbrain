@@ -7,7 +7,7 @@
  * join the binding once and carry it on AuthInfo.member, so dispatch costs no
  * query; an AuthInfo no verifier built (member undefined) is looked up from
  * its principal. A local stdio server reads its binding from its own
- * `gbrain serve --stdio-member <id>` (the harness's MCP entry, so one
+ * `foresights serve --stdio-member <id>` (the harness's MCP entry, so one
  * registration on one machine), else from config `mcp.stdio_member` set by
  * hand. A remote read or write on a brain with no member-access restriction
  * and no owner never looks a binding up. An empty identity means the
@@ -61,7 +61,7 @@ const WHOAMI: NonNullable<Action['verify']> = { argv: ['gbrain', 'whoami', '--js
 
 function identityUnavailable(): OperationError {
   return opError('access_identity_unavailable', 'The member this connection is bound to could not be looked up, so nothing was read or written.',
-    'Retry the same request in a few seconds (a write with the same request_id); if it keeps failing, ask the brain operator to run gbrain doctor --json on the brain host.', {
+    'Retry the same request in a few seconds (a write with the same request_id); if it keeps failing, ask the brain operator to run foresights doctor --json on the brain host.', {
       why: 'Reading the credential\'s member binding failed with a database error. Reading the connection as unbound instead would open pages its member may not read, so the request stops here.',
       detail: `retry_after_ms=${IDENTITY_RETRY_AFTER_MS}`,
       fix: { ...WHOAMI, consent: [], actor: 'provider', requires_exclusive: false, verify: WHOAMI,
@@ -225,7 +225,7 @@ function audienceNotPermitted(caller: AudienceCaller, audience: readonly Audienc
 function audienceUnknown(principal: string) {
   const group = principal.startsWith('group:');
   return catalogueError('on_behalf_of_unknown_member', `The audience names ${principal}, which is not ${group ? 'a group' : 'an enabled member'} on this brain, so nothing was read.`,
-    `Name enabled members and existing groups only; a person who is not a member joins the audience as guest. The brain operator checks the ids with gbrain access ${group ? 'group' : 'member'} list${group ? '' : ' --all'}.`);
+    `Name enabled members and existing groups only; a person who is not a member joins the audience as guest. The brain operator checks the ids with foresights access ${group ? 'group' : 'member'} list${group ? '' : ' --all'}.`);
 }
 
 /**

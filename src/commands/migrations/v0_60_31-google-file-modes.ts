@@ -1,6 +1,6 @@
 /**
  * Security fix wave: the one-time notice for Google sources whose directory
- * is outside `~/.gbrain`. Files gbrain wrote there before this release keep
+ * is outside `~/.gbrain`. Files foresights wrote there before this release keep
  * the permissions they were written with (typically 0644), and only a rewrite
  * tightens them. Detection only: the notice names each directory, the count
  * of group/world-readable entries found now and the opt-in repair commands.
@@ -15,7 +15,7 @@ export const GOOGLE_FILE_MODES_NOTICE_KEY = 'google.file_modes_notice';
 
 export function googleFileModesNoticeLines(scans: Awaited<ReturnType<typeof scanGoogleFileModes>>): string[] {
   return scans.map(scan => `[google] Google source ${scan.sourceId} keeps its files in ${scan.dir}, outside ~/.gbrain. `
-    + 'Files gbrain wrote there before this version keep their old permissions and may be readable by other local users '
+    + 'Files foresights wrote there before this version keep their old permissions and may be readable by other local users '
     + `(${scan.loose.length} found now). Preview the fix: ${googleFileModesPreviewCommand(scan.sourceId)} — `
     + `apply after review: ${googleFileModesApplyCommand(scan.sourceId)}. Verify and repair options: docs/guides/google-connect.md`);
 }

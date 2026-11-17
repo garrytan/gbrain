@@ -427,7 +427,7 @@ jobs:
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
       - name: Run multi-agent serve suite
         # cathedral-6 (T7): multi-agent continuity + isolation over a real
-        # `gbrain serve --http`. Own invocation line (engine-parity
+        # `foresights serve --http`. Own invocation line (engine-parity
         # precedent): the file spawns two serves on fixed ports
         # (19133/19134) and SIGKILLs one mid-hammer — never fold it into the
         # shared-process tier1 line above. Named files only, no glob.
@@ -458,11 +458,11 @@ jobs:
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
       - name: Run serve-delegated sync suite
-        # Serve-delegated sync (PGLite): a real `gbrain serve` owns the
-        # single-writer lock while real `gbrain sync` subprocesses delegate
+        # Serve-delegated sync (PGLite): a real `foresights serve` owns the
+        # single-writer lock while real `foresights sync` subprocesses delegate
         # through its IPC socket, get SIGKILLed mid-run, and resume. Own
         # invocation line, and deliberately NO DATABASE_URL — the suite is
-        # PGLite-only (env DATABASE_URL is a live gbrain config source and
+        # PGLite-only (env DATABASE_URL is a live foresights config source and
         # would flip the sandboxed brain to Postgres; the file also
         # self-strips). Named files only, no glob.
         run: bash scripts/run-with-receipt.sh tier1 sync-delegation -- bun test --timeout=240000 test/e2e/sync-delegation-under-serve.serial.test.ts
@@ -691,7 +691,7 @@ jobs:
           overwrite: true
 
   postgres15-compat:
-    # #7112: gbrain supports Postgres 15, but PGLite runs 17 and every other
+    # #7112: foresights supports Postgres 15, but PGLite runs 17 and every other
     # Postgres lane 16, so SQL only 16+ parses (IS JSON) shipped green and
     # wedged managed sync on 15. Runs the targeted write, sync, jobs and
     # migration files of scripts/e2e-postgres15.txt on a pg15 server wherever
@@ -862,10 +862,10 @@ jobs:
         timeout-minutes: 8
         run: scripts/ci-install-openclaw.sh
       # #8002: OpenClaw reads MCP servers from mcp.servers in
-      # ~/.openclaw/openclaw.json; the script saves gbrain there with
+      # ~/.openclaw/openclaw.json; the script saves foresights there with
       # `openclaw mcp set`, fails unless `openclaw mcp show` reads it back,
       # and puts scripts/ci-mcp-tap.sh in front of the server so the test step
-      # can require a gbrain tool call.
+      # can require a foresights tool call.
       - name: Configure OpenClaw MCP
         run: bash scripts/ci-openclaw-mcp.sh
         env:
@@ -882,7 +882,7 @@ jobs:
           # Keyed by decision (GBRA-108: Tier 2 keyed nightly, about $2 a week).
           GBRAIN_TEST_KEEP_PROVIDER_KEYS: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
-          # Each test requires a gbrain tool call in this log (#8002).
+          # Each test requires a foresights tool call in this log (#8002).
           GBRAIN_TEST_TIER2_MCP_TAP_LOG: ${{ runner.temp }}/gbrain-mcp-tap.jsonl
       # bun test exits 0 when every test skips (an empty secret, a missing
       # openclaw agent), so a keyless or all-skip run fails here instead.

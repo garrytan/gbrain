@@ -5,7 +5,7 @@
  * A managed source page is synced and extracted, edited through sync, caught
  * in the trailing-commit window of a queued publication (#5777: skipped, not a
  * sticky source_changed), re-extracted (#5774 retires the stale atom), deleted
- * and cleaned up by `gbrain repair stale-atoms`, then restored: discovery
+ * and cleaned up by `foresights repair stale-atoms`, then restored: discovery
  * offers it again and extraction restores every atom of its current text.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -111,7 +111,7 @@ for (const kind of testBackends()) {
       await unmanaged(() => engine.softDeletePage(slug, { sourceId }));
       const preview = await repair(['stale-atoms', '--source', sourceId]);
       expect(preview.listing.map(entry => entry.class)).toEqual(['origin_gone', 'origin_gone']);
-      expect(preview.apply_command).toMatch(/^gbrain repair stale-atoms --source \S+ --apply --expect [0-9a-f]{64}$/);
+      expect(preview.apply_command).toMatch(/^(?:foresights|gbrain) repair stale-atoms --source \S+ --apply --expect [0-9a-f]{64}$/);
       expect((await repair(preview.apply_command.split(' ').slice(2))).outcomes).toEqual({ retired: 2 });
       expect(await atoms()).toMatchObject({ 'patience-compounds-over-years': { deleted: true, retired_by: 'stale-atoms' },
         'hire-slowly': { deleted: true, retired_by: 'stale-atoms' } });

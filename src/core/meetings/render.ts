@@ -3,7 +3,7 @@
  * built from strings. Every provider-authored field passes through
  * `neutralizeOutsideText` on its own, so no title, summary, action item or
  * sentence can open a facts fence, forge a timeline row or a speaker turn;
- * gbrain's own structure (headings, metadata labels, transcript anchors) is
+ * foresights's own structure (headings, metadata labels, transcript anchors) is
  * composed around the neutralized text. Run ids and fetch times stay out of
  * the page so an unchanged meeting renders byte-identical and publishes nothing.
  */
@@ -27,7 +27,7 @@ export class MeetingPageTooLargeError extends Error {
 
 /** Outside text on one line: whitespace collapsed, then neutralized. */
 const inline = (text: string) => neutralizeOutsideText(text.replace(/\s+/g, ' ').trim());
-/** A speaker name inside gbrain's own `**Name** (hh:mm:ss):` anchor: no emphasis, colon or bracket can break out of it. */
+/** A speaker name inside foresights's own `**Name** (hh:mm:ss):` anchor: no emphasis, colon or bracket can break out of it. */
 const speakerName = (text: string) => inline(text.replace(/[*:()[\]]/g, ' ')) || 'Unknown speaker';
 
 /** Multi-line outside text: neutralized, and a line shaped like any builtin chat anchor (once trimmed, as the parser reads it) escaped, so no line reads as a turn. */

@@ -184,7 +184,7 @@ export function writeInstallReceipt(receipt: AgentInstallReceipt): void {
   } catch { /* A missing or changed helper is repaired from the recorded package. */ }
   const ref = /^[a-f0-9]{40}$/.test(receipt.artifact?.source_ref ?? '') ? receipt.artifact!.source_ref : INSTALL_REF;
   const command = helperOwned ? `bash ${shellQuote(helper)} --json`
-    : `curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/${ref}/scripts/setup-in-agent.sh | bash -s -- --root ${shellQuote(receipt.root)} --harness ${shellQuote(receipt.harness)} --json`;
+    : `curl -fsSL https://raw.githubusercontent.com/aimonk2025/gbrain/${ref}/scripts/setup-in-agent.sh | bash -s -- --root ${shellQuote(receipt.root)} --harness ${shellQuote(receipt.harness)} --json`;
   receipt.recovery = { command, action: receipt.last_failure
     ? 'Preserve memory and owned files. Resolve the reported failure, then run the recorded repair command; never remove a live lock.'
     : 'Run the recorded command to repair software without reinitializing memory. Complete pending native and search-mode steps separately.' };
@@ -201,7 +201,7 @@ export function readFileConfigState(path: string): ConfigState {
   } catch { return { kind: 'invalid' }; }
 }
 
-/** A child receives only its selected installation's GBrain environment. */
+/** A child receives only its selected installation's Foresights environment. */
 export function isolatedAgentEnv(root: string, inherited: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(inherited)) {

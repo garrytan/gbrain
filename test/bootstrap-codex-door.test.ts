@@ -111,7 +111,7 @@ describe('Codex door — registerCodexMcp argv (--surface starter + GBRAIN_SOURC
     expect(argv.join(' ')).toContain('serve --surface starter');
   });
 
-  test('a non-absolute gbrain binary is refused (GUI hosts inherit no PATH) [CX-P1.4]', () => {
+  test('a non-absolute foresights binary is refused (GUI hosts inherit no PATH) [CX-P1.4]', () => {
     expect(() => registerCodexMcp({ gbrainBin: 'gbrain', sourceId: 'workspace' })).toThrow(/absolute path/);
   });
 });

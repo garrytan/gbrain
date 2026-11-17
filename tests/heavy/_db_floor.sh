@@ -11,7 +11,7 @@
 #                                           # var is test-shaped or allowed
 #
 # BOTH variables are floored: heavy scripts shell out to the real CLI
-# (gbrain doctor / gbrain sync), and src/core/config.ts resolves
+# (foresights doctor / foresights sync), and src/core/config.ts resolves
 # GBRAIN_DATABASE_URL ABOVE DATABASE_URL — flooring only one would let the
 # other reach a real brain. Query strings are stripped BEFORE the name is
 # extracted: `?host=/tmp/test-sockets` must not smuggle a test-shaped segment

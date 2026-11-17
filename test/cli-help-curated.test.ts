@@ -35,10 +35,10 @@ describe('curated help specs (D3)', () => {
     test(`${command}: every curated flag is accepted by the generated registry and well-typed`, async () => {
       const spec = (await loadCuratedHelp(command))!;
       const accepted = new Set(CLI_FLAG_REGISTRY[command] ?? []);
-      expect(spec.usage).toContain(`gbrain ${command}`);
+      expect(spec.usage).toContain(`foresights ${command}`);
       expect(spec.examples.length).toBeGreaterThanOrEqual(2);
       expect(spec.examples.length).toBeLessThanOrEqual(4);
-      for (const e of spec.examples) expect(e.startsWith(`gbrain ${command}`)).toBe(true);
+      for (const e of spec.examples) expect(e.startsWith(`foresights ${command}`)).toBe(true);
       expect(new Set(spec.flags.map(f => f.name)).size).toBe(spec.flags.length);
       for (const f of spec.flags) {
         expect(accepted.has(f.name), `${command} ${f.name} is not in the acceptance registry`).toBe(true);
@@ -52,12 +52,12 @@ describe('curated help specs (D3)', () => {
   test('the renderer prints usage, the typed flag table, enum values, consent effects and examples', async () => {
     const spec = (await loadCuratedHelp('doctor'))!;
     const text = renderCuratedHelp('doctor', spec);
-    expect(text).toContain('Usage: gbrain doctor');
+    expect(text).toContain('Usage: foresights doctor');
     expect(text).toMatch(/--max-usd <n>\s+number\s+.*\[consent: paid\]/);
     expect(text).toMatch(/--include-repairs\s+boolean\s+.*\[consent: destructive\]/);
     expect(text).toMatch(/--scope <choice>\s+enum\s+.*One of: all\|brain\./);
-    expect(text).toContain('Examples:\n  gbrain doctor --json');
-    expect(text).toContain('gbrain doctor --help --json');
+    expect(text).toContain('Examples:\n  foresights doctor --json');
+    expect(text).toContain('foresights doctor --help --json');
   });
 });
 
@@ -96,7 +96,7 @@ describe('curatedFlagError (D4, CLI-only commands)', () => {
 describe('unknown-flag did-you-mean from curated flags (D3)', () => {
   test('a typo on a curated command suggests the curated flag', async () => {
     const curated = (await loadCuratedHelp('doctor'))!.flags.map(f => f.name);
-    const e = unknownFlagError('doctor', '--remediat', "unknown flag --remediat for 'gbrain doctor'", curated);
+    const e = unknownFlagError('doctor', '--remediat', "unknown flag --remediat for 'foresights doctor'", curated);
     expect(e.code).toBe('unknown_flag');
     expect(e.message).toContain('did you mean --remediate?');
     expect(e.suggestion).toContain('Did you mean --remediate?');

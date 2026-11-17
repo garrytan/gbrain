@@ -9,7 +9,7 @@ import { applyFtsLanguagePolicy } from './fts-language.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 
 export const PGLITE_SCHEMA_SQL_TEMPLATE = `
--- GBrain PGLite schema (local embedded Postgres), generated from src/schema.sql
+-- Foresights PGLite schema (local embedded Postgres), generated from src/schema.sql
 -- and the TS schema fragments by scripts/build-schema.ts.
 
 CREATE EXTENSION IF NOT EXISTS vector;

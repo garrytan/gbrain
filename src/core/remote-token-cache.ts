@@ -8,7 +8,7 @@
  *
  * Trust: an entry is keyed by a hash of the issuer, MCP URL, client id and
  * client secret, so another client or a rotated secret never reuses it. Each
- * key has its own file under `remote-tokens/` in the gbrain home, holding the
+ * key has its own file under `remote-tokens/` in the foresights home, holding the
  * bearer and its expiry only (no secret, no client id). A file is written
  * 0600 by an atomic rename, which replaces a planted symlink instead of
  * writing through it, and read through a descriptor opened without following

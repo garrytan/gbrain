@@ -18,7 +18,7 @@ query matters. Authors report 1.6x–2.9x end-to-end speedups at 2x–5x compres
 The compression model was trained on MeetingBank, so transfer to conversational memory
 or other domains is not guaranteed; the paper evaluates specific benchmarks and target
 LMs. Its comparison also relies on previously reported results for some baselines. For
-GBrain, this is evidence for evaluating a trained salience model as a distinct option,
+Foresights, this is evidence for evaluating a trained salience model as a distinct option,
 while keeping raw excerpts and source links available. It is not evidence that deleting
 rounds by lexical match is equivalent: the compressor learns token-preservation patterns
 from labeled/distilled data and uses bidirectional context.

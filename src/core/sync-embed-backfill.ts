@@ -212,7 +212,7 @@ export function formatSyncEmbedBackfillOutcome(
       }
       if (outcome.reason === 'stalled') {
         return `embed-backfill skipped${source}: the last ${outcome.failures} runs failed on the same blocked pages with nothing embedded; `
-          + `see \`gbrain doctor --only embed_backfill_stalled\` (manual drain: \`${outcome.command}\`)`;
+          + `see \`foresights doctor --only embed_backfill_stalled\` (manual drain: \`${outcome.command}\`)`;
       }
       const detail = outcome.reason === 'cooldown'
         ? 'cooldown'

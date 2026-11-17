@@ -1,5 +1,5 @@
 /**
- * #6696 C7: `matchesRepairPath`, the `--only` / `--skip` matcher of `gbrain repair file-drift`. A value with no `*` keeps
+ * #6696 C7: `matchesRepairPath`, the `--only` / `--skip` matcher of `foresights repair file-drift`. A value with no `*` keeps
  * exact-path semantics (the other repair kinds' `--only`); only a value with `*` is a glob.
  */
 import { describe, expect, test } from 'bun:test';

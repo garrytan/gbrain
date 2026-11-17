@@ -4,7 +4,7 @@
  * THE IDENTITY KEY IS (source_id, slug). A brain can mount many sources and
  * the same real-world entity routinely exists as a different page in each
  * (`wiki:people/alice` vs `team-brain:people/alice-chen`). Nothing else in
- * gbrain asserts "these pages are the same entity" — slugs are only unique
+ * foresights asserts "these pages are the same entity" — slugs are only unique
  * per source, and titles collide freely. The `entity_identities` table
  * (migration v137) records that assertion explicitly: member pages grouped
  * under an opaque `entity_id` handle, one optional canonical member per

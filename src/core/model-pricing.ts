@@ -52,7 +52,7 @@ export interface ModelPricing {
   /**
    * #4218 — USD per 1M prompt-cache-WRITE tokens at the default 5-minute
    * TTL (Anthropic: 1.25x input; the 1h TTL bills 2x and is NOT modeled —
-   * gbrain's gateway requests the default TTL unless config overrides it,
+   * foresights's gateway requests the default TTL unless config overrides it,
    * so 5m is the honest best-effort rate). Fall back to input rate when
    * absent (under-estimate for writes; documented, not silent).
    */
@@ -149,9 +149,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // ($0.25/MTok) instead of 0.1x — the only rate that changed.
   'anthropic:claude-fable-5-1':           anthro(10.00, 50.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-fable-5-1']),
   // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
-  // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
+  // per-token rate as 4.8 (released 2026-05-28) — closes foresights#1819.
   // Opus 5.5 (released 2026-09-22): $4 in / $20 out, cache writes 1.25x
-  // ($5). Fast mode ($8/$40) is not modeled. Closes gbrain#5359.
+  // ($5). Fast mode ($8/$40) is not modeled. Closes foresights#5359.
   'anthropic:claude-opus-5-5':            anthro( 4.00, 20.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-opus-5-5']),
   'anthropic:claude-opus-5':              anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-8':            anthro( 5.00, 25.00),
@@ -264,7 +264,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // Scoped to the three models this fork's OpenRouter fallback tier
   // actually routes through (model-fallback-probe.ts's FALLBACK map) —
   // add more entries here as needed rather than fetching the catalogue
-  // live; see PR discussion on gbrain#3848 for why a dynamic fetch/cache
+  // live; see PR discussion on foresights#3848 for why a dynamic fetch/cache
   // didn't merge (default-on network behavior, new pricing-source surface).
   //
   // deepseek/deepseek-v4-flash-0731 re-verified 2026-10-05 against the

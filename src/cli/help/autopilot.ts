@@ -1,13 +1,13 @@
-/** D3 curated help for `gbrain autopilot` (flags read by src/commands/autopilot.ts, autopilot-daemon.ts, autopilot-pause.ts, autopilot-retry-global.ts). */
+/** D3 curated help for `foresights autopilot` (flags read by src/commands/autopilot.ts, autopilot-daemon.ts, autopilot-pause.ts, autopilot-retry-global.ts). */
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
   summary: 'Self-maintaining brain daemon: lint, backlinks, sync, extract, embed and orphans on an interval.',
   usage: [
-    'gbrain autopilot [--repo <path>] [--interval <s>] [--json] [--no-worker] [--inline]',
-    'gbrain autopilot --install [--repo <path>] [--target macos|linux-systemd|ephemeral-container|linux-cron] [--force]',
-    'gbrain autopilot --uninstall | --status [--json] | pause [--reason <text>] | resume',
-    'gbrain autopilot --retry-global [--phase <name>] [--json]',
+    'foresights autopilot [--repo <path>] [--interval <s>] [--json] [--no-worker] [--inline]',
+    'foresights autopilot --install [--repo <path>] [--target macos|linux-systemd|ephemeral-container|linux-cron] [--force]',
+    'foresights autopilot --uninstall | --status [--json] | pause [--reason <text>] | resume',
+    'foresights autopilot --retry-global [--phase <name>] [--json]',
   ].join('\n'),
   flags: [
     { name: '--repo', type: 'string', desc: 'Brain repository to maintain (default: config sync.repo_path).' },
@@ -29,9 +29,9 @@ export const help: CliHelpSpec = {
     { name: '--phase', type: 'string', desc: 'With --retry-global: release only this phase.' },
   ],
   examples: [
-    'gbrain autopilot --status --json',
-    'gbrain autopilot --install --repo ~/brain',
-    'gbrain autopilot --repo ~/brain --interval 600 --json',
-    'gbrain autopilot pause --reason "migrating"',
+    'foresights autopilot --status --json',
+    'foresights autopilot --install --repo ~/brain',
+    'foresights autopilot --repo ~/brain --interval 600 --json',
+    'foresights autopilot pause --reason "migrating"',
   ],
 };

@@ -71,13 +71,13 @@ const STATUS_VERIFY = { argv: statusArgv() };
 const DOCTOR_VERIFY = { argv: ['gbrain', 'doctor', '--no-migrate', '--json'] };
 const planVerify = (s: GraduationCommandSpelling) => ({ argv: planArgv(s) });
 const NOTHING_CHANGED = 'Nothing has changed: the brain stays on PGLite and keeps working.';
-const MCP_RESTART = 'Some desktop agent apps stop relaunching a server that exited; restart the MCP client (or its gbrain server entry) after the fix.';
+const MCP_RESTART = 'Some desktop agent apps stop relaunching a server that exited; restart the MCP client (or its foresights server entry) after the fix.';
 
 /** `graduation_source_writer_held`: a serve or daemon holds the source and did not hand it over. */
 export function sourceWriterHeldError(opts: { owner: LockOwner | null; pid?: number; subcommand?: string; rerun: string[] }): OperationError {
   const holder = opts.owner
-    ? `a live \`gbrain serve\` (PID ${opts.owner.pid}, ${opts.owner.transport})`
-    : `a gbrain process (PID ${opts.pid ?? 'unknown'}${opts.subcommand ? `, \`gbrain ${opts.subcommand}\`` : ''})`;
+    ? `a live \`foresights serve\` (PID ${opts.owner.pid}, ${opts.owner.transport})`
+    : `a foresights process (PID ${opts.pid ?? 'unknown'}${opts.subcommand ? `, \`foresights ${opts.subcommand}\`` : ''})`;
   const why = `${holder} holds this PGLite brain's single-writer lock and did not hand it over within 30 seconds, so the move cannot fence the source.`;
   const rerun: Action = { argv: opts.rerun, consent: [], actor: 'agent', requires_exclusive: true, verify: STATUS_VERIFY,
     why: 'Re-runs the move once nothing else holds the brain.' };
@@ -96,31 +96,31 @@ export function unclassifiedTableError(opts: { relations: readonly string[]; sid
   const list = opts.relations.join(', ');
   const docs = GRADUATION_DOCS.graduation_unclassified_table;
   if (opts.cause === 'newer_schema') {
-    const why = `The ${opts.side} database has relations this gbrain does not know (${list}); it was created by a newer gbrain, and copying unknown tables could lose data.`;
-    return opError('graduation_unclassified_table', `The ${opts.side} has relations this gbrain version does not classify: ${list}.`,
-      'Ask the user to upgrade gbrain on this machine (fix), then preview the move again.',
+    const why = `The ${opts.side} database has relations this foresights does not know (${list}); it was created by a newer foresights, and copying unknown tables could lose data.`;
+    return opError('graduation_unclassified_table', `The ${opts.side} has relations this foresights version does not classify: ${list}.`,
+      'Ask the user to upgrade foresights on this machine (fix), then preview the move again.',
       { why, reason: 'newer_schema', docs,
         fix: { argv: ['gbrain', 'upgrade'], consent: [], actor: 'user', requires_exclusive: false, docs, verify: planVerify(opts.spelling ?? {}),
           why: `${why} Upgrading this binary gives it the newer inventory.`,
-          user_message: `The Postgres database was set up by a newer gbrain than this one. Can you upgrade gbrain here (gbrain upgrade)? Then I'll check the move again. ${NOTHING_CHANGED}` } });
+          user_message: `The Postgres database was set up by a newer foresights than this one. Can you upgrade foresights here (foresights upgrade)? Then I'll check the move again. ${NOTHING_CHANGED}` } });
   }
-  const why = `This gbrain's own migrations created relations its graduation inventory does not list (${list}). Moving without a classification for every table could drop data, so the move refuses; this is a gbrain bug.`;
+  const why = `This foresights's own migrations created relations its graduation inventory does not list (${list}). Moving without a classification for every table could drop data, so the move refuses; this is a foresights bug.`;
   return opError('graduation_unclassified_table', `The graduation inventory has no row for: ${list}.`,
-    'Report this to the gbrain maintainers with `gbrain doctor --json` output; nothing changed and the brain keeps working on PGLite.',
+    'Report this to the foresights maintainers with `foresights doctor --json` output; nothing changed and the brain keeps working on PGLite.',
     { why, reason: 'missing_inventory_row', docs,
       fix: { consent: [], actor: 'agent', requires_exclusive: false, docs, verify: planVerify(opts.spelling ?? {}),
-        why, user_message: `gbrain found a table it does not know how to move (${list}), which is a gbrain bug. Your brain stays on PGLite and keeps working; I can report it to the maintainers.` } });
+        why, user_message: `foresights found a table it does not know how to move (${list}), which is a foresights bug. Your brain stays on PGLite and keeps working; I can report it to the maintainers.` } });
 }
 
 /** `graduation_embedding_dimension_mismatch`: a pre-existing, non-empty target has a different embedding layout. */
 export function embeddingDimensionMismatchError(opts: { column: string; source: string; target: string; host: string; spelling?: GraduationCommandSpelling }): OperationError {
   const docs = GRADUATION_DOCS.graduation_embedding_dimension_mismatch;
-  const why = `${opts.column} is ${opts.source} on this brain but ${opts.target} in the existing database at ${opts.host}; vectors cannot be copied into a column of another size, and gbrain never drops a vector silently.`;
+  const why = `${opts.column} is ${opts.source} on this brain but ${opts.target} in the existing database at ${opts.host}; vectors cannot be copied into a column of another size, and foresights never drops a vector silently.`;
   return opError('graduation_embedding_dimension_mismatch', `The target's ${opts.column} (${opts.target}) does not match this brain (${opts.source}).`,
     'Ask the user for an empty database, or whether to preview wiping this one (fix); nothing changed.',
     { why, docs,
       fix: { argv: planArgv(opts.spelling ?? {}, ['--force']), consent: ['destructive'], actor: 'agent', requires_exclusive: false, docs, verify: planVerify(opts.spelling ?? {}),
-        why: `${why} An empty database always matches (gbrain sizes it from this brain). The --force preview lists exactly what a wipe of ${opts.host} deletes.`,
+        why: `${why} An empty database always matches (foresights sizes it from this brain). The --force preview lists exactly what a wipe of ${opts.host} deletes.`,
         user_message: `The Postgres database at ${opts.host} already holds embeddings of a different size than your brain's. Do you have an empty database I can use instead, or should I show you what wiping this one would delete? ${NOTHING_CHANGED}` } });
 }
 
@@ -171,7 +171,7 @@ export function foreignHostBindingError(opts: { sourceId: string; ownerHost: str
       { name: 'worktree_root', how: `The checkout of ${opts.sourceId} on this host.` },
       { name: 'epoch', how: 'The epoch the prepare step printed on the owner host.' },
       { name: 'manifest_sha256', how: 'The manifest sha256 the prepare step printed on the owner host.' },
-      { name: 'admin_state', how: `admin_state from \`gbrain sources writer status ${opts.sourceId} --json\` on this host.` },
+      { name: 'admin_state', how: `admin_state from \`foresights sources writer status ${opts.sourceId} --json\` on this host.` },
     ],
     consent: [], actor: 'user', requires_exclusive: false, verify: planVerify(opts.spelling ?? {}),
     why: 'Accepts the prepared transfer on this host; then preview the move again.',
@@ -180,7 +180,7 @@ export function foreignHostBindingError(opts: { sourceId: string; ownerHost: str
     'Ask the user to run the two-host transfer (fix on the owner host, fix.then here), then preview the move again.',
     { why, docs,
       fix: { argv: ['gbrain', 'sources', 'writer', 'transfer', 'prepare', opts.sourceId, '--admin-intent', 'writer_transfer_prepare', '--expected-state', '<admin_state>'],
-        inputs: [{ name: 'admin_state', how: `admin_state from \`gbrain sources writer status ${opts.sourceId} --json\` on host ${opts.ownerHost}.` }],
+        inputs: [{ name: 'admin_state', how: `admin_state from \`foresights sources writer status ${opts.sourceId} --json\` on host ${opts.ownerHost}.` }],
         consent: [], actor: 'user', requires_exclusive: false, docs, verify: { argv: ['gbrain', 'sources', 'status', opts.sourceId, '--json'] },
         why: `${why} Run this on host ${opts.ownerHost}.`,
         user_message: `Your source ${opts.sourceId} is owned by another computer (${opts.ownerHost}). Its ownership has to move to this computer before the brain can move to Postgres; that takes one command there and one here. ${NOTHING_CHANGED}`,
@@ -207,12 +207,12 @@ export function verifyFailedError(opts: { failures: readonly VerifyFailure[]; re
   const why = `Verification compares every carried table before the target may take over: ${VERIFY_WHY[kind]} (${where}). The target stays fenced and the PGLite brain stays authoritative and writable.`;
   if (opts.repeated) {
     return opError('graduation_verify_failed', `Verification failed again after a re-copy: ${first?.detail ?? kind}.`,
-      'Report this to the gbrain maintainers with the redacted bug bundle; the safe exit is a rollback to the source.',
-      { why: `${why} A re-copy did not fix it, so it is a gbrain bug, not a transient fault. \`gbrain migrate --rollback-to-source\` discards the target and keeps the PGLite brain.`,
+      'Report this to the foresights maintainers with the redacted bug bundle; the safe exit is a rollback to the source.',
+      { why: `${why} A re-copy did not fix it, so it is a foresights bug, not a transient fault. \`foresights migrate --rollback-to-source\` discards the target and keeps the PGLite brain.`,
         reason: kind, docs, detail: first?.detail,
         fix: { consent: [], actor: 'agent', requires_exclusive: false, docs, verify: STATUS_VERIFY,
           why: `${why} Report the table, first key and column (no row content) to the maintainers.`,
-          user_message: 'Moving your brain to Postgres stopped at the final check, twice. Your brain is still on PGLite and works normally. I can report this to the gbrain maintainers, and discard the half-built Postgres copy if you want.' } });
+          user_message: 'Moving your brain to Postgres stopped at the final check, twice. Your brain is still on PGLite and works normally. I can report this to the foresights maintainers, and discard the half-built Postgres copy if you want.' } });
   }
   return opError('graduation_verify_failed', `Verification failed: ${first?.detail ?? kind}.`,
     'Resume the move (fix): it re-copies the mismatched tables once and verifies again.',
@@ -224,9 +224,9 @@ export function verifyFailedError(opts: { failures: readonly VerifyFailure[]; re
 /** `graduation_interrupted`: a run stopped (crash, SIGINT, lock gap) before it finished. */
 export function interruptedError(opts: { runId: string; state: string; dataDir?: string }): OperationError {
   const docs = GRADUATION_DOCS.graduation_interrupted;
-  const why = `Graduation run ${opts.runId} stopped in state ${opts.state} and no process owns it now${opts.dataDir ? ` (brain ${opts.dataDir})` : ''}. Resume continues from the first incomplete step; \`gbrain migrate --rollback-to-source\` discards the target instead.`;
+  const why = `Graduation run ${opts.runId} stopped in state ${opts.state} and no process owns it now${opts.dataDir ? ` (brain ${opts.dataDir})` : ''}. Resume continues from the first incomplete step; \`foresights migrate --rollback-to-source\` discards the target instead.`;
   return opError('graduation_interrupted', `An engine graduation (run ${opts.runId}) was interrupted in state ${opts.state}.`,
-    'Resume it (fix); `gbrain migrate --status --json` shows where it stopped.',
+    'Resume it (fix); `foresights migrate --status --json` shows where it stopped.',
     { why, docs,
       fix: { argv: resumeArgv(), consent: [], actor: 'agent', requires_exclusive: true, docs, verify: STATUS_VERIFY, why } });
 }
@@ -237,22 +237,22 @@ export function inProgressError(opts: { runId?: string; state?: string; pid?: nu
   const who = opts.pid !== undefined ? ` (PID ${opts.pid})` : '';
   const why = `This brain${opts.dataDir ? ` (${opts.dataDir})` : ''} is being moved to Postgres by another process${who}${opts.state ? `, now ${opts.state}` : ''}. While it runs, neither engine may be opened by anything else.`;
   return opError('graduation_in_progress', `An engine graduation${opts.runId ? ` (run ${opts.runId})` : ''} is in progress${who}.`,
-    'Wait for the move to finish, then retry; `gbrain migrate --status --json` shows its progress.',
+    'Wait for the move to finish, then retry; `foresights migrate --status --json` shows its progress.',
     { why, docs,
       fix: { argv: statusArgv(), consent: [], actor: 'provider', requires_exclusive: false, docs, verify: STATUS_VERIFY,
         why: `${why} Poll the status until the run ends, then retry the same request. ${MCP_RESTART}`,
-        user_message: 'gbrain is moving your brain to Postgres right now; memory is back as soon as the move finishes.' } });
+        user_message: 'foresights is moving your brain to Postgres right now; memory is back as soon as the move finishes.' } });
 }
 
 /** `graduation_split_brain`: a stray brain appeared at the old path. */
 export function splitBrainError(opts: { sourcePath: string; strayPath: string; strayRows?: number; retainedPath?: string }): OperationError {
   const docs = GRADUATION_DOCS.graduation_split_brain;
-  const why = `A different brain appeared at ${opts.strayPath} (where the graduated brain used to be${opts.strayRows !== undefined ? `; ${opts.strayRows} rows` : ''}), probably created by an older gbrain after a crash. The target is withheld from authority until the user decides what happens to it.`;
+  const why = `A different brain appeared at ${opts.strayPath} (where the graduated brain used to be${opts.strayRows !== undefined ? `; ${opts.strayRows} rows` : ''}), probably created by an older foresights after a crash. The target is withheld from authority until the user decides what happens to it.`;
   return opError('graduation_split_brain', `A stray brain exists at ${opts.strayPath} next to graduation's retained copy${opts.retainedPath ? ` ${opts.retainedPath}` : ''}.`,
-    'Ask the user which copy to keep (fix); `gbrain migrate --status --json` lists both paths with row counts and newest writes.',
+    'Ask the user which copy to keep (fix); `foresights migrate --status --json` lists both paths with row counts and newest writes.',
     { why, docs,
       fix: { argv: resumeArgv(['--yes']), consent: ['destructive'], actor: 'agent', requires_exclusive: true, docs, verify: STATUS_VERIFY,
-        why: `${why} After the user agrees, \`--resume --yes\` moves the stray brain to \`<path>.stray-<run_id>\` (nothing is deleted) and finishes the move to Postgres; the alternative is to move the stray brain aside yourself and run \`gbrain migrate --rollback-to-source\`.`,
+        why: `${why} After the user agrees, \`--resume --yes\` moves the stray brain to \`<path>.stray-<run_id>\` (nothing is deleted) and finishes the move to Postgres; the alternative is to move the stray brain aside yourself and run \`foresights migrate --rollback-to-source\`.`,
         user_message: `While moving your brain to Postgres, a second brain showed up at ${opts.strayPath}. Should I finish the move to Postgres (the stray brain is moved aside, not deleted, for you to inspect), or go back to the original PGLite brain? Nothing is deleted either way.` } });
 }
 
@@ -273,7 +273,7 @@ export function rollbackWritesLostError(opts: { losses: readonly { relation: str
   return opError('graduation_rollback_writes_lost', `Rollback would drop target-side writes: ${listed}.`,
     'Ask the user whether those changes may be dropped (fix); the Postgres brain stays authoritative until they agree.',
     { why, reason: 'user_data', docs,
-      fix: { argv: rollbackArgv(['--yes', '--expect', opts.planHash ?? '<plan_hash>']), ...(opts.planHash ? {} : { inputs: [{ name: 'plan_hash', how: 'plan_hash from `gbrain migrate --status --json`.' }] }),
+      fix: { argv: rollbackArgv(['--yes', '--expect', opts.planHash ?? '<plan_hash>']), ...(opts.planHash ? {} : { inputs: [{ name: 'plan_hash', how: 'plan_hash from `foresights migrate --status --json`.' }] }),
         consent: ['destructive'], actor: 'agent', requires_exclusive: true, docs, verify: STATUS_VERIFY, ...(opts.planHash ? { plan_hash: opts.planHash } : {}), why,
         user_message: `Going back to PGLite would lose what changed on Postgres since the move: ${listed}. Should I go back anyway? If not, nothing changes and Postgres stays in use.` } });
 }
@@ -305,13 +305,13 @@ export function targetAuthFailedError(opts: { host: string; urlEnv?: string }): 
 /** `graduation_target_ddl_unreachable`: the direct/DDL route does not reach the same database. */
 export function targetDdlUnreachableError(opts: { host: string; ddlHost: string; spelling?: GraduationCommandSpelling }): OperationError {
   const docs = GRADUATION_DOCS.graduation_target_ddl_unreachable;
-  const why = `gbrain reaches ${opts.host} but not its direct (schema) connection ${opts.ddlHost}, or the two do not name the same database. Supabase's derived direct host is IPv6-only; its session pooler works from IPv4 networks.`;
+  const why = `foresights reaches ${opts.host} but not its direct (schema) connection ${opts.ddlHost}, or the two do not name the same database. Supabase's derived direct host is IPv6-only; its session pooler works from IPv4 networks.`;
   return opError('graduation_target_ddl_unreachable', `The direct database connection ${opts.ddlHost} for ${opts.host} is unreachable or names another database.`,
     'Ask the user for the session pooler URL, set GBRAIN_DIRECT_DATABASE_URL to it, then preview again (fix).',
     { why, docs,
       fix: { argv: planArgv(opts.spelling ?? {}), consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs, verify: planVerify(opts.spelling ?? {}),
         why: `${why} Set GBRAIN_DIRECT_DATABASE_URL to the session pooler URL (port 5432) before re-running the plan.`,
-        user_message: `gbrain can reach your Postgres database but not the direct connection it needs to set up tables (common on Supabase over IPv4). Can you copy the "session pooler" connection string from the database's connect settings? ${NOTHING_CHANGED}` } });
+        user_message: `foresights can reach your Postgres database but not the direct connection it needs to set up tables (common on Supabase over IPv4). Can you copy the "session pooler" connection string from the database's connect settings? ${NOTHING_CHANGED}` } });
 }
 
 const REQUIREMENT_FIX: Readonly<Record<string, string>> = {
@@ -332,18 +332,18 @@ export function targetUnsupportedError(opts: { requirement: keyof typeof REQUIRE
     'Ask the user to provide the prerequisite or another database, then preview again (fix).',
     { why, reason: opts.requirement, docs,
       fix: { argv: planArgv(opts.spelling ?? {}), consent: ['egress'], actor: 'agent', requires_exclusive: false, docs, verify: planVerify(opts.spelling ?? {}), why,
-        user_message: `The Postgres database at ${opts.host} is missing something gbrain needs: ${need}. Can you set that up, or give me a different database? ${NOTHING_CHANGED}` } });
+        user_message: `The Postgres database at ${opts.host} is missing something foresights needs: ${need}. Can you set that up, or give me a different database? ${NOTHING_CHANGED}` } });
 }
 
 /** `graduation_unsupported_platform`: Windows, brain with history. */
 export function unsupportedPlatformError(opts: { platform: string }): OperationError {
   const docs = GRADUATION_DOCS.graduation_unsupported_platform;
-  const why = `Graduating a brain with write history is not available on ${opts.platform} yet: its tombstone and crash protections are tested on macOS and Linux only. The brain stays on PGLite; \`gbrain mcp expose\` shares it with agents on other machines without moving it.`;
+  const why = `Graduating a brain with write history is not available on ${opts.platform} yet: its tombstone and crash protections are tested on macOS and Linux only. The brain stays on PGLite; \`foresights mcp expose\` shares it with agents on other machines without moving it.`;
   return opError('graduation_unsupported_platform', `Moving a brain with write history to Postgres is not available on ${opts.platform}.`,
     'Ask the user whether to share the PGLite brain over MCP instead (fix); nothing changed.',
     { why, docs,
       fix: { argv: ['gbrain', 'mcp', 'expose'], consent: ['persistent_install', 'egress'], actor: 'agent', requires_exclusive: false, docs, verify: DOCTOR_VERIFY, why,
-        user_message: 'Moving this brain to Postgres is not available on Windows yet. Should I share it with your other machines over MCP instead (gbrain mcp expose)? It stays on this computer.' } });
+        user_message: 'Moving this brain to Postgres is not available on Windows yet. Should I share it with your other machines over MCP instead (foresights mcp expose)? It stays on this computer.' } });
 }
 
 /**
@@ -355,7 +355,7 @@ export function engineGraduatedError(opts: { tombstone: Pick<Tombstone, 'targetD
   const docs = GRADUATION_DOCS.engine_graduated;
   const where = opts.tombstone?.targetDisplayUrl ?? 'Postgres';
   const mcp = opts.transport === 'stdio' || opts.transport === 'http';
-  const why = `This brain moved to ${where}; ${opts.dataDir} is a tombstone${opts.tombstone ? ` and the retained PGLite copy is ${opts.tombstone.movedTo}` : ''}. gbrain never opens or recreates a brain there.`;
+  const why = `This brain moved to ${where}; ${opts.dataDir} is a tombstone${opts.tombstone ? ` and the retained PGLite copy is ${opts.tombstone.movedTo}` : ''}. foresights never opens or recreates a brain there.`;
   if (opts.graduatingHost) {
     return opError('engine_graduated', `This brain moved to ${where}; ${opts.dataDir} is no longer a brain.`,
       'Finish the move on this host (fix): it completes the routing flip and the registry rewrites.',
@@ -363,7 +363,7 @@ export function engineGraduatedError(opts: { tombstone: Pick<Tombstone, 'targetD
         fix: { argv: resumeArgv(), consent: [], actor: 'agent', requires_exclusive: false, docs, verify: DOCTOR_VERIFY,
           why: `${why} The graduation manifest on this host is past cutover; resuming finishes pointing the config and mounts at Postgres.${mcp ? ` ${MCP_RESTART}` : ''}` } });
   }
-  const restart = mcp ? ` Then restart this MCP server in your agent app (or rewire it with \`gbrain bootstrap harness --harness all\`). ${MCP_RESTART}` : '';
+  const restart = mcp ? ` Then restart this MCP server in your agent app (or rewire it with \`foresights bootstrap harness --harness all\`). ${MCP_RESTART}` : '';
   return opError('engine_graduated', `This brain moved to ${where}; ${opts.dataDir} is no longer a brain.`,
     'Ask the user to point this config at the Postgres brain (fix); one command, then retry.',
     { why, docs,
@@ -371,5 +371,5 @@ export function engineGraduatedError(opts: { tombstone: Pick<Tombstone, 'targetD
         inputs: [{ name: 'target_url', how: `The connection string of ${where}; the graduating host's config.json holds it. Pass it from the environment (e.g. "$GBRAIN_TARGET_URL"), never typed into a shared log.` }],
         consent: [], actor: 'user', requires_exclusive: false, docs, verify: DOCTOR_VERIFY,
         why: `${why} Pointing this config's database_url at the target is the whole fix; existing tokens and OAuth clients stay valid.${restart}`,
-        user_message: `Your gbrain brain moved to Postgres (${where}), but this ${mcp ? 'agent app' : 'machine'} still points at the old local copy. Can you run \`gbrain config set database_url "$GBRAIN_TARGET_URL"\` with the Postgres connection string${mcp ? ', then restart the app\'s gbrain server' : ''}?` } });
+        user_message: `Your foresights brain moved to Postgres (${where}), but this ${mcp ? 'agent app' : 'machine'} still points at the old local copy. Can you run \`foresights config set database_url "$GBRAIN_TARGET_URL"\` with the Postgres connection string${mcp ? ', then restart the app\'s foresights server' : ''}?` } });
 }

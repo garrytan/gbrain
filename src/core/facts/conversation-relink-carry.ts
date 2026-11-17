@@ -1,7 +1,7 @@
 /**
  * #6764: how a free conversation relink survives re-extraction.
  *
- * `gbrain facts relink --conversation` links a derived conversation row in
+ * `foresights facts relink --conversation` links a derived conversation row in
  * place (entity_slug set, `entity relinked from <tier>` appended to its
  * context; the row stays the page's derived row, so it has no fence to lose
  * and fence projection never touches it). A replacement of the page's batch

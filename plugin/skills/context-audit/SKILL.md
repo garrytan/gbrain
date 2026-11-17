@@ -10,7 +10,7 @@ description: |
   sorted by token savings with a risk class per finding. REPORT-ONLY: this
   skill never edits any audited file. Recommendations for bootstrap-rendered
   files target the interview answer bank / templates, never the rendered
-  output. Judging routes through `gbrain eval cross-modal` (single cheap
+  output. Judging routes through `foresights eval cross-modal` (single cheap
   model by default; full multi-model panel is explicit opt-in).
 triggers:
   - "context audit"
@@ -34,7 +34,7 @@ when_to_use: "Use when the user asks: \"context audit\", \"context diet\", \"sys
 
 > **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md)
 > — before running a fresh audit, check the brain for prior audit reports
-> (`gbrain recall "context audit report"`) so you can compute token DRIFT since
+> (`foresights recall "context audit report"`) so you can compute token DRIFT since
 > the last run and avoid re-flagging findings the user already declined.
 >
 > **Convention:** see [conventions/quality.md](../conventions/quality.md) —
@@ -79,8 +79,8 @@ This skill guarantees:
   recommendation list the user applies deliberately.
 - **Rendered-file safety.** Any recommendation touching a bootstrap-rendered
   file is expressed as an answer-bank or template change
-  (`gbrain bootstrap interview --set KEY "..."` then
-  `gbrain bootstrap render --only <FILE> --force`), never as a direct edit.
+  (`foresights bootstrap interview --set KEY "..."` then
+  `foresights bootstrap render --only <FILE> --force`), never as a direct edit.
   See [skills/soul-audit/SKILL.md](../soul-audit/SKILL.md) for the mechanics.
 - **Estimated with a stated basis, never invented.** Token figures come from
   the deterministic pre-pass (`wc -c` bytes/2.8 — Claude-family tokenizers
@@ -91,7 +91,7 @@ This skill guarantees:
   context breakdown (e.g. Claude Code `/context`), that figure outranks the
   estimate — quote it and use it for the stack total.
 - **Native judging.** The draft report is quality-gated through
-  `gbrain eval cross-modal` — no raw model API calls, no hardcoded model IDs.
+  `foresights eval cross-modal` — no raw model API calls, no hardcoded model IDs.
 - **Cost line.** Default judging is ONE cheap model (the user's utility-tier
   model, all three slots, `--cycles 1` — a few cents). The full
   three-provider frontier panel runs only when the user explicitly asks for
@@ -142,10 +142,10 @@ Write the draft report to a temp file, then gate it:
 
 ```bash
 # Resolve the cheap judge from the user's model tiers — never hardcode an ID.
-# (`gbrain models` shows all resolved tiers if the config key is unset.)
-JUDGE=$(gbrain config get models.tier.utility)
+# (`foresights models` shows all resolved tiers if the config key is unset.)
+JUDGE=$(foresights config get models.tier.utility)
 
-gbrain eval cross-modal \
+foresights eval cross-modal \
   --task "Context-stack token-hygiene audit: every finding cites file + quoted evidence; savings are estimated (bytes/2.8, divisor stated in the report), never invented; findings ranked by token savings; every rendered-file recommendation targets the interview answer bank or template, never a direct edit; risk class on every row" \
   --output /tmp/context-audit-draft.md \
   --slug context-audit-report \
@@ -202,9 +202,9 @@ belongs: source file, answer bank/template, memory store, or a new skill.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain eval cross-modal` exits 1 (FAIL): fix the flagged weaknesses and re-run; do not deliver a failed audit as passing.
+- `foresights eval cross-modal` exits 1 (FAIL): fix the flagged weaknesses and re-run; do not deliver a failed audit as passing.
 - No judge model or provider key is configured: say the audit ran structure-only and name the missing key; do not fabricate scores.
 - A paid multi-model audit hits `no_pricing` or a cost cap: fall back to the default single cheap judge and tell the user why.
 
@@ -215,10 +215,10 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   rendered-file guard and are out of contract.
 - **Recommending a direct edit to a rendered file.** SOUL.md / USER.md /
   ACCESS_POLICY.md / HEARTBEAT.md edits are overwritten by the next
-  `gbrain bootstrap render`. Target the answer bank or template, then
+  `foresights bootstrap render`. Target the answer bank or template, then
   re-render.
 - **Raw model API calls for judging.** The eval runner owns provider config,
-  receipts, and verdict aggregation — route through `gbrain eval cross-modal`.
+  receipts, and verdict aggregation — route through `foresights eval cross-modal`.
 - **Hardcoding model IDs.** Resolve the judge from the user's model tiers;
   model names in a skill body rot.
 - **Running the full multi-model panel by default.** It is an explicit opt-in;

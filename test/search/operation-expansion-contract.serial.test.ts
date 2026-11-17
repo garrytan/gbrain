@@ -130,7 +130,7 @@ describe('query expansion follows the search mode', () => {
   }
 });
 
-describe('per-brain switch: `gbrain config set search.expansion true|false`', () => {
+describe('per-brain switch: `foresights config set search.expansion true|false`', () => {
   async function runQueryCli(argv: string[], probe: ReturnType<typeof spyHybrid>): Promise<number> {
     const before = probe.expanderCalls.length;
     await operationsByName.query.handler(makeCtx({}), parseOpArgs(operationsByName.query, argv));

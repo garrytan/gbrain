@@ -71,8 +71,8 @@ const FLAGGED: Array<[string, string]> = [
 ];
 
 const ALLOWED = [
-  'gbrain git commit-push -m "x" -- people/alice-example.md',
-  'gbrain git commit-push --push-only',
+  'foresights git commit-push -m "x" -- people/alice-example.md',
+  'foresights git commit-push --push-only',
   'scripts/brain-commit-push.sh --pull',
   'git stash store -m "rescued" "$(cat "$f")"',
   'git stash list',
@@ -172,7 +172,7 @@ describe('check-shared-tree-git.sh', () => {
     for (const rel of scanned) expect(r.stderr).toContain(`FAIL: ${rel}:1 stash `);
   });
 
-  it('exempts generated error codes, contributor docs about the gbrain repo and historical records', () => {
+  it('exempts generated error codes, contributor docs about the foresights repo and historical records', () => {
     for (const rel of ['docs/guides/error-codes.md', 'docs/RELEASING.md', 'docs/TESTING.md', 'docs/contributing/v.md',
       'docs/designs/d.md', 'docs/plans/p.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'TODOS.md', 'test/x.md', 'src/x.md']) {
       write(rel, 'Run `git push --force` now.\n');
@@ -184,8 +184,8 @@ describe('check-shared-tree-git.sh', () => {
 
   it('requires the Multi-agent rules block to be identical in every agent doc', () => {
     const block = (body: string) => `# Doc\n\n<!-- BEGIN multi-agent-rules -->\n${body}\n<!-- END multi-agent-rules -->\n`;
-    write('AGENTS.md', block('Use `gbrain git commit-push`.'));
-    write('INSTALL_FOR_AGENTS.md', block('Use `gbrain git commit-push`.'));
+    write('AGENTS.md', block('Use `foresights git commit-push`.'));
+    write('INSTALL_FOR_AGENTS.md', block('Use `foresights git commit-push`.'));
     expect(run().status).toBe(0);
     write('BOOTSTRAP_FOR_AGENTS.md', block('Use the helper.'));
     let r = run();

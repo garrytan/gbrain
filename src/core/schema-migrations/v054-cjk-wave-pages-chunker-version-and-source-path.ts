@@ -9,7 +9,7 @@ export const v054: Migration = {
   // path (CJK files where path → slug is non-derivable).
   //
   //   chunker_version: bumped to 2 in this release. New imports populate
-  //     it; existing rows inherit DEFAULT 1. `gbrain reindex --markdown`
+  //     it; existing rows inherit DEFAULT 1. `foresights reindex --markdown`
   //     walks `WHERE chunker_version < 2 AND page_kind = 'markdown'`
   //     and re-imports each, bumping the column.
   //

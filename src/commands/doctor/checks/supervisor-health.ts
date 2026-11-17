@@ -57,7 +57,7 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-    // Shared classifier — same code path runs in `gbrain jobs supervisor
+    // Shared classifier — same code path runs in `foresights jobs supervisor
     // status` (src/commands/jobs.ts). Counts only events whose `likely_cause`
     // is NOT in the clean denylist (clean_exit, graceful_shutdown). Pre-v0.34
     // entries lacking `likely_cause` fall back to `code !== 0`. Supersedes
@@ -80,7 +80,7 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
         checks.push({
           name: 'supervisor',
           status: 'fail',
-          message: `Supervisor gave up at ${maxCrashesEvent.ts} (max_crashes_exceeded). Restart with: gbrain jobs supervisor start --detach`,
+          message: `Supervisor gave up at ${maxCrashesEvent.ts} (max_crashes_exceeded). Restart with: foresights jobs supervisor start --detach`,
         });
       } else if (!running && dbLockCheckSkippedUnderFast && events.length > 0) {
         // #4518: pidfile check found nothing at the HOME-derived default
@@ -91,13 +91,13 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `Not found at the default pidfile path (last_start=${lastStart ?? 'unknown'}) — inconclusive under --fast (DB-lock fallback needs a connection). Run \`gbrain doctor\` without --fast to verify a per-queue --pid-file supervisor.`,
+          message: `Not found at the default pidfile path (last_start=${lastStart ?? 'unknown'}) — inconclusive under --fast (DB-lock fallback needs a connection). Run \`foresights doctor\` without --fast to verify a per-queue --pid-file supervisor.`,
         });
       } else if (!running && events.length > 0) {
         checks.push({
           name: 'supervisor',
           status: 'warn',
-          message: `Supervisor not running (last_start=${lastStart ?? 'unknown'}). Restart with: gbrain jobs supervisor start --detach`,
+          message: `Supervisor not running (last_start=${lastStart ?? 'unknown'}). Restart with: foresights jobs supervisor start --detach`,
         });
       } else if (crashes24h >= 1) {
         // Threshold dropped from `>3` (pre-fix, inflated by clean exits being
@@ -185,7 +185,7 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
             `Queue '${queue}' singleton lock is held by ${lock!.holder_host}:${lock!.holder_pid}, and the local pidfile names the same pid ` +
             `${localPid} on this machine, whose hostname is now ${localHost}. Either this machine's hostname changed since the supervisor ` +
             `started (a restart records the new label and clears this), or a supervisor on another machine holds this queue. ` +
-            `Check with gbrain jobs supervisor status; stop the extra one only if there are two: gbrain jobs supervisor stop (effective cap here: ${rssStr}).`,
+            `Check with foresights jobs supervisor status; stop the extra one only if there are two: foresights jobs supervisor stop (effective cap here: ${rssStr}).`,
           details: { queue, lock_holder: `${lock!.holder_host}:${lock!.holder_pid}`, local: `${localHost}:${localPid}`, same_pid_host_label_differs: true,
             effective_max_rss_mb: effectiveMaxRss },
         });
@@ -197,7 +197,7 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
             `Queue '${queue}' singleton lock is held by ${lock!.holder_host}:${lock!.holder_pid}, ` +
             `but the local pidfile points to ${localHost}:${localPid ?? 'none'}. A second supervisor may be ` +
             `running with a different --max-rss (effective cap here: ${rssStr}). Stop the extra one ` +
-            `and keep a single supervisor per queue: gbrain jobs supervisor stop.`,
+            `and keep a single supervisor per queue: foresights jobs supervisor stop.`,
           details: { queue, lock_holder: `${lock!.holder_host}:${lock!.holder_pid}`, local: `${localHost}:${localPid ?? 'none'}`, effective_max_rss_mb: effectiveMaxRss },
         });
       } else if (verdict === 'single') {

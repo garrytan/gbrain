@@ -4,7 +4,7 @@
  * `unknown` (written before trust tiers, so they have no provenance), and
  * while a claim's lift has not finished. The fix is `fix.next:
  * tell_user_to_run`: relay what claiming means; only the owner can claim, at a terminal
- * (`gbrain trust claim-sources`, trust/claim.ts). A fresh or empty brain, or a
+ * (`foresights trust claim-sources`, trust/claim.ts). A fresh or empty brain, or a
  * brain before the trust migration, is ok. #6533: once claims finished, it also
  * warns while claim-lifted rows rank above their own signals (legacy
  * extract_atoms atoms, #9284 legacy Life Chronicle events) and names the
@@ -40,7 +40,7 @@ async function runTrustSourcesUnclaimed(ctx: DoctorContext): Promise<Check[]> {
       const ended = relower.sources.filter(id => !owned.find(s => s.id === id)?.claimed);
       const named = ended.length ? relower.sources.flatMap(id => ['--source', id]) : [];
       checks.push({ name: 'trust_sources_unclaimed', status: 'warn', details: { ...details, relower: { rows: relower.rows, sources: relower.sources, sample: relower.sample.slice(0, 5) } },
-        message: `${relower.rows} row(s) a claim lifted to "your notes" say they were written by an agent (atoms extracted, or Life Chronicle events, from before gbrain recorded that). `
+        message: `${relower.rows} row(s) a claim lifted to "your notes" say they were written by an agent (atoms extracted, or Life Chronicle events, from before foresights recorded that). `
           + `Preview with ${[...TRUST_RELOWER_COMMAND, '--dry-run', ...named].join(' ')}, then run ${[...TRUST_RELOWER_COMMAND, ...named].join(' ')}; it only lowers.`,
         fix: { argv: [...TRUST_RELOWER_COMMAND, ...named], consent: [], actor: 'agent', requires_exclusive: false, verify: VERIFY,
           preview_argv: [...TRUST_RELOWER_COMMAND, '--dry-run', '--json', ...named],
@@ -50,7 +50,7 @@ async function runTrustSourcesUnclaimed(ctx: DoctorContext): Promise<Check[]> {
     } else {
       checks.push({ name: 'trust_sources_unclaimed', status: 'warn', details,
         message: `${rows} row(s) from before trust tiers in ${unclaimed.length} unclaimed source(s) (${unclaimed.map(s => s.id).join(', ')}) read as "unverified origin", so remote MCP readers see them quoted as source material. `
-          + 'Tell the user: if these are their own notes, they run gbrain trust claim-sources in a terminal on the brain host (gbrain trust claim-sources --dry-run --json previews it).',
+          + 'Tell the user: if these are their own notes, they run foresights trust claim-sources in a terminal on the brain host (foresights trust claim-sources --dry-run --json previews it).',
         fix: claimSourcesFix('trust_sources_unclaimed') });
     }
   } catch (err) {

@@ -1,5 +1,5 @@
 /**
- * `gbrain bootstrap status` — phase detection, the install log, and the
+ * `foresights bootstrap status` — phase detection, the install log, and the
  * support blob (agent-bootstrap plan: D5, B1, B5, C1 skew check).
  *
  * [D5] THE phase list is defined ONCE, here, in TS. `bootstrap status --json`
@@ -14,7 +14,7 @@
  * crashed run writes artifacts without a log line and the status command is
  * exactly the resume entrypoint for that case.
  *
- * [B1] `<gbrain home>/bootstrap/install.jsonl` — one appended line per
+ * [B1] `<foresights home>/bootstrap/install.jsonl` — one appended line per
  * dispatcher subcommand invocation ({ts, phase, outcome, duration_ms,
  * binary_version, harness?, workspace}). Append-only, never throws.
  *
@@ -168,7 +168,7 @@ export function probeOriginVisibility(origin: string): OriginVisibility {
 }
 
 /** True when either hook carrier — the gitignored `settings.local.json` OR
- * the committed `.claude/settings.json` [D12] — carries a gbrain marker. */
+ * the committed `.claude/settings.json` [D12] — carries a foresights marker. */
 export function hooksInstalled(ws: string): boolean {
   try {
     const probe = (relpath: string): boolean => {
@@ -202,16 +202,16 @@ export const PHASES: PhaseSpec[] = [
   },
   {
     id: 'engine',
-    title: 'Local brain engine (gbrain init)',
-    resume_hint: 'gbrain init --pglite',
+    title: 'Local brain engine (foresights init)',
+    resume_hint: 'foresights init --pglite',
     detect: (_ws, ctx) =>
-      ctx.configPresent ? { state: 'done' } : { state: 'pending', detail: 'no gbrain config — engine not initialized' },
+      ctx.configPresent ? { state: 'done' } : { state: 'pending', detail: 'no foresights config — engine not initialized' },
   },
   {
     id: 'interview',
     title: 'Identity interview (confirmed read-back)',
     resume_hint:
-      'gbrain bootstrap interview --init, then --set each answer, then --confirm <hash>. ' +
+      'foresights bootstrap interview --init, then --set each answer, then --confirm <hash>. ' +
       'Claude Code and opencode: also record the MCP scope consent (--set MCP_SCOPE <project|user>) BEFORE --confirm',
     detect: (ws) => {
       const exists = existsSync(interviewStatePath(ws));
@@ -228,7 +228,7 @@ export const PHASES: PhaseSpec[] = [
   {
     id: 'render',
     title: 'Render identity files',
-    resume_hint: 'gbrain bootstrap render',
+    resume_hint: 'foresights bootstrap render',
     detect: (ws, ctx) => {
       if (ctx.manifest.state === 'initialized') return { state: 'done' };
       if (ctx.manifest.state === 'template') {
@@ -245,7 +245,7 @@ export const PHASES: PhaseSpec[] = [
   {
     id: 'skills',
     title: 'Skill scaffold',
-    resume_hint: 'gbrain skillpack scaffold --all',
+    resume_hint: 'foresights skillpack scaffold --all',
     detect: (ws, ctx) => {
       const dir = join(ws, 'skills');
       if (existsSync(dir)) {
@@ -268,11 +268,11 @@ export const PHASES: PhaseSpec[] = [
     // outside the harness being wired). Advisory prose; the grep pins in
     // scripts/check-bootstrap-templates.sh §(e) are the enforcement.
     resume_hint:
-      'gbrain bootstrap hooks --harness <claude-code|codex|opencode> — MCP scope consent applies on ' +
+      'foresights bootstrap hooks --harness <claude-code|codex|opencode> — MCP scope consent applies on ' +
       'Claude Code and opencode (recorded during the interview, pre-confirm; opencode defaults to ' +
       'user-global — the sharing-safe choice, since it spawns project-config servers with no trust gate); ' +
       'Codex registrations are always user-global (no scope flag); a project-scoped .codex/config.toml server ' +
-      'you manage yourself is adopted, never rewritten: `gbrain bootstrap hooks --adopt --harness codex` after a passing verify',
+      'you manage yourself is adopted, never rewritten: `foresights bootstrap hooks --adopt --harness codex` after a passing verify',
     detect: (ws, ctx) => {
       const regs = ctx.receipt?.registrations ?? [];
       if (regs.length > 0) {
@@ -288,7 +288,7 @@ export const PHASES: PhaseSpec[] = [
         return {
           state: 'partial',
           detail: 'hooks installed but MCP not registered (the harness CLI was not on PATH) — ' +
-            're-run `gbrain bootstrap hooks --harness <claude-code|codex>` once it is',
+            're-run `foresights bootstrap hooks --harness <claude-code|codex>` once it is',
         };
       }
       if (hooksInstalled(ws)) return { state: 'done', detail: 'hooks present in .claude/settings.local.json' };
@@ -301,13 +301,13 @@ export const PHASES: PhaseSpec[] = [
         return { state: 'done', detail: `codex (project, adopted ${adopted.connection.adopted_at}): ${CODEX_PROJECT_CONFIG} mcp_servers.${adopted.connection.name}` };
       }
       if (adopted.state === 'drifted') {
-        return { state: 'partial', detail: `codex (project) adopted connection drifted — ${adopted.why}; re-run \`gbrain bootstrap verify\` then \`gbrain bootstrap hooks --adopt --harness codex\`` };
+        return { state: 'partial', detail: `codex (project) adopted connection drifted — ${adopted.why}; re-run \`foresights bootstrap verify\` then \`foresights bootstrap hooks --adopt --harness codex\`` };
       }
       if (adopted.state === 'detected') {
         return {
           state: 'partial',
           detail: `codex (project) detected, not verified: ${CODEX_PROJECT_CONFIG} defines mcp_servers.${adopted.detected.name} (${adopted.detected.transport}) — ` +
-            'run `gbrain bootstrap verify`, then `gbrain bootstrap hooks --adopt --harness codex` to adopt it (no user-global `codex mcp add` needed)',
+            'run `foresights bootstrap verify`, then `foresights bootstrap hooks --adopt --harness codex` to adopt it (no user-global `codex mcp add` needed)',
         };
       }
       return { state: 'pending' };
@@ -316,19 +316,19 @@ export const PHASES: PhaseSpec[] = [
   {
     id: 'repo',
     title: 'Private GitHub repo (durable body)',
-    resume_hint: 'gbrain bootstrap repo (or stay local-only; re-run any time)',
+    resume_hint: 'foresights bootstrap repo (or stay local-only; re-run any time)',
     detect: (ws, ctx) => {
       const repoUrl = (ctx.receipt as (InstallReceipt & { repo_url?: string }) | null)?.repo_url;
       if (repoUrl) return { state: 'done', detail: repoUrl };
       const origin = gitOriginUrl(ws);
-      if (origin) return { state: 'partial', detail: `origin exists (${origin}) but not yet pushed — run \`gbrain bootstrap repo\` (adopts an empty repo you created), or \`gbrain bootstrap attach\` for an existing agent clone` };
+      if (origin) return { state: 'partial', detail: `origin exists (${origin}) but not yet pushed — run \`foresights bootstrap repo\` (adopts an empty repo you created), or \`foresights bootstrap attach\` for an existing agent clone` };
       return { state: 'pending' };
     },
   },
   {
     id: 'verify',
     title: 'End-to-end verify',
-    resume_hint: 'gbrain bootstrap verify',
+    resume_hint: 'foresights bootstrap verify',
     detect: (_ws, ctx) => {
       if (!ctx.lastVerify) return { state: 'pending' };
       if (ctx.lastVerify.ok) return { state: 'done', detail: `last verify ${ctx.lastVerify.ts}` };

@@ -1,5 +1,5 @@
 /**
- * REAL-binary door test — the gbrain CODEX PLUGIN. Drives the actual `codex`
+ * REAL-binary door test — the foresights CODEX PLUGIN. Drives the actual `codex`
  * binary's plugin/marketplace subcommands against the committed plugin
  * artifacts (manifests + curated plugin/ tree + launcher):
  *
@@ -9,17 +9,17 @@
  *      `codex plugin add gbrain@gbrain`. Asserts: enable entry in the hermetic
  *      config.toml, snapshot carries the curated skills + non-root mcp.json +
  *      an EXECUTABLE launcher, dual-marketplace resolution yields exactly one
- *      gbrain plugin, add-twice idempotency, the deterministic tools/list
+ *      foresights plugin, add-twice idempotency, the deterministic tools/list
  *      surface oracle (== the plugin surface, via the snapshot launcher),
- *      the cold-home fast-fail ("No brain configured. Run: gbrain init"),
+ *      the cold-home fast-fail ("No brain configured. Run: foresights init"),
  *      the --source-guard write gate (blocked without GBRAIN_SOURCE on a
  *      multi-source brain, allowed with it), the `codex mcp add` coexistence
  *      probe, and `codex plugin remove`.
  *
  *   2. SMOKE (needs codex auth): one live `codex exec` turn in a session whose
- *      gbrain MCP server comes from the PLUGIN (no `codex mcp add`) — proves
+ *      foresights MCP server comes from the PLUGIN (no `codex mcp add`) — proves
  *      marketplace → plugin → mcp.json → launcher → GBRAIN_BIN → serve →
- *      brain → fact. Plus the recovery-loop probe: with no gbrain binary
+ *      brain → fact. Plus the recovery-loop probe: with no foresights binary
  *      reachable, the session still completes (degrade, don't brick).
  *
  * Hermetic per test (temp HOME/CODEX_HOME/GBRAIN_HOME); INSTALL self-skips
@@ -54,7 +54,7 @@ const CLI = join(REPO_ROOT, 'src', 'cli.ts');
 const CODEX_BIN = resolveCodexBinary();
 const PLUGIN_CAPABLE = !!CODEX_BIN && codexSupportsPlugins(CODEX_BIN);
 
-/** The ops whose publish gate resolves off on the seeded brain over stdio, read as `gbrain serve` reads them. */
+/** The ops whose publish gate resolves off on the seeded brain over stdio, read as `foresights serve` reads them. */
 async function seededGateDisabled(home: string): Promise<ReadonlySet<string>> {
   const savedHome = process.env.GBRAIN_HOME;
   process.env.GBRAIN_HOME = home;
@@ -264,7 +264,7 @@ describe.skipIf(!PLUGIN_CAPABLE)('codex plugin door — INSTALL (no auth needed)
       });
       expect(coldFast.status).not.toBe(0);
       expect(coldFast.stderr).toContain('No brain configured');
-      expect(coldFast.stderr).toContain('gbrain init');
+      expect(coldFast.stderr).toContain('foresights init');
 
       // (g) --source-guard: a GENUINELY AMBIGUOUS brain (default + TWO
       // non-default sources, so resolution can't land on the unambiguous
@@ -367,7 +367,7 @@ describe.skipIf(!PLUGIN_CAPABLE || !hasCodexAuth())('codex plugin door — SMOKE
       const extraEnv = { GBRAIN_BIN: gbrainBin, GBRAIN_HOME: home, GBRAIN_SOURCE: sourceId };
 
       const prompt =
-        `You have a gbrain MCP tool connected to a knowledge brain (provided by the gbrain plugin). ` +
+        `You have a foresights MCP tool connected to a knowledge brain (provided by the foresights plugin). ` +
         `Using ONLY that brain (do not guess, do not use general knowledge), answer: ` +
         `${seeded.query} Report exactly what the brain says.`;
 
@@ -393,7 +393,7 @@ describe.skipIf(!PLUGIN_CAPABLE || !hasCodexAuth())('codex plugin door — SMOKE
       }
       expect(passed, `plugin SMOKE failed on all ${maxAttempts} attempts.\n${lastEvidence}`).toBe(true);
 
-      // Recovery-loop probe (CX2): with NO gbrain binary reachable, the
+      // Recovery-loop probe (CX2): with NO foresights binary reachable, the
       // session must still complete a trivial turn — the plugin degrades
       // (launcher exits 127 with the install one-liner), never bricks codex.
       const brokenTurn = await codexExecTurn({

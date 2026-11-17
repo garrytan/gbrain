@@ -1,5 +1,5 @@
 /**
- * F4b (spec 5.3 test 8, O-CEO-17, Addendum A item 1): `gbrain import` of
+ * F4b (spec 5.3 test 8, O-CEO-17, Addendum A item 1): `foresights import` of
  * 2,000 pages into PGLite refreshes planner statistics during the import, at
  * every `import.analyze_every_pages` (500) pages where the row-delta threshold
  * says the hot tables are stale, instead of planning the whole import against

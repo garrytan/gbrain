@@ -1,5 +1,5 @@
 /**
- * Shared fixture + normalizer for the W0 `gbrain doctor --json` goldens
+ * Shared fixture + normalizer for the W0 `foresights doctor --json` goldens
  * (test/doctor-json-golden.test.ts on PGLite, test/e2e/doctor-json-golden.test.ts
  * on Postgres).
  *
@@ -150,7 +150,7 @@ export function networkAttempts(h: DoctorHome): string[] {
   return existsSync(h.netLog) ? readFileSync(h.netLog, 'utf-8').split('\n').filter(Boolean) : [];
 }
 
-/** Rewrite the fresh config.json (the only way `gbrain init` leaves it) with `patch`. */
+/** Rewrite the fresh config.json (the only way `foresights init` leaves it) with `patch`. */
 export function patchConfig(h: DoctorHome, patch: (cfg: Record<string, unknown>) => void): void {
   const file = join(h.home, '.gbrain', 'config.json');
   const cfg = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;

@@ -31,7 +31,7 @@ This skill guarantees:
 ## Phases
 
 1. **Load calendar.** Check today's meetings. For each: load attendee brain pages, recent timeline, open threads.
-2. **Check yesterday's threads.** When google sources exist, `gbrain waiting --json` is the real data source for open threads and unanswered items — prefer it over prose heuristics (it carries loop rows with counterparty, due date, and evidence; see `skills/google-loops/SKILL.md`). Otherwise, search brain for yesterday's timeline entries. Flag anything unresolved.
+2. **Check yesterday's threads.** When google sources exist, `foresights waiting --json` is the real data source for open threads and unanswered items — prefer it over prose heuristics (it carries loop rows with counterparty, due date, and evidence; see `skills/google-loops/SKILL.md`). Otherwise, search brain for yesterday's timeline entries. Flag anything unresolved.
 3. **Review active tasks.** Load `ops/tasks` from brain. Surface P0 and P1 items.
 4. **Compile prep briefing.** Per-meeting context cards + open threads + task priorities.
 
@@ -56,9 +56,9 @@ Prep: {what to know before this meeting}
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain waiting` refuses on stale data: run (or ask the user to run) the sync it names, then retry; do not prep from stale mail.
+- `foresights waiting` refuses on stale data: run (or ask the user to run) the sync it names, then retry; do not prep from stale mail.
 - Meeting-context searches return nothing with a degraded notice: say the brain is searching keywords only right now, instead of "no prior context".
 
 ## Anti-Patterns

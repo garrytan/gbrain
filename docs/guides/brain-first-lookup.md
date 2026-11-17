@@ -18,19 +18,19 @@ shared context before doing anything else. External APIs only fill gaps.
 ```
 lookup(name_or_topic):
   // STEP 1: Keyword search (fast, works day one, no embeddings needed)
-  results = gbrain search "{name_or_topic}"
+  results = foresights search "{name_or_topic}"
   if results.length > 0:
-    page = gbrain get {results[0].slug}
+    page = foresights get {results[0].slug}
     return page  // done, brain had it
 
   // STEP 2: Hybrid search (needs embeddings, finds semantic matches)
-  results = gbrain query "what do we know about {name_or_topic}"
+  results = foresights query "what do we know about {name_or_topic}"
   if results.length > 0:
-    page = gbrain get {results[0].slug}
+    page = foresights get {results[0].slug}
     return page
 
   // STEP 3: Direct slug (if you know or can guess the slug)
-  page = gbrain get "people/{slugify(name_or_topic)}"
+  page = foresights get "people/{slugify(name_or_topic)}"
   if page: return page
 
   // STEP 4: External API (FALLBACK ONLY)
@@ -85,4 +85,4 @@ infrastructure thesis, she's interested in your take on AI agents."
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Brain-Agent Loop](brain-agent-loop.md), [Search Modes](search-modes.md)*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). See also: [Brain-Agent Loop](brain-agent-loop.md), [Search Modes](search-modes.md)*

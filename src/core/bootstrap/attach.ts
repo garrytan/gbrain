@@ -1,5 +1,5 @@
 /**
- * `gbrain bootstrap attach` — machine-two adoption of an existing agent
+ * `foresights bootstrap attach` — machine-two adoption of an existing agent
  * workspace [CX-P1.5, CX2-1].
  *
  * A cloned repo carrying an `initialized: true` agent.json enters attach mode:
@@ -48,7 +48,7 @@ export interface AttachStep {
 }
 
 export interface AttachWorkspaceOptions {
-  /** The gbrain home receiving the install receipt (default: configDir()). */
+  /** The foresights home receiving the install receipt (default: configDir()). */
   gbrainHomeDir?: string;
   /** Target harness for the hooks/MCP steps' descriptions. */
   harness?: 'claude-code' | 'codex' | 'opencode';
@@ -70,19 +70,19 @@ export function attachWorkspace(workspaceDir: string, opts: AttachWorkspaceOptio
     case 'absent':
       throw new BootstrapError(
         'NOT_A_WORKSPACE',
-        `not an agent workspace (no agent.json in ${workspaceDir}) — clone a bootstrapped workspace, or run \`gbrain bootstrap render\` to create one`,
+        `not an agent workspace (no agent.json in ${workspaceDir}) — clone a bootstrapped workspace, or run \`foresights bootstrap render\` to create one`,
       );
     case 'template':
       throw new BootstrapError(
         'TEMPLATE_UNINITIALIZED',
-        'this is an uninitialized template — run `gbrain bootstrap render` (attach is for clones of an already-bootstrapped workspace)',
+        'this is an uninitialized template — run `foresights bootstrap render` (attach is for clones of an already-bootstrapped workspace)',
       );
     case 'invalid':
       throw new BootstrapError('MANIFEST_INVALID', `agent.json is invalid: ${state.reason}`);
     case 'newer_format':
       throw new BootstrapError(
         'NEWER_FORMAT',
-        `agent.json format_version ${state.manifest.format_version} is newer than this gbrain understands — upgrade gbrain first`,
+        `agent.json format_version ${state.manifest.format_version} is newer than this foresights understands — upgrade foresights first`,
       );
     case 'initialized':
       break;
@@ -91,7 +91,7 @@ export function attachWorkspace(workspaceDir: string, opts: AttachWorkspaceOptio
 
   const gbrainHomeDir = opts.gbrainHomeDir ?? configDir();
   const resolvedWs = realpathOrResolve(workspaceDir);
-  // Pre-write guard [CX2-12]: a receipt from a NEWER gbrain refuses (upgrade
+  // Pre-write guard [CX2-12]: a receipt from a NEWER foresights refuses (upgrade
   // first — readReceipt alone would return null and silently clobber its
   // created_paths/registrations); an unreadable receipt is backed up loudly.
   const guard = guardReceiptOverwrite(gbrainHomeDir);
@@ -140,7 +140,7 @@ export function attachWorkspace(workspaceDir: string, opts: AttachWorkspaceOptio
   const steps: AttachStep[] = [
     {
       kind: 'register_source',
-      description: `register ${resolvedWs}/brain as gbrain source '${manifest.source_id}' (gbrain sources add)`,
+      description: `register ${resolvedWs}/brain as foresights source '${manifest.source_id}' (foresights sources add)`,
     },
     {
       kind: 'hooks_repair',
@@ -148,11 +148,11 @@ export function attachWorkspace(workspaceDir: string, opts: AttachWorkspaceOptio
     },
     {
       kind: 'mcp_add',
-      description: `register the gbrain MCP server with ${harness} (GBRAIN_SOURCE=${manifest.source_id})`,
+      description: `register the foresights MCP server with ${harness} (GBRAIN_SOURCE=${manifest.source_id})`,
     },
     {
       kind: 'verify',
-      description: 'run `gbrain bootstrap verify` to confirm the attached workspace end-to-end',
+      description: 'run `foresights bootstrap verify` to confirm the attached workspace end-to-end',
     },
   ];
 

@@ -106,10 +106,10 @@ function walkthrough(): Step[] {
 
 test('docs/guides/repair.md "Held files": every command runs and prints every line the guide shows', () => {
   const steps = walkthrough();
-  expect(steps.map(step => step.command.split(' ').slice(0, 3).join(' '))).toContain('gbrain repair frontmatter');
+  expect(steps.map(step => step.command.split(' ').slice(0, 3).join(' '))).toContain('foresights repair frontmatter');
   expect(steps.length).toBeGreaterThanOrEqual(12);
 
-  // A source synced once by the older gbrain.
+  // A source synced once by the older foresights.
   mkdirSync(join(checkout, 'notes'), { recursive: true });
   ok(['git', 'init', '-q', checkout]);
   ok(['git', '-C', checkout, 'config', 'user.name', 'Example']);
@@ -179,23 +179,23 @@ test('#6278: a source holding frontmatter, fence and preparation-stalled files r
     const coverage = (await readHeldCoverage(engine, { sourceId: id }))[0]!;
     expect(coverageRoute(coverage)).toEqual({ fences: 1, others: 1, stalled: 1 });
     const steps = holdRepairSteps(id, coverageRoute(coverage));
-    expect(steps.commands).toEqual([`gbrain repair frontmatter --source ${id}`, `gbrain repair content --source ${id}`, `gbrain sources writer status --source ${id} --json`,
-      `gbrain sources status ${id} --json`, `gbrain sources retry-held ${id}`, `gbrain sync --source ${id} --no-pull`]);
+    expect(steps.commands).toEqual([`foresights repair frontmatter --source ${id}`, `foresights repair content --source ${id}`, `foresights sources writer status --source ${id} --json`,
+      `foresights sources status ${id} --json`, `foresights sources retry-held ${id}`, `foresights sync --source ${id} --no-pull`]);
     expect(steps.text).toContain('preparation-stalled hold(s) are not file problems and need no repair');
     expect(result.holds_fix!.why).toContain('the 1 preparation-stalled hold(s) are not file problems and need no repair');
     // sources status lists each hold with its own step.
     const status = (await readGitHoldStatuses(engine, [id])).get(id)!;
     const lines = gitHoldStatusLines(id, status).join('\n');
     expect(lines).toContain('notes/stalled.md');
-    expect(lines).toContain(`gbrain sources writer status --source ${id} --json`);
+    expect(lines).toContain(`foresights sources writer status --source ${id} --json`);
     expect(status.items.find(item => item.path === 'notes/stalled.md')!.fix.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', id, '--json']);
     // doctor: one finding, three kinds, the stalled one routed to writer status.
     const check = await gitHeldFilesCheck(engine, [id]);
     expect(check.status).toBe('warn');
     expect(check.details).toMatchObject({ held: 3, sources: [{ source_id: id, fences: 1, stalled: 1, held: 3 }] });
-    expect(check.message).toContain(`gbrain sources writer status --source ${id} --json`);
-    expect(check.message).toContain('gbrain repair content'); // #6377: fence holds route to the content lane
-    expect(check.message).toContain('gbrain repair frontmatter');
+    expect(check.message).toContain(`foresights sources writer status --source ${id} --json`);
+    expect(check.message).toContain('foresights repair content'); // #6377: fence holds route to the content lane
+    expect(check.message).toContain('foresights repair frontmatter');
     // retry-held schedules all three and keeps the run's options on the follow-up sync.
     const retry = await retryHeld(engine, id);
     expect(retry.scheduled).toBe(3);
@@ -206,7 +206,7 @@ test('#6278: a source holding frontmatter, fence and preparation-stalled files r
     expect(notice.fix!.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', id]);
     expect(notice.fix!.why).toContain('writer status');
     const relay = hostOperatorFix([{ source_id: id, route: coverageRoute(coverage) }], 'why');
-    expect(relay.user_message).toContain(`'gbrain sources writer status --source ${id} --json'`);
+    expect(relay.user_message).toContain(`'foresights sources writer status --source ${id} --json'`);
     expect(relay.user_message).toContain('the files themselves are fine');
     expect(relay.user_message).not.toContain('notes/stalled.md');
     const held = [...(await readGitSourceHolds(engine, { sourceIds: [id] }))[0]!.holds];

@@ -1,5 +1,5 @@
 /**
- * Re-chunk sealed segmented pages stored under an older SEGMENTED_CHUNKER_VERSION (`gbrain reindex --segmented`).
+ * Re-chunk sealed segmented pages stored under an older SEGMENTED_CHUNKER_VERSION (`foresights reindex --segmented`).
  *
  * Preview first: the preview chunks each page's live occurrences with today's segmented chunker, compares the result
  * with the stored rows, and writes nothing. `--apply` re-stages only the occurrences whose chunks change, one staging

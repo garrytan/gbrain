@@ -41,7 +41,7 @@ export async function enableThenDisableConverges(databaseUrl?: string) {
     expect(await engine.getConfig(LINK_EXTRACTION_GENERATION_KEY)).toBe(on.generation);
     expect(await stale(engine)).toBeGreaterThanOrEqual(2);
     const described = await describeLineGrammarChange(engine, on);
-    expect(described.lines.join('\n')).toContain('gbrain extract --stale');
+    expect(described.lines.join('\n')).toContain('foresights extract --stale');
     expect(described.json).toMatchObject({ changed: true, effective: { enabled: true } });
     await extractManagedStaleLinks(engine, { mentions: false });
     expect(await stale(engine)).toBe(0);

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Tier 2 (e2e.yml) runs gbrain's stdio MCP server behind this tap (#8002).
+# Tier 2 (e2e.yml) runs foresights's stdio MCP server behind this tap (#8002).
 # Every JSON-RPC message OpenClaw sends the server is appended to <log>, and
 # every message the server answers to <log>.responses, so
-# test/e2e/skills.test.ts can require that a gbrain tool call succeeded
+# test/e2e/skills.test.ts can require that a foresights tool call succeeded
 # (scripts/mcp-tap-calls.ts reads both, #8011). The server's stdout goes back
 # to the client untouched.
 #

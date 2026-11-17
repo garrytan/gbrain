@@ -1,5 +1,5 @@
 /**
- * `gbrain autopilot --install` consent (agent-first operator wave E9).
+ * `foresights autopilot --install` consent (agent-first operator wave E9).
  *
  * Installing the autopilot daemon is a `persistent_install`: a background job
  * that outlives the session and, when provider keys are configured, runs paid
@@ -38,7 +38,7 @@ export function installWrites(plan: AutopilotInstallPlan): string[] {
   const job = plan.target === 'macos' ? plistPath(plan.job.launchdLabel)
     : plan.target === 'linux-systemd' ? systemdUnitPath(plan.job.systemdUnit)
       : plan.target === 'ephemeral-container' ? plan.job.startScriptPath
-        : 'your crontab (one gbrain autopilot line)';
+        : 'your crontab (one foresights autopilot line)';
   return [wrapper, job];
 }
 
@@ -51,13 +51,13 @@ function providerKeysPresent(): boolean {
 /** `--dry-run`: the plan, nothing written. */
 export function renderInstallDryRun(plan: AutopilotInstallPlan): string {
   return [
-    `gbrain autopilot --install --dry-run: nothing was written.`,
+    `foresights autopilot --install --dry-run: nothing was written.`,
     `  target: ${plan.target} — ${TARGET_LABEL[plan.target]}`,
     `  repo:   ${plan.repoPath}`,
     `  would write:`,
     ...installWrites(plan).map((w) => `    ${w}`),
     `  ${providerKeysPresent() ? 'Provider keys are configured, so LLM and embedding phases will spend provider credits within the configured budgets.' : 'No provider keys are configured, so only free maintenance phases will run.'}`,
-    `  Install: gbrain autopilot --install --yes (after the user agrees). Remove later: gbrain autopilot --uninstall`,
+    `  Install: foresights autopilot --install --yes (after the user agrees). Remove later: foresights autopilot --uninstall`,
   ].join('\n');
 }
 
@@ -73,13 +73,13 @@ export async function autopilotInstallConsent(engine: BrainEngine, args: string[
       command: 'autopilot',
       effects: ['persistent_install'],
       actor: 'agent',
-      what: 'Install the gbrain autopilot background service',
+      what: 'Install the foresights autopilot background service',
       why: `Installs a ${TARGET_LABEL[plan.target]} that keeps the brain at ${plan.repoPath} synced, extracted and consolidated in the background. Writes: ${installWrites(plan).join(', ')}.`
         + (paid ? ' Provider keys are configured, so its LLM and embedding phases spend provider credits within the configured budgets.' : ''),
-      risk: 'A background job keeps running after this session and starts again at login/boot until `gbrain autopilot --uninstall` removes it.',
-      user_message: `I'd like to install gbrain's background maintenance (autopilot) so your brain stays synced and indexed without you running anything.`
+      risk: 'A background job keeps running after this session and starts again at login/boot until `foresights autopilot --uninstall` removes it.',
+      user_message: `I'd like to install foresights's background maintenance (autopilot) so your brain stays synced and indexed without you running anything.`
         + (paid ? ' It will use your configured AI provider keys, which costs a little within your budget settings.' : '')
-        + ' You can remove it any time with `gbrain autopilot --uninstall`. OK?',
+        + ' You can remove it any time with `foresights autopilot --uninstall`. OK?',
       argv: ['gbrain', 'autopilot', ...passthrough, '--yes'],
       preview_argv: ['gbrain', 'autopilot', ...passthrough, '--dry-run'],
       args,

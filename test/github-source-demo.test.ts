@@ -159,7 +159,7 @@ function listFiles(dir: string): string[] {
     .map((d) => join((d as { parentPath?: string; path?: string }).parentPath ?? (d as { path?: string }).path ?? '', d.name));
 }
 
-describe('gbrain sources demo github — CLI', () => {
+describe('foresights sources demo github — CLI', () => {
   test('--dir + --limit 2 writes under --dir only, honors the limit, prints guidance', async () => {
     const dir = makeOutDir();
     const cwdDefault = join(process.cwd(), 'gbrain-demo');
@@ -191,7 +191,7 @@ describe('gbrain sources demo github — CLI', () => {
       // Guidance copy.
       expect(r.stdout).toContain(`wrote ${items.length} item pages + ${repos.size} repo cards to ${dir}`);
       expect(r.stdout).toContain('no network, no token, no brain required');
-      expect(r.stdout).toContain('gbrain sources add gh --kind github --scope auto');
+      expect(r.stdout).toContain('foresights sources add gh --kind github --scope auto');
       expect(r.stdout).toContain('docs/guides/github-source.md');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -227,7 +227,7 @@ describe('gbrain sources demo github — CLI', () => {
     const cwdDefaultExistedBefore = existsSync(cwdDefault);
     const r = await runDemo(['github', '--dir']);
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain('Usage: gbrain sources demo github');
+    expect(r.stderr).toContain('Usage: foresights sources demo github');
     expect(existsSync(cwdDefault)).toBe(cwdDefaultExistedBefore);
   });
 
@@ -236,7 +236,7 @@ describe('gbrain sources demo github — CLI', () => {
     try {
       const r = await runDemo(['--dir', dir]);
       expect(r.exitCode).toBe(2);
-      expect(r.stderr).toContain('Usage: gbrain sources demo github');
+      expect(r.stderr).toContain('Usage: foresights sources demo github');
       expect(listFiles(dir)).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -250,7 +250,7 @@ describe('gbrain sources demo github — CLI', () => {
     const cwdDefaultExistedBefore = existsSync(cwdDefault);
     const r = await runDemo(['--help']);
     expect(r.exitCode).toBeUndefined();
-    expect(r.stdout).toContain('Usage: gbrain sources demo github [--dir <path>] [--limit <n>]');
+    expect(r.stdout).toContain('Usage: foresights sources demo github [--dir <path>] [--limit <n>]');
     expect(r.stderr).toBe('');
     expect(existsSync(cwdDefault)).toBe(cwdDefaultExistedBefore);
   });

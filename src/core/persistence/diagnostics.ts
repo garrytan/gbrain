@@ -31,14 +31,14 @@ export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   recovery_required: 'Inspect the recorded publication fingerprints on the designated owner and settle recovery before publishing this worktree.',
   recovery_capacity: 'Allow recovery to settle or increase the applicable persistence.limits recovery byte cap. Do not remove recovery records.',
   queue_capacity: 'Let outstanding requests finish or increase the applicable persistence.limits cap. Accepted request IDs are never evicted.',
-  write_quota_exhausted: 'Raise the cumulative cap the refusal names with gbrain config set on the brain host (gbrain doctor --only persistence_capacity --json prints the value), then retry with the same request_id. Accepted request IDs are never evicted.',
+  write_quota_exhausted: 'Raise the cumulative cap the refusal names with foresights config set on the brain host (foresights doctor --only persistence_capacity --json prints the value), then retry with the same request_id. Accepted request IDs are never evicted.',
   consumer_stopping: 'Restart the resident owner and inspect the same request_id before resubmitting.',
   source_changed: 'Inspect the source incarnation and worktree binding; queued requests cannot follow a recreated source.',
   permission_denied: 'Inspect the durable principal and current source, operation, and namespace grants.',
   writer_coordinator_required: DATABASE_REFUSAL_HINT,
   // #6278: a preparation the budget cut off, and the terminal give-up at the attempt limit.
   preparation_deadline: 'Keep the same request_id: the owner cut this preparation off at its budget and will claim it again; a second cut-off finishes it preparation_stalled. Read claim.stall on the running blocker for the step and what it waited on.',
-  preparation_stalled: 'Do not resubmit under the same request_id. The receipt names the last recorded step; for a sync file run gbrain sources retry-held <source> after the cause is fixed, then the same gbrain sync with the same options; a foreground write needs a new request_id.',
+  preparation_stalled: 'Do not resubmit under the same request_id. The receipt names the last recorded step; for a sync file run foresights sources retry-held <source> after the cause is fixed, then the same foresights sync with the same options; a foreground write needs a new request_id.',
 };
 export function writerNextAction(reason: string | null | undefined): string {
   return reason && WRITER_NEXT_ACTIONS[reason] || 'Inspect the sanitized receipt and owner diagnostics before retrying with the same request_id.';
@@ -58,7 +58,7 @@ export function claimNextAction(claim: ClaimState, stall: ClaimStall | null, pol
   const who = claim.owner ? `${claim.owner.kind} pid ${claim.owner.pid}` : 'the owner';
   const where = `${claim.step ? ` at step ${claim.step}` : ''}${claim.waiting_on !== 'unknown' ? ` (waiting on ${claim.waiting_on})` : ''}${claim.last_sql ? `, last statement ${claim.last_sql.label}` : ''}`;
   if (claim.owner_exited) {
-    return { code: 'claim_owner_exited', retry_after_ms: null, why: `${who} has exited${where} and nothing renews the claim; the next write from this machine (or a gbrain process already running here, within seconds) releases it and runs the request again, so the source moves without anyone acting.`,
+    return { code: 'claim_owner_exited', retry_after_ms: null, why: `${who} has exited${where} and nothing renews the claim; the next write from this machine (or a foresights process already running here, within seconds) releases it and runs the request again, so the source moves without anyone acting.`,
       fix: renderAction({ argv: status, consent: [], actor: 'agent', requires_exclusive: false, why: 'Read-only: rerun after the next write from this machine to see the request requeued or committed.', verify: { argv: status } }, ctx) };
   }
   if (claim.phase === 'publication_transaction') {
@@ -72,7 +72,7 @@ export function claimNextAction(claim: ClaimState, stall: ClaimStall | null, pol
     return { code: 'claim_overdue', retry_after_ms: 0,
       why: `${who} has held this claim${where} for ${Math.round(age / 1000)}s${pastCeiling ? `, past the ${Math.round(policy.ceilingMs / 1000)}s ceiling` : ''}${owner.row?.restart_required ? ' and reports restart_required' : wedged ? ' and reports a root barrier past the ceiling' : ''}; only restarting that process ends the work it is parked in.`,
       fix: renderAction({ argv: status, consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Restart the named process on this host, then rerun status (read-only) to see the claim released.',
-        user_message: `Restart the gbrain ${claim.owner?.kind ?? 'owner'} process${claim.owner ? ` (pid ${claim.owner.pid})` : ''} on the brain host.`, verify: { argv: status } }, ctx) };
+        user_message: `Restart the foresights ${claim.owner?.kind ?? 'owner'} process${claim.owner ? ` (pid ${claim.owner.pid})` : ''} on the brain host.`, verify: { argv: status } }, ctx) };
   }
   const budgetLeft = stall ? Math.max(0, policy.ceilingMs - age) : policy.budgetMs === null ? null : Math.max(0, policy.budgetMs - age);
   return { code: 'claim_running', retry_after_ms: budgetLeft,
@@ -82,7 +82,7 @@ export function claimNextAction(claim: ClaimState, stall: ClaimStall | null, pol
 }
 /**
  * #6317 (reporter ask 3): the owner process's database backends from `pg_stat_activity`, matched on the `application_name`
- * every gbrain pool starts its connections with (`gbrain <kind>:<pid>:<nonce8>`, db.ts), so a round-trip that never
+ * every foresights pool starts its connections with (`foresights <kind>:<pid>:<nonce8>`, db.ts), so a round-trip that never
  * returns (backend `active`, `wait_event` ClientRead, an old transaction) is visible in one command. Statement text never
  * leaves: only its label (first keyword plus table). Through a transaction-mode pooler the server connection is shared
  * and carries the pooler's own name or another client's, so the mapping is partial (`backend_visibility: 'pooled'`).
@@ -95,7 +95,7 @@ export async function readOwnerBackends(engine: BrainEngine, owners: Array<Pick<
   if (engine.kind !== 'postgres' || !owners.length) return { visibility: 'unavailable', byOwner };
   const diagnostics = (engine as { getPoolDiagnostics?: () => { prepare?: boolean | null } | null }).getPoolDiagnostics?.();
   const visibility: BackendVisibility = diagnostics?.prepare === false ? 'pooled' : 'session';
-  const names = owners.map(owner => `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`);
+  const names = owners.map(owner => `foresights ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`);
   try {
     const rows = await engine.executeRaw<{ pid: number; state: string | null; wait_event_type: string | null; wait_event: string | null; query: string | null;
       query_age_ms: string | number | null; xact_age_ms: string | number | null; state_age_ms: string | number | null; application_name: string }>(
@@ -224,7 +224,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
       // #6317 (C1): the owner's heartbeat row (liveness, pool), the last statement, and the one next_action envelope per running claim.
       const ownerRow = state?.owner ? consumerRows.find(r => r.pid === state.owner!.pid && (state.owner!.nonce === undefined || r.nonce === state.owner!.nonce)) ?? null : null;
       const ceilingMs = snapshot?.preparation.ceilingMs ?? 600_000;
-      const ownerBackends = state?.owner ? backends.byOwner.get(`gbrain ${state.owner.kind}:${state.owner.pid}:${(state.owner.nonce ?? '').slice(0, 8)}`) ?? [] : [];
+      const ownerBackends = state?.owner ? backends.byOwner.get(`foresights ${state.owner.kind}:${state.owner.pid}:${(state.owner.nonce ?? '').slice(0, 8)}`) ?? [] : [];
       const claim = state ? { ...state, ...(state.owner ? { owner: { ...state.owner, backend: ownerBackends, backend_visibility: backends.visibility } } : {}),
         ...(budget === null ? {} : { budget_ms: budget }), stall, ...claimPool(engine, state, ownerRow), pool_tracked_subset: tracked,
         owner_live: state.owner_exited ? false : ownerRow ? ownerRow.liveness === 'live' : null, owner_mode: ownerRow?.mode ?? null,

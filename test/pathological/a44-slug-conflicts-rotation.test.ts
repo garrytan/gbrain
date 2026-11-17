@@ -1,6 +1,6 @@
 /**
- * GBRA-130 A-44: \`gbrain repair slug-conflicts\` (src/core/repair/slug-conflicts.ts),
- * run by \`gbrain repair content\`, the cycle's content_repair phase and
+ * GBRA-130 A-44: \`foresights repair slug-conflicts\` (src/core/repair/slug-conflicts.ts),
+ * run by \`foresights repair content\`, the cycle's content_repair phase and
  * \`sync unblock --apply\`, on a managed source with real
  * \`frontmatter_slug_conflict\` holds written by sync.
  *
@@ -82,7 +82,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const result = await expectUnitNotAborted(() => repair());
       expect(result).toMatchObject({ applied: 2, complete: true });
       expect(result.failed.length).toBe(1);
-      expectItemFailure({ key: result.failed[0]!.item, code: result.failed[0]!.reason, fix: result.failed[0]!.fix }, { key: SOURCE + ':notes/a.md', code: 'storage_error', fix: /"gbrain","repair","slug-conflicts","--source","default"/ });
+      expectItemFailure({ key: result.failed[0]!.item, code: result.failed[0]!.reason, fix: result.failed[0]!.fix }, { key: SOURCE + ':notes/a.md', code: 'storage_error', fix: /"(?:foresights|gbrain)","repair","slug-conflicts","--source","default"/ });
       expect(await attempts()).toEqual({ 'notes/a.md': 2 });
       expect(readFileSync(join(root, 'notes', 'a.md'), 'utf8')).toBe(file('a'));
       expectOthersUnchanged(before, await snapshotItems(engine, SOURCE), { expectProgress: ['notes/b', 'notes/c'] });

@@ -70,10 +70,10 @@ describe('#2416 — conceptNudge message', () => {
     expect(conceptNudge('who is alice from acme')).toBeNull();
   });
 
-  test('returns a single-line hint naming `gbrain query` and the completeness caveat', () => {
+  test('returns a single-line hint naming `foresights query` and the completeness caveat', () => {
     const msg = conceptNudge('all the companies that do offshore wind');
     expect(msg).not.toBeNull();
-    expect(msg!).toContain('gbrain query');
+    expect(msg!).toContain('foresights query');
     expect(msg!).toContain('all the companies that do offshore wind');
     expect(msg!).toContain('not proof of completeness');
     expect(msg!.includes('\n')).toBe(false);

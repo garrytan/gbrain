@@ -8,7 +8,7 @@ export const v079: Migration = {
   // skillpack-registry + cross-modal waves landing on master first.
   //
   // Adds `pages.last_retrieved_at TIMESTAMPTZ NULL` — the real stale-page
-  // signal for `gbrain lsd`'s "your brain at 3am noticing what it forgot"
+  // signal for `foresights lsd`'s "your brain at 3am noticing what it forgot"
   // mode. Bumped by op-layer write-back inside the `search` / `query` /
   // `get_page` op handlers AFTER results return (NOT inside the engine
   // methods — internal callers like sync / migrations / tests must not

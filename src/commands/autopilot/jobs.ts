@@ -69,14 +69,14 @@ export function cronLineBelongsToBrain(line: string, job: AutopilotJob): boolean
   return autopilotWrapperOwner(wrapper, job.homeDir).owner === 'own';
 }
 
-/** `GBRAIN_HOME=<parent> gbrain autopilot <verb>` for the brain whose home is `brainHome`. */
+/** `GBRAIN_HOME=<parent> foresights autopilot <verb>` for the brain whose home is `brainHome`. */
 export function brainCommand(brainHome: string, verb: string): string {
   const parent = dirname(brainHome);
   const defaultHome = join(process.env.HOME || '', '.gbrain');
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- path comparison only, no fs access
   return resolvePath(brainHome) === resolvePath(defaultHome)
-    ? `gbrain autopilot ${verb}`
-    : `GBRAIN_HOME=${shellQuote(parent)} gbrain autopilot ${verb}`;
+    ? `foresights autopilot ${verb}`
+    : `GBRAIN_HOME=${shellQuote(parent)} foresights autopilot ${verb}`;
 }
 
 /**
@@ -155,7 +155,7 @@ export function stripBootstrapLines(scriptPath: string): number {
 }
 
 /**
- * #5195: a non-default brain installed by an older gbrain ran under the shared
+ * #5195: a non-default brain installed by an older foresights ran under the shared
  * job name. Installing it again on the same target removes that shared job —
  * only when its wrapper names this brain — before the brain's own job is
  * written, and says so. Crontab lines are handled by installCrontab.
@@ -250,8 +250,8 @@ export function detectInstalledJob(job: AutopilotJob): { installed: InstalledJob
 /**
  * Does this crontab contain an autopilot INSTALL line? The installed line
  * invokes the generated wrapper (autopilot-run.sh); older installs called
- * `gbrain autopilot` directly — match either. But the docs also recommend
- * cron-ing `gbrain autopilot --status` as a health monitor, and counting THAT
+ * `foresights autopilot` directly — match either. But the docs also recommend
+ * cron-ing `foresights autopilot --status` as a health monitor, and counting THAT
  * line as an install makes a monitor-only machine report installed/never_run
  * with exit 1 forever. Comments never count. Pure and exported for tests.
  */
@@ -259,7 +259,7 @@ export function crontabIndicatesAutopilotInstall(crontab: string): boolean {
   return crontab.split('\n').some((line) => {
     if (line.trimStart().startsWith('#')) return false;
     if (line.includes('autopilot-run.sh')) return true;
-    return line.includes('gbrain autopilot') && !line.includes('--status');
+    return /\b(?:foresights|gbrain) autopilot\b/.test(line) && !line.includes('--status');
   });
 }
 
@@ -297,7 +297,7 @@ export function autopilotJobStatus(job: AutopilotJob): { installTarget: InstallT
   lines.push(`Wrapper: ${installed?.wrapperPath ?? job.wrapperPath}`);
   lines.push(`Log: ${job.logPath}`);
   if (needsReinstall === 'legacy_shared_job') {
-    lines.push(`  This brain runs under the shared job ${installed!.name} from an older gbrain. Give it its own job: ${brainCommand(job.homeDir, '--install')}`);
+    lines.push(`  This brain runs under the shared job ${installed!.name} from an older foresights. Give it its own job: ${brainCommand(job.homeDir, '--install')}`);
   } else if (needsReinstall === 'wrapper_missing') {
     lines.push(`  The job runs ${installed!.wrapperPath}, which no longer exists (the brain moved?). Reinstall: ${brainCommand(job.homeDir, '--install')}`);
   }

@@ -23,32 +23,32 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 | 3x/day (weekdays) | Meeting sync | Full ingestion + attendee propagation | [meeting-sync](../../recipes/meeting-sync.md) |
 | Weekly | Calendar sync | Daily files + attendee enrichment | [calendar-to-brain](../../recipes/calendar-to-brain.md) |
 | Daily AM | Morning briefing | Search calendar attendees, deal status, active threads | [briefing skill](../../skills/briefing/SKILL.md) |
-| Weekly | Brain maintenance | `gbrain doctor`, embed stale, orphan detection | [maintain skill](../../skills/maintain/SKILL.md) |
+| Weekly | Brain maintenance | `foresights doctor`, embed stale, orphan detection | [maintain skill](../../skills/maintain/SKILL.md) |
 | Nightly | Dream cycle | Entity sweep, enrich thin spots, fix citations | See below |
 
-### Prefer gbrain's native schedulers where they fit
+### Prefer foresights's native schedulers where they fit
 
-System cron is the lowest common denominator, but gbrain ships its own
+System cron is the lowest common denominator, but foresights ships its own
 scheduling surfaces — reach for these first:
 
-- **`gbrain dream`** — the shipped nightly maintenance cycle (lint,
+- **`foresights dream`** — the shipped nightly maintenance cycle (lint,
   backlinks, extract, sync, embed, synthesize). Schedule THIS instead of
   hand-rolling the dream cycle below.
-- **`gbrain jobs` / minions** — queue shell jobs or LLM subagents with retry,
+- **`foresights jobs` / minions** — queue shell jobs or LLM subagents with retry,
   backoff, and an audit trail. See the `minion-orchestrator` skill.
-- **`gbrain serve`** — while the agent connected to it is idle, it runs the
-  free upkeep (`gbrain maintain --unattended`) once a day, with nothing to
+- **`foresights serve`** — while the agent connected to it is idle, it runs the
+  free upkeep (`foresights maintain --unattended`) once a day, with nothing to
   install. A source too big to finish in its short idle slices is parked after
-  30 tries and finished by the next full run. `gbrain maintain --status` shows
+  30 tries and finished by the next full run. `foresights maintain --status` shows
   the last run and anything parked.
-- **`gbrain maintain --schedule`** — for a brain no agent opens most days:
+- **`foresights maintain --schedule`** — for a brain no agent opens most days:
   installs a job that runs the same upkeep every 6 hours (launchd, a systemd
   user timer or cron). Opt-in; preview with `--dry-run`.
-- **`gbrain autopilot`** — the long-lived background daemon that runs full
+- **`foresights autopilot`** — the long-lived background daemon that runs full
   cycles on its own cadence, for a Postgres brain with a repo.
 - **`cron-scheduler` skill** (`skills/cron-scheduler/`) — teaches an agent to
   manage its harness's scheduler.
-- **Bootstrap session-triggered schedules** — `gbrain bootstrap` installs
+- **Bootstrap session-triggered schedules** — `foresights bootstrap` installs
   HEARTBEAT.md-driven schedules that fire on session activity; see
   [bootstrap.md](bootstrap.md).
 
@@ -57,11 +57,11 @@ For scheduling `sync` + `embed --stale` specifically, the home doc is
 
 ### Dream beside autopilot
 
-A nightly `gbrain dream` beside autopilot is supported. Source phases run
+A nightly `foresights dream` beside autopilot is supported. Source phases run
 under the source's own lease; brain-wide phases (synthesize, patterns, embed,
 purge…) also need the shared `gbrain-cycle` lease, so the later run skips only
 those (`maintenance_lock_busy`) and the holder runs them.
-`gbrain status --section locks --json` shows the holder.
+`foresights status --section locks --json` shows the holder.
 
 ## Implementation: Setting Up Cron Jobs
 
@@ -78,14 +78,14 @@ those (`maintenance_lock_busy`) and the holder runs them.
 # Calendar sync — Sundays at 10 AM
 0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date +%Y-%m-%d)
 
-# Brain health — weekly Mondays at 6 AM. Every gbrain call goes through the
+# Brain health — weekly Mondays at 6 AM. Every foresights call goes through the
 # wrapper below (gbrain-run), never a bare `gbrain` or `bun run src/cli.ts`.
 0 6 * * 1 gbrain-run doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain-run embed --stale
 
 # Health alert — hourly. Page on the alert verdict, never on health_score:
 # exit 0 none, 17 act (alert.items carry each fix), 18 unknown (a page-class
 # check did not run fresh); page on 18 only from the second run in a row.
-17 * * * * gbrain-run doctor --alert --json > /tmp/gbrain-alert.json 2>> /tmp/gbrain-alert.err; rc=$?; case $rc in 0) ;; 17) your-notify "gbrain needs action" ;; 18) [ "$(jq -r '.alert.consecutive_unknown // 0' /tmp/gbrain-alert.json)" -ge 2 ] && your-notify "gbrain health unknown twice in a row" ;; *) your-notify "gbrain doctor --alert failed (exit $rc)" ;; esac
+17 * * * * gbrain-run doctor --alert --json > /tmp/gbrain-alert.json 2>> /tmp/gbrain-alert.err; rc=$?; case $rc in 0) ;; 17) your-notify "foresights needs action" ;; 18) [ "$(jq -r '.alert.consecutive_unknown // 0' /tmp/gbrain-alert.json)" -ge 2 ] && your-notify "foresights health unknown twice in a row" ;; *) your-notify "foresights doctor --alert failed (exit $rc)" ;; esac
 
 # Autopilot health gate — daily at 7 AM. The exit code is the signal:
 # 0 fresh (or nothing installed), 1 needs attention (stale heartbeat,
@@ -94,27 +94,27 @@ those (`maintenance_lock_busy`) and the holder runs them.
 # or passes stamping past a phase that failed 3+ passes in a row),
 # 2 the daemon took itself out of rotation. Status is filesystem-only (the
 # daemon writes the maintenance verdict each tick), so it works even during
-# a DB outage. On a stall: gbrain doctor --only global_maintenance_stalled
+# a DB outage. On a stall: foresights doctor --only global_maintenance_stalled
 # names the phase and the command to run.
-0 7 * * * gbrain-run autopilot --status >> /tmp/gbrain-autopilot-health.log 2>&1 || your-notify "gbrain autopilot needs attention"
+0 7 * * * gbrain-run autopilot --status >> /tmp/gbrain-autopilot-health.log 2>&1 || your-notify "foresights autopilot needs attention"
 
 # Dream cycle — nightly at 2 AM
 0 2 * * * /path/to/dream-cycle.sh
 ```
 
 <a id="calling-gbrain-unattended"></a>
-### Call gbrain through one wrapper
+### Call foresights through one wrapper
 
 A scheduled job does not run in the shell you tested it in. Cron, a harness's
 workspace scripts and git hooks start with another `HOME`, a bare `PATH` and
 whatever environment their parent had, so a call that works by hand can do
 something else on a schedule:
 
-- **No database.** The job finds no brain config or URL, gbrain refuses
+- **No database.** The job finds no brain config or URL, foresights refuses
   (`no_brain`, or `GBRAIN_DB_ACCESS no_url`) on stderr, and a caller that
   drops stderr reads every lookup as "nothing found".
-- **A second host.** gbrain keeps its host identity under the brain home, so a
-  job that resolves another home is another host: `gbrain sources refresh`
+- **A second host.** foresights keeps its host identity under the brain home, so a
+  job that resolves another home is another host: `foresights sources refresh`
   refuses `refresh_not_owner` (since v0.60.427.0 it names the identity file it
   read and the `HOME` and `GBRAIN_HOME` it resolved), and owner-only
   maintenance reports `owner_unavailable` with reason `host_mismatch`.
@@ -128,7 +128,7 @@ runs the installed binary:
 
 ```bash
 #!/usr/bin/env bash
-# gbrain-run: the only way scheduled work calls gbrain
+# gbrain-run: the only way scheduled work calls foresights
 set -euo pipefail
 export GBRAIN_HOME=/srv/gbrain          # parent of .gbrain; the value serve, workers and autopilot use
 if [ -f /srv/gbrain/brain.env ]; then   # only if the harness keeps the brain's settings in its own file
@@ -139,14 +139,14 @@ exec /srv/gbrain/.bun/bin/gbrain "$@"  # the installed binary, by absolute path
 
 Rules for the wrapper and everything that calls it:
 
-1. **Set `GBRAIN_HOME`, never `HOME`.** `GBRAIN_HOME` moves only gbrain's
+1. **Set `GBRAIN_HOME`, never `HOME`.** `GBRAIN_HOME` moves only foresights's
    state. Changing `HOME` also changes the git identity, SSH keys and push
    credentials the job runs with. Use the same value as the serve, the workers
    and autopilot; doctor `host_identity_mismatch` names a process that differs.
 2. **Run the installed binary.** Never `bun run src/cli.ts` from a checkout with
    the caller's inherited environment: it skips the wrapper's settings and can
    run another build than the serve.
-3. **Keep stderr and the exit code.** Never send gbrain's stderr to
+3. **Keep stderr and the exit code.** Never send foresights's stderr to
    `/dev/null`. Append it to a log and branch on the exit code
    ([exit codes](exit-codes.md)): `10` means the write was accepted and is
    still pending, not "not found" or "failed"; `3` means stop and ask the
@@ -157,35 +157,35 @@ Rules for the wrapper and everything that calls it:
    Set caller timeouts of at least 10 s in the shell and in the language
    runtime that runs it (a runtime's exec timeout can override the shell's
    without saying so), and turn on the [warm CLI socket](cli-socket.md) so
-   reads skip the cold start. Give fetch or push calls (`gbrain sources
+   reads skip the cold start. Give fetch or push calls (`foresights sources
    git-reconcile`, `refresh`) 15 minutes.
 6. **Quote the env file.** A file a shell sources is shell syntax. An unquoted
    `&` in a URL ends the assignment and backgrounds the rest, so the variable
    silently keeps its old value. Quote every value, keep Postgres URLs to
    `?sslmode=require` (set driver options such as `GBRAIN_PREPARE=false` as
    variables instead of extra `&` parameters), and restart every running
-   gbrain process after an edit: a process keeps the environment it started
+   foresights process after an edit: a process keeps the environment it started
    with.
 7. **Never print the environment.** `env`, `printenv` or a process's
    `environ` holds the database URL and API keys, and a transcript keeps them.
-   To debug, print variable names only, or run `gbrain engine status --json`,
+   To debug, print variable names only, or run `foresights engine status --json`,
    which redacts the URL.
 
 On a managed brain the same wrapper runs `gbrain-run sources refresh <id>` on
 a schedule ([the managed cron line](../../skills/cron-scheduler/SKILL.md#managed-brain)).
 Scripts commit the files they write with
-`gbrain git commit-push --path <absolute brain checkout> -- <paths>`, never
+`foresights git commit-push --path <absolute brain checkout> -- <paths>`, never
 plain `git commit`, in the managed checkout (a wrapper that changes directory
 would otherwise point it at another repository); see
 [shared-checkout git](shared-checkout-git.md#scripts-and-the-managed-checkout).
-`gbrain doctor --only cron_gbrain_home --json` reads the crontab and the scripts
+`foresights doctor --only cron_gbrain_home --json` reads the crontab and the scripts
 it names and warns about a line that runs `src/cli.ts` straight from a checkout,
-or calls gbrain without the brain's `GBRAIN_HOME`.
+or calls foresights without the brain's `GBRAIN_HOME`.
 
 ### Quiet Hours Gate (MANDATORY)
 
 Every cron job that sends notifications MUST check quiet hours first. The
-gate is a small script YOU create (it doesn't ship with gbrain) and call at
+gate is a small script YOU create (it doesn't ship with foresights) and call at
 the top of every notification-sending cron script; held output goes to a
 holding directory that the morning briefing drains. See
 [Quiet Hours](quiet-hours.md) for the gate script and the full pattern —
@@ -202,7 +202,7 @@ infer your current location and timezone. All times shown in YOUR local timezone
 // Hold the notification, fold into morning briefing
 
 get_user_timezone():
-  calendar = gbrain query "flight" --types calendar --since 7d
+  calendar = foresights query "flight" --types calendar --since 7d
   if recent_flight:
     return infer_timezone(flight.destination)
   return config.default_timezone  // fallback: US/Pacific
@@ -216,7 +216,7 @@ morning briefing. Zero config change needed.
 
 The most important cron job. Runs while you sleep.
 
-**gbrain ships this**: `gbrain dream` runs the maintenance half of the cycle
+**foresights ships this**: `foresights dream` runs the maintenance half of the cycle
 (lint, backlinks, extract, sync, embed, synthesize) as one command — schedule
 it nightly and Phase 4 below (plus most of Phase 2's hygiene checks) is
 covered. The pseudocode that follows is the harness-side variant for agents
@@ -226,7 +226,7 @@ Nightly summaries land on the calendar day you actually lived: the cycle
 buckets by explicit `--date` > `cycle.timezone` config > the host's IANA
 timezone > UTC, so a run scheduled after local midnight lands on the day
 you lived, not on the UTC date. When the host clock's zone isn't yours (a cloud box on
-UTC), pin it once: `gbrain config set cycle.timezone America/Los_Angeles`.
+UTC), pin it once: `foresights config set cycle.timezone America/Los_Angeles`.
 
 ### Synthesis cost control: the triage cascade
 
@@ -247,7 +247,7 @@ per-transcript synthesis subagents. The dials:
 - `models.dream.triage` — the triage model (default: utility tier / Haiku).
 - `dream.triage.max_chars` (default 24000, floor 1000) — per-transcript
   sample window (head/middle/tail) sent to the judge. Not part of cache
-  validity — after changing it, `gbrain dream retriage --force` re-judges
+  validity — after changing it, `foresights dream retriage --force` re-judges
   under the new sampling.
 - `dream.triage.max_tokens` (default 2048, floor 256) — judge output budget.
 - `dream.triage.concurrency` (default 4, clamped 1–16) — concurrent judge
@@ -272,7 +272,7 @@ per-transcript synthesis subagents. The dials:
   `details.synthesis.quote_verify`.
 - `cycle.propose_takes.types` (default unset = every page type) — a JSON array
   of page types the `propose_takes` phase may scan, for example
-  `gbrain config set cycle.propose_takes.types '["meeting","analysis"]'`.
+  `foresights config set cycle.propose_takes.types '["meeting","analysis"]'`.
   Pages of other types (machine-written lanes, `note` scratch pages) are
   never sent to the model, so the phase spends only on the lanes you name.
   The built-in exclusions (receipts, atoms, the dream cycle's own output)
@@ -290,8 +290,8 @@ per-transcript synthesis subagents. The dials:
   the model, a content block) gets a separate failure tombstone and is
   skipped while its body and the prompt version are unchanged; pages that
   failed before are retried after the fresh ones, so they never block the
-  rest. `gbrain takes propose --failed` lists held pages and
-  `gbrain takes propose --retry-failed [--slug <slug>]` releases them.
+  rest. `foresights takes propose --failed` lists held pages and
+  `foresights takes propose --retry-failed [--slug <slug>]` releases them.
   Timeouts, rate limits and other transient errors are never held.
 - `dream.synthesize.attribution_rules` and `dream.propose_takes.attribution_rules`
   (default off) — extra prompt rules from #5425: keep who proposed what and
@@ -310,7 +310,7 @@ per-transcript synthesis subagents. The dials:
   `unverified_claims`; a later sentence that only repeats the number, or
   negates a different one, changes nothing. Off, every page and proposal is
   byte-identical to a release without the checks. One switch, both checks:
-  `gbrain config set dream.attribution_checks true`.
+  `foresights config set dream.attribution_checks true`.
 - `dream.synthesize.max_turns` (default 16) — synthesis turn budget for
   agentic children and oneshot fallbacks (the default oneshot path — see
   the next section — is a single completion and never spends turns). The
@@ -328,7 +328,7 @@ per-transcript synthesis subagents. The dials:
   silently rejected.
 - A truncated, refused or unparseable verdict backs off (24h, doubling to
   7 days; `triage_unreliable_backoff`) instead of being re-paid nightly;
-  `gbrain dream retriage --force` re-judges now.
+  `foresights dream retriage --force` re-judges now.
 - `dream.synthesize.max_submissions_per_source_per_day` (default 0 = off) —
   opt-in backstop cap on synthesis jobs per source; 200/day is a sane value
   for busy deployments.
@@ -340,9 +340,9 @@ defers the rest to following cycles), or to drain a queued synthesis
 backlog:
 
 ```bash
-gbrain dream retriage --dry-run          # what would change (zero LLM calls)
-gbrain dream retriage --reconcile-queue  # re-score + cancel queued jobs that fail the gate
-gbrain dream retriage --audit-rejects 20 # synthesis-model second opinion on 20 gate rejects
+foresights dream retriage --dry-run          # what would change (zero LLM calls)
+foresights dream retriage --reconcile-queue  # re-score + cancel queued jobs that fail the gate
+foresights dream retriage --audit-rejects 20 # synthesis-model second opinion on 20 gate rejects
 ```
 
 ### Synthesis speed: oneshot mode + the drain pool
@@ -362,7 +362,7 @@ Above the triage cascade sit the execution dials:
   provider work and both are included in synthesis token/spend telemetry.
   Typical effect: 10+ provider round-trips per transcript
   (up to the 16-turn default cap, more on raised `max_turns`) → 1. Revert
-  dial: `gbrain config set dream.synthesize.mode agentic`.
+  dial: `foresights config set dream.synthesize.mode agentic`.
 - `dream.synthesize.link_manifest` (default on) — the zero-embed
   pre-retrieval manifest (built from the triage verdict's cached entities +
   segment notes). Benefits BOTH modes: agentic children stop burning turns
@@ -394,10 +394,10 @@ same input.
 
 A dream key whose submissions died `dream.breaker.max_dead_submissions`
 times (default 3; `0` disables) within 24 hours is refused before the next
-submission, and `gbrain doctor` reports it as `dream_paid_loop`. Fix the
+submission, and `foresights doctor` reports it as `dream_paid_loop`. Fix the
 cause first (a missing provider key, a quota, a failing transcript), then
-`gbrain dream reset-key --list` shows the refused keys and
-`gbrain dream reset-key '<key>'` re-enables one. Details in
+`foresights dream reset-key --list` shows the refused keys and
+`foresights dream reset-key '<key>'` re-enables one. Details in
 [spend controls](../operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions).
 
 Three more fields answer "what did that cost and did it land":
@@ -435,7 +435,7 @@ dream_cycle():
   for message in conversations:
     entities = detect_entities(message)
     for entity in entities:
-      page = gbrain search "{entity.name}"
+      page = foresights search "{entity.name}"
       if not page:
         create_page(entity)        // new entity, create + enrich
       elif page.is_thin():
@@ -444,7 +444,7 @@ dream_cycle():
         update_timeline(entity)    // existing page, add today's mentions
 
   // Phase 2: Fix Broken Citations
-  pages = gbrain list --type person --limit 100
+  pages = foresights list --type person --limit 100
   for page in pages:
     for entry in page.timeline:
       if not entry.has_source_attribution():
@@ -458,8 +458,8 @@ dream_cycle():
     promote_to_memory(pattern)     // ephemeral → durable knowledge
 
   // Phase 4: Sync
-  gbrain sync --no-pull --no-embed
-  gbrain embed --stale
+  foresights sync --no-pull --no-embed
+  foresights embed --stale
 ```
 
 ### Setting Up the Dream Cycle
@@ -471,7 +471,7 @@ deep, REM) run automatically during quiet hours.
 ```bash
 /cron add "0 2 * * *" "Dream cycle: search today's sessions for
   entities I mentioned. For each person, company, or idea: check
-  if a brain page exists (gbrain search), create or update it if
+  if a brain page exists (foresights search), create or update it if
   thin. Fix any broken citations. Then consolidate: read MEMORY.md,
   promote important signals, remove stale entries."
   --name "nightly-dream-cycle"
@@ -489,10 +489,10 @@ echo "Dream cycle starting at $(date)"
 # Read today's conversation logs, extract entities, update brain
 
 # Phase 2: Shipped maintenance cycle (lint, backlinks, extract, sync, embed, synthesize)
-gbrain dream
+foresights dream
 
 # Phase 3: Surface anything that needs someone (exit 17 act, 18 unknown)
-gbrain doctor --alert --json | jq '.alert'
+foresights doctor --alert --json | jq '.alert'
 
 echo "Dream cycle complete at $(date)"
 ```
@@ -524,8 +524,8 @@ echo "Dream cycle complete at $(date)"
    got enriched and broken citations were fixed.
 3. **Email collector cron:** Wait 30 minutes. Check `data/digests/` for new digest.
 4. **Morning briefing:** Check that held messages appear in the briefing.
-5. **Health check:** Run `gbrain doctor --json`. All checks should pass.
+5. **Health check:** Run `foresights doctor --json`. All checks should pass.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Quiet Hours](quiet-hours.md), [Operational Disciplines](operational-disciplines.md)*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). See also: [Quiet Hours](quiet-hours.md), [Operational Disciplines](operational-disciplines.md)*

@@ -24,8 +24,8 @@
  * provider refused is never sent to the next one; outages still fall back.
  * The first hop a process takes queues one `chat_fallback_hop` safety notice
  * (`fallback-hop-queue.ts`, drained by MCP dispatch and the CLI).
- * The chain stops on a gbrain policy refusal (an invocation-guard denial or a
- * BudgetTracker `BudgetExhausted`: budget, caps and pricing describe gbrain's
+ * The chain stops on a foresights policy refusal (an invocation-guard denial or a
+ * BudgetTracker `BudgetExhausted`: budget, caps and pricing describe foresights's
  * own accounting, and the next model is billed by the same ledger)
  * and once the caller's own abort signal has fired, including a cancel that
  * lands while an attempt is refusing (the refusal is returned, not forwarded). When every model fails,
@@ -72,8 +72,8 @@ export function chatFallbackHopNotice(failed: string, next: string, cause: strin
     why: `chat_fallback_chain sent a request to another model: ${failed} ${refusal ? `refused it (${cause})` : `failed (${cause})`}, so the request went to ${next}. ` +
       'Every later hop in this process logs to stderr only. ' +
       (refusal
-        ? 'Fallback on refusals sends content one provider refused to the next one; `gbrain config set chat_fallback_on_refusal false` keeps outage fallback and stops that.'
-        : 'Outage fallback is the configured behavior; `gbrain doctor --only chat_fallback_chain` shows the chain, the providers it reaches and how to remove it.'),
+        ? 'Fallback on refusals sends content one provider refused to the next one; `foresights config set chat_fallback_on_refusal false` keeps outage fallback and stops that.'
+        : 'Outage fallback is the configured behavior; `foresights doctor --only chat_fallback_chain` shows the chain, the providers it reaches and how to remove it.'),
     fix: {
       argv: ['gbrain', 'doctor', '--only', 'chat_fallback_chain', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows the effective chain, the config plane it comes from and per-plane removal guidance; read-only.',

@@ -1,16 +1,16 @@
 /**
- * commands/backup.ts — `gbrain backup` CLI surface (monthly backup-coverage
+ * commands/backup.ts — `foresights backup` CLI surface (monthly backup-coverage
  * check: "if this disk died, could I recreate my agent?").
  *
- *   gbrain backup status [--json]   # verdict + per-asset table + fix commands
- *   gbrain backup check  [--json]   # force a recompute + write the cache
+ *   foresights backup status [--json]   # verdict + per-asset table + fix commands
+ *   foresights backup check  [--json]   # force a recompute + write the cache
  *
  * Exit codes: 0 ok / 1 warn (both subcommands). `--quiet` (global flag) is
  * the detached-spawn mode: no output, always exit 0.
  *
  * ENGINE HANDLING: dispatched in cli.ts's PRE-engine lane and connects via an
  * injected thunk, because the shared connectEngine would die on the PGLite
- * single-writer lock while a `gbrain serve` runs — exactly the primary cohort
+ * single-writer lock while a `foresights serve` runs — exactly the primary cohort
  * this command serves. On an engine-acquire failure both subcommands fall
  * back to the cached verdict + age (cache-derived exit code), never a crash;
  */
@@ -36,10 +36,10 @@ import {
 } from '../core/backup/status-file.ts';
 
 const BACKUP_USAGE: Record<string, { usage: string; example: string }> = {
-  create: { usage: 'gbrain backup create --output /absolute/private/path/archive.gbrain-backup [--json]',
-    example: 'gbrain backup create --output /srv/private/brain-2026-10-03.gbrain-backup' },
-  restore: { usage: 'gbrain backup restore ARCHIVE --into /absolute/new-root [--mode new-brain|recovery] [--purge-mirror /absolute/purge-events.jsonl] [--confirm-quiesced] [--confirm-backup-compatible] [--confirm-authority-reviewed] [--json]',
-    example: 'gbrain backup restore /srv/private/brain-2026-10-03.gbrain-backup --into /srv/gbrain-restored' },
+  create: { usage: 'foresights backup create --output /absolute/private/path/archive.gbrain-backup [--json]',
+    example: 'foresights backup create --output /srv/private/brain-2026-10-03.gbrain-backup' },
+  restore: { usage: 'foresights backup restore ARCHIVE --into /absolute/new-root [--mode new-brain|recovery] [--purge-mirror /absolute/purge-events.jsonl] [--confirm-quiesced] [--confirm-backup-compatible] [--confirm-authority-reviewed] [--json]',
+    example: 'foresights backup restore /srv/private/brain-2026-10-03.gbrain-backup --into /srv/gbrain-restored' },
 };
 
 /** A3/D4: a malformed `backup create|restore` invocation is a caller mistake (exit 2) with the usage and an example. */
@@ -74,7 +74,7 @@ export interface BackupCliResult {
 }
 
 const HELP =
-  'gbrain backup <status|check|create|restore> [--json]\n\n' +
+  'foresights backup <status|check|create|restore> [--json]\n\n' +
   '  status   Configured repos and recently verified remote commits. Git alone\n' +
   '           is not a full database backup. Uses the\n' +
   '           cached verdict, including warnings, while remote evidence is fresh.\n' +
@@ -96,8 +96,8 @@ const HELP =
   '                        --purge-mirror ABS when that root is gone.\n\n' +
   '  --json   Structured verdict (includes the recovery field).\n\n' +
   'Exit codes: 0 ok / 1 warn / 2 usage error. Off switches: GBRAIN_BACKUP_CHECK=0 or\n' +
-  '`gbrain config set backup.check_enabled false`. Interval:\n' +
-  '`gbrain config set backup.check_interval_days <n>` (default 30, min 1;\n' +
+  '`foresights config set backup.check_enabled false`. Interval:\n' +
+  '`foresights config set backup.check_interval_days <n>` (default 30, min 1;\n' +
   'env GBRAIN_BACKUP_CHECK_DAYS wins over config).';
 
 function exitFor(s: BackupStatus | null): 0 | 1 {
@@ -139,13 +139,13 @@ function renderHuman(s: BackupStatus, out: (line: string) => void): void {
   out(recoveryStatement(s));
   const timeouts = s.totals.remote_timeouts ?? 0;
   if (timeouts > 0) {
-    out(`note: ${timeouts} remote check(s) timed out, so those backups are unconfirmed, not missing; for a slow remote raise the slot (default 2000 ms, max 30000): gbrain config set backup.remote_timeout_ms <ms>`);
+    out(`note: ${timeouts} remote check(s) timed out, so those backups are unconfirmed, not missing; for a slow remote raise the slot (default 2000 ms, max 30000): foresights config set backup.remote_timeout_ms <ms>`);
   }
   if (s.degraded) {
     out('note: the brain database was unreadable during this check — verdict is partial (not cached)');
   }
   if (s.overall === 'warn') {
-    out('Fix the ✗ and ⚠ rows above, then run: gbrain backup check');
+    out('Fix the ✗ and ⚠ rows above, then run: foresights backup check');
   }
 }
 
@@ -182,12 +182,12 @@ export async function runBackupCli(
       }
       const { createPgliteBackup, restorePgliteBackup } = await import('../core/backup/snapshot.ts');
       if (sub === 'create') {
-        if (!values['--output'] || values['--into'] || values['--mode'] || values['--purge-mirror'] || confirmations.size || positional.length) throw backupUsageError(sub, 'gbrain backup create takes exactly --output <absolute archive path>.');
+        if (!values['--output'] || values['--into'] || values['--mode'] || values['--purge-mirror'] || confirmations.size || positional.length) throw backupUsageError(sub, 'foresights backup create takes exactly --output <absolute archive path>.');
         const result = await createPgliteBackup({ output: values['--output'] });
         if (json) console.log(JSON.stringify({ ok: true, ...result }));
         else console.log(`Backup created: ${result.archive}\nSensitive full database state; protect any off-VM copy.\nExcluded assets: ${(result.manifest.omitted as string[]).join('; ')}`);
       } else {
-        if (!values['--into'] || values['--output'] || positional.length !== 1) throw backupUsageError(sub, 'gbrain backup restore takes one ARCHIVE and --into <absolute new root>.');
+        if (!values['--into'] || values['--output'] || positional.length !== 1) throw backupUsageError(sub, 'foresights backup restore takes one ARCHIVE and --into <absolute new root>.');
         if (values['--mode'] !== undefined && !['new-brain', 'recovery'].includes(values['--mode'])) throw new Error('Restore --mode must be new-brain or recovery.');
         if (values['--purge-mirror'] !== undefined && !isAbsolute(values['--purge-mirror'])) throw backupUsageError(sub, '--purge-mirror takes an absolute path to a copy of the original brain\'s .gbrain/purge-events.jsonl.');
         const result = await restorePgliteBackup({ archive: positional[0], into: values['--into'], mode: values['--mode'] === 'recovery' ? 'recovery' : 'new_brain',
@@ -213,8 +213,8 @@ export async function runBackupCli(
       const message = backupFailureMessage(error);
       const { writeCliError } = await import('../cli/cli-error.ts');
       writeCliError(opError('storage_error', message,
-        'Tell the user the backup failed with this message, then run `gbrain doctor --json` to check storage and locks before retrying.', {
-          why: `gbrain backup ${sub} stopped on a database or filesystem error before it finished.`,
+        'Tell the user the backup failed with this message, then run `foresights doctor --json` to check storage and locks before retrying.', {
+          why: `foresights backup ${sub} stopped on a database or filesystem error before it finished.`,
           fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
             why: 'Doctor reports the brain\'s storage, lock and connection state, read-only.', verify: { argv: ['gbrain', 'doctor', '--json'] } },
         }), 'backup', { json, legacy: { ok: false, reason, message, ...(detail.retryable === true ? { retryable: true } : {}) } });
@@ -277,7 +277,7 @@ export async function runBackupCli(
   if (quiet) return { exitCode: 0 };
 
   if (!status) {
-    console.log(lockNote ?? 'no backup verdict yet — run: gbrain backup check');
+    console.log(lockNote ?? 'no backup verdict yet — run: foresights backup check');
     return { exitCode: disabled ? 0 : 1 };
   }
 

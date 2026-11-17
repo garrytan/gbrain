@@ -8,7 +8,7 @@
  * loop ticks every few minutes, so logging every skip would flood the
  * audit file with rows that carry no signal.
  *
- * Read by `gbrain doctor`'s `conversation_parser_probe_health` check and
+ * Read by `foresights doctor`'s `conversation_parser_probe_health` check and
  * by the autopilot wiring's 24h rate-limit gate (`parserProbeRanWithin`).
  */
 

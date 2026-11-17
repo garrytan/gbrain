@@ -1,7 +1,7 @@
 /**
  * Tests for `src/core/doctor-remote.ts` — the thin-client doctor check set.
  *
- * Strategy: spin up a tiny in-process HTTP server that mimics `gbrain serve --http`
+ * Strategy: spin up a tiny in-process HTTP server that mimics `foresights serve --http`
  * for OAuth discovery, /token, and /mcp. This tests the REAL probe code in
  * `remote-mcp-probe.ts` end-to-end, not a mocked version. Each test seeds the
  * server's behavior (200 / 401 / 404 / network drop) and asserts the resulting
@@ -323,7 +323,7 @@ describe('runUpgradeDriftCheck', () => {
         expect(result.message).toContain(`v${VERSION}`);
         expect(result.message).toContain('v99.99.99');
         // Auto-upgrade hint (no prior failure on file)
-        expect(result.message).toContain('Run `gbrain upgrade`');
+        expect(result.message).toContain('Run `foresights upgrade`');
         expect(result.detail?.prior_failed).toBe(false);
         expect(result.detail?.level).toBe('major');
       });
@@ -360,9 +360,9 @@ describe('runUpgradeDriftCheck', () => {
         expect(result.status).toBe('warn');
         expect(result.message).toContain('major upgrade available');
         // Manual-install hint, NOT the auto-upgrade hint
-        expect(result.message).toContain('Prior `gbrain upgrade` did not advance');
-        expect(result.message).toContain('https://github.com/garrytan/gbrain/releases');
-        expect(result.message).not.toContain('Run `gbrain upgrade`');
+        expect(result.message).toContain('Prior `foresights upgrade` did not advance');
+        expect(result.message).toContain('https://github.com/aimonk2025/gbrain/releases');
+        expect(result.message).not.toContain('Run `foresights upgrade`');
         expect(result.detail?.prior_failed).toBe(true);
       });
     } finally {
@@ -396,7 +396,7 @@ describe('runUpgradeDriftCheck', () => {
       await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
         const result = await runUpgradeDriftCheck(config);
         expect(result.status).toBe('warn');
-        expect(result.message).toContain('Run `gbrain upgrade`');
+        expect(result.message).toContain('Run `foresights upgrade`');
         expect(result.detail?.prior_failed).toBe(false);
       });
     } finally {

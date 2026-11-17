@@ -4,7 +4,7 @@ import { dropInvalidConcurrentIndex } from './helpers.ts';
 export const v103: Migration = {
   version: 103,
   name: 'migration_impact_log_and_priority_recent_idx',
-  // v0.41.18.0 (gbrain onboard wave, A6 + A25 + A13 + codex #9 + #10):
+  // v0.41.18.0 (foresights onboard wave, A6 + A25 + A13 + codex #9 + #10):
   // (1) migration_impact_log table — onboard --history backbone with
   //     attribution columns (job_id, source_id, brain_id, started_at,
   //     idempotency_key) so concurrent runs don't misattribute deltas.

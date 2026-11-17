@@ -1,5 +1,5 @@
 /**
- * GST-2768 PR 3: `gbrain transcripts archive run` is the documented command that archives now, on demand, and it
+ * GST-2768 PR 3: `foresights transcripts archive run` is the documented command that archives now, on demand, and it
  * works with automatic maintenance turned off (`maintenance.auto false`), on a keyless personal PGLite brain.
  * The CLI runs as a subprocess because the harness roots hang off os.homedir(), which Bun fixes at process start;
  * HOME points at a throwaway harness tree holding one synthetic Claude Code session.
@@ -34,7 +34,7 @@ afterAll(() => {
   if (home) rmSync(home, { recursive: true, force: true });
 });
 
-describe('gbrain transcripts archive run, on demand', () => {
+describe('foresights transcripts archive run, on demand', () => {
   test('archives now with automatic maintenance turned off (maintenance.auto false)', async () => {
     for (const [key, value] of [['maintenance.auto', 'false'], ['brain.audience', 'personal']]) {
       const set = await gbrain(['config', 'set', key, value]);

@@ -1,6 +1,6 @@
 /**
- * #4992: every subprocess gbrain launches defaults `windowsHide: true` through
- * src/core/spawn.ts, so a detached gbrain process on Windows (no console)
+ * #4992: every subprocess foresights launches defaults `windowsHide: true` through
+ * src/core/spawn.ts, so a detached foresights process on Windows (no console)
  * stops opening a visible console window for each program it runs.
  *
  * The wrappers are checked for every argument shape Node accepts, and the

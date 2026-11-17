@@ -1,8 +1,8 @@
 /**
- * #3661 — `gbrain config set` must reject a flag it does not implement
+ * #3661 — `foresights config set` must reject a flag it does not implement
  * instead of dropping it and writing anyway.
  *
- * The bug: `gbrain config set models.tier.subagent <value> --dry-run` printed
+ * The bug: `foresights config set models.tier.subagent <value> --dry-run` printed
  * the normal "Set <key> = <value>" confirmation and persisted the mutation to
  * the DB config plane. `--dry-run` is implemented by sync/import/extract/
  * quarantine/pages, so an operator who had learned that habit got a live

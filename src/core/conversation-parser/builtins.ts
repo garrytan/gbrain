@@ -9,7 +9,7 @@
  * Contracts (eng review + codex outside voice):
  *   - D7: every entry carries `test_positive[]` (>=2) + `test_negative[]`
  *     (>=2). Module-load validation in `validatePatternEntry` runs both
- *     sets on every entry at startup; gbrain throws if any drifts.
+ *     sets on every entry at startup; foresights throws if any drifts.
  *   - D9: `DEFAULT_SPEAKER_CLEAN` is the exported default — patterns
  *     without a `speaker_clean` field inherit it. Only patterns with
  *     special speaker shapes (matrix-element strips ':matrix.org')
@@ -141,7 +141,7 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
       'Alice — Today at 18:37',
       '<alice> irc',
     ],
-    source_doc: 'pre-existing gbrain MESSAGE_LINE_RX; PR #1461 preserved',
+    source_doc: 'pre-existing foresights MESSAGE_LINE_RX; PR #1461 preserved',
   },
 
   {
@@ -903,7 +903,7 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   {
     id: 'markdown-heading-turn',
     origin: 'builtin',
-    // gbrain transcript-ingest shape: a heading-only line ('## User' /
+    // foresights transcript-ingest shape: a heading-only line ('## User' /
     // '## Assistant' / '### Human') opens a turn; the message text is
     // the continuation lines below the heading (D5), not anything on
     // the heading line itself. No per-line timestamps — date comes
@@ -937,10 +937,10 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
       '## User said hello',
     ],
     source_doc:
-      'gbrain nightly transcript ingest: compiled_truth bodies use markdown headings per turn',
+      'foresights nightly transcript ingest: compiled_truth bodies use markdown headings per turn',
   },
   {
-    // gbrain's Gmail thread page (src/core/google/google-render.ts): one
+    // foresights's Gmail thread page (src/core/google/google-render.ts): one
     // `## <From> · YYYY-MM-DD HH:MM` heading per message (`## → <From> · …`
     // for a sent message), the body below it. The time is UTC (the
     // renderer slices an ISO instant). The speaker is the From display
@@ -975,7 +975,7 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
       '# Alice Example <alice@example.com> · 2026-09-07 12:21',
       '## Alice Example <alice@example.com> · 2026-09-07 12:21 extra words',
     ],
-    source_doc: 'gbrain Gmail thread render (src/core/google/google-render.ts renderThreadPage)',
+    source_doc: 'foresights Gmail thread render (src/core/google/google-render.ts renderThreadPage)',
   },
   {
     id: 'python-dict-utterance',
@@ -1087,5 +1087,5 @@ function validateAllBuiltins(): void {
   }
 }
 
-// D7: run at module load. Any drift = gbrain refuses to start.
+// D7: run at module load. Any drift = foresights refuses to start.
 validateAllBuiltins();

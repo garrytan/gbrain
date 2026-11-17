@@ -1,12 +1,12 @@
 /**
  * Fresh-install migration stamping (agent-first operator wave, E8).
  *
- * A brain `gbrain init` just created is already at the current schema, so a
+ * A brain `foresights init` just created is already at the current schema, so a
  * migration that declares `fresh_install_noop: true` has nothing to do there:
  * init records it complete with `fresh_install: true` and the creating
  * version. Every other registered migration stays unrun and lists as
  * `pending_fresh_install` (src/core/migration-ledger.ts), which
- * `gbrain apply-migrations --yes` completes. Called once by init, only when
+ * `foresights apply-migrations --yes` completes. Called once by init, only when
  * the database was created by this init (never on re-init of an existing one).
  */
 
@@ -18,7 +18,7 @@ import { migrations } from './index.ts';
 /** The command that finishes the setup migrations init leaves pending (no service installed). */
 export const FINISH_SETUP_ARGV = ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'] as const;
 export const FINISH_SETUP_COMMAND = FINISH_SETUP_ARGV.join(' ');
-/** `gbrain setup`'s machine-readable run of it, optionally limited to one migration. */
+/** `foresights setup`'s machine-readable run of it, optionally limited to one migration. */
 export function setupMigrationsArgv(launcher: string, version?: string): string[] {
   return [launcher, ...FINISH_SETUP_ARGV.slice(1), '--json', ...(version ? ['--migration', version] : [])];
 }
@@ -42,7 +42,7 @@ export function stampFreshInstallMigrations(installed: string = VERSION.replace(
       status: 'complete',
       fresh_install: true,
       installed_version: installed,
-      phases: [{ name: 'fresh_install', status: 'skipped', detail: `No-op on a brain gbrain init created at v${installed}: schema current, nothing to backfill or install.` }],
+      phases: [{ name: 'fresh_install', status: 'skipped', detail: `No-op on a brain foresights init created at v${installed}: schema current, nothing to backfill or install.` }],
     });
     receipt.stamped.push(migration.version);
   }

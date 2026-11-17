@@ -15,7 +15,7 @@
  *  - extractStaleFromDB, flag ON via DB config: edge written, and the
  *    return shape's `skippedCrossSource` is 0.
  *  - `link_resolution.cross_source` is registered in KNOWN_CONFIG_KEYS
- *    (so `gbrain config set` accepts it without --force).
+ *    (so `foresights config set` accepts it without --force).
  *
  * Hermetic PGLite — no DATABASE_URL, no API keys. Harness conventions from
  * test/extract-source-aware.test.ts. Serial file: mutates process.env.

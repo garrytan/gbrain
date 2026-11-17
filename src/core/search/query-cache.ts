@@ -12,7 +12,7 @@
  *
  * Storage: the `query_cache` table (migration v51) with the same
  * embedding dim as `content_chunks`. Per-row TTL (default 3600 seconds).
- * Stale rows are skipped at read time and pruned by `gbrain cache prune`.
+ * Stale rows are skipped at read time and pruned by `foresights cache prune`.
  *
  * Multi-source isolation: cache lookups scope by `source_id` so brain
  * A's "who is widget-ceo" cannot return brain B's cached results for
@@ -416,7 +416,7 @@ export class SemanticQueryCache {
     }
   }
 
-  /** Summary stats for `gbrain cache stats`. */
+  /** Summary stats for `foresights cache stats`. */
   async stats(): Promise<CacheStats> {
     try {
       const rows = await this.engine.executeRaw<{

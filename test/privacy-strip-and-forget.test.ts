@@ -7,7 +7,7 @@
  *   - Layer B (get_page privacy trigger): stripFactsFence + stripTakesFence
  *     fire when ctx.remote === true (Codex R2-#5 closes the subagent hole)
  *   - Forget-as-fence: forgetFactInFence rewrites the fence row instead of
- *     the DB-only expire path so forgets survive gbrain rebuild (Codex R2-#3)
+ *     the DB-only expire path so forgets survive foresights rebuild (Codex R2-#3)
  *
  * Real PGLite + tempdir filesystem.
  */

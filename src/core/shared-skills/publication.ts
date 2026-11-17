@@ -52,8 +52,8 @@ function ownerStatusFix(sourceId: string, ctx?: OperationContext): Action {
 }
 function inventoryError(code: 'catalog_unavailable' | 'revision_conflict', message: string, sourceId: string): OperationError {
   return code === 'revision_conflict'
-    ? opError(code, message, `Source ${sourceId}'s sealed pack inventory disagrees with its current skill heads, so nothing was published. If another publication just committed, list the catalog again and resubmit with a new request_id; if it repeats, run gbrain doctor --json on the brain host and report it.`, { fix: catalogFix(sourceId) })
-    : opError(code, message, `Source ${sourceId}'s sealed shared-skill inventory is missing or inconsistent, so nothing was published. Run gbrain doctor --json on the brain host and report the result to the user; never hand-edit skillpack.json to repair it.`, { fix: DOCTOR_FIX });
+    ? opError(code, message, `Source ${sourceId}'s sealed pack inventory disagrees with its current skill heads, so nothing was published. If another publication just committed, list the catalog again and resubmit with a new request_id; if it repeats, run foresights doctor --json on the brain host and report it.`, { fix: catalogFix(sourceId) })
+    : opError(code, message, `Source ${sourceId}'s sealed shared-skill inventory is missing or inconsistent, so nothing was published. Run foresights doctor --json on the brain host and report the result to the user; never hand-edit skillpack.json to repair it.`, { fix: DOCTOR_FIX });
 }
 function precondition(value: unknown, read: Action): string | null {
   if (value === null || value === undefined) return null;
@@ -85,25 +85,25 @@ async function sourceRoot(engine: BrainEngine, sourceId: string, incarnation: st
   const binding = await getWorktreeBinding(engine, sourceId);
   if (!binding || binding.source_incarnation !== incarnation || binding.state !== 'active' || !binding.owner_host_id) {
     throw opError('owner_unavailable', 'Shared skills require an active designated canonical source owner.',
-      `Source ${sourceId} has no active designated canonical owner at this incarnation, so nothing was published. The brain host's operator inspects it with gbrain sources writer status --source ${sourceId} --json; claiming ownership is their decision.`,
+      `Source ${sourceId} has no active designated canonical owner at this incarnation, so nothing was published. The brain host's operator inspects it with foresights sources writer status --source ${sourceId} --json; claiming ownership is their decision.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
   if (binding.owner_host_id !== hostIdFor(engine) || !binding.local_path) {
     throw opError('owner_unavailable', 'The designated owner must prepare this publication.',
-      `Source ${sourceId}'s canonical owner is another host (or has no local checkout here), so publish through that host or a connection to its gbrain server. gbrain sources writer status --source ${sourceId} --json names the owner.`,
+      `Source ${sourceId}'s canonical owner is another host (or has no local checkout here), so publish through that host or a connection to its foresights server. foresights sources writer status --source ${sourceId} --json names the owner.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
   const aliases = await engine.executeRaw<{ source_id: string }>(`SELECT b.source_id FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
     WHERE b.worktree_id=$1::uuid AND b.relative_path=$2 AND b.source_id<>$3 AND NOT s.archived`, [binding.worktree_id, binding.relative_path, sourceId]);
   if (aliases.length) {
     throw opError('source_root_conflict', 'Multiple active sources alias this canonical skill root; resolve ownership before publishing.',
-      `Sources ${aliases.map(row => row.source_id).join(', ')} share source ${sourceId}'s canonical skill root. The brain host's operator archives or rebinds the extra sources before anything publishes; gbrain sources writer status --source ${sourceId} --json shows the bindings.`,
+      `Sources ${aliases.map(row => row.source_id).join(', ')} share source ${sourceId}'s canonical skill root. The brain host's operator archives or rebinds the extra sources before anything publishes; foresights sources writer status --source ${sourceId} --json shows the bindings.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
   const root = resolve(binding.local_path, binding.relative_path);
   if (realpathSync(root) !== root) {
     throw opError('local_conflict', 'Canonical source root contains a symlink.',
-      `Source ${sourceId}'s registered checkout resolves through a symlink. The brain host's operator re-registers the source at its real path before anything publishes; gbrain sources writer status --source ${sourceId} --json shows the binding.`,
+      `Source ${sourceId}'s registered checkout resolves through a symlink. The brain host's operator re-registers the source at its real path before anything publishes; foresights sources writer status --source ${sourceId} --json shows the binding.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
   return { binding, root };
@@ -209,7 +209,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
   assertSkillCapability(ctx, 'skill_editor', operation);
   if (adoption && ctx.remote !== false) {
     throw opError('permission_denied', 'Pack adoption requires trusted host authority.',
-      'Only the gbrain CLI on the brain host adopts canonical packs (gbrain init and the shared-content migration do it); a remote connection publishes individual skills with put_skill instead.');
+      'Only the foresights CLI on the brain host adopts canonical packs (foresights init and the shared-content migration do it); a remote connection publishes individual skills with put_skill instead.');
   }
   const sourceId = pageMutationSource(ctx, params, operation);
   const name = skillName(params.name);
@@ -351,7 +351,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
   const manifestHash = manifestBytes ? sha256(manifestBytes) : null;
   if (pack && manifestHash !== pack.manifest_hash && adoption?.expected_hashes?.['skillpack.json'] !== manifestHash) {
     throw opError('local_conflict', 'The canonical manifest has unpublished edits.',
-      `skillpack.json in source ${sourceId}'s checkout was edited outside gbrain. Restore the published manifest, or publish the reviewed edit through import_skill_proposal from the CLI on the brain host with its current SHA-256 in expected_hashes, then publish again.`);
+      `skillpack.json in source ${sourceId}'s checkout was edited outside foresights. Restore the published manifest, or publish the reviewed edit through import_skill_proposal from the CLI on the brain host with its current SHA-256 in expected_hashes, then publish again.`);
   }
   const beforeHashes: Record<string, string | null> = {};
   const allProposedFiles = proposals.flatMap(p => p.files);
@@ -420,7 +420,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
 export async function prepareSharedSkillMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   if (!['put_skill', 'delete_skill'].includes(row.operation) || row.target_kind !== 'skill_bundle' || row.protocol_version !== 2 || !row.intent) {
     throw opError('unsupported_mutation_protocol', 'Unsupported shared skill publication target.',
-      `Write request ${row.request_id} is not a shared-skill publication this gbrain can prepare; it was probably accepted by another gbrain version. Run gbrain upgrade on every host that serves this brain; the request stays journaled for inspection.`);
+      `Write request ${row.request_id} is not a shared-skill publication this foresights can prepare; it was probably accepted by another foresights version. Run foresights upgrade on every host that serves this brain; the request stays journaled for inspection.`);
   }
   const intent = row.intent as unknown as PublicationIntent;
   skillName(intent.name); skillName(intent.pack_id, 'pack_id');
@@ -537,7 +537,7 @@ export interface AdoptSharedSkillpackOptions {
 export async function importSharedSkillProposal(ctx: OperationContext, params: Record<string, unknown>) {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Reviewed skill proposals require the trusted local operator.',
-      'Only the gbrain CLI on the brain host imports reviewed proposals; the person there runs the command in fix with the reviewed parameters.', {
+      'Only the foresights CLI on the brain host imports reviewed proposals; the person there runs the command in fix with the reviewed parameters.', {
         fix: { ...hostFix(ctx, ['gbrain', 'call', 'import_skill_proposal', '<params_json>'], 'Imports the reviewed canonical files under the trusted local operator; remote editors cannot widen disclosure.'),
           inputs: [{ name: 'params_json', how: 'The same put_skill parameters plus expected_hashes (current SHA-256 per affected file and skillpack.json), as one JSON object.' }] },
       });
@@ -552,7 +552,7 @@ export async function importSharedSkillProposal(ctx: OperationContext, params: R
 export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: string, options: AdoptSharedSkillpackOptions = {}) {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Canonical pack adoption is a trusted host operation.',
-      'Only the gbrain CLI on the brain host adopts canonical packs (gbrain init and the shared-content migration do it); a remote connection publishes individual skills with put_skill instead.');
+      'Only the foresights CLI on the brain host adopts canonical packs (foresights init and the shared-content migration do it); a remote connection publishes individual skills with put_skill instead.');
   }
   const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
   if (!source) {

@@ -4,7 +4,7 @@
  * walked every receipt on each claim. `persistence_requests_foreground_committed` serves it; its predicate must be the
  * probe's own (`state='committed' AND NOT SYNC_KIND(c)`) or the planner cannot use it. The migration has the v179
  * online-index shape: the Postgres blob omits the index and the migration builds it CONCURRENTLY, PGLite's blob carries
- * it, and `gbrain repair request-indexes` rebuilds a dropped or INVALID one on a current schema. The Postgres access path
+ * it, and `foresights repair request-indexes` rebuilds a dropped or INVALID one on a current schema. The Postgres access path
  * on a large journal and an interrupted concurrent build are in test/e2e/persistence-claim-committed-probe-7649-postgres.test.ts.
  *
  * The migration is found by its name, never by its number: the number is provisional until the merge slot.
@@ -120,14 +120,14 @@ for (const backend of testBackends()) describe(`[${backend}] #7649 the foregroun
     expect(await state()).toBe('valid');
   }, 120_000);
 
-  test('a dropped index is named by doctor and rebuilt by gbrain repair request-indexes; a second repair is a no-op', async () => {
+  test('a dropped index is named by doctor and rebuilt by foresights repair request-indexes; a second repair is a no-op', async () => {
     await engine.executeRaw(`DROP INDEX ${INDEX.name}`);
     const check = await requestIndexesCheck(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain(`${INDEX.name} is missing: request-table reads (managed sync checkpoints, write claims,`);
-    expect(check.message).toContain('gbrain repair request-indexes');
+    expect(check.message).toContain('foresights repair request-indexes');
     const scope = await resolveRepairScope(engine);
-    expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: false })).toMatchObject({ affected: 1, apply_command: 'gbrain repair request-indexes --apply' });
+    expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: false })).toMatchObject({ affected: 1, apply_command: 'foresights repair request-indexes --apply' });
     expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ applied: 1, complete: true });
     expect(await state()).toBe('valid');
     expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ affected: 0, applied: 0, complete: true });

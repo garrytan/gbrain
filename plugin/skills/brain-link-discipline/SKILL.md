@@ -70,13 +70,13 @@ The two output surfaces take OPPOSITE link forms:
 | Surface | Link form | Why |
 |---|---|---|
 | Chat message to the user | Absolute, verified URL (or the fallback chain below) | Repo-relative paths aren't clickable in chat surfaces |
-| Inside a brain page body | RELATIVE markdown link: `[Alice Example](../people/alice-example.md)` | gbrain's link extraction builds the links/backlinks graph — which powers relational retrieval — from filesystem-relative links. An absolute URL between two brain pages is invisible to that graph |
+| Inside a brain page body | RELATIVE markdown link: `[Alice Example](../people/alice-example.md)` | foresights's link extraction builds the links/backlinks graph — which powers relational retrieval — from filesystem-relative links. An absolute URL between two brain pages is invisible to that graph |
 
 **Never write absolute URLs for page-to-page references inside a brain
 page.** Absolute URLs in a page body are for genuinely external targets
 only. Frontmatter `related:` / `people:` keys stay bare relative paths
 (machine-parsed, not rendered prose). After a link-heavy write,
-`gbrain check-backlinks check` audits the graph and `gbrain sync --no-pull`
+`foresights check-backlinks check` audits the graph and `foresights sync --no-pull`
 makes the pages searchable.
 
 ## Deriving the path mechanically
@@ -107,7 +107,7 @@ https://<host>/<owner>/<repo>/blob/<branch>/<that-exact-path>
 
 1. Write/edit the brain file.
 2. `scripts/brain-commit-push.sh "<msg>" <file>` (or
-   `gbrain git commit-push -m "<msg>" -- <file>` when the brain has no helper).
+   `foresights git commit-push -m "<msg>" -- <file>` when the brain has no helper).
    It commits only that file under the checkout's writer lock and pushes,
    merging remote commits without touching other agents' files.
 3. **Verify the push landed** — the command must exit 0 and print
@@ -117,7 +117,7 @@ https://<host>/<owner>/<repo>/blob/<branch>/<that-exact-path>
    retry once on `commit_lock_busy`; stop and tell the user on
    `integrate_conflict` or `writer_coordinator_required`; never fall back to
    stash, `pull --rebase` or a plain push
-   ([outcomes](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
+   ([outcomes](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
 4. **In the SAME message that reports the commit, output the link** — as a
    clickable markdown link or bare URL, never a backticked code span.
 
@@ -154,7 +154,7 @@ to the ref-update evidence from the push. When in doubt, don't send the token.
    brain often has none, or the repo is local-only) → give the repo-relative
    path (`people/alice-example.md`) and say plainly that it's a local path
    in the brain repo.
-3. **`gbrain publish` output as an attachable HTML ARTIFACT.** `gbrain
+3. **`foresights publish` output as an attachable HTML ARTIFACT.** `foresights
    publish <page-path>` emits a self-contained LOCAL HTML file (its output
    line is `Published: <local-path>`). Offer to attach or send that file —
    NEVER present it as a URL, because it isn't one. Use `--password` for
@@ -191,7 +191,7 @@ Created 3 pages:
 Hosted-remote links into a private brain repo open only for people with
 repo access. That's fine for the user's own chat surface; it is NOT a
 shareable link for an outside audience. For outside sharing, fall through
-to the `gbrain publish` artifact (step 3 of the fallback chain).
+to the `foresights publish` artifact (step 3 of the fallback chain).
 
 ## Contract
 
@@ -224,15 +224,15 @@ No hosted remote (fallback steps 2–3):
 
 > Saved `concepts/widget-co-pricing.md` in the brain repo (local path — this
 > brain has no hosted remote). Want a shareable HTML render? I can generate
-> one with `gbrain publish` and attach the file.
+> one with `foresights publish` and attach the file.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A brain-page link would 404 because the page is uncommitted or unsynced: say the link is not live yet and give the repo-relative path; do not invent a hosted URL.
-- `get_page` / `gbrain get` returns `page_not_found` for the slug you meant to link: resolve the real slug (search by title) before linking; never ship a guessed slug.
-- `gbrain publish` fails: give the user the repo-relative path with the scope note instead of a broken share link.
+- `get_page` / `foresights get` returns `page_not_found` for the slug you meant to link: resolve the real slug (search by title) before linking; never ship a guessed slug.
+- `foresights publish` fails: give the user the repo-relative path with the scope note instead of a broken share link.
 
 ## Anti-Patterns
 
@@ -243,7 +243,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - ❌ Relaying a subagent result containing local brain paths verbatim.
 - ❌ Outputting hosted URLs BEFORE the push has landed (they 404 until the
   push completes — push first, verify the ref moved, then link).
-- ❌ Presenting `gbrain publish` output as a URL. It emits a local HTML file
+- ❌ Presenting `foresights publish` output as a URL. It emits a local HTML file
   path; offer it as an attachable artifact.
 - ❌ Hand-stripping a cwd prefix to build the repo-relative path. Use
   `git ls-files --full-name`.

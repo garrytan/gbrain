@@ -99,7 +99,7 @@ describe('v0.29 — redirect hints on existing ops', () => {
     // Agent contract v1 (F5): get_recent_transcripts is never MCP-callable, so
     // query names the owner's CLI read instead of routing agents to it.
     expect(QUERY_DESCRIPTION).not.toContain("get_recent_transcripts");
-    expect(QUERY_DESCRIPTION).toContain("`gbrain transcripts recent`");
+    expect(QUERY_DESCRIPTION).toContain("`foresights transcripts recent`");
   });
 
   test('query warns the LLM not to assume "crazy" means impressive', () => {

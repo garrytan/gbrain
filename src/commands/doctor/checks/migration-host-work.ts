@@ -19,7 +19,7 @@ export function migrationHostWorkCheck(history: Map<string, CompletedMigrationEn
     name: 'minions_migration',
     status: 'warn',
     message: `Migration(s) ${versions.join(', ')} applied_pending_host_work: the checkpoint is recorded, but host publication or source setup is not done. `
-      + `Inspect each source's next step: ${argv.join(' ')}; once that work is done, \`gbrain apply-migrations --yes\` records it.`,
+      + `Inspect each source's next step: ${argv.join(' ')}; once that work is done, \`foresights apply-migrations --yes\` records it.`,
     fix: agentFix(argv, "Lists each source's pending host step (writer setup, publication) and its command; changes nothing.", 'minions_migration'),
     details: { code: 'migration_host_work_pending', applied_pending_host_work: versions },
   };

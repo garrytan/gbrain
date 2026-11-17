@@ -83,7 +83,7 @@ const commit = async (message: string) => { await ok(['git', '-C', checkout, 'ad
 function normalize(text: string): string {
   return text.split(checkout).join('~/brain/notes')
     .replace(/\b[0-9a-f]{64}\b/g, '<hash>')
-    .replace(/\b[0-9a-f]{7,40}\b(?= gbrain:)/g, '<commit>')
+    .replace(/\b[0-9a-f]{7,40}\b(?= (?:foresights|gbrain):)/g, '<commit>')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, '<id>')
     .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?Z?)?/g, '<time>')
     .replace(/\b\d+ h old\b/g, '<n> h old');
@@ -121,7 +121,7 @@ test('docs/guides/repair.md "Fences": every command runs and prints every line t
   const steps = walkthrough();
   expect(steps.length).toBeGreaterThanOrEqual(6);
 
-  // A source synced once by the older gbrain.
+  // A source synced once by the older foresights.
   mkdirSync(checkout, { recursive: true });
   await ok(['git', 'init', '-q', checkout]);
   await ok(['git', '-C', checkout, 'config', 'user.name', 'Example']);

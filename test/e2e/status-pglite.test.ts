@@ -1,5 +1,5 @@
 /**
- * E2E `gbrain status` against a real PGLite brain.
+ * E2E `foresights status` against a real PGLite brain.
  *
  * Seeds:
  *   - 1 source row
@@ -62,7 +62,7 @@ async function seedSource(engine: PGLiteEngine, id: string) {
   );
 }
 
-describe('gbrain status E2E (PGLite)', () => {
+describe('foresights status E2E (PGLite)', () => {
   test('JSON envelope shape includes schema_version + sync + cycle + locks + workers + queue + autopilot', async () => {
     await seedSource(engine, 'default');
     let jsonOut = '';

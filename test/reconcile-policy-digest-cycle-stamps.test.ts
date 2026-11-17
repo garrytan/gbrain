@@ -2,7 +2,7 @@
  * Wave-3 connector follow-up #1 (small version): `reconcilePolicyDigest`
  * hashed the raw `sources.config`, which every successful source cycle
  * stamps with `last_source_cycle_at` / `last_full_cycle_at`. An autopilot
- * cycle between `gbrain sources reconcile` preview and apply therefore made
+ * cycle between `foresights sources reconcile` preview and apply therefore made
  * the preview stale ("Reconciliation preview is stale: policy_digest"). The
  * stamps are excluded now; real policy changes still move the digest.
  */

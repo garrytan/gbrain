@@ -3,8 +3,8 @@
  *
  * Composes lint, backlinks, sync, extract, embed, and orphans into
  * one honest unit of work. Called from:
- *   - `gbrain dream` (CLI alias; one-shot cron-triggered cycle)
- *   - `gbrain autopilot` (daemon; scheduled on an interval)
+ *   - `foresights dream` (CLI alias; one-shot cron-triggered cycle)
+ *   - `foresights autopilot` (daemon; scheduled on an interval)
  *   - Minions `autopilot-cycle` handler (durable queue; retry + observability)
  *
  * All three converge on runCycle() so there's one source of truth for
@@ -76,7 +76,7 @@ export type CyclePhase =
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
   // v0.36.1.0 Hindsight calibration wave:
   //  - propose_takes: LLM scans markdown prose, proposes gradeable claims
-  //    to a review queue. User accepts/rejects via `gbrain takes propose`.
+  //    to a review queue. User accepts/rejects via `foresights takes propose`.
   //  - grade_takes: walks unresolved takes, retrieves evidence, asks a
   //    judge model to verdict them. Auto-resolve OFF by default (D17).
   //  - calibration_profile: aggregates the resolved subset into 2-4
@@ -213,7 +213,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // depends on cross-session themes gets optimized against the freshest
   // state — strictly fresher than "right after patterns" since downstream
   // phases also mutate state the optimizer reads. Default OFF; opt-in via
-  // `gbrain config set cycle.skillopt.enabled true`. Bundled-skill safety
+  // `foresights config set cycle.skillopt.enabled true`. Bundled-skill safety
   // (D16): never auto-mutates bundled skills. Position MUST match the
   // dispatch block in runCycle (see line ~1912) — pinned by the
   // `report.phases.map(p => p.phase)).toEqual(ALL_PHASES)` assertion in
@@ -246,7 +246,7 @@ export const ALL_PHASES: CyclePhase[] = [
  * brain-wide phases in the single maintenance job instead of being repeated
  * into every source. SOURCE_BACKGROUND_PHASES have no automatic lane on
  * multi-source brains yet — they run on explicit invocation
- * (`gbrain dream --source X --phase extract_atoms`) until the background
+ * (`foresights dream --source X --phase extract_atoms`) until the background
  * lane lands (see TODOS).
  *
  * SOURCE_PHASES ∪ MIXED_PHASES ∪ GLOBAL_PHASES == ALL_PHASES, with no overlap.
@@ -284,7 +284,7 @@ export const SOURCE_BACKGROUND_PHASES: CyclePhase[] = SOURCE_PHASES.filter(
  * The canonical `default` cycle remains a place where a full implicit
  * cycle (including mixed phases) is valid; full implicit NON-default source
  * cycles are caller opt-in via `fullImplicitSourceCycle` (#4700 — bare
- * `gbrain dream` targeting the brain's default-like source).
+ * `foresights dream` targeting the brain's default-like source).
  */
 export function resolveCyclePhases(
   requested: CyclePhase[] | undefined,
@@ -305,7 +305,7 @@ export function resolveCyclePhases(
  * source when a legacy job drains after upgrade. Intersecting with
  * SOURCE_FRESHNESS_PHASES is a fixed point for current fanout payloads and a
  * safe downgrade for legacy ones. Operator intent goes through the CLI
- * (`gbrain dream --source X --phase …`), which resolveCyclePhases honors
+ * (`foresights dream --source X --phase …`), which resolveCyclePhases honors
  * verbatim — this normalization is for the queue handler only.
  *
  * No-source or no-phases payloads pass through untouched. Callers must treat
@@ -545,7 +545,7 @@ export interface CycleOpts {
   yieldDuringPhase?: () => Promise<void>;
   /**
    * Synthesize phase scope overrides (v0.23). Forwarded to runPhaseSynthesize.
-   * - `synthInputFile`: ad-hoc transcript path (`gbrain dream --input <file>`).
+   * - `synthInputFile`: ad-hoc transcript path (`foresights dream --input <file>`).
    * - `synthDate` / `synthFrom` / `synthTo`: date filters for corpus scan.
    * Mutually exclusive with each other in CLI parsing; runner trusts the
    * caller (CLI wrapper validates).
@@ -556,7 +556,7 @@ export interface CycleOpts {
   synthTo?: string;
   /**
    * v0.23.2: explicit opt-in to disable the synthesize self-consumption guard.
-   * Wired from `gbrain dream --unsafe-bypass-dream-guard`. Never auto-applied
+   * Wired from `foresights dream --unsafe-bypass-dream-guard`. Never auto-applied
    * for `--input` because that would let any caller silently re-trigger the
    * loop bug (codex finding #3).
    */
@@ -598,7 +598,7 @@ export interface CycleOpts {
   /** #6803, #8573: a source cycle with no sync works on a bounded window of its pages changed after this (null: from its oldest page); see cycle/source-window.ts. */
   sourceChangedSince?: string | null;
   /**
-   * #4700 — bare `gbrain dream` may opt the brain's default-like source
+   * #4700 — bare `foresights dream` may opt the brain's default-like source
    * (sources.default / sole-non-default routing) into the full implicit
    * phase set instead of the freshness-only source cycle. Never set by the
    * autopilot fanout or explicit `--source <id>` runs.
@@ -607,7 +607,7 @@ export interface CycleOpts {
   /**
    * issue #2860 — one-shot per-invocation bypass of a phase's own
    * `dream.<phase>.enabled` / `cycle.<phase>.enabled` config gate. Wired
-   * from `gbrain dream --phase <name> --once`.
+   * from `foresights dream --phase <name> --once`.
    *
    * Deliberately typed as the SINGLE named `CyclePhase`, not a boolean —
    * each gated phase's dispatch block below only honors the override when
@@ -625,7 +625,7 @@ export interface CycleOpts {
    * one-shot escape hatch (`--drain` for extract_atoms).
    */
   onceForPhase?: CyclePhase;
-  /** #6297: the operator named the phases (`gbrain dream --phase`); patterns then skips its in-cycle cadence. */
+  /** #6297: the operator named the phases (`foresights dream --phase`); patterns then skips its in-cycle cadence. */
   directPhases?: boolean;
   /**
    * Absolute wall-clock deadline (epoch ms) of the enclosing minion job,
@@ -633,7 +633,7 @@ export interface CycleOpts {
    * stamp). Phases that spawn bounded sub-work (patterns' subagent) clamp
    * their own timeouts to the REMAINING time so one phase's fixed
    * worst-case can't blow past the job budget and dead-letter the whole
-   * cycle mid-phase (#2781). Unset for direct callers (`gbrain dream`) —
+   * cycle mid-phase (#2781). Unset for direct callers (`foresights dream`) —
    * phases then use their configured timeouts unchanged.
    */
   deadlineAtMs?: number | null;
@@ -650,7 +650,7 @@ export interface CycleOpts {
   /**
    * GBRA-438: extract_facts writes new fact rows without calling the
    * embedding provider; their vectors wait for the stale-fact embed drain
-   * (`gbrain embed --stale --facts`, or unattended upkeep's capped step).
+   * (`foresights embed --stale --facts`, or unattended upkeep's capped step).
    */
   deferFactEmbedding?: boolean;
 }
@@ -667,7 +667,7 @@ export interface CycleOpts {
  * #4062 review: wall-clock cap for the extract phase's IN-CYCLE stale drain.
  * Deliberately small — the drain is a backlog nibbler that must not starve
  * the phases behind it; the full STALE_TIME_BUDGET_MS (~30 min) belongs to
- * the explicit `gbrain extract --stale` command. A backlog bigger than one
+ * the explicit `foresights extract --stale` command. A backlog bigger than one
  * cap's worth drains incrementally across cycles (staleRemaining reports it).
  */
 export const CYCLE_STALE_DRAIN_BUDGET_MS = 3 * 60 * 1000;
@@ -701,7 +701,7 @@ export interface LockHandle {
  * Compute the cycle lock ID for a given source.
  *
  * - `undefined` returns the legacy `'gbrain-cycle'` ID, preserving
- *   back-compat for every existing caller (autopilot, `gbrain dream`
+ *   back-compat for every existing caller (autopilot, `foresights dream`
  *   without `--source`, the no-DB file-lock path).
  * - Any string is validated via `assertValidSourceId` first (codex r2 P1-B
  *   defense-in-depth: `CycleOpts.sourceId` is a new direct API surface
@@ -725,7 +725,7 @@ export function cycleLockIdFor(sourceId?: string): string {
  *
  * runCycle needs the label on paths that never validate `opts.sourceId`:
  * lock-free phase selections acquire no lock at all (e.g.
- * `gbrain dream --phase orphans --source __all__` — the `__all__` sentinel
+ * `foresights dream --phase orphans --source __all__` — the `__all__` sentinel
  * deliberately fails strict validation), and the engine-null file-lock path
  * never routes the sourceId through `acquireDbCycleLock`. Throwing there
  * would crash a run that never needed a lock id. NEVER use this for an
@@ -1095,7 +1095,7 @@ export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: B
     const [{ runLintCore }, { cycleLintFixEnabled, cycleLintExcludes, cycleLintPhaseEnabled }] = await Promise.all([import('../commands/lint.ts'), import('./cycle/lint-fix-setting.ts')]);
     // #6369: `cycle.lint.enabled=false` skips the phase before any scan; `dream --phase lint --once` bypasses it.
     if (!opts.once && !(await cycleLintPhaseEnabled(engine))) {
-      return { phase: 'lint', status: 'skipped', duration_ms: 0, summary: 'lint skipped: cycle.lint.enabled=false', details: { reason: 'disabled', enable_hint: 'gbrain config set cycle.lint.enabled true' } };
+      return { phase: 'lint', status: 'skipped', duration_ms: 0, summary: 'lint skipped: cycle.lint.enabled=false', details: { reason: 'disabled', enable_hint: 'foresights config set cycle.lint.enabled true' } };
     }
     // issue #1678: pass the cycle's live engine so lint's content-sanity
     // DB-plane lift REUSES it instead of creating + disconnecting a
@@ -1138,7 +1138,7 @@ export async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Prom
     // Maintenance cycles must not rewrite tracked brain pages with generated
     // "Referenced in" timeline bullets. The graph extractor/auto-link path is
     // the canonical link store during sync/dream/autopilot; the legacy
-    // filesystem fixer remains available explicitly via `gbrain check-backlinks
+    // filesystem fixer remains available explicitly via `foresights check-backlinks
     // fix` for users who truly want markdown backlinks materialized.
     const { runBacklinksCore } = await import('../commands/backlinks.ts');
     const result = await runBacklinksCore({
@@ -1155,7 +1155,7 @@ export async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Prom
       duration_ms: 0,
       summary: gaps === 0
         ? 'no missing back-links found'
-        : `${gaps} missing back-link(s) found (audit-only; run gbrain check-backlinks fix to materialize)`,
+        : `${gaps} missing back-link(s) found (audit-only; run foresights check-backlinks fix to materialize)`,
       details: { gaps, added, pages_affected: result.pages_affected, dryRun, mode: 'audit-only' },
     };
   } catch (e) {
@@ -1181,7 +1181,7 @@ interface SyncPhaseResult extends PhaseResult {
  * table. Returns undefined when no registered source matches (falls back
  * to pre-v0.18 global config.sync.* keys).
  *
- * Exported for dream.ts (#1869): a `gbrain dream --dir <path>` run whose
+ * Exported for dream.ts (#1869): a `foresights dream --dir <path>` run whose
  * path matches a registered source's local_path is a per-source cycle in
  * everything but name, so dream derives the source id up front and passes
  * it as opts.sourceId — landing the freshness stamp without changing
@@ -1320,7 +1320,7 @@ async function runPhaseSync(
       noPull: !pull || managedPullSkipped,
       noEmbed: true,                       // embed is a separate phase
       noExtract: willRunExtractPhase,      // dedupe ONLY when cycle's extract phase will also run.
-                                           // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
+                                           // If extract isn't scheduled (e.g. `foresights dream --phase sync`),
                                            // sync's inline extract still runs to preserve prior behavior.
       drainHolder: { kind: 'cycle', id: null }, // #6712 PR 1: a busy drain lease skips like a busy sync lock
       ...(signal ? { signal } : {}),
@@ -1437,7 +1437,7 @@ async function runPhaseExtract(
     let lostWrites: string | null = null;
     const result = await runExtractCore(engine, {
       mode: 'all',
-      jsonMode: false, // batch errors stay human-readable on stderr, as in a plain `gbrain extract`
+      jsonMode: false, // batch errors stay human-readable on stderr, as in a plain `foresights extract`
       quiet: true, // the cycle owns the report — no helper summary on stdout (keeps dream --json pure)
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
@@ -1454,10 +1454,10 @@ async function runPhaseExtract(
     // fs walk found) — pages left stale for any OTHER reason (extractor
     // version bump, DB-only writes, a prior aborted sweep) never re-extracted
     // on the cycle, so the links_extracted_at backlog grew unboundedly until
-    // someone hand-ran `gbrain extract --stale`. Drain it here: DB-source,
+    // someone hand-ran `foresights extract --stale`. Drain it here: DB-source,
     // source-scoped, capped at CYCLE_STALE_DRAIN_BUDGET_MS per cycle (the
     // full ~30-min STALE_TIME_BUDGET_MS stays with the explicit
-    // `gbrain extract --stale` command — an unbounded in-cycle drain would
+    // `foresights extract --stale` command — an unbounded in-cycle drain would
     // starve every later phase behind a big backlog; the remainder drains
     // across subsequent cycles), no-op when nothing is stale. Failures
     // degrade to details (the targeted pass already succeeded — a drain
@@ -1737,13 +1737,13 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
  *  - source rows where `archived = true AND archive_expires_at <= now()`
  *    (paired with the cascade FK to `pages`, this also drops the source's pages)
  *  - page rows where `deleted_at` is older than `purge.retention_hours` (default 72h), except
- *    managed sync tombstones with no live twin (#7130), which wait for `gbrain pages purge-deleted`
+ *    managed sync tombstones with no live twin (#7130), which wait for `foresights pages purge-deleted`
  *
  * Cascade on `pages` covers `content_chunks`, `page_links`, `chunk_relations`.
  * `dryRun` short-circuits — no DELETEs are issued.
  *
- * Mirrors the operator escape hatches: `gbrain sources purge` (no id) and
- * `gbrain pages purge-deleted` both call the same library functions, so
+ * Mirrors the operator escape hatches: `foresights sources purge` (no id) and
+ * `foresights pages purge-deleted` both call the same library functions, so
  * scripted purges and the autopilot phase converge on a single behavior.
  */
 /**
@@ -1793,7 +1793,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       };
     }
     const [{ purgeExpiredSources }, { purgeDeletedPagesCoordinated, purgePhaseNote, purgePhaseStatus }, { readPurgeRetentionHours }] = await Promise.all([import('./destructive-guard.ts'), import('./persistence/purge-deleted.ts'), import('./sync-reconcile.ts')]);
-    // gbrain#4115: {purged, blocked} — a RESTRICT-FK-held source (revoked
+    // foresights#4115: {purged, blocked} — a RESTRICT-FK-held source (revoked
     // oauth_client, v64) is reported and skipped instead of aborting the sweep.
     const purgeResult = await purgeExpiredSources(engine);
     const purgedSources = purgeResult.purged;
@@ -1973,7 +1973,7 @@ async function runCycleUnscoped(
   // A1: canonical per-source scope for the DB-capable per-source phases
   // (extract_facts, extract_atoms, the calibration trio). Explicit --source
   // (opts.sourceId) wins; else derive from the resolved checkout dir. Without
-  // this, `gbrain dream --source repo-a` on a checkout-less brain would scope
+  // this, `foresights dream --source repo-a` on a checkout-less brain would scope
   // those phases to 'default' (resolveSourceForDir(null) → undefined) while the
   // cycle still locks + stamps last_full_cycle_at for repo-a — a freshness
   // stamp that lies. resolveSourceForDir returns undefined when brainDir is
@@ -2731,12 +2731,12 @@ async function runCycleUnscoped(
           checkAborted(cycleSignal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          // gbrain#4168: thread the job's absolute deadline so the phase's
+          // foresights#4168: thread the job's absolute deadline so the phase's
           // clean partial-exit fires before the worker's kill switch (same
           // literal shape as the patterns call above so the structural guard
           // matches both).
           // #4102: `once` bypasses the cycle.propose_takes.enabled off switch
-          // for `gbrain dream --phase propose_takes --once` (same semantics as
+          // for `foresights dream --phase propose_takes --once` (same semantics as
           // conversation_facts_backfill / enrich_thin above).
           const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { dryRun, repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null, once: opts.onceForPhase === 'propose_takes' }) as Promise<PhaseResult>, 'propose_takes');
           result.duration_ms = duration_ms;
@@ -3007,7 +3007,7 @@ async function runCycleUnscoped(
     // Passive trigger of the runSuggest() library (D3 + D4 plan-eng-review).
     // Best-effort: phase failure does not abort the cycle. Writes nothing
     // to user data — output goes to ~/.gbrain/audit/schema-events-*.jsonl
-    // (T15) and the disk-derived candidate set surfaced by `gbrain schema
+    // (T15) and the disk-derived candidate set surfaced by `foresights schema
     // review-candidates`.
     if (phases.includes('schema-suggest')) {
       checkAborted(cycleSignal);
@@ -3325,12 +3325,12 @@ export function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals'
     totals.pages_extracted > 0 ||
     totals.pages_embedded > 0 ||
     totals.pages_emotional_weight_recomputed > 0 ||
-    // A7: a code brain runs `gbrain dream` specifically to build the call graph
+    // A7: a code brain runs `foresights dream` specifically to build the call graph
     // (resolve_symbol_edges). Without these, an edges-only cycle reports 'clean'
     // — indistinguishable from "nothing happened" even when N edges resolved.
     totals.edges_resolved > 0 ||
     totals.edges_ambiguous > 0 ||
-    // `gbrain dream --input <file>` implies `--phase synthesize` (a
+    // `foresights dream --input <file>` implies `--phase synthesize` (a
     // synthesize-only cycle never touches sync/embed/etc, so those totals
     // stay zero even on a genuinely productive run). Without these two, a
     // real synthesize outcome — new pages written, or an already-completed

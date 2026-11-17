@@ -20,7 +20,7 @@ import type { Migration } from './types.ts';
 // the derived key is derived again at once. The one call below
 // derives both keys for an existing brain (a brain that already serves several
 // people starts its 14-day grace at this upgrade). reads_unscoped records when
-// the brain operator let one credential read unscoped on purpose (gbrain auth
+// the brain operator let one credential read unscoped on purpose (foresights auth
 // rescope --reads-unscoped --yes); NULL, with no backfill. Nothing else is
 // rewritten. No schema.sql mirror: like v282, these exist only through
 // migrations. The number is a placeholder restamped at the merge slot.

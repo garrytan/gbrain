@@ -1,5 +1,5 @@
 /**
- * #9027: `gbrain repair agent-session-facts --apply` on a page stored in segments (`body_storage = 'segmented'`).
+ * #9027: `foresights repair agent-session-facts --apply` on a page stored in segments (`body_storage = 'segmented'`).
  *
  * Protects: the fenced facts of a segmented page are re-attributed (`attributed_to: other` plus the speaker note) and
  * its fenced `kind: fact` / `holder: self` takes retired, as on an inline page: the page is read back whole and

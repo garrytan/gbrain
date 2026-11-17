@@ -8,7 +8,7 @@
  * Design constraints (eng review D2, D3, D4, D20, D21):
  *
  *   - D2: extracted as a first-class primitive after rule-of-three
- *     satisfied across 12+ ad-hoc batch sites in gbrain.
+ *     satisfied across 12+ ad-hoc batch sites in foresights.
  *
  *   - D3: budget gate is fail-CLOSED. Primitive reads
  *     `getCurrentBudgetTracker()` from `src/core/ai/gateway.ts` ahead

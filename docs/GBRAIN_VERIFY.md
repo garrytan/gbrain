@@ -1,6 +1,6 @@
-# GBrain Installation Verification Runbook
+# Foresights Installation Verification Runbook
 
-> **One-command equivalent:** `gbrain bootstrap verify` runs the whole install
+> **One-command equivalent:** `foresights bootstrap verify` runs the whole install
 > contract (round-trip, graph floor, and more) automatically and exits non-zero
 > on failure — it is the first thing to run after any install. See
 > [docs/guides/bootstrap.md](guides/bootstrap.md). This runbook is the
@@ -8,17 +8,17 @@
 > and you need to isolate which layer broke, or when you want to understand
 > what "healthy" looks like check by check.
 
-> **Something feels off, or a gbrain call failed?** Start with the
+> **Something feels off, or a foresights call failed?** Start with the
 > [agent operator protocol](protocol/AGENT_OPERATOR_v1.md): the error's `code`
-> and `fix.next` say what happened, who acts and how to verify; `gbrain errors
+> and `fix.next` say what happened, who acts and how to verify; `foresights errors
 > <code>` explains a code offline, and the
 > [troubleshooting symptom table](guides/troubleshooting.md#symptom-table)
 > covers symptoms that are not a single error. Then use the checks below.
 
-Run these checks after install to confirm every part of GBrain is working.
+Run these checks after install to confirm every part of Foresights is working.
 Each check includes the command, expected output, and what to do if it fails.
-When `gbrain doctor` reports `timeline_history`, `derived_visibility` or
-unsealed pages, use [`gbrain repair`](guides/repair.md); when a write is
+When `foresights doctor` reports `timeline_history`, `derived_visibility` or
+unsealed pages, use [`foresights repair`](guides/repair.md); when a write is
 refused with a named reason, see [write refusal reasons](guides/write-refusals.md).
 
 The most important check is #4 (live sync). "Sync ran" is not the same as
@@ -32,7 +32,7 @@ worse than no sync at all, because you think it's working.
 **Command:**
 
 ```bash
-gbrain doctor --json
+foresights doctor --json
 ```
 
 **Expected:** All checks return `"ok"`:
@@ -56,8 +56,8 @@ check. See `skills/setup/SKILL.md` Error Recovery table.
 **Command:**
 
 ```bash
-gbrain apply-migrations --list      # per-version status: applied / partial / wedged / pending / future
-gbrain apply-migrations --dry-run   # what a real run would apply or resume
+foresights apply-migrations --list      # per-version status: applied / partial / wedged / pending / future
+foresights apply-migrations --dry-run   # what a real run would apply or resume
 ```
 
 Both surfaces are read-only — they never run orchestrators or schema
@@ -85,7 +85,7 @@ orchestrator migrations still run their filesystem-only phases. Scripts and
 CI that need a hard signal add `--require-db`: with it, `--list` and
 `--dry-run` exit 1 when the probe failed, and a real run prints the probe
 line and aborts with exit 1 before any orchestrator runs. The observational
-sibling is `gbrain doctor --no-migrate`, which connects probe-only so a
+sibling is `foresights doctor --no-migrate`, which connects probe-only so a
 clean-or-behind schema is reported on as-is instead of being auto-migrated
 before the health checks run.
 
@@ -109,7 +109,7 @@ read brain, respond with context, write brain, sync.
 **Command:**
 
 ```bash
-gbrain check-update --json
+foresights check-update --json
 ```
 
 **Expected:** Returns JSON with `current_version`, `latest_version`,
@@ -129,7 +129,7 @@ This is the most important check. Three parts.
 Compare page count in the DB against syncable file count in the repo:
 
 ```bash
-gbrain stats
+foresights stats
 ```
 
 Then count syncable files:
@@ -146,25 +146,25 @@ find /data/brain -name '*.md' \
   | wc -l
 ```
 
-**Expected:** Page count in `gbrain stats` should be close to the file count.
+**Expected:** Page count in `foresights stats` should be close to the file count.
 Some difference is normal (files added since last sync), but if page count is
 less than half the file count, sync is silently skipping pages.
 
 **If page count is way too low (Supabase/Postgres brains):** The #1 cause is an
 unreachable direct connection on an IPv4-only host. (PGLite brains have no
-network layer — for them, check that the sync cron/watch is actually running.) GBrain uses the Transaction pooler (port 6543)
+network layer — for them, check that the sync cron/watch is actually running.) Foresights uses the Transaction pooler (port 6543)
 for reads, but routes migrations, DDL, and sync transactions to a derived direct
 connection (`db.<ref>.supabase.co:5432`), which is IPv6-only.
 - On an IPv4-only host, reads work but sync transactions fail and silently skip
   pages.
 - Fix: set `GBRAIN_DIRECT_DATABASE_URL` to the **Session pooler** string (port
   5432 on the `pooler.supabase.com` host, IPv4), or enable Supabase's IPv4
-  add-on. Then run `gbrain sync --full` to reimport everything.
+  add-on. Then run `foresights sync --full` to reimport everything.
 
 ### 4b. Embed Check
 
 ```bash
-gbrain stats
+foresights stats
 ```
 
 **Expected:** Embedded chunk count should be close to total chunk count.
@@ -172,7 +172,7 @@ gbrain stats
 **If embedded is much lower than total:**
 
 ```bash
-gbrain embed --stale
+foresights embed --stale
 ```
 
 Without a key for the configured embedding provider (`VOYAGE_API_KEY` for the
@@ -190,7 +190,7 @@ This is the real test. Edit a brain page, push, wait, search.
 # Example: fix a line in alice-example's page
 cd /data/brain
 # Make a small edit to one .md file, then commit and push only that file
-gbrain git commit-push -m "test: verify live sync" -- people/alice-example.md
+foresights git commit-push -m "test: verify live sync" -- people/alice-example.md
 ```
 
 It must exit 0 and print `pushed <sha> to origin/<branch>`. On any other
@@ -202,16 +202,16 @@ result, stop the test and follow [outcomes](guides/shared-checkout-git.md#outcom
 3. Search for the corrected text:
 
 ```bash
-gbrain search "<text from the correction>"
+foresights search "<text from the correction>"
 ```
 
 **Expected:** The search returns the **corrected** text, not the old version.
 
 **If it returns old text:** Sync failed silently. Check:
 - Is the sync cron registered and running?
-- Is `gbrain sync --watch` still alive (if using watch mode)?
-- Run `gbrain config get sync.last_run` to see when sync last ran.
-- Run `gbrain sync --repo /data/brain` manually and check for errors.
+- Is `foresights sync --watch` still alive (if using watch mode)?
+- Run `foresights config get sync.last_run` to see when sync last ran.
+- Run `foresights sync --repo /data/brain` manually and check for errors.
 - If sync errors mention an unreachable host or connection timeout, the direct
   connection isn't reachable on IPv4 (see 4a above).
 
@@ -222,7 +222,7 @@ gbrain search "<text from the correction>"
 **Command:**
 
 ```bash
-gbrain stats
+foresights stats
 ```
 
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
@@ -238,7 +238,7 @@ echo $VOYAGE_API_KEY | head -c 10   # or $OPENAI_API_KEY
 If blank, set the key. Then:
 
 ```bash
-gbrain embed --stale
+foresights embed --stale
 ```
 
 ### 5a. Fact and take vectors
@@ -249,7 +249,7 @@ too (fact dedup and consolidation, `think`, `takes search --semantic`).
 **Command:**
 
 ```bash
-gbrain doctor --json
+foresights doctor --json
 ```
 
 **Expected:** the `fact_take_vectors` check is `ok`. On a keyless brain
@@ -264,19 +264,19 @@ model, and `details.fix` lists the exact commands. Takes are repaired by the
 ordinary stale pass:
 
 ```bash
-gbrain embed --stale
+foresights embed --stale
 ```
 
 Facts are repaired per source, after a preview (paid provider calls need
 explicit authorization):
 
 ```bash
-gbrain embed --facts --stale --source <source-id> --dry-run --json
-gbrain embed --facts --stale --source <source-id> --yes --max-cost-usd 1
+foresights embed --facts --stale --source <source-id> --dry-run --json
+foresights embed --facts --stale --source <source-id> --yes --max-cost-usd 1
 ```
 
 If the check says the vectors were not verified (code `vectors_not_verified`),
-run `gbrain migrate embeddings --status` to see which model and width the brain
+run `foresights migrate embeddings --status` to see which model and width the brain
 records.
 
 ---
@@ -285,7 +285,7 @@ records.
 
 **Check:** Ask the agent about a person or concept that exists in the brain.
 
-**Expected:** The agent uses `gbrain search` or `gbrain query` FIRST, not grep
+**Expected:** The agent uses `foresights search` or `foresights query` FIRST, not grep
 or external APIs. The response includes brain-sourced context with source
 attribution.
 
@@ -303,7 +303,7 @@ one-time backfill.
 **Command:**
 
 ```bash
-gbrain stats | grep -E 'links|timeline'
+foresights stats | grep -E 'links|timeline'
 ```
 
 **Expected:** Both `links` and `timeline_entries` are non-zero (assuming the brain
@@ -312,17 +312,17 @@ has content with entity references and dated markdown).
 **If it's zero on a brain with imported content:** Run the backfill.
 
 ```bash
-gbrain extract links --source db --dry-run | head -5    # preview
-gbrain extract links --source db                         # commit
-gbrain extract timeline --source db
-gbrain stats                                             # confirm > 0
+foresights extract links --source db --dry-run | head -5    # preview
+foresights extract links --source db                         # commit
+foresights extract timeline --source db
+foresights stats                                             # confirm > 0
 ```
 
 **Bonus check** — graph traversal works:
 
 ```bash
 # Pick any well-connected slug from your brain
-gbrain graph-query people/<some-person-slug> --depth 2
+foresights graph-query people/<some-person-slug> --depth 2
 ```
 
 **Expected:** Indented tree of typed edges (`--attended-->`, `--works_at-->`, etc.).
@@ -339,14 +339,14 @@ heuristics won't find them — file an issue with a sample page.
 ## 8. JSONB Frontmatter Integrity
 
 A Postgres-backed brain can carry double-encoded JSONB columns
-(`frontmatter->>'key'` returns NULL, GIN indexes are inert). `gbrain upgrade`
-runs `gbrain repair-jsonb` automatically via the `v0_12_2` orchestrator.
+(`frontmatter->>'key'` returns NULL, GIN indexes are inert). `foresights upgrade`
+runs `foresights repair-jsonb` automatically via the `v0_12_2` orchestrator.
 Verify the repair succeeded.
 
 **Command:**
 
 ```bash
-gbrain repair-jsonb --dry-run --json
+foresights repair-jsonb --dry-run --json
 ```
 
 **Expected:** `totalRepaired: 0` across all 5 columns (`pages.frontmatter`,
@@ -358,7 +358,7 @@ JSON objects, not string-encoded JSON.
 without `--dry-run`:
 
 ```bash
-gbrain repair-jsonb
+foresights repair-jsonb
 ```
 
 Idempotent. PGLite brains always report 0 (the embedded engine never
@@ -367,11 +367,11 @@ double-encodes).
 **Bonus check** — the doctor's dedicated JSONB scan agrees:
 
 ```bash
-gbrain doctor --json | grep -o '"name":"jsonb_integrity"[^}]*'
+foresights doctor --json | grep -o '"name":"jsonb_integrity"[^}]*'
 ```
 
 **Expected:** the fragment contains `"status":"ok"` ("All JSONB columns store
-objects/arrays"). If it reports double-encoded rows, run `gbrain repair-jsonb`.
+objects/arrays"). If it reports double-encoded rows, run `foresights repair-jsonb`.
 
 ---
 
@@ -379,31 +379,31 @@ objects/arrays"). If it reports double-encoded rows, run `gbrain repair-jsonb`.
 
 ```bash
 # 0. The one-command contract check (exits non-zero on failure)
-gbrain bootstrap verify
+foresights bootstrap verify
 
 # 1. Schema
-gbrain doctor --json
+foresights doctor --json
 
 # 2. Sync recency
-gbrain config get sync.last_run
+foresights config get sync.last_run
 
 # 3. Page count + embed coverage
-gbrain stats
+foresights stats
 
 # 4. Search works
-gbrain search "test query from your brain content"
+foresights search "test query from your brain content"
 
 # 5. Catch any unembedded chunks
-gbrain embed --stale
+foresights embed --stale
 
 # 6. Auto-update
-gbrain check-update --json
+foresights check-update --json
 
 # 7. Knowledge graph populated (links + timeline > 0)
-gbrain stats | grep -E 'links|timeline'
+foresights stats | grep -E 'links|timeline'
 
 # 8. JSONB integrity (Postgres only, PGLite always 0)
-gbrain repair-jsonb --dry-run --json
+foresights repair-jsonb --dry-run --json
 ```
 
 If all eight return successfully, the installation is healthy. For the full

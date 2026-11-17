@@ -3,7 +3,7 @@
  * setCliExitVerdict.
  *
  * A RAW `process.exitCode = N` is silently ZEROED by the deliberate
- * flush-exit: currentExitCode() reads only gbrain's owned verdict (the
+ * flush-exit: currentExitCode() reads only foresights's owned verdict (the
  * PGLite-Emscripten-pollution defense), so a command that bypasses the
  * setter reports success on failure. Caught live twice in one day: doctor's
  * FAIL path exited 0 after a merge introduced a raw write. Runtime variants

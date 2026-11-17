@@ -1,5 +1,5 @@
 /**
- * Run status and exit semantics for `gbrain extract-conversation-facts`:
+ * Run status and exit semantics for `foresights extract-conversation-facts`:
  * a partial run (some pages extracted, some failed) is a success that lists
  * its failed pages; only a run where every attempted page failed, or a model
  * without pricing, exits nonzero.

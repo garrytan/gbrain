@@ -21,7 +21,7 @@ describe('buildInitFirstRunNotices', () => {
     expect(bundle).toMatchObject({ code: 'first_run_decisions', kind: 'ask' });
     expect(bundle.decisions!.map(d => d.id)).toEqual(['search_mode', 'writeback', 'skills_scaffold']);
     expect(bundle.user_message).toBe(
-      'gbrain is installed. In effect: search mode balanced; agents save only what you ask them to remember, until you turn on automatic saving '
+      'foresights is installed. In effect: search mode balanced; agents save only what you ask them to remember, until you turn on automatic saving '
       + '(salient is recommended: durable facts you state, saved with provenance). '
       + `${costMatrixSentence()} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     );
@@ -96,8 +96,8 @@ describe('the upkeep line (GBRA-438)', () => {
     expect(bundle.decisions!.map(d => d.id)).toEqual(['search_mode', 'upkeep']);
     const upkeep = bundle.decisions!.find(d => d.id === 'upkeep')!;
     expect(upkeep.question).toBe(
-      "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. "
-      + 'Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.',
+      "Upkeep: free upkeep runs on its own while your agent's foresights session is open. Nothing is deleted or paid for without you. "
+      + 'Turn off: foresights config set maintenance.auto false. Optional schedule: foresights maintain --schedule.',
     );
     expect(upkeep.question).not.toContain('?');
     expect(upkeep.default).toBe('on');
@@ -121,12 +121,12 @@ describe('the upkeep line (GBRA-438)', () => {
     expect(n.user_message!.split(upkeepLine(false)).length).toBe(2);
     expect(n.user_message).toContain("Nothing needs an answer now");
     const [alone] = setupFirstRunNotices([{ ...bundle, decisions: bundle.decisions!.filter(d => d.id === 'upkeep'), contract_version: 1 }], 'Claude Code');
-    expect(alone.user_message).toBe(`gbrain is set up and Claude Code is wired, so memory works now. Report back (Wakeshift): off. gbrain wakeshift enable turns it on. ${upkeepLine(false)} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`);
+    expect(alone.user_message).toBe(`foresights is set up and Claude Code is wired, so memory works now. Report back (Wakeshift): off. foresights wakeshift enable turns it on. ${upkeepLine(false)} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`);
   });
 });
 
-describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
-  const wiring = { id: 'harness_wiring', question: 'Which agent app should get gbrain memory?', options: [{ id: 'wire', label: 'wire' }, { id: 'skip', label: 'skip' }], default: 'wire', default_reason: 'detected' };
+describe('setupFirstRunNotices (foresights setup <harness>)', () => {
+  const wiring = { id: 'harness_wiring', question: 'Which agent app should get foresights memory?', options: [{ id: 'wire', label: 'wire' }, { id: 'skip', label: 'skip' }], default: 'wire', default_reason: 'detected' };
   const fromInit = (inputs: Parameters<typeof buildInitFirstRunNotices>[0]) => {
     const [bundle] = buildInitFirstRunNotices(inputs);
     return [{ ...bundle, decisions: [...bundle.decisions!, wiring], contract_version: 1 }];
@@ -141,9 +141,9 @@ describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
   test('frames the bundle as settings in effect, relayed in the install reply, never a reply-to-continue question', () => {
     const [n] = setupFirstRunNotices(fromInit({ searchMode, writeback: true }), 'Claude Code');
     expect(n.user_message).toBe(
-      'gbrain is set up and Claude Code is wired, so memory works now. In effect: search mode balanced; agents save only what you ask them to remember, '
+      'foresights is set up and Claude Code is wired, so memory works now. In effect: search mode balanced; agents save only what you ask them to remember, '
       + 'until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). '
-      + 'Report back (Wakeshift): off. gbrain wakeshift enable turns it on. '
+      + 'Report back (Wakeshift): off. foresights wakeshift enable turns it on. '
       + `${costMatrixSentence()} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     );
     expect(n.user_message).not.toContain("Reply 'defaults'");
@@ -171,9 +171,9 @@ describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
   test('every harness gets the Report back (Wakeshift) row: off by default, on once reporting back is published', () => {
     for (const harness of ['Claude Code', 'Codex']) {
       const [off] = setupFirstRunNotices(fromInit({ searchMode }), harness);
-      expect(off.user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
+      expect(off.user_message).toContain('Report back (Wakeshift): off. foresights wakeshift enable turns it on.');
       const [on] = setupFirstRunNotices(fromInit({ searchMode }), harness, { reportBack: true });
-      expect(on.user_message).toContain('Report back (Wakeshift): on. gbrain wakeshift disable turns it off.');
+      expect(on.user_message).toContain('Report back (Wakeshift): on. foresights wakeshift disable turns it off.');
       expect(on.user_message).not.toContain('Report back (Wakeshift): off');
     }
   });
@@ -194,17 +194,17 @@ describe('the conversation archive line (GST-2768)', () => {
     expect(archive.question).toContain('Conversation archive: on.');
     expect(archive.question).toContain('conversations source');
     expect(archive.question).toContain('nothing leaves this machine');
-    expect(archive.question).toContain('gbrain transcripts archive off');
+    expect(archive.question).toContain('foresights transcripts archive off');
     expect(archive.default).toBe('on');
     expect(archive.options.find(o => o.id === 'off')!.argv).toEqual(['gbrain', 'transcripts', 'archive', 'off']);
-    expect(archiveLine('on', true)).toContain('gbrain embed --held --dry-run');
+    expect(archiveLine('on', true)).toContain('foresights embed --held --dry-run');
   });
 
   test('a shared brain is offered it with the on command, default off', () => {
     const [bundle] = buildInitFirstRunNotices({ searchMode, archive: { state: 'offered', embedding: false } });
     const archive = bundle.decisions!.find(d => d.id === 'conversation_archive')!;
     expect(archive.question).toBe(archiveLine('offered', false));
-    expect(archive.question).toContain('gbrain transcripts archive on');
+    expect(archive.question).toContain('foresights transcripts archive on');
     expect(archive.default).toBe('off');
     expect(archive.options.find(o => o.id === 'on')!.argv).toEqual(['gbrain', 'transcripts', 'archive', 'on']);
   });

@@ -1,7 +1,7 @@
 /**
  * GBRA-230 lane G: the commit-push door.
  * Protects:
- *   - #7752: `gbrain git commit-push --dry-run` runs the real run's path checks. On a non-cone sparse checkout a path
+ *   - #7752: `foresights git commit-push --dry-run` runs the real run's path checks. On a non-cone sparse checkout a path
  *     outside the sparse-checkout definition refuses `commit_paths_invalid` with the real run's fix text, takes no lock
  *     and writes nothing (red before: the dry run exited 0 and listed the path the real run refuses). Cone mode and a
  *     checkout without sparse checkout keep answering what their real run does. The dry run also refuses what the real

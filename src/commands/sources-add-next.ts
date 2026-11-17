@@ -1,5 +1,5 @@
 /**
- * GBRA-156: the next command `gbrain sources add` prints when a new
+ * GBRA-156: the next command `foresights sources add` prints when a new
  * non-federated source leaves the no-grant floor holding no page.
  *
  * A remote token or agent connection with no source grant reads the default
@@ -44,7 +44,7 @@ export function notInDefaultSearchNotice(id: string, shared: boolean, ask = shar
     kind: 'info',
     why: `The source "${id}" is not federated, so it is not in default search: a search, query or recall that names no source leaves its pages out, and a remote token or agent connection with no source grant cannot read them.`
       + (shared ? ' This brain serves several people or is not marked personal, so a new source stays out until someone chooses to add it.' : '')
-      + ` Run \`gbrain sources federate ${id}\` to add it, or grant one token with \`gbrain auth rescope --token <name> --sources ${id}\`.`,
+      + ` Run \`foresights sources federate ${id}\` to add it, or grant one token with \`foresights auth rescope --token <name> --sources ${id}\`.`,
     fix: {
       argv: ['gbrain', 'sources', 'federate', id],
       consent: [],
@@ -57,7 +57,7 @@ export function notInDefaultSearchNotice(id: string, shared: boolean, ask = shar
   };
 }
 
-/** After `gbrain sync --source <id>`: the same notice when that source holds pages and its federated setting is unset. */
+/** After `foresights sync --source <id>`: the same notice when that source holds pages and its federated setting is unset. */
 export async function syncOutOfSearchNotice(engine: BrainEngine, args: string[]): Promise<Notice | null> {
   if (args[0] === 'status' || args[0] === 'unblock' || args.includes('--dry-run')) return null;
   const id = args.find((_, i) => args[i - 1] === '--source');
@@ -90,7 +90,7 @@ export async function reportAddOutcome(input: { id: string; chosen: boolean | nu
   }
   if (input.chosen != null) return undefined;
   if (input.federated) {
-    input.say(`  this brain serves one person, so a new source joins default search; \`gbrain sources unfederate ${input.id}\` takes it out`);
+    input.say(`  this brain serves one person, so a new source joins default search; \`foresights sources unfederate ${input.id}\` takes it out`);
     return undefined;
   }
   const notice = notInDefaultSearchNotice(input.id, true);

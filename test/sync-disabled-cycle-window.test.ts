@@ -2,7 +2,7 @@
  * #8573: a per-source cycle that runs no sync for its source works on the
  * source's pages changed since its previous cycle. A git source with
  * `config.syncEnabled=false` (an external scheduler runs
- * `gbrain sync --source` itself) got the freshness phases without `sync` and
+ * `foresights sync --source` itself) got the freshness phases without `sync` and
  * no changed-page window, so extract_facts and recompute_emotional_weight
  * walked every page of the source on every cycle; past about 27k pages each
  * cycle died at the 30-minute job timeout and never stamped. A source with no

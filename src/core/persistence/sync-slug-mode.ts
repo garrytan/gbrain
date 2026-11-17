@@ -31,15 +31,15 @@ export async function pinnedSlugModeMismatch(engine: Pick<BrainEngine, 'executeR
 /** The refusal's cause and the decision it leaves to a person (the receipt appends the inspect command). */
 export function slugModeMismatchCause(sourceId: string, pinned: string, slugMode: SlugRootMode): string {
   return `Source ${sourceId} pins slug_root_mode=${pinned}, but this sync ran under ${slugMode}; at a subdirectory the two modes give different slugs, so the checkpoint did not advance. `
-    + `A person decides which mode the source keeps: set sources.config.slug_root_mode back to ${slugMode} and rerun gbrain sync --no-pull --source ${sourceId}, `
-    + `or keep ${pinned}: preview gbrain repair managed-sync-orphans --source ${sourceId} (it lists this run's cursor as slug_mode_refused), apply it with the hash it prints, then rerun gbrain sync --no-pull --source ${sourceId}, which discovers the source again under ${pinned} (pages this run wrote keep their ${slugMode} slugs beside the new ones).`;
+    + `A person decides which mode the source keeps: set sources.config.slug_root_mode back to ${slugMode} and rerun foresights sync --no-pull --source ${sourceId}, `
+    + `or keep ${pinned}: preview foresights repair managed-sync-orphans --source ${sourceId} (it lists this run's cursor as slug_mode_refused), apply it with the hash it prints, then rerun foresights sync --no-pull --source ${sourceId}, which discovers the source again under ${pinned} (pages this run wrote keep their ${slugMode} slugs beside the new ones).`;
 }
 
 /**
  * #6834: whether a checkpoint was refused because `last_commit` moved, and it now stands at exactly this run's target:
- * another run of the source (an older gbrain's cursor under another key, or an older binary) checkpointed the same
+ * another run of the source (an older foresights's cursor under another key, or an older binary) checkpointed the same
  * commit. The run's pages all committed and the source is where the checkpoint would put it, so a fresh checkpoint marked
- * overtaken (#5522) finishes the cursor. A checkpoint moved anywhere else stays refused; `gbrain repair
+ * overtaken (#5522) finishes the cursor. A checkpoint moved anywhere else stays refused; `foresights repair
  * managed-sync-orphans` retires that cursor (`checkpoint_moved`).
  */
 export async function checkpointMovedToTarget(engine: Pick<BrainEngine, 'executeRaw'>, cursor: { sourceId: string; incarnation: string },

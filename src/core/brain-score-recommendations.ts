@@ -88,8 +88,8 @@ export interface Check {
  * Shared recommendation generator for brain-health remediation.
  *
  * Consumed by both:
- *   - `gbrain doctor --remediation-plan` / `--remediate` (queue-based execution)
- *   - `gbrain features --auto-fix` (inline execution preserved per D15)
+ *   - `foresights doctor --remediation-plan` / `--remediate` (queue-based execution)
+ *   - `foresights features --auto-fix` (inline execution preserved per D15)
  *
  * Pure module — no engine I/O. Input is `BrainHealth` (already produced by
  * engine.getHealth()) + a `RecommendationContext` that names which prereqs
@@ -204,7 +204,7 @@ export interface CheckClassification {
  * lets callers inject RemediationStep entries discovered by doctor checks
  * outside this module's hardcoded planner. Without this, adding a
  * `Check.remediation` field to a new doctor check wouldn't auto-wire into
- * `gbrain doctor --remediation-plan` — the planner would just ignore it.
+ * `foresights doctor --remediation-plan` — the planner would just ignore it.
  *
  * Onboard's runRemediationPlan calls the 4 new check helpers (embed_staleness,
  * entity_link_coverage, timeline_coverage, takes_count) and threads their

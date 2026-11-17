@@ -1,5 +1,5 @@
 /**
- * Argument parsing, formatting and context shared by the `gbrain jobs`
+ * Argument parsing, formatting and context shared by the `foresights jobs`
  * subcommand modules (moved out of src/commands/jobs.ts, which re-exports the
  * public helpers).
  */
@@ -101,7 +101,7 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
       ? '--concurrency flag'
       : 'GBRAIN_WORKER_CONCURRENCY env';
     process.stderr.write(
-      `[gbrain jobs] invalid concurrency from ${source} (${JSON.stringify(raw)}); ` +
+      `[foresights jobs] invalid concurrency from ${source} (${JSON.stringify(raw)}); ` +
       `falling back to 1. Set a positive integer.\n`
     );
     return 1;

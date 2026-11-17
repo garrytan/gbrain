@@ -2,10 +2,10 @@
 
 A page keeps its structured rows in two kinds of fenced Markdown tables: a
 **facts** fence (what is true about the page's subject) and a **takes** fence
-(who believes what, and how strongly). This page is the exact format gbrain
+(who believes what, and how strongly). This page is the exact format foresights
 accepts, what it fixes in a malformed fence by itself, and what it never
 guesses. Everything between the generated markers below is rendered from the
-parser and repair code, so it matches the running gbrain.
+parser and repair code, so it matches the running foresights.
 
 **Say to your agent:** *"Why was my facts table held? Show me what the fence
 should look like."*
@@ -18,10 +18,10 @@ row and `takes_add` adds a take row, each with a valid row number, kind and
 holder, so the fence never needs repair. Write a table by hand only when the
 user asks for it, and follow the format below.
 
-When a fence does not follow this format, gbrain fixes what has one exact
+When a fence does not follow this format, foresights fixes what has one exact
 meaning in the same write and holds or refuses the rest with an
 `invalid_fence` reason ([what each reason means](write-refusals.md#invalid_fence)).
-On the brain host, `gbrain repair fences` previews and applies the remaining
+On the brain host, `foresights repair fences` previews and applies the remaining
 repairs, and the maintenance run applies them automatically
 ([fence repair](repair.md#fences)).
 
@@ -55,7 +55,7 @@ Facts cells are read by the column the header names, in any order. A header with
 | 15 | `attributed_to` | `user`, `assistant`, `other` | yes | - | Who asserted the claim, or empty. |
 
 <a id="facts-layouts"></a>
-- **Narrow, 10 cells** (what gbrain writes unless a row needs a wide column):
+- **Narrow, 10 cells** (what foresights writes unless a row needs a wide column):
 
   ```text
   | # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
@@ -100,7 +100,7 @@ Takes cells are read by position, except `resolved`, `quality`, `evidence`, `val
 | 13 | `by` | free text | yes | - | Who resolved it. Read by header name. |
 
 <a id="takes-layouts"></a>
-- **Narrow, 7 cells** (what gbrain writes unless a row needs a wide column):
+- **Narrow, 7 cells** (what foresights writes unless a row needs a wide column):
 
   ```text
   | # | claim | kind | who | weight | since | source |
@@ -121,7 +121,7 @@ Takes cells are read by position, except `resolved`, `quality`, `evidence`, `val
 
 A takes `who` cell is one of `world`, `brain`, `people/<slug>`, `companies/<slug>`. Slugs are lowercase.
 
-| Written | Valid | What gbrain does |
+| Written | Valid | What foresights does |
 | --- | --- | --- |
 | `world` | yes | Accepted. |
 | `brain` | yes | Accepted. |
@@ -139,8 +139,8 @@ A takes `who` cell is one of `world`, `brain`, `people/<slug>`, `companies/<slug
 
 - `#` is a positive whole number, unique per fence kind across the whole page: the body and the timeline count together.
 - A struck row keeps its number, and `superseded by #N` must name a row on the page.
-- gbrain renumbers a row whose number is zero, negative, not a number or a duplicate. When two rows share a number, the row that matches the stored row keeps it. A new number is one above every number on the page (live and struck, both sections) and every stored row number of the page, so a freed number is not reused. A number whose only trace was deleted before this release is not known and could be reused.
-- gbrain does not renumber a duplicate that a `superseded by #N` reference names (`superseded_ambiguous`), or rows hidden from a remote caller.
+- foresights renumbers a row whose number is zero, negative, not a number or a duplicate. When two rows share a number, the row that matches the stored row keeps it. A new number is one above every number on the page (live and struck, both sections) and every stored row number of the page, so a freed number is not reused. A number whose only trace was deleted before this release is not known and could be reused.
+- foresights does not renumber a duplicate that a `superseded by #N` reference names (`superseded_ambiguous`), or rows hidden from a remote caller.
 
 <a id="examples"></a>
 ## Examples
@@ -170,7 +170,7 @@ A valid takes fence (narrow layout):
 ```
 
 <a id="normalized"></a>
-## What gbrain fixes by itself
+## What foresights fixes by itself
 
 These rules run on every write path for free. They edit or move cell text and never re-render a table. A fence they fix completely is written back in fixed form; each fix is reported by its class, row and column.
 
@@ -185,11 +185,11 @@ These rules run on every write path for free. They edit or move cell text and ne
 | `column_default` | A required facts column missing from the whole header gets its write default: `confidence` `1.0`, `notability` `medium`, `visibility` `private`. Takes have no defaults; a takes fence with no weight is `weight_missing`. |
 | `header_alias` | A header whose every column has a known spelling (see [header spellings](#header-spellings)) becomes the canonical header, and each row's cells move into canonical order unchanged. |
 | `enum_synonym` | Facts notability `critical`, `very high`, `highest` → `high`; `very low`, `minor` → `low`; visibility `internal`, `team`, `confidential`, `restricted`, `secret`, `shared` → `private`, and `public` → `world` only on a world-visible page (`private` otherwise); case and spacing variants of a canonical value. Any other word is `enum_unmapped`. |
-| `kind_map` | Facts: `proposal`, `suggestion`, `hypothesis` → `idea`; `opinion`, `view`, `insight`, `assessment`, `frame` → `belief`; `promise`, `pledge` → `commitment`; `meeting`, `launch`, `announcement`, `milestone` → `event`; any other word → `fact`, with the word kept in `context` (for example `original kind: partnership`). A facts kind cell longer than three words, or with sentence punctuation, a link or strikethrough, is not read as a kind: it is `claim_split`, usually the end of a claim an unescaped `|` cut in two. Takes: `assessment`, `recommendation`, `strategic position`, `opinion`, `view` → `take`; `prediction`, `forecast` → `bet`; `guess`, `intuition` → `hunch`; any other word is `takes_kind_unsupported`, because gbrain never chooses a takes kind. |
+| `kind_map` | Facts: `proposal`, `suggestion`, `hypothesis` → `idea`; `opinion`, `view`, `insight`, `assessment`, `frame` → `belief`; `promise`, `pledge` → `commitment`; `meeting`, `launch`, `announcement`, `milestone` → `event`; any other word → `fact`, with the word kept in `context` (for example `original kind: partnership`). A facts kind cell longer than three words, or with sentence punctuation, a link or strikethrough, is not read as a kind: it is `claim_split`, usually the end of a claim an unescaped `|` cut in two. Takes: `assessment`, `recommendation`, `strategic position`, `opinion`, `view` → `take`; `prediction`, `forecast` → `bet`; `guess`, `intuition` → `hunch`; any other word is `takes_kind_unsupported`, because foresights never chooses a takes kind. |
 | `holder_alias` | Takes holder `system`, `assistant`, `ai`, `agent`, `gbrain`, `model` (any case) → `brain`. |
 | `confidence_format` | A percent or a number with stray spaces in `confidence` or `weight` becomes a decimal: `85%` → `0.85`, `0. 8` → `0.8`. A number outside 0 to 1 is `confidence_out_of_range`. |
 | `holder_verified` | Tier 2, not Tier 1: a takes holder written as a name becomes the one `people/` or `companies/` page it resolves to exactly. On a world-visible page a private page never matches. Anything less certain stays `holder_unresolved`. |
-| `quote_marker` | Repair only (`gbrain repair fences` and the content-repair lane), never on a write: a facts or takes marker quoted in prose (text follows it on its line, or it sits on a blockquote line, outside code and table lines, and it begins or ends no fence that holds rows) is wrapped in backticks, so readers see an example rather than a fence. The edit is kept only when every row of every fence stays where it was and the privacy boundary hides at least what it hid. A page whose only problem is such a mention reads `quoted_marker`. |
+| `quote_marker` | Repair only (`foresights repair fences` and the content-repair lane), never on a write: a facts or takes marker quoted in prose (text follows it on its line, or it sits on a blockquote line, outside code and table lines, and it begins or ends no fence that holds rows) is wrapped in backticks, so readers see an example rather than a fence. The edit is kept only when every row of every fence stays where it was and the privacy boundary hides at least what it hid. A page whose only problem is such a mention reads `quoted_marker`. |
 
 <a id="header-spellings"></a>
 ### Header spellings
@@ -224,13 +224,13 @@ Header cells are compared case-insensitively, with spaces, `_` and `-` treated a
 | `source` | `src` |
 
 <a id="never-guessed"></a>
-## What gbrain never guesses
+## What foresights never guesses
 
 A problem the rules above cannot fix exactly is held or refused with a reason. The reason says which tier clears it:
 
 - **llm** (Tier 3, the repair model rewrites only the named rows, or answers HOLD when a row has two readings): [`header_unmapped`](write-refusals.md#fence-header_unmapped), [`no_header`](write-refusals.md#fence-no_header), [`row_before_header`](write-refusals.md#fence-row_before_header), [`short_row`](write-refusals.md#fence-short_row), [`unclosed_trailing_content`](write-refusals.md#fence-unclosed_trailing_content).
 - **resolver** (Tier 2, verified holder lookup, free): [`holder_unresolved`](write-refusals.md#fence-holder_unresolved).
-- **manual** (a person edits the fence; gbrain never guesses): [`extra_cells`](write-refusals.md#fence-extra_cells), [`claim_split`](write-refusals.md#fence-claim_split), [`missing_begin`](write-refusals.md#fence-missing_begin), [`split_rows`](write-refusals.md#fence-split_rows), [`marker_near_miss`](write-refusals.md#fence-marker_near_miss), [`repeated_marker`](write-refusals.md#fence-repeated_marker), [`takes_in_facts`](write-refusals.md#fence-takes_in_facts), [`superseded_ambiguous`](write-refusals.md#fence-superseded_ambiguous), [`enum_unmapped`](write-refusals.md#fence-enum_unmapped), [`weight_missing`](write-refusals.md#fence-weight_missing), [`holder_missing`](write-refusals.md#fence-holder_missing), [`confidence_out_of_range`](write-refusals.md#fence-confidence_out_of_range), [`claim_value_invalid`](write-refusals.md#fence-claim_value_invalid), [`takes_kind_unsupported`](write-refusals.md#fence-takes_kind_unsupported).
+- **manual** (a person edits the fence; foresights never guesses): [`extra_cells`](write-refusals.md#fence-extra_cells), [`claim_split`](write-refusals.md#fence-claim_split), [`missing_begin`](write-refusals.md#fence-missing_begin), [`split_rows`](write-refusals.md#fence-split_rows), [`marker_near_miss`](write-refusals.md#fence-marker_near_miss), [`repeated_marker`](write-refusals.md#fence-repeated_marker), [`takes_in_facts`](write-refusals.md#fence-takes_in_facts), [`superseded_ambiguous`](write-refusals.md#fence-superseded_ambiguous), [`enum_unmapped`](write-refusals.md#fence-enum_unmapped), [`weight_missing`](write-refusals.md#fence-weight_missing), [`holder_missing`](write-refusals.md#fence-holder_missing), [`confidence_out_of_range`](write-refusals.md#fence-confidence_out_of_range), [`claim_value_invalid`](write-refusals.md#fence-claim_value_invalid), [`takes_kind_unsupported`](write-refusals.md#fence-takes_kind_unsupported).
 
 <a id="gates"></a>
 ### Gates every repair passes

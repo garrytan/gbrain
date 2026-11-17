@@ -36,7 +36,7 @@ export function normalizeDiversePoolDepth(v: unknown): number | undefined {
   return Number.isInteger(n) && n >= 0 && n <= DIVERSE_POOL_DEPTH_MAX ? n : undefined;
 }
 
-/** The `gbrain config set` refusal message for an out-of-contract value, or null (search/config-values.ts). */
+/** The `foresights config set` refusal message for an out-of-contract value, or null (search/config-values.ts). */
 export function diversePoolDepthValueProblem(value: string): string | null {
   return normalizeDiversePoolDepth(value) === undefined
     ? `${DIVERSE_POOL_DEPTH_KEY} must be an integer from 0 to ${DIVERSE_POOL_DEPTH_MAX} or off (got ${value})` : null;

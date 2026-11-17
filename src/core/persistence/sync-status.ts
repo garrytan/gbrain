@@ -84,7 +84,7 @@ export interface SyncStatusError extends SyncFaultVerdict {
   slug?: string;
   path?: string;
   /**
-   * The write request the failure's receipt belongs to (`gbrain write-request <id>`). GBRA-287: null when the run stopped
+   * The write request the failure's receipt belongs to (`foresights write-request <id>`). GBRA-287: null when the run stopped
    * in its discovery, freeze or admission phase before any request was admitted, so there is no receipt, root request
    * (`root_cause`) or `write_error_detail` to read; `phase`, `code` and `message` name the error.
    */
@@ -162,7 +162,7 @@ export interface SyncStatus {
   carried?: CarriedHolds[];
   /**
    * #6729: renames whose page identity was not kept and whose pair has no disposition yet (old page soft-deleted with its
-   * facts and links, held from the purge), each with its remedy: `gbrain repair rename-identity` preview and apply argv,
+   * facts and links, held from the purge), each with its remedy: `foresights repair rename-identity` preview and apply argv,
    * consent and when the purge hold releases.
    */
   identity_downgrades: import('../sync-identity-downgrades.ts').IdentityDowngradeEntry[];
@@ -172,7 +172,7 @@ export interface SyncStatus {
   human_reason?: string;
   /** #7189: what `needs_human` comes from: a hold (named, so a `last_error.needs_human: false` beside it is not a contradiction) or the last error. */
   needs_human_from: { kind: 'hold'; path: string; slug: string | null; code: string } | { kind: 'last_error'; code: string } | null;
-  /** The resume arguments after `gbrain sync` for this source's cursor (its stored options when one exists). */
+  /** The resume arguments after `foresights sync` for this source's cursor (its stored options when one exists). */
   resume_argv: string[];
   /**
    * #6643: for a cursor whose checkpoint has not committed, every receipt that would block it now (empty: the next sync
@@ -198,7 +198,7 @@ export interface SyncStatus {
    */
   fence_holds: import('../generations/fence.ts').FenceHoldEntry[];
   /**
-   * #7679: the active `gbrain sources refresh` of the source's worktree, or null: its state, the process recorded as its
+   * #7679: the active `foresights sources refresh` of the source's worktree, or null: its state, the process recorded as its
    * holder, whether that process still holds the refresh lock (`orphaned`; null when the lock is on another host), and the
    * fix. An orphaned refresh's fix names `--resume`, and `next` takes it unless a person's decision comes first.
    */
@@ -326,7 +326,7 @@ export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undef
   if (verdict.needs_human) return verdict;
   const reason = disposition.state === 'paid'
     ? `Model repair of ${record.path} waits on a setting only the user changes (${disposition.reason}); the hold's fix names it.`
-    : `gbrain will not repair ${record.path} by itself (${disposition.reason}); the hold's fix names the exact edit or decision.`;
+    : `foresights will not repair ${record.path} by itself (${disposition.reason}); the hold's fix names the exact edit or decision.`;
   return { ...verdict, safe_actions: ['none'], needs_human: true, human_reason: reason };
 }
 
@@ -510,7 +510,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
       : stateReason === 'commits_waiting' ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `The checkout's HEAD is ${waiting} commit(s) past the last synced commit ${source.last_commit?.slice(0, 12)}; this sync imports them.` } satisfies Action
       : stateReason === 'status_unknown' ? { argv: ['gbrain', 'sync', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
-      why: `The oldest-blocker or recovery probe did not answer within ${SYNC_STATUS_PROBE_MS / 1000} s, so this status does not know the state (it is not reported synced). Rerun it after a short wait; gbrain doctor --json checks the database if it keeps timing out.` } satisfies Action
+      why: `The oldest-blocker or recovery probe did not answer within ${SYNC_STATUS_PROBE_MS / 1000} s, so this status does not know the state (it is not reported synced). Rerun it after a short wait; foresights doctor --json checks the database if it keeps timing out.` } satisfies Action
       : gitPushHolds.find(hold => hold.conflict || hold.parked)?.fix ?? fenceHolds[0]?.fix ?? (worktreeRefresh?.liveness === 'unknown' ? worktreeRefresh.fix : null)),
     state, reason: stateReason,
     oldest_blocker: oldest, recovery, checkpoint_blockers_read: detail ? { status: 'read' } : notRead('checkpoint blocker list'),
@@ -778,7 +778,7 @@ export async function unblockSync(engine: BrainEngine, sourceId: string, opts: U
     if (disposition.action === 'unsupported') { refuse(`${status.safe_actions[0]}: not something unblock performs; run the fix it names`); continue; }
     repairs.set(disposition.kind, [...(repairs.get(disposition.kind) ?? []), hold]);
     if (!opts.apply) {
-      applied.push({ path: hold.path, slug: hold.slug, code: hold.code, action: 'repair', detail: `would run gbrain repair ${disposition.kind} on this path under the fences.repair caps; --apply repairs it and schedules the re-screen`,
+      applied.push({ path: hold.path, slug: hold.slug, code: hold.code, action: 'repair', detail: `would run foresights repair ${disposition.kind} on this path under the fences.repair caps; --apply repairs it and schedules the re-screen`,
         repair: { kind: disposition.kind, outcome: 'skipped', reason: 'preview', next: unblockApply } });
     }
   }
@@ -811,7 +811,7 @@ export async function unblockSync(engine: BrainEngine, sourceId: string, opts: U
         if (outcome === 'repaired') retry.push(hold.path);
         else if (outcome === 'held') await recordHoldAttempt(engine, { sourceId, incarnation: source.incarnation, path: hold.path, code: hold.code });
         applied.push({ path: hold.path, slug: hold.slug, code: hold.code, action: 'repair',
-          detail: outcome === 'repaired' ? `repaired by gbrain repair ${kind}${typeof detail?.tier === 'string' ? ` (${detail.tier})` : ''}; scheduled for a re-screen`
+          detail: outcome === 'repaired' ? `repaired by foresights repair ${kind}${typeof detail?.tier === 'string' ? ` (${detail.tier})` : ''}; scheduled for a re-screen`
             : `${outcome} (${reason})${message ? `: ${message}` : !item && stop ? `: ${stop.message}` : ''}`,
           repair: { kind, outcome, ...(reason ? { reason } : {}), ...(typeof detail?.tier === 'string' ? { tier: detail.tier } : {}), ...(llmUsd !== undefined ? { llm_usd: llmUsd } : {}),
             ...(receiptOf(detail) ? { receipt: receiptOf(detail) } : {}), next: outcome === 'repaired' ? syncNext : outcome === 'skipped' && (!item || stop) ? unblockApply : fix } });

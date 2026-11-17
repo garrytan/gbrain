@@ -10,16 +10,16 @@
  * orchestrator turns that promise into a verified install state.
  *
  * Phases (all idempotent; resumable from a prior status:"partial" run):
- *   A. Schema   — gbrain init --migrate-only (applies v8/v9/v10).
+ *   A. Schema   — foresights init --migrate-only (applies v8/v9/v10).
  *   B. Config   — verify auto_link is not explicitly disabled (read
  *                 in-process, file/env plane then database). If it's
  *                 set to false, leave it alone (user intent) but warn.
- *   C. Backfill — gbrain extract links --source db (idempotent; the
+ *   C. Backfill — foresights extract links --source db (idempotent; the
  *                 UNIQUE constraint on (from, to, link_type) guarantees
  *                 re-runs are no-op).
- *   D. Timeline — gbrain extract timeline --source db (idempotent via
+ *   D. Timeline — foresights extract timeline --source db (idempotent via
  *                 the (page_id, date, summary) UNIQUE index).
- *   E. Verify   — gbrain stats; confirm link_count and
+ *   E. Verify   — foresights stats; confirm link_count and
  *                 timeline_entry_count match expectations OR explain
  *                 why they're zero (empty brain, no entity refs in
  *                 content, etc.).
@@ -65,7 +65,7 @@ interface ConfigCheckResult {
 }
 
 /**
- * Reads `auto_link` in-process the way `gbrain config get` resolves it: the
+ * Reads `auto_link` in-process the way `foresights config get` resolves it: the
  * file/env plane wins over the database plane. Unset means enabled
  * (isAutoLinkEnabled's default). Never spawns a CLI child.
  */
@@ -102,7 +102,7 @@ async function phaseBConfigCheck(opts: OrchestratorOpts): Promise<OrchestratorPh
   };
   if (disabled) {
     console.log('  Note: auto_link is explicitly disabled (config: auto_link=' + raw + ').');
-    console.log('  Skipping backfill phases. Re-enable with: gbrain config set auto_link true');
+    console.log('  Skipping backfill phases. Re-enable with: foresights config set auto_link true');
   }
   return { name: 'config', status: 'complete', detail: result.status + unreadable, autoLink: result };
 }
@@ -115,7 +115,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // --source db is idempotent: the UNIQUE constraint on
     // (from_page_id, to_page_id, link_type) and ON CONFLICT DO NOTHING
     // make re-runs cheap. Empty brains return 0/0 quickly.
-    runGbrainSubprocess('gbrain extract links --source db' + childGlobalFlags(), { timeoutMs: 600_000 });
+    runGbrainSubprocess('foresights extract links --source db' + childGlobalFlags(), { timeoutMs: 600_000 });
     return { name: 'backfill_links', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -126,7 +126,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseDBackfillTimeline(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'backfill_timeline', status: 'skipped', detail: 'dry-run' };
   try {
-    runGbrainSubprocess('gbrain extract timeline --source db' + childGlobalFlags(), { timeoutMs: 600_000 });
+    runGbrainSubprocess('foresights extract timeline --source db' + childGlobalFlags(), { timeoutMs: 600_000 });
     return { name: 'backfill_timeline', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -147,7 +147,7 @@ function readStats(): StatsSnapshot | null {
     const out = execSync(gbrainChildCommand('gbrain get_stats --json 2>/dev/null || gbrain stats'), {
       encoding: 'utf-8', timeout: 30_000, env: process.env,
     });
-    // The fallback `gbrain stats` prints human-readable output; parse loosely.
+    // The fallback `foresights stats` prints human-readable output; parse loosely.
     const pages = parseInt((out.match(/Pages:\s+(\d+)/) || ['', '0'])[1], 10);
     const links = parseInt((out.match(/Links:\s+(\d+)/) || ['', '0'])[1], 10);
     const timeline = parseInt((out.match(/Timeline:\s+(\d+)/) || ['', '0'])[1], 10);
@@ -161,7 +161,7 @@ function phaseEVerify(opts: OrchestratorOpts, autoLinkDisabled: boolean): Orches
   if (opts.dryRun) return { name: 'verify', status: 'skipped', detail: 'dry-run' };
   const stats = readStats();
   if (!stats) {
-    return { name: 'verify', status: 'failed', detail: 'could not read gbrain stats' };
+    return { name: 'verify', status: 'failed', detail: 'could not read foresights stats' };
   }
 
   console.log('');
@@ -190,7 +190,7 @@ function phaseEVerify(opts: OrchestratorOpts, autoLinkDisabled: boolean): Orches
   if (stats.link_count === 0 && stats.page_count > 0) {
     console.log('  Pages present but 0 links extracted. Likely no entity refs in content,');
     console.log('  or all entity refs target slugs that do not exist as pages.');
-    console.log('  Try: gbrain extract links --source db --dry-run | head -20');
+    console.log('  Try: foresights extract links --source db --dry-run | head -20');
     return { name: 'verify', status: 'complete', detail: 'no_extractable_refs' };
   }
 
@@ -261,7 +261,7 @@ export const v0_12_0: Migration = {
   featurePitch: {
     headline: 'Knowledge Graph wires itself — every page write extracts typed links automatically',
     description:
-      'Every gbrain put_page now extracts entity references and creates typed links ' +
+      'Every foresights put_page now extracts entity references and creates typed links ' +
       '(attended, works_at, invested_in, founded, advises) with zero LLM calls. Hybrid ' +
       'search. Self-wiring graph. Backlink-boosted ranking. Ask "who works at Acme?" or ' +
       '"what did Bob invest in?" — answers vector search alone can\'t reach. Benchmarked ' +

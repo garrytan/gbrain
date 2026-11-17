@@ -1,5 +1,5 @@
 /**
- * `gbrain repair consolidate-ties` (#6023): reopen facts that consolidation
+ * `foresights repair consolidate-ties` (#6023): reopen facts that consolidation
  * closed at their own effective instant.
  *
  * Before this release, a cluster with two typed claims stating one metric,
@@ -63,7 +63,7 @@ interface ApprovedTie extends ClosedTie { selection: string[] }
 interface RestoreItem extends RepairItem { tie: ClosedTie; hash: string; last: boolean }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair consolidate-ties${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair consolidate-ties${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
@@ -92,7 +92,7 @@ export const consolidateTiesRepair: RepairHandler = {
             + `${t.partners.join(', ')} into take ${t.take_id}; restore reopens it` })) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair consolidate-ties --apply restores only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair consolidate-ties --apply restores only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

@@ -98,7 +98,7 @@ describe('expression index statistics on an upgraded PGLite brain', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain(`expression index ${TITLE_INDEX.name} (on pages) has no statistics`);
     expect(check.message).toContain('The next maintenance pass');
-    expect(check.message).toContain('gbrain repair planner-stats --apply');
+    expect(check.message).toContain('foresights repair planner-stats --apply');
     expect(check.message).not.toContain('rows changed since ANALYZE');
   });
 
@@ -172,7 +172,7 @@ describe('buildIndexOnline analyzes after it builds', () => {
     expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
     expect(text).toContain(`[${v240.version}] ✓ ${v240.name}`);
     expect(text).toContain(`${TITLE_INDEX.name} is built and valid, but ANALYZE pages failed (canceling statement due to lock timeout)`);
-    expect(text).toContain('Run on the brain host: gbrain repair planner-stats --apply');
+    expect(text).toContain('Run on the brain host: foresights repair planner-stats --apply');
     const [valid] = await engine.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [TITLE_INDEX.name]);
     expect(valid!.valid).toBe(true);
     expect(await readExpressionIndexesWithoutStats(engine)).toEqual([{ index: TITLE_INDEX.name, table: 'pages' }]);

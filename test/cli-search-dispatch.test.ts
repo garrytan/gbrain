@@ -1,5 +1,5 @@
 /**
- * T5 — `gbrain search` dispatch reconcile. Subprocess test against the real
+ * T5 — `foresights search` dispatch reconcile. Subprocess test against the real
  * cli.ts entrypoint:
  *   - `search modes`  -> read-only config dashboard (NOT a search for "modes")
  *   - `search "<q>"`  -> cheap-hybrid free-text search (NOT "Unknown subcommand")
@@ -28,7 +28,7 @@ function withHome(fn: (home: string) => void) {
   try { fn(home); } finally { rmSync(home, { recursive: true, force: true }); }
 }
 
-describe('T5 — gbrain search dispatch', () => {
+describe('T5 — foresights search dispatch', () => {
   test('`search modes --json` routes to the dashboard (active_mode), not a query', () => {
     withHome((home) => {
       const { stdout, status } = run(['search', 'modes', '--json'], home);

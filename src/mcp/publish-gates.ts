@@ -42,7 +42,7 @@ export async function readPublishGate(
   key: PublishGateKey,
   transport?: string,
 ): Promise<boolean> {
-  // Wakeshift: the host file plane (`gbrain wakeshift enable`) plus a usable key, never the DB plane a remote writer reaches.
+  // Wakeshift: the host file plane (`foresights wakeshift enable`) plus a usable key, never the DB plane a remote writer reaches.
   if (key === 'mcp.publish_wakeshift') return wakeshiftPublished();
   let dbVal: string | null = null;
   let readFailed = false;
@@ -65,7 +65,7 @@ export async function readPublishGate(
  * subtracts this set. One getConfig read per DISTINCT gate key per call
  * (two today, issued concurrently — one RTT of latency, not one per key),
  * deliberately not memoized — the per-request read is what makes
- * `gbrain config set mcp.publish_skills true` take effect without a
+ * `foresights config set mcp.publish_skills true` take effect without a
  * server restart.
  */
 export async function disabledOpsForPublishGates(

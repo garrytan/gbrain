@@ -8,11 +8,11 @@
  *   bun scripts/bench/sync-convergence-seeded.ts --engine pglite|postgres [--database-url <admin url>] [--out <file.md>]
  *     [--scale [--files 61000] [--rate 0.01] [--rounds 3] [--cache-dir <dir>]]
  *
- * The mix (no --scale) seeds through real gbrain calls wherever the state is reachable that way: performManagedSync (the
+ * The mix (no --scale) seeds through real foresights calls wherever the state is reachable that way: performManagedSync (the
  * first sync, and a second one that writes holds), put_page and delete_page (soft delete and purge) through the
  * page-mutation path, Git commits, writeGitHold / clearGitHold, and the journal's admitWrite for open work. Raw SQL is
  * used only where nothing else reaches the state; each case's seed names which. It then runs the redacted dry run
- * (gbrain sync --dry-run --json --redact-paths) and gbrain sync status --json --detail through the CLI handlers, plus the
+ * (foresights sync --dry-run --json --redact-paths) and foresights sync status --json --detail through the CLI handlers, plus the
  * library read (readShadowLevel + buildConvergenceReceipt with every path sampled), and compares all three.
  *
  * --scale seeds a converged source of --files pages by direct SQL (sync-convergence-lib.ts seedSource), seeds --rate of
@@ -77,7 +77,7 @@ export const FINDINGS = {
     text: 'A #6885 legacy twin (source_path NULL) is outside the domain: the pair reads as one matched path and nothing in convergence counts it, so PR 4 can neither report nor converge already-forked pairs.' },
 } as const satisfies Record<string, Finding>;
 
-// ─── seeding the mix through gbrain ──────────────────────────────────
+// ─── seeding the mix through foresights ──────────────────────────────────
 
 export interface MixBrain { engine: BrainEngine; ctx: OperationContext; root: string }
 const SYNC = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true };
@@ -242,7 +242,7 @@ export async function seedMix(brain: MixBrain): Promise<SeededCase[]> {
   const purgedOids = new Map(['mix/purged-marker-same.md', 'mix/purged-marker-differs.md', 'mix/legacy-marker.md'].map(path => [path, oidAt(path)]));
   for (const path of ['mix/purged-nomarker.md', 'mix/purged-marker-same.md', 'mix/purged-marker-differs.md', 'mix/legacy-marker.md']) await deletePage(path, true);
 
-  // Stage 3c: raw SQL, only where no gbrain call reaches the state.
+  // Stage 3c: raw SQL, only where no foresights call reaches the state.
   await recordSql('mix/reparse-parser.md', `jsonb_set(completed_keys->0, '{parser,parser_version}', '"import=0"')`);
   await recordSql('mix/reparse-origin.md', `jsonb_set(completed_keys->0, '{origin}', '"mix/elsewhere.md"')`);
   await recordSql('mix/adopt-revision.md', "(completed_keys->0) - 'revision'");
@@ -515,8 +515,8 @@ export function renderRun(run: EvalRun): string {
 }
 
 export function renderCli(cli: CliCheck): string {
-  return `CLI [measured]: \`gbrain sync --dry-run --json --redact-paths\` exited ${cli.dryRunExit}${cli.dryRunError ? ` (${cli.dryRunError.code}: ${cli.dryRunError.message})` : ''} and its convergence counts ${cli.dryRunCounts === cli.libraryCounts ? 'equal' : '**differ from**'} the library receipt's; `
-    + `\`gbrain sync status --json --detail\` exited ${cli.statusExit}${cli.statusError ? ` (${cli.statusError.code})` : ''}, counts ${cli.statusCounts === cli.libraryCounts ? 'equal' : '**differ**'}. `
+  return `CLI [measured]: \`foresights sync --dry-run --json --redact-paths\` exited ${cli.dryRunExit}${cli.dryRunError ? ` (${cli.dryRunError.code}: ${cli.dryRunError.message})` : ''} and its convergence counts ${cli.dryRunCounts === cli.libraryCounts ? 'equal' : '**differ from**'} the library receipt's; `
+    + `\`foresights sync status --json --detail\` exited ${cli.statusExit}${cli.statusError ? ` (${cli.statusError.code})` : ''}, counts ${cli.statusCounts === cli.libraryCounts ? 'equal' : '**differ**'}. `
     + `${cli.redactedSamplesChecked} redacted samples mapped back to their seeded paths, ${cli.redactedSampleMismatches.length} disagreeing with the library class or action`
     + `${cli.redactedSampleMismatches.length ? ` (${cli.redactedSampleMismatches.join('; ')})` : ''}; ${cli.redactionLeaks.length} paths or slugs leaked under --redact-paths.`;
 }
@@ -543,7 +543,7 @@ export function renderFindings(runs: EvalRun[], extra: Finding[] = []): string {
 
 /**
  * The SQL- and Git-reachable part of the mix at scale, round-robin over --rate of the fixture's pages. Every case is
- * seeded by direct SQL or Git on top of seedSource's converged source (gbrain writes at 61k on PGLite would take hours),
+ * seeded by direct SQL or Git on top of seedSource's converged source (foresights writes at 61k on PGLite would take hours),
  * so holds are writeGitHold rows; open work and write-through attestations need real requests and stay mix-only.
  */
 export const SCALE_KINDS = ['import_changed', 'import_new', 'reparse_parser', 'reparse_origin', 'db_only', 'unproven', 'drift_both', 'drift_unknown', 'delete', 'delete_drift',
@@ -660,7 +660,7 @@ async function main(): Promise<number> {
   const scale = process.argv.includes('--scale');
   const out = resolve(flag('out', join(homedir(), '.capy/work/6712', scale ? `shadow-eval-scale-${engineKind}.md` : `shadow-eval-${engineKind}.md`)));
   const { VERSION } = await import('../../src/version.ts');
-  const header = `Measured by scripts/bench/sync-convergence-seeded.ts at ${new Date().toISOString()}: engine ${engineKind}, gbrain ${VERSION} (${gitIn(resolve(import.meta.dir, '../..'), ['rev-parse', '--short=9', 'HEAD'])}), `
+  const header = `Measured by scripts/bench/sync-convergence-seeded.ts at ${new Date().toISOString()}: engine ${engineKind}, foresights ${VERSION} (${gitIn(resolve(import.meta.dir, '../..'), ['rev-parse', '--short=9', 'HEAD'])}), `
     + `${execFileSync('git', ['--version'], { encoding: 'utf8' }).trim()}, Bun ${Bun.version}.`;
   let body = '';
   if (scale) {

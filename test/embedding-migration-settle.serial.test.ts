@@ -341,7 +341,7 @@ for (const kind of testBackends()) {
       const json = await cli(['--max-cost-usd', '0.001', '--json']);
       const envelope = JSON.parse(json.text.slice(json.text.indexOf('{\n  "status": "refused"'), json.text.lastIndexOf('}') + 1));
       expect(envelope).toMatchObject({ status: 'refused', reason: 'embedding_budget_below_worst_case', error: 'embedding_budget_below_worst_case', cap_usd: 0.001 });
-      expect(envelope.suggestion).toBe(`gbrain migrate embeddings --to ${model} --dim ${dimensions} --max-cost-usd ${envelope.required_cap_usd.toFixed(2)} --yes`);
+      expect(envelope.suggestion).toBe(`foresights migrate embeddings --to ${model} --dim ${dimensions} --max-cost-usd ${envelope.required_cap_usd.toFixed(2)} --yes`);
       expect(envelope.docs).toEndWith('docs/guides/write-refusals.md#embedding_budget_below_worst_case');
       expect(transportCalls).toBe(0);
       expect(await vectors()).toEqual(before);

@@ -1,5 +1,5 @@
 /**
- * GBRA-161 PR 1a: the generation primitive and `gbrain repair generations`.
+ * GBRA-161 PR 1a: the generation primitive and `foresights repair generations`.
  *
  * Protects: a derived result replaces the live generation only whole and only when it may: a complete successor retires
  * what it dropped (versioned, stamped, preimage on the ledger) in the transaction that activates it; a shrink below the

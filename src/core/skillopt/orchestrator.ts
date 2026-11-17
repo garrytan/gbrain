@@ -187,7 +187,7 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
       class: 'NoSkill',
       code: 'no_skill_md',
       message: `Cannot find SKILL.md for '${skillName}' at ${skillFile}.`,
-      hint: `Create the skill first via 'gbrain skillify scaffold ${skillName}'.`,
+      hint: `Create the skill first via 'foresights skillify scaffold ${skillName}'.`,
     });
   }
 

@@ -232,8 +232,8 @@ describe('maybeDelegateSyncToServe brain + source gates (F3)', () => {
       expect(await maybeDelegateSyncToServe(dirWithLiveServeLock(), [])).toBe(true);
       const text = cap.lines.join('\n');
       expect(text).toContain('exposes no sync IPC');
-      expect(text).not.toContain('Restart that serve on this gbrain version.');
-      expect(text).toContain('If that serve runs an older gbrain, restart it on this version.');
+      expect(text).not.toContain('Restart that serve on this foresights version.');
+      expect(text).toContain('If that serve runs an older foresights, restart it on this version.');
     } finally {
       cap.restore();
       _resetCliExitVerdictForTests();

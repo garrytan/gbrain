@@ -1,6 +1,6 @@
 # Test audit evidence, 2026-09-29
 
-Read-only discovery records from the 2026-09-29 test audit of gbrain at
+Read-only discovery records from the 2026-09-29 test audit of foresights at
 `2ede415` (v0.59.11.0). Five lanes looked for tests that protect no shipped
 behavior, the production code only those tests keep alive, and the coverage
 holes that must be filled before anything is removed. Every candidate carries a
@@ -25,7 +25,7 @@ consolidation").
 | source-grep | [lane-source-grep/source-grep.md](lane-source-grep/source-grep.md) | Tests that read `src/**` as text: which are blind to behavior changes (probe edits they miss), which pin real contracts, and which need a routing fix before they can go | Blind/duplicate deletions; the source-grep rewrites; the `postgres-engine.ts` E2E map entry |
 | doc-pins | [lane-doc-pins/doc-pins.md](lane-doc-pins/doc-pins.md) | Tests that assert on committed docs, skills, templates and recipes: prose-only pins versus generated-artifact freshness, link integrity and shipped prompt contracts | Doc-pin deletions; the resolver fixture tests; the doc-claims consolidation |
 | e2e | [lane-e2e/e2e.md](lane-e2e/e2e.md) | How `test/e2e` files are routed in CI, which files run only PGLite, which wrappers double-run scenarios, and where selected E2E spends time | E2E lane corrections; the PGLite-only lane-move pilot |
-| patterns | [lane-patterns/patterns.md](lane-patterns/patterns.md) | Cross-cutting low-value shapes over `test/**`: typeof probes, placeholder assertions, copied-function tests, near-duplicate files | Placeholder and typeof-probe cleanup; the `gbrain features` behavioral tests |
+| patterns | [lane-patterns/patterns.md](lane-patterns/patterns.md) | Cross-cutting low-value shapes over `test/**`: typeof probes, placeholder assertions, copied-function tests, near-duplicate files | Placeholder and typeof-probe cleanup; the `foresights features` behavioral tests |
 | seams | [lane-seams/seams.md](lane-seams/seams.md) | Test-only exports in `src/`, seams with no callers, and `src/` modules unreachable from every runtime entry (static walk, orphan guard, poison probe) | Seam cleanup; the dead-module cluster removals and their disposition gate |
 
 ## Inventories and probe logs

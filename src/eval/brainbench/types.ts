@@ -4,7 +4,7 @@
  * Type layer for the fixture corpus, harness adapters, and result documents.
  * The fixture + result shapes are PUBLISHED interchange formats (mirrored as
  * JSON Schemas in evals/brainbench/schema/) so foreign runners — notably the
- * sibling gbrain-evals repo — can drive `gbrain eval brainbench --fixtures DIR
+ * sibling gbrain-evals repo — can drive `foresights eval brainbench --fixtures DIR
  * --gold DIR --json --out FILE` against their own corpora. Breaking changes
  * bump FIXTURE_SCHEMA_VERSION / RESULT_SCHEMA_VERSION; additive-only within a
  * version.
@@ -48,7 +48,7 @@ export type HarnessName = (typeof ALL_HARNESSES)[number];
 
 /**
  * 'production' — exercises a shipped integration seam byte-for-byte.
- * 'contract'  — grades gbrain primitives through a harness-shaped injection
+ * 'contract'  — grades foresights primitives through a harness-shaped injection
  *               contract a later PR will wire to the real harness. Printed on
  *               every scoreboard row; see docs/eval/BRAINBENCH.md.
  */

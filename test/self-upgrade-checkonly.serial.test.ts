@@ -1,5 +1,5 @@
 /**
- * Serial (stubs globalThis.fetch): `gbrain self-upgrade --check-only --json`
+ * Serial (stubs globalThis.fetch): `foresights self-upgrade --check-only --json`
  * surfaces the changelog so the notify prompt can tell the operator WHAT they'll
  * get, not just a version number. Network stubbed; the JSON shape + changelog
  * extraction are real.
@@ -71,7 +71,7 @@ describe('self-upgrade --check-only surfaces what you get', () => {
     const out = JSON.parse(captured.join('\n'));
     expect(out.update_available).toBe(true);
     expect(out.latest_version).toBe(latest);
-    expect(out.release_url).toBe('https://github.com/garrytan/gbrain/blob/latest-stable/CHANGELOG.md');
+    expect(out.release_url).toBe('https://github.com/aimonk2025/gbrain/blob/latest-stable/CHANGELOG.md');
     expect(out.changelog_diff).toContain('Shiny new thing');
   });
 

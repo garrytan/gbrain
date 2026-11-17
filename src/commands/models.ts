@@ -1,9 +1,9 @@
 /**
- * v0.31.12 — `gbrain models` CLI.
+ * v0.31.12 — `foresights models` CLI.
  *
  * Two modes:
  *
- *   `gbrain models`           — read-only routing table. Prints the four
+ *   `foresights models`           — read-only routing table. Prints the four
  *                               tier defaults, the resolved value for each
  *                               (after consulting models.default + models.tier.*),
  *                               per-task overrides, alias map, and source-of-truth
@@ -12,7 +12,7 @@
  *                               advisory `[newer <family> available: <id>]`
  *                               hint plus the config command.
  *
- *   `gbrain models doctor`   — opt-in probe. Fires a 1-token `gateway.chat()`
+ *   `foresights models doctor`   — opt-in probe. Fires a 1-token `gateway.chat()`
  *                               call against each configured chat / expansion
  *                               model and reports reachability with the
  *                               provider's error string. Catches the bug class
@@ -104,7 +104,7 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
   },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.standing_questions',       tier: 'deep',      description: 'Pinned-question answers (standing_questions phase, questions_pin/refresh)' },
-  { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
+  { key: 'models.think',                    tier: 'deep',      description: '`foresights think` synthesis op' },
   {
     key: 'models.fence_repair',
     tier: 'deep',
@@ -117,7 +117,7 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     description: 'Slug-conflict judgment of the content-repair lane (#6377); unset: models.fence_repair, else the first measured model with a key, else none (off)',
     narrowResolver: async engine => { const r = await resolveContentRepairModelWithSource(engine); return { model: r.model ?? 'none', source: r.source === 'measured' ? 'measured' : 'config' }; },
   },
-  { key: 'models.subagent',                 tier: 'subagent',  description: '`gbrain agent run` subagent loop' },
+  { key: 'models.subagent',                 tier: 'subagent',  description: '`foresights agent run` subagent loop' },
   {
     key: 'facts.extraction_model',
     tier: 'reasoning',
@@ -216,7 +216,7 @@ function newerAvailable(resolved: string, configKey: string): NewerAvailable | u
   const newer = newerAnthropicModel(resolved);
   if (!newer) return undefined;
   const model = `anthropic:${newer.id}`;
-  return { family: newer.family, model: newer.id, command: `gbrain config set ${configKey} ${model}` };
+  return { family: newer.family, model: newer.id, command: `foresights config set ${configKey} ${model}` };
 }
 
 async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
@@ -298,7 +298,7 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
  * probe's own route resolver, then the #4636 substitution over the panel
  * defaults against this process's brain-configured gateway (silent log —
  * the report labels each substituted slot instead). The daemon's launcher
- * also sources the gbrain env file, which this command never loads, so the
+ * also sources the foresights env file, which this command never loads, so the
  * report names that gap instead of reading a secrets file.
  */
 async function buildNightlyProbeReport(engine: BrainEngine): Promise<NightlyProbeReport> {
@@ -380,7 +380,7 @@ function formatText(report: ModelsReport): string {
     }
   }
   lines.push('');
-  lines.push('Tip: probe reachability with `gbrain models doctor` (opt-in; spends a minimal request per configured chat/embed/rerank surface).');
+  lines.push('Tip: probe reachability with `foresights models doctor` (opt-in; spends a minimal request per configured chat/embed/rerank surface).');
   return lines.join('\n');
 }
 
@@ -476,7 +476,7 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
             `embedding_dimensions=${dims} is not a valid Voyage output_dimension ` +
             `for "${modelId}" (allowed: ${VOYAGE_VALID_OUTPUT_DIMS.join('/')}).`,
           fix:
-            `gbrain config set embedding_dimensions <${VOYAGE_VALID_OUTPUT_DIMS.join('|')}>, ` +
+            `foresights config set embedding_dimensions <${VOYAGE_VALID_OUTPUT_DIMS.join('|')}>, ` +
             `or switch to a fixed-dim Voyage model (e.g. voyage-3, voyage-3-lite).`,
           elapsed_ms: Date.now() - start,
         };
@@ -514,7 +514,7 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
  * writes. Meanwhile live search resolves `search.reranker.model` via
  * `resolveSearchMode()` (per-call > config-key > recipe > bundle default).
  * The two paths could disagree silently: doctor says "not configured"
- * while every `gbrain search` call is using a mode default. This helper
+ * while every `foresights search` call is using a mode default. This helper
  * walks the same chain live search does so doctor's verdict matches.
  *
  * Falls back to `getRerankerModel()` (gateway value) when the engine path
@@ -567,7 +567,7 @@ async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
       model: '(none)',
       touchpoint: 'reranker_config',
       status: 'ok',
-      message: 'reranker not configured (set `gbrain config set search.reranker.model <provider:model>` and `search.reranker.enabled true`)',
+      message: 'reranker not configured (set `foresights config set search.reranker.model <provider:model>` and `search.reranker.enabled true`)',
       elapsed_ms: Date.now() - start,
     };
   }
@@ -591,7 +591,7 @@ async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
         touchpoint: 'reranker_config',
         status: 'config',
         message: `Model "${parsed.modelId}" is not in ${recipe.name}'s reranker allowlist.`,
-        fix: `gbrain config set search.reranker.model ${recipe.id}:<one of ${tp.models.join('|')}>`,
+        fix: `foresights config set search.reranker.model ${recipe.id}:<one of ${tp.models.join('|')}>`,
         elapsed_ms: Date.now() - start,
       };
     }
@@ -810,11 +810,11 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
   const json = args.includes('--json');
   // args is `subArgs` from cli.ts `handleCliOnly` — the leading 'models'
   // token has already been stripped. The subcommand is at args[0], NOT
-  // args[1]. Pre-fix this check was `args[1]`, so `gbrain models doctor`
+  // args[1]. Pre-fix this check was `args[1]`, so `foresights models doctor`
   // silently fell through to the read view. The doctor probe path was
   // unreachable from the CLI.
   //
-  // --help honored FIRST so `gbrain models doctor --help` shows usage
+  // --help honored FIRST so `foresights models doctor --help` shows usage
   // instead of running network probes (which would spend tokens or
   // exit nonzero when the user only asked for help). Pre-fix the
   // args[1] ternary happened to dodge this by always falling through
@@ -826,9 +826,9 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
   if (sub === 'help') {
     process.stdout.write(
 `Usage:
-  gbrain models                   Show routing table (read-only)
-  gbrain models doctor [flags]    Probe each configured model (~1 token each)
-  gbrain models --json            Machine-readable output
+  foresights models                   Show routing table (read-only)
+  foresights models doctor [flags]    Probe each configured model (~1 token each)
+  foresights models --json            Machine-readable output
 
 Flags (doctor only):
   --skip <provider>               Skip a provider (e.g. --skip openai or --skip=openai)
@@ -836,9 +836,9 @@ Flags (doctor only):
   --json                          JSON output
 
 Configure routing:
-  gbrain config set models.default <model>           # global hammer
-  gbrain config set models.tier.<tier> <model>       # per-tier (utility/reasoning/deep/subagent)
-  gbrain config set models.aliases.<name> <model>    # custom alias
+  foresights config set models.default <model>           # global hammer
+  foresights config set models.tier.<tier> <model>       # per-tier (utility/reasoning/deep/subagent)
+  foresights config set models.aliases.<name> <model>    # custom alias
 
 Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anthropic-only)
 `);

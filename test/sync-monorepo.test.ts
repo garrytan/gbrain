@@ -2,7 +2,7 @@
  * #753/#774 — --src-subpath + --exclude monorepo subdir-source support.
  *
  * A single git repo can hold N logical sources at subdirectories (wiki/,
- * memory/, ...). `gbrain sync --src-subpath wiki` (or passing the subdir
+ * memory/, ...). `foresights sync --src-subpath wiki` (or passing the subdir
  * directly as the repo path) scopes file walking + imports to the subdir
  * while git operations (pull, rev-parse, diff) run at the discovered repo
  * root. Slugs stay git-root-relative (`wiki/page1`) so full and incremental
@@ -113,7 +113,7 @@ describe('sync monorepo subdir-source support (#753/#774)', () => {
     expect(result.added).toBe(2); // only wiki/page1 + wiki/page2
     // #4342: a FRESH subdir source (no --src-subpath, no already-prefixed
     // pages) pins slug_root_mode='source-root' — slugs are local_path-
-    // relative, matching what `gbrain import wiki/` produces. Full and
+    // relative, matching what `foresights import wiki/` produces. Full and
     // incremental syncs of the scope agree via the sticky pin (a live
     // install with git-root-prefixed pages auto-pins 'git-root' instead —
     // covered by test/sync-slug-root-mode-4342.test.ts).

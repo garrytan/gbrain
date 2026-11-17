@@ -1,7 +1,7 @@
 # Interleaved supersession candidates: dev verdict
 
 `facts.candidate_fusion = interleave` (candidate) against `rrf_free`, the single cosine arm (baseline), on
-gbrain 91081f319, through an offline PGLite replay of a seeded fixture. Interleave adds no measurable benefit,
+foresights 91081f319, through an offline PGLite replay of a seeded fixture. Interleave adds no measurable benefit,
 so the default stays `rrf_free`. Interleave never improved twin recall@5 and lost 1 to 2 twins out of 280.
 False supersession and preserved distinct claims were identical in both arms at every threshold. The verdict
 is `dev`, so it cannot set a default.

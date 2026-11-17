@@ -3,12 +3,12 @@
  *
  * For every guest source (a guest_sources row, or a source whose config says guest: true):
  *  - fail: the two guest records disagree (config guest: true with no guest_sources row, or a guest_sources row whose
- *    config lacks guest: true; either alone still marks reads, and gbrain guests init restores both), the config lacks
+ *    config lacks guest: true; either alone still marks reads, and foresights guests init restores both), the config lacks
  *    federated or the external_untrusted trust_ceiling, it has a local path, a writer names a removed or unknown
  *    credential, or a writer's grant reaches beyond the guest source;
  *  - warn: the writer list is empty or names a principal that is not a remote credential, no brain owner is set, a
  *    credential bound to the owner cannot read the source (with the exact grant command, and
- *    gbrain guests grant-owner-clients for all of them), or its min_trust floor hides guest notes (F9).
+ *    foresights guests grant-owner-clients for all of them), or its min_trust floor hides guest notes (F9).
  * Never changes a grant. Database only, so a repo-less brain gets the same check; not applicable without a guest source.
  */
 import type { Check } from '../../doctor.ts';
@@ -58,16 +58,16 @@ async function sourceFindings(engine: BrainEngine, s: GuestSourceRow): Promise<F
   if (!s.writers.length) out.push({ level: 'warn', text: 'source ' + s.id + ' has no writers, so nobody can save guest notes there' });
   for (const w of s.writers) out.push(...await writerFindings(engine, s.id, w));
   const { owner, credentials } = await ownerCredentials(engine, s.id);
-  if (!owner) out.push({ level: 'warn', text: 'no brain owner is set (gbrain access owner set <member>), so no guest note can name its readers' });
+  if (!owner) out.push({ level: 'warn', text: 'no brain owner is set (foresights access owner set <member>), so no guest note can name its readers' });
   const missing = credentials.filter(c => !c.readsGuest);
   for (const c of missing) {
     out.push({ level: 'warn', text: c.kind + ' ' + c.name + ' (' + c.id + ') is bound to the owner but cannot read ' + s.id
-      + (c.command ? '; grant it with: ' + c.command : '; it has no source grant gbrain adds to'), fix: ['gbrain', 'guests', 'grant-owner-clients', '--source', s.id] });
+      + (c.command ? '; grant it with: ' + c.command : '; it has no source grant foresights adds to'), fix: ['gbrain', 'guests', 'grant-owner-clients', '--source', s.id] });
   }
-  if (missing.length) out.push({ level: 'warn', text: 'or grant every owner credential at once: gbrain guests grant-owner-clients --source ' + s.id + ' --yes' });
+  if (missing.length) out.push({ level: 'warn', text: 'or grant every owner credential at once: foresights guests grant-owner-clients --source ' + s.id + ' --yes' });
   for (const c of credentials.filter(c => c.floorHidesGuests)) {
     out.push({ level: 'warn', text: c.kind + ' ' + c.name + ' (' + c.id + ') has min_trust ' + c.minTrust + ', which hides every guest note (stored at external_untrusted); '
-      + 'to show them, lower it with: gbrain auth set-min-trust ' + c.id + ' external_untrusted' });
+      + 'to show them, lower it with: foresights auth set-min-trust ' + c.id + ' external_untrusted' });
   }
   return out;
 }
@@ -75,7 +75,7 @@ async function sourceFindings(engine: BrainEngine, s: GuestSourceRow): Promise<F
 /** A schema behind the guest-notes migration has no guest_sources table: only a config can mark a guest source, and nothing enforces it. */
 async function behindGuestMigration(engine: BrainEngine): Promise<Check> {
   const marked = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE COALESCE(config->>'guest' = 'true', false) ORDER BY id");
-  const behind = `this brain's schema is behind the guest-notes migration (v${GUEST_NOTES_MIGRATION}); gbrain apply-migrations --yes brings it up to date`;
+  const behind = `this brain's schema is behind the guest-notes migration (v${GUEST_NOTES_MIGRATION}); foresights apply-migrations --yes brings it up to date`;
   if (!marked.length) return infoCheck(name, `Not applicable: ${behind}.`, 'not_applicable');
   return { name, status: 'warn', message: `Source(s) ${marked.map(s => s.id).join(', ')} say guest: true in their config, but ${behind}; until then nothing enforces their writer list or trust ceiling.` };
 }
@@ -85,7 +85,7 @@ export async function guestSourceCheck(engine: BrainEngine): Promise<Check> {
     const sources = await engine.executeRaw<GuestSourceRow>(
       'SELECT s.id, s.local_path, s.config, g.writers, g.trust_ceiling AS ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id = s.id '
         + 'WHERE ' + guestSourceSql('s.config', 's.id') + ' ORDER BY s.id');
-    if (!sources.length) return infoCheck(name, 'Not applicable: this brain has no guest source (gbrain guests init).', 'not_applicable');
+    if (!sources.length) return infoCheck(name, 'Not applicable: this brain has no guest source (foresights guests init).', 'not_applicable');
     const findings: Finding[] = [];
     for (const s of sources) findings.push(...await sourceFindings(engine, s));
     const ids = sources.map(s => s.id).join(', ');

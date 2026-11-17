@@ -151,7 +151,7 @@ hundred ways.
 hundred ways, and could an *adversary* imitate it? If yes → judgment, model.
 Only a string a *machine* emitted in exactly one shape is a regex tell.
 
-## Where This Bites in GBrain
+## Where This Bites in Foresights
 
 The shipped surfaces this convention protects:
 

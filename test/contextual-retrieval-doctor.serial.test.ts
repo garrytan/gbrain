@@ -68,7 +68,7 @@ describe('contextual_retrieval_coverage doctor check', () => {
     const result = await checkContextualRetrievalCoverage(engine);
     expect(result.status).toBe('warn');
     expect(result.message).toContain('older chunker_version');
-    expect(result.message).toContain('gbrain reindex --markdown');
+    expect(result.message).toContain('foresights reindex --markdown');
     // #5004: name the consequence — pages below the safe-chunk index version
     // are withheld from every remote/MCP chunk read until reindexed.
     expect(result.message).toContain('1 page(s) below the safe-chunk index version');
@@ -129,7 +129,7 @@ describe('contextual_retrieval_coverage doctor check', () => {
     const result = await checkContextualRetrievalCoverage(engine);
     expect(result.status).toBe('warn');
     expect(result.message).toContain('1 page(s) below the safe-chunk index version (1 code)');
-    expect(result.message).toContain('gbrain repair safe-chunks');
+    expect(result.message).toContain('foresights repair safe-chunks');
     expect(result.message).not.toContain('older chunker_version');
     expect(result.details).toMatchObject({ unsealed_pages: 1, unsealed_code_pages: 1, repair: 'safe-chunks' });
   });

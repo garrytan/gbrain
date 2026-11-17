@@ -1,6 +1,6 @@
 /**
  * #6712 PR 2 (L4): after a managed sync, count the source's ghost pages (live pages whose canonical file is gone) with the
- * one classifier, `scanGhostSource` (ghost-pages.ts), and name the read-only `gbrain repair ghost-pages` preview. Sync never
+ * one classifier, `scanGhostSource` (ghost-pages.ts), and name the read-only `foresights repair ghost-pages` preview. Sync never
  * deletes or tombstones such a page on its own: a file missing from the checkout but not deleted in Git is either an edit
  * in progress or a mistake, and only a person decides which. A path that holds a sync hold (a held deletion) is the hold's
  * to settle and is not counted. Bounded by the scan's own limits; off the owner host, or when the scan cannot tell, there

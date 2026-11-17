@@ -1,6 +1,6 @@
 /**
  * skillpack/update-journal.ts — the journal and backups behind
- * `gbrain skillpack reference --update-untouched` and `gbrain skillpack restore`.
+ * `foresights skillpack reference --update-untouched` and `foresights skillpack restore`.
  *
  * Layout: `~/.gbrain/skillpack-backups/<id>/journal.json` plus
  * `files/<rel>`, the bytes each replaced file had before the update. Plain
@@ -78,7 +78,7 @@ export function hashTarget(path: string): string | null {
   }
   if (!stat.isFile()) {
     throw new OperationError('target_escape', `${path} is not a regular file (symlinks are refused).`,
-      'Replace it with a regular file, or pin the skill with gbrain skillpack pin <skill>.');
+      'Replace it with a regular file, or pin the skill with foresights skillpack pin <skill>.');
   }
   return sha256(readFileSync(path));
 }
@@ -90,7 +90,7 @@ export function newJournalId(now = new Date()): string {
 export function journalDir(id: string, root = backupsRoot()): string {
   if (!/^[0-9TZ-]+-[0-9a-f]{6}$/.test(id)) {
     throw new OperationError('skillpack_journal_not_found', `'${id}' is not a skillpack backup id.`,
-      'List the backups with gbrain skillpack restore --list.');
+      'List the backups with foresights skillpack restore --list.');
   }
   return confinedSkillChildWrite(root, id, { dryRun: true });
 }
@@ -108,12 +108,12 @@ export function readJournal(id: string, root = backupsRoot()): Journal {
   const path = confinedSkillChildWrite(journalDir(id, root), 'journal.json', { dryRun: true });
   if (!existsSync(path)) {
     throw new OperationError('skillpack_journal_not_found', `No skillpack backup '${id}' under ${root}.`,
-      'List the backups with gbrain skillpack restore --list.');
+      'List the backups with foresights skillpack restore --list.');
   }
   const journal = JSON.parse(readFileSync(path, 'utf-8')) as Journal;
   if (journal.schema_version !== JOURNAL_SCHEMA) {
     throw new OperationError('skillpack_journal_not_found', `${path} is not a ${JOURNAL_SCHEMA} journal.`,
-      'List the backups with gbrain skillpack restore --list.');
+      'List the backups with foresights skillpack restore --list.');
   }
   return journal;
 }
@@ -186,7 +186,7 @@ export function undoFile(journalId: string, skillsRoot: string, file: JournalFil
   const bytes = readFileSync(confinedSkillChildWrite(journalDir(journalId, root), file.backup, { dryRun: true }));
   if (sha256(bytes) !== file.pre) {
     throw new OperationError('skillpack_backup_corrupt', `The backup of ${file.rel} in ${journalId} does not hash to the journal's pre-update hash.`,
-      `Leave ${file.rel} as it is, or compare it with the bundle using gbrain skillpack reference <skill>.`);
+      `Leave ${file.rel} as it is, or compare it with the bundle using foresights skillpack reference <skill>.`);
   }
   replaceFile(target, bytes);
   return true;

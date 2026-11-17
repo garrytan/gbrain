@@ -6,6 +6,6 @@ export async function refuseGenerationsValue(key: string, value: string): Promis
   const refusal = (await import('../../core/generations/config.ts')).generationsConfigRefusal(key, value);
   if (!refusal) return;
   const { exitCliError, usageError } = await import('../../cli/cli-error.ts');
-  exitCliError(usageError(refusal.message, `Re-run with a value in range, e.g. gbrain config set ${key} ${refusal.example}.`,
+  exitCliError(usageError(refusal.message, `Re-run with a value in range, e.g. foresights config set ${key} ${refusal.example}.`,
     { fix: { argv: ['gbrain', 'config', 'get', key], consent: [], actor: 'agent', why: 'Shows the value in effect; nothing was written.', requires_exclusive: false } }), 'config');
 }

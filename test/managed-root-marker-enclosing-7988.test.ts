@@ -64,7 +64,7 @@ describe.each(backends.map(url => [url ? 'postgres' : 'pglite', url] as const))(
     await refreshManagedFilesystemRoots(engine);
     expect(existsSync(marker)).toBe(true);
     await expect(assertLegacyFilesystemWriter(engine, join(home, '.gbrain', 'skillpack-bridge-state.json'))).rejects.toMatchObject({
-      code: 'writer_coordinator_required', suggestion: expect.stringContaining('gbrain sources writer deactivate --dry-run --json') });
+      code: 'writer_coordinator_required', suggestion: expect.stringContaining('foresights sources writer deactivate --dry-run --json') });
     await settleManagedGitEffects(engine);
     expect(await deactivatePersistence(engine, { requestId: randomUUID() })).toMatchObject({ mode: 'classic', deactivated: true });
     expect(existsSync(marker)).toBe(false);

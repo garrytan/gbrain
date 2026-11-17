@@ -1,5 +1,5 @@
 /**
- * #7003 (GBRA-133 PR 2a.4): `gbrain autopilot --status` graded the daemon's heartbeat (the lock mtime) against
+ * #7003 (GBRA-133 PR 2a.4): `foresights autopilot --status` graded the daemon's heartbeat (the lock mtime) against
  * 6 x the STATUS caller's `--interval` (default 300 s), but the daemon sleeps its own adaptive interval (2 x its
  * `--interval` on a brain scoring 90 or more), so a healthy daemon started with `--interval 1500` read
  * "NOT ticking" and exited 1 on every long sleep.

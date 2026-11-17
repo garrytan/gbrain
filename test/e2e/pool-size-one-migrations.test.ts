@@ -5,7 +5,7 @@
  * `transaction: false` migrations (CREATE INDEX CONCURRENTLY and friends) run
  * on a reserved connection. The long-hold permit keeps one connection free for
  * reads and control work, so before the fix a pool of one refused them with
- * writer_pool_capacity at the first such migration and `gbrain init` failed.
+ * writer_pool_capacity at the first such migration and `foresights init` failed.
  * Migration holds are self-contained (they use only the reserved connection),
  * so they may take the only connection; ordinary long holds still may not.
  *
@@ -69,7 +69,7 @@ describe.skipIf(!DATABASE_URL)('pool size one: fresh init and migrations (E2E)',
     }
   }, 180_000);
 
-  test('GBRAIN_POOL_SIZE=1 gbrain init then apply-migrations succeed on a fresh database', async () => {
+  test('GBRAIN_POOL_SIZE=1 foresights init then apply-migrations succeed on a fresh database', async () => {
     const url = await freshDatabase();
     const h = makeDoctorHome('pool-one');
     homes.push(h);

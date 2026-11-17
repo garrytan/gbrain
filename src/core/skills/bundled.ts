@@ -1,5 +1,5 @@
 /**
- * skills/bundled.ts — gbrain's own bundled skills, embedded at build time
+ * skills/bundled.ts — foresights's own bundled skills, embedded at build time
  * (bundled-skills.generated.ts), so they are the same on a source install and
  * a compiled binary and never come from the caller's working directory or a
  * host skills dir.
@@ -14,7 +14,7 @@
  * Every read is a key lookup in the embedded map: a client-supplied name or
  * asset is a lookup key, never a path.
  *
- * Read by `gbrain bundled-skill` (src/cli/commands/bundled-skill.ts), which
+ * Read by `foresights bundled-skill` (src/cli/commands/bundled-skill.ts), which
  * needs no brain connection, and by the skills index (spring-index.ts).
  */
 import { createHash } from 'node:crypto';

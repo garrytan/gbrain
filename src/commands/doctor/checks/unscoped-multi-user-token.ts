@@ -92,7 +92,7 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
   checks.push({
     name: 'unscoped_multi_user_token', status: 'warn',
     message: ctx.remote
-      ? `${flagged.length} credential(s) can read chat from several channels and read the same pages whoever talks to their agent, so an agent several people use may answer one person with another person's messages. Ask the brain host's operator to run gbrain doctor --only ${NOTICE_CODE}.`
+      ? `${flagged.length} credential(s) can read chat from several channels and read the same pages whoever talks to their agent, so an agent several people use may answer one person with another person's messages. Ask the brain host's operator to run foresights doctor --only ${NOTICE_CODE}.`
       : `${flagged.length} credential(s) or local agent(s) can read chat from several channels and read the same pages whoever talks to their agent: ${first.label} reaches ${first.census.channels} channels in ${first.census.chat_sources.join(', ')}`
         + `${flagged.length > 1 ? `, and ${flagged.length - 1} more in details.flagged` : ''}. An agent several people use may answer one person with another person's messages.`,
     details: ctx.remote ? { flagged_count: flagged.length } : { flagged: details(flagged) },

@@ -19,7 +19,7 @@
  *     / an older serve (`unknown_kind`, `stale_serve`) each keep the CLI's own
  *     consumer with ONE actionable line, and a live serve runs the drain and
  *     hands back the SyncResult the in-process printers take, with
- *     `gbrain sync --source <id> --no-pull --json` admitted unchanged.
+ *     `foresights sync --source <id> --no-pull --json` admitted unchanged.
  *
  * Marked .serial.test.ts: the runner is a module singleton
  * (__resetDelegatedSyncForTests) and the tests bind local sockets.
@@ -284,13 +284,13 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     expect(kill.kind === 'own_consumer' && kill.line).toMatch(/GBRAIN_SERVE_SYNC_IPC=0.*does not delegate to the serve \(PID 4242\)/);
     expect(kill.kind === 'own_consumer' && kill.line).not.toContain('own consumer beside');
     expect(noSock).toMatchObject({ kind: 'own_consumer', reason: 'no_socket' });
-    expect(noSock.kind === 'own_consumer' && noSock.line).toMatch(/exposes no sync IPC socket.*Restart that serve on this gbrain version/);
+    expect(noSock.kind === 'own_consumer' && noSock.line).toMatch(/exposes no sync IPC socket.*Restart that serve on this (?:foresights|gbrain) version/);
     expect(captured).toHaveLength(3);
     // #6543: none of these rungs forces this process's own consumer beside the serve.
     expect(ownConsumerForcedReason()).toBeNull();
   }), 120_000);
 
-  test('a serve already on this gbrain version is never told to restart on this version; an older one still is', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  test('a serve already on this foresights version is never told to restart on this version; an older one still is', async () => withEnv({ GBRAIN_HOME: home }, async () => {
     const f = await fixture(1);
     const dead = join(home, `dead-${randomUUID().slice(0, 8)}.sock`);
     writeFileSync(dead, '');
@@ -304,12 +304,12 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     resetOwnConsumerForTest();
     for (const outcome of [noSock, silent]) {
       const line = outcome.kind === 'own_consumer' ? outcome.line ?? '' : '';
-      expect(line).not.toMatch(/[Rr]estart that serve on this gbrain version/);
-      expect(line).toContain(`already runs this gbrain version (v${VERSION})`);
+      expect(line).not.toMatch(/[Rr]estart that serve on this (?:foresights|gbrain) version/);
+      expect(line).toContain(`already runs this foresights version (v${VERSION})`);
     }
     expect(noSock.kind === 'own_consumer' && noSock.line).toMatch(/GBRAIN_SERVE_SYNC_IPC=0/);
     expect(silent.kind === 'own_consumer' && silent.line).toMatch(/not answering its IPC socket.*may be wedged/);
-    expect(older.kind === 'own_consumer' && older.line).toMatch(/Restart that serve on this gbrain version/);
+    expect(older.kind === 'own_consumer' && older.line).toMatch(/Restart that serve on this (?:foresights|gbrain) version/);
   }), 120_000);
 
   test('#7167: a dry run that is not delegated says it previews in this process and writes nothing, and never forces a consumer of its own', async () => withEnv({ GBRAIN_HOME: home }, async () => {
@@ -433,7 +433,7 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     expect((thrown as OperationError).fix?.argv).toEqual(refusal.fix.argv);
   }), 120_000);
 
-  test('`gbrain sync --source <id> --no-pull --json` delegates unchanged: the serve drains, the CLI prints the drain\'s lines and gets the SyncResult back', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  test('`foresights sync --source <id> --no-pull --json` delegates unchanged: the serve drains, the CLI prints the drain\'s lines and gets the SyncResult back', async () => withEnv({ GBRAIN_HOME: home }, async () => {
     const f = await fixture(5);
     const sock = await serveSocket();
     captureStderr();
@@ -455,7 +455,7 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     expect(rows.map(r => r.principal_id)).toEqual([local.id]);
   }), 180_000);
 
-  test('#6543 C1: `gbrain sync --source <id>` without --no-pull on a managed brain delegates with --no-pull implied and the serve drains it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  test('#6543 C1: `foresights sync --source <id>` without --no-pull on a managed brain delegates with --no-pull implied and the serve drains it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
     const f = await fixture(2);
     const sock = await serveSocket();
     const flags = { noPull: false, dryRun: false };
@@ -463,7 +463,7 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     await implyManagedNoPull(engine, flags, f.id);
     const outcome = await maybeDelegateManagedSyncToServe(engine, ['--source', f.id, '--json'], { ...baseOpts(f.id), noPull: flags.noPull, noEmbed: undefined }, deps({ sock }));
     releaseStderr();
-    expect(captured.some(l => l.includes('--no-pull is implied') && l.includes(`gbrain sources refresh ${f.id}`))).toBe(true);
+    expect(captured.some(l => l.includes('--no-pull is implied') && l.includes(`foresights sources refresh ${f.id}`))).toBe(true);
     expect(outcome.kind).toBe('delegated');
     if (outcome.kind !== 'delegated') throw new Error('unreachable');
     expect(outcome.result).toMatchObject({ status: 'first_sync', added: 2 });

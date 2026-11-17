@@ -1,5 +1,5 @@
 /**
- * #6795: `gbrain config set chat_model|expansion_model` writes a DB-plane
+ * #6795: `foresights config set chat_model|expansion_model` writes a DB-plane
  * default. A `models.*` key, `GBRAIN_MODEL`, the per-key env var or a
  * config.json pin outranks it at runtime (gateway.ts resolveGatewayModels +
  * ai/legacy-model-pin.ts). This names the one that actually wins, by key,
@@ -34,7 +34,7 @@ export function modelPinShadowNotice(key: LegacyModelKey, shadow: ModelPinShadow
       why: `Removes ${shadow.name} so the ${key} just written takes effect; it may also select other models, so ask first.` }
     : shadow.kind === 'env'
       ? { argv: ['unset', shadow.name], consent: [], actor: 'user', requires_exclusive: false, verify,
-        why: `${shadow.name} is set in the environment gbrain runs in; only the user can remove it (shell profile or service environment).` }
+        why: `${shadow.name} is set in the environment foresights runs in; only the user can remove it (shell profile or service environment).` }
       : { argv: ['gbrain', 'config', 'unset', key, '--file'], ask_user: true, consent: [], actor: 'agent', requires_exclusive: false, verify,
         why: `Removes the ${key} pin from ${shadow.name} so the database value just written takes effect.` };
   return { code: 'config_write_shadowed', kind: 'degraded', why: `${key} was stored in the database, but ${by} outranks it, so the model in use does not change.`, fix };
@@ -52,7 +52,7 @@ export async function reportLegacyModelWrite(engine: ConfigReader, key: LegacyMo
   if (notice) console.error(`[config] WARN: ${notice.why} Fix: ${notice.fix!.argv!.join(' ')} (${notice.fix!.why})`);
 }
 
-/** `gbrain config unset chat_model|expansion_model --file`: drop only the config.json pin; the database value stays. */
+/** `foresights config unset chat_model|expansion_model --file`: drop only the config.json pin; the database value stays. */
 export function unsetModelFilePin(key: LegacyModelKey): void {
   const cfg = loadConfigFileOnly();
   if (!cfg || cfg[key] === undefined) {

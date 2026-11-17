@@ -2,7 +2,7 @@
  * #6712 PR 4 shadow validation on seeded fixtures (the evidence that replaces the production baseline; it rides PR 4b).
  *
  * Authoring gate: (1) protects the read-only shadow's per-path class and action tag (design v3.2 §2.3 rows 1-19, the
- * in_flight overlay, the §2.6 valve, §2.7 bootstrap and §6 --full) on a managed brain seeded through real gbrain calls,
+ * in_flight overlay, the §2.6 valve, §2.7 bootstrap and §6 --full) on a managed brain seeded through real foresights calls,
  * the totality of the level, and the CLI surfaces (the redacted dry run and status --detail) agreeing with the library;
  * (2) a classifier or read change that moves any seeded path's class, action, sub-label, side or state, drops a path
  * from the domain, double-counts one, leaks a path under --redact-paths or writes a row fails here; (3) the pure

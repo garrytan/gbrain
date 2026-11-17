@@ -1,5 +1,5 @@
 /**
- * `gbrain filing`: post-connect dispatch, run by handleCliOnly with the engine
+ * `foresights filing`: post-connect dispatch, run by handleCliOnly with the engine
  * connectEngine() opened. The record lives in src/cli/command-table.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';

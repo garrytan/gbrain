@@ -12,13 +12,13 @@ import { MANAGED_WRITER_GUARD_FUNCTION_SQL } from '../persistence/writer-guard-s
 // page_versions snapshot; the nullable per-token `min_trust` read floor on
 // oauth_clients and access_tokens; the trust_proposals decision record; and
 // the BEFORE ROW trigger that stamps and guards the tier (trust/schema.ts).
-// Every existing row reads `unknown` until `gbrain trust backfill` classifies
+// Every existing row reads `unknown` until `foresights trust backfill` classifies
 // it. content_chunks gets no column: chunk tier is its page's at read time.
 // The managed-writer guard function is re-created (no table lock) so a page
 // tier change is guarded content like the page body. No schema.sql mirror:
 // like write attribution, these columns exist only through migrations.
 // A brain with no facts, takes, timeline entries or pages has no legacy rows
-// for `gbrain trust backfill` to classify, so its backfill is recorded as
+// for `foresights trust backfill` to classify, so its backfill is recorded as
 // complete here (fresh installs replay this migration on empty tables);
 // doctor trust_tiers then never asks a new brain to backfill. Graduation
 // replaces the target's config rows with the source's, so a copy carries the

@@ -2,7 +2,7 @@
   "version": 1,
   "schema": "1",
   "corpus": "gbrain",
-  "description": "v0.34 code-retrieval baseline. 30 questions about gbrain's own codebase covering callers, callees, definitions, blast radius, and cluster membership. The 'expected' field is a SET of file:line tuples (not page slugs) for code-symbol retrieval. Match semantics: a result counts as relevant when its (file, line) matches any expected tuple OR its (file, symbol_qualified) matches when symbol_qualified is provided.\n\nTo regenerate / extend: bump version, add questions, document the diff. Pre-v0.34 baseline is captured against this exact set so it cannot be retroactively tuned.",
+  "description": "v0.34 code-retrieval baseline. 30 questions about foresights's own codebase covering callers, callees, definitions, blast radius, and cluster membership. The 'expected' field is a SET of file:line tuples (not page slugs) for code-symbol retrieval. Match semantics: a result counts as relevant when its (file, line) matches any expected tuple OR its (file, symbol_qualified) matches when symbol_qualified is provided.\n\nTo regenerate / extend: bump version, add questions, document the diff. Pre-v0.34 baseline is captured against this exact set so it cannot be retroactively tuned.",
   "questions": [
     {
       "id": "callers-001",
@@ -168,7 +168,7 @@
     {
       "id": "flow-002",
       "kind": "execution_flow",
-      "query": "how does gbrain sync flow from cli to database write",
+      "query": "how does foresights sync flow from cli to database write",
       "symbol": "performSync",
       "expected_files": ["src/commands/sync.ts", "src/core/sync.ts", "src/core/import-file.ts", "src/core/postgres-engine.ts"],
       "expected_min_recall": 0.5
@@ -243,7 +243,7 @@
     {
       "id": "edge-003",
       "kind": "definition",
-      "query": "where is the gbrain serve http entrypoint",
+      "query": "where is the foresights serve http entrypoint",
       "symbol": "runServeHttp",
       "expected_files": ["src/commands/serve-http.ts"],
       "expected_min_recall": 1.0

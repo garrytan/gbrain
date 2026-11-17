@@ -1,10 +1,10 @@
 /**
- * Tests for `gbrain init --migrate-only` — the schema-only primitive used by
+ * Tests for `foresights init --migrate-only` — the schema-only primitive used by
  * apply-migrations, the stopgap script, and the postinstall hook.
  *
  * The key contract: migrate-only MUST NOT call saveConfig. Running it on an
  * existing Postgres install must not flip it to PGLite. Running it against a
- * missing config must fail loudly with a clear "run gbrain init first" error.
+ * missing config must fail loudly with a clear "run foresights init first" error.
  *
  * Uses subprocess invocations (not in-proc) because runInit calls
  * process.exit(1) on error paths, which breaks test isolation. Spawns route
@@ -28,7 +28,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { runCli, runCliBatch, type CliResult } from './helpers/cli-spawn.ts';
 
-describe('gbrain init --migrate-only — error paths', () => {
+describe('foresights init --migrate-only — error paths', () => {
   // Every argv here is a validation-failure path verified to exit before any
   // migrate-only side effects (no config write, no DB touch), so all four
   // share one empty home. That makes the config.json absence checks below
@@ -57,7 +57,7 @@ describe('gbrain init --migrate-only — error paths', () => {
 
   function cached(...argv: string[]): CliResult {
     const r = batched.get(argv.join(' '));
-    if (!r) throw new Error(`not in ERROR_ARGVS batch: gbrain ${argv.join(' ')}`);
+    if (!r) throw new Error(`not in ERROR_ARGVS batch: foresights ${argv.join(' ')}`);
     return r;
   }
 
@@ -100,7 +100,7 @@ describe('gbrain init --migrate-only — error paths', () => {
   });
 });
 
-describe('gbrain init --migrate-only — happy path with PGLite config', () => {
+describe('foresights init --migrate-only — happy path with PGLite config', () => {
   // One home for both tests: the config-preservation test builds the brain,
   // the idempotence test reruns against it. Declaration order IS execution
   // order within a bun test file, so the reuse never observes an unbuilt

@@ -1,7 +1,7 @@
 /**
  * #2119-class DB-plane read-side merge (also #2137/#4297).
  *
- * DB-plane values that `gbrain config set` accepted for years, `config get`
+ * DB-plane values that `foresights config set` accepted for years, `config get`
  * echoed back, and NOTHING read: provider credentials, chat/expansion model
  * pins, the chat fallback chain and its refusal switch, and flat `cycle.*` knobs. This module owns
  * their sparse-merge into the loaded config — called by
@@ -13,7 +13,7 @@
  * below is type-only, erased at compile time — no cycle).
  *
  * NEVER merged from the DB: `embedding_model` / `embedding_dimensions`. They
- * size the schema, must be stable across engine connect, and `gbrain config
+ * size the schema, must be stable across engine connect, and `foresights config
  * set` hard-refuses them — a stale DB row must not resurrect the plane-split
  * footgun the #4287 fixes closed. Do not add them to any list here.
  */
@@ -21,7 +21,7 @@
 import type { GBrainConfig } from './config.ts';
 
 /**
- * The provider-credential fields sparse-merged from the DB plane. `gbrain
+ * The provider-credential fields sparse-merged from the DB plane. `foresights
  * config set <vendor>_api_key` routes NEW writes to the file plane
  * (FILE_PLANE_API_KEYS in src/commands/config.ts, kept in sync by
  * test/loadConfig-merge.test.ts), but values that reached the DB anyway —
@@ -138,7 +138,7 @@ function parseJsonOrString(raw: string): unknown {
 }
 
 /**
- * `gbrain config set provider_chat_options.<selector> <value>` takes one JSON
+ * `foresights config set provider_chat_options.<selector> <value>` takes one JSON
  * object per selector. A dotted leaf (`...<selector>.thinking.type disabled`)
  * or a non-object value is refused with the exact JSON-form command.
  */
@@ -152,7 +152,7 @@ export function assertProviderChatOptionsSetValue(key: string, value: string): v
   const example = isPlainRecord(leaf) ? JSON.stringify(leaf) : '{"thinking":{"type":"disabled"}}';
   throw new Error(
     `${key} takes one JSON object per selector (provider_chat_options.<provider> or provider_chat_options.<provider>:<model>); nothing was written. ` +
-    `Run: gbrain config set ${CHAT_OPTIONS_PREFIX}${selector || '<provider>'} '${example.replace(/'/g, `'\\''`)}'`,
+    `Run: foresights config set ${CHAT_OPTIONS_PREFIX}${selector || '<provider>'} '${example.replace(/'/g, `'\\''`)}'`,
   );
 }
 
@@ -268,7 +268,7 @@ export async function applyDbPlaneReadSideMerge(
     const rawChain = values.get('chat_fallback_chain');
     if (rawChain !== undefined) {
       const parsed = parseDbChatFallbackChain(rawChain);
-      if (parsed.error) console.warn(`[gbrain] config: chat_fallback_chain DB value ${parsed.error}; ignoring`);
+      if (parsed.error) console.warn(`[foresights] config: chat_fallback_chain DB value ${parsed.error}; ignoring`);
       if (parsed.chain) merged.chat_fallback_chain = parsed.chain;
     }
   }
@@ -311,7 +311,7 @@ export async function applyDbPlaneReadSideMerge(
     const split = splitChatOptionsKey(rest);
     if (split.path.length > 0 || !isPlainRecord(parsed)) {
       if (split.path.length === 0 || split.selector.includes('.') || !split.selector) {
-        console.warn(`[gbrain] config: ${key} is not a JSON object per selector; ignoring. Store it as gbrain config set ${CHAT_OPTIONS_PREFIX}<selector> '<json object>'.`);
+        console.warn(`[foresights] config: ${key} is not a JSON object per selector; ignoring. Store it as foresights config set ${CHAT_OPTIONS_PREFIX}<selector> '<json object>'.`);
         continue;
       }
       if (split.path.some((segment) => UNSAFE_KEYS.has(segment))) continue;

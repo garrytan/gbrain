@@ -1,5 +1,5 @@
 /**
- * #7869: an explicit managed atom retry (`gbrain jobs submit extract-atoms-drain
+ * #7869: an explicit managed atom retry (`foresights jobs submit extract-atoms-drain
  * --params '{"retryRequestId": …}'`) re-checks a transcript item's session
  * source before it starts anything. A batch that failed before #7851 may hold
  * another source's session transcript, extracted into the run's source; the

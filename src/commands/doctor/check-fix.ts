@@ -7,7 +7,7 @@
  * command as `fix` (information, never coaching).
  *
  * Stored checks carry `Action`; `finalizeCheckFixes` renders them for the
- * report's transport (CLI `gbrain doctor --json`, MCP `run_doctor`).
+ * report's transport (CLI `foresights doctor --json`, MCP `run_doctor`).
  */
 import { cliRenderContext, redactForTransport, renderAction, type Action, type RenderContext, type RenderedAction } from '../../core/agent-output.ts';
 import { embeddingEnablement, type ReadinessEntry, type ReadinessState } from '../../core/readiness.ts';
@@ -48,7 +48,7 @@ export function doctorVerify(check: string): { argv: string[] } {
   return { argv: ['gbrain', 'doctor', '--only', check, '--json'] };
 }
 
-/** A gbrain command the agent may run with no consent (read-only or a reversible local repair). */
+/** A foresights command the agent may run with no consent (read-only or a reversible local repair). */
 export function agentFix(argv: string[], why: string, verifyCheck: string, extra: Partial<Action> = {}): Action {
   return { argv, consent: [], actor: 'agent', why, verify: doctorVerify(verifyCheck), requires_exclusive: false, ...extra };
 }
@@ -108,7 +108,7 @@ export function checkError(name: string, what: string, err?: unknown, opts: { st
     try {
       const d = classifyPgAccessError(err);
       if (d.reason !== 'unknown') {
-        fix = agentFix(['gbrain', 'db-repair'], `The database refused the check (${d.reason}). \`gbrain db-repair\` diagnoses it without changing anything.`, name,
+        fix = agentFix(['gbrain', 'db-repair'], `The database refused the check (${d.reason}). \`foresights db-repair\` diagnoses it without changing anything.`, name,
           { docs: 'docs/ENGINES.md#engine-detection-and-access-repair' });
       }
     } catch { /* classification is best-effort */ }
@@ -154,7 +154,7 @@ export function finalizeCheckFixes<T extends CheckLike>(checks: readonly T[], re
 
 /**
  * E1: a repairable finding on the local doctor carries its next step: the
- * read-only `gbrain repair <kind>` preview, which lists what the repair would
+ * read-only `foresights repair <kind>` preview, which lists what the repair would
  * change and prints the exact apply command for the user to approve.
  */
 function withRepairPreviewFix<T extends CheckLike>(check: T): T {

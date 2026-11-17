@@ -1,5 +1,5 @@
 /**
- * #7191: `gbrain stats --by source,type [--since <date>] [--collapse-aliases]`
+ * #7191: `foresights stats --by source,type [--since <date>] [--collapse-aliases]`
  * (the `get_stats` op's `by` / `since` / `collapse_aliases` params): page
  * counts grouped by source and type, the counts agents otherwise take with
  * `grep -c`, `wc` or SQL.

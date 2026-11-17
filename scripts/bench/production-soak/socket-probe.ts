@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Warm CLI socket probe on a loaded production-soak brain (GBRA-156): the soak topology at --rtt-ms, the loopback mock
- * provider, one `gbrain serve --cli-socket` (GBRAIN_SQL_TRACE on) and --n warm `gbrain search --json --timings` CLI
+ * provider, one `foresights serve --cli-socket` (GBRAIN_SQL_TRACE on) and --n warm `foresights search --json --timings` CLI
  * calls. Per call it records the CLI's wall time, the serve's op time (timings_ms.op), the CLI overhead around it,
  * and the serve's database round trips for the call: the total, and the sequential ones (the longest chain of round
  * trips each starting after the previous one answered, i.e. the network floor the call cannot overlap).

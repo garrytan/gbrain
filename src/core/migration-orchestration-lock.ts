@@ -1,5 +1,5 @@
 /**
- * Orchestration lock for `gbrain apply-migrations` (#5693).
+ * Orchestration lock for `foresights apply-migrations` (#5693).
  *
  * Exactly one runner orchestrates a brain's migrations at a time. The runner
  * acquires this lock before it mutates the migration ledger and holds it
@@ -87,7 +87,7 @@ export interface MigrationOrchestrationLock {
 
 export function formatMigrationsRunning(holder: MigrationLockHolder | null): string {
   return `another apply-migrations is running (host ${holder?.host ?? 'unknown'}, pid ${holder?.pid ?? 'unknown'}). `
-    + 'Wait for it to finish; `gbrain doctor` shows migration progress. '
+    + 'Wait for it to finish; `foresights doctor` shows migration progress. '
     + 'See docs/guides/write-refusals.md#migrations_running';
 }
 

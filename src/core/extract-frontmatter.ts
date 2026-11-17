@@ -1,8 +1,8 @@
 /**
  * `autopilot.incremental_extract_include_frontmatter` — one answer for every
  * extraction path: the cycle, sync's inline extract, the GitHub/Google source
- * inline extracts, the `extract_stale` minion, `gbrain maintain`, and
- * `gbrain extract --stale` without an explicit flag.
+ * inline extracts, the `extract_stale` minion, `foresights maintain`, and
+ * `foresights extract --stale` without an explicit flag.
  *
  * The knob shipped in v0.42 but only the cycle read it. Every other path
  * extracted body links only AND then stamped `links_extracted_at`, so with the
@@ -10,7 +10,7 @@
  * frontmatter edges, and the cycle's stale drain (the one path that honoured
  * the knob) never revisited it. The siblings defeated the documented knob.
  *
- * Both planes, file wins (same precedence as loadConfigWithEngine). `gbrain
+ * Both planes, file wins (same precedence as loadConfigWithEngine). `foresights
  * config set` writes the DB plane, so a file-only read would make the
  * documented enable command a silent no-op (#2120 class). A non-boolean
  * file-plane value is not an answer — it falls through to the DB plane. Fails

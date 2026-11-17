@@ -41,7 +41,7 @@ import * as fs from 'node:fs';
  * isLockError in src/commands/backup.ts matches on the leading substring —
  * the source-text contract pin below fails the suite if either side drifts. */
 const LOCK_SUBSTRING = 'Could not acquire PGLite lock';
-const LOCK_MESSAGE = 'Could not acquire PGLite lock. Another gbrain process is using the database.';
+const LOCK_MESSAGE = 'Could not acquire PGLite lock. Another foresights process is using the database.';
 
 const ENV_KEYS = [
   'GBRAIN_HOME',
@@ -197,7 +197,7 @@ describe('runBackupCli — usage', () => {
     const { connect, calls } = thunkFor(stubEngine({}));
     const r = await run(['--help'], connect);
     expect(r.exitCode).toBe(0);
-    expect(r.log).toContain('gbrain backup <status|check|create|restore>');
+    expect(r.log).toContain('foresights backup <status|check|create|restore>');
     expect(calls()).toBe(0);
   });
 
@@ -205,7 +205,7 @@ describe('runBackupCli — usage', () => {
     const { connect, calls } = thunkFor(stubEngine({}));
     const r = await run([], connect);
     expect(r.exitCode).toBe(0);
-    expect(r.log).toContain('gbrain backup <status|check|create|restore>');
+    expect(r.log).toContain('foresights backup <status|check|create|restore>');
     expect(calls()).toBe(0);
   });
 
@@ -397,11 +397,11 @@ describe('runBackupCli status: fix commands for dirty and unverified rows', () =
 
     const r = await run(['status'], thunkFor(stubEngine({})).connect);
 
-    expect(r.stdout).toContain('fix: gbrain sources push dirty-src');
-    expect(r.stdout).toContain('fix: gbrain sources push root-a\n');
-    expect(r.stdout).toContain('fix: gbrain sources push --path /ws/example');
-    expect(r.stdout).toContain('fix: gbrain backup check');
-    expect(r.stdout).toContain('Fix the ✗ and ⚠ rows above, then run: gbrain backup check');
+    expect(r.stdout).toContain('fix: foresights sources push dirty-src');
+    expect(r.stdout).toContain('fix: foresights sources push root-a\n');
+    expect(r.stdout).toContain('fix: foresights sources push --path /ws/example');
+    expect(r.stdout).toContain('fix: foresights backup check');
+    expect(r.stdout).toContain('Fix the ✗ and ⚠ rows above, then run: foresights backup check');
   });
 });
 
@@ -503,7 +503,7 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
     const doc = JSON.parse(r.stdout.trim());
     expect(doc).toMatchObject({ ok: false, reason: 'EPERM', code: 'storage_error' });
     expect(doc.message).toBe('Backup failed with no error message (code EPERM).');
-    expect(doc.why).toContain('gbrain backup create stopped');
+    expect(doc.why).toContain('foresights backup create stopped');
     expect(doc.fix).toMatchObject({ argv: ['gbrain', 'doctor', '--json'], next: 'run', verify: { argv: ['gbrain', 'doctor', '--json'] } });
     expect(doc.retryable).toBe(false);
   });
@@ -512,8 +512,8 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
     const r = await failCreate({ code: 'EPERM', errno: -1 }, false);
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('Error [storage_error]: Backup failed with no error message (code EPERM, errno -1).');
-    expect(r.stderr).toContain('Fix: gbrain doctor --json');
-    expect(r.stderr).toContain('Why: gbrain backup create stopped');
+    expect(r.stderr).toContain('Fix: foresights doctor --json');
+    expect(r.stderr).toContain('Why: foresights backup create stopped');
     expect(r.stderr).not.toContain('undefined');
     expect(r.stderr).not.toContain('[object Object]');
   });
@@ -540,7 +540,7 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
           const doc = JSON.parse(r.stdout.trim());
           expect(doc).toMatchObject({ ok: false, reason: 'unmanaged_database_path', code: 'unmanaged_database_path', class: 'host_only' });
           expect(doc.fix).toMatchObject({ next: 'ask_user', verify: { argv: ['gbrain', 'doctor', '--json'] } });
-          expect(doc.fix.user_message).toContain('stop every gbrain writer');
+          expect(doc.fix.user_message).toContain('stop every foresights writer');
         } else {
           expect(r.stderr).toContain('Error [unmanaged_database_path]');
         }

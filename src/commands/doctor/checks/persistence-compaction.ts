@@ -36,7 +36,7 @@ export async function checkPersistenceCompaction(engine: BrainEngine): Promise<C
         : 'No receipt compaction recorded yet; a resident consumer compacts receipts past the retention window on its idle ticks.' };
     return { name: 'persistence_compaction', status: 'warn', details,
       message: `A resident consumer has run for over ${staleHours} hours but ${last ? `the last receipt compaction was ${details.last_compaction_age_hours} hours ago` : 'no receipt compaction was recorded'}, `
-        + 'so receipt bytes are not coming back. Check the consumer (gbrain sources writer status --json), and preview an on-demand pass with gbrain repair receipt-compaction --json.',
+        + 'so receipt bytes are not coming back. Check the consumer (foresights sources writer status --json), and preview an on-demand pass with foresights repair receipt-compaction --json.',
       fix: { argv: ['gbrain', 'repair', 'receipt-compaction', '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('persistence_compaction'),
         docs: COMPACTION_DOCS, why: 'Previews compacting the receipts past the retention window; it writes nothing.' } };
   } catch (error) {
@@ -82,7 +82,7 @@ export async function checkPersistenceCounterDrift(engine: BrainEngine): Promise
         + (drift.some(row => row.delta > 0) ? 'An overcharge holds back write capacity no receipt uses; no data is lost. ' : '')
         + (drift.some(row => row.delta < 0) ? 'An under-count lets writes use capacity the receipts already reserve. ' : '')
         + `${clamped ? `${clamped} true-up decrement(s) were clamped at zero. ` : ''}`
-        + 'Nothing is changed by this check; details.drift lists the receipts behind each scope by kind. Report it with gbrain doctor --only persistence_counter_drift --json.' };
+        + 'Nothing is changed by this check; details.drift lists the receipts behind each scope by kind. Report it with foresights doctor --only persistence_counter_drift --json.' };
   } catch (error) {
     return { name: 'persistence_counter_drift', status: 'warn', message: `Receipt-bytes counters could not be compared: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
       details: { health: 'unknown' } };

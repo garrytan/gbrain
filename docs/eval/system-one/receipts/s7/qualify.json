@@ -30,5 +30,5 @@
   },
   "min_action_precision": 0.9,
   "policy_fingerprint": "4d1429790e67d15d",
-  "next": "gbrain decide enable triage"
+  "next": "foresights decide enable triage"
 }

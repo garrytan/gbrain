@@ -1,6 +1,6 @@
 /**
  * #5012 item 9: calendar readability per linked Google source, for
- * `gbrain google status`. With a probe (the default) each source that syncs
+ * `foresights google status`. With a probe (the default) each source that syncs
  * Calendar gets one live `events.list` read of its configured calendar; with
  * `--no-probe` the result its last sweep recorded (`calendar_unreadable` in
  * connector state) is reported instead. A 403 or 404 is `calendar_unreadable`
@@ -25,7 +25,7 @@ export interface CalendarReadability {
 export type CalendarProbe = (account: string, calendarId: string) => Promise<{ readable: true } | { readable: false; httpStatus: 403 | 404 }>;
 
 export function calendarUnreadableFix(account: string, sourceId: string): { list_command: string; set_command: string } {
-  return { list_command: `gbrain google calendars --account ${account}`, set_command: `gbrain sources set-calendar ${sourceId} <calendar-id>` };
+  return { list_command: `foresights google calendars --account ${account}`, set_command: `foresights sources set-calendar ${sourceId} <calendar-id>` };
 }
 
 /** Readability of one source's calendar, or null when the source does not sync Calendar. */

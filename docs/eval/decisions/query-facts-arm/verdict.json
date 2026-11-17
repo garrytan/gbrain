@@ -146,7 +146,7 @@
   },
   "diagnostic_correction_dated": {
     "preregistered": false,
-    "note": "Not a gate. Same runs, except remember receives the correction's own timestamp as valid_from (bench --remember-valid-from; gbrain's remember has accepted valid_from since this branch). Decided after gate 1's cells ran, so it cannot change the decision; it shows what the arm does once a fact carries the date it took effect.",
+    "note": "Not a gate. Same runs, except remember receives the correction's own timestamp as valid_from (bench --remember-valid-from; foresights's remember has accepted valid_from since this branch). Decided after gate 1's cells ran, so it cannot change the decision; it shows what the arm does once a fact carries the date it took effect.",
     "forget_remember": {
       "off": {
         "checkpoints": {
@@ -228,7 +228,7 @@
         "why_lower": "fact rows take a page slot when the row count is already full"
       }
     },
-    "key_off_identity": "query output with the key off is identical to garrytan/gbrain@a87c3e2af on all gate-2 corpora apart from wall-clock recency scores and random revision ids"
+    "key_off_identity": "query output with the key off is identical to aimonk2025/gbrain@a87c3e2af on all gate-2 corpora apart from wall-clock recency scores and random revision ids"
   },
   "gate_3": {
     "status": "not_run"

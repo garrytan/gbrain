@@ -275,7 +275,7 @@ describe('parseConversation — disabledBuiltinIds', () => {
 // Multi-line continuation (D5)
 // ---------------------------------------------------------------------------
 
-describe('parseConversation — markdown-heading-turn (gbrain transcript ingest)', () => {
+describe('parseConversation — markdown-heading-turn (foresights transcript ingest)', () => {
   test('parses ## User / ## Assistant heading-only turns with continuation body', () => {
     const body = [
       '## User',

@@ -115,14 +115,14 @@ describe('progress-aware sync deadline (large-brain ceiling)', () => {
     const line = syncDeadlineStopNotice(['--source', 'notes', '--no-pull'], res);
     expect(line).toContain('code=sync_deadline_stop');
     expect(line).toContain('the 3600s sync deadline (default:non-tty) passed and the run made no progress for 900s');
-    expect(line).toContain('Resume with: gbrain sync --source notes --no-pull.');
+    expect(line).toContain('Resume with: foresights sync --source notes --no-pull.');
   });
 
   test('under --json the stop notice is one parseable object', () => {
     const res = resolveSyncHardDeadline(['--hard-deadline', '60'], { isTty: false })!;
     const notice = JSON.parse(syncDeadlineStopNotice(['--hard-deadline', '60', '--json'], res));
     expect(notice).toMatchObject({ status: 'stopped', code: 'sync_deadline_stop', deadline_seconds: 60, progress_window_seconds: null,
-      resume_command: 'gbrain sync --hard-deadline 60 --json' });
+      resume_command: 'foresights sync --hard-deadline 60 --json' });
   });
 });
 

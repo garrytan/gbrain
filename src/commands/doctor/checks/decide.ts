@@ -33,9 +33,9 @@ async function runDecideHealth(ctx: DoctorContext): Promise<Check[]> {
     const warns: string[] = [];
     const notes: string[] = [];
     if ([...providers].some((p) => providerKind(p) === 'typesafe') && !state.key.present) {
-      warns.push('a TypeSafe provider is configured but TYPESAFE_API_KEY (or JEV_TYPESAFE_API_KEY) is not set: export TYPESAFE_API_KEY=... && gbrain decide probe');
+      warns.push('a TypeSafe provider is configured but TYPESAFE_API_KEY (or JEV_TYPESAFE_API_KEY) is not set: export TYPESAFE_API_KEY=... && foresights decide probe');
     }
-    for (const p of providers) if (isTypesafeAlias(p)) warns.push(`${p} is a moving alias; pin it: gbrain decide enable <slot> (writes the resolved id)`);
+    for (const p of providers) if (isTypesafeAlias(p)) warns.push(`${p} is a moving alias; pin it: foresights decide enable <slot> (writes the resolved id)`);
     for (const p of policies) {
       const line = effectiveModeLine(p);
       if (line && p.requested !== 'off') warns.push(line);
@@ -49,18 +49,18 @@ async function runDecideHealth(ctx: DoctorContext): Promise<Check[]> {
     for (const p of active) {
       const seen = recent.find((r) => r.slot === p.slot && r.provider === p.provider);
       if (p.calibration && seen && seen.model_resolved !== p.calibration.model_resolved) {
-        warns.push(`${p.slot}: calibration ${p.calibration.ref} is for ${p.calibration.model_resolved} but ${p.provider} now answers as ${seen.model_resolved} (drift: calls run with off behavior); gbrain decide calibrations list --slot ${p.slot}`);
+        warns.push(`${p.slot}: calibration ${p.calibration.ref} is for ${p.calibration.model_resolved} but ${p.provider} now answers as ${seen.model_resolved} (drift: calls run with off behavior); foresights decide calibrations list --slot ${p.slot}`);
       }
     }
     for (const m of mixed) warns.push(`${m.slot}: ${m.n} receipt(s) failed on mixed resolved models (alias rollout in progress); pin the provider id`);
     for (const u of usage) {
-      if (u.rows >= 20 && u.errors / u.rows > ERROR_RATE_WARN) warns.push(`${u.slot}: ${(100 * u.errors / u.rows).toFixed(1)}% of receipts errored in 24 h (over 5%); see gbrain decide receipts --slot ${u.slot}`);
+      if (u.rows >= 20 && u.errors / u.rows > ERROR_RATE_WARN) warns.push(`${u.slot}: ${(100 * u.errors / u.rows).toFixed(1)}% of receipts errored in 24 h (over 5%); see foresights decide receipts --slot ${u.slot}`);
       if (u.egress > 0) notes.push(`${u.slot}: ${u.egress} egress refusal(s) in 24 h`);
     }
     if (stats.some((s) => s.error_reason === 'pinned_model_unavailable')) {
-      warns.push('the pinned model is no longer served (pinned_model_unavailable): gbrain config set decide.provider typesafe:<new-id>, then recalibrate or adopt a reference calibration');
+      warns.push('the pinned model is no longer served (pinned_model_unavailable): foresights config set decide.provider typesafe:<new-id>, then recalibrate or adopt a reference calibration');
     }
-    if (spend.total >= state.cfg.dailyUsd) warns.push(`daily decide budget exhausted ($${spend.total.toFixed(4)} of $${state.cfg.dailyUsd.toFixed(2)}); slots take their fail direction until UTC midnight: gbrain config set decide.budget.daily_usd <usd>`);
+    if (spend.total >= state.cfg.dailyUsd) warns.push(`daily decide budget exhausted ($${spend.total.toFixed(4)} of $${state.cfg.dailyUsd.toFixed(2)}); slots take their fail direction until UTC midnight: foresights config set decide.budget.daily_usd <usd>`);
     const keyDefaults = active.filter((p) => state.cfg.slots[p.slot].keyDefault).map((p) => p.slot);
     if (keyDefaults.length > 0) notes.push(`opt out of the key-aware default: ${keyDefaults.map(keyDefaultOptOut).join(' && ')}`);
     const label = (p: (typeof active)[number]) => state.cfg.slots[p.slot].keyDefault ? ` (${KEY_DEFAULT_LABEL})` : '';

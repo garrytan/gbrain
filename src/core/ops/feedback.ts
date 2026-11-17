@@ -1,5 +1,5 @@
 /**
- * Retrieval feedback operations: `rate_answer` (CLI `gbrain rate`).
+ * Retrieval feedback operations: `rate_answer` (CLI `foresights rate`).
  * Never import from '../operations.ts' here (cycle).
  */
 import type { Operation } from './contract.ts';

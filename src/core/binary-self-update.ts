@@ -4,7 +4,7 @@
  * swap claim true for the one method we own").
  *
  * `bun` / `bun-link` delegate their swap to those package managers.
- * The compiled standalone binary is the only method gbrain itself writes, so
+ * The compiled standalone binary is the only method foresights itself writes, so
  * it's the only place we can (and now do) guarantee atomicity:
  *
  *   resolve published asset → download to a temp sibling of the live binary →
@@ -57,14 +57,14 @@ import { createHash } from 'node:crypto';
  * test/release-workflow.test.ts.
  */
 export const EXPECTED_BUILDER_ID_PREFIX =
-  'https://github.com/garrytan/gbrain/.github/workflows/release.yml@';
+  'https://github.com/aimonk2025/gbrain/.github/workflows/release.yml@';
 export const EXPECTED_BUILDER_IDS: readonly string[] = [
   `${EXPECTED_BUILDER_ID_PREFIX}refs/heads/master`,
 ];
 
 /** Base for the GitHub attestation REST endpoint (per-subject-digest lookup). */
 const ATTESTATION_API_BASE =
-  'https://api.github.com/repos/garrytan/gbrain/attestations/sha256:';
+  'https://api.github.com/repos/aimonk2025/gbrain/attestations/sha256:';
 
 export interface ReleaseAsset {
   name: string;
@@ -104,7 +104,7 @@ export interface BinarySelfUpdateResult {
   targetVersion?: string;
 }
 
-/** The release asset basename gbrain publishes for this platform/arch, or null
+/** The release asset basename foresights publishes for this platform/arch, or null
  * when no asset is published (degrade to notify-only). */
 export function expectedAssetName(platform: NodeJS.Platform, arch: NodeJS.Architecture): string | null {
   if (platform === 'darwin' && arch === 'arm64') return 'gbrain-darwin-arm64';
@@ -129,7 +129,7 @@ export interface BinarySelfUpdateDeps {
   fetchRelease?: () => Promise<{ tag: string; assets: ReleaseAsset[] } | null>;
   /** Download `url` to `destPath`. Default streams the HTTP body to disk. */
   download?: (url: string, destPath: string) => Promise<void>;
-  /** Smoke-test the staged binary; returns true if `<path> --version` looks like gbrain. */
+  /** Smoke-test the staged binary; returns true if `<path> --version` looks like foresights. */
   smoke?: (stagedPath: string) => boolean;
   /**
    * Confirm the staged binary actually IS the release it claims to be — its
@@ -166,14 +166,14 @@ async function defaultFetchRelease(): Promise<{ tag: string; assets: ReleaseAsse
  */
 export async function fetchAlphaRelease(fetchImpl: typeof fetch = fetch): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
   try {
-    const res = await fetchImpl('https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION', {
+    const res = await fetchImpl('https://raw.githubusercontent.com/aimonk2025/gbrain/latest-stable/VERSION', {
       headers: { 'User-Agent': 'gbrain-self-upgrade' },
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return null;
     const version = /^v?(\d+\.\d+\.\d+(?:\.\d+)?)(?:[-+][0-9A-Za-z.-]+)?$/.exec(((await res.text()).slice(0, 256).trim().split('\n')[0] ?? '').trim())?.[1];
     if (!version) return null;
-    return fetchReleaseJson(`https://api.github.com/repos/garrytan/gbrain/releases/tags/v${version}`, fetchImpl);
+    return fetchReleaseJson(`https://api.github.com/repos/aimonk2025/gbrain/releases/tags/v${version}`, fetchImpl);
   } catch {
     return null;
   }
@@ -181,7 +181,7 @@ export async function fetchAlphaRelease(fetchImpl: typeof fetch = fetch): Promis
 
 /** GBRA-175: one named release (the stable channel's), in the same shape as the latest release. */
 export function fetchReleaseByTag(tag: string): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
-  return fetchReleaseJson(`https://api.github.com/repos/garrytan/gbrain/releases/tags/${encodeURIComponent(tag)}`);
+  return fetchReleaseJson(`https://api.github.com/repos/aimonk2025/gbrain/releases/tags/${encodeURIComponent(tag)}`);
 }
 
 async function fetchReleaseJson(url: string, fetchImpl: typeof fetch = fetch): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
@@ -224,7 +224,7 @@ export async function defaultDownload(url: string, destPath: string): Promise<vo
 function defaultSmoke(stagedPath: string): boolean {
   try {
     const out = execFileSync(stagedPath, ['--version'], { encoding: 'utf-8', timeout: 10_000 });
-    return /gbrain\s/i.test(out);
+    return /(?:foresights|gbrain)\s/i.test(out);
   } catch {
     return false;
   }
@@ -233,7 +233,7 @@ function defaultSmoke(stagedPath: string): boolean {
 function defaultCheckVersion(stagedPath: string, expectedVersion: string): boolean {
   try {
     const out = execFileSync(stagedPath, ['--version'], { encoding: 'utf-8', timeout: 10_000 });
-    // Substring, not equality: `--version` prints `gbrain <version>` (+ maybe a
+    // Substring, not equality: `--version` prints `foresights <version>` (+ maybe a
     // build suffix). The release workflow enforces binary-version == VERSION at
     // build time, so the tag's numeric version must appear here.
     return out.includes(expectedVersion);

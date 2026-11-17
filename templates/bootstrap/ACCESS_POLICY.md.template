@@ -20,8 +20,8 @@ Who may see and ask what, through {{AGENT_NAME}}.
 ## Enforcement honesty
 
 This file is prompt-level policy for the agent. The database's own remote-access
-enforcement (visibility tiers, source scoping) is configured in gbrain — see
-`docs/guides/bootstrap.md` in the gbrain repo. In this workspace, facts default to
+enforcement (visibility tiers, source scoping) is configured in foresights — see
+`docs/guides/bootstrap.md` in the foresights repo. In this workspace, facts default to
 the `world` visibility tier so your own sessions can recall them; flip
 `facts.default_visibility` to `private` if you plan to expose this brain to other
 surfaces with less trust.
@@ -45,15 +45,15 @@ that tradeoff.
 
 Codex: there is no choice — `codex mcp add` has no scope flag, so the
 registration is always user-global and the tradeoff above is the standing
-state. Off-ramps: `codex mcp remove gbrain` removes just the registration;
-`gbrain bootstrap uninstall` is the full teardown.
+state. Off-ramps: `codex mcp remove foresights` removes just the registration;
+`foresights bootstrap uninstall` is the full teardown.
 
 opencode: the scope logic is INVERTED from Claude Code. opencode spawns
 servers from a project `opencode.json` with NO trust prompt, so a
 project-scoped registration in a repo you share means anyone who checks the
-repo out gets the entry executed on open. gbrain therefore defaults to a
+repo out gets the entry executed on open. foresights therefore defaults to a
 user-global registration; project scope is an explicit opt-in that prints a
-sharing warning. Off-ramps: `gbrain bootstrap uninstall` removes the entry
+sharing warning. Off-ramps: `foresights bootstrap uninstall` removes the entry
 from both scope files; deleting the `mcp.gbrain` key by hand also works.
 
 ## The transcript corpus

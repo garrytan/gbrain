@@ -2,7 +2,7 @@
 
 ## The idea
 
-Every GBrain operation goes through `BrainEngine`. The engine is the contract between "what the brain can do" and "how it's stored." Swap the engine, keep everything else.
+Every Foresights operation goes through `BrainEngine`. The engine is the contract between "what the brain can do" and "how it's stored." Swap the engine, keep everything else.
 
 Two engines ship today: `PGLiteEngine` — embedded Postgres via WASM (@electric-sql/pglite), the zero-config default — and `PostgresEngine`, backed by Supabase or any Postgres + pgvector. The interface is designed so a `DuckDBEngine`, `TursoEngine`, or any custom backend could slot in without touching the CLI, MCP server, skills, or any consumer code.
 
@@ -19,7 +19,7 @@ Different users have different constraints:
 | Researcher | Analytics, bulk exports, embeddings | DuckDBEngine (someday) |
 | Edge/mobile | Offline-first, sync later | PGLiteEngine + sync (someday) |
 
-The engine interface means we don't have to choose. PGLite is the zero-friction default. Supabase is the production scale path. `gbrain migrate --to postgres` moves a PGLite brain to Postgres with its history ([guide](guides/move-to-postgres.md)); `gbrain migrate --to pglite` moves a brain without write history the other way.
+The engine interface means we don't have to choose. PGLite is the zero-friction default. Supabase is the production scale path. `foresights migrate --to postgres` moves a PGLite brain to Postgres with its history ([guide](guides/move-to-postgres.md)); `foresights migrate --to pglite` moves a brain without write history the other way.
 
 ## The interface
 
@@ -185,15 +185,15 @@ own the tables), run `ANALYZE content_chunks(model, modality, page_id, body_gene
 
 ### TLS for Postgres connections
 
-Every Postgres connection gbrain opens to a host that is **not on this
+Every Postgres connection foresights opens to a host that is **not on this
 machine** requires TLS unless the database URL says otherwise. On this
 machine means `localhost`, `127.0.0.0/8`, `::1` or a Unix socket path;
 everything else needs TLS, including private addresses (`10.x`,
-`192.168.x`) and Docker service names such as `postgres-1`, because gbrain
+`192.168.x`) and Docker service names such as `postgres-1`, because foresights
 cannot tell a trusted network from an untrusted one by its name.
 (`src/core/pg-tls.ts` is the one resolver every connection pool uses.)
 
-| URL says | What gbrain does |
+| URL says | What foresights does |
 |---|---|
 | no `sslmode`, host on this machine | plaintext, as before |
 | no `sslmode`, any other host | `sslmode=require` |
@@ -210,7 +210,7 @@ certificate. For that, use `verify-full`. It checks the server certificate
 against Node's CA store, so a provider with its own CA needs that CA added:
 Supabase publishes it under **Project Settings → Database → SSL
 Configuration → Download certificate**. Put the file on the brain host and set
-`NODE_EXTRA_CA_CERTS=/path/to/prod-ca-2021.crt` in the environment gbrain
+`NODE_EXTRA_CA_CERTS=/path/to/prod-ca-2021.crt` in the environment foresights
 runs in (for the installed service, `~/.gbrain/env`), then use
 `?sslmode=verify-full`. A `sslrootcert=<file>` parameter is not read by the
 driver; use `NODE_EXTRA_CA_CERTS` instead.
@@ -219,7 +219,7 @@ A server that does not accept TLS fails the connection with
 [`postgres_tls_required`](guides/error-codes.md#postgres_tls_required),
 which names both choices: turn TLS on at the server, or add
 `sslmode=disable` to the URL. Nothing falls back to plaintext on its own.
-`gbrain doctor --only postgres_tls` reports whether this machine's own
+`foresights doctor --only postgres_tls` reports whether this machine's own
 connection to a non-local server uses TLS. It judges that from the client side:
 `sslmode=require`, `verify-ca` and `verify-full` make the driver refuse a
 server without TLS. It warns on `sslmode=disable`, and on `sslmode=prefer` when
@@ -236,7 +236,7 @@ applies to it.
 The chunk HNSW index stores each vector beside its graph links, so at 1,024
 dimensions it takes about 7.6 GiB per million chunks as `vector` (about
 9.8 GiB for a 1.28M-chunk brain) and a third of that as `halfvec`. The
-deferred ANN build (`gbrain migrate embeddings`, `gbrain reindex --vectors`)
+deferred ANN build (`foresights migrate embeddings`, `foresights reindex --vectors`)
 runs `CREATE INDEX CONCURRENTLY` with the server's `maintenance_work_mem`.
 When the graph does not fit, pgvector logs `hnsw graph no longer fits into
 maintenance_work_mem` and the build slows several-fold: 4.3x at 250k chunks
@@ -260,12 +260,12 @@ took 103 s on 16 vCPU with 12 GB and 8 workers. Measured, not shipped:
 After a Postgres restart or a cache eviction, the first searches walk HNSW
 pages nobody has read yet: on a brain whose index is bigger than the cache,
 an unseen query reads 2,000 to 4,500 index pages and spends 1.2 to 2.7 s in
-the vector stage. `gbrain embeddings prewarm` loads every HNSW index of the
+the vector stage. `foresights embeddings prewarm` loads every HNSW index of the
 brain into `shared_buffers` once with `pg_prewarm(<index>, 'buffer')`, so
 those pages are already cached. It is opt-in and local to the brain host: a
 CLI-only command (no MCP tool, refused by thin clients), and
-`gbrain config set serve.vector_prewarm true` runs it once in the
-background each time `gbrain serve` starts (off by default; a refusal is
+`foresights config set serve.vector_prewarm true` runs it once in the
+background each time `foresights serve` starts (off by default; a refusal is
 logged and the serve carries on).
 
 `shared_buffers` decides whether it runs. The indexes must total at most
@@ -277,9 +277,9 @@ rows and file sizes, so a refusal reads no index page.
 
 | Command | Does |
 |---|---|
-| `gbrain embeddings prewarm --dry-run --json` | Index sizes, `shared_buffers`, `effective_cache_size`, the budget and the fit; reads nothing |
-| `gbrain embeddings prewarm` | Prewarms when the indexes fit and `pg_prewarm` exists |
-| `gbrain config set serve.vector_prewarm true` | Prewarms at each serve start (restart the serve) |
+| `foresights embeddings prewarm --dry-run --json` | Index sizes, `shared_buffers`, `effective_cache_size`, the budget and the fit; reads nothing |
+| `foresights embeddings prewarm` | Prewarms when the indexes fit and `pg_prewarm` exists |
+| `foresights config set serve.vector_prewarm true` | Prewarms at each serve start (restart the serve) |
 
 Refusals, each with a fix: `vector_prewarm_wont_fit` (raise
 `shared_buffers` to at least twice the index size and restart Postgres; a
@@ -289,7 +289,7 @@ extensions) and `vector_prewarm_unsupported_engine` (PGLite has no server
 cache to fill). Prewarmed pages stay cached until Postgres restarts or other
 reads evict them; pg_prewarm's own `autoprewarm` worker
 (`shared_preload_libraries = 'pg_prewarm'`) can reload them after a restart
-without gbrain.
+without foresights.
 
 ### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
 
@@ -309,7 +309,7 @@ bound params). An RLS policy can then filter rows by
 with no per-read transaction and no pool-slot hold (the search methods keep
 their own transaction for `SET LOCAL statement_timeout` and `jit = off`).
 
-**Enabling it** (operator-managed SQL; gbrain ships no DDL for this):
+**Enabling it** (operator-managed SQL; foresights ships no DDL for this):
 
 ```sql
 ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
@@ -343,7 +343,7 @@ keeps its text in `page_segment_texts`, its layout and headings in
 derivation results (link candidates, window anchors) in `page_segment_derivations`,
 with each page's derivation spend in `page_derivation_spend` and derivation purges
 in progress in `page_segment_derivation_purges` / `page_segment_derivation_purge_pages`.
-gbrain enables RLS on all ten on every schema replay, as it does on `pages` and
+foresights enables RLS on all ten on every schema replay, as it does on `pages` and
 `content_chunks`, so with no policy a role that does not bypass RLS reads no row
 of them. Title search, the source-scoped vector scan, the chunk windows search
 reads around its hits, `get_chunks` and get_page check a chunk of a page stored
@@ -441,20 +441,20 @@ policies above it creates segmented pages and sees only its sources' rows
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
 facts withdrawn run as the writing role (`SECURITY INVOKER`) and read their ledgers
 (`fact_purges`, `fact_withdrawals`, `take_purges`, `page_purges` and the derivation purge
-tables) under that role's RLS. Every gbrain function that pins a search_path ends it with
+tables) under that role's RLS. Every foresights function that pins a search_path ends it with
 `pg_temp` (migration v277, #7632), so a session's temp table or view named like a ledger
 cannot hide it from a guard; before, any session, the owner included, could store purged
 content that way. A write role with no policy on a ledger still reads it empty, so its
 purged or withdrawn writes still go through: give a scoped write role a `SELECT` policy on
-the ledgers of the sources it writes (gbrain#7659 tracks the fix). Each definition outside
+the ledgers of the sources it writes (foresights#7659 tracks the fix). Each definition outside
 `src/core/schema-migrations/` pins `pg_catalog, public, pg_temp` itself (`bun run check:search-path`
 fails one that does not, or a pinned function missing from `PINNED_FUNCTION_NAMES`), so a schema
 replay keeps it; historical migration bodies still pin the old path, so every migration run ends by
 putting `pg_temp` back (`hardenFunctionSearchPaths` in `src/core/function-search-path.ts`), and the
 schema blob's generated hardening region must stay its last statement. Where the migrating role
 does not own a function, the run that applies migrations names it on stderr and leaves it;
-`gbrain doctor` (`function_search_path`) prints the schema-qualified `ALTER FUNCTION` to run as its
-owner, or `gbrain apply-migrations --yes` below v277 ([function search path](guides/troubleshooting.md#function-search-path);
+`foresights doctor` (`function_search_path`) prints the schema-qualified `ALTER FUNCTION` to run as its
+owner, or `foresights apply-migrations --yes` below v277 ([function search path](guides/troubleshooting.md#function-search-path);
 `test/e2e/function-search-path-postgres.test.ts`).
 
 <a id="writer-protocol-fences"></a>
@@ -469,7 +469,7 @@ publication either one is stored on the receipt as `writer_coordinator_required`
 `unreadable_state`, the role remedy, and the owner-only `error_detail.state` naming the table; since
 #7777 for the protocol guards, #7780 for the state and remedy). A protocol guard's
 refusal outside publication (write admission, protocol activation) reaches the command as that
-database error, which gbrain's generic database output labels `permission_denied` with grant
+database error, which foresights's generic database output labels `permission_denied` with grant
 advice: the code at the start of the message names the refusal. On a managed brain the same refusal covers, for a writer without the git protocol, a
 hidden `git_canonical_brain` row and, while the brain has any Git-canonical source, a hidden
 target or old source row whether or not that source is Git-canonical; and a hidden page row behind a tag,
@@ -533,7 +533,7 @@ from `access_policy_state` and `access_rules`, and remote reads hide the prefixe
 from reading those tables never reads them as "no rule": the stamp refuses the write with
 `writer_coordinator_required` (relationship `unreadable_state`, naming the table), and reads treat every page as
 under a pending prefix, so nothing is shown. The owner (without `FORCE ROW LEVEL SECURITY`) and a role that
-bypasses RLS are not affected, and `gbrain access` rule commands refuse such a role with `permission_denied`. A scoped
+bypasses RLS are not affected, and `foresights access` rule commands refuse such a role with `permission_denied`. A scoped
 role that writes or serves pages needs these policies; they let it read the rules and lock a source's policy row while
 stamping, but not change either. Row-level security does not cover TRUNCATE or triggers, so the recipe also revokes
 those. A policy that filters these rows hides rules from the role and so reveals the pages under them: keep `USING (true)`. The folder-rule lineage test also reads `slug_rename_history` (every slug a renamed page has had), which renames write; a role that cannot read it reads every page as covered, so a scoped role needs a `USING (true)` policy there like the other tables it writes. The recipe for the three access tables:
@@ -568,34 +568,34 @@ account. Two paths:
 ```bash
 brew install postgresql@17
 brew services start postgresql@17
-createdb gbrain
+createdb foresights
 cd /tmp && git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
 cd pgvector && make && make install
-psql gbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"
-gbrain init --url postgresql://localhost:5432/gbrain
-gbrain doctor
+psql foresights -c "CREATE EXTENSION IF NOT EXISTS vector;"
+foresights init --url postgresql://localhost:5432/gbrain
+foresights doctor
 ```
 
-`gbrain init --url <conn>` writes the config file and runs the schema setup in
+`foresights init --url <conn>` writes the config file and runs the schema setup in
 one step. To point an EXISTING brain config at a different database without
-re-initializing, use `gbrain config set database_url <conn>` — it routes to the
+re-initializing, use `foresights config set database_url <conn>` — it routes to the
 file plane (`~/.gbrain/config.json`), infers `engine: postgres`, and works even
 when the current database is unreachable.
 
-**Ladder-driven (harness installs)** — `gbrain init --prefer-postgres` probes
+**Ladder-driven (harness installs)** — `foresights init --prefer-postgres` probes
 for a usable Postgres before falling back to PGLite: an env URL, Supabase
 Management-API discovery (`SUPABASE_ACCESS_TOKEN` + `SUPABASE_DB_PASSWORD`), a
 local server (only when `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD` are set or
-`--local-postgres` is passed; `CREATE DATABASE gbrain` needs explicit
-`--allow-create-db`), or — with explicit `--allow-docker` — gbrain's own
+`--local-postgres` is passed; `CREATE DATABASE foresights` needs explicit
+`--allow-create-db`), or — with explicit `--allow-docker` — foresights's own
 container `gbrain-postgres` (image `pgvector/pgvector:pg16`, loopback-only
 host port 5434, data on the named `gbrain-pgdata` volume,
 `--restart unless-stopped`). The ladder REFUSES over an already-configured
 brain (re-runs during an outage must never let the PGLite floor overwrite a
-healthy Postgres config — that lane is `gbrain db-repair`), and a bare
-`DATABASE_URL` is adopted only when the target is already a gbrain brain or
+healthy Postgres config — that lane is `foresights db-repair`), and a bare
+`DATABASE_URL` is adopted only when the target is already a foresights brain or
 holds no tables at all (`GBRAIN_DATABASE_URL` is always stated intent).
-gbrain starts and reuses that container but never stops or removes it; an
+foresights starts and reuses that container but never stops or removes it; an
 existing container is reused with its REAL credentials recovered via
 `docker inspect`, never a freshly generated password — and never reused when
 its database already holds a brain this home's config doesn't record.
@@ -621,23 +621,23 @@ Details in INSTALL_FOR_AGENTS.md ("Engine preference for harness installs").
 PGLite runs Postgres inside WebAssembly, and pglite.wasm caps its memory at
 2 GiB. pgvector holds the whole HNSW graph in `maintenance_work_mem` while it
 builds, about 4.7 KB per 1,024-dimension chunk (1.16 GB at 250k chunks).
-gbrain starts PGLite with `max_parallel_maintenance_workers=0` (PGLite has no
+foresights starts PGLite with `max_parallel_maintenance_workers=0` (PGLite has no
 worker processes, and a planned parallel build reserved all of
 `maintenance_work_mem` up front) and `max_wal_size=8GB` (a build WAL-logs its
 whole index in one statement, and WAL past the automatic checkpoint trigger
-wedges PGLite). The deferred ANN build (`gbrain migrate embeddings`) and
-`gbrain reindex --vectors` size `maintenance_work_mem` to the graph
+wedges PGLite). The deferred ANN build (`foresights migrate embeddings`) and
+`foresights reindex --vectors` size `maintenance_work_mem` to the graph
 (`withHnswBuildMemory` in `src/core/vector-index.ts`): a 248,802-chunk build
 takes about 11 minutes and a 1.9 GB index. A graph past the 1.5 GiB budget,
 about 300k chunks at 1,024 dimensions, is refused before the build with
 `pglite_vector_index_too_large`; vector search keeps working with exact scans,
-and the fix is the read-only `gbrain migrate --to postgres --plan --json`.
+and the fix is the read-only `foresights migrate --to postgres --plan --json`.
 
 **When to use PGLite vs Postgres:**
 
 | Factor | PGLite | PostgresEngine + Supabase |
 |--------|--------|--------------------------|
-| Setup | `gbrain init` (zero-config) | Account + connection string |
+| Setup | `foresights init` (zero-config) | Account + connection string |
 | Scale | Good for < 1,000 files | Production-proven at 10K+ |
 | Multi-device | Single machine only | Any device via remote MCP |
 | Cost | Free | Supabase Pro ($25/mo) |
@@ -645,27 +645,27 @@ and the fix is the read-only `gbrain migrate --to postgres --plan --json`.
 | Backups | Manual (file copy) | Managed by Supabase |
 | Largest page | 128 MiB, stored in segments (`pages.max_bytes`) | 256 MiB, stored in segments (`pages.max_bytes`) |
 
-**The belief ledger lives only in the database.** `belief_events` and its side tables record what the brain had recorded, and when (`gbrain beliefs status`). Markdown carries only current state, so a rebuild from Markdown, `gbrain reinit-pglite` or a dropped database starts an empty history; back up the database itself. After restoring a Postgres (or PGLite) backup, replay the purges made after the backup was taken: until then content purged later is readable again, and `gbrain doctor --only belief_ledger_coverage` reports a restore whose purge replay was partial, unavailable or unverified. Graduation copies the ledger verbatim (equal event keys and digests); the legacy copier refuses a brain that has one.
+**The belief ledger lives only in the database.** `belief_events` and its side tables record what the brain had recorded, and when (`foresights beliefs status`). Markdown carries only current state, so a rebuild from Markdown, `foresights reinit-pglite` or a dropped database starts an empty history; back up the database itself. After restoring a Postgres (or PGLite) backup, replay the purges made after the backup was taken: until then content purged later is readable again, and `foresights doctor --only belief_ledger_coverage` reports a restore whose purge replay was partial, unavailable or unverified. Graduation copies the ledger verbatim (equal event keys and digests); the legacy copier refuses a brain that has one.
 
-**Migration:** on a PGLite brain, `gbrain migrate --to postgres` (alias `--to supabase`) graduates the brain to Postgres. Without `--yes` it prints the plan and exits 3; `--yes --expect <plan_hash>` runs it. Graduation drains pending writes, copies every table verbatim with its primary keys (pages, facts, takes, versions, links, timeline, embeddings, transcripts and paid caches, request history and withdrawals, token and OAuth rows) into a fenced target, verifies row counts and digests, runs `gbrain doctor` on the target, and only then flips routing. It works for brains with write history and for managed brains. The PGLite data dir is retained as `<path>.graduated-<run_id>` and a tombstone file takes its place. Walkthrough, recovery by error code, rollback and what stays on this computer: [Move a PGLite brain to Postgres](guides/move-to-postgres.md).
+**Migration:** on a PGLite brain, `foresights migrate --to postgres` (alias `--to supabase`) graduates the brain to Postgres. Without `--yes` it prints the plan and exits 3; `--yes --expect <plan_hash>` runs it. Graduation drains pending writes, copies every table verbatim with its primary keys (pages, facts, takes, versions, links, timeline, embeddings, transcripts and paid caches, request history and withdrawals, token and OAuth rows) into a fenced target, verifies row counts and digests, runs `foresights doctor` on the target, and only then flips routing. It works for brains with write history and for managed brains. The PGLite data dir is retained as `<path>.graduated-<run_id>` and a tombstone file takes its place. Walkthrough, recovery by error code, rollback and what stays on this computer: [Move a PGLite brain to Postgres](guides/move-to-postgres.md).
 
 **Say to your agent:** *"Upgrade my brain to Postgres. Show me the plan first."*
 
-The legacy copier handles every other direction: `gbrain migrate --to pglite`, PGLite to Postgres when `gbrain config set migrate.graduation false` opts out of graduation, and history-free brains on Windows. It re-creates pages through `putPage` (chunks, embeddings, links, tags, timeline, facts) and copies config rows minus the engine-local denylist (`MIGRATE_CONFIG_ENGINE_LOCAL_KEYS`: the target-owned `engine`/`version` connection + schema ledger and the physical embedding-column registry keys); skipped keys are printed, never silent, and the run ends with a per-table copied-count summary. It forwards the full page row (origin path, kind, provenance, `ingested_at`, aliases, chunk code metadata). Pages the source had sealed are rebuilt on the target before the config flip, without an embedding key, keeping chunk ids and vectors whose input matches. A failed rebuild blocks the flip: the run exits 1 with no error code, prints `The active engine was NOT switched` and the failing pages, and leaves the source engine active; fix them (`gbrain projections drain` on the target) and re-run `gbrain migrate` to resume. Pages the source had not sealed arrive queued, with their verbatim chunks. It does not carry request IDs, withdrawals, attribution or ownership, so it refuses a managed brain and any brain with durable write history, fact withdrawals or canonical worktree ownership (rows in `persistence_requests`, `fact_withdrawals` or `persistence_worktrees`), and a brain with a belief ledger (rows in `belief_events`), which it names.
+The legacy copier handles every other direction: `foresights migrate --to pglite`, PGLite to Postgres when `foresights config set migrate.graduation false` opts out of graduation, and history-free brains on Windows. It re-creates pages through `putPage` (chunks, embeddings, links, tags, timeline, facts) and copies config rows minus the engine-local denylist (`MIGRATE_CONFIG_ENGINE_LOCAL_KEYS`: the target-owned `engine`/`version` connection + schema ledger and the physical embedding-column registry keys); skipped keys are printed, never silent, and the run ends with a per-table copied-count summary. It forwards the full page row (origin path, kind, provenance, `ingested_at`, aliases, chunk code metadata). Pages the source had sealed are rebuilt on the target before the config flip, without an embedding key, keeping chunk ids and vectors whose input matches. A failed rebuild blocks the flip: the run exits 1 with no error code, prints `The active engine was NOT switched` and the failing pages, and leaves the source engine active; fix them (`foresights projections drain` on the target) and re-run `foresights migrate` to resume. Pages the source had not sealed arrive queued, with their verbatim chunks. It does not carry request IDs, withdrawals, attribution or ownership, so it refuses a managed brain and any brain with durable write history, fact withdrawals or canonical worktree ownership (rows in `persistence_requests`, `fact_withdrawals` or `persistence_worktrees`), and a brain with a belief ledger (rows in `belief_events`), which it names.
 
-<a id="engine-migration-refused"></a>**Engine migration refused (`writer_coordinator_required`).** The legacy copier's refusal is an agent-contract envelope whose `fix` names the refusing side; every branch verifies with the read-only `gbrain doctor --no-migrate --json`, and nothing has changed in either datastore:
+<a id="engine-migration-refused"></a>**Engine migration refused (`writer_coordinator_required`).** The legacy copier's refusal is an agent-contract envelope whose `fix` names the refusing side; every branch verifies with the read-only `foresights doctor --no-migrate --json`, and nothing has changed in either datastore:
 
 | Refusing side | `fix.next` | Next step |
 |---|---|---|
-| A PGLite brain with history (or a managed one) moving to Postgres with graduation turned off | `ask_user` (consent `egress`) | Relay `user_message`: turn graduation back on (`fix.argv`: `gbrain config unset migrate.graduation`) and preview the move with the read-only plan (`fix.then`: `gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`, then the [two-command flow](guides/move-to-postgres.md#move-the-brain)), or keep it on PGLite and share it through `gbrain mcp expose`. |
+| A PGLite brain with history (or a managed one) moving to Postgres with graduation turned off | `ask_user` (consent `egress`) | Relay `user_message`: turn graduation back on (`fix.argv`: `foresights config unset migrate.graduation`) and preview the move with the read-only plan (`fix.then`: `foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`, then the [two-command flow](guides/move-to-postgres.md#move-the-brain)), or keep it on PGLite and share it through `foresights mcp expose`. |
 | A Postgres brain moving to PGLite | `report` | The brain stays on Postgres; moving down would drop its history. |
 | A target that already holds persistence history | `tell_user_to_run` | Rerun with an empty database the user provides (`--path` for a PGLite target). |
 
 A brain with page versions but no write history gets the same refusal with `reason: page_history` and the number of versions in the message: the legacy copier re-creates pages without their versions, so the copy would discard them. Graduation (PGLite to Postgres) carries them.
 
-On Windows, a PGLite brain with history gets `graduation_unsupported_platform` instead: it stays on PGLite and is shared with `gbrain mcp expose`.
+On Windows, a PGLite brain with history gets `graduation_unsupported_platform` instead: it stays on PGLite and is shared with `foresights mcp expose`.
 
-<a id="graduation-writer-held"></a>**Graduation refused: the brain is held (`graduation_source_writer_held`).** Graduation needs the PGLite kernel lock. A live stdio `gbrain serve` hands the brain over through the intent marker `<path>.gbrain-graduation.json` and exits; autopilot pauses. When another holder (an HTTP serve, a daemon, another command) does not release the brain within 30 seconds, the run refuses and names it with its pid and transport (`fix.next: tell_user_to_run`). The user stops that process, then the agent reruns the same `gbrain migrate` command. Verify with the read-only `gbrain migrate --status --json`. Nothing has changed in either datastore.
+<a id="graduation-writer-held"></a>**Graduation refused: the brain is held (`graduation_source_writer_held`).** Graduation needs the PGLite kernel lock. A live stdio `foresights serve` hands the brain over through the intent marker `<path>.gbrain-graduation.json` and exits; autopilot pauses. When another holder (an HTTP serve, a daemon, another command) does not release the brain within 30 seconds, the run refuses and names it with its pid and transport (`fix.next: tell_user_to_run`). The user stops that process, then the agent reruns the same `foresights migrate` command. Verify with the read-only `foresights migrate --status --json`. Nothing has changed in either datastore.
 
 The migration and the autopilot daemon do not race: both graduation and the
 legacy copier claim a cooperative pause marker before touching the target. The
@@ -683,7 +683,7 @@ at once, and it waits only for queued write requests, bounded by
 is released on failure and on catchable signals; a marker orphaned by an
 uncleanly killed run is adopted by a later migrate only after a pid-liveness
 check (a live migrate's marker is never stolen), and the daemon clears an
-orphan whose owning process died on its next poll. `gbrain autopilot --status`
+orphan whose owning process died on its next poll. `foresights autopilot --status`
 reports `paused` (exit 1) while the marker is parked and prints the marker
 path; on a host with no daemon running to self-heal, remove an orphan by hand
 only after confirming the pid it names is dead. After a clean flip the daemon
@@ -699,7 +699,7 @@ override the new config (graduation lists such a variable as a plan blocker).
 upgrade.
 
 **Real root cause:** corrupt WAL/checkpoint state in the data dir after an
-unclean shutdown (the OS-upgrade reboot kills gbrain mid-write and tears the
+unclean shutdown (the OS-upgrade reboot kills foresights mid-write and tears the
 write-ahead log; every subsequent open fails WAL replay inside WASM and
 Emscripten surfaces only the opaque abort). It is **not** a macOS/WASM
 incompatibility — the same signature reproduces across macOS versions and on
@@ -716,29 +716,29 @@ version bump changes it.
    reset does not rebuild indexes, so a page written just before the crash
    can be missing from vector search while keyword search still finds it.
    On success it prints a loud stderr notice naming the backup and the next
-   commands: `gbrain reindex --vectors` (rebuilds every HNSW index from the
-   stored vectors, no re-embedding) and then `gbrain doctor`. Safety bounds: repair only runs under a cleanly-acquired
+   commands: `foresights reindex --vectors` (rebuilds every HNSW index from the
+   stored vectors, no re-embedding) and then `foresights doctor`. Safety bounds: repair only runs under a cleanly-acquired
    data-dir lock (never after reaping another process's lock), skips for a
    cooldown window after a failed attempt
    (`GBRAIN_PGLITE_WAL_REPAIR_COOLDOWN_SECONDS`, default 3600), reuses one
    backup per corruption episode (newest 3 episodes retained), and restores
    the original files if the retry still fails. Kill-switch:
    `GBRAIN_PGLITE_WAL_REPAIR=off`.
-2. **Manual repair.** `gbrain pglite-repair --dry-run` diagnoses the data dir
-   (read-only); `gbrain pglite-repair --yes` runs the same in-place WAL reset
-   deliberately. Refuses when another gbrain process holds the brain (a live
-   `gbrain serve` is named explicitly) and never force-removes `.gbrain-lock`.
-3. **Rebuild.** `gbrain reinit-pglite` (embedding model/dimensions default
+2. **Manual repair.** `foresights pglite-repair --dry-run` diagnoses the data dir
+   (read-only); `foresights pglite-repair --yes` runs the same in-place WAL reset
+   deliberately. Refuses when another foresights process holds the brain (a live
+   `foresights serve` is named explicitly) and never force-removes `.gbrain-lock`.
+3. **Rebuild.** `foresights reinit-pglite` (embedding model/dimensions default
    from your config) wipes and re-creates the brain from your brain repo, or
    manually: back up `~/.gbrain`, move `brain.pglite` aside,
-   `gbrain init --pglite`, re-add sources, `gbrain sync`, `gbrain embed`.
+   `foresights init --pglite`, re-add sources, `foresights sync`, `foresights embed`.
    Required for *catalog* corruption (58P01 / pgvector load failure) — WAL
    repair cannot fix that class.
-4. **Switch engines.** `gbrain init --supabase`, or native Postgres +
+4. **Switch engines.** `foresights init --supabase`, or native Postgres +
    pgvector — see the "Local Postgres" section above for the full recipe
-   (Homebrew or the `gbrain init --prefer-postgres` ladder).
+   (Homebrew or the `foresights init --prefer-postgres` ladder).
 
-`gbrain doctor` runs a `pglite_data_dir` check whenever a PGLite brain fails
+`foresights doctor` runs a `pglite_data_dir` check whenever a PGLite brain fails
 to connect: it diagnoses the dir from disk, names the repair command, reports
 retained repair backups, and escalates when repairs keep recurring (that
 means the unclean-shutdown genesis is still active — see the ladder's rung 4).
@@ -747,9 +747,9 @@ means the unclean-shutdown genesis is still active — see the ladder's rung 4).
 ### Legacy PGLite lock (`pglite_busy` reason `legacy_owner_unverified`)
 
 A PGLite brain is owned through the stable sibling kernel lock
-`<data-dir>.gbrain-owner.lock`. Brains last opened by an older gbrain may
+`<data-dir>.gbrain-owner.lock`. Brains last opened by an older foresights may
 still hold that release's lock folder, `<data-dir>/.gbrain-lock/`. The first
-open by a current gbrain removes it automatically only when it can prove the
+open by a current foresights removes it automatically only when it can prove the
 old owner is dead: readable metadata with a PID that `kill -0` reports gone
 and, on Linux, the same PID namespace and boot id as this process. A live
 owner keeps the ordinary `pglite_busy` refusal.
@@ -758,10 +758,10 @@ When the folder's metadata is torn or missing, records no PID, or (Linux) does
 not prove the PID ran in this namespace since the last boot, waiting never
 helps, so the open refuses `pglite_busy` with reason
 `legacy_owner_unverified` (class consent, exit 3, not retryable). Its fix
-asks the user and starts with the read-only preview; `gbrain doctor` shows
+asks the user and starts with the read-only preview; `foresights doctor` shows
 the same reason and fix on its `connection` check.
 
-1. **Preview.** `gbrain pglite-repair --legacy-lock --dry-run --json [--path <dir>]`
+1. **Preview.** `foresights pglite-repair --legacy-lock --dry-run --json [--path <dir>]`
    never opens the engine and never creates anything. It names the recorded
    PID, whether `kill -0` says it is running and its command, the processes
    an open-file scan of `/proc` (Linux) saw holding files under the data dir,
@@ -770,11 +770,11 @@ the same reason and fix on its `connection` check.
    PID namespace and cannot see other containers or other hosts that share the
    folder.
 2. **Apply, after the user agrees.**
-   `gbrain pglite-repair --legacy-lock --path <dir> --yes --expect <plan_hash>`
-   takes the kernel lock (so no current gbrain can be running), inspects
+   `foresights pglite-repair --legacy-lock --path <dir> --yes --expect <plan_hash>`
+   takes the kernel lock (so no current foresights can be running), inspects
    again under it and refuses `legacy_lock_removal_refused` while a process
    on this host holds the data dir or the recorded PID runs a command that
-   could be gbrain (`live_holder`), or when the data dir is on a network or
+   could be foresights (`live_holder`), or when the data dir is on a network or
    shared filesystem such as NFS, SMB, 9p, virtiofs or FUSE
    (`network_filesystem`), or when it cannot confirm the filesystem is local
    (`filesystem_unverified`: Linux reads `statfs`; macOS reads the mount
@@ -796,7 +796,7 @@ the same reason and fix on its `connection` check.
 `openEngine(settings)` (`src/core/engine-open.ts`, exported as `gbrain/engine-open`) creates and connects an engine
 from one value, for a host that embeds several brains in one process or keeps its settings somewhere other than
 `~/.gbrain`. It is off by default and refuses unless `settings.embedded_core === true` (`embedded_core_required`).
-The CLI, `gbrain serve` and mounts never call it and behave exactly as before.
+The CLI, `foresights serve` and mounts never call it and behave exactly as before.
 
 ```ts
 import { openEngine } from 'gbrain/engine-open';
@@ -933,14 +933,14 @@ Two engine-free commands answer "which engine is this brain on?" and "why can't
 I reach it, and what fixes it?" — both work with the database down, which is the
 point. They anchor the runtime availability loop: classified failure →
 `GBRAIN_DB_ACCESS <reason>` marker → the bundled `skills/db-repair/` skill →
-`gbrain db-repair`.
+`foresights db-repair`.
 
-### `gbrain engine status [--json] [--probe] [--brain <id>]`
+### `foresights engine status [--json] [--probe] [--brain <id>]`
 
 Reports (JSON `schema_version: 1`): the effective engine vs the config-file
 engine (they can differ under a transient env URL), `db_url_source`, an
 env-shadow note when a cwd-.env `DATABASE_URL` is being excluded by the
-cwd-.env guard (gbrain never adopts a `DATABASE_URL` that Bun auto-loaded
+cwd-.env guard (foresights never adopts a `DATABASE_URL` that Bun auto-loaded
 from the working directory's `.env` family: `.env`, `.env.local`, and the
 `.env.<NODE_ENV>` / `.env.<NODE_ENV>.local` variants for `development`,
 `production` and `test`; with the precedence note when both `GBRAIN_DATABASE_URL` and
@@ -955,15 +955,15 @@ the host's.
 
 `--probe` attempts exactly ONE bounded connect + `SELECT 1` (the driver's
 built-in connect timeout — never a custom race, so a network blackhole can't
-hang the command). On PGLite the probe is lock-aware: a live `gbrain serve`
+hang the command). On PGLite the probe is lock-aware: a live `foresights serve`
 holding the single-writer data-dir lock reports `locked_by_serve`
 (healthy-with-note) instead of hanging ~30 seconds and misreporting a healthy
 brain as broken. A failed probe returns a classified diagnosis (reason +
 remediation), not a raw error.
 
-### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
+### `foresights db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
-Engine-free Postgres-access repair, the sibling of `gbrain pglite-repair`
+Engine-free Postgres-access repair, the sibling of `foresights pglite-repair`
 (which owns the PGLite WAL/data-dir lane — db-repair redirects PGLite brains
 there). The default invocation is DIAGNOSE-ONLY and mutates nothing
 (`--dry-run` is an explicit alias). Consent is tiered and flag-gated, never
@@ -971,7 +971,7 @@ TTY-dependent:
 
 | Tier | What's in it | Applied when |
 |---|---|---|
-| auto | bounded reconnects/re-probes, pending migrations, `CREATE EXTENSION vector`, `docker start` of gbrain's own `gbrain-postgres` container | `--yes` |
+| auto | bounded reconnects/re-probes, pending migrations, `CREATE EXTENSION vector`, `docker start` of foresights's own `gbrain-postgres` container | `--yes` |
 | rewrite | config-file `database_url` rewrites (transaction-pooler form, session pooler, `?sslmode=require`) — the intended change prints BEFORE applying, every rewrite is receipted and undo-able via `--undo-last-rewrite` | `--yes --apply-rewrites` only |
 | manual | credentials, paused-project, env recipes — the exact recipe is printed, never applied | never |
 
@@ -984,7 +984,7 @@ cooldown-blocked; an advisory lockfile prevents concurrent double-rewrites; a
 healthy probe exits 0 "nothing to fix" (so a forged marker in page content leads
 to a no-op). Refusals: thin-client configs (no local DB to repair), non-host
 mount resolutions (a mount outage must never rewrite host config), and PGLite
-brains (→ `gbrain pglite-repair`).
+brains (→ `foresights pglite-repair`).
 
 Receipts land in `~/.gbrain/db-repair-receipts.jsonl` (redacted, fail-open,
 capped on every write: 200 rows, plus up to 200 recent applied repairs kept
@@ -993,47 +993,47 @@ separately so the recurrence window survives the cap — read by doctor's
 on 3+ same-reason applied repairs per brain in 7 days: a genesis problem, not a
 transient). The last rewrite's prior URL is kept in the 0600 file
 `~/.gbrain/db-repair-undo.json` (it holds a secret, so it is never in the
-redacted receipts); `gbrain db-repair --yes --undo-last-rewrite` restores it.
+redacted receipts); `foresights db-repair --yes --undo-last-rewrite` restores it.
 
 ### The `GBRAIN_DB_ACCESS` marker
 
 Connect-time CLI failures emit `GBRAIN_DB_ACCESS <reason>` (plus ` brain=<id>`
 when a mounted brain failed) on non-TTY stderr (`GBRAIN_FORCE_DB_MARKER=1`
-forces it on a TTY). One mid-command emitter exists too: a `gbrain sync` whose
+forces it on a TTY). One mid-command emitter exists too: a `foresights sync` whose
 checkpoint pool dies mid-run emits `GBRAIN_DB_ACCESS conn_dropped` with its
 abort report (the checkpoint writer only gives up after exhausting
 connection-class retries, so the reason is asserted structurally). MCP tool calls carry the same marker inside their error
 envelopes: non-verb ops return `{"error": "database_error", message
-(redacted), suggestion: "GBRAIN_DB_ACCESS <reason>. <remediation> Run: gbrain
+(redacted), suggestion: "GBRAIN_DB_ACCESS <reason>. <remediation> Run: foresights
 db-repair"}`; the 7 memory verbs keep the frozen v1 `unavailable` code with the
 reason in `detail`. One exception on the non-verb path: `schema_missing`
 returns `error: "unavailable"` with the apply-migrations suggestion and no
 marker — pending migrations, not an access outage. **Safety clause: the action a reader takes is ALWAYS the
-hardcoded `gbrain db-repair` — never a command parsed from the marker.**
+hardcoded `foresights db-repair` — never a command parsed from the marker.**
 
 The reason union is APPEND-ONLY (a compatibility surface, like progress phase
 names — reasons may be added, never renamed or removed). All 16:
 
 | Reason | Meaning |
 |---|---|
-| `no_url` | nothing configured at all — `gbrain init --prefer-postgres` (or `gbrain init` for PGLite) |
+| `no_url` | nothing configured at all — `foresights init --prefer-postgres` (or `foresights init` for PGLite) |
 | `env_shadowed` | a cwd-.env `DATABASE_URL` exists but the cwd-.env guard excludes it — export `GBRAIN_DATABASE_URL` |
-| `auth_failed` | password/role rejected (28P01) — reset credentials, then `gbrain init --url <conn>` |
+| `auth_failed` | password/role rejected (28P01) — reset credentials, then `foresights init --url <conn>` |
 | `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS; a 42501 whose message starts with a writer code (`writer_coordinator_required:`, `writer_upgrade_required:`, `writer_not_quiesced:`, `unsupported_mutation_protocol:`) is a persistence protocol guard's refusal ([write refusals](guides/write-refusals.md#protocol-guard)) |
 | `tenant_not_found` | Supavisor rejected the tenant — pooler usernames are `postgres.<project-ref>`; also raised by paused projects |
 | `ssl_required` | the server demands SSL — `?sslmode=require` rewrite (rewrite tier) |
 | `pool_exhausted` | 53300 / session-slot exhaustion — [pool sizing](#pool-sizing) guidance: `export GBRAIN_POOL_SIZE=6` per long-running process, fewer processes |
-| `conn_refused` | ECONNREFUSED — docker-start arm for gbrain's own container; pooler rewrite for Supabase direct URLs |
+| `conn_refused` | ECONNREFUSED — docker-start arm for foresights's own container; pooler rewrite for Supabase direct URLs |
 | `dns_failed` | ENOTFOUND/EAI_AGAIN — one bounded retry; persistent on a Supabase direct host suggests a paused project, while on a Supabase pooler URL it points at this machine's DNS and network (the shared pooler host resolves whatever a project's state) |
 | `network_unreachable` | ENETUNREACH/ETIMEDOUT — often an IPv6-only direct host; session-pooler rewrite |
 | `conn_dropped` | 08xxx / reset mid-connection — transient, bounded reconnect |
 | `server_starting` | "the database system is starting up" — retry shortly |
 | `db_missing` | 3D000 — the named database does not exist |
-| `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
+| `schema_missing` | 42P01/42703 — pending migrations (`foresights apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
-| `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
-| `tls_required_default` | `postgres_tls_required`: gbrain's TLS default met a non-local server without TLS — db-repair stops at manual; turn TLS on at the server or add `sslmode=disable` ([TLS](#tls-for-postgres-connections)) |
-| `unknown` | unclassified — redacted error + `gbrain doctor` |
+| `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `foresights repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
+| `tls_required_default` | `postgres_tls_required`: foresights's TLS default met a non-local server without TLS — db-repair stops at manual; turn TLS on at the server or add `sslmode=disable` ([TLS](#tls-for-postgres-connections)) |
+| `unknown` | unclassified — redacted error + `foresights doctor` |
 
 The classifier lives in `src/core/pg-access-classify.ts`; remediation copy has
 exactly one home (that module) — db-repair, doctor, and MCP dispatch all render
@@ -1042,7 +1042,7 @@ recipe text.
 
 ### Degraded-mode serve
 
-When Postgres is unreachable at `gbrain serve` STARTUP, serve does not die:
+When Postgres is unreachable at `foresights serve` STARTUP, serve does not die:
 it boots on a lazy-reconnect engine, each tool call attempts a single reconnect
 (minimum ~5s between real attempts — no connect storms), and until one succeeds
 tool calls return the classified envelopes above. The call that triggers the
@@ -1054,23 +1054,23 @@ refresh their catalog. Structured
 `[gbrain-serve] DEGRADED:` / `[gbrain-serve] RECOVERED:` lines land on stderr
 for harness-log forensics. Kill switch: `GBRAIN_SERVE_DEGRADED=0` (or `false`)
 restores die-on-startup. Scope: Postgres startup failures only — PGLite startup failures
-keep die-on-startup (that lane's repair is `gbrain pglite-repair`), and
+keep die-on-startup (that lane's repair is `foresights pglite-repair`), and
 mid-session outages ride the engine's own reconnect plus the per-call
 classified envelopes.
 
 ### Pool sizing
 
-<a id="pool-sizing"></a>Each gbrain process opens its own ordinary pool of
+<a id="pool-sizing"></a>Each foresights process opens its own ordinary pool of
 `GBRAIN_POOL_SIZE` connections (default 10; environment variable only, no
-config key). A long-running process (`gbrain serve`, `gbrain autopilot`,
-`gbrain jobs work`) needs at least **6**: two for write publication, one for the
+config key). A long-running process (`foresights serve`, `foresights autopilot`,
+`foresights jobs work`) needs at least **6**: two for write publication, one for the
 idle work probe, one each for the projection and effects workers, and one for
 reads and tool calls. Below that, boot or projection draining stalls under
 traffic. One-shot CLI commands can use `GBRAIN_POOL_SIZE=2`. With
-`GBRAIN_POOL_SIZE=1`, schema setup and maintenance still run (`gbrain init
+`GBRAIN_POOL_SIZE=1`, schema setup and maintenance still run (`foresights init
 --db-only`, `apply-migrations`, `repair request-indexes`, `backfill`), but
 managed writes need two connections: they stay queued with
-`writer_pool_capacity`, so `gbrain init` without `--db-only` stops at its
+`writer_pool_capacity`, so `foresights init` without `--db-only` stops at its
 packaged-skill install. Long holds keep one connection free for reads and
 control work; only holds that use nothing but their own connection (migration
 DDL, concurrent index builds, backfill batches) may take a single
@@ -1081,22 +1081,22 @@ Size the pooler for every process at once:
 ```
 long-running processes x GBRAIN_POOL_SIZE
   + processes whose direct route lands on this pooler x their direct pool (see below)
-  + one-shot commands running at the same time x their pool (a full `gbrain sync` is one too)
+  + one-shot commands running at the same time x their pool (a full `foresights sync` is one too)
   + parallel import workers x 2 (an unmanaged sync of more than 100 files, `--workers N`, or the sync a serve runs)
   <= the pooler's client limit (Supabase Supavisor: the project's pool_size)
 ```
 
 The direct route lands on the pooler when `GBRAIN_DIRECT_DATABASE_URL` names it,
-and also when gbrain derives it from a Supabase pooler URL whose user does not
+and also when foresights derives it from a Supabase pooler URL whose user does not
 name the project (`postgres.<ref>`): the derived route keeps the pooler host on
 port 5432, its session port, even when the main URL uses transaction mode
 (6543). Two long-running processes at the
 defaults (10 + 3 each) already pass a client limit of 25, so a scheduled
-`gbrain sync` next to a `gbrain serve` on the same session port can exhaust it.
+`foresights sync` next to a `foresights serve` on the same session port can exhaust it.
 `GBRAIN_MAX_CONNECTIONS` caps a sync's worker fan-out to fit a budget.
 
 <a id="direct-pool-by-command"></a>The direct pool's size follows the command.
-`gbrain serve`, `gbrain jobs`, `gbrain autopilot` and `gbrain sync --watch`
+`foresights serve`, `foresights jobs`, `foresights autopilot` and `foresights sync --watch`
 open up to 3 direct connections. A command that exits but owns writes or takes
 a lease (`sync`, `put`, `import`, `dream`, `cycle`, `sources`, `mcp`,
 `migrate-graduation`) and the diagnostics that report the route (`doctor`,
@@ -1111,12 +1111,12 @@ statement timeout), and taking a lease such as an embed or extract lock
 may open the full 3-connection direct pool.
 
 When the sum does not fit, run fewer long-running processes (for example one
-shared `gbrain serve --http` instead of one stdio `serve` per agent session),
+shared `foresights serve --http` instead of one stdio `serve` per agent session),
 or raise the pooler's limit. Do not lower a long-running process below 6.
 
-`gbrain doctor` check `session_lane_budget` (read-only) counts this role's
+`foresights doctor` check `session_lane_budget` (read-only) counts this role's
 connections in `pg_stat_activity` across every process, by process kind
-(`serve`, `sync`, `jobs`, … from the `gbrain <kind>:<pid>:<nonce>`
+(`serve`, `sync`, `jobs`, … from the `foresights <kind>:<pid>:<nonce>`
 connection name) and host, and warns at 80% of the limit with the kinds
 holding the most. Postgres cannot read a pooler's per-role limit, so behind a
 Supabase pooler set `GBRAIN_SESSION_LANE_LIMIT` to the project's `pool_size`;
@@ -1130,14 +1130,14 @@ With a direct route configured, the persistence consumer's own tick
 statements (idle probe, switch read, recovery and expired-claim scans,
 capacity marking) take the direct pool beside the claims, renewals and the
 heartbeat, so a transaction-mode pooler never sits between the owner and its
-bookkeeping (#6317; `gbrain sources writer status --json` shows
+bookkeeping (#6317; `foresights sources writer status --json` shows
 `connection.lane: direct`). `GBRAIN_CONSUMER_DIRECT_LANE=0` keeps those scans
 on the ordinary pool when the direct pool is too small for them.
 `pool_exhausted` errors (SQLSTATE `53300`) and the
 [serve boot timeout](#serve-boot-timeout) print this guidance.
 
 <a id="serve-boot-timeout"></a>**`serve_boot_timeout`** (stderr, exit 1).
-`gbrain serve` made no boot progress for `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`
+`foresights serve` made no boot progress for `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`
 (default 60; 0 disables), so it released the database and exited. The window
 restarts at every boot phase, progress note and answered request, so a large
 brain whose boot is slow but advancing is never stopped; the line also says how long the
@@ -1164,14 +1164,14 @@ transaction and never fail with SQLSTATE `25P02`. Queued statements move to a
 fresh connection. The line names the status byte and the pool (`read` or
 `direct`) and carries no query text. `getPoolDiagnostics().poisonedDiscards`
 counts discards per engine. There is no opt-out. Nothing needs to be repaired;
-if the line repeats, run `gbrain doctor --json` and report the warn lines with
+if the line repeats, run `foresights doctor --json` and report the warn lines with
 the operations that preceded them. A pool created with `max: 1` keeps the
 driver's documented single-connection idiom (`BEGIN` as an ordinary query)
 for unreserved statements.
 
 <a id="schema-lock-blocked"></a>**`schema_lock_blocked`** (error, retryable).
 A schema step waited its `lock_timeout` for a table lock another session holds
-and stopped instead of hanging (#5227). `gbrain init` and `upgrade` replay
+and stopped instead of hanging (#5227). `foresights init` and `upgrade` replay
 `schema.sql` on the reserved DDL backend; every `ALTER TABLE` there takes an
 ACCESS EXCLUSIVE lock even as a no-op, so one open transaction in another
 client (idle in transaction, a stuck job) used to park the whole command in
@@ -1230,7 +1230,7 @@ line names the pool, `reason`, `age_ms`, `budget_ms` (that statement's own
 cap), `queued` (statements that failed with it) and the statement by first
 keyword and table (`sql=SELECT_pages`), never its text or parameters. `getPoolDiagnostics().stuckDiscards` counts retirements per
 engine; `/health?deep=1` reports them as `stuck_discards`. Retry the failed
-call; if the line repeats, run `gbrain doctor --json` and report the warn lines
+call; if the line repeats, run `foresights doctor --json` and report the warn lines
 with the operations that preceded them.
 
 <a id="pg-connection-desync"></a>**`pg_connection_desync`** (warn). A statement's
@@ -1253,12 +1253,12 @@ connect error, and the next statement retries. The line names the pool, the
 driver's connection id, the incident (`cause=stuck|desync|closed`) and the
 error code. `getPoolDiagnostics()` counts reconnects of retired connections as
 `recovered` and failures as `recoveryFailed`; `/health?deep=1` reports them as
-`recovered` and `recovery_failed` (#6543). A resident `gbrain serve` writes its
+`recovered` and `recovery_failed` (#6543). A resident `foresights serve` writes its
 stuck, desync and recovery events to the pool-recovery audit
 (`~/.gbrain/audit/pool-recovery-YYYY-Www.jsonl`), so
-`gbrain doctor --only pool_reap_health` fails on a recovery failure and warns
+`foresights doctor --only pool_reap_health` fails on a recovery failure and warns
 on a stuck or desynced connection in the last hour.
-Retry the failed call; if the line repeats, run `gbrain doctor --json` and
+Retry the failed call; if the line repeats, run `foresights doctor --json` and
 report the warn lines.
 
 <a id="pg-statement-build-failed"></a>**`pg_statement_build_failed`** (warn). A
@@ -1277,26 +1277,26 @@ parameter (`param=$2`, or `param=?` for an array element). Behind a
 transaction-mode pooler (port 6543, `?prepare=false`) a build failure usually
 means a misrouted answer: the statement bound a value read from a row that
 belonged to another statement, so earlier reads on that pool are suspect too.
-Check `/health?deep=1` `transport.max_pipeline` (gbrain sends `0` there since
+Check `/health?deep=1` `transport.max_pipeline` (foresights sends `0` there since
 v0.60.187.0; `PGMAX_PIPELINE=0` forces it) and audit the window with
 [the pooler misroute audit](guides/pooler-misroute-audit.md). Elsewhere the
-call site that bound `undefined` is a gbrain bug, so report the line.
+call site that bound `undefined` is a foresights bug, so report the line.
 `getPoolDiagnostics().buildFailures` counts them.
 
 <a id="pg-pool-stalled"></a>**`pg_pool_stalled`** (warn, resident processes).
-`gbrain serve` reads its pool every 30 s; when connections are checked out or
+`foresights serve` reads its pool every 30 s; when connections are checked out or
 statements are waiting for one across two ticks in a row and the pool completed
 no statement in between, it logs this line once per tick with `checked_out`,
 `max`, `waiters`, `inflight_oldest_ms` and `stalled_ms`, and one
-`[gbrain] info code=pg_pool_recovered` line when statements complete again.
+`[foresights] info code=pg_pool_recovered` line when statements complete again.
 One slow statement is one quiet tick and is never reported. With the in-flight
 watchdog on, a stall ends within `statement_timeout` plus grace and
 `pg_connection_stuck` names the connection; with the watchdog off this line is
 the only trace a wedged pool leaves. A line that keeps repeating with no
 recovery means the database or pooler is unreachable from the process:
-`gbrain doctor --json` from a fresh process, then restart the stalled one.
+`foresights doctor --json` from a fresh process, then restart the stalled one.
 
-<a id="serve-deep-health"></a>**`/health?deep=1`** (`gbrain serve --http`). Plain `/health` stays the fast
+<a id="serve-deep-health"></a>**`/health?deep=1`** (`foresights serve --http`). Plain `/health` stays the fast
 liveness probe, and it runs its `SELECT 1` on a reserved connection, which the
 driver only ever claims from idle connections; a wedged connection sits in the
 busy queue where handler statements are routed, so `/health` answered 200
@@ -1310,7 +1310,7 @@ deep probe per engine at a time). Its body carries the pool block:
 `{ checked_out, max, waiters, inflight_oldest_ms, completed, poisoned_discards,
 stuck_discards, build_failures, desync_discards, recovered, recovery_failed }`. It is cheap enough for a two-minute cron. The
 same pool numbers ride the persistence consumer's heartbeat row, so
-`gbrain sources writer status --json` shows `pool.inflight_oldest_ms` for the
+`foresights sources writer status --json` shows `pool.inflight_oldest_ms` for the
 owner process.
 
 Every 503 body carries a stable `code` with `fix` and `docs` from the error
@@ -1326,15 +1326,15 @@ registry (#6543):
   No request id or statement text reaches either body: the endpoint is
   unauthenticated.
 - `deep_health_probe_failed` with `reason` `pending`, `timeout` or `error`: the
-  pooled `SELECT 1` did not answer. Retry; if it persists, `gbrain doctor --json`.
+  pooled `SELECT 1` did not answer. Retry; if it persists, `foresights doctor --json`.
 
 Both 200 and 503 bodies carry `transport`, read once at startup through the
-read pool and logged as a `[gbrain serve] transport` line:
+read pool and logged as a `[foresights serve] transport` line:
 `{ pooler_mode, prepare, max_pipeline, max_pipeline_reason, statement_timeout,
 session_timeouts_not_applied, fix?, application_name? }`. `prepare` and
 `max_pipeline` are the live pool's options; `max_pipeline_reason` says why
 (`transaction_pooler_port`, `url_prepare_false`, `gbrain_prepare_off`,
-`url_max_pipeline`, `env_pgmax_pipeline` or `default`): gbrain builds the read
+`url_max_pipeline`, `env_pgmax_pipeline` or `default`): foresights builds the read
 pools with `max_pipeline: 0` for a transaction-mode URL (port 6543 or
 `?prepare=false`) or `GBRAIN_PREPARE=0` since v0.60.187.0, and a URL
 `?max_pipeline=` or a non-empty `PGMAX_PIPELINE` always wins.
@@ -1345,7 +1345,7 @@ PgBouncer deployment on port 6543 or with `?prepare=false` can opt back in with
 (1185 vs 1890 in 30 s); at localhost latency there was no measurable cost. Do
 not opt back in behind Supavisor.
 `application_name: "Supavisor"` appears when the backend names Supavisor.
-`session_timeouts_not_applied: true` means gbrain configured a
+`session_timeouts_not_applied: true` means foresights configured a
 `statement_timeout` but it reads `0` through the pool (a transaction-mode
 pooler drops startup parameters), so no server-side timeout bounds an
 autocommit statement; `fix` is the same `ALTER ROLE` the
@@ -1360,46 +1360,46 @@ without a human, set `GBRAIN_SERVE_RESTART_REQUIRED_EXIT_SECONDS=<n>` (off by de
 start with `invalid_params`). When `persistence_restart_required` has held
 continuously for `n` seconds (read in-process; the hold restarts whenever the
 stuck work settles and the flag clears), serve logs
-`[gbrain serve] error code=serve_unhealthy_exit cause=persistence_restart_required`,
+`[foresights serve] error code=serve_unhealthy_exit cause=persistence_restart_required`,
 disconnects under a 5 s deadline (the consumer's stop waits on the stuck work,
 so the exit never depends on it draining) and exits `69`.
 `pool_inflight_over_budget` never triggers the exit (the variable is named for
 its one trigger): restart serve yourself or from your health check. A loop
-guard records each self-exit in `serve-self-exit.json` under the gbrain home;
+guard records each self-exit in `serve-self-exit.json` under the foresights home;
 after 3 self-exits within an hour serve stops exiting, logs
 `serve_self_exit_suppressed`, and the deep-health 503 carries
 `self_exit_suppressed: true` with a fix that asks for a manual restart and a
-look at `gbrain sources writer status --json`.
-The service `gbrain mcp expose` installs restarts it (systemd `Restart=always`,
+look at `foresights sources writer status --json`.
+The service `foresights mcp expose` installs restarts it (systemd `Restart=always`,
 launchd `KeepAlive`), so a fresh serve comes up; the floor keeps a restart loop
 under the systemd unit's start limit (10 starts per 300 s). For the installed service put the variable
 in `~/.gbrain/env`; for a foreground serve set it in the shell or your own
 supervisor's environment. A foreground serve with no supervisor just exits.
 
 <a id="backfill-rollback-failed"></a>**`backfill_rollback_failed`** (error).
-A `gbrain backfill` batch failed, and its `ROLLBACK` failed too. The run stops
+A `foresights backfill` batch failed, and its `ROLLBACK` failed too. The run stops
 rather than retrying on a connection whose transaction state is unknown; the
 driver discards that connection. Nothing from the batch was committed and the
 checkpoint did not advance. The message names both errors (redacted, at most
 200 characters each). Fix the cause they name, then run
-`gbrain backfill <kind> --resume`.
+`foresights backfill <kind> --resume`.
 
 <a id="backfill-commit-indeterminate"></a>**`backfill_commit_indeterminate`** (error).
-A `gbrain backfill` batch sent its `COMMIT` and got no verdict from the
+A `foresights backfill` batch sent its `COMMIT` and got no verdict from the
 server (for example the connection dropped), so the batch may or may not have
 committed. The run stops without bisecting or skipping anything, and the
-checkpoint stays before the batch. Run `gbrain backfill <kind> --resume`:
+checkpoint stays before the batch. Run `foresights backfill <kind> --resume`:
 rows that did commit no longer match the backfill and are not redone.
 
 <a id="backfill-skipped-rows"></a>**Skipped backfill rows.** A row whose compute
 or UPDATE fails on its own (a CHECK or type violation, a compute error) is
 isolated by splitting its batch, each part in its own transaction, and recorded
 in the config key `backfill.<kind>.skipped`; the checkpoint moves past it and
-the other rows land. `gbrain backfill <kind>` prints each recorded row with
+the other rows land. `foresights backfill <kind>` prints each recorded row with
 its code and the retry command, and every later run retries it first. A row
 that fails with the same content error on 3 consecutive runs (same row, same
-gbrain version) is held: it is reported but not retried until the row or the
-gbrain version changes; `gbrain backfill <kind> --fresh` retries it now. When
+foresights version) is held: it is reported but not retried until the row or the
+foresights version changes; `foresights backfill <kind> --fresh` retries it now. When
 most rows of a run fail, the run stops with `item_failures_systemic` and keeps
 the skip record and checkpoint it began with.
 
@@ -1410,7 +1410,7 @@ a write-error code, `storage_error`, or `deadline_exceeded` when the phase
 overran its five-second budget. `message` is the redacted error text, one line,
 at most 200 characters. When an unexpected exception in the owner failed a
 write (`storage_error` with a generic public message; the class and frame stay owner-only),
-the line also carries `class=`, `errno=` and `frame=` (the top gbrain source
+the line also carries `class=`, `errno=` and `frame=` (the top foresights source
 frame, repo-relative, for example `src/core/persistence/page-prepare.ts:120`):
 the owner diagnostics the receipt points at. For a database server error it
 adds `error_text=`, `statement=` and `position=` (#7112): the server's primary
@@ -1420,7 +1420,7 @@ line of the failing statement with its literals replaced, never its
 parameters, and the error's character position. A PL/pgSQL `RAISE` keeps no
 text, because it can carry page values. The stored receipt keeps the same
 identifiers (never an application error's message) owner-side in `error_detail`, with the
-build that ran the attempt; on the brain host `gbrain write-request <id> --json`
+build that ran the attempt; on the brain host `foresights write-request <id> --json`
 prints that `error_detail`, and names an owner on another build than the CLI
 (`owner_build`) and the restart to run. Connection-wait evidence follows on Postgres:
 `first_conn_ms` is the time from phase start until the phase obtained a
@@ -1428,7 +1428,7 @@ connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
 one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
 `loop_lag_ms` is the longest event-loop delay during the phase (a busy or
 starved process). The same fields appear in the consumer's status snapshot
-under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting.
+under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `foresights sources writer status --json` to see what is waiting.
 A `deadline_exceeded` phase is also how a round-trip a transaction-mode pooler
 (Supavisor port 6543, PgBouncer) never completed ends: the backend sits in
 `ClientRead`, the cancel request the deadline sends may never reach it, so
@@ -1454,15 +1454,15 @@ line is rate-limited (one per second, one per phase and code every 30 seconds).
 An idle consumer keeps one ordinary-pool connection for its work probe and
 never holds a direct or session-pooler connection, so a
 `GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
-idle `gbrain serve` processes.
+idle `foresights serve` processes.
 
 <a id="persistence-claim-phase"></a>**Claim phases.** Each claim renewal also records the claimed write's phase
-(`preparing` or `publishing`); `gbrain sources writer status --json` shows it as
+(`preparing` or `publishing`); `foresights sources writer status --json` shows it as
 `claim` on running blockers, and doctor `persistence_write_stall` warns past
 `persistence.max_claim_ms` (default 600000, 60000 to 86400000). A running
 claim also carries the preparation `step`, how long it has been in it, what it
 waits on (`git`, `fs`, `db`, `pool` or `unknown`) and the owner process (kind,
-pid, gbrain version); past its budget, `claim.stall` reads
+pid, foresights version); past its budget, `claim.stall` reads
 `preparation_overdue`. Each request counts the cut-offs of its preparation in
 `persistence_requests.preparation_attempts`. See
 [troubleshooting](guides/troubleshooting.md#persistence-write-stall).

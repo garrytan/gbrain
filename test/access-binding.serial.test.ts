@@ -2,10 +2,10 @@
  * GBRA-218 A1 identity: the operator CLI as real subprocesses against a
  * repo-less PGLite brain on disk (no git checkout).
  *
- * 1. Protects: `gbrain auth create|rescope|register-client --member` binds a
+ * 1. Protects: `foresights auth create|rescope|register-client --member` binds a
  *    credential to an enabled member and refuses an unknown one before any
  *    credential is minted or changed; `--member none` unbinds; `--dry-run`
- *    writes no binding; `--may-act-for` is stored normalized; `gbrain access
+ *    writes no binding; `--may-act-for` is stored normalized; `foresights access
  *    member rm` previews without `--yes` and a removed id is refused on re-add
  *    with access_member_id_retired (the contract envelope under --json).
  *    GST-1158: `member add|set --email` declares a case-folded email, list

@@ -79,7 +79,7 @@ describe('apply-migrations with a wedged migration (#6696 C5)', () => {
     expect(code, stderr).toBe(0);
     expect(stdout).toContain(ledgerPath());
     expect(stdout).toContain('phases[].detail, if present');
-    expect(stdout).toContain(`gbrain apply-migrations --force-retry ${WEDGED}`);
+    expect(stdout).toContain(`foresights apply-migrations --force-retry ${WEDGED}`);
     expect(stdout).toContain('migrations/completed.jsonl (phases[].detail, if present');
     expect(stdout).not.toContain('upgrade-errors.jsonl');
   }, 30_000);
@@ -91,10 +91,10 @@ describe('apply-migrations with a wedged migration (#6696 C5)', () => {
     const doc = JSON.parse(list.stdout) as Record<string, any>;
     expect(doc.migrations.find((m: { version: string }) => m.version === WEDGED)).toMatchObject({ status: 'wedged' });
     expect(doc.wedged).toEqual([{ version: WEDGED, fix: { argv: ['gbrain', 'apply-migrations', '--force-retry', WEDGED],
-      command: `gbrain apply-migrations --force-retry ${WEDGED}` } }]);
+      command: `foresights apply-migrations --force-retry ${WEDGED}` } }]);
     const human = await cli(['apply-migrations', '--list']);
     expect(human.stdout).not.toContain('All migrations up to date');
-    expect(human.stdout).toContain(`gbrain apply-migrations --force-retry ${WEDGED}`);
+    expect(human.stdout).toContain(`foresights apply-migrations --force-retry ${WEDGED}`);
     expect(human.stdout).toContain(ledgerPath());
     expect(human.stdout).not.toContain('upgrade-errors.jsonl');
   }, 120_000);

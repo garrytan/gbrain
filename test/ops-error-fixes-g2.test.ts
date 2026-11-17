@@ -81,7 +81,7 @@ describe('jobs ops (refusals)', () => {
     expect(env).toMatchObject({ error: 'permission_denied', code: 'insufficient_scope', fix: { actor: 'host_admin', next: 'tell_user_to_run' } });
   });
 
-  test('submit_agent on the local CLI points at gbrain agent run with the prompt as a declared input', async () => {
+  test('submit_agent on the local CLI points at foresights agent run with the prompt as a declared input', async () => {
     const env = await envelopeOf('submit_agent', ctx('cli'), { prompt: 'hello' });
     expect(env.error).toBe('invalid_request');
     expect(env.fix).toMatchObject({ argv: ['gbrain', 'agent', 'run', '--', '<prompt>'], consent: ['paid'], inputs: [{ name: 'prompt' }] });

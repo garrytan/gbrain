@@ -7,7 +7,7 @@ import { protectNewBackupPath } from './private-path.ts';
 
 const MAGIC = Buffer.from('GBRAIN-BACKUP-1\n');
 const MAX_MANIFEST = 8 * 1024 * 1024;
-/** The archive's total payload cap (8 GiB); `gbrain backup create` checks it up front (#6649). */
+/** The archive's total payload cap (8 GiB); `foresights backup create` checks it up front (#6649). */
 export const BACKUP_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 const MAX_BYTES = BACKUP_ARCHIVE_MAX_BYTES;
 const MAX_FILES = 100_000;
@@ -131,7 +131,7 @@ export function readBackupArchive(archive: string, destination: string): Archive
   assertNoSymlinks(archive);
   const fd = openSync(archive, 'r');
   try {
-    if (!readExactly(fd, MAGIC.length, 0).equals(MAGIC)) fail('Not a GBrain backup archive.');
+    if (!readExactly(fd, MAGIC.length, 0).equals(MAGIC)) fail('Not a Foresights backup archive.');
     const length = readExactly(fd, 4, MAGIC.length).readUInt32BE();
     if (length > MAX_MANIFEST) fail('Backup manifest exceeds its size limit.');
     let value: unknown;
@@ -206,7 +206,7 @@ export function extractPgliteDump(file: string, destination: string): void {
       const target = confinedPath(destination, path);
       seen.add(path);
       if (seen.size > MAX_FILES || offset + size > length) fail('PGLite tar exceeds bounds.');
-      // Node-backed dumpDataDir also sees GBrain's live owner lock. It is a
+      // Node-backed dumpDataDir also sees Foresights's live owner lock. It is a
       // process lease, not database state: importing it would either wait on
       // the source process or invite unsafe stale-lock removal in recovery.
       if (path === 'postmaster.pid' || ['.gbrain-lock', '.gbrain-lock.reap-claim'].some(p => path === p || path.startsWith(p + '/'))) {

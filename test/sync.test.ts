@@ -35,7 +35,7 @@ describe('buildSyncManifest', () => {
   });
 
   test('T (typechange) counts as modified — was silently dropped', () => {
-    // file <-> symlink. Reachable with the flags gbrain actually passes
+    // file <-> symlink. Reachable with the flags foresights actually passes
     // (`--name-status -M`). Dropping it meant the change never reached the
     // index until some later commit happened to touch the same path.
     const manifest = buildSyncManifest(`T\tpeople/now-a-symlink.md`);
@@ -51,7 +51,7 @@ describe('buildSyncManifest', () => {
   });
 
   test('C (copy) imports the destination — unreachable today, defensive', () => {
-    // Requires -C/--find-copies, which gbrain does not pass. If the flags ever
+    // Requires -C/--find-copies, which foresights does not pass. If the flags ever
     // change, the copy destination is a NEW path that must be imported, and the
     // source is untouched — so it is an add, not a rename.
     const manifest = buildSyncManifest(`C100\tpeople/src.md\tpeople/copy.md`);
@@ -167,7 +167,7 @@ describe('pruneDir', () => {
     expect(pruneDir('venv')).toBe(false);
   });
 
-  test('blocks *.raw sidecar dirs (gbrain convention)', () => {
+  test('blocks *.raw sidecar dirs (foresights convention)', () => {
     expect(pruneDir('.raw')).toBe(false);
     expect(pruneDir('pedro.raw')).toBe(false);
     expect(pruneDir('article.raw')).toBe(false);
@@ -386,7 +386,7 @@ describe('buildSyncManifest — C-style-quoted paths', () => {
       writeFileSync(join(repo, name), 'x\ny\n');
       execSync('git add -A && git commit -q -m two', { cwd: repo, shell: '/bin/bash' });
 
-      // gbrain's own invocation, quotepath and all.
+      // foresights's own invocation, quotepath and all.
       const argv = buildGitInvocation(repo, ['diff', '--name-status', '-M', 'HEAD~1..HEAD']);
       const out = execSync(`git ${argv.map(a => JSON.stringify(a)).join(' ')}`, { encoding: 'utf-8' });
 

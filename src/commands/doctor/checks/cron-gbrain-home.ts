@@ -1,10 +1,10 @@
 /**
- * `cron_gbrain_home` (GBRA-108): a cron line, or a script a cron line runs, that calls gbrain without the home this
+ * `cron_gbrain_home` (GBRA-108): a cron line, or a script a cron line runs, that calls foresights without the home this
  * brain lives in. Cron starts commands with a bare environment, so a line that runs `bun run src/cli.ts` straight from
  * a checkout, or the `gbrain` binary while this brain is under a non-default GBRAIN_HOME, reads and writes
  * `~/.gbrain` instead: a second, silent brain state (locks, queue, config) beside the real one.
  *
- * Read-only and bounded: `crontab -l` (5 s, or the entry deadline when sooner: local-audits.ts `localProbe`; no check unless the crontab mentions gbrain or src/cli.ts), plus at most 20 scripts the lines name (64 KiB
+ * Read-only and bounded: `crontab -l` (5 s, or the entry deadline when sooner: local-audits.ts `localProbe`; no check unless the crontab mentions foresights or src/cli.ts), plus at most 20 scripts the lines name (64 KiB
  * each). A line or script counts as setting the home when it assigns GBRAIN_HOME (on the line, in the crontab's
  * environment lines, or anywhere in the script). Warns, never fails; the user edits the crontab.
  */
@@ -17,7 +17,7 @@ import { doctorVerify } from '../check-fix.ts';
 const SCRIPTS_MAX = 20;
 const SCRIPT_BYTES_MAX = 64 * 1024;
 const DIRECT_CLI = /(?:^|[\s;&|(=])(?:\S*\/)?src\/cli\.ts\b/;
-const BINARY_CALL = /(?:^|[\s;&|(\/])gbrain\s+[a-z]/;
+const BINARY_CALL = /(?:^|[\s;&|(\/])(?:foresights|gbrain)\s+[a-z]/;
 const SETS_HOME = /(?:^|[\s;&|(])(?:export\s+)?GBRAIN_HOME=/;
 
 export interface CronGbrainHomeFinding { where: string; command: string; reason: 'direct_cli' | 'default_home' }
@@ -46,7 +46,7 @@ function cronCommand(line: string): string | null {
 function scriptOf(command: string): string | null {
   for (const word of command.split(/\s+/)) {
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-    return /^(?:\/|~\/)/.test(word) && !/\/(?:bun|node|bash|sh|zsh|env|gbrain)$/.test(word) ? word : null;
+    return /^(?:\/|~\/)/.test(word) && !/\/(?:bun|node|bash|sh|zsh|env|(?:foresights|gbrain))$/.test(word) ? word : null;
   }
   return null;
 }
@@ -83,16 +83,16 @@ export function cronGbrainHomeFindings(crontab: string, customHome: string | und
 }
 
 export function cronGbrainHomeCheck(crontab: string | null, customHome: string | undefined, read?: (path: string) => string | null): Check | null {
-  if (crontab === null || !/gbrain|src\/cli\.ts/.test(crontab)) return null;
+  if (crontab === null || !/(?:foresights|gbrain)|src\/cli\.ts/.test(crontab)) return null;
   const findings = cronGbrainHomeFindings(crontab, customHome, read);
-  if (!findings.length) return { name: 'cron_gbrain_home', status: 'ok', message: 'No cron line or script it runs calls gbrain without its GBRAIN_HOME.', details: { findings } };
+  if (!findings.length) return { name: 'cron_gbrain_home', status: 'ok', message: 'No cron line or script it runs calls foresights without its GBRAIN_HOME.', details: { findings } };
   const home = customHome ? `GBRAIN_HOME=${customHome}` : 'GBRAIN_HOME set to the home this brain uses';
   const listed = findings.slice(0, 5).map(f => `${f.where}: ${f.command}`).join(' | ');
   return { name: 'cron_gbrain_home', status: 'warn', details: { findings, gbrain_home: customHome ?? null },
-    message: `${findings.length} cron command(s) run gbrain without GBRAIN_HOME, so they use ~/.gbrain rather than this brain's home: ${listed}${findings.length > 5 ? ' ...' : ''}. `
+    message: `${findings.length} cron command(s) run foresights without GBRAIN_HOME, so they use ~/.gbrain rather than this brain's home: ${listed}${findings.length > 5 ? ' ...' : ''}. `
       + `Cron passes no GBRAIN_HOME of its own; set it on the line or in the script, or call a wrapper that sets it.`,
     fix: { argv: ['crontab', '-e'], consent: [], actor: 'user', requires_exclusive: false,
       why: 'A cron command without GBRAIN_HOME reads and writes a second brain state under ~/.gbrain; only the user edits the crontab.',
-      user_message: `These cron commands run gbrain without GBRAIN_HOME: ${listed}. Add ${home} to each (or to the script it runs), or point them at a wrapper that exports it, so they act on this brain.`,
+      user_message: `These cron commands run foresights without GBRAIN_HOME: ${listed}. Add ${home} to each (or to the script it runs), or point them at a wrapper that exports it, so they act on this brain.`,
       verify: doctorVerify('cron_gbrain_home') } };
 }

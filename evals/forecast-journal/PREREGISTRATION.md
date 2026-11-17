@@ -40,7 +40,7 @@ The $0 check (`bun evals/forecast-journal/harness.ts --check`, also in the keyle
 
 1. Load every cohort: one `sources` row, 40 topic pages through `putPage`, the takes through `addTakesBatch`, and the resolutions in one update.
 2. Capture four outputs on cohort 1. Three come from a remote context with a holder allowlist covering every cohort-1 holder (an N6-style grant that can read them): `takes_list {}`, `takes_search {query: "milestone"}` and `takes_scorecard {}`. The fourth is local `takes_scorecard {}`.
-3. Apply the stated-horizon scan (`scanStatedHorizons {apply: true}`), as `gbrain takes horizon scan --apply` does. Capture the same outputs again.
+3. Apply the stated-horizon scan (`scanStatedHorizons {apply: true}`), as `foresights takes horizon scan --apply` does. Capture the same outputs again.
 4. For each cohort, read `scorecardGroups {groupBy: holder, minN: 10}` and `readForecastJournal`. For each topic, read `readForecastJournal {about: topic, state: resolved}`, all as of 2026-10-16.
 
 ## Measurements and decision rule

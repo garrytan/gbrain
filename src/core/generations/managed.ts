@@ -15,7 +15,7 @@
  * digest(activation id, member slug, action). The activation row (`derived_generation_activations`) is written with the batch, before any member runs:
  * a crash after activation resumes the pending members on the next run (`listPendingMembers`); members created by an
  * activation that never happened are orphan candidates (`listOrphanCandidates`), listed and never retired automatically.
- * Doctor counts both (`generation_pending`) and `gbrain repair generations --mode cleanup` lists them, read-only.
+ * Doctor counts both (`generation_pending`) and `foresights repair generations --mode cleanup` lists them, read-only.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -142,7 +142,7 @@ export async function prepareGenerationActivation(engine: BrainEngine, row: Writ
   const adapter = p?.key ? generationAdapter(p.key.kind) : undefined;
   if (!p || p.kind !== GENERATION_ACTIVATE_INTENT || row.authority.remote || !adapter || p.key.sourceId !== row.source_id || p.activationId !== row.request_id) {
     throw opError('permission_denied', 'Unsupported generation activation request.',
-      `Request ${row.request_id} in source ${row.source_id} is not a generation activation the trusted local writer admitted, so the coordinator refused it before any change. Activations run only from the gbrain CLI on the brain host.`,
+      `Request ${row.request_id} in source ${row.source_id} is not a generation activation the trusted local writer admitted, so the coordinator refused it before any change. Activations run only from the foresights CLI on the brain host.`,
       { fix: readFix('Shows the source owner and any write in flight, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'] }) });
   }
   const memberKeys = [...new Set([...p.members.map(member => member.slug), ...p.kept])];

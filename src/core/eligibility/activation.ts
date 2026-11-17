@@ -98,7 +98,7 @@ export async function partitionForActivation<T>(
   return { kept, withheld };
 }
 
-/** The command that lists every unconfirmed item for the owner (DX-7 `gbrain trust review`). */
+/** The command that lists every unconfirmed item for the owner (DX-7 `foresights trust review`). */
 export const TRUST_REVIEW_COMMAND = ['gbrain', 'trust', 'review'] as const;
 
 /** DX-10: the structured suppression notice. A count and the review command; never the withheld content. */
@@ -107,7 +107,7 @@ export function activationSuppressionNotice(withheld: number, surface: string): 
   return {
     code: 'memory_suppressed',
     kind: 'info',
-    why: `${withheld} unconfirmed agent-written ${withheld === 1 ? 'memory was' : 'memories were'} not used in ${surface} because ${withheld === 1 ? 'it reads' : 'they read'} like instructions. They stay searchable; the owner reviews them with gbrain trust review.`,
+    why: `${withheld} unconfirmed agent-written ${withheld === 1 ? 'memory was' : 'memories were'} not used in ${surface} because ${withheld === 1 ? 'it reads' : 'they read'} like instructions. They stay searchable; the owner reviews them with foresights trust review.`,
     fix: { argv: [...TRUST_REVIEW_COMMAND], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Lists unconfirmed agent-written memories with the command to confirm or drop each; only the owner can confirm.' },
   };

@@ -1,5 +1,5 @@
 /**
- * `gbrain dream retriage` (#4152) — re-score the corpus and reconcile the
+ * `foresights dream retriage` (#4152) — re-score the corpus and reconcile the
  * synth-v2 job backlog against the triage gate.
  *
  * Two halves, both optional:
@@ -163,10 +163,10 @@ function parseRetriageArgs(args: string[]): RetriageArgs {
 }
 
 function printRetriageHelp(args: string[]): Promise<void> {
-  return printHelpText('dream retriage', `gbrain dream retriage — re-score the corpus, reconcile the synth backlog
+  return printHelpText('dream retriage', `foresights dream retriage — re-score the corpus, reconcile the synth backlog
 
 USAGE
-  gbrain dream retriage [flags]
+  foresights dream retriage [flags]
 
 FLAGS
   --threshold <0..1>   Gate override for this sweep (default: dream.triage.threshold)
@@ -297,7 +297,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     parsed = parseRetriageArgs(args);
   } catch (e) {
     if (e instanceof UsageError) {
-      refuse(args, usageError(`dream retriage: ${e.message} (see: gbrain dream retriage --help)`, 'Run `gbrain dream retriage --help` for the accepted flags.'));
+      refuse(args, usageError(`dream retriage: ${e.message} (see: foresights dream retriage --help)`, 'Run `foresights dream retriage --help` for the accepted flags.'));
       return;
     }
     throw e;
@@ -308,15 +308,15 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     return;
   }
   if (engine === null) {
-    refuse(args, opError('database_error', 'gbrain dream retriage requires a connected brain; run `gbrain init` first',
-      'Fix the brain connection (`gbrain doctor --json` names the cause), or run `gbrain init` first.'));
+    refuse(args, opError('database_error', 'foresights dream retriage requires a connected brain; run `foresights init` first',
+      'Fix the brain connection (`foresights doctor --json` names the cause), or run `foresights init` first.'));
     return;
   }
 
   const config = await loadSynthConfig(engine);
   if (!config.corpusDir && !(await conversationPagesOptedIn(engine))) {
     refuse(args, opError('config_error', 'dream retriage: dream.synthesize.session_corpus_dir is unset and dream.synthesize.conversation_pages is not true — nothing to retriage',
-      'Ask the user where their session transcripts live, then: gbrain config set dream.synthesize.session_corpus_dir <dir> (or, for imported conversation pages: gbrain config set dream.synthesize.conversation_pages true)'));
+      'Ask the user where their session transcripts live, then: foresights config set dream.synthesize.session_corpus_dir <dir> (or, for imported conversation pages: foresights config set dream.synthesize.conversation_pages true)'));
     return;
   }
   const threshold = parsed.threshold ?? config.triage.threshold;
@@ -394,7 +394,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     if (parsed.maxUsd !== null && perFileUsd === null) {
       refuse(args, usageError(
         `dream retriage: --max-usd requires a priced model; "${triageModel}" has no CANONICAL_PRICING entry`,
-        'Drop --max-usd, or register the model\'s price with `gbrain pricing set` (look up its per-token rate first).'));
+        'Drop --max-usd, or register the model\'s price with `foresights pricing set` (look up its per-token rate first).'));
       return;
     }
     // The frontier audit spends too (security review): fold its worst case
@@ -411,7 +411,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       refuse(args, usageError(
         `dream retriage: --max-usd with --audit-rejects requires a priced synthesis model; ` +
         `"${config.model}" has no CANONICAL_PRICING entry`,
-        'Drop --max-usd, or register the model\'s price with `gbrain pricing set` (look up its per-token rate first).'));
+        'Drop --max-usd, or register the model\'s price with `foresights pricing set` (look up its per-token rate first).'));
       return;
     }
     const auditEstimateUsd = parsed.auditRejects !== null && auditPerFileUsd !== null

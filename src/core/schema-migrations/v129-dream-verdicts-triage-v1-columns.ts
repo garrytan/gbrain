@@ -23,7 +23,7 @@ export const v129: Migration = {
   // dream.triage.threshold. A binary rollback to pre-#4152 code (which
   // trusts the boolean as permanent) after retuning the threshold gates
   // differently until content hashes change — sweep with
-  // `gbrain dream retriage --force` (or clear scored rows) after such a
+  // `foresights dream retriage --force` (or clear scored rows) after such a
   // rollback.
   idempotent: true,
   sql: `

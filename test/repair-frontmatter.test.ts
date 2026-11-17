@@ -1,5 +1,5 @@
 /**
- * #5988 Lane 3: `gbrain repair frontmatter`. One previewed, hash-bound repair
+ * #5988 Lane 3: `foresights repair frontmatter`. One previewed, hash-bound repair
  * per file: safe quoting by default, interpretations only with
  * --include-ambiguous, --only/--skip bound into the hash, needs_review never
  * written, and managed publication through `managed_file_repair` (exact
@@ -131,7 +131,7 @@ test('safe preview quotes only, hashes its set, and the apply writes exactly the
   expect(details(preview).counts).toMatchObject({ safe: 1, interpretive: 0, needs_review: 0 });
   expect(details(preview).samples.safe!.diff).toContain('+author: "alice-example (citing acme-example) (original: https://example.invalid/a)"');
   const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
-  expect(preview.apply_command).toBe(`gbrain repair frontmatter --source ${s.id} --apply --expect ${hash} --yes`);
+  expect(preview.apply_command).toBe(`foresights repair frontmatter --source ${s.id} --apply --expect ${hash} --yes`);
   expect((await s.run()).apply_command).toBe(preview.apply_command);
   expect(s.read('notes/roundup.md')).toBe(QUOTABLE);
   expect((await refusal(() => s.run({ apply: true, expect: 'f'.repeat(64) }))).code).toBe('preview_changed');
@@ -171,7 +171,7 @@ test('interpretations wait for --include-ambiguous (two-pass next_action), which
   const one = await s.run({ includeAmbiguous: true, only: ['notes/a.md'] });
   expect(details(one).counts).toMatchObject({ interpretive: 1 });
   const oneHash = one.apply_command.split('--expect ')[1]!.split(' ')[0]!;
-  expect(one.apply_command).toBe(`gbrain repair frontmatter --source ${s.id} --only notes/a.md --include-ambiguous --apply --expect ${oneHash} --yes`);
+  expect(one.apply_command).toBe(`foresights repair frontmatter --source ${s.id} --only notes/a.md --include-ambiguous --apply --expect ${oneHash} --yes`);
   expect((await refusal(() => s.run({ apply: true, expect: oneHash, includeAmbiguous: true }))).code).toBe('preview_changed');
   const applied = await s.run({ apply: true, expect: oneHash, includeAmbiguous: true, only: ['notes/a.md'] });
   expect(applied.outcome_items?.[0]?.detail).toMatchObject({ path: 'notes/a.md', imported: 'created', hold_cleared: true });
@@ -226,7 +226,7 @@ test('a held modified file: put_page stays refused for drift, the repair writes 
   expect((await s.sync()).held_count ?? 0).toBe(0);
 }), 180_000);
 
-test('#6188: a held fence file is never rewritten by frontmatter repair; its resolution defers to that file\'s gbrain repair fences preview', () => each(async engine => {
+test('#6188: a held fence file is never rewritten by frontmatter repair; its resolution defers to that file\'s foresights repair fences preview', () => each(async engine => {
   const takes = '<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n'
     + '| 1 | Sentinelclaimq93 renews | take | Sentinelholderq93 Example | 0.7 | 2026-01 | chat |\n<!--- gbrain:takes:end -->';
   const s = await managed(engine, { 'notes/a.md': note('A'), 'people/fenced.md': note('Fenced', `A synthetic page.\n\n${takes}`) });
@@ -235,7 +235,7 @@ test('#6188: a held fence file is never rewritten by frontmatter repair; its res
   const before = s.read('people/fenced.md');
   const review = details(await s.run()).needs_review.find(entry => entry.path === 'people/fenced.md');
   expect(review).toMatchObject({ code: 'invalid_fence' });
-  expect(review!.resolution).toContain(`gbrain repair fences --source ${s.id} --only people/fenced.md`);
+  expect(review!.resolution).toContain(`foresights repair fences --source ${s.id} --only people/fenced.md`);
   expect(review!.resolution).toContain('frontmatter repair does not change fences');
   for (const secret of ['Sentinelclaimq93', 'Sentinelholderq93']) expect(JSON.stringify(review)).not.toContain(secret);
   expect(s.read('people/fenced.md')).toBe(before);
@@ -268,7 +268,7 @@ test('apply refuses while an unfinished managed sync cursor still names a select
   try {
     const error = await refusal(() => s.run({ apply: true, expect: hash }));
     expect(error.code).toBe('sync_in_progress');
-    expect(error.suggestion).toContain(`gbrain sync --source ${s.id} --no-pull`);
+    expect(error.suggestion).toContain(`foresights sync --source ${s.id} --no-pull`);
     expect(s.read('notes/roundup.md')).toBe(QUOTABLE);
   } finally {
     await engine.executeRaw("DELETE FROM op_checkpoints WHERE (op='managed-sync' AND fingerprint=$1) OR (op='managed-sync-manifest' AND fingerprint=$2)", [`fixture-${runId}`, runId]);
@@ -392,7 +392,7 @@ test('legacy brain: the apply backs the file up, writes it, imports it, clears i
     expect((await engine.getPage('notes/post', { sourceId: id }))?.title).toBe('alice-example post 4\nsecond line of post 4');
     const detail = applied.outcome_items!.find(o => o.detail?.path === 'notes/roundup.md')!.detail!;
     expect(detail).toMatchObject({ path: 'notes/roundup.md', written: true, imported: 'imported', committed: 'commit_step' });
-    expect(detail.commit_step).toBe(`gbrain git commit-push --path ${root} -m 'fix(frontmatter): repair notes/roundup.md' -- notes/roundup.md`);
+    expect(detail.commit_step).toBe(`foresights git commit-push --path ${root} -m 'fix(frontmatter): repair notes/roundup.md' -- notes/roundup.md`);
     expect(readFileSync(String(detail.backup), 'utf8')).toBe(QUOTABLE);
     expect(s.read('notes/roundup.md')).toContain('author: "alice-example');
     expect((await engine.getPage('notes/roundup', { sourceId: id }))?.frontmatter.author).toBe('alice-example (citing acme-example) (original: https://example.invalid/a)');

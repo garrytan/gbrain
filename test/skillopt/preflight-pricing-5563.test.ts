@@ -49,7 +49,7 @@ describe('A-N4 preflight prices through the shared resolver', () => {
     expect(est.per_model_cost_usd[UNPRICED]).toBeNull();
     expect(est.exceeds_cap).toBe(false);
     const report = formatPreflightReport(est, { ...base, maxCostSource: 'default' });
-    expect(report).toContain(`Est. cost:  unpriced (no price for ${UNPRICED}; register a rate with gbrain pricing set)`);
+    expect(report).toContain(`Est. cost:  unpriced (no price for ${UNPRICED}; register a rate with foresights pricing set)`);
     expect(report).toContain('cap: $5.00 default');
   });
 
@@ -71,8 +71,8 @@ describe('#5563 preflight policy for unpriced models', () => {
     expect(r.proceed).toBe(false);
     expect(r.abort_code).toBe('no_pricing');
     expect(r.no_pricing?.model).toBe(UNPRICED);
-    expect(r.abort_reason).toContain(`skillopt: gbrain has no pricing for chat model "${UNPRICED}"`);
-    expect(r.abort_reason).toContain(`gbrain pricing set ${UNPRICED} --input`);
+    expect(r.abort_reason).toContain(`skillopt: foresights has no pricing for chat model "${UNPRICED}"`);
+    expect(r.abort_reason).toContain(`foresights pricing set ${UNPRICED} --input`);
   });
 
   test('user cap with a registered rate: proceeds', () => {

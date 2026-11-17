@@ -76,7 +76,7 @@ const { days, target } = parseArgs(process.argv.slice(2));
 
 const config = loadConfig();
 if (!config) {
-  console.error('No GBrain config found. Run `gbrain init` first, or set DATABASE_URL / GBRAIN_DATABASE_URL.');
+  console.error('No Foresights config found. Run `foresights init` first, or set DATABASE_URL / GBRAIN_DATABASE_URL.');
   process.exit(1);
 }
 const engineConfig = toEngineConfig(config);

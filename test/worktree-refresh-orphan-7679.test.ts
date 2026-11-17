@@ -1,5 +1,5 @@
 /**
- * #7679: an orphaned `gbrain sources refresh` (its process killed while the row
+ * #7679: an orphaned `foresights sources refresh` (its process killed while the row
  * is `syncing`, for example a container replaced mid-refresh) recovers without
  * an operator, and a live refresh is never stolen.
  *

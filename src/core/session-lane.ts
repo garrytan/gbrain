@@ -1,11 +1,11 @@
 /**
  * GBRA-133: the session-lane census behind doctor `session_lane_budget`. A Supabase-style pooler gives each database role a
- * fixed number of session-mode server connections (Supavisor `pool_size`), and every gbrain process on a host opens its own
+ * fixed number of session-mode server connections (Supavisor `pool_size`), and every foresights process on a host opens its own
  * pools: serve's ordinary pool, each process's direct pool, a sync's import workers. Nothing counted them together, so one
  * host could exhaust the lane (`EMAXCONNSESSION`) with no warning before the first refusal.
  *
  * One read-only statement over `pg_stat_activity` (no query text) counts this role's client backends in this database by
- * `application_name`. Every gbrain pool names its connections `gbrain <kind>:<pid>:<nonce8>` (db.ts), so those backends
+ * `application_name`. Every foresights pool names its connections `foresights <kind>:<pid>:<nonce8>` (db.ts), so those backends
  * are attributed to a process kind and, through the live `persistence_consumers` row of the same pid and nonce, to a host.
  * A transaction-mode pooler's server connections carry the pooler's own name, so they are counted apart (`pooler`), never
  * attributed. The limit is `GBRAIN_SESSION_LANE_LIMIT` (the pooler's per-role session limit, which Postgres cannot read)
@@ -19,13 +19,13 @@ export const SESSION_LANE_LIMIT_ENV = 'GBRAIN_SESSION_LANE_LIMIT';
 /** At or above this share of the limit the check warns: one more process of the usual size passes it. */
 export const SESSION_LANE_WARN_RATIO = 0.8;
 const POOLER_NAMES = /^(supavisor|pgbouncer|odyssey|pgcat)\b/i;
-const GBRAIN_NAME = /^gbrain ([^:]+):(\d+):([0-9a-f]{0,8})$/i;
+const GBRAIN_NAME = /^(?:foresights|gbrain) ([^:]+):(\d+):([0-9a-f]{0,8})$/i;
 
 export interface SessionLaneProcess { application_name: string; kind: string; pid: number; host_id: string | null; connections: number }
 export interface SessionLaneCensus {
   /** This role's client backends in this database. */
   total: number;
-  /** Named by a gbrain pool, a pooler, or anything else. */
+  /** Named by a foresights pool, a pooler, or anything else. */
   gbrain: number; pooler: number; other: number;
   by_kind: Record<string, number>;
   by_host: Array<{ host_id: string | null; connections: number }>;

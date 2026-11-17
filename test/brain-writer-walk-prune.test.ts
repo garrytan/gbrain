@@ -1,7 +1,7 @@
 /**
  * v0.38.2.0 — descent-time pruning regression suite.
  *
- * The original bug (PR #1287 reported, this PR fixes): `gbrain doctor` hung
+ * The original bug (PR #1287 reported, this PR fixes): `foresights doctor` hung
  * indefinitely on a 216K-page brain because the frontmatter walker descended
  * into every node_modules / .git / .obsidian / *.raw / ops subtree on disk
  * and let `isSyncable` filter at the leaf — paying the IO cost of stat'ing
@@ -15,7 +15,7 @@
  *
  * This file covers both walkers that were missing pruneDir:
  *   - brain-writer.ts:walkDir (driven by scanBrainSources / doctor)
- *   - frontmatter.ts:collectFiles (driven by `gbrain frontmatter validate`)
+ *   - frontmatter.ts:collectFiles (driven by `foresights frontmatter validate`)
  */
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';

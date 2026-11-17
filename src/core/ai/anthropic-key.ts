@@ -13,7 +13,7 @@
  *      `loadConfigWithEngine()` into the gateway env — becomes visible to
  *      `probeChatModel` and the direct-`Anthropic`-client subagent path,
  *      which are deliberately gateway-config-independent otherwise;
- *   3. the gbrain config file (`anthropic_api_key` set via `gbrain config
+ *   3. the foresights config file (`anthropic_api_key` set via `foresights config
  *      set`) so stdio MCP launches that don't inherit shell env keep working.
  *      `loadConfig` can throw on first-run installs; that is swallowed and
  *      treated as "no key available."
@@ -99,7 +99,7 @@ export function hasAnthropicKey(): boolean {
 
 /**
  * Resolve the actual key value: env first, then the gateway env snapshot,
- * then the gbrain config file. In an embedded engine's scope, only that engine's
+ * then the foresights config file. In an embedded engine's scope, only that engine's
  * own `settings.ai.providers.anthropic.apiKey`. Callers constructing an Anthropic client
  * directly (e.g. the legacy subagent path) must pass this as `apiKey` — a
  * bare `new Anthropic()` only sees env, so launchd/MCP workers with

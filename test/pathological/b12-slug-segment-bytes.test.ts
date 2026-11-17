@@ -7,7 +7,7 @@
  * the 240-byte file-name budget (90 CJK characters: 270 bytes, 90 UTF-16
  * units) with invalid_params, detail slug_not_portable and the shortened slug
  * to write instead, while a healthy sibling write lands and nothing else
- * changes; a page an older gbrain stored under such a slug keeps its row, and
+ * changes; a page an older foresights stored under such a slug keeps its row, and
  * publishing its file ends its write failed with invalid_params (nativeFileTarget
  * refuses a name over NAME_MAX and maps ENAMETOOLONG to detail file_name_too_long) instead of storage_error with a
  * "repair the filesystem" fix agents retry. A run-scoped error while checking
@@ -55,8 +55,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const error = await refusal(Promise.resolve(putPage.handler(ctx, { slug: LONG, content: body('Long') })));
         expect({ code: error.code, detail: error.detail }).toEqual({ code: 'invalid_params', detail: 'slug_not_portable' });
         const suggestion = 'notes/' + '漢'.repeat(78);
-        expectItemFailure(asFailure(LONG, error), { key: LONG, code: 'invalid_params', fix: new RegExp(`^gbrain get ${suggestion}$`) });
-        expect(error.suggestion).toContain(`gbrain put ${suggestion}`);
+        expectItemFailure(asFailure(LONG, error), { key: LONG, code: 'invalid_params', fix: new RegExp(`^foresights get ${suggestion}$`) });
+        expect(error.suggestion).toContain(`foresights put ${suggestion}`);
         const dry = await refusal(Promise.resolve(putPage.handler({ ...ctx, dryRun: true }, { slug: LONG, content: body('Long') })));
         expect({ code: dry.code, detail: dry.detail }).toEqual({ code: 'invalid_params', detail: 'slug_not_portable' });
         await expectUnitNotAborted(() => Promise.resolve(putPage.handler(ctx, { slug: 'notes/sibling', content: body('Sibling') })));

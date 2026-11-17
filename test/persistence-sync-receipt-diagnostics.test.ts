@@ -33,7 +33,7 @@ test('file/database drift preserves v1 vocabulary and names reviewed repair with
   expect(body).toMatchObject({ error: 'scope_denied', protocol_version: 1, write_error: 'source_changed',
     detail: 'file_database_drift', write_request: receipt });
   expect(body.message).toContain('file and database disagree');
-  expect(body.suggestion).toContain('gbrain sources reconcile');
+  expect(body.suggestion).toContain('foresights sources reconcile');
   expect(body.suggestion).toContain('--preview');
   expect(body.suggestion).toContain('new request_id');
   expect(body.suggestion).not.toMatch(/sources writer (claim|activate|transfer)/);
@@ -83,7 +83,7 @@ test('CLI JSON and frozen error serialization retain the same allowlisted health
     const body = JSON.parse(stdout);
     expect(body.write_request.diagnostic).toEqual(diagnostic);
     expect(body.suggestion).toContain(requestId);
-    expect(body.suggestion).toContain('gbrain sources writer status');
+    expect(body.suggestion).toContain('foresights sources writer status');
     expect(stdout).not.toContain('PRIVATE_DRIVER_ERROR');
     expect(validateAgainstSchema(body, ERROR_SCHEMA)).toEqual([]);
   } finally { stderr.mockRestore(); }
@@ -110,7 +110,7 @@ test.each(['blocked_by_failures', 'partial'] as const)('managed %s rendering use
     managedWrite: { source_id: 'example-source', path: 'notes/example.md', slug: 'notes/example',
       write_error: pending ? 'write_pending' : 'source_changed', reason: pending ? 'write_pending' : 'file_database_drift',
       message: pending ? 'The accepted write is not committed.' : 'The file and database disagree.',
-      suggestion: pending ? 'Resume this request.' : 'Review gbrain sources reconcile before retrying.',
+      suggestion: pending ? 'Resume this request.' : 'Review foresights sources reconcile before retrying.',
       write_request: pending ? { ...receipt, state: 'queued', retry_after_ms: 1000 } : receipt, ledger_recorded: false } };
   let output = '';
   printSyncResult(result, { write: (text: string) => { output += text; return true; } } as NodeJS.WriteStream);

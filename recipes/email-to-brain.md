@@ -25,7 +25,7 @@ health_checks:
   # No heartbeat_max_age check: heartbeat checks read the recipe's OWN id
   # (~/.gbrain/integrations/email-to-brain/), but the connector's funnel
   # events land under ~/.gbrain/integrations/google/heartbeat.jsonl.
-  # Freshness is enforced natively instead: `gbrain waiting` refuses on
+  # Freshness is enforced natively instead: `foresights waiting` refuses on
   # stale google sources (no successful sync in 24h) and names the fix.
   - type: any_of
     label: "Auth provider"
@@ -52,19 +52,19 @@ promised, and the context needed to respond.
 **You are the installer — but you no longer write a collector script.**
 Earlier versions of this recipe had you build a deterministic Node.js
 collector (pagination, deduplication, Gmail link generation, noise filtering).
-All of that is now IMPLEMENTED in gbrain's google source kind — see
+All of that is now IMPLEMENTED in foresights's google source kind — see
 `docs/guides/google-connect.md` (setup + every error and its fix) and
 `docs/guides/open-loops.md` (how detection works). Do NOT re-implement it, and
 do not pull emails via raw API calls: the connector handles pagination, dedup,
 deep links, and noise filtering correctly, resumably, and under test.
 
 **The core pattern still holds: code for data, LLMs for judgment.** The code
-half now ships in gbrain. Your job shifts to:
+half now ships in foresights. Your job shifts to:
 
-1. Run the setup (`gbrain google setup`) and **relay every fenced
+1. Run the setup (`foresights google setup`) and **relay every fenced
    `[SHOW USER] ... [/SHOW USER]` block to the user verbatim** — paraphrasing
    loses load-bearing detail like "Desktop app, NOT Web application".
-2. Operate the daily triage with `gbrain waiting` per
+2. Operate the daily triage with `foresights waiting` per
    `skills/google-loops/SKILL.md` (loop closing, muting, context pulls).
 3. Make the judgment calls the connector deliberately leaves to you: which
    entities deserve enrichment, what the digest means for today.
@@ -73,8 +73,8 @@ half now ships in gbrain. Your job shifts to:
 
 ```
 Gmail Account(s)
-  ↓ (BYO OAuth via gbrain google connect; tokens in ~/.gbrain/credentials.json)
-gbrain google source kind (deterministic, resumable, newest-first backfill)
+  ↓ (BYO OAuth via foresights google connect; tokens in ~/.gbrain/credentials.json)
+foresights google source kind (deterministic, resumable, newest-first backfill)
   ↓ Materializes markdown in the source's MANAGED DIR (not the brain repo):
   ├── emails/{YYYY}/{MM}/...md    (type: email — one page per thread, deep links baked in)
   └── people/...md                (type: person — from Contacts, aliases for sender resolution)
@@ -83,7 +83,7 @@ Open-loop engine (per sync)
   ├── deterministic thread detector (unanswered_inbound / unanswered_outbound, free)
   └── LLM commitment extractor (last 30 days, capped; kill switch loops.extraction_enabled)
   ↓
-gbrain waiting  →  the daily digest: ranked people waiting on you
+foresights waiting  →  the daily digest: ranked people waiting on you
 Agent judgment calls: enrichment, prioritization, drafting with brain context
 ```
 
@@ -109,7 +109,7 @@ you know what the connector does, not so you re-build it:
 
 ## Prerequisites
 
-1. **GBrain installed and configured** (`gbrain doctor` passes)
+1. **Foresights installed and configured** (`foresights doctor` passes)
 2. **Google access** via one of:
    - Native connector (recommended): run the
      **[credential-gateway](credential-gateway.md)** recipe, Option A
@@ -122,22 +122,22 @@ you know what the connector does, not so you re-build it:
 ### Step 1: Run the One-Command Setup
 
 ```bash
-gbrain google setup --json
+foresights google setup --json
 ```
 
 This walks the whole chain idempotently: credential intake (prints the GCP
 checklist when nothing is on file) → consent → source registration → a first
 budgeted sync (newest mail first — the deep backfill resumes automatically on
-later syncs) → the first `gbrain waiting` digest. Re-running is always safe.
+later syncs) → the first `foresights waiting` digest. Re-running is always safe.
 
 The pieces, if you want them separately:
 
 ```bash
-gbrain google connect
-gbrain sources add gmail-you --kind google --account you@example.com \
+foresights google connect
+foresights sources add gmail-you --kind google --account you@example.com \
   [--services gmail,calendar,contacts] [--history-days N]
-gbrain sync --source gmail-you
-gbrain waiting
+foresights sync --source gmail-you
+foresights waiting
 ```
 
 Multiple accounts: repeat with `--account work@example.com`; each account is
@@ -153,24 +153,24 @@ fix, doc_url }`; show the user `problem` + `fix`.
 ### Step 2: Verify
 
 ```bash
-gbrain google status --json     # per-account refresh probe
-gbrain waiting                  # the first digest (refuses on stale data)
+foresights google status --json     # per-account refresh probe
+foresights waiting                  # the first digest (refuses on stale data)
 ```
 
 ### Step 3: Continuous Sync
 
-Google sources are ordinary gbrain sources: `gbrain sync --source <id>`,
-`gbrain sync --all`, and autopilot all pick them up. **A bare un-targeted
-`gbrain sync` (repo mode) does not** — target it or use `--all`. No cron
+Google sources are ordinary foresights sources: `foresights sync --source <id>`,
+`foresights sync --all`, and autopilot all pick them up. **A bare un-targeted
+`foresights sync` (repo mode) does not** — target it or use `--all`. No cron
 script of its own; the connector logs funnel events to
 `~/.gbrain/integrations/google/heartbeat.jsonl` automatically.
 
 ### Step 4: Daily Triage (YOUR job — see skills/google-loops/SKILL.md)
 
 ```bash
-gbrain waiting --json        # ranked people waiting on you
-gbrain loops done <id>       # user handled it
-gbrain loops mute sender <email>   # never track this sender again
+foresights waiting --json        # ranked people waiting on you
+foresights loops done <id>       # user handled it
+foresights loops mute sender <email>   # never track this sender again
 ```
 
 - `waiting` REFUSES on stale data (no successful sync in 24h) and names the
@@ -184,12 +184,12 @@ gbrain loops mute sender <email>   # never track this sender again
 
 ## What the Agent Should Test After Setup
 
-1. **Connectivity:** `gbrain google status --json` shows `refresh_probe: "ok"`.
-2. **Ingestion:** `gbrain search "<a recent real subject>"` returns the thread
+1. **Connectivity:** `foresights google status --json` shows `refresh_probe: "ok"`.
+2. **Ingestion:** `foresights search "<a recent real subject>"` returns the thread
    page with a working Gmail deep link (opens the correct account).
-3. **Loop detection:** `gbrain waiting` groups real unanswered threads and
+3. **Loop detection:** `foresights waiting` groups real unanswered threads and
    excludes noise senders and list mail.
-4. **Self-close:** reply to a waiting thread, `gbrain sync --source <id>`,
+4. **Self-close:** reply to a waiting thread, `foresights sync --source <id>`,
    verify the loop closed itself (`closed_by: reply_detected`).
 
 ## Cost Estimate
@@ -198,7 +198,7 @@ gbrain loops mute sender <email>   # never track this sender again
 |-----------|-------------|
 | Gmail API (your own OAuth client) | $0 (within free quota) |
 | Deterministic thread detector | $0 (zero LLM, always on) |
-| LLM commitment extraction | small — last 30 days only, ≤50 threads/sweep; off switch: `gbrain config set loops.extraction_enabled false` |
+| LLM commitment extraction | small — last 30 days only, ≤50 threads/sweep; off switch: `foresights config set loops.extraction_enabled false` |
 
 Tell the user once during setup that commitment extraction sends recent email
 text to the configured chat provider, and name the off switch.
@@ -214,6 +214,6 @@ table. The three users actually hit:
 - **`access_denied_test_user`** → add yourself under Audience → Test users.
 - **`invalid_grant_testing_expiry`** (everything silently stopped ~day 7) →
   publish the consent screen to Production, then
-  `gbrain google connect --reauth <email>`. `gbrain doctor`'s `google_oauth`
+  `foresights google connect --reauth <email>`. `foresights doctor`'s `google_oauth`
   check warns once an account goes 5+ days without a successful refresh
   (an actively-syncing account gets no pre-warning — publish to Production).

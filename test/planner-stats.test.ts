@@ -193,8 +193,8 @@ describe('7. planner.auto_analyze=false', () => {
       const check = await runDoctorCheck();
       expect(check.status).toBe('warn');
       expect(check.message).toContain('facts (800 rows changed since ANALYZE');
-      expect(check.message).toContain('gbrain repair planner-stats --apply');
-      expect(check.message).toContain('gbrain config set planner.auto_analyze true');
+      expect(check.message).toContain('foresights repair planner-stats --apply');
+      expect(check.message).toContain('foresights config set planner.auto_analyze true');
     });
   });
 
@@ -218,7 +218,7 @@ describe('doctor planner_stats_stale and repair planner-stats', () => {
       const check = await runDoctorCheck();
       expect(check.status).toBe('warn');
       expect(check.message).toContain('facts (900 rows changed since ANALYZE, threshold 500');
-      expect(check.details?.fix).toBe('gbrain repair planner-stats --apply');
+      expect(check.details?.fix).toBe('foresights repair planner-stats --apply');
 
       expect(REPAIR_KINDS).toContain('planner-stats');
       const plan = await plannerStatsRepair.plan(engine, { brain_id: 'host', source_ids: [] }, null);

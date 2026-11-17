@@ -4,7 +4,7 @@
  * Protects: on a managed brain, a page whose atoms were published once is edited and re-extracted; the model
  * honestly returns `[]`. The prior atom stays live (no `retired_by`), the scan state advances for the new
  * content (the completed `managed-atoms` checkpoint and the page state, so the next run makes no model call), and
- * `gbrain repair stale-atoms` does not list the kept atom. A later non-empty extraction still retires it, and an
+ * `foresights repair stale-atoms` does not list the kept atom. A later non-empty extraction still retires it, and an
  * unmanaged brain agrees with the managed one. A partial publish retires nothing either: when the batch's re-written
  * atom conflicts (it was edited between admission and publication), the batch's retirement of another atom is
  * refused and that atom stays live.

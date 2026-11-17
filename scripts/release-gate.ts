@@ -170,7 +170,7 @@ if (import.meta.main) {
   const sha = flag('--sha') ?? '';
   const version = flag('--version') ?? '';
   const ref = flag('--ref') ?? 'refs/heads/master';
-  const repo = flag('--repo') ?? process.env.GITHUB_REPOSITORY ?? 'garrytan/gbrain';
+  const repo = flag('--repo') ?? process.env.GITHUB_REPOSITORY ?? 'aimonk2025/gbrain';
   const timeoutMs = Number(flag('--timeout-minutes') ?? 110) * 60_000;
   const pollMs = Number(flag('--poll-seconds') ?? 60) * 1000;
   const output = flag('--output');

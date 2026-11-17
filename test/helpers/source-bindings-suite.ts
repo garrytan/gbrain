@@ -81,7 +81,7 @@ export function sourceBindingsSuite(label: string, getEngine: () => BrainEngine)
     });
   });
 
-  describe(`${label}: orphan_persistence_bindings and gbrain repair orphan-bindings (#5732)`, () => {
+  describe(`${label}: orphan_persistence_bindings and foresights repair orphan-bindings (#5732)`, () => {
     test('doctor reports an orphan binding of a removed source and the repair removes it', async () => {
       const { checkOrphanBindings } = await import('../../src/commands/doctor/checks/orphan-bindings.ts');
       const { repairRunner } = await import('../../src/core/repair/registry.ts');
@@ -95,7 +95,7 @@ export function sourceBindingsSuite(label: string, getEngine: () => BrainEngine)
       const before = await checkOrphanBindings(getEngine());
       expect(before.status).toBe('warn');
       expect(before.details?.bindings).toEqual([expect.objectContaining({ source_id: 'orphan-r', source_incarnation: old, reason: 'source_removed' })]);
-      expect(before.message).toContain('gbrain repair orphan-bindings --apply');
+      expect(before.message).toContain('foresights repair orphan-bindings --apply');
 
       const scope = await resolveRepairScope(getEngine(), 'kept-r');
       const preview = await quiet(async () => (await repairRunner(getEngine(), { apply: false })).run('orphan-bindings', scope));

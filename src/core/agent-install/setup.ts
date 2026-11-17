@@ -66,7 +66,7 @@ async function cli(root: string, artifact: InstallArtifact, args: string[]): Pro
         failure.next_action ?? 'The database is busy. Wait for its owner to finish and rerun setup; do not remove its lock.',
         failure.reason === 'live_serve' ? 'live_serve' : 'timeout',
       );
-      throw new AgentInstallError('setup_command_failed', `GBrain ${args[0]} failed (exit ${code}); rerun setup to resume. Existing data is preserved.`);
+      throw new AgentInstallError('setup_command_failed', `Foresights ${args[0]} failed (exit ${code}); rerun setup to resume. Existing data is preserved.`);
     }
   } finally { clearTimeout(timer); clearTimeout(killTimer); }
 }
@@ -84,7 +84,7 @@ function artifactFromBundle(bundle: string, sourceRef: string): Omit<InstallArti
   const packageDir = join(root, 'app', 'node_modules', 'gbrain');
   const pkg = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
   if (pkg.name !== 'gbrain' || typeof pkg.version !== 'string' || !existsSync(join(packageDir, 'src', 'cli.ts')) || !existsSync(join(packageDir, 'scripts', 'setup-in-agent.sh'))) {
-    throw new AgentInstallError('invalid_artifact', 'Setup bundle does not contain the GBrain package and setup helper.');
+    throw new AgentInstallError('invalid_artifact', 'Setup bundle does not contain the Foresights package and setup helper.');
   }
   if (!/^[a-f0-9]{40}$/.test(sourceRef)) throw new AgentInstallError('invalid_artifact_ref', 'A resolved 40-character source commit is required.');
   const version = bunSpawnSync([bun, '--version'], { stdout: 'pipe', stderr: 'pipe' });
@@ -161,11 +161,11 @@ function ownedFileHash(receipt: AgentInstallReceipt, path: string): string | nul
 
 export function renderLocalInstructions(root: string, sourceId: string, sharedRouter = ''): string {
   const launcher = join(root, 'bin', 'gbrain');
-  return `# GBrain memory
+  return `# Foresights memory
 
 Use the executable \`${launcher}\` for this installation. It selects the host brain and source \`${sourceId}\`; use this same absolute path from every conversation and native routine.
 
-Recall relevant memory before answering personal or continuing-work questions. Use \`gbrain recall --help\` through this launcher for the installed command schema. Explicitly remember user-requested durable facts, with their source and date. Preserve uncertainty and distinguish what the user said from an inference. Correct or forget outdated facts when asked; verify the change through a fresh recall. Forgetting withdraws active memory; history, source material, and private backups may remain. Never promise physical erasure. Never import connected-service history or enable automatic capture without the user's instruction.
+Recall relevant memory before answering personal or continuing-work questions. Use \`foresights recall --help\` through this launcher for the installed command schema. Explicitly remember user-requested durable facts, with their source and date. Preserve uncertainty and distinguish what the user said from an inference. Correct or forget outdated facts when asked; verify the change through a fresh recall. Forgetting withdraws active memory; history, source material, and private backups may remain. Never promise physical erasure. Never import connected-service history or enable automatic capture without the user's instruction.
 
 Do not replace the agent's identity. This is one shared local installation, not a boundary between Bots. Memory calls are finite CLI processes. A busy database means another command is running: retry after it finishes; never remove its lock.
 
@@ -174,7 +174,7 @@ ${sharedRouter ? `\n${sharedRouter}\n` : ''}`;
 }
 
 export function renderLocalMaintenance(root: string, routineId: string): string {
-  return `# GBrain maintenance (${routineId})
+  return `# Foresights maintenance (${routineId})
 
 Create at most one native scheduled routine with this identifier for the shared installation. Use \`${join(root, 'bin', 'gbrain')}\` with absolute paths. First run \`doctor --fast --json\`; report failures. Run only configured maintenance that does not require missing provider credentials. Paid embedding/extraction is a separate user choice. Do not start serve, cron, or a daemon.
 
@@ -190,7 +190,7 @@ function refuseBelowFloor(identity: ReturnType<typeof artifactFromBundle>, optio
     ...(options.skills ? ['--skills', options.skills] : []), ...(options.json ? ['--json'] : [])];
   const rerun = `curl --fail --silent --show-error --location ${SETUP_HELPER_URL} --output /tmp/gbrain-setup.sh && bash /tmp/gbrain-setup.sh ${rerunArgs.map(shellQuote).join(' ')}`;
   const next = options.upgrade ? 'Make a verified backup first (docs/guides/in-agent-setup.md), then fetch' : 'Fetch';
-  throw new AgentInstallError('runtime_below_floor', `This GBrain release needs Bun ${MINIMUM_BUN_VERSION} or newer, but the setup bundle carries Bun ${identity.bun_version || 'of unknown version'}, so the helper that staged it is out of date. ${outcome} ${next} the current helper and rerun setup: ${rerun}`);
+  throw new AgentInstallError('runtime_below_floor', `This Foresights release needs Bun ${MINIMUM_BUN_VERSION} or newer, but the setup bundle carries Bun ${identity.bun_version || 'of unknown version'}, so the helper that staged it is out of date. ${outcome} ${next} the current helper and rerun setup: ${rerun}`);
 }
 
 export async function setupInAgent(options: AgentSetupOptions): Promise<AgentSetupResult> {

@@ -22,7 +22,7 @@ async function runEvalCapture(ctx: DoctorContext): Promise<Check[]> {
 
   // 11a-bis. Eval-capture health (v0.25.0). Capture is a fire-and-forget
   // side-effect that logs failures to a persistent table so this check
-  // can see drops cross-process (the MCP server captures; `gbrain doctor`
+  // can see drops cross-process (the MCP server captures; `foresights doctor`
   // runs in a separate process). Counts failures in the last 24h and
   // warns when non-zero. Pre-v31 brains: the table doesn't exist yet;
   // swallow the error and report skipped.
@@ -48,8 +48,8 @@ async function runEvalCapture(ctx: DoctorContext): Promise<Check[]> {
           'Captured queries feed retrieval evals; if the user does not use them, capture can be turned off.',
         fix: {
           argv: ['gbrain', 'config', 'set', 'eval.capture', 'false'], consent: [], actor: 'user', requires_exclusive: false,
-          why: 'Query capture only feeds retrieval evals (gbrain eval export/replay). Turning it off stops these failures; it is the user\'s preference, so ask first.',
-          user_message: 'gbrain failed to record some queries for its retrieval evals. If you don\'t run gbrain evals, I can turn query capture off. Should I?',
+          why: 'Query capture only feeds retrieval evals (foresights eval export/replay). Turning it off stops these failures; it is the user\'s preference, so ask first.',
+          user_message: 'foresights failed to record some queries for its retrieval evals. If you don\'t run foresights evals, I can turn query capture off. Should I?',
           verify: doctorVerify('eval_capture'),
         },
       });
@@ -101,7 +101,7 @@ async function runContradictions(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'contradictions',
         status: 'ok',
-        message: 'No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query "..." --top-k 5` to populate.',
+        message: 'No probe runs in the last 7 days. Run `foresights eval suspected-contradictions --query "..." --top-k 5` to populate.',
       });
     } else {
       const latest = recent[0];
@@ -142,7 +142,7 @@ async function runContradictions(ctx: DoctorContext): Promise<Check[]> {
           lines.push(`    → ${f.cmd}`);
         }
         if (highFindings.length > 3) {
-          lines.push(`  …and ${highFindings.length - 3} more — see \`gbrain eval suspected-contradictions review\``);
+          lines.push(`  …and ${highFindings.length - 3} more — see \`foresights eval suspected-contradictions review\``);
         }
         checks.push({
           name: 'contradictions',
@@ -220,7 +220,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
     const agesOutAt = incidents ? new Date(Math.max(...failures.map(r => new Date(r.newest).getTime())) + 24 * 3600_000).toISOString() : null;
     const dead = await factsAbsorbJobsStillDead(engine);
     const deadSentence = dead.total === 0 ? '' : `${dead.total} job${dead.total === 1 ? '' : 's'} still dead (${dead.jobs.map(j => `job ${j.id} for ${j.slug ?? 'an unknown page'}`).join(', ')}): ` +
-      `fix the cause in its error (\`gbrain jobs get <id>\`), then ${dead.jobs.map(j => `\`gbrain jobs retry ${j.id}\``).join(', ')}.`;
+      `fix the cause in its error (\`foresights jobs get <id>\`), then ${dead.jobs.map(j => `\`foresights jobs retry ${j.id}\``).join(', ')}.`;
 
     if (rows.length === 0) {
       // Zero failure rows is only "healthy" when extraction is actually
@@ -247,7 +247,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
             status: 'warn',
             message:
               `Automatic fact extraction is misconfigured: resolved model ${unavailableModel} has no usable ` +
-              `provider key. Fix: set the provider's API key, or \`gbrain config set facts.extraction_model <provider:model>\`.`,
+              `provider key. Fix: set the provider's API key, or \`foresights config set facts.extraction_model <provider:model>\`.`,
           });
         } else {
           checks.push({
@@ -297,7 +297,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
               (dead.total ? '.' : '; 0 jobs still dead. No facts-absorb job is unresolved, so these are past attempts: nothing needs retrying, and the warning clears as they age out.')
             : `Facts:absorb activity in last 24h (under threshold ${threshold}): ${summary}.`,
           notes,
-          contended ? `Writer contention persists (${contended}). Check the canonical writer with \`gbrain sources writer status --source ${contention[0].source_id} --json\`.` : '',
+          contended ? `Writer contention persists (${contended}). Check the canonical writer with \`foresights sources writer status --source ${contention[0].source_id} --json\`.` : '',
         ].filter(Boolean).join(' '),
         ...(contention.length ? {
           details: { persistent_writer_contention: contention.map(c => ({ source_id: c.source_id, deferred: c.n, oldest: new Date(c.oldest).toISOString() })) },
@@ -315,7 +315,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
       const newestDead = dead.jobs[0];
       if (newestDead && !check.fix) {
         check.fix = agentFix(['gbrain', 'jobs', 'retry', String(newestDead.id)],
-          `Re-queues dead facts-absorb job ${newestDead.id}, which extracts ${newestDead.slug ?? 'its page'} again with a paid model call. Fix the cause in the job's error first (gbrain jobs get ${newestDead.id}).`,
+          `Re-queues dead facts-absorb job ${newestDead.id}, which extracts ${newestDead.slug ?? 'its page'} again with a paid model call. Fix the cause in the job's error first (foresights jobs get ${newestDead.id}).`,
           'facts_extraction_health', { consent: ['paid'], mcp: { tool: 'retry_job', arguments: { id: newestDead.id } },
             user_message: `Facts extraction for ${newestDead.slug ?? 'a page'} failed and its job is dead. Retrying job ${newestDead.id} makes one paid model call. Should I retry it?` });
       }
@@ -325,7 +325,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
     const retry = await readDeadFactsAbsorbRetry(engine).catch(() => null);
     if (check && retry && (retry.pending || retry.exhausted.length || retry.not_retryable.length)) {
       check.message = `${check.message} Dead facts-absorb retry set: ${retry.pending} pending (the next maintenance pass re-submits them once extraction is servable), ` +
-        `${retry.exhausted.length} exhausted after ${retry.max_resubmits} re-submit(s), ${retry.not_retryable.length} not retryable (a deterministic failure; fix its cause, then gbrain jobs retry <id>). ` +
+        `${retry.exhausted.length} exhausted after ${retry.max_resubmits} re-submit(s), ${retry.not_retryable.length} not retryable (a deterministic failure; fix its cause, then foresights jobs retry <id>). ` +
         `See ${factsRetryDeadCommand('--list')}${retry.exhausted[0] ? `; re-enable one with ${factsRetryDeadCommand('--reset', retry.exhausted[0].key)}` : ''}.`;
       check.details = { ...(check.details ?? {}), facts_absorb_retry: retry };
       if (retry.exhausted.length) {
@@ -348,7 +348,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'facts_extraction_health',
         status: 'ok',
-        message: 'Skipped (ingest_log.source_id unavailable — run `gbrain apply-migrations --yes`).',
+        message: 'Skipped (ingest_log.source_id unavailable — run `foresights apply-migrations --yes`).',
       });
     } else if (code === '42501') {
       checks.push({
@@ -439,7 +439,7 @@ async function conversationPipelineNote(engine: ReturnType<typeof connectedEngin
   return {
     message: `${pages} conversation page(s) are not read by the page-write facts backstop (conversation_pipeline); ` +
       `their facts come from the conversation facts backfill, which is off. Enabling it makes paid model calls, capped at ${caps}: ` +
-      `gbrain config set ${CONVERSATION_PIPELINE_ENABLE_KEY} true.`,
+      `foresights config set ${CONVERSATION_PIPELINE_ENABLE_KEY} true.`,
     details: { reason: 'conversation_pipeline', pages, enable_key: CONVERSATION_PIPELINE_ENABLE_KEY,
       caps: { max_cost_usd: cfg.maxCostUsd, max_total_cost_usd: cfg.maxTotalCostUsd,
         max_walltime_min: cfg.maxWalltimeMin, max_total_walltime_min: cfg.maxTotalWalltimeMin } },
@@ -473,7 +473,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
   // historical (#5742), so only an inferred pre-1990 date is an anomaly. The "fell back despite parseable date"
   // arm can't be a pure SQL COUNT(*) — JSONB `?` only proves a key exists,
   // not that its value parses — so it fetches the candidate rows and
-  // re-runs computeEffectiveDate() in JS (same function `gbrain
+  // re-runs computeEffectiveDate() in JS (same function `foresights
   // reindex-frontmatter` uses) to confirm a real date was missed.
   progress.heartbeat('effective_date_health');
   try {
@@ -499,7 +499,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
     // present — an empty string, null, or unparseable value still passes
     // it, so a naive COUNT(*) on that predicate over-reports "fell back
     // despite a parseable date". Fetch the candidate rows instead and run
-    // them through the SAME parse/range rules `gbrain reindex-frontmatter`
+    // them through the SAME parse/range rules `foresights reindex-frontmatter`
     // uses (computeEffectiveDate) to confirm the frontmatter value itself
     // is parseable. This is a ONE-DIRECTIONAL guarantee, not equivalence:
     // every row counted here is a row reindex-frontmatter's dry run would
@@ -560,7 +560,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'effective_date_health',
         status: 'warn',
-        message: `${parts.join('; ')} (sample of last 1000 pages). Run \`gbrain reindex-frontmatter\` to recompute.`,
+        message: `${parts.join('; ')} (sample of last 1000 pages). Run \`foresights reindex-frontmatter\` to recompute.`,
       });
     } else {
       checks.push({
@@ -572,7 +572,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
   } catch (err) {
     if (isMissingSchemaObject(err, 'column', ['effective_date', 'effective_date_source'])) {
       // column doesn't exist — pre-v0.29.1 brain
-      checks.push({ name: 'effective_date_health', status: 'ok', message: 'Skipped (effective_date column unavailable — run gbrain apply-migrations)' });
+      checks.push({ name: 'effective_date_health', status: 'ok', message: 'Skipped (effective_date column unavailable — run foresights apply-migrations)' });
     } else {
       checks.push(checkError('effective_date_health', 'read pages', err));
     }
@@ -613,7 +613,7 @@ async function runSalience(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'salience_health',
         status: 'warn',
-        message: `${zeroWithTakes} pages with active takes have emotional_weight=0. Run \`gbrain dream --phase recompute_emotional_weight\` to populate. Brain has ${nonzero} pages with non-zero emotional_weight.`,
+        message: `${zeroWithTakes} pages with active takes have emotional_weight=0. Run \`foresights dream --phase recompute_emotional_weight\` to populate. Brain has ${nonzero} pages with non-zero emotional_weight.`,
       });
     } else if (nonzero === 0) {
       checks.push({

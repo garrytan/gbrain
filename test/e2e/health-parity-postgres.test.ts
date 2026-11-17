@@ -2,12 +2,12 @@
  * D8 (test-gap plan; TODOS.md chennai-wave test debt item (b)) — getHealth
  * parity on real Postgres for the chennai wave's accounting fixes:
  *
- *   gbrain#4153 — the islanded (orphan_pages) predicate applies endpoint
+ *   foresights#4153 — the islanded (orphan_pages) predicate applies endpoint
  *   liveness in BOTH directions: an inbound link from a soft-deleted page
  *   and an outbound link to a soft-deleted target must NOT rescue a page
  *   from islanded status.
  *
- *   gbrain#4147 — entity-scoped link_coverage / timeline_coverage report
+ *   foresights#4147 — entity-scoped link_coverage / timeline_coverage report
  *   null below MIN_ENTITY_PAGES_FOR_COVERAGE (0/0 must not read as a hard
  *   0%), with entity_page_count surfaced so consumers can tell 0% from
  *   vacuous.

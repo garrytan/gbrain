@@ -1,5 +1,5 @@
 /**
- * Agent contract v1: `gbrain recall --limit` usage errors are invalid_params
+ * Agent contract v1: `foresights recall --limit` usage errors are invalid_params
  * (exit 2 through renderCliError): under `--json` one envelope carrying
  * `code`, `why` and a runnable `fix`; on a terminal the Error/Fix/Why lines.
  * The flag is parsed before any engine call, so no brain is opened.
@@ -42,7 +42,7 @@ describe('recall --limit invalid-input envelope', () => {
     const r = renderCliError(await refusal(['--limit', '3x']), { json: false, command: 'recall', tty: false });
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain('got "3x"');
-    expect(r.stderr).toContain('Fix: gbrain recall --limit 50');
+    expect(r.stderr).toContain('Fix: foresights recall --limit 50');
   });
 
   test('the thin-client dispatch probe refuses the same way', () => {

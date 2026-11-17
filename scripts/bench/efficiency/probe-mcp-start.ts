@@ -7,7 +7,7 @@
  *     [--slug <existing-slug>] [--label <brain-label>] [--engine pglite|postgres] \
  *     [--idle-ms 0,1000] [--json <out.jsonl>]
  *
- * Each sample is a fresh `gbrain serve` process (GBRAIN_SWEEP=0). Per sample:
+ * Each sample is a fresh `foresights serve` process (GBRAIN_SWEEP=0). Per sample:
  *   init   spawn -> initialize response
  *   list   spawn -> tools/list response (sent right after initialize)
  *   call1  first tools/call latency, from send to response
@@ -99,7 +99,7 @@ const calls = [
 
 const machine = machineLabel();
 console.log(`machine: ${machine}`);
-console.log(`engine: ${engine}  brain: ${label}  command: gbrain serve (stdio)  mode: cold (fresh process per sample)  N: ${N} per row, interleaved  percentiles: nearest-rank 0.5/0.95\n`);
+console.log(`engine: ${engine}  brain: ${label}  command: foresights serve (stdio)  mode: cold (fresh process per sample)  N: ${N} per row, interleaved  percentiles: nearest-rank 0.5/0.95\n`);
 console.log('| cli | first call | idle after list ms | N | init p50 | init p95 | list p50 | list p95 | call1 p50 | call1 p95 | total p50 | total p95 |');
 console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
 const hashes = new Map<string, Set<string>>();
@@ -122,7 +122,7 @@ for (const idleMs of idles) {
       console.log(`| ${cli} | ${callLabel} | ${idleMs} | ${rows.length} | ${f('init', 0.5)} | ${f('init', 0.95)} | ${f('list', 0.5)} | ${f('list', 0.95)} | ${f('call1', 0.5)} | ${f('call1', 0.95)} | ${f('total', 0.5)} | ${f('total', 0.95)} |`);
       if (jsonOut) {
         appendFileSync(jsonOut, JSON.stringify({
-          machine, engine, brain: label, command: `gbrain serve stdio, first call ${callLabel}`, cli, idle_ms: idleMs, mode: 'cold', n: rows.length,
+          machine, engine, brain: label, command: `foresights serve stdio, first call ${callLabel}`, cli, idle_ms: idleMs, mode: 'cold', n: rows.length,
           ...Object.fromEntries((['init', 'list', 'call1', 'total'] as const).flatMap(k => [[`${k}_p50`, pct(rows.map(r => r[k]), 0.5)], [`${k}_p95`, pct(rows.map(r => r[k]), 0.95)]])),
         }) + '\n');
       }

@@ -103,16 +103,16 @@ export function unknownSourceSkipLine(skips: readonly UnknownSourceSkip[]): stri
   const sample = skips.slice(0, 5).map(s => `${s.source_id}:${s.slug}`).join(', ');
   return `Skipped ${skips.length} page(s) because source(s) ${missing.join(', ')} have no sources row (unknown_source; e.g. ${sample}); ` +
     'their links and watermark were kept and the run is incomplete for them. Re-running extract does not fix this: re-register the source ' +
-    '(`gbrain sources list` shows the registered ones) or remove its pages.';
+    '(`foresights sources list` shows the registered ones) or remove its pages.';
 }
 
 /** The operator line for pages a settings change left stale mid-run. */
 export const settingsChangedSkipLine = (n: number) =>
-  `Skipped ${n} page(s) because the line-grammar settings changed during this run; they stay stale. Run \`gbrain extract --stale\` to finish them.`;
+  `Skipped ${n} page(s) because the line-grammar settings changed during this run; they stay stale. Run \`foresights extract --stale\` to finish them.`;
 
 /** The operator line for pages a concurrent write left stale mid-run. */
 export const concurrentWriteSkipLine = (n: number) =>
-  `Skipped ${n} page(s) another writer changed during this run (the page or a link target); their links and watermark were kept, so they stay stale. Run \`gbrain extract --stale\` to finish them.`;
+  `Skipped ${n} page(s) another writer changed during this run (the page or a link target); their links and watermark were kept, so they stay stale. Run \`foresights extract --stale\` to finish them.`;
 
 export async function applyAttendanceDelta(tx: Pick<BrainEngine, 'executeRaw' | 'addLinksBatch'>,
   origin: { id: string; slug: string; source_id: string; type: string }, remove: string[], additions: LinkBatchInput[]) {

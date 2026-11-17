@@ -10,11 +10,11 @@
  * and record nothing.
  *
  * Holds: a leftover page refused with a content-class error on 3 consecutive
- * runs at the same \`content_hash\` and the same producer (the gbrain version,
+ * runs at the same \`content_hash\` and the same producer (the foresights version,
  * which carries the verifier and the writer) is held out of the leftover
  * query. A held page is never reported as grounded: \`grounding_held\` lists it
- * with the command that retries it. Editing the page or upgrading gbrain
- * releases it on the next run; \`gbrain config unset <key>\` releases every
+ * with the command that retries it. Editing the page or upgrading foresights
+ * releases it on the next run; \`foresights config unset <key>\` releases every
  * hold of the source at once. Transient failures are never held and reset the
  * count.
  *
@@ -25,7 +25,7 @@
  * its evidence and paid-child gates and drops each entry once its page grounds
  * (or the entry is gone). The same 3-run content rule holds a page's appends
  * (listed in `grounding_held` with `timeline_appends`); editing the page or
- * upgrading gbrain releases them. That key is never unset to release a hold:
+ * upgrading foresights releases them. That key is never unset to release a hold:
  * it is the only copy of the entries still to verify.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -137,9 +137,9 @@ export async function finishGroundingRun(engine: BrainEngine, run: GroundingRun)
   if (JSON.stringify(holds) !== JSON.stringify(run.holds)) await engine.setConfig(holdsKey(run.sourceId), JSON.stringify({ version: 1, items: holds }));
   const pending = nextPending(run, now);
   if (JSON.stringify(pending) !== JSON.stringify(run.pending)) await engine.setConfig(appendsKey(run.sourceId), JSON.stringify({ version: 1, items: pending }));
-  const release = `gbrain config unset ${holdsKey(run.sourceId)} && gbrain dream --phase patterns --once --source ${run.sourceId}`;
-  const retry = `gbrain dream --phase patterns --once --source ${run.sourceId}`;
-  const inspect = (slug: string) => `gbrain get --source ${run.sourceId} -- ${slug}`;
+  const release = `foresights config unset ${holdsKey(run.sourceId)} && foresights dream --phase patterns --once --source ${run.sourceId}`;
+  const retry = `foresights dream --phase patterns --once --source ${run.sourceId}`;
+  const inspect = (slug: string) => `foresights get --source ${run.sourceId} -- ${slug}`;
   return {
     failedSlugs: new Set(run.failed.map(f => f.key)),
     details: {

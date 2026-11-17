@@ -137,7 +137,7 @@ export async function collectRemoteDoctorReport(
     checks.push({
       name: 'oauth_credentials',
       status: 'fail',
-      message: 'No client_secret available. Set GBRAIN_REMOTE_CLIENT_SECRET or rerun `gbrain init --mcp-only` with --oauth-client-secret.',
+      message: 'No client_secret available. Set GBRAIN_REMOTE_CLIENT_SECRET or rerun `foresights init --mcp-only` with --oauth-client-secret.',
     });
     return {
       schema_version: 2,
@@ -216,8 +216,8 @@ export async function collectRemoteDoctorReport(
   // safe), then a representative admin op (also read-only, no side effects).
   // Reports per-tier status with a pinpoint remediation hint when admin is
   // missing — the v0.29.2/v0.30.0 thin-clients without admin scope hit
-  // `gbrain stats` / `gbrain history` and fail today; this check surfaces
-  // the gap during `gbrain remote doctor` instead of mid-command.
+  // `foresights stats` / `foresights history` and fail today; this check surfaces
+  // the gap during `foresights remote doctor` instead of mid-command.
   //
   // Skippable via opts.skipScopeProbe (preferred for tests) OR
   // GBRAIN_DOCTOR_SKIP_SCOPE_PROBE=1 (env-flag for ops bypass) — the MCP
@@ -235,7 +235,7 @@ export async function collectRemoteDoctorReport(
   // Mirrors the local runDoctor `orphan_ratio` check but routes through
   // the find_orphans MCP op (same canonical findOrphans() data fn under
   // the hood) and emits an OPERATOR-POINTING hint instead of the
-  // self-fix hint — thin-client users can't run `gbrain extract links
+  // self-fix hint — thin-client users can't run `foresights extract links
   // --by-mention` against a brain they don't host. Hint asks them to
   // ping the brain operator at the configured public URL.
   //
@@ -251,7 +251,7 @@ export async function collectRemoteDoctorReport(
   //   - 'ok' when local >= remote OR drift is 'patch' (D8 policy: only
   //     minor/major drift is meaningful enough to flag in doctor)
   //   - 'warn' when minor/major drift detected; fix hint points at
-  //     `gbrain upgrade` (or, if state shows a prior 'failed' attempt,
+  //     `foresights upgrade` (or, if state shows a prior 'failed' attempt,
   //     points at the manual install path)
   //   - 'ok' (informational) when network unreachable / fetch throws —
   //     doctor MUST NOT fail loud on transient network issues; this check
@@ -268,10 +268,10 @@ export async function collectRemoteDoctorReport(
  * v0.42.0.0 D11: thin-client orphan_ratio check.
  *
  * Calls `find_orphans` MCP op (read scope) to get the same data the
- * local `gbrain doctor` `orphan_ratio` check uses. Computes the ratio,
+ * local `foresights doctor` `orphan_ratio` check uses. Computes the ratio,
  * applies the same thresholds (vacuous <100 entity, warn >0.5, fail
  * >0.8), but emits an OPERATOR-POINTING hint: thin-client users can't
- * run `gbrain extract links --by-mention` themselves — they need to
+ * run `foresights extract links --by-mention` themselves — they need to
  * ping whoever runs the brain server.
  *
  * Errors non-fatal — informational check.
@@ -318,7 +318,7 @@ export async function runOrphanRatioCheck(config: GBrainConfig): Promise<RemoteC
   // locally; point them at the brain server's operator.
   const url = config.remote_mcp?.mcp_url ?? '<your brain server>';
   const hint =
-    `Ask the brain operator at ${url} to run: gbrain extract links --by-mention --source db ` +
+    `Ask the brain operator at ${url} to run: foresights extract links --by-mention --source db ` +
     `(auto-links entity mentions in body text).`;
   if (ratio > 0.8) {
     return {
@@ -343,7 +343,7 @@ export async function runOrphanRatioCheck(config: GBrainConfig): Promise<RemoteC
 
 /**
  * v0.31.11: thin-client version-drift check. Surfaces remote-brain drift in
- * `gbrain doctor` so quiet/non-TTY users (who don't see the interactive
+ * `foresights doctor` so quiet/non-TTY users (who don't see the interactive
  * prompt) still learn about minor/major bumps. Pure data fetch + compare.
  *
  * Errors are non-fatal: any failure returns an 'ok' status with a
@@ -405,8 +405,8 @@ export async function runUpgradeDriftCheck(config: GBrainConfig): Promise<Remote
   } catch { /* state read is best-effort */ }
 
   const fixHint = priorFailed
-    ? `Prior \`gbrain upgrade\` did not advance the binary. See https://github.com/garrytan/gbrain/releases for manual install.`
-    : `Run \`gbrain upgrade\` to install v${remoteVersion}.`;
+    ? `Prior \`foresights upgrade\` did not advance the binary. See https://github.com/aimonk2025/gbrain/releases for manual install.`
+    : `Run \`foresights upgrade\` to install v${remoteVersion}.`;
 
   return {
     name: 'thin_client_upgrade_drift',
@@ -511,7 +511,7 @@ export function buildScopeCheck(grantedScope: string, probe: ScopeProbeResult): 
       status: 'warn',
       message:
         'admin scope MISSING (read works). On the host, re-register: ' +
-        '`gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin`',
+        '`foresights auth register-client <name> --grant-types client_credentials --scopes read,write,admin`',
       detail: {
         granted: grantedScope || null,
         read_ok: true,
@@ -595,8 +595,8 @@ function printHumanReport(report: RemoteDoctorReport): void {
   } else {
     console.log('Connectivity check FAILED — see error above.');
     console.log('Common fixes:');
-    console.log('  - Confirm the host is reachable + `gbrain serve --http` is running.');
-    console.log('  - Confirm OAuth credentials are valid (have the host operator re-mint via `gbrain auth register-client`).');
+    console.log('  - Confirm the host is reachable + `foresights serve --http` is running.');
+    console.log('  - Confirm OAuth credentials are valid (have the host operator re-mint via `foresights auth register-client`).');
     console.log('  - Confirm `mcp_url` matches the path the host serves /mcp on (default: <issuer_url>/mcp).');
   }
 }

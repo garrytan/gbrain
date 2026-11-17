@@ -35,8 +35,8 @@ when_to_use: "Use when the user asks: \"two-tier extraction\", \"triage then dee
 > content gets a backlink, not a second extraction.
 >
 > **Convention:** see [conventions/model-routing.md](../conventions/model-routing.md) —
-> this skill uses gbrain's tier vocabulary (`utility` / `reasoning` / `deep`).
-> Resolve tiers through `gbrain models`; never hardcode a model ID.
+> this skill uses foresights's tier vocabulary (`utility` / `reasoning` / `deep`).
+> Resolve tiers through `foresights models`; never hardcode a model ID.
 >
 > **Convention:** see [conventions/test-before-bulk.md](../conventions/test-before-bulk.md) —
 > run the 10 → 100 → 500 progressive ramp before any full-corpus pass.
@@ -254,8 +254,8 @@ corpus (the test-before-bulk ramp gives you the numbers), not a guarantee.
 Check current tier routing before a run:
 
 ```bash
-gbrain models                          # current tier → model table
-gbrain config set models.tier.deep opus   # example: pin the escalation tier
+foresights models                          # current tier → model table
+foresights config set models.tier.deep opus   # example: pin the escalation tier
 ```
 
 ## Adapting for Other Content Types
@@ -317,7 +317,7 @@ gbrain config set models.tier.deep opus   # example: pin the escalation tier
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The deep tier hits a cost cap or `no_pricing`: stop deep reads, keep the triage results, and ask the user before raising the cap or registering a price.
 - A triage call fails or returns low confidence: fail closed to human review; never silently promote the item to the deep tier or drop it.
@@ -336,7 +336,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - **Fixed model for all content.** The whole point is adaptive routing.
   Different content deserves different depth.
 - **Hardcoding model IDs.** Tiers resolve through the model-routing
-  convention (`gbrain models`); a hardcoded ID rots and silently breaks.
+  convention (`foresights models`); a hardcoded ID rots and silently breaks.
 - **Skipping the privacy wall.** Personal archives contain medical
   information, family conversations, credentials. The deterministic
   pre-LLM check is not optional.

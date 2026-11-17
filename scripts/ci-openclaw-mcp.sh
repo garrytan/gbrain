@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tier 2 (e2e.yml): register gbrain's stdio MCP server with OpenClaw, then
+# Tier 2 (e2e.yml): register foresights's stdio MCP server with OpenClaw, then
 # prove OpenClaw sees it (#8002).
 #
 # OpenClaw 2026.4.9 reads its MCP servers from `mcp.servers` in
@@ -11,7 +11,7 @@
 #
 # gbrain serves its starter surface (31 tools): OpenClaw's default agent model
 # is openai/gpt-5.4, OpenAI refuses a request with more than 128 tools, and
-# OpenClaw adds about 31 of its own to gbrain's 158 on the full surface.
+# OpenClaw adds about 31 of its own to foresights's 158 on the full surface.
 #
 # The server runs behind scripts/ci-mcp-tap.sh, which logs every request to
 # $GBRAIN_TEST_TIER2_MCP_TAP_LOG and every response to

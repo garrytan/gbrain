@@ -6,7 +6,7 @@ import type { Migration } from './types.ts';
 // GBRA-133 PR 2a (commit triggers that never drop a commit; core in
 // src/core/commit-notifier.ts and src/core/notifier/store.ts):
 // - sync_wanted_markers: one row per source and intent class (freshness, pull,
-//   full). A submitter (gbrain sync trigger, the GitHub webhook, a busy
+//   full). A submitter (foresights sync trigger, the GitHub webhook, a busy
 //   delegated sync, a resident forwarding a HEAD move) upserts it and bumps
 //   generation; a drainer deletes it only WHERE generation equals the value it
 //   read, so a newer request survives the run that was already going.

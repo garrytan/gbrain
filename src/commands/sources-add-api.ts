@@ -1,5 +1,5 @@
 /**
- * `gbrain sources add <id> --kind meetings|slack` on an unmanaged brain (the default keyless install). These kinds use
+ * `foresights sources add <id> --kind meetings|slack` on an unmanaged brain (the default keyless install). These kinds use
  * the managed-lifecycle parser, so both paths accept exactly the same flags; a slack source is checked against Slack
  * before it is registered, and --dry-run registers nothing.
  */
@@ -21,5 +21,5 @@ export async function runApiSourceAdd(engine: BrainEngine, args: string[]): Prom
   const record = opts.slack ? config.s_record : config.m_record;
   console.log(`Created ${opts.slack ? 'slack' : 'meetings'} source "${created.id}" (record: ${String(record)})${created.local_path ? ` → ${created.local_path}` : ''}`);
   console.log(`  federated: ${isSourceFederated(created.config)}`);
-  console.log(`  sync: run \`gbrain sync --source ${created.id}\` once; after its first sync, autopilot keeps it synced on its own interval.`);
+  console.log(`  sync: run \`foresights sync --source ${created.id}\` once; after its first sync, autopilot keeps it synced on its own interval.`);
 }

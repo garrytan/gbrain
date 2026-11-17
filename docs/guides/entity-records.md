@@ -1,7 +1,7 @@
 # Entity records: contracts, amendments and orders on entity rows
 
 An account's governing terms usually live in a few documents among many: the
-contract, its amendments, an order form. GBrain can list those documents where
+contract, its amendments, an order form. Foresights can list those documents where
 agents already look, the compact `entity names` rows, the full `entity` card
 and `context_pack`, so a later amendment is not lost behind a page of older
 hits.
@@ -17,15 +17,15 @@ its full card.
 ## Turn records on
 
 ```bash
-gbrain config set entity.record_types contract,amendment,order-form
-gbrain config get entity.record_types
+foresights config set entity.record_types contract,amendment,order-form
+foresights config get entity.record_types
 ```
 
 The value is a comma-separated list of page types. A stored type alias is read
 as its schema-pack type (with `gbrain-base-v2`, `term-sheet` lists under
 `deal`). A type that neither the pack declares nor any page uses gives a
 `record_types_undeclared` notice instead of an empty list. Unset it to turn
-records off again: `gbrain config unset entity.record_types`.
+records off again: `foresights config unset entity.record_types`.
 
 `entity.names_references` (default `true`) controls the `referenced_by_count`
 and card `next` on `entity names` rows; `false` turns them off.
@@ -56,7 +56,7 @@ Effective 2026-03-01, the monthly fee changes to 12,000 USD. All other terms are
   type in the schema pack's frontmatter links (example pack:
   `examples/schema-packs/amends-example/pack.yaml`; details in
   [temporal edges](temporal-edges.md#amendments-the-amends-link)), then link the
-  pages you already have with `gbrain extract links --source db --include-frontmatter`.
+  pages you already have with `foresights extract links --source db --include-frontmatter`.
   Without the mapping the page is still a record; it just shows no `amends`.
 - Whole-record replacement is a `supersedes` link, which also down-ranks the
   replaced page in search. Use it only when the new record replaces the old one
@@ -120,9 +120,9 @@ unread, not empty.
 Read-only, no agent needed:
 
 ```bash
-gbrain config get entity.record_types
-gbrain call get_backlinks '{"slug":"accounts/acme-example","type":"amendment","group":"page"}'
-gbrain call list_pages '{"type":"amendment"}'
+foresights config get entity.record_types
+foresights call get_backlinks '{"slug":"accounts/acme-example","type":"amendment","group":"page"}'
+foresights call list_pages '{"type":"amendment"}'
 ```
 
 Full field contract: [MEMORY_VERBS v1, entity records](../protocol/MEMORY_VERBS_v1.md#entity-records-record-types-enrolled-by-config-additive).

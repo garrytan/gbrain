@@ -111,7 +111,7 @@ function skipWithoutRepo(defaultSourcePath: string | null): OrchestratorPhaseRes
   recordSkippedAutopilotInstall(defaultSourcePath);
   const command = autopilotInstallCommand(defaultSourcePath);
   console.log(`No autopilot was installed: sync.repo_path is unset or relative. Install it when you want background maintenance: ${command} `
-    + `(recorded in ${pendingHostWorkPath()}; gbrain doctor shows it until an autopilot is installed)`);
+    + `(recorded in ${pendingHostWorkPath()}; foresights doctor shows it until an autopilot is installed)`);
   return {
     name: 'install', status: 'skipped', reason: 'no_repo_path', detail: `sync.repo_path is unset or relative, so the upgrade installed no autopilot. Install it: ${command}`,
     ...(defaultSourcePath ? { argv: autopilotInstallArgv(defaultSourcePath) } : {}),
@@ -123,7 +123,7 @@ function skipNotInstalled(repo: string | null): OrchestratorPhaseResult {
   recordSkippedAutopilotInstall(repo, why);
   const command = autopilotInstallCommand(repo);
   console.log(`No autopilot was installed: ${why}. Install it when you want background maintenance: ${command} `
-    + `(recorded in ${pendingHostWorkPath()}; gbrain doctor shows it until an autopilot is installed)`);
+    + `(recorded in ${pendingHostWorkPath()}; foresights doctor shows it until an autopilot is installed)`);
   return {
     name: 'install', status: 'skipped', reason: 'not_installed', detail: `${why}. Install it: ${command}`,
     ...(repo ? { argv: autopilotInstallArgv(repo) } : {}),
@@ -137,7 +137,7 @@ export async function phaseFInstall(opts: OrchestratorOpts): Promise<Orchestrato
   try {
     const config = loadConfig();
     if (config?.engine === 'pglite') {
-      return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use gbrain serve for background maintenance' };
+      return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use foresights serve for background maintenance' };
     }
     let repoPath: string | null = null;
     try {
@@ -149,7 +149,7 @@ export async function phaseFInstall(opts: OrchestratorOpts): Promise<Orchestrato
       repoNote = `repo path unreadable (${e instanceof Error ? e.message : String(e)}); the install resolves it itself`;
     }
     if (!autopilotInstalledForBrain()) return skipNotInstalled(repoPath);
-    execSync(gbrainChildCommand('gbrain autopilot --install --yes'), { stdio: cliChildStdio(), timeout: 60_000, env: process.env });
+    execSync(gbrainChildCommand('foresights autopilot --install --yes'), { stdio: cliChildStdio(), timeout: 60_000, env: process.env });
     return { name: 'install', status: 'complete' };
   } catch (e) {
     return { name: 'install', status: 'failed', reason: 'install_failed', detail: `${repoNote}: ${e instanceof Error ? e.message : String(e)}` };

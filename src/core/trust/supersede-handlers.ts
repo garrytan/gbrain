@@ -110,12 +110,12 @@ export async function forgetRequiresOwner(engine: BrainEngine, input: { sourceId
   // Frozen MEMORY_VERBS v1 pair: `error` stays scope_denied, `code` is the canonical forget_requires_owner.
   const error = verbError('scope_denied',
     `forget_requires_owner: fact #${input.factId} is ${input.factTier}; an agent cannot forget it. Proposal ${ref} asks the owner.`,
-    `Do not retry. Tell the user fact #${input.factId} needs their decision: they can forget it with gbrain trust confirm ${ref} on the brain host.`,
+    `Do not retry. Tell the user fact #${input.factId} needs their decision: they can forget it with foresights trust confirm ${ref} on the brain host.`,
     JSON.stringify({ proposal_ref: ref, fact_id: String(input.factId) }));
   error.canonical = 'forget_requires_owner';
   error.fix = tierRaiseFix(['gbrain', 'trust', 'confirm', ref],
     'Forgetting a fact the owner confirmed or curated is their decision; the confirm prompt applies the forget.',
-    `Run on the brain host, in a terminal: gbrain trust confirm ${ref}`);
+    `Run on the brain host, in a terminal: foresights trust confirm ${ref}`);
   return error;
 }
 

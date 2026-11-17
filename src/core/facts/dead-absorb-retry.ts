@@ -8,10 +8,10 @@
  * Each maintenance pass (the facts_drain cycle phase, any engine) reads the dead page-write jobs. A job whose error
  * is a provider or configuration failure is recorded in a durable set keyed by its idempotency key (config row
  * facts.absorb_retry.state). Once the cause has cleared (extraction enabled and its model servable), the pass
- * re-submits it in place (gbrain jobs retry semantics: same row, same key, fresh attempts), at most
+ * re-submits it in place (foresights jobs retry semantics: same row, same key, fresh attempts), at most
  * facts.absorb_retry.max_resubmits times per key (default 3; 0 disables) and at most once an hour per key, and at
  * most MAX_RESUBMITS_PER_PASS keys per pass. A key at its limit is exhausted: it stays dead and visible until an
- * operator resets it (gbrain facts retry-dead --reset <key>) or clears it (--clear <key>: never re-submitted again).
+ * operator resets it (foresights facts retry-dead --reset <key>) or clears it (--clear <key>: never re-submitted again).
  * A job that died on anything else (a deterministic write refusal, an unclassified error) is not retryable: it stays
  * dead and is counted. Entries settle when their job completes or its row is gone.
  */
@@ -77,7 +77,7 @@ export interface DeadAbsorbRetryResult {
 }
 
 export function factsRetryDeadCommand(flag: '--list' | '--reset' | '--clear', key?: string): string {
-  return ['gbrain facts retry-dead', flag, ...(key ? [`'${key.replaceAll("'", "'\\''")}'`] : [])].join(' ');
+  return ['foresights facts retry-dead', flag, ...(key ? [`'${key.replaceAll("'", "'\\''")}'`] : [])].join(' ');
 }
 
 export async function loadMaxResubmits(engine: BrainEngine): Promise<number> {
@@ -173,7 +173,7 @@ export function retryDeadFactsAbsorb(engine: BrainEngine, opts: { dryRun?: boole
   return reconcile(engine, { apply: !opts.dryRun, now: opts.now ?? Date.now() });
 }
 
-/** Read-only status for doctor and gbrain facts retry-dead --list (nothing is written or re-submitted). */
+/** Read-only status for doctor and foresights facts retry-dead --list (nothing is written or re-submitted). */
 export async function readDeadFactsAbsorbRetry(engine: BrainEngine, now = Date.now()): Promise<DeadAbsorbRetryResult> {
   const r = await reconcile(engine, { apply: false, now });
   if (r.waiting_on === 'dry_run') delete r.waiting_on;

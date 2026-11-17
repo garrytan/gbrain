@@ -43,6 +43,6 @@ export async function upstreamRewriteReason(read: GitRead, before: UpstreamRecor
   const held = new Set(tips.length ? lines((await read(['rev-list', '--ignore-missing', `^${targetHead}`, ...tips])).stdout) : []);
   const removed = lines((await read(['rev-list', `${targetHead}..${oldHead}`])).stdout).find(sha => sha && held.has(sha));
   if (removed) return `${upstreamRef} no longer contains ${removed}, which it held before: its history was rewritten (a force-push), and publishing would merge back the commits the rewrite removed.`;
-  if (!before.recorded) return `gbrain has no record of what ${upstreamRef} held before this fetch (no reflog entry and no completed refresh), so it cannot tell a force-push from local commits.`;
+  if (!before.recorded) return `foresights has no record of what ${upstreamRef} held before this fetch (no reflog entry and no completed refresh), so it cannot tell a force-push from local commits.`;
   return null;
 }

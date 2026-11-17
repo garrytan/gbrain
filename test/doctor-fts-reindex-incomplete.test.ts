@@ -1,7 +1,7 @@
 /**
  * fts_reindex_incomplete doctor check (#4795).
  *
- * `gbrain reindex-search-vector` stamps `fts.reindex_in_progress` (= target
+ * `foresights reindex-search-vector` stamps `fts.reindex_in_progress` (= target
  * language) in the config table before flipping the trigger functions and
  * clears it only after both backfills finish. While the marker is set the
  * brain's keyword index is split across two tokenizers, so doctor must
@@ -24,7 +24,7 @@ describe('ftsReindexIncompleteCheck', () => {
     expect(check!.name).toBe('fts_reindex_incomplete');
     expect(check!.status).toBe('fail');
     expect(check!.message).toContain('dutch');
-    expect(check!.message).toContain('GBRAIN_FTS_LANGUAGE=dutch gbrain reindex-search-vector --yes');
+    expect(check!.message).toContain('GBRAIN_FTS_LANGUAGE=dutch foresights reindex-search-vector --yes');
   });
 
   test('marker absent → null (nothing pushed)', async () => {

@@ -4,7 +4,7 @@
  * Protects: a source rooted at its repository root checkpoints under either pin (both modes give it identical slugs)
  * and keeps the pin it has; a subdirectory source checkpoints under its pin; a pin that changes under a run of a
  * subdirectory source is refused as `slug_root_mode_mismatch`, not as a concurrent-writer `revision_conflict`; and a
- * plain `gbrain sync --no-pull` recovers a checkpoint that already failed that way.
+ * plain `foresights sync --no-pull` recovers a checkpoint that already failed that way.
  * Regression it catches: discovery hardcodes `git-root` at an empty scope while the guard compares the pin, so a
  * `source-root` pin on a root source never checkpoints. No existing test syncs a root source with a pin.
  * Synthetic content only.

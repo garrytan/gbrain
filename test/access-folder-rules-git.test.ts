@@ -4,7 +4,7 @@
  * 1. Protects: `<source root>/.gbrain/access.yml` is read by sync from the synced
  *    commit (also when it is the only changed path) and applied before the
  *    commit's pages are imported; narrowing applies, widening is held until
- *    gbrain access apply, which commits `.gbrain/access.approved` through the
+ *    foresights access apply, which commits `.gbrain/access.approved` through the
  *    door. A malformed file keeps the last applied rules and hides what it
  *    touches. A rebuilt database reaches the same rules from git alone. The
  *    persisted store survives a removed .git, and rule migrate moves rules
@@ -14,7 +14,7 @@
  *    a migrate or a missing checkout drops rules.
  * 3. Existing coverage (access-folder-rules) pins the database store.
  * 4. Real seams: real git repositories (one with a bare remote), performSync,
- *    gbrain git commit-push through commitPolicyFile, the CLI module, PGLite.
+ *    foresights git commit-push through commitPolicyFile, the CLI module, PGLite.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -105,7 +105,7 @@ describe('folder access rules, git store', () => {
     expect((await policyStatus(engine, SRC)).held).toEqual([]);
   }, 120_000);
 
-  test('a committed widening is held; gbrain access apply commits access.approved through the door and applies it', async () => {
+  test('a committed widening is held; foresights access apply commits access.approved through the door and applies it', async () => {
     writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
     git(root, 'commit', '-q', '-am', 'drop alice rule');
     await sync(engine, root);
@@ -177,7 +177,7 @@ describe('folder access rules, git store', () => {
     expect({ rules: s.rules.map(r => r.id), invalid: s.invalid }).toEqual({ rules: ['team'], invalid: [] });
   }, 120_000);
 
-  test('gbrain access rule add on a git source commits access.yml through the door and applies it at once', async () => {
+  test('foresights access rule add on a git source commits access.yml through the door and applies it at once', async () => {
     const r = await cli(engine, ['rule', 'add', '--source', SRC, '--prefix', 'partners/alice-example/', '--readers', 'alice-example', '--id', 'alice', '--yes']);
     expect({ store: r.store, state: r.state, outcome: r.git.outcome, path: r.git.path }).toEqual({ store: 'git', state: 'applied', outcome: 'committed_local', path: POLICY_FILE });
     expect((await readCommittedPolicy(root)).yml).toContain('id: alice');

@@ -81,7 +81,7 @@ export function guestQuoteLabel(guest: GuestStamp): string {
   return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${guest.saved_at ?? 'undated'}, ${NOT_OWNER}`;
 }
 
-/** The fixed line gbrain appends to a think answer built from guest notes; the model never writes it. */
+/** The fixed line foresights appends to a think answer built from guest notes; the model never writes it. */
 export function guestAnswerLine(slugs: readonly string[]): string {
   return `Uses outside-guest notes: ${[...new Set(slugs)].join(', ')} (${NOT_OWNER}).`;
 }

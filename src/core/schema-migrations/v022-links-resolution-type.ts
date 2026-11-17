@@ -7,7 +7,7 @@ export const v022: Migration = {
   // each edge records whether its target source was pinned at
   // extraction time via `[[source:slug]]` (qualified) or resolved
   // via local-first fallback (unqualified). Unqualified edges are
-  // candidates for re-resolution via `gbrain extract
+  // candidates for re-resolution via `foresights extract
   // --refresh-unqualified` when the source topology changes.
   //
   // Nullable because legacy edges (pre-v0.17) have no resolution

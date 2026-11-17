@@ -1,5 +1,5 @@
 /**
- * #4831: `gbrain skillpack sync` registers exactly the skills it scaffolded in
+ * #4831: `foresights skillpack sync` registers exactly the skills it scaffolded in
  * an existing workspace skills/manifest.json (append-only, user entries and
  * order untouched), so check-resolvable no longer reports each one as an
  * orphan trigger. A workspace without a manifest keeps deriving from the walk.

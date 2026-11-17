@@ -1,5 +1,5 @@
 /**
- * Judge-agreement math for `gbrain decide judge-agreement` (eval-only; Jev as
+ * Judge-agreement math for `foresights decide judge-agreement` (eval-only; Jev as
  * a judge beside an existing LLM judge, no runtime substitution): the 2x2
  * confusion matrix, raw agreement, Cohen's kappa with a large-sample 95% CI,
  * per-slice results and latency percentiles. Pure: no I/O, no provider.

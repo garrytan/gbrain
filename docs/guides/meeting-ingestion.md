@@ -28,18 +28,18 @@ on new_meeting_transcript(meeting):
         # Below the bar: full transcript, append-only
         #   Format: **Speaker** (HH:MM:SS): Words.
 
-    gbrain put <slug> --content "<compiled_truth>\n---\n<timeline>"
+    foresights put <slug> --content "<compiled_truth>\n---\n<timeline>"
 
     # Step 3: Propagate to ALL entity pages (MANDATORY -- most agents skip this)
     for person in meeting.attendees + meeting.mentioned_people:
-        gbrain timeline-add <person_slug> {date} \
+        foresights timeline-add <person_slug> {date} \
             "Met in '{meeting.title}' on {date}. Key points: ..." \
             --source "Meeting notes '{meeting.title}', {date}"
         # Update their State section if new information surfaced
         # Update company pages for each person's company if relevant
 
     for company in meeting.mentioned_companies:
-        gbrain timeline-add <company_slug> {date} \
+        foresights timeline-add <company_slug> {date} \
             "Discussed in '{meeting.title}': {what_was_said}" \
             --source "Meeting notes '{meeting.title}', {date}"
 
@@ -52,11 +52,11 @@ on new_meeting_transcript(meeting):
     #   edges from the meeting page's `Attendees:` line and `attendees:`
     #   frontmatter, so skip them here
     for entity in all_entities_mentioned - meeting.attendees:
-        gbrain link <slug> <entity_slug>   # meeting -> entity
-        gbrain link <entity_slug> <slug>    # entity -> meeting
+        foresights link <slug> <entity_slug>   # meeting -> entity
+        foresights link <entity_slug> <slug>    # entity -> meeting
 
     # Step 6: Sync so new pages are immediately searchable
-    gbrain sync
+    foresights sync
 
 # Schedule: cron 3x/day (10 AM, 4 PM, 9 PM) to catch new meetings
 # Source: Circleback (https://circleback.ai) or any service with
@@ -64,7 +64,7 @@ on new_meeting_transcript(meeting):
 
 # Automation: the built-in `extract-timeline-from-meetings` Minion job
 # automates step 3 (entity timeline propagation) for already-ingested
-# meeting pages: gbrain jobs submit extract-timeline-from-meetings --follow
+# meeting pages: foresights jobs submit extract-timeline-from-meetings --follow
 ```
 
 ## Tricky Spots
@@ -78,12 +78,12 @@ on new_meeting_transcript(meeting):
 
 ## How to Verify
 
-1. After ingesting a meeting, run `gbrain get meetings/{date}-{slug}`. Confirm the page has the agent's analysis above the bar and the full diarized transcript below it.
-2. For each attendee, run `gbrain get <attendee_slug>`. Check that their timeline has a new entry referencing the meeting with specific insights (not just "attended meeting").
-3. Pick a company mentioned in the meeting. Run `gbrain get <company_slug>`. Confirm a timeline entry exists referencing what was discussed about the company.
-4. Run `gbrain call get_links '{"slug": "meetings/{date}-{slug}"}'`. Verify links exist to the mentioned entity pages.
-5. Run `gbrain call get_backlinks '{"slug": "meetings/{date}-{slug}"}'`. Verify an `attended` link arrives from each attendee: where the active schema pack does not override attendance (gbrain-base-v2, which `gbrain init` sets), attendance points from the person to the meeting, so `get_links` on the meeting does not list it.
-6. Run `gbrain search "{meeting_topic}"`. Confirm the meeting page appears in search results (verifies sync ran).
+1. After ingesting a meeting, run `foresights get meetings/{date}-{slug}`. Confirm the page has the agent's analysis above the bar and the full diarized transcript below it.
+2. For each attendee, run `foresights get <attendee_slug>`. Check that their timeline has a new entry referencing the meeting with specific insights (not just "attended meeting").
+3. Pick a company mentioned in the meeting. Run `foresights get <company_slug>`. Confirm a timeline entry exists referencing what was discussed about the company.
+4. Run `foresights call get_links '{"slug": "meetings/{date}-{slug}"}'`. Verify links exist to the mentioned entity pages.
+5. Run `foresights call get_backlinks '{"slug": "meetings/{date}-{slug}"}'`. Verify an `attended` link arrives from each attendee: where the active schema pack does not override attendance (gbrain-base-v2, which `foresights init` sets), attendance points from the person to the meeting, so `get_links` on the meeting does not list it.
+6. Run `foresights search "{meeting_topic}"`. Confirm the meeting page appears in search results (verifies sync ran).
 
 ## Related
 
@@ -92,4 +92,4 @@ on new_meeting_transcript(meeting):
   pattern overview).
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

@@ -19,7 +19,7 @@
  *   writes the hold, instead of reporting the restored page as moved;
  * - on a host that does not own the checkout the restore applies but reports the file left unheld
  *   (`restored_file_unheld`, `checkout_not_on_this_host`) with the owner host's command, and that command
- *   (`gbrain repair file-drift --prefer database`, run once the host owns the checkout) writes the edit to the file.
+ *   (`foresights repair file-drift --prefer database`, run once the host owns the checkout) writes the edit to the file.
  *
  * Doctor `sync_overwritten_db_edits` warns with the source's count and slugs for a high finding and is ok otherwise.
  *
@@ -281,7 +281,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     const applied = await repair(engine, { slugs: ['notes/a'], expect: preview.preview_hash });
     const [outcome] = applied.outcome_items ?? [];
     expect([outcome?.outcome, outcome?.detail?.held, outcome?.detail?.why]).toEqual(['restored_file_unheld', false, 'checkout_not_on_this_host']);
-    expect(String(outcome?.detail?.next)).toContain('gbrain repair file-drift --source default --slug notes/a --prefer database');
+    expect(String(outcome?.detail?.next)).toContain('foresights repair file-drift --source default --slug notes/a --prefer database');
     expect(await bodyOf(engine, 'notes/a')).toContain('DBONLYMARKER');
     expect(await holdOf(engine, 'notes/a.md')).toBeNull();
     expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toContain('The second committed body.');

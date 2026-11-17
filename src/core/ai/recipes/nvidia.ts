@@ -4,7 +4,7 @@ import type { Recipe } from '../types.ts';
  * NVIDIA NIM / API Catalog exposes OpenAI-compatible /v1/chat/completions
  * and /v1/embeddings APIs.
  *
- * Retrieval models use asymmetric encoding. The gateway maps gbrain's
+ * Retrieval models use asymmetric encoding. The gateway maps foresights's
  * document/query distinction to NVIDIA's wire values:
  *   document -> input_type: passage
  *   query    -> input_type: query
@@ -19,7 +19,7 @@ export const nvidia: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'nvidia/nemotron-3-super-120b-a12b',
     'nvidia/nv-embedqa-e5-v5',

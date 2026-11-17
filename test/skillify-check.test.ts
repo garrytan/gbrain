@@ -35,7 +35,7 @@ async function run(args: string[]): Promise<{ exitCode: number; stdout: string; 
 
 describe('skillify-check CLI', () => {
   test('text mode runs against a known-skilled file', async () => {
-    // publish is one of the gbrain commands with SKILL.md + tests +
+    // publish is one of the foresights commands with SKILL.md + tests +
     // resolver entry. Should get a non-zero score.
     const result = await run(['src/commands/publish.ts']);
     expect(result.stdout).toContain('[publish]');
@@ -132,7 +132,7 @@ function runWithPath(opts: { path: string }): { stdout: string; stderr: string }
   };
 }
 
-describe('skillify-check ↔ gbrain check-resolvable wiring', () => {
+describe('skillify-check ↔ foresights check-resolvable wiring', () => {
   const created: string[] = [];
   afterEach(() => {
     while (created.length) {
@@ -141,12 +141,12 @@ describe('skillify-check ↔ gbrain check-resolvable wiring', () => {
     }
   });
 
-  test('loud failure when gbrain binary is not on PATH (no silent pass)', () => {
+  test('loud failure when foresights binary is not on PATH (no silent pass)', () => {
     const emptyPath = mkdtempSync(join(tmpdir(), 'no-gbrain-'));
     created.push(emptyPath);
     const r = runWithPath({ path: emptyPath });
     // Loud warning must appear on stderr.
-    expect(r.stderr).toContain('gbrain check-resolvable not runnable');
+    expect(r.stderr).toContain('foresights check-resolvable not runnable');
     const parsed = JSON.parse(r.stdout);
     const gate = parsed[0].items.find((i: any) => i.name === 'check-resolvable gate');
     expect(gate).toBeDefined();
@@ -155,7 +155,7 @@ describe('skillify-check ↔ gbrain check-resolvable wiring', () => {
     expect(gate.detail).toContain('unavailable');
   });
 
-  test('happy path: synthetic gbrain on PATH returns ok=true, gate passes', () => {
+  test('happy path: synthetic foresights on PATH returns ok=true, gate passes', () => {
     const fakeBinDir = mkdtempSync(join(tmpdir(), 'fake-gbrain-'));
     created.push(fakeBinDir);
     const fakeBin = join(fakeBinDir, 'gbrain');
@@ -170,7 +170,7 @@ JSON
     chmodSync(fakeBin, 0o755);
     const r = runWithPath({ path: `${fakeBinDir}:${process.env.PATH}` });
     // No silent-pass warning.
-    expect(r.stderr).not.toContain('gbrain check-resolvable not runnable');
+    expect(r.stderr).not.toContain('foresights check-resolvable not runnable');
     const parsed = JSON.parse(r.stdout);
     const gate = parsed[0].items.find((i: any) => i.name === 'check-resolvable gate');
     expect(gate).toBeDefined();

@@ -1,7 +1,7 @@
 /**
- * Cat 41 run 4 (D runs): after `gbrain remember "... coffee black, with a pinch
+ * Cat 41 run 4 (D runs): after `foresights remember "... coffee black, with a pinch
  * of cardamom" --kind preference` on a keyless brain, the agents asked
- * `gbrain recall "how does the user take their coffee"` and got "No matching
+ * `foresights recall "how does the user take their coffee"` and got "No matching
  * facts." The positional is an entity, then a literal fact-text substring
  * (#4720), so a question matches neither, while `--question` ranks the fact
  * first. On a brain without embeddings a multi-word positional that matched
@@ -79,6 +79,6 @@ describe('brain with embeddings: output unchanged, plus a hint', () => {
     const r = await recall([q]);
     expect(r.out).toContain('No matching facts.');
     expect(r.out).not.toContain(FACT);
-    expect(r.err).toContain(`To rank facts against it as a question: gbrain recall --question ${JSON.stringify(q)}`);
+    expect(r.err).toContain(`To rank facts against it as a question: foresights recall --question ${JSON.stringify(q)}`);
   });
 });

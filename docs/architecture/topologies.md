@@ -1,6 +1,6 @@
-# GBrain Deployment Topologies
+# Foresights Deployment Topologies
 
-GBrain supports three deployment shapes. They compose: a single user can mix
+Foresights supports three deployment shapes. They compose: a single user can mix
 all three on the same machine without conflict, because every shape resolves
 to "which `~/.gbrain/config.json` is active right now?" and `GBRAIN_HOME`
 controls that selection.
@@ -13,7 +13,7 @@ this doc is about WHERE that database lives.
 ## Quick decision tree
 
 ```
-   "I'm setting up gbrain..."
+   "I'm setting up foresights..."
         │
         ▼
   Just for me, on one machine? ─── yes ───▶ Topology 1 (single brain)
@@ -41,25 +41,25 @@ brain at a remote server.
   ┌────────────────┐
   │   one machine  │
   │  ┌──────────┐  │
-  │  │  gbrain  │──┼──→  ~/.gbrain/  →  PGLite  or  Supabase
+  │  │  foresights  │──┼──→  ~/.gbrain/  →  PGLite  or  Supabase
   │  │   CLI    │  │
   │  └──────────┘  │
   └────────────────┘
 ```
 
 What you get: one local DB (PGLite for small brains, Supabase for ~1000+
-files). All commands work directly against it. `gbrain serve` exposes it
+files). All commands work directly against it. `foresights serve` exposes it
 to a single agent over MCP.
 
 When it fits: solo use, single machine, one agent, no Conductor parallelism.
-This is the default; `gbrain init` (no flags) gives you this.
+This is the default; `foresights init` (no flags) gives you this.
 
 Setup:
 
 ```
-gbrain init           # interactive — defaults to PGLite
-gbrain init --pglite  # explicit local
-gbrain init --supabase  # remote Supabase (recommended for 1000+ files)
+foresights init           # interactive — defaults to PGLite
+foresights init --pglite  # explicit local
+foresights init --supabase  # remote Supabase (recommended for 1000+ files)
 ```
 
 Nothing else here is special. The other two topologies are variations on
@@ -71,12 +71,12 @@ Nothing else here is special. The other two topologies are variations on
   ┌────────────┐                    ┌──────────────────┐
   │ neuromancer│                    │    brain-host    │
   │ ┌────────┐ │ HTTP MCP / OAuth   │  ┌────────────┐  │
-  │ │ Hermes │─┼───────────────────→│  │   gbrain   │──┼──→ Supabase
+  │ │ Hermes │─┼───────────────────→│  │   foresights   │──┼──→ Supabase
   │ │ agent  │ │                    │  │ serve --http│  │
   │ └────────┘ │                    │  └────────────┘  │
   │            │                    │   (with autopilot)│
   │  no local  │                    │                  │
-  │  gbrain DB │                    │                  │
+  │  foresights DB │                    │                  │
   └────────────┘                    └──────────────────┘
 ```
 
@@ -112,7 +112,7 @@ The CLI dispatch guard refuses every DB-bound command (`sync`, `embed`,
 `extract`, `migrate`, `serve`, `enrich`, `jobs`, `sources`, `pages`,
 `files`, `eval`, and the rest of the local-only surface — the full hint
 table is `THIN_CLIENT_REFUSE_HINTS` in `src/cli.ts`) on a thin-client
-install with a clear error pointing at the remote host. `gbrain doctor`
+install with a clear error pointing at the remote host. `foresights doctor`
 runs a dedicated thin-client check set (OAuth discovery, token round-trip,
 MCP smoke). See [`thin-client.md`](./thin-client.md) for the routing seam.
 
@@ -121,16 +121,16 @@ MCP smoke). See [`thin-client.md`](./thin-client.md) for the routing seam.
 **Step 1 — On the host (brain-host):**
 
 ```bash
-gbrain init --supabase                         # or --pglite, doesn't matter
-gbrain serve --http --port 3001 --bind 0.0.0.0 # bind explicitly for remote access
+foresights init --supabase                         # or --pglite, doesn't matter
+foresights serve --http --port 3001 --bind 0.0.0.0 # bind explicitly for remote access
                                                 # (default bind is 127.0.0.1)
-gbrain auth register-client neuromancer \
+foresights auth register-client neuromancer \
   --grant-types client_credentials \
   --scopes read,write,admin                    # admin needed for remote doctor
 
 # source-scoped client (write to one source, federate reads across
 # multiple sources). Omit both flags for an unscoped super-client.
-gbrain auth register-client neuromancer-dept \
+foresights auth register-client neuromancer-dept \
   --grant-types client_credentials \
   --scopes read,write \
   --source dept-x \
@@ -139,16 +139,16 @@ gbrain auth register-client neuromancer-dept \
 
 The `register-client` command prints a `client_id` and `client_secret`.
 Note both. **Scope must include `admin`** for `run_doctor` (used by
-`gbrain remote doctor`) and generic background jobs. `submit_job` accepts
+`foresights remote doctor`) and generic background jobs. `submit_job` accepts
 only `sync`, `import`, `lint`, and `lint-fix` with the authenticated source's
 registered root, so the host refuses the `autopilot-cycle` job that
-`gbrain remote ping` submits; run maintenance on the brain host. See the
+`foresights remote ping` submits; run maintenance on the brain host. See the
 [authorization upgrade guide](../guides/authorization-upgrade.md#generic-remote-background-jobs).
 
 **Step 2 — On the thin client (neuromancer):**
 
 ```bash
-gbrain init --mcp-only \
+foresights init --mcp-only \
   --issuer-url https://brain-host.local:3001 \
   --mcp-url https://brain-host.local:3001/mcp \
   --oauth-client-id <id> \
@@ -181,20 +181,20 @@ Example for Claude Desktop's `~/.config/claude/claude_desktop_config.json`:
 **Step 4 — Verify.**
 
 ```bash
-gbrain doctor             # runs thin-client checks (no local DB needed)
-gbrain remote doctor      # asks the host to run its own doctor (Tier B)
+foresights doctor             # runs thin-client checks (no local DB needed)
+foresights remote doctor      # asks the host to run its own doctor (Tier B)
 ```
 
-`gbrain sync` and friends will refuse with a clear thin-client error
+`foresights sync` and friends will refuse with a clear thin-client error
 naming the `mcp_url`. That's the correct behavior — those commands need
 a local engine that doesn't exist here.
 
 ### Re-run guard
 
-Running `gbrain init` (no flags) on a machine that already has thin-client
+Running `foresights init` (no flags) on a machine that already has thin-client
 config set refuses without `--force`. This catches the scripted-setup-loop
 friction where an orchestrator keeps trying to create a local DB. Use
-`gbrain init --mcp-only --force` to refresh thin-client config.
+`foresights init --mcp-only --force` to refresh thin-client config.
 
 ### Storing the OAuth secret
 
@@ -225,16 +225,16 @@ token at once.
   │                                                      │
   │  ┌─ worktree A ──────────────┐                       │
   │  │  GBRAIN_HOME=A/.conductor │                       │
-  │  │  gbrain serve --port 3001 │── PGLite (code A)     │
+  │  │  foresights serve --port 3001 │── PGLite (code A)     │
   │  └───────────────────────────┘                       │
   │                                                      │
   │  ┌─ worktree B ──────────────┐                       │
   │  │  GBRAIN_HOME=B/.conductor │                       │
-  │  │  gbrain serve --port 3002 │── PGLite (code B)     │
+  │  │  foresights serve --port 3002 │── PGLite (code B)     │
   │  └───────────────────────────┘                       │
   │                                                      │
   │  ┌─ default ~/.gbrain ───────┐    HTTP MCP / OAuth   │
-  │  │  gbrain serve --port 3000 │──────────────────────→ remote artifacts
+  │  │  foresights serve --port 3000 │──────────────────────→ remote artifacts
   │  └───────────────────────────┘                        (Supabase / brain-host)
   │                                                      │
   │  Agent's MCP config (Hermes / Claude Desktop):       │
@@ -263,15 +263,15 @@ When it fits:
 
 ```bash
 export GBRAIN_HOME=/path/to/worktree-A/.conductor/gbrain
-gbrain init --pglite
-gbrain serve --http --port 3001
+foresights init --pglite
+foresights serve --http --port 3001
 ```
 
-Each worktree's `gbrain serve` instance binds its own port and indexes its
-own DB. Multiple `gbrain serve` processes coexist fine — they're separate
+Each worktree's `foresights serve` instance binds its own port and indexes its
+own DB. Multiple `foresights serve` processes coexist fine — they're separate
 OS processes with separate config and separate connection pools.
 
-The artifact brain runs as a separate `gbrain serve` instance with the
+The artifact brain runs as a separate `foresights serve` instance with the
 default `~/.gbrain` (no GBRAIN_HOME override) — or remote, in which case
 it's a Topology 2 setup.
 
@@ -289,7 +289,7 @@ later `init` overwrite:
 
 ```bash
 export GBRAIN_HOME=/path/to/worktree-A/.conductor/gbrain
-gbrain init --pglite \
+foresights init --pglite \
   --embedding-model voyage:voyage-code-3 \
   --embedding-dimensions 1024
 ```
@@ -301,21 +301,21 @@ brains, switch with the one-command wipe-and-reinit (preserves every
 other config field):
 
 ```bash
-gbrain reinit-pglite --embedding-model voyage:voyage-code-3 --embedding-dimensions 1024
-gbrain reindex-code --yes
+foresights reinit-pglite --embedding-model voyage:voyage-code-3 --embedding-dimensions 1024
+foresights reindex-code --yes
 ```
 
-(`gbrain config set embedding_model` is refused because the schema column
+(`foresights config set embedding_model` is refused because the schema column
 has to resize alongside the config.)
 
-`gbrain reindex-code` prints a recommendation when the configured
+`foresights reindex-code` prints a recommendation when the configured
 embedding model isn't code-tuned. Suppress with
 `GBRAIN_NO_CODE_MODEL_NUDGE=1` if you've intentionally chosen another
 provider (single-vendor procurement, compliance, no Voyage key).
 
 ### CRITICAL: alias-level routing is manual
 
-Topology 3 has no smart per-tool routing inside gbrain. The agent picks
+Topology 3 has no smart per-tool routing inside foresights. The agent picks
 which brain to query when it picks the alias. **A wrong alias writes (or
 queries) the wrong brain silently.** This is intentional (explicit beats
 magic) but real:
@@ -337,17 +337,17 @@ Mitigations:
 
 ### Setup (manual; gstack automates this side)
 
-The gbrain side requires zero new code — `GBRAIN_HOME` and `--port` already
+The foresights side requires zero new code — `GBRAIN_HOME` and `--port` already
 exist. Setup looks like:
 
 ```bash
 # Start the artifact brain (default ~/.gbrain) on port 3000
-gbrain serve --http --port 3000 &
+foresights serve --http --port 3000 &
 
 # Start a per-worktree code brain on port 3001
 export GBRAIN_HOME=/path/to/worktree-A/.conductor/gbrain
-gbrain init --pglite
-gbrain serve --http --port 3001 &
+foresights init --pglite
+foresights serve --http --port 3001 &
 unset GBRAIN_HOME
 ```
 
@@ -373,7 +373,7 @@ different ports). For Claude Desktop:
 
 The gstack-side wiring (per-worktree home setup, port allocation, automatic
 MCP config generation, gitignore for the per-worktree DB) is in the gstack
-repo's setup-gbrain skill — it composes these primitives, gbrain doesn't
+repo's setup-gbrain skill — it composes these primitives, foresights doesn't
 have to know about Conductor.
 
 ## Combining topologies
@@ -383,13 +383,13 @@ The three shapes compose. A single machine can run:
 - A thin-client default config pointing at a remote artifact brain
   (Topology 2).
 - Plus per-worktree code brains under their own `GBRAIN_HOME` (Topology 3).
-- Each worktree's `gbrain serve` instance is local; the agent's MCP config
+- Each worktree's `foresights serve` instance is local; the agent's MCP config
   lists them alongside the remote artifact brain.
 
 `GBRAIN_HOME` controls which config file is active for any one CLI
-invocation. `gbrain serve --port` controls which port a server listens on.
+invocation. `foresights serve --port` controls which port a server listens on.
 The agent's MCP client picks the alias and thus the destination per tool
-call. There's no global gbrain orchestrator that knows about all of them
+call. There's no global foresights orchestrator that knows about all of them
 simultaneously — that's by design.
 
 ## Writer administration is not routine repair
@@ -400,7 +400,7 @@ activate managed persistence, or transfer ownership. Start with read-only inspec
 on the selected brain host:
 
 ```bash
-gbrain sources writer status --brain host --json
+foresights sources writer status --brain host --json
 ```
 
 Keep the brain and source selection explicit. Inspect the existing owners, source
@@ -438,8 +438,8 @@ fingerprint. Each non-dry-run action requires both an exact `--admin-intent` and
 For example, after reviewing the target host and canonical directory:
 
 ```bash
-gbrain sources writer claim default --brain host --path /absolute/canonical/source --dry-run --json
-gbrain sources writer claim default --brain host --path /absolute/canonical/source \
+foresights sources writer claim default --brain host --path /absolute/canonical/source --dry-run --json
+foresights sources writer claim default --brain host --path /absolute/canonical/source \
   --admin-intent writer_claim --expected-state <reviewed-admin-state> --json
 ```
 
@@ -457,11 +457,11 @@ owners, and outstanding locks and recovery to be resolved. On a brain whose
 owner needs none: `writer status` already reports it `database_only`, and
 activation lists it under `database_only_sources` and goes ahead (#6449). Page
 writes to it publish to the database only (`write_through.skipped:
-disabled_by_config`), `gbrain sync` on it refuses `owner_unavailable` naming the
+disabled_by_config`), `foresights sync` on it refuses `owner_unavailable` naming the
 claim, and turning `sync.write_through` back on does not claim it, not even on
 PGLite (activation records the listed source ids as a JSON array in the config
 key `persistence.database_only_sources`, deactivation clears it, and
-`gbrain config unset persistence.database_only_sources` is the escape hatch if a
+`foresights config unset persistence.database_only_sources` is the escape hatch if a
 listing outlives its brain state; it is not a setting to edit by hand): the next write
 refuses with `detail: unbound_source` and the `writer claim` to run (preview
 with `--dry-run`), or stays database-only under
@@ -471,7 +471,7 @@ suggestion names that claim and the database-only alternative. Preview
 activation with `--confirm-quiesced --dry-run`, then, only when approved:
 
 ```bash
-gbrain sources writer activate --brain host --confirm-quiesced \
+foresights sources writer activate --brain host --confirm-quiesced \
   --admin-intent writer_activate --expected-state <reviewed-admin-state> --json
 ```
 
@@ -484,7 +484,7 @@ exact successor manifest; stale heartbeats never authorize takeover.
 worktree and records `prepared_at` with the manifest; until the successor accepts, maintenance,
 fence repair, managed repair roots and lifecycle changes refuse `owner_unavailable` /
 `transfer_in_progress` (`wait`, then `ask_user` once the drain is 30 minutes old). On the owner
-host, `gbrain sources writer transfer cancel <source> --expected-epoch <n> --admin-intent
+host, `foresights sources writer transfer cancel <source> --expected-epoch <n> --admin-intent
 writer_transfer_cancel --expected-state <admin_state>` (preview with `--dry-run`) takes the
 coordination lock, requires the worktree draining at that epoch under this owner, sets it back to
 `active` and clears the prepared manifest; the epoch is kept, so an accept bound to it refuses
@@ -493,7 +493,7 @@ coordination lock, requires the worktree draining at that epoch under this owner
 **Content receipts follow the root.** An accept and a `sources set-path` rebind the shared-skills
 content receipt of every moved gbrain-owned content source (nested sources by relative path) in
 their own transaction and report them as `content_receipts`; a receipt an older release left
-behind is rebound by `gbrain repair content-receipt-root` ([repair guide](../guides/repair.md#content-receipt-root)).
+behind is rebound by `foresights repair content-receipt-root` ([repair guide](../guides/repair.md#content-receipt-root)).
 
 <a id="transfer-manifest-scope"></a>**What the manifest covers.** In a Git checkout, the transfer, `sources
 set-path` (rebind), clone and reclone manifest covers the files Git tracks
@@ -530,10 +530,10 @@ owner. Wrong identity, changed tokens, malformed physical records or uncertain
 liveness refuse. The native lock derives from the database binding.
 
 ```bash
-gbrain sources writer transfer prepare default --brain host --self-transfer \
+foresights sources writer transfer prepare default --brain host --self-transfer \
   --admin-intent writer_transfer_prepare --expected-state <reviewed-admin-state> --dry-run --json
 # After separate approval, rerun prepare without --dry-run; then inspect fresh status.
-gbrain sources writer transfer accept default --brain host --self-transfer \
+foresights sources writer transfer accept default --brain host --self-transfer \
   --path /absolute/canonical/source --expected-epoch <prepared-epoch> \
   --manifest <prepared-sha256> --admin-intent writer_transfer_accept \
   --expected-state <fresh-reviewed-admin-state> --dry-run --json
@@ -559,16 +559,16 @@ neither relaxes anything else:
   again from a fresh status. The flag without `--self-transfer` is a usage
   error.
 - *Recorded path now a symlink to the moved checkout:* run
-  `gbrain sources set-path <source> <recorded-or-real-path>` on the owner host.
+  `foresights sources set-path <source> <recorded-or-real-path>` on the owner host.
   When the recorded path resolves to the target and the reservation under the
   recorded name and the stamp inside the real directory agree on token, brain
   id and worktree id, the worktree keeps its id: `local_path` and the host
   binding move to the real directory, the reservation is written under the new
   `sha256(root)` name, the old one is removed and the stamp names the new root.
   A token or worktree mismatch keeps the refusal and moves nothing.
-- <a id="moved-root"></a>*Moved to a new path, no symlink (#8625):* `gbrain sources
-  set-path <source> <new>`, `gbrain sources add <id> --path <new>` and
-  `gbrain sources writer claim <id> --path <new>`, dry runs included, refuse
+- <a id="moved-root"></a>*Moved to a new path, no symlink (#8625):* `foresights sources
+  set-path <source> <new>`, `foresights sources add <id> --path <new>` and
+  `foresights sources writer claim <id> --path <new>`, dry runs included, refuse
   `recovery_required` with detail `physical_root_moved` when the folder's stamp
   names this brain, a worktree this host owns and a recorded root that no longer
   exists, and the reservation under the recorded name carries the stamp's token.
@@ -578,16 +578,16 @@ neither relaxes anything else:
   worktree and its sources, and the exit (its `fix` is `ask_user`, since it
   moves the user's folders):
   - *The worktree still has sources:* `ln -s <new> <old>` (the moved folder or
-    parent), `gbrain sources set-path <source> <new>` (the symlinked relocation
+    parent), `foresights sources set-path <source> <new>` (the symlinked relocation
     above), `rm <old>`, then `set-path` for each further source of the worktree.
   - *Its source was removed* (`remove` keeps the worktree and its history):
-    `mv <new> <old>`, then `gbrain sources add <id> --path <old>` (add `--force`
+    `mv <new> <old>`, then `foresights sources add <id> --path <old>` (add `--force`
     for a plain directory), which reattaches the worktree; move it again with the
     steps above.
   - *The folder is a copy* (another filesystem, a copy and delete: its device,
     inode or birth time differs from the stamp) *and its source was removed:*
     moving it back would not reattach the worktree, so restore the original from a
-    backup or switch the brain to classic mode with `gbrain sources writer
+    backup or switch the brain to classic mode with `foresights sources writer
     deactivate --dry-run`.
 
   A lookalike (another brain's stamp, a token the reservation does not carry, a
@@ -595,7 +595,7 @@ neither relaxes anything else:
   keeps the generic refusal. A remote page write that reaches the automatic claim
   of such a folder gets the detail only, with no path or worktree id.
 
-`gbrain sources writer deactivate --dry-run` lists a `physical_root` blocker
+`foresights sources writer deactivate --dry-run` lists a `physical_root` blocker
 exactly when its real run would refuse: the managed run takes the strict
 worktree lock, so a recreated root blocks it until one of the exits above ran;
 the classic (pre-activation) release publishes nothing and needs only the
@@ -640,7 +640,7 @@ the first match wins:
 `GBRAIN_COORDINATION_HOME` must be an absolute path without `..` segments and is
 read only when rule 4 applies. It comes from the process environment only: a
 `.env` file in the working directory cannot set it (it is on the cwd `.env`
-quarantine list). `gbrain sources writer status --json` prints
+quarantine list). `foresights sources writer status --json` prints
 `onboarding.sources[].coordination_lock` with the resolved `path` and the `rule`
 that chose it; an unclaimed checkout without a reservation reports the
 `directory` a claim would use, and an unreadable setting reports `error`.
@@ -653,7 +653,7 @@ to a checkout (rule 4) and names another directory than the recorded lock's,
 (`configured_directory`, `recorded_path`, `move_step`) and doctor's
 `coordination_lock_location` warns with the same move step: make the recorded
 lock's directory survive container recreation (mount it), and unset the variable
-for that checkout's processes if it was meant to move the lock. No gbrain command
+for that checkout's processes if it was meant to move the lock. No foresights command
 relocates a recorded lock yet; never edit or delete the reservation to force one.
 
 A reservation written before this rule existed, for a checkout that contains
@@ -671,19 +671,19 @@ verified writer recovery. Never delete the reservation to get past it.
 Activation is reversible through the [deactivate runbook](#deactivate-runbook)
 below, but treat deactivation as a planned mode conversion, not an undo. Take a
 database backup first: for Postgres, `pg_dump` the brain database; for PGLite,
-stop every gbrain process and copy the database directory.
+stop every foresights process and copy the database directory.
 
 Quiesce every writer on every host that uses this database before activating:
 
-1. Stop `gbrain serve` (stdio and HTTP) on each host.
-2. Pause autopilot on each host with `gbrain autopilot pause --reason "writer activation"`
-   and confirm with `gbrain autopilot status`. The pause survives
-   `gbrain upgrade` and `gbrain autopilot --install`; `gbrain autopilot resume`
+1. Stop `foresights serve` (stdio and HTTP) on each host.
+2. Pause autopilot on each host with `foresights autopilot pause --reason "writer activation"`
+   and confirm with `foresights autopilot status`. The pause survives
+   `foresights upgrade` and `foresights autopilot --install`; `foresights autopilot resume`
    clears it afterwards.
-3. Stop `gbrain jobs work` workers and supervisors that are not autopilot's.
-4. Disable cron entries, Git hooks and harness hooks that run `gbrain sync`,
+3. Stop `foresights jobs work` workers and supervisors that are not autopilot's.
+4. Disable cron entries, Git hooks and harness hooks that run `foresights sync`,
    `embed`, `extract`, `dream` or `import`.
-5. Upgrade every remaining host to the gbrain version you activate with (v0.60.11.0
+5. Upgrade every remaining host to the foresights version you activate with (v0.60.11.0
    or newer), even ones you only read from.
 
 Then run the sequence, re-reading status between every step, because
@@ -691,35 +691,35 @@ Then run the sequence, re-reading status between every step, because
 `writer_admin_state_changed`:
 
 ```bash
-gbrain sources writer status --brain host --json          # note admin_state
-gbrain sources writer claim default --brain host --path /absolute/canonical/source \
+foresights sources writer status --brain host --json          # note admin_state
+foresights sources writer claim default --brain host --path /absolute/canonical/source \
   --admin-intent writer_claim --expected-state <admin_state> --json
-gbrain sources writer status --brain host --json          # fresh admin_state
-gbrain sources writer activate --brain host --confirm-quiesced --dry-run --json
-gbrain sources writer activate --brain host --confirm-quiesced \
+foresights sources writer status --brain host --json          # fresh admin_state
+foresights sources writer activate --brain host --confirm-quiesced --dry-run --json
+foresights sources writer activate --brain host --confirm-quiesced \
   --admin-intent writer_activate --expected-state <fresh admin_state> --json
 ```
 
 After activation, managed sync requires `--no-pull` (new upstream commits come in
-through `gbrain sources refresh <source>`, the drained worktree-wide fast-forward,
-which runs inside a resident PGLite owner such as `gbrain serve` when one holds the brain;
+through `foresights sources refresh <source>`, the drained worktree-wide fast-forward,
+which runs inside a resident PGLite owner such as `foresights serve` when one holds the brain;
 see [worktree refresh refusals](../guides/write-refusals.md#worktree-refresh-refusals)) and refuses `--skip-failed` and
 `--include-gitignored`; after fixing a failed item run
-the plain `gbrain sync --no-pull` with the same source and options (`--retry-failed` is a deprecated alias of it on a managed brain). Resume
-autopilot with `gbrain autopilot resume` and re-enable the hooks you stopped.
+the plain `foresights sync --no-pull` with the same source and options (`--retry-failed` is a deprecated alias of it on a managed brain). Resume
+autopilot with `foresights autopilot resume` and re-enable the hooks you stopped.
 
 When activation refuses with `writer_not_quiesced` because of queued work, the
 refusal names the blocking effect (effect id, kind, source, page and request id)
-and the command that inspects it, `gbrain sources writer status <source> --json`.
+and the command that inspects it, `foresights sources writer status <source> --json`.
 A committed write whose embedding effect is stuck queued or failed is reported by
-`gbrain doctor` as `stale_embedding_effects` and settled by
-`gbrain repair embedding-effects --source <source>` (preview, then `--apply`).
+`foresights doctor` as `stale_embedding_effects` and settled by
+`foresights repair embedding-effects --source <source>` (preview, then `--apply`).
 
 <a id="deactivate-runbook"></a>
 ### Deactivate runbook
 
-`gbrain sources writer deactivate` converts the whole brain back to classic
-mode: classic writers, `gbrain sync` and older binaries then write as they did
+`foresights sources writer deactivate` converts the whole brain back to classic
+mode: classic writers, `foresights sync` and older binaries then write as they did
 before managed mode. It is a planned mode conversion, not a proven rollback of
 everything that happened while managed. It keeps canonical files and database
 pages, retires every worktree (their rows stay so write receipts remain valid),
@@ -731,37 +731,37 @@ is classic. Reactivation is the normal claim and activate runbook above.
 dry run first."*
 
 <a id="pre-activation-claims"></a>**A source claimed before activation.** Claiming a source fences classic
-`gbrain sync` of it even while managed persistence was never activated, so sync
+`foresights sync` of it even while managed persistence was never activated, so sync
 refuses `writer_coordinator_required` (#6122). On such a brain, the dry run
 reports the claims as `pre_activation_claims` (with `source_bindings` counting
 them) and, when nothing blocks, an `apply_command`; running it releases every
 claim: the claimed worktrees are retired, source and host bindings are removed
 and a committed `writer_deactivate` receipt (`outcome.pre_activation: true`) is
 recorded. The brain stays classic and its mode epoch does not change; the next
-`gbrain sync` runs in classic mode, and the source can be claimed again later.
+`foresights sync` runs in classic mode, and the source can be claimed again later.
 The CLI writer registration that receipt needs is created if the brain has none
 yet, as activation would. The other choice is to finish the claim and activate
 runbook above.
 
-1. Quiesce every writer on every host, as for activation: stop `gbrain serve`,
-   pause autopilot with `gbrain autopilot pause --reason "writer deactivation"`,
+1. Quiesce every writer on every host, as for activation: stop `foresights serve`,
+   pause autopilot with `foresights autopilot pause --reason "writer deactivation"`,
    and let queued writes finish.
-2. Back up: `pg_dump` the Postgres database, or stop gbrain and copy the PGLite
+2. Back up: `pg_dump` the Postgres database, or stop foresights and copy the PGLite
    directory.
-3. Dry run: `gbrain sources writer deactivate --dry-run`. It lists each blocker
+3. Dry run: `foresights sources writer deactivate --dry-run`. It lists each blocker
    with its exit and what would change, and changes nothing. Blocker exits:
-   `gbrain cancel-write-request <request_id>` for a queued write,
-   `gbrain sync --source <id> --no-pull` for one that needs
+   `foresights cancel-write-request <request_id>` for a queued write,
+   `foresights sync --source <id> --no-pull` for one that needs
    recovery, waiting for the owner to drain a queued or running effect (a
    links or facts-backstop effect that keeps failing settles after five
    attempts; an embedding effect still queued after an hour is re-queued by
-   `gbrain repair embedding-effects --source <id>`), and
-   `gbrain sources writer unlock` for the writer admin lock. A terminally
+   `foresights repair embedding-effects --source <id>`), and
+   `foresights sources writer unlock` for the writer admin lock. A terminally
    failed effect does not block: the dry run lists it in `failed_effects` with
    its code and the exit that retries it
-   (`gbrain sources writer retry-effects <source> --request-id <id> --dry-run`
+   (`foresights sources writer retry-effects <source> --request-id <id> --dry-run`
    for parked targets and failed Git, withdrawal, links and facts-backstop
-   effects, `gbrain repair embedding-effects --source <id>` for a failed
+   effects, `foresights repair embedding-effects --source <id>` for a failed
    embedding effect, none for a zero-norm refusal or an effect whose source is
    gone). Held Google or GitHub items do not block: deactivate
    copies each source's managed holds into its classic state file
@@ -769,58 +769,58 @@ runbook above.
    and reported in classic mode; the dry run lists them as `carried_holds`. Only
    a source with no state directory, or with a classic state file that does not
    parse, blocks; its exit is to move that file aside, or to resolve the holds
-   (`gbrain sources status <id>`, fix the cause, `gbrain sources retry-held <id>`,
-   `gbrain sync --source <id>`). A live connector or maintenance
+   (`foresights sources status <id>`, fix the cause, `foresights sources retry-held <id>`,
+   `foresights sync --source <id>`). A live connector or maintenance
    lease means waiting for that run. A clean dry run prints `apply_command`,
    the deactivate command bound to the state it reviewed.
-4. Deactivate: run the printed `apply_command`, or `gbrain sources writer status --json`
+4. Deactivate: run the printed `apply_command`, or `foresights sources writer status --json`
    (note `admin_state`) and then
-   `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state <admin_state>`.
+   `foresights sources writer deactivate --admin-intent writer_deactivate --expected-state <admin_state>`.
    It takes no `<source>`: deactivation is brain-wide.
-5. Verify on every host: `gbrain sources writer status` reports `mode: classic`
+5. Verify on every host: `foresights sources writer status` reports `mode: classic`
    and this host's `local_markers`: `cleared`, or `pending` with each path that
    still needs attention. Binaries older than v0.60.20.0 honor local markers
    without this cleanup, so run a v0.60.20.0 or newer command (for example
-   `gbrain sources writer status`) once on every other host before an older
+   `foresights sources writer status`) once on every other host before an older
    binary writes there. That first command removes the markers and registry
    records of the retired epoch; a marker from an unknown or newer epoch (for
    example after restoring an older backup) is kept and reported.
    On Postgres every filesystem source is now unbound: page writes refuse
    `unbound_source`, and the write path is the file, a commit and
-   `gbrain sync` ([unbound sources](../guides/write-refusals.md#unbound-sources-on-postgres)).
+   `foresights sync` ([unbound sources](../guides/write-refusals.md#unbound-sources-on-postgres)).
 
 `min_writer_version` is not implemented: while the brain is managed, the database
 writer guard is the enforcement, and after deactivation that guard is inert.
 
 ### Writer admin lock
 
-`gbrain sources writer lock` sets an opt-in, brain-level admin lock; while it
+`foresights sources writer lock` sets an opt-in, brain-level admin lock; while it
 is set, writer claim, activate, transfer prepare, accept and cancel refuse for
 every caller with `writer_admin_locked`, whose hint tells an agent to stop and
 ask the operator. Only these administrative changes are blocked: ordinary
 writes continue, including the automatic first-write claim on a PGLite brain.
 There is no `--force`; the escape hatch is the local unlock. Remote callers can
-neither lock nor unlock, and generic `gbrain config set`/`unset` (including
+neither lock nor unlock, and generic `foresights config set`/`unset` (including
 `--pattern`) refuse the reserved key `persistence.writer_admin_lock`. Dry runs
 of the four operations refuse too. The lock guards against routine or accidental
 agent administration; it is not a security boundary against a caller with the
 same shell. Binaries older than v0.60.11.0 do not consult it.
-`gbrain sources writer status` shows `admin_lock` (whether it is set, when, and
+`foresights sources writer status` shows `admin_lock` (whether it is set, when, and
 by which host) and the selected brain.
 
 To administer a locked brain, the operator runs, on the brain host:
 
 ```bash
-gbrain sources writer unlock --brain host
-gbrain sources writer status default --brain host --json   # fresh admin_state
+foresights sources writer unlock --brain host
+foresights sources writer status default --brain host --json   # fresh admin_state
 # ... the reviewed claim, activate or transfer commands above ...
-gbrain sources writer lock --brain host
+foresights sources writer lock --brain host
 ```
 
-If administration fails midway, still run `gbrain sources writer lock` before
+If administration fails midway, still run `foresights sources writer lock` before
 investigating, so no agent can retry the change meanwhile. `lock` refuses with
 `writer_transfer_conflict` while a transfer is prepared but not accepted; accept
-it on the successor, or cancel it on the owner host with `gbrain sources writer
+it on the successor, or cancel it on the owner host with `foresights sources writer
 transfer cancel <source> --expected-epoch <n>`, first. Shared-skill setup, which claims a checkout as
 administration rather than as an ordinary first write, is refused while locked.
 `lock` and `unlock` are idempotent and print the resulting state.
@@ -828,18 +828,18 @@ administration rather than as an ordinary first write, is refused while locked.
 ### Git durability on a managed brain
 
 <a id="git-durability"></a>On a managed brain the persistence owner commits and
-pushes page writes through its Git effect; `gbrain sources push`, `sources
+pushes page writes through its Git effect; `foresights sources push`, `sources
 harden` and `lint --fix` are not its Git writers and refuse with
 `writer_coordinator_required` naming this verb. Whether the owner commits is a
 recorded per-host-binding setting, `git_durability` (`on`, `off` or `unknown` in
 `writer status --json` and in `writer activate`'s listing):
 
 ```bash
-gbrain sources writer status <source> --json                  # read git_durability and parked effects first
-gbrain sources writer git-durability <source> --enable --dry-run
-gbrain sources writer git-durability <source> --enable --admin-intent writer_git_durability --expected-state <admin_state>
-gbrain sources writer git-durability <source> --pat-file ~/.config/gbrain/pat --admin-intent writer_git_durability --expected-state <admin_state>
-gbrain sources writer git-durability <source> --disable --admin-intent writer_git_durability --expected-state <admin_state>
+foresights sources writer status <source> --json                  # read git_durability and parked effects first
+foresights sources writer git-durability <source> --enable --dry-run
+foresights sources writer git-durability <source> --enable --admin-intent writer_git_durability --expected-state <admin_state>
+foresights sources writer git-durability <source> --pat-file ~/.config/gbrain/pat --admin-intent writer_git_durability --expected-state <admin_state>
+foresights sources writer git-durability <source> --disable --admin-intent writer_git_durability --expected-state <admin_state>
 ```
 
 `--enable` runs a read-only `git push --dry-run` probe first (`git_branch_unborn`,
@@ -861,18 +861,18 @@ or rebases the checkout.
 Git effect commits only the page paths it wrote (a `commit-tree` of them) and then
 pushes HEAD. Everything else in the checkout (`MEMORY.md`, daily notes,
 `AGENTS.md`, scripts) is the operator's: commit it with
-`gbrain git commit-push -m "<msg>" -- <paths>`, which commits only those paths
+`foresights git commit-push -m "<msg>" -- <paths>`, which commits only those paths
 under the checkout's commit lock (`committed_local`) and never fetches, pushes
 or moves the checkout. Those commits reach the remote on the owner's next
 push, because the owner pushes HEAD, or sooner with
-`gbrain git commit-push --push-only --keep-checkout` from the checkout; `gbrain sources push` refuses on a managed root and its secret scan
+`foresights git commit-push --push-only --keep-checkout` from the checkout; `foresights sources push` refuses on a managed root and its secret scan
 does not run on a hand push. A hand push and the owner's push race only by
 ordinary Git semantics (both push the same HEAD; a push the remote rejects is
 retried by the owner and, after repeated failures, parked, which
 `writer status --json` shows). Never
 `git pull --rebase`, `git reset` or `git checkout` page paths in the checkout: <!-- gbrain-allow-shared-tree-git: names what never to run -->
 the owner never pulls, and moving files under it is what `source_changed`
-guards against; bring remote commits in with `gbrain sources refresh <source>`.
+guards against; bring remote commits in with `foresights sources refresh <source>`.
 The durability block `sources harden` writes into `AGENTS.md`/`RESOLVER.md`
 before activation says the opposite (run the push helper after every write,
 pull before writing), so `writer git-durability <source> --enable` and
@@ -892,11 +892,11 @@ extraction needs a separately approved retry identity. After inspecting the
 failed receipt, a trusted local operator can submit:
 
 ```bash
-gbrain jobs submit extract-atoms-drain --params '{"sourceId":"default","retryRequestId":"<receipt-request-id>"}' --follow --max-attempts 1 --idempotency-key <unique-approval-key>
+foresights jobs submit extract-atoms-drain --params '{"sourceId":"default","retryRequestId":"<receipt-request-id>"}' --follow --max-attempts 1 --idempotency-key <unique-approval-key>
 ```
 
 Replace the source and receipt with the inspected values and choose a unique
-approval key for that action. Inspect a submitted retry with `gbrain jobs get
+approval key for that action. Inspect a submitted retry with `foresights jobs get
 <job-id>` rather than resubmitting it. Completed submissions replay their result;
 a newly submitted job after failure is a new approval to attempt extraction.
 An approved malformed-output retry permits one new extraction attempt;
@@ -906,7 +906,7 @@ effect, preview the exact original request first, then separately approve the
 same command without `--dry-run`:
 
 ```bash
-gbrain sources writer retry-effects default --request-id <original-request-uuid> --dry-run --json
+foresights sources writer retry-effects default --request-id <original-request-uuid> --dry-run --json
 ```
 
 Only an unclaimed failed nonrecovering embedding effect is eligible. Current
@@ -922,7 +922,7 @@ timeouts and budget admission remain effective without a whole-page deadline.
 
 The same command handles parked Git and withdrawal work. A target that fails five
 consecutive times is parked: its scan moves on, the effect never reports
-complete, and `gbrain doctor` (`parked_effects`) names the page with the exact
+complete, and `foresights doctor` (`parked_effects`) names the page with the exact
 command. Fix the cause, preview with `--dry-run`, then run it without
 `--dry-run` to authorize one more attempt per parked target. A target that fails
 again parks again; each invocation authorizes one attempt.
@@ -970,7 +970,7 @@ that distinction, and neither mode invents a binding. Managed connector
 `--dry-run`, `--skip-failed`, and Git filtering/working-tree/code options refuse
 before credentials or network access rather than pretending to preview.
 After repairing a terminal connector storage failure, explicitly run
-`gbrain sync --source <connector-source-id> --retry-failed` with the same options.
+`foresights sync --source <connector-source-id> --retry-failed` with the same options.
 Ordinary replay does not reopen a failed receipt. Explicit retry authorizes a
 new, linked attempt after current and originally accepted grants, source,
 canonical owner and idle state are checked. The old receipt stays immutable,
@@ -995,7 +995,7 @@ with live-owner dream delegation.
 
 Status: planned (GBRA-248). None of this runs yet, and nothing reads the
 setting below. Today one process serves one brain; to serve several, run one
-process per brain ([running gbrain on servers today](../guides/servers-today.md)).
+process per brain ([running foresights on servers today](../guides/servers-today.md)).
 
 The embedded core lets a host such as a hosted service run many customers'
 brains in one server process. Each brain is opened from a settings object, and
@@ -1022,9 +1022,9 @@ migrates on connect. Process exit, signal handlers, timers, files under
 `GBRAIN_HOME` and child processes stay in the local app.
 
 **`database_only`.** A hosted brain with no repository is the existing no-root
-source state (`gbrain init --db-only`), not a new mode. Git stays the parent
+source state (`foresights init --db-only`), not a new mode. Git stays the parent
 wherever a repository exists. Markdown and files leave a database-only brain
-through `gbrain export` and a `StorageBackend`, not through a mirror.
+through `foresights export` and a `StorageBackend`, not through a mirror.
 
 **The `embedded_core` setting.** Every hosted or embedded behavior the program
 adds is opt-in behind one setting, `embedded_core`, off by default: no-root
@@ -1072,7 +1072,7 @@ content-directory and no-root shapes.
 ## When NOT to use these topologies
 
 - **Don't use Topology 2 if your agent only ever runs on the same machine
-  as the brain.** A local `gbrain` install + `gbrain serve` (stdio) is
+  as the brain.** A local `gbrain` install + `foresights serve` (stdio) is
   simpler and faster.
 - **Don't use Topology 3 if you only have one Conductor worktree at a
   time.** Per-worktree engines exist to prevent contention; one-at-a-time
@@ -1085,13 +1085,13 @@ content-directory and no-root shapes.
 
 ## See also
 
-- `docs/guides/bootstrap.md` — `gbrain bootstrap`, the paved-road paste-in
+- `docs/guides/bootstrap.md` — `foresights bootstrap`, the paved-road paste-in
   install for Topology 1 with a desktop coding agent (interview, hooks,
   MCP registration, verify).
 - `docs/architecture/brains-and-sources.md` — in-brain organization (brains
   vs sources axes).
 - `docs/mcp/CLAUDE_DESKTOP.md` and siblings — per-client MCP setup.
-- `gbrain init --help` and `gbrain auth --help` for command-level details.
+- `foresights init --help` and `foresights auth --help` for command-level details.
 - [`docs/tutorials/`](../tutorials/) — end-to-end walkthroughs that combine
   these topologies into working setups (company brain, personal brain,
   agent integration, etc.).

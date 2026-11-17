@@ -59,7 +59,7 @@ export function closeCoverageWindow(state: CoverageState, lookbackDays: number):
 
 /** An unmanaged dry run: these sources fetch and publish in one pass, so a preview calls no provider and writes nothing. */
 export function connectorDryRunResult(label: string, sourceId: string): SyncResult {
-  process.stderr.write(`[sync] ${sourceId}: a ${label} source has no preview; nothing was fetched or written. Run gbrain sync --source ${sourceId} without --dry-run to sync it.\n`);
+  process.stderr.write(`[sync] ${sourceId}: a ${label} source has no preview; nothing was fetched or written. Run foresights sync --source ${sourceId} without --dry-run to sync it.\n`);
   return { status: 'dry_run', fromCommit: null, toCommit: '', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
 }
 
@@ -80,7 +80,7 @@ export async function recordRateLimit(engine: BrainEngine, sourceId: string, ret
 export function connectorBindingMissing(label: string, sourceId: string): OperationError {
   return new OperationError('connector_binding_missing',
     `${label} source ${sourceId} records to Git, but its checkout is not available; the item was held, not written database-only.`,
-    `Restore the source's Git checkout (gbrain sources status ${sourceId}), then retry the held items: gbrain sources retry-held ${sourceId}. To record this source in the database instead, change its record mode explicitly.`,
+    `Restore the source's Git checkout (foresights sources status ${sourceId}), then retry the held items: foresights sources retry-held ${sourceId}. To record this source in the database instead, change its record mode explicitly.`,
     'docs/guides/meeting-and-slack-sources.md#connector_binding_missing');
 }
 
@@ -141,7 +141,7 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
       const root = await gitCheckoutOf(ctx.dir);
       if (!root || !ctx.dir) throw connectorBindingMissing(ctx.label, sourceId);
       const filePath = join(ctx.dir, relPath);
-      if (!isWriteTargetContained(filePath, ctx.dir)) throw new OperationError('invalid_params', `${relPath} resolves outside the source directory.`, 'This is a gbrain defect; report it.');
+      if (!isWriteTargetContained(filePath, ctx.dir)) throw new OperationError('invalid_params', `${relPath} resolves outside the source directory.`, 'This is a foresights defect; report it.');
       const { commitPathsLocked } = await import('../git/commit-push.ts');
       if (isPrivate) {
         if (existsSync(filePath)) { rmSync(filePath); commitPathsLocked(ctx.dir, [checkoutPath(root, ctx.dir, relPath)], page.privateMessage, { lockWaitMs: 30_000 }); }

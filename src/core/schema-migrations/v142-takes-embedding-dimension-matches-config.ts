@@ -37,7 +37,7 @@ export const v142: Migration = {
 
     await engine.executeRaw(`DROP INDEX IF EXISTS idx_takes_embedding_hnsw`);
     // Existing vectors cannot be cast across dimensions. Null them before
-    // replacing the column; the next `gbrain takes embed` repopulates them.
+    // replacing the column; the next `foresights takes embed` repopulates them.
     await engine.executeRaw(`UPDATE takes SET embedding = NULL, embedded_at = NULL`);
     await engine.executeRaw(`ALTER TABLE takes DROP COLUMN IF EXISTS embedding`);
     await engine.executeRaw(`ALTER TABLE takes ADD COLUMN embedding VECTOR(${embeddingDim})`);

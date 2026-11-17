@@ -1,5 +1,5 @@
 /**
- * #5988 `managed_file_repair`: the owner-internal intent `gbrain repair
+ * #5988 `managed_file_repair`: the owner-internal intent `foresights repair
  * frontmatter --apply` publishes on a managed brain. One coordinated write
  * replaces a canonical file with the exact bytes the operator approved and
  * imports them through the same screen, preparation and canonical projections
@@ -19,18 +19,18 @@
  * canonical overlay (retained tags, a withdrawal, sanitization) is refused,
  * never written with the overlay bypassed.
  *
- * A fence repair (`gbrain repair fences`) carries its `FenceRepairReceipt` in
+ * A fence repair (`foresights repair fences`) carries its `FenceRepairReceipt` in
  * the intent (`fenceRepair`): the preparer refuses a malformed receipt or one
  * whose before/after sha256 are not the previewed and the written bytes, the
  * receipt rides the publication outcome as `fence_repair`, the file's Git
  * commit takes `fenceRepairCommitSubject` with the `gbrain-repair:` trailer,
- * and every refusal routes to `gbrain repair fences` instead of
- * `gbrain repair frontmatter`. #6377: a slug-conflict repair (`gbrain repair
+ * and every refusal routes to `foresights repair fences` instead of
+ * `foresights repair frontmatter`. #6377: a slug-conflict repair (`foresights repair
  * content`, the `slug-conflicts` kind) rides the same way with its
  * `ContentRepairReceipt` (`contentRepair`), outcome field `content_repair`,
  * subject `gbrain: repair frontmatter slug in <path>` and trailer
  * `gbrain-repair: frontmatter_slug_conflict <tier> <confidence>`; its
- * refusals route to `gbrain repair content`. #6696 C8: an intent carrying
+ * refusals route to `foresights repair content`. #6696 C8: an intent carrying
  * `holdObservedAt` (the slug-conflict `import` of unchanged held bytes)
  * clears the hold only while it is that observation, so a hold a sync wrote
  * after the repair read it stays.
@@ -133,7 +133,7 @@ async function assertDeclaredSlugAbsent(tx: BrainEngine, sourceId: string, root:
 
 function changedSincePreview(sourceId: string, path: string, why: string, kind: FileRepairKind) {
   return opError('changed_since_preview', `${path} changed since its repair was previewed: ${why}.`,
-    `Nothing was written for ${path}. Preview again with gbrain repair ${kind} --source ${sourceId}, review the new proposal, and approve its new hash.`,
+    `Nothing was written for ${path}. Preview again with foresights repair ${kind} --source ${sourceId}, review the new proposal, and approve its new hash.`,
     { fix: previewFix(sourceId, kind) });
 }
 
@@ -146,7 +146,7 @@ function changedSincePreview(sourceId: string, path: string, why: string, kind: 
 function checkedFenceRepair(input: { fenceRepair?: unknown; beforeHash: string; content: string; path: string }, sourceId: string): FenceRepairReceipt | undefined {
   if (input.fenceRepair === undefined) return undefined;
   const refuse = (why: string): never => { throw opError('invalid_params', `The fence repair receipt for ${input.path} ${why}, so nothing was written.`,
-    `gbrain repair fences builds this receipt from the bytes it previewed and writes; this one does not describe them. Preview again with gbrain repair fences --source ${sourceId} and apply its new plan; if the apply refuses the same way, tell the user and include gbrain doctor --json.`,
+    `foresights repair fences builds this receipt from the bytes it previewed and writes; this one does not describe them. Preview again with foresights repair fences --source ${sourceId} and apply its new plan; if the apply refuses the same way, tell the user and include foresights doctor --json.`,
     { fix: previewFix(sourceId, 'fences') }); };
   const receipt = parseFenceRepairReceipt(input.fenceRepair);
   if (!receipt) return refuse('is malformed');
@@ -159,7 +159,7 @@ function checkedFenceRepair(input: { fenceRepair?: unknown; beforeHash: string; 
 function checkedContentRepair(input: { contentRepair?: unknown; beforeHash: string; content: string; path: string }, sourceId: string): ContentRepairReceipt | undefined {
   if (input.contentRepair === undefined) return undefined;
   const refuse = (why: string): never => { throw opError('invalid_params', `The content repair receipt for ${input.path} ${why}, so nothing was written.`,
-    `gbrain repair content builds this receipt from the bytes it previewed and writes; this one does not describe them. Preview again with gbrain repair content --source ${sourceId} and apply its new plan; if the apply refuses the same way, tell the user and include gbrain doctor --json.`,
+    `foresights repair content builds this receipt from the bytes it previewed and writes; this one does not describe them. Preview again with foresights repair content --source ${sourceId} and apply its new plan; if the apply refuses the same way, tell the user and include foresights doctor --json.`,
     { fix: previewFix(sourceId, 'content') }); };
   const receipt = parseContentRepairReceipt(input.contentRepair);
   if (!receipt) return refuse('is malformed');
@@ -180,7 +180,7 @@ function repairKindOf(input: { fenceRepair?: unknown; contentRepair?: unknown })
  */
 export function confinedRepairTarget(root: string, path: string, sourceId: string, kind: FileRepairKind = 'frontmatter'): string {
   const refuse = (why: string): never => { throw opError('source_changed', `The repair target ${JSON.stringify(path)} ${why}, so nothing was written.`,
-    `gbrain repair ${kind} writes only regular files inside source ${sourceId}'s root, never through a symlink. Replace the link with the real file (or leave it out), then preview again.`,
+    `foresights repair ${kind} writes only regular files inside source ${sourceId}'s root, never through a symlink. Replace the link with the real file (or leave it out), then preview again.`,
     { fix: ownerStatusFix(sourceId) }); };
   if (!path || path.includes('\0') || isAbsolute(path) || path.split(/[\\/]/).some(part => part === '..' || part === '')) refuse('is not a confined source-relative path');
   const target = resolve(root, path);
@@ -292,9 +292,9 @@ export async function managedRepairRoot(engine: BrainEngine, sourceId: string, k
 export interface ManagedFileRepairInput {
   sourceId: string; requestId: string; slug: string; path: string; sourcePath: string; content: string;
   beforeHash: string; resultDigest: string; expected_revision?: string; renameFrom?: SyncRename; noEmbed: boolean;
-  /** Set by `gbrain repair fences`: the write's receipt, and its refusals route there. */
+  /** Set by `foresights repair fences`: the write's receipt, and its refusals route there. */
   fenceRepair?: FenceRepairReceipt;
-  /** #6377 set by the `slug-conflicts` kind: the write's receipt, and its refusals route to `gbrain repair content`. */
+  /** #6377 set by the `slug-conflicts` kind: the write's receipt, and its refusals route to `foresights repair content`. */
   contentRepair?: ContentRepairReceipt;
   /** #6696 C8: clear the hold only while it is this observation. */
   holdObservedAt?: string;
@@ -325,7 +325,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   if (!p || p.kind !== 'managed_file_repair' || typeof p.content !== 'string' || typeof p.path !== 'string' || typeof p.sourcePath !== 'string'
     || typeof p.beforeHash !== 'string' || typeof p.resultDigest !== 'string' || (p.holdObservedAt !== undefined && typeof p.holdObservedAt !== 'string')) {
     throw opError('invalid_params', 'The durable file repair intent is incomplete.',
-      `Repair request ${row.request_id} in source ${row.source_id} has no complete intent, so it published nothing. Preview the repair again: gbrain repair ${kind} --source ${row.source_id}.`,
+      `Repair request ${row.request_id} in source ${row.source_id} has no complete intent, so it published nothing. Preview the repair again: foresights repair ${kind} --source ${row.source_id}.`,
       { fix: previewFix(row.source_id, kind) });
   }
   const fenceRepair = checkedFenceRepair(p, row.source_id);

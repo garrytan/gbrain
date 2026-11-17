@@ -228,7 +228,7 @@ export async function renderOp(command: string, op: OperationMeta, params: Recor
   if (noticeText) process.stderr.write(noticeText);
   if (typeof result === 'object' && result !== null && !Array.isArray(result) && (result as { status?: unknown }).status === 'error') {
     const detail = (result as { error?: unknown }).error;
-    console.error(`gbrain ${command}: operation reported status 'error'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
+    console.error(`foresights ${command}: operation reported status 'error'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
     setCliExitVerdict(1);
   }
   maybePrintConceptNudge(op.name, params);
@@ -249,7 +249,7 @@ export async function maybeServeFromCliSocket(command: string, args: string[]): 
   const home = configDir();
   const path = cliSocketPath(home);
   const problem = connectProblem(path, cliSocketDir(home));
-  if (problem === 'missing') { debug(`no socket at ${path}; start the serve with gbrain serve --cli-socket or set serve.cli_socket true`); return false; }
+  if (problem === 'missing') { debug(`no socket at ${path}; start the serve with foresights serve --cli-socket or set serve.cli_socket true`); return false; }
   if (problem) { debug(`socket refused before connect (${problem})`); return false; }
   let brainId: string;
   try { brainId = resolveBrainId(cliOpts.brain); } catch { debug('brain did not resolve'); return false; }

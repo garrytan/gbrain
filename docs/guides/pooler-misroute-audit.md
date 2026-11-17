@@ -1,6 +1,6 @@
 # Pooler misroute audit
 
-A brain whose `gbrain serve` read pool pipelined statements through a
+A brain whose `foresights serve` read pool pipelined statements through a
 transaction-mode pooler (Supavisor or PgBouncer on port 6543, or a URL with
 `?prepare=false`) before v0.60.187.0 could hand a statement another
 statement's rows (#6543). Most of the time that failed loudly
@@ -9,7 +9,7 @@ but a statement that bound a value from someone else's row and succeeded
 leaves a persistence row whose identity belongs to another row.
 `scripts/audit-pooler-misroute.ts` looks for those rows. It only reads.
 
-**Say to your agent:** *"Run the gbrain pooler misroute audit for the window
+**Say to your agent:** *"Run the foresights pooler misroute audit for the window
 the serve ran through the transaction pooler, and show me the result before
 changing anything."*
 
@@ -30,11 +30,11 @@ the upgraded serve started.
 ## Run
 
 The script is one self-contained file: it needs no checkout and imports
-nothing from gbrain, only the postgres driver your install already ships
-(`vendor/postgres` under the gbrain install; set
+nothing from foresights, only the postgres driver your install already ships
+(`vendor/postgres` under the foresights install; set
 `GBRAIN_AUDIT_POSTGRES_DRIVER=<path to vendor/postgres/src/index.js>` if it is
 not found). On a host without a checkout, copy `scripts/audit-pooler-misroute.ts`
-from the gbrain repository at this version or later, then:
+from the foresights repository at this version or later, then:
 
 ```bash
 bun audit-pooler-misroute.ts \

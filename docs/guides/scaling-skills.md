@@ -122,14 +122,14 @@ This is the routing-table pattern but applied to the skill manifest itself.
 The resolver routes to skills, but it also routes around skills, keeping
 them out of the context window until they're needed.
 
-GBrain ships with a [bundled `skills/RESOLVER.md`](../../skills/RESOLVER.md)
+Foresights ships with a [bundled `skills/RESOLVER.md`](../../skills/RESOLVER.md)
 you can use as a reference shape. The skillpack story for distributing
 your own resolvers across machines is covered in
 [skillpacks as scaffolding](skillpacks-as-scaffolding.md).
 
 ## The compact list format
 
-GBrain's resolver parser reads two dialects. Markdown tables:
+Foresights's resolver parser reads two dialects. Markdown tables:
 
 ```markdown
 | Trigger | Skill |
@@ -149,7 +149,7 @@ The same `parseResolverEntries` function reads table rows and list rows
 in the same file, with the multi-resolver merge (skillpack
 `skills/RESOLVER.md` + workspace `../AGENTS.md`) folding everything into
 one unified view, so a compact-format resolver is fully visible to
-`gbrain doctor`.
+`foresights doctor`.
 
 ### The list-format contract
 
@@ -172,7 +172,7 @@ A few rules to keep the parser unambiguous:
   works as a fallback.
 
 You can mix table and list rows in the same file. Useful when a brain
-inherits a table-format `RESOLVER.md` from gbrain and a list-format
+inherits a table-format `RESOLVER.md` from foresights and a list-format
 `../AGENTS.md` from OpenClaw.
 
 ## The doctor safety net
@@ -181,7 +181,7 @@ The danger with tiering is invisible skill loss. You disable a skill from
 native scanning, forget to add it to the resolver, and now the agent can't
 do something it used to do. You won't notice until the moment you need it.
 
-`gbrain doctor` walks every skill on disk and verifies it's reachable,
+`foresights doctor` walks every skill on disk and verifies it's reachable,
 either through native scanning (Tier A) or through the resolver (Tier B
 and C). On Garry's setup, the first run after tiering found 63 unreachable
 skills. Sixty-three capabilities that existed on disk but had no routing
@@ -190,14 +190,14 @@ path. Fixed in an hour by adding resolver entries.
 Run it after every skill change:
 
 ```bash
-gbrain doctor
+foresights doctor
 ```
 
 For CI gates, use the JSON-emitting variant:
 
 ```bash
-gbrain check-resolvable --json
-gbrain check-resolvable --strict  # warnings fail too
+foresights check-resolvable --json
+foresights check-resolvable --strict  # warnings fail too
 ```
 
 If a skill is unreachable, the output tells you which one and suggests
@@ -250,7 +250,7 @@ actually ask for things:
 That's it. The model handles the rest. When a request doesn't match Tier A,
 it checks the resolver, reads the matching SKILL.md, and executes.
 
-### 4. Run `gbrain doctor` and fix any unreachable skills
+### 4. Run `foresights doctor` and fix any unreachable skills
 
 The doctor sweep tells you which skills don't have a routing path. Add a
 resolver entry for each one, re-run, repeat until the count is zero.
@@ -307,8 +307,8 @@ assertions fail locally instead of in CI.
 
 `check-skill-refs` fails on two things:
 
-- **A `gbrain` command that cannot run.** Every `gbrain <cmd>` in a code block
-  or inline span must be real (`gbrain embed refresh` fails with its
+- **A `gbrain` command that cannot run.** Every `foresights <cmd>` in a code block
+  or inline span must be real (`foresights embed refresh` fails with its
   replacement). Paid commands go preview, user approval, then `--yes --max-usd <cap>`.
 - **A relative link that leaves `skills/`**, which dangles in every copied
   skill. Link the protocol through `skills/conventions/agent-operator-protocol.md`
@@ -327,7 +327,7 @@ fix the cause:
 usually a trigger in the skill's frontmatter or its row in
 `skills/RESOLVER.md`. Regenerate the lock (`bun run
 scripts/generate-skills-manifest.ts`) and the llms bundles (`bun run
-build:llms`), verify with `gbrain check-resolvable --strict`, and ship it as
+build:llms`), verify with `foresights check-resolvable --strict`, and ship it as
 a MICRO release. Downstream installs heal on their next upgrade — the fix
 travels with the skillpack, not with a support thread.
 
@@ -340,7 +340,7 @@ travels with the skillpack, not with a support thread.
 - [Sub-agent routing](sub-agent-routing.md) — when to delegate to a
   sub-agent vs handle in-line, and the model routing table for each path.
 
-GBrain: [github.com/garrytan/gbrain](https://github.com/garrytan/gbrain).
+Foresights: [github.com/aimonk2025/gbrain](https://github.com/aimonk2025/gbrain).
 The `parseResolverEntries` parser lives at
 [`src/core/check-resolvable.ts`](../../src/core/check-resolvable.ts);
 the bundled resolver lives at [`skills/RESOLVER.md`](../../skills/RESOLVER.md).

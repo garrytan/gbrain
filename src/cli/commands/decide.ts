@@ -1,5 +1,5 @@
 /**
- * `gbrain decide`: pre-connect dispatch (opens its own engine), so `--help`
+ * `foresights decide`: pre-connect dispatch (opens its own engine), so `--help`
  * and every subcommand's help answer without a configured brain, a plain
  * `decide probe` works with only a TypeSafe key, and the eval-only
  * `decide judge-agreement` never opens a brain. The record lives in

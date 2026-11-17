@@ -59,7 +59,7 @@ describe('config key family', () => {
     expect(validatePreparationConfigValue(PREPARATION_BUDGET_KEYS.ceilingMs, '150000')).toBeNull();
     const others = new Map([[PREPARATION_BUDGET_KEYS.ceilingMs, '200000']]);
     expect(validatePreparationConfigValue(PREPARATION_BUDGET_KEYS.syncMs, '170000', others)).toBeNull();
-    expect(validatePreparationConfigValue(PREPARATION_BUDGET_KEYS.syncMs, '170001', others)?.suggestion).toContain(`gbrain config set ${PREPARATION_BUDGET_KEYS.ceilingMs} 200001`);
+    expect(validatePreparationConfigValue(PREPARATION_BUDGET_KEYS.syncMs, '170001', others)?.suggestion).toContain(`foresights config set ${PREPARATION_BUDGET_KEYS.ceilingMs} 200001`);
     expect(validatePreparationConfigValue(PREPARATION_BUDGET_KEYS.maintenanceMs, '600000')?.message).toContain('600000');
   });
 });

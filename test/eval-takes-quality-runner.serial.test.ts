@@ -273,7 +273,7 @@ describe('runner — pricing gate (new models must run)', () => {
     }
     expect(r.receipt.cycles_run).toBe(1);
     expect(r.receipt.cost_usd).toBe(0);
-    expect(lines.join('')).toContain('gbrain pricing set vendor:brand-new-model');
+    expect(lines.join('')).toContain('foresights pricing set vendor:brand-new-model');
   });
 
   test('a rate registered in pricing.overrides prices the model under a cap', async () => {

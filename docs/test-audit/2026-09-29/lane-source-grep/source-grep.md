@@ -1,6 +1,6 @@
-# Test audit — LANE=source-grep (gbrain @ 2ede415, read-only)
+# Test audit — LANE=source-grep (foresights @ 2ede415, read-only)
 
-Method: openclaw `test-audit` skill (discovery mode), gbrain AGENTS.md / CLAUDE.md / docs/TESTING.md
+Method: openclaw `test-audit` skill (discovery mode), foresights AGENTS.md / CLAUDE.md / docs/TESTING.md
 "Coverage responsibilities before consolidation". Every mutation probe below was a temporary edit to
 `src/**`, followed by `bun test <file>` on the grep test and its claimed owner, then `git checkout -- <file>`.
 The tree was verified clean afterwards (`git status --short` → empty). Raw probe log:
@@ -78,7 +78,7 @@ fails in verify.
   - P2a reintroduce the original bug (poll loop reads `job.state`): grep 3/1 fail; `test/remote-cli.test.ts` 6/**3 fail**.
   - P2b behavior-preserving `terminal.includes(String(job.status))`: grep **3/1 fail**; remote-cli **9/0**. The grep test is coupled to the implementation.
 - **Surviving owner:** `test/remote-cli.test.ts` › describe "remote ping poll loop". It returns `get_job {status:'completed'|'failed'}` through a fake MCP server and asserts the exit and JSON status. The describe "remote ping --timeout parsing (behavioral…)" also covers it. Unit lane. The typed-generic assertion is already enforced by `tsc` in verify.
-- **History:** header describes the `status` vs `state` regression in `gbrain remote ping`. Shallow boundary.
+- **History:** header describes the `status` vs `state` regression in `foresights remote ping`. Shallow boundary.
 - **Unlocks:** 53 LOC, 1 file. **Cost:** 160 ms. **Risk:** low.
 - **Action:** delete. Validate with `bun test test/remote-cli.test.ts`.
 

@@ -6,9 +6,9 @@ import { runCli } from './helpers/cli-spawn.ts';
 import type { HarnessTarget } from '../src/core/bootstrap/format.ts';
 import { VERSION } from '../src/version.ts';
 
-// #7771: one gbrain install (one GBRAIN_HOME) can serve two Claude Code or
+// #7771: one foresights install (one GBRAIN_HOME) can serve two Claude Code or
 // Codex configurations under different HOMEs. The bootstrap harness lane is
-// an owner conflict for `gbrain setup` only when it wired the configuration
+// an owner conflict for `foresights setup` only when it wired the configuration
 // setup is about to wire (or a project, which every configuration loads).
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');

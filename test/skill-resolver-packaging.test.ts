@@ -4,7 +4,7 @@
  * 1. Protects: `gbrain/skill-resolver` (the package export Bun consumers
  *    import), the dependency-free Node bundle the release attaches with its
  *    sha256 (scripts/build-skill-resolver-bundle.ts, gbrain-skill-resolver.mjs)
- *    and `gbrain skills library`, which writes the same bundle from the
+ *    and `foresights skills library`, which writes the same bundle from the
  *    installed source to a fixed path; each must import and resolve under
  *    Node with no node_modules. In CI a missing node fails instead of skipping.
  * 2. Fails when: the export path moves, the bundle stops building or running

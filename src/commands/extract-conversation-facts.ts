@@ -1,5 +1,5 @@
 /**
- * gbrain extract-conversation-facts — batch fact extraction for
+ * foresights extract-conversation-facts — batch fact extraction for
  * conversation pages (and adjacent long-form types).
  *
  * Background
@@ -17,7 +17,7 @@
  *     the surrounding 50K messages of context that establish the topic.
  *
  * The facts table doesn't have this problem. Each row is a discrete
- * claim with its own embedding and entity linkage, and `gbrain search`
+ * claim with its own embedding and entity linkage, and `foresights search`
  * blends facts into the result set. The extraction pipeline that
  * builds facts (src/core/facts/extract.ts) is already wired into
  * real-time MCP turns and the post-sync backstop — but had never been
@@ -403,7 +403,7 @@ import { FAILED_EXIT_CODE } from '../core/exit-codes.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { intFlagValue } from '../cli/flag-values.ts';
 
-const ECF_HELP_HINT = 'Run `gbrain extract-conversation-facts --help` for the accepted flags and examples.';
+const ECF_HELP_HINT = 'Run `foresights extract-conversation-facts --help` for the accepted flags and examples.';
 
 /**
  * v0.41.13.0 — back-compat shape for direct callers + the existing
@@ -444,7 +444,7 @@ export function pageSegmentGapMinutes(page: Pick<Page, 'slug' | 'frontmatter'>):
     `[extract-conversation-facts] ${page.slug}: ignoring frontmatter conversation_segment_gap_minutes=${JSON.stringify(raw)?.slice(0, 80)}; ` +
     `it must be a whole number of minutes from 1 to ${MAX_PAGE_SEGMENT_GAP_MINUTES} (unquoted). ` +
     `Splitting on the default ${DEFAULT_SEGMENT_GAP_MINUTES}-minute gap instead. ` +
-    `To fix: set the key to an integer in that range, or remove it, then rerun gbrain extract-conversation-facts --slug ${page.slug}\n`,
+    `To fix: set the key to an integer in that range, or remove it, then rerun foresights extract-conversation-facts --slug ${page.slug}\n`,
   );
   return undefined;
 }
@@ -1515,7 +1515,7 @@ interface ParsedArgs {
   sourceId?: string;
   types?: AllowedType[];
   slug?: string;
-  /** Exactly these pages (comma-separated `--slugs`; `gbrain repair conversation-labels` prints it). */
+  /** Exactly these pages (comma-separated `--slugs`; `foresights repair conversation-labels` prints it). */
   slugs?: string[];
   dryRun?: boolean;
   limit?: number;
@@ -1606,7 +1606,7 @@ export function parseArgs(args: string[]): ParsedArgs {
   return out;
 }
 
-const HELP = `Usage: gbrain extract-conversation-facts [options]
+const HELP = `Usage: foresights extract-conversation-facts [options]
 
 Batch-extract facts from conversation pages (and adjacent long-form
 types: meeting, slack, email) into the facts table. Each page is parsed
@@ -1626,7 +1626,7 @@ Options:
                          source): extract that one page under this conversation format
                          (none: the page is not a transcript; it settles as not
                          extractable and its conversation facts are removed). For a page
-                         held because no format is detected over it (gbrain doctor
+                         held because no format is detected over it (foresights doctor
                          conversation_detection_ambiguous). Preview with --dry-run first.
                          The choice holds until the page changes; then it is detected
                          again and, when still undetected, held for a new choice.
@@ -1647,7 +1647,7 @@ Options:
                          safety is guaranteed by the per-page advisory lock + replay
                          safety (delete-orphans-first on each page claim).
   --override-disabled    Bypass facts.extraction_enabled=false brain-wide kill-switch.
-  --background           Submit as a Minion job; print job_id; exit (use 'gbrain jobs follow').
+  --background           Submit as a Minion job; print job_id; exit (use 'foresights jobs follow').
   --json                 Emit the run counters as one JSON object on stdout (diagnostics stay on stderr).
   --yes                  Auto-confirm cost preview in non-TTY contexts.
   --help, -h             Show this help.
@@ -1658,14 +1658,14 @@ reports status "partial" with failed_pages). 1 when every attempted page failed,
 a model has no pricing, or the gateway is unavailable.
 
 Multi-source: when --source-id is omitted, the command iterates ALL
-sources from gbrain sources list. Per-source budget cap defaults to
+sources from foresights sources list. Per-source budget cap defaults to
 --max-cost-usd; the brain-wide cap when running via the autopilot cycle
 phase is cycle.conversation_facts_backfill.max_total_cost_usd.
 Default USD caps are not enforced for unpriced chat models (a warning is emitted).
-Explicit caps remain fail-closed; register a missing price with gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>.
+Explicit caps remain fail-closed; register a missing price with foresights pricing set <model> --input <usd-per-1M> --output <usd-per-1M>.
 
 Resumability: per-page completion is durable via a terminal audit row
-in the facts table (source='${TERMINAL_AUDIT_SOURCE}'). gbrain doctor's
+in the facts table (source='${TERMINAL_AUDIT_SOURCE}'). foresights doctor's
 conversation_facts_backlog check counts pages without this row.
 `;
 
@@ -1679,7 +1679,7 @@ async function resolveGrammarSource(engine: BrainEngine, explicit: string | unde
   const holders = explicit ? [explicit] : (await engine.executeRaw<{ source_id: string }>(
     'SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id', [slug])).map(r => r.source_id);
   if (holders.length !== 1) {
-    const commands = holders.map(s => `gbrain extract-conversation-facts --source-id ${s} --slug ${slug} --grammar <format|none> --dry-run`);
+    const commands = holders.map(s => `foresights extract-conversation-facts --source-id ${s} --slug ${slug} --grammar <format|none> --dry-run`);
     throw usageError(holders.length ? `--grammar chooses the format of one page, and ${slug} is in ${holders.length} sources (${holders.join(', ')}): pass --source-id`
       : `--grammar: no page ${slug} in any source`, holders.length ? commands.join('; ') : ECF_HELP_HINT, { reason: holders.length ? 'grammar_source_ambiguous' : 'grammar_page_not_found' });
   }
@@ -1706,7 +1706,7 @@ function buildJobParams(args: string[]): Record<string, unknown> {
     maxCostUsd: parsed.maxCostUsd,
     overrideDisabled: parsed.overrideDisabled,
     // v0.41.15.0 (D9): thread workers through the Minion job envelope
-    // so `gbrain extract-conversation-facts --background --workers 20`
+    // so `foresights extract-conversation-facts --background --workers 20`
     // round-trips. The handler in src/commands/jobs.ts reads
     // job.data.workers and passes to runExtractConversationFactsCore.
     workers: parsed.workers,
@@ -1742,7 +1742,7 @@ export async function runExtractConversationFacts(
     console.error(
       'Chat gateway unavailable. Set a provider key (OPENAI_API_KEY or ANTHROPIC_API_KEY — ' +
       'extraction routes to whichever is present), or configure a model explicitly ' +
-      '(`gbrain config set facts.extraction_model <provider:model>`), or pass --dry-run to ' +
+      '(`foresights config set facts.extraction_model <provider:model>`), or pass --dry-run to ' +
       'preview segmentation. Keyless brains capture memory via agent-authored `## Facts` ' +
       'fences and the `remember` verb instead.',
     );
@@ -1875,7 +1875,7 @@ export async function runExtractConversationFacts(
       for (const failed of aggregate.failed_pages) console.error(`    ${failed.slug}: ${failed.error}`);
     }
     if (aggregate.pages_pending) console.log(`  ${aggregate.pages_pending} page(s) were accepted and are still pending; rerun the same command to confirm them (no model call).`);
-    if (aggregate.pages_detection_ambiguous) console.log(`  ${aggregate.pages_detection_ambiguous} page(s) are held: no conversation format is detected over them, yet some parse messages, so their facts were kept and nothing was extracted; gbrain doctor conversation_detection_ambiguous lists each with its formats, and --source-id <source> --slug <slug> --grammar <format|none> --dry-run previews a choice.`);
+    if (aggregate.pages_detection_ambiguous) console.log(`  ${aggregate.pages_detection_ambiguous} page(s) are held: no conversation format is detected over them, yet some parse messages, so their facts were kept and nothing was extracted; foresights doctor conversation_detection_ambiguous lists each with its formats, and --source-id <source> --slug <slug> --grammar <format|none> --dry-run previews a choice.`);
     for (const p of aggregate.grammar_previews ?? []) console.log(`  Preview of ${p.source_id}:${p.slug} under --grammar ${p.grammar ?? 'none'}: ${p.messages} message(s) in ${p.windows} window(s), ${p.windows_to_extract} to extract; a settled run removes ${p.facts_to_collect} conversation fact(s).`);
     if (aggregate.pages_blocked) console.log(`  ${aggregate.pages_blocked} page(s) are blocked at their current version after a request failed; they are retried only once the page changes (each SKIP line names the receipt).`);
     if (aggregate.pages_llm_fallback > 0) {
@@ -1946,7 +1946,7 @@ function recordPageFailure(result: ExtractConversationFactsResult, sourceId: str
   result.pages_failed++;
   recordFailedPage(result, slug, error instanceof Error ? error.message : String(error));
   const reason = (error as { extractionReason?: ExtractFailureReason } | null)?.extractionReason ?? 'page_error';
-  process.stderr.write(`[extract-conversation-facts] ${slug} failed (${reason}) and stays unfinished; retry: gbrain extract-conversation-facts --source-id ${sourceId} --slug ${slug}\n`);
+  process.stderr.write(`[extract-conversation-facts] ${slug} failed (${reason}) and stays unfinished; retry: foresights extract-conversation-facts --source-id ${sourceId} --slug ${slug}\n`);
 }
 
 export function isAbortError(err: unknown): boolean {

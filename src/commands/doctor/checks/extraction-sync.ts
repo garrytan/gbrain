@@ -51,7 +51,7 @@ export { EXTRACTION_LAG_WARN_PCT_DEFAULT, EXTRACTION_LAG_MIN_PAGES } from '../..
 
 /**
  * Sync freshness check (v0.32.4) — verify that sources with local_path have
- * been synced recently. Detects the silent failure mode where `gbrain sync`
+ * been synced recently. Detects the silent failure mode where `foresights sync`
  * stopped running and brain search now misses recent pages.
  *
  * Pure staleness check. Reads `sources.last_sync_at` only — no filesystem
@@ -74,7 +74,7 @@ export { EXTRACTION_LAG_WARN_PCT_DEFAULT, EXTRACTION_LAG_MIN_PAGES } from '../..
  *   - executeRaw throws → outer-catch warn so doctor keeps running
  *
  * Failure messages embed `source.id` so the fix command
- * `gbrain sync --source <id>` matches what the user copy-pastes.
+ * `foresights sync --source <id>` matches what the user copy-pastes.
  */
 
 /**
@@ -88,7 +88,7 @@ export { EXTRACTION_LAG_WARN_PCT_DEFAULT, EXTRACTION_LAG_MIN_PAGES } from '../..
  * Warn-only by DEFAULT (>20% stale). Hard-fail ONLY when the operator opts in
  * via GBRAIN_EXTRACTION_LAG_FAIL_PCT — so a just-upgraded 280K-page brain
  * (every page NULL → 100% stale) gets a loud WARN, never a non-zero exit that
- * would break a CI/cron pipeline gating on `gbrain doctor`.
+ * would break a CI/cron pipeline gating on `foresights doctor`.
  *
  * Vacuous-skip on tiny brains (<100 pages, no --source) like orphan_ratio.
  * Pre-v112 brains (links_extracted_at missing) degrade to OK; any other missing
@@ -188,7 +188,7 @@ export async function checkUnverifiedExtractions(
       name,
       status: n > 0 ? 'warn' : 'ok',
       message: n > 0
-        ? `${n} unverified auto-extracted entity stub(s) older than ${days} days awaiting review. List with 'gbrain extraction-pending'; promote/reject with 'gbrain extraction-review <promote|reject> --slugs <slug,...>'.`
+        ? `${n} unverified auto-extracted entity stub(s) older than ${days} days awaiting review. List with 'foresights extraction-pending'; promote/reject with 'foresights extraction-review <promote|reject> --slugs <slug,...>'.`
         : 'No stale unverified extraction stubs',
       details: { count: n, days, source_id: sourceId ?? null },
     };
@@ -200,7 +200,7 @@ export async function checkUnverifiedExtractions(
 /**
  * issue #2250 (reported by @615Works) — content_hash_duplicates.
  *
- * `gbrain import` run from the wrong root (one level too deep) drops the
+ * `foresights import` run from the wrong root (one level too deep) drops the
  * path prefix from every slug, leaving `people/x` and `x` coexisting with
  * identical content. `dream --phase purge` never removes them (they aren't
  * file-backed orphans) and nothing surfaced the condition. One GROUP BY —
@@ -253,12 +253,12 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
     }
     const parts: string[] = [];
     if (pairCount > 0) {
-      // `gbrain delete` soft-deletes in the active source, so the command pins
+      // `foresights delete` soft-deletes in the active source, so the command pins
       // the pairs' source; --force because page writes are revisioned and a
       // delete naming neither --force nor --expected-revision is refused.
       const source = pairSources.size === 1 ? [...pairSources][0] : '<source-id>';
       const sourceNote = pairSources.size === 1 ? '' : ` (pairs span sources ${[...pairSources].sort().join(', ')}; run it once per pair with that pair's source)`;
-      const fix = `Fix: GBRAIN_SOURCE=${source} gbrain delete <bare-slug> --force for each pair${sourceNote}.`;
+      const fix = `Fix: GBRAIN_SOURCE=${source} foresights delete <bare-slug> --force for each pair${sourceNote}.`;
       parts.push(
         `${atLeast}${pairCount} content-hash duplicate pair(s) detected (same content, differing slug forms — ` +
         `usually an import run from the wrong root, which drops the path prefix). ` +
@@ -298,7 +298,7 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
  * `query --lang/--symbol-kind` silently miss them. A plain sync or
  * `reindex-code` never heals them (importCodeFile's content_hash
  * short-circuit skips unchanged pages), so the cure is
- * `gbrain reindex-code --force`. Raw SQL only (works on both engines).
+ * `foresights reindex-code --force`. Raw SQL only (works on both engines).
  */
 export async function checkCodeChunkMetadata(engine: BrainEngine): Promise<Check> {
   const name = 'code_chunk_metadata';
@@ -323,7 +323,7 @@ export async function checkCodeChunkMetadata(engine: BrainEngine): Promise<Check
         `(symbol_name and language both NULL) — code-def/code-refs and ` +
         `--lang/--symbol-kind filters miss them. A plain sync/reindex may skip ` +
         `already-current text projections. ` +
-        `Fix: gbrain reindex-code --force --no-embed`,
+        `Fix: foresights reindex-code --force --no-embed`,
       details: { chunks_missing_metadata: chunks, pages_affected: pages },
     };
   } catch (e) {
@@ -388,7 +388,7 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
     }
     const authorities = await connectorAuthorities(engine, sources.map(s => ({ id: s.id, kind: parseSourceConfig(s.config).kind })));
     const connectorDb = new Set([...authorities].filter(([, a]) => a === 'connector_database').map(([id]) => id));
-    const connectorNote = connectorDb.size > 0 ? ` ${connectorDb.size} API connector source(s) skipped: connector_database pages are DB-only by design (recover them with gbrain sync --source <id> --full).` : '';
+    const connectorNote = connectorDb.size > 0 ? ` ${connectorDb.size} API connector source(s) skipped: connector_database pages are DB-only by design (recover them with foresights sync --source <id> --full).` : '';
     const checkable = sources.filter(s => s.local_path && existsSync(s.local_path) && !connectorDb.has(s.id));
     if (checkable.length === 0) {
       return { name, status: 'ok', message: `Not applicable (no sources with a local repo path on this host).${connectorNote}` };
@@ -561,13 +561,13 @@ function buildExtractAtomsDrainCommand(
   bySource: Array<{ source_id: string; backlog: number }> | null,
 ): string {
   if (!bySource || bySource.length === 0) {
-    return `gbrain dream --phase extract_atoms --drain --source <source-id> --window 120`;
+    return `foresights dream --phase extract_atoms --drain --source <source-id> --window 120`;
   }
   if (bySource.length === 1) {
-    return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120`;
+    return `foresights dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120`;
   }
   const sources = bySource.map((row) => row.source_id).join(', ');
-  return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 (repeat for backlog source(s): ${sources})`;
+  return `foresights dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 (repeat for backlog source(s): ${sources})`;
 }
 
 function buildExtractAtomsBacklogFixHint(
@@ -696,7 +696,7 @@ export async function computeExtractAtomsBacklogCheck(
     // it will grow forever without a signal. WARN with the drain command.
     if (!declared && backlog > 10) {
       const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
-      const fix = gate.consent_required ? 'gbrain config set cycle.extract_atoms.enabled true' : buildExtractAtomsBacklogFixHint(backlogBySource);
+      const fix = gate.consent_required ? 'foresights config set cycle.extract_atoms.enabled true' : buildExtractAtomsBacklogFixHint(backlogBySource);
       return {
         name, status: 'warn',
         message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
@@ -734,7 +734,7 @@ export async function computeExtractAtomsBacklogCheck(
           name, status: 'warn',
           message:
             `${backlog} page(s) pending and the active pack declares extract_atoms, but ${since} — ` +
-            `nothing appears to run the cycle. Install the scheduler: gbrain autopilot --install. ` +
+            `nothing appears to run the cycle. Install the scheduler: foresights autopilot --install. ` +
             `Or drain now: ${drain}`,
           details: {
             backlog,
@@ -910,7 +910,7 @@ export async function computeAtomProvenanceDriftCheck(
 
     if (drifted >= MIN_DRIFTED && ratio > WARN_RATIO) {
       const fix =
-        "preview the atoms that are safe to retire with gbrain repair stale-atoms (source gone, or source edited and " +
+        "preview the atoms that are safe to retire with foresights repair stale-atoms (source gone, or source edited and " +
         "already re-extracted), then apply with the --expect hash it prints. Atoms of an edited page that was not " +
         "re-extracted yet are the extract_atoms backlog, not stale";
       return {
@@ -1111,7 +1111,7 @@ export async function computeExtractHealthCheck(
       return {
         name,
         status: 'warn',
-        // #3697: this hint used to name `gbrain extract status --rebuild-rollup`,
+        // #3697: this hint used to name `foresights extract status --rebuild-rollup`,
         // which does not exist (the JSONL→rollup rebuild is a planned self-heal,
         // not a shipped command). Say what is true instead of sending the
         // operator to a usage error.
@@ -1213,7 +1213,7 @@ export async function checkSyncFreshness(
     // #6076: an adopted read-only catalog pack (no commit history) has nothing to sync.
     const catalogPacks = await readOnlyCatalogPackSourceIds(engine, sources, localOnly);
     let writer_owned_count = 0, read_only_pack_count = 0;
-    // #9471: roots inside gbrain's own content directory, which sync refuses (a receipt-claimed root stays writer-owned above).
+    // #9471: roots inside foresights's own content directory, which sync refuses (a receipt-claimed root stays writer-owned above).
     const contentDirectories: Array<{ id: string; keyless: boolean }> = [];
     // v0.41.27.0: D6 count math. Every source falls into
     // EXACTLY ONE bucket per iteration. Invariant pinned by unit test:
@@ -1273,7 +1273,7 @@ export async function checkSyncFreshness(
       if (catalogPacks.ids.has(source.id)) { read_only_pack_count++; continue; }
       const contentDirectory = await syncContentDirectory(engine, { sourceId: source.id, repoPath: source.local_path ?? undefined });
       if (contentDirectory?.ownedBy === 'content_root') { contentDirectories.push({ id: source.id, keyless: contentDirectory.keyless }); continue; }
-      // Embed source.id in user-visible messages so `gbrain sync --source <id>`
+      // Embed source.id in user-visible messages so `foresights sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
@@ -1319,7 +1319,7 @@ export async function checkSyncFreshness(
         issues.push(
           `Source ${display} has held the sync lock for ${heldFor} ` +
           `(pid ${liveSnap.holder_pid} on ${liveSnap.holder_host}) — heartbeating but not finishing. ` +
-          `Run \`gbrain sync --break-lock --source ${source.id}\` after confirming the holder is wedged.`,
+          `Run \`foresights sync --break-lock --source ${source.id}\` after confirming the holder is wedged.`,
         );
         hasFailures = true;
         stale_count++;
@@ -1445,7 +1445,7 @@ export async function checkSyncFreshness(
     const inProgressNote = (inProgress.length ? `. ${inProgress.join('; ')}` : '')
       + (writer_owned_count ? `. ${writer_owned_count} writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status` : '')
       + (read_only_pack_count ? `. ${read_only_pack_count} read-only skill-pack source(s): no commits to sync` : '')
-      + (contentDirectories.length ? `. ${contentDirectories.length} gbrain-owned content director${contentDirectories.length === 1 ? 'y' : 'ies'}, where sync does not apply: add files with ${contentDirectories.map(dir => `\`gbrain import <dir>${dir.keyless ? ' --no-embed' : ''} --source ${dir.id}\``).join(', ')}` : '')
+      + (contentDirectories.length ? `. ${contentDirectories.length} gbrain-owned content director${contentDirectories.length === 1 ? 'y' : 'ies'}, where sync does not apply: add files with ${contentDirectories.map(dir => `\`foresights import <dir>${dir.keyless ? ' --no-embed' : ''} --source ${dir.id}\``).join(', ')}` : '')
       + (catalogPacks.note ? `. ${catalogPacks.note}` : '');
 
     const remedy = issues.length > outcomes.length;
@@ -1455,7 +1455,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: hasFailures ? 'fail' : 'warn',
-        message: `${issues.join('; ')}${remedy ? `. Run \`gbrain sync --source <id>${managed ? ' --no-pull' : ''}\` ${hasFailures ? 'for each stale source' : 'to refresh'}` : ''}${moved?.note ?? ''}${inProgressNote}`,
+        message: `${issues.join('; ')}${remedy ? `. Run \`foresights sync --source <id>${managed ? ' --no-pull' : ''}\` ${hasFailures ? 'for each stale source' : 'to refresh'}` : ''}${moved?.note ?? ''}${inProgressNote}`,
         details, ...(outcomeFix ? { fix: outcomeFix } : {}),
       };
     }

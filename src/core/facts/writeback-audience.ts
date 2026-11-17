@@ -12,7 +12,7 @@
  * three clients and one human), so only ≥3 DISTINCT non-automation MCP
  * clients active in the last 30 days reads as shared evidence — and
  * `reasons[]` always names what decided, so doctor can surface a
- * misclassification and the one-line fix (`gbrain config set brain.audience
+ * misclassification and the one-line fix (`foresights config set brain.audience
  * personal|shared`).
  *
  * Fail direction: a config read failure → 'unknown' (nudge surfaces stay
@@ -83,7 +83,7 @@ export async function classifyBrainAudience(
         audience: 'shared',
         reasons: [
           ...reasons,
-          `heuristic: ${humans.length} distinct non-automation MCP clients active in 30d (threshold ${SHARED_CLIENT_THRESHOLD}) — declare the truth with: gbrain config set brain.audience personal|shared`,
+          `heuristic: ${humans.length} distinct non-automation MCP clients active in 30d (threshold ${SHARED_CLIENT_THRESHOLD}) — declare the truth with: foresights config set brain.audience personal|shared`,
         ],
       };
     }

@@ -3,8 +3,8 @@
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only; release history lives in `CHANGELOG.md` + git.
 
-`gbrain init --mcp-only` sets up a thin-client install: no local brain content,
-just an OAuth client pointing at a remote `gbrain serve --http`. Every operation
+`foresights init --mcp-only` sets up a thin-client install: no local brain content,
+just an OAuth client pointing at a remote `foresights serve --http`. Every operation
 surface routes through the remote brain — a thin-client install never opens the
 empty local PGLite, so a populated remote brain can't silently return
 "No results." Local-only commands refuse with a pinpoint hint instead of
@@ -14,7 +14,7 @@ Installed thin-client launchers clear inherited brain and source overrides witho
 adding `--brain host` or pinning the grant's write source onto reads. Unqualified
 reads use the host grant's readable sources; explicit `--source` remains subject
 to host authorization. Local PGLite launchers retain their host/source binding.
-The generic `gbrain call` dispatcher is host-only and refuses before opening a
+The generic `foresights call` dispatcher is host-only and refuses before opening a
 local engine; use the named CLI command or an authorized MCP tool instead.
 
 **Requester scope:** on a host brain that serves several people (two or more
@@ -22,7 +22,7 @@ enabled members, or `access.serves = several`), every remote read op except the
 identity and health calls (`src/core/access/requester-scope.ts`) must come from a
 connection bound to a member, naming an audience, or attested; a thin client's
 unbound OAuth client is refused `requester_scope_required` with a host-side fix
-(`gbrain auth rescope --client <id> --member <id>`), after a 14-day grace for
+(`foresights auth rescope --client <id> --member <id>`), after a 14-day grace for
 clients older than the brain's `access.serves_since`. The gate runs in
 `dispatchToolCall` after access resolves and inside agent jobs; it reads only the
 request's config snapshot and the verifier's AuthInfo (`readsUnscoped`,
@@ -66,7 +66,7 @@ journal request. On a source in git-canonical mode (`canonical: git`) the
 brain owner's door commits it to Git before the database row commits, and the
 receipt names the commit (`outcome.persistence.git_commit`). While the owner
 is down the call ends `write_pending` (exit 10) with its request id, and
-`gbrain write-request <id>` follows it; nothing is written to the
+`foresights write-request <id>` follows it; nothing is written to the
 database first. Design: `docs/designs/GIT_CANONICAL_MEMORY.md`, "Remote and
 hosted writes".
 
@@ -115,7 +115,7 @@ carries the routing-seam picture):
   (accepts `30s`, `2m`, `500ms`, plain ms). Default `null` = per-command
   default (30s for most ops, 180s for `think`). `parseTimeout(s)` exported
   helper.
-- `src/core/doctor-remote.ts` — `gbrain remote doctor` includes the
+- `src/core/doctor-remote.ts` — `foresights remote doctor` includes the
   `oauth_client_scopes_probe` check. Probes the read tier via
   `get_brain_identity` and the admin tier via `get_health`; reports per-tier
   status with pinpoint remediation when admin is missing. `buildScopeCheck`
@@ -139,7 +139,7 @@ carries the routing-seam picture):
 
 ## stdio bridge
 
-On a thin client, bare `gbrain serve` is a stdio MCP server that relays to
+On a thin client, bare `foresights serve` is a stdio MCP server that relays to
 the brain host instead of refusing (#8543). A harness that only speaks stdio
 (OpenClaw, a desktop app, a gateway) can then use a remote brain with the
 same entry it would use for a local one.
@@ -152,30 +152,30 @@ same entry it would use for a local one.
   `gbrain-stdio-bridge`, so the host serves the lean rows and windowed pages
   any remote agent gets.
 - **What it accepts.** `--surface`, `--advertise` and `--source-guard` (the
-  argv gbrain's plugins register). `--surface` and `--advertise` narrow the
+  argv foresights's plugins register). `--surface` and `--advertise` narrow the
   local listing only; `request_tools {surface}` widens this session locally
   and writes nothing on the host. `serve --http`, `--access` and every other
   host flag still refuse with `requires_local_engine`: the host enforces
   what a client may do, so a restriction belongs on a narrower client
-  (`gbrain auth register-client <name> --grant-types client_credentials
+  (`foresights auth register-client <name> --grant-types client_credentials
   --scopes read`) used from its own `GBRAIN_HOME`.
 - **Failures.** A transport failure becomes the v1 agent envelope with a
   bounded `recovery` and a `fix` that never adds a scope. A write that may
   have reached the host keeps its `request_id` with
   `submission_status: "unknown"` (`write_outcome_unknown`): read the receipt
-  with `get_write_request` or `gbrain write-request -- <id>`, or resend with
+  with `get_write_request` or `foresights write-request -- <id>`, or resend with
   the same `request_id`. One HTTP 401 re-mints the token and resends once with
   the same `request_id`. URLs in every envelope and stderr line lose their
   userinfo, query and fragment. An unexpected fault writes a 0600 trace under
   `<GBRAIN_HOME>/.gbrain/bridge-traces/`, answers `internal_error`, and the
   bridge keeps serving.
 - **Audience.** A call carrying `_meta.on_behalf_of` is relayed only to a host
-  at gbrain 0.60.543.0 or newer, and a read answer must report
+  at foresights 0.60.543.0 or newer, and a read answer must report
   `_meta.access.audience`; otherwise the bridge answers
   `host_upgrade_required` instead of the credential's whole view.
 - **Lifecycle.** Same as local stdio serve: signals, the parent watchdog,
   `MCP_STDIO=1` (stdin EOF is not a disconnect), and a stdin-EOF drain whose
-  bound is the call timeout (`gbrain --timeout=Ns serve`, default 180 s). A
+  bound is the call timeout (`foresights --timeout=Ns serve`, default 180 s). A
   write still in flight when the drain expires is logged with its
   `request_id` and the exit code is 1.
 

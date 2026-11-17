@@ -212,7 +212,7 @@ export interface SkillOptOpts {
   optimizerMode: OptimizerMode;
   /** B1.4 (library only): replaces the generated success criteria in every optimizer prompt, verbatim. */
   criteriaText?: string;
-  /** B1.3 (library only): every rollout the run makes goes through this hook; gbrain's budget then meters optimizer calls only. */
+  /** B1.3 (library only): every rollout the run makes goes through this hook; foresights's budget then meters optimizer calls only. */
   rolloutHook?: RolloutBatchHook;
 
   // Safety.
@@ -359,7 +359,7 @@ export interface RolloutBatchRequest {
   /** The full SKILL.md text the target runs with. */
   skillText: string;
   skillSha256: string;
-  /** In the order gbrain would run them. */
+  /** In the order foresights would run them. */
   tasks: BenchmarkTask[];
   /** 1 for train_forward, VALIDATION_RUNS_PER_TASK otherwise. */
   runsPerTask: number;
@@ -409,7 +409,7 @@ export const BOOTSTRAP_PENDING_REVIEW = '# BOOTSTRAP_PENDING_REVIEW';
 
 /**
  * D16: a skill is "bundled" when its SKILL.md lives under the repo's
- * canonical `skills/` directory (relative to the gbrain install root).
+ * canonical `skills/` directory (relative to the foresights install root).
  * Bundled skills require `--allow-mutate-bundled` to overwrite.
  */
 export interface BundledSkillContext {

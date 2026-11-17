@@ -4,7 +4,7 @@
  * know_to_ask_failure_rate (lower better): of turns where gold says the
  * memory layer SHOULD have surfaced something, the fraction where the
  * injection hit neither gold nor acceptable slugs. This grades the
- * deterministic injection decision — the mechanism gbrain ships at the seam
+ * deterministic injection decision — the mechanism foresights ships at the seam
  * (decision 3); agent-LLM-in-the-loop replay is the pre-registered --live
  * extension.
  *

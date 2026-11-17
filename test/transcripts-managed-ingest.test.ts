@@ -1,5 +1,5 @@
 /**
- * `gbrain transcripts ingest` on a writer-claimed (managed) brain (#5235).
+ * `foresights transcripts ingest` on a writer-claimed (managed) brain (#5235).
  *
  * Protects: on a managed brain the direct importer is refused
  * (writer_coordinator_required), so each rendered part must be submitted as a
@@ -91,7 +91,7 @@ describe('transcripts ingest on a writer-claimed brain', () => {
     expect(repeat.pages).toMatchObject({ imported: 0, skipped: 1, errored: 0 });
   }, 120_000);
 
-  test('`gbrain transcripts ingest` passes the dispatcher\'s makeContext through to the coordinated path', async () => {
+  test('`foresights transcripts ingest` passes the dispatcher\'s makeContext through to the coordinated path', async () => {
     await claimBrain();
     const path = exportFile('a.json', false);
     await withEnv({ GBRAIN_HOME: dir, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () =>

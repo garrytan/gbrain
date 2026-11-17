@@ -6,7 +6,7 @@ import type { MinionHandler } from '../types.ts';
 import { assertEmbedNotStalled } from '../../embed-stall.ts';
 
 /**
- * v0.41.18.0 (A13): embed-catch-up handler for the gbrain onboard
+ * v0.41.18.0 (A13): embed-catch-up handler for the foresights onboard
  * remediation pipeline. Wraps runEmbedCore with stale + catchUp + the
  * priority/batchSize the recommendation supplies. NOT in
  * PROTECTED_JOB_NAMES (embedding spend only).

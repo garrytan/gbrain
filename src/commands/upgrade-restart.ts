@@ -1,9 +1,9 @@
 /**
  * GBRA-175: the host side of the upgrade restart (src/core/upgrade-restart.ts
- * holds the pure planning and verification). `gbrain upgrade` calls
+ * holds the pure planning and verification). `foresights upgrade` calls
  * `preflightHostRestart` before it installs anything, so a process it could
  * not restart refuses the upgrade instead of leaving two builds running, and
- * the new build runs `gbrain upgrade --restart-only` after the swap, which
+ * the new build runs `foresights upgrade --restart-only` after the swap, which
  * calls `runHostRestart`. `--restart-only` on its own restarts every process
  * onto the build already installed (doctor's `runtime_build_skew` fix);
  * `--dry-run` prints the plan and changes nothing.
@@ -37,7 +37,7 @@ const DOCS = 'docs/guides/upgrades-auto-update.md#restart';
 const DRY_RUN_VERIFY = ['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'];
 const VERIFY_TIMEOUT_MS = 180_000;
 const VERIFY_POLL_MS = 2_000;
-/** #8776: how long verification waits for a launcher to start autopilot again: gbrain's cron line runs every 5 minutes. */
+/** #8776: how long verification waits for a launcher to start autopilot again: foresights's cron line runs every 5 minutes. */
 const HANDOFF_WAIT_MS = 360_000;
 
 const brainHome = () => process.env.GBRAIN_HOME?.trim() || homedir();
@@ -83,7 +83,7 @@ function readProcessTable(uid: number | undefined, pids?: number[]): ProcessTabl
   });
 }
 
-/** The gbrain install a command line starts from: the package directory above its entry point and the version it holds now (null for a compiled binary). */
+/** The foresights install a command line starts from: the package directory above its entry point and the version it holds now (null for a compiled binary). */
 function installOf(command: string, cwd?: string | null): { root: string | null; version: string | null } {
   const entry = gbrainEntry(command, { cwd, packageName: packageNameAt })?.entry;
   if (!entry) return { root: null, version: null };
@@ -128,7 +128,7 @@ function readCrontab(): string | null {
 
 /**
  * #8776: what starts autopilot again when it exits, for an autopilot launchd or systemd does not run: this brain's own
- * gbrain cron line (`gbrain autopilot --install` on Linux without a user systemd bus: its wrapper every 5 minutes or more often), else a launcher the operator
+ * foresights cron line (`foresights autopilot --install` on Linux without a user systemd bus: its wrapper every 5 minutes or more often), else a launcher the operator
  * declared with `self_upgrade.autopilot_launcher external`; null when neither, so the upgrade refuses as before.
  * `pid` is the daemon this brain's autopilot lock names, the only one the hand-off may stop.
  */
@@ -234,7 +234,7 @@ function describeSteps(plan: RestartPlan): string[] {
     : step.kind === 'supervisor' ? `${[step.pid, ...step.workers].map(name).join(', ')}: \`${step.stop.join(' ')}\`, then \`${step.start.join(' ')}\``
     : step.kind === 'replace_copy' ? `${step.pids.map(name).join(', ')} run from the Bun global copy at ${step.root} (${step.from ? `v${step.from}` : 'version unknown'}): replace it with v${step.to} (BUN_INSTALL=${step.bun_install}: bun remove -g gbrain, then bun add -g the tag) before the restarts`
     : step.kind === 'handoff' ? `${name(step.pid)}: stop it (SIGTERM drains it); ${launcherName(step.launcher)} starts the installed build again (verified for up to ${Math.round(step.launcher.wait_ms / 60_000)} minutes)`
-    : `${name(step.pid)}: stop it (reconnect gbrain in its harness afterwards)`);
+    : `${name(step.pid)}: stop it (reconnect foresights in its harness afterwards)`);
 }
 
 /** The refusal for a plan with manual steps, or null when every process restarts on its own. */
@@ -244,20 +244,20 @@ export function restartRefusal(plan: RestartPlan, rerunArgv: readonly string[], 
   const first = plan.manual.find(m => m.role !== 'mcp') ?? plan.manual[0]!;
   const fix: Action = onlyMcp
     ? { ask_user: true, argv: [...rerunArgv.filter(a => a !== '--stop-mcp'), '--stop-mcp'], consent: [], actor: 'agent', requires_exclusive: false, docs: DOCS,
-      why: 'Stops each listed MCP server during the restart; its harness starts the installed build when gbrain is reconnected.',
-      user_message: `${plan.manual.length} gbrain MCP server(s) started by agent harnesses run on this host (${plan.manual.map(m => `pid ${m.pid}`).join(', ')}). Upgrading leaves them on the old build unless they stop. May the upgrade stop them? Reconnect gbrain in each harness afterwards.`,
+      why: 'Stops each listed MCP server during the restart; its harness starts the installed build when foresights is reconnected.',
+      user_message: `${plan.manual.length} foresights MCP server(s) started by agent harnesses run on this host (${plan.manual.map(m => `pid ${m.pid}`).join(', ')}). Upgrading leaves them on the old build unless they stop. May the upgrade stop them? Reconnect foresights in each harness afterwards.`,
       verify: { argv: DRY_RUN_VERIFY } }
     : { argv: first.argv, consent: [], actor: 'user', requires_exclusive: false, docs: DOCS, why: first.instruction, verify: { argv: DRY_RUN_VERIFY } };
   return opError('restart_refused',
-    `${plan.manual.length} gbrain process(es) on this host cannot be restarted automatically, so nothing was restarted${installed ? '' : ' and nothing was installed'}: ${plan.manual.map(m => m.instruction).join(' ')}`,
-    `Handle each process as listed, then run \`${rerunArgv.join(' ')}\` again; \`gbrain upgrade --no-restart\` installs without restarting (doctor then reports runtime_build_skew).`,
+    `${plan.manual.length} foresights process(es) on this host cannot be restarted automatically, so nothing was restarted${installed ? '' : ' and nothing was installed'}: ${plan.manual.map(m => m.instruction).join(' ')}`,
+    `Handle each process as listed, then run \`${rerunArgv.join(' ')}\` again; \`foresights upgrade --no-restart\` installs without restarting (doctor then reports runtime_build_skew).`,
     { fix, docs: DOCS });
 }
 
 export interface HostRestartOptions { stopMcp: boolean; json: boolean; rerunArgv: string[] }
 
 /**
- * `gbrain upgrade --restart-only [--dry-run]`. True when this handled the invocation. A `--dry-run` without
+ * `foresights upgrade --restart-only [--dry-run]`. True when this handled the invocation. A `--dry-run` without
  * `--restart-only` is the channel preview (commands/upgrade-channel.ts runUpgradeDryRun), which installs nothing, so it
  * is still never ignored while the upgrade installs for real (#2185).
  */
@@ -282,16 +282,16 @@ function ownInstallRoot(): string | null {
  */
 export function mismatchFix(p: HostProcess, expected: string): Action {
   const restart: Action = { argv: ['gbrain', 'upgrade', '--restart-only'], consent: [], actor: 'agent', requires_exclusive: false, docs: DOCS,
-    why: 'Restarts every gbrain process onto the installed build and verifies it.', verify: { argv: DRY_RUN_VERIFY } };
+    why: 'Restarts every foresights process onto the installed build and verifies it.', verify: { argv: DRY_RUN_VERIFY } };
   if (!p.install_root) {
     return { argv: DRY_RUN_VERIFY, consent: [], actor: 'agent', requires_exclusive: false, docs: DOCS, verify: { argv: DRY_RUN_VERIFY },
-      why: `${p.role} pid ${p.pid} runs another build from an install that could not be located (a compiled binary): reinstall that binary at v${expected} or start the process from this install, then run gbrain upgrade --restart-only.` };
+      why: `${p.role} pid ${p.pid} runs another build from an install that could not be located (a compiled binary): reinstall that binary at v${expected} or start the process from this install, then run foresights upgrade --restart-only.` };
   }
   const fix = copyFix(p.install_root, p.install_version ?? null, expected);
   const envPrefix = Object.entries(fix.env).map(([k, v]) => `${k}=${v}`);
   const chain = fix.argv.reduceRight<Action>((then, argv) => ({ argv: envPrefix.length ? ['env', ...envPrefix, ...argv] : argv, consent: [], actor: 'user', requires_exclusive: false, docs: DOCS,
     why: `${p.role} pid ${p.pid} came back on another build because it runs from ${p.install_root}: ${fix.instruction}.`, then }), restart);
-  return { ...chain, ask_user: true, user_message: `${p.role} pid ${p.pid} still runs another gbrain build after the restart: it starts from ${p.install_root}, which holds ${p.install_version ? `v${p.install_version}` : 'an unknown version'}. May I ${fix.instruction}, then restart again?` };
+  return { ...chain, ask_user: true, user_message: `${p.role} pid ${p.pid} still runs another foresights build after the restart: it starts from ${p.install_root}, which holds ${p.install_version ? `v${p.install_version}` : 'an unknown version'}. May I ${fix.instruction}, then restart again?` };
 }
 
 /**
@@ -314,7 +314,7 @@ export async function preflightHostRestart(opts: HostRestartOptions): Promise<bo
 }
 
 /**
- * #8776, for doctor's `self_upgrade_health`: the plan the next `gbrain upgrade` makes before it installs (the preflight
+ * #8776, for doctor's `self_upgrade_health`: the plan the next `foresights upgrade` makes before it installs (the preflight
  * plan), from the process table alone (no database connection). Read-only; null when ps cannot run.
  */
 export async function upgradeRestartReadiness(): Promise<RestartPlan | null> {
@@ -325,7 +325,7 @@ export async function upgradeRestartReadiness(): Promise<RestartPlan | null> {
   return planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: false, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes) });
 }
 
-/** `gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]`: restart every process onto the installed build and verify. */
+/** `foresights upgrade --restart-only [--stop-mcp] [--dry-run] [--json]`: restart every process onto the installed build and verify. */
 export async function runHostRestart(opts: HostRestartOptions & { dryRun: boolean }): Promise<void> {
   const { sources, notes, close, pidFile } = await hostSources();
   try {
@@ -355,18 +355,18 @@ export async function runHostRestart(opts: HostRestartOptions & { dryRun: boolea
       const failed = results.find(r => !r.ok);
       const mismatch = mismatchedBuilds(plan, verified.processes)[0];
       setCliExitVerdict(writeCliError(opError('restart_unverified',
-        `After the restart this host still runs more than one gbrain build, or a process did not come back: ${verified.problems.join(' ')}`,
-        `${failed ? `${failed.detail}. ` : ''}${mismatch ? 'Move each listed install onto this build as named' : 'Restart what is listed with the command the plan printed'}, then run \`gbrain upgrade --restart-only\` again.`,
-        { docs: DOCS, fix: mismatch ? mismatchFix(mismatch, VERSION) : { argv: DRY_RUN_VERIFY, consent: [], actor: 'agent', requires_exclusive: false, docs: DOCS, why: 'Read-only: lists every gbrain process on this host with its build and the restart each one needs.', verify: { argv: ['gbrain', 'doctor', '--only', 'runtime_build_skew', '--json'] } } }),
+        `After the restart this host still runs more than one foresights build, or a process did not come back: ${verified.problems.join(' ')}`,
+        `${failed ? `${failed.detail}. ` : ''}${mismatch ? 'Move each listed install onto this build as named' : 'Restart what is listed with the command the plan printed'}, then run \`foresights upgrade --restart-only\` again.`,
+        { docs: DOCS, fix: mismatch ? mismatchFix(mismatch, VERSION) : { argv: DRY_RUN_VERIFY, consent: [], actor: 'agent', requires_exclusive: false, docs: DOCS, why: 'Read-only: lists every foresights process on this host with its build and the restart each one needs.', verify: { argv: ['gbrain', 'doctor', '--only', 'runtime_build_skew', '--json'] } } }),
         'upgrade', { json: opts.json, extra: opts.json ? { restart: doc } : undefined }));
       return;
     }
     if (opts.json) { console.log(JSON.stringify(doc, null, 2)); return; }
     const running = verified.processes.map(p => `${p.role} pid ${p.pid}`).join(', ');
-    console.log(`Verified: every gbrain process on this host runs v${VERSION}${running ? ` (${running})` : ' (none is running)'}; warm CLI socket: ${verified.warm_socket.state === 'refused' ? `refused for this shell (${verified.warm_socket.reason}${verified.warm_socket.mismatch ? `: ${verified.warm_socket.mismatch}` : ''})` : verified.warm_socket.state}.`);
+    console.log(`Verified: every foresights process on this host runs v${VERSION}${running ? ` (${running})` : ' (none is running)'}; warm CLI socket: ${verified.warm_socket.state === 'refused' ? `refused for this shell (${verified.warm_socket.reason}${verified.warm_socket.mismatch ? `: ${verified.warm_socket.mismatch}` : ''})` : verified.warm_socket.state}.`);
     for (const line of verified.unverified) console.log(`Note: ${line}`);
     const stopped = plan.steps.filter(step => step.kind === 'stop');
-    if (stopped.length) console.log(`Reconnect gbrain in the harness of each stopped MCP server (${stopped.map(s => `pid ${s.pid}`).join(', ')}): Claude Code /mcp, then reconnect; other harnesses: start a new session.`);
+    if (stopped.length) console.log(`Reconnect foresights in the harness of each stopped MCP server (${stopped.map(s => `pid ${s.pid}`).join(', ')}): Claude Code /mcp, then reconnect; other harnesses: start a new session.`);
   } finally {
     await close();
   }
@@ -386,7 +386,7 @@ export function planServeRestart(processes: readonly HostProcess[], serveService
   const plan = planRestart(older, { expected, serveService, autopilotService: null, stopMcp: false, ownInstallRoot: ownRoot });
   if (!plan.stale.length) return { outcome: 'current' };
   if (plan.manual.length || plan.steps.some(step => step.kind !== 'service')) {
-    return { outcome: 'manual', detail: `run \`gbrain upgrade --restart-only\`: ${[...describeSteps(plan), ...plan.manual.map(m => m.instruction)].join(' ')}` };
+    return { outcome: 'manual', detail: `run \`foresights upgrade --restart-only\`: ${[...describeSteps(plan), ...plan.manual.map(m => m.instruction)].join(' ')}` };
   }
   return plan;
 }
@@ -395,18 +395,18 @@ export function planServeRestart(processes: readonly HostProcess[], serveService
  * #7475: the autopilot self-upgrade swaps and relaunches only itself. Once it runs the new build, it calls this to
  * restart the serve the installed serve service runs when that serve is on an older build, and to verify it came
  * back on this one. Serve only: a stale serve the service does not run (started by hand, or from another install)
- * is reported as `manual` and left to doctor's `runtime_build_skew` and `gbrain upgrade --restart-only`.
+ * is reported as `manual` and left to doctor's `runtime_build_skew` and `foresights upgrade --restart-only`.
  */
 export async function restartStaleServeService(): Promise<ServeRestartOutcome> {
   const services = hostServices();
   if (!services.serve) return { outcome: 'no_service' };
-  if (!serveServiceRunsWrapper(process.platform, homedir())) return { outcome: 'manual', detail: 'the serve service on this host starts another brain\'s serve wrapper (another GBRAIN_HOME), so this autopilot leaves it alone; run `gbrain upgrade --restart-only` with that brain\'s GBRAIN_HOME' };
+  if (!serveServiceRunsWrapper(process.platform, homedir())) return { outcome: 'manual', detail: 'the serve service on this host starts another brain\'s serve wrapper (another GBRAIN_HOME), so this autopilot leaves it alone; run `foresights upgrade --restart-only` with that brain\'s GBRAIN_HOME' };
   const { sources, close, pidFile } = await hostSources();
   try {
     const collectServe = async () => (await collectHostProcesses(sources)).filter(p => p.role === 'serve');
     const root = ownInstallRoot();
     const onDisk = installedVersion(root);
-    if (onDisk !== VERSION) return { outcome: 'manual', detail: `the install on disk holds ${onDisk ? `v${onDisk}` : 'an unknown build'}, not this autopilot's v${VERSION}; run \`gbrain upgrade --restart-only\`` };
+    if (onDisk !== VERSION) return { outcome: 'manual', detail: `the install on disk holds ${onDisk ? `v${onDisk}` : 'an unknown build'}, not this autopilot's v${VERSION}; run \`foresights upgrade --restart-only\`` };
     let installedMs: number | null = null;
     try { installedMs = statSync(join(root!, 'package.json')).mtimeMs; } catch { /* no install time: a serve with no recorded build stays as it is */ }
     const plan = planServeRestart(await collectServe(), services.serve, VERSION, root, installedMs);
@@ -463,7 +463,7 @@ export async function restartServeAfterSelfUpgrade(isIdle: () => Promise<boolean
 
 function printPlan(plan: RestartPlan, warm: WarmSocketState, notes: string[]): void {
   for (const note of notes) console.log(note);
-  if (!plan.stale.length) console.log(`Every gbrain process on this host already runs v${plan.expected}${plan.current.length ? ` (${plan.current.map(describe).join(', ')})` : ' (none is running)'}.`);
+  if (!plan.stale.length) console.log(`Every foresights process on this host already runs v${plan.expected}${plan.current.length ? ` (${plan.current.map(describe).join(', ')})` : ' (none is running)'}.`);
   else {
     console.log(`Restarting onto v${plan.expected}:`);
     for (const line of describeSteps(plan)) console.log(`  ${line}`);

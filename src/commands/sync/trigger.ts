@@ -1,4 +1,4 @@
-/** `gbrain sync trigger`: ask for a sync of one source without waiting for it (GBRA-133 PR 2a). */
+/** `foresights sync trigger`: ask for a sync of one source without waiting for it (GBRA-133 PR 2a). */
 import type { BrainEngine } from '../../core/engine.ts';
 import { cliRenderContext, renderNotice, type Notice } from '../../core/agent-output.ts';
 
@@ -17,7 +17,7 @@ export interface TriggerOutcome {
   resident: TriggerResident | null;
 }
 
-const USAGE = 'Usage: gbrain sync trigger --source <id> [--priority high|normal|low] [--json]';
+const USAGE = 'Usage: foresights sync trigger --source <id> [--priority high|normal|low] [--json]';
 
 export function printSyncTriggerHelp(): void {
   console.log(`${USAGE}
@@ -32,17 +32,17 @@ Outcomes (stdout keeps job_id=N whenever a job is queued; --json prints
   queued      a sync job was queued (a jobs worker or autopilot runs it)
   coalesced   a sync job for this source is already waiting or running; the
               marker makes it (or the notifier) run once more if needed
-  nudged      the running gbrain serve recorded the request and its notifier
+  nudged      the running foresights serve recorded the request and its notifier
               starts the sync (PGLite)
 
-When no resident (gbrain serve, gbrain jobs work or the autopilot daemon)
+When no resident (foresights serve, foresights jobs work or the autopilot daemon)
 watches the source, the outcome carries resident: null and the notice
-no_resident with the fix gbrain sync --source <id> --no-pull (one stderr line,
+no_resident with the fix foresights sync --source <id> --no-pull (one stderr line,
 or notice in --json). Exit 0 for every outcome.
 
 See also:
-  gbrain sources webhook set <id>   Set up GitHub-signed push webhook
-  gbrain sync status --source <id>  The notifier block: who syncs it, its state
+  foresights sources webhook set <id>   Set up GitHub-signed push webhook
+  foresights sync status --source <id>  The notifier block: who syncs it, its state
 `);
 }
 
@@ -50,7 +50,7 @@ See also:
 export function noResidentNotice(sourceId: string): Notice {
   return {
     code: 'no_resident', kind: 'degraded',
-    why: `No resident (gbrain serve, gbrain jobs work or the autopilot daemon) watches source ${sourceId}; the request is recorded and runs when one starts, or when a sync reaches it.`,
+    why: `No resident (foresights serve, foresights jobs work or the autopilot daemon) watches source ${sourceId}; the request is recorded and runs when one starts, or when a sync reaches it.`,
     fix: { argv: ['gbrain', 'sync', '--source', sourceId, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Syncs the checkout HEAD now; the recorded request clears once last_commit reaches it.' },
   };
@@ -99,7 +99,7 @@ export async function runSyncTrigger(engine: BrainEngine, args: string[]): Promi
   const { recordTriggerMarker } = await import('../../core/notifier/nudge.ts');
   const recorded = await recordTriggerMarker(engine, { sourceId: sourceIdArg, requestedBy: 'sync_trigger' });
   if (!recorded) {
-    console.error(`Source "${sourceIdArg}" not found. List with: gbrain sources list`);
+    console.error(`Source "${sourceIdArg}" not found. List with: foresights sources list`);
     process.exit(1);
   }
   const { marker, managed } = recorded;

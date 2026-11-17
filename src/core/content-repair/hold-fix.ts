@@ -2,11 +2,11 @@
  * #6377: what a `frontmatter_slug_conflict` sync hold tells an agent, by the
  * content-repair lane's recorded state (`meta.content_repair`, written by
  * `recordContentHoldRepair`). The command is always that file's
- * `gbrain repair content --source <id> --only <path>` (Lane C's lane runner:
+ * `foresights repair content --source <id> --only <path>` (Lane C's lane runner:
  * fences, then slug conflicts, for one selection); the step it calls for
  * depends on the state:
  *
- * - no state: the lane has not judged it yet. gbrain repairs it by itself on
+ * - no state: the lane has not judged it yet. foresights repairs it by itself on
  *   the next maintenance run or on `sync unblock --apply`; the preview is
  *   read-only and calls no model.
  * - `merge_into` (`merge_recommended`): a person merges the two pages; the
@@ -60,10 +60,10 @@ function paidStep(reason: string, model: string | undefined): { argv: string[]; 
   if (reason === 'no_measured_model') return { argv: ['gbrain', 'config', 'set', 'models.content_repair', '<model>'],
     inputs: [{ name: 'model', how: `The provider:model the user chooses to trust with the slug-conflict judgment. Measured: ${CONTENT_REPAIR_MEASURED_MODELS.join(', ')}; each needs its provider's key.` }] };
   if (reason === 'no_pricing') return { argv: ['gbrain', 'pricing', 'set', model ?? '<model>', '--input', '<usd>', '--output', '<usd>'],
-    inputs: [...(model ? [] : [{ name: 'model', how: 'The content-repair model: models.content_repair in gbrain models --json.' }]),
+    inputs: [...(model ? [] : [{ name: 'model', how: 'The content-repair model: models.content_repair in foresights models --json.' }]),
       { name: 'usd', how: "The provider's price in USD per 1M input tokens after --input and per 1M output tokens after --output, from its pricing page." }] };
   return { argv: ['gbrain', 'config', 'set', 'fences.repair.max_usd_per_day', '<usd>'],
-    inputs: [{ name: 'usd', how: 'The daily cap in USD the user agreed to; read the current one with gbrain config get fences.repair.max_usd_per_day.' }] };
+    inputs: [{ name: 'usd', how: 'The daily cap in USD the user agreed to; read the current one with foresights config get fences.repair.max_usd_per_day.' }] };
 }
 
 export function contentHoldFix(record: { source_id: string; path: string; slug?: string | null; meta: { content_repair?: ContentHoldRepairState } }): Action {
@@ -76,20 +76,20 @@ export function contentHoldFix(record: { source_id: string; path: string; slug?:
   if (!state) {
     return { ...base, actor: 'agent',
       why: `The frontmatter slug: line of ${record.path} names a slug other than its path; a line naming no page is removed by the next managed sync itself (sync.slug_conflicts.auto_remove). `
-        + `The content-repair lane clears this itself on the next maintenance run or with gbrain sync unblock --source ${source} --apply: `
+        + `The content-repair lane clears this itself on the next maintenance run or with foresights sync unblock --source ${source} --apply: `
         + 'a stray slug (no such page, or a page of another type with nothing in common) is removed deterministically; anything else is judged by the content-repair model under the fences.repair caps. '
         + 'The preview is read-only and calls no model: it lists the planned action, the estimated model cost and the cap left, and prints the apply command.' };
   }
   if (!contentRepairLaneCurrent(state) && state.action !== 'pending') {
     return { ...base, actor: 'agent',
-      why: `An older gbrain recorded ${state.action} (${state.reason}) for ${record.path}; this release's content-repair lane rechecks it once on the next sync or maintenance run, reading the file and retrying through the normal repair write. `
-        + `To recheck now: gbrain sync unblock --source ${source} --apply. The preview is read-only and calls no model.` };
+      why: `An older foresights recorded ${state.action} (${state.reason}) for ${record.path}; this release's content-repair lane rechecks it once on the next sync or maintenance run, reading the file and retrying through the normal repair write. `
+        + `To recheck now: foresights sync unblock --source ${source} --apply. The preview is read-only and calls no model.` };
   }
   const paragraph = contentRepairHumanReason({ ...state, path: record.path, slug: record.slug ?? null });
   if (paragraph) {
     return { ...base, actor: 'user', user_message: paragraph,
       why: state.action === 'merge_into'
-        ? `The content-repair model judged ${record.path} and page ${state.canonical ?? state.named ?? '?'} to be the same page (merge_recommended). gbrain does not merge pages by itself yet, so a person merges them; nothing was written. `
+        ? `The content-repair model judged ${record.path} and page ${state.canonical ?? state.named ?? '?'} to be the same page (merge_recommended). foresights does not merge pages by itself yet, so a person merges them; nothing was written. `
           + 'Removing the slug: line instead would mint a second page for the same thing, so the deterministic repair never applies here.'
         : `The content-repair model could not decide whether ${record.path} and the page its slug: line names are the same page (content_repair_needs_human), so nothing was written and nothing retries it until the file changes. `
           + 'A person decides which page keeps the slug.' };
@@ -100,11 +100,11 @@ export function contentHoldFix(record: { source_id: string; path: string; slug?:
     return { ...base, actor: 'agent', consent: ['paid' as Effect], ...paidStep(state.reason, state.model),
       why: `${record.path} waits for the content-repair model (${state.reason}): ${state.reason === 'llm_disabled' ? 'model repair is off (fences.repair.llm false)'
         : state.reason === 'no_measured_model' ? 'no measured model has a provider key here and models.content_repair is unset'
-        : state.reason === 'no_pricing' ? `gbrain has no price for ${state.model ?? 'the model'} under a user-set cap` : 'the daily content-repair budget is spent'}. `
+        : state.reason === 'no_pricing' ? `foresights has no price for ${state.model ?? 'the model'} under a user-set cap` : 'the daily content-repair budget is spent'}. `
         + `Spending is the user's call; ask before changing it. Until then the file stays held${state.next_attempt_after ? ` and the maintenance run tries again after ${state.next_attempt_after}` : ''}. `
         + `Preview: ${preview.join(' ')}. By hand instead: if ${record.path} and ${named ?? 'the page its slug: line names'} are different pages, delete the slug: line of ${record.path} and commit; if they are the same, merge them and delete the duplicate.`,
       user_message: `${pair}; only a model call can judge whether they are the same page, and ${state.reason === 'llm_disabled' ? 'model repair is turned off' : state.reason === 'budget_exhausted' ? 'the daily model budget for content repair is spent'
-        : state.reason === 'no_pricing' ? 'gbrain has no price for the configured model' : 'no measured model has a key here'}. Allow the spend, or leave the file held?` };
+        : state.reason === 'no_pricing' ? 'foresights has no price for the configured model' : 'no measured model has a key here'}. Allow the spend, or leave the file held?` };
   }
   if (state.action === 'pending') {
     return { ...base, actor: 'agent',
@@ -115,7 +115,7 @@ export function contentHoldFix(record: { source_id: string; path: string; slug?:
     return { ...base, actor: 'agent',
       why: `Sync files ${record.path} as page ${record.slug ?? '?'}, and ${state.named && state.named !== record.slug ? `its path derives ${state.named}` : 'its slug: line does not name that page as written'}, `
         + `so removing the line would not clear the hold (slug_page_mismatch). By hand: make the slug: line name ${record.slug ?? 'the page'} exactly or move the file to the path that derives it, `
-        + `commit, and run gbrain sync --source ${source} --no-pull; the preview shows the current state.` };
+        + `commit, and run foresights sync --source ${source} --no-pull; the preview shows the current state.` };
   }
   if (state.reason === 'still_invalid' && state.other_codes?.length) {
     return { ...base, argv: ['gbrain', 'repair', 'frontmatter', '--source', source, '--only', record.path, '--include-ambiguous'], actor: 'agent',
@@ -123,6 +123,6 @@ export function contentHoldFix(record: { source_id: string; path: string; slug?:
         + 'The frontmatter repair preview shows that edit and writes nothing; applying it is an interpretation, so ask the user before running the apply command it prints.' };
   }
   return { ...base, actor: 'agent',
-    why: `gbrain decided to remove the slug: line of ${record.path} but could not write it (${state.reason}); the preview shows the current state. `
-      + `By hand: delete the slug: line of ${record.path} (the path decides the slug), commit, and run gbrain sync --source ${source} --no-pull.` };
+    why: `foresights decided to remove the slug: line of ${record.path} but could not write it (${state.reason}); the preview shows the current state. `
+      + `By hand: delete the slug: line of ${record.path} (the path decides the slug), commit, and run foresights sync --source ${source} --no-pull.` };
 }

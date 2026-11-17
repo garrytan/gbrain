@@ -1,5 +1,5 @@
 /**
- * #6858 ask 4: gbrain's own oversized-page screen must not rewrite a canonical file just to stamp its assessment.
+ * #6858 ask 4: foresights's own oversized-page screen must not rewrite a canonical file just to stamp its assessment.
  * The gate's markers (`embed_skip`, `content_flag`, `quarantine`) are re-derived from the bytes on every import and
  * `assessed_at` changes whenever the body does, so on master every managed sync import of an oversized page that agents
  * append to became a canonical writeback: a file publication with a recovery record, the window an agent's own edit of

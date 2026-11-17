@@ -35,10 +35,10 @@ build. The regression suite checks imports, ABI compatibility, real `case`,
 heredoc and loop parsing, and semantic function preservation. `CHUNKER_VERSION`
 advances to 7 to trigger the existing re-chunk gate when Git HEAD is unchanged.
 That gate does not force a full walk when new commits are present; use
-`gbrain sync --source <id> --full` to recover all previously affected files in
+`foresights sync --source <id> --full` to recover all previously affected files in
 an active repository rather than relying on an incremental sync.
 
-## Lua (`gbrain serve` hang, GBRA-49 Q1 scoreboard)
+## Lua (`foresights serve` hang, GBRA-49 Q1 scoreboard)
 
 `grammars/tree-sitter-lua.wasm` is the official
 [`tree-sitter-grammars/tree-sitter-lua` v0.3.0 release asset](https://github.com/tree-sitter-grammars/tree-sitter-lua/releases/tag/v0.3.0),
@@ -57,7 +57,7 @@ replacing the `tree-sitter-wasms` bundle's build of the unmaintained
   one began "inside" a string or long bracket, misparsed `x = 1` as an error,
   or spun until the chunker timeout (30 s per fence). A conversation page with
   five ChatGPT-style ```` ```lua ```` fences around shell commands kept
-  `gbrain serve` at 100% CPU for 9.5 hours: each preparation attempt blocked
+  `foresights serve` at 100% CPU for 9.5 hours: each preparation attempt blocked
   the event loop for about 150 s, exceeded its deadline, and was retried.
   The maintained grammar uses `calloc` and resets state on every parse.
 - The node types also changed (`function_declaration` for every

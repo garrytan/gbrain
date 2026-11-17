@@ -2,7 +2,7 @@
 
 [Postmortem and decision](postmortem.md) · [Per-case results](paired-results.csv)
 
-We found two genuine retrieval recoveries, offset by one retrieval loss, but did **not** reproduce the paper's answer-quality improvement. The recoveries already occur without Horizon triggers. This is evidence about a small reproduction of the released scene-only pipeline, not a completed replication of Table 4 or a result for the custom GBrain implementation.
+We found two genuine retrieval recoveries, offset by one retrieval loss, but did **not** reproduce the paper's answer-quality improvement. The recoveries already occur without Horizon triggers. This is evidence about a small reproduction of the released scene-only pipeline, not a completed replication of Table 4 or a result for the custom Foresights implementation.
 
 ## Matched results
 
@@ -35,10 +35,10 @@ The small balanced sample spans only nine base-conversation indices; the paired 
 
 ## Cost and artifacts
 
-Reported cost for model compatibility checks, the initial one-case check and the full pilot was **$9.224531784**, including external BYOK charges. Three unresolved requests retain **$0.1653932** in reservations; they are not treated as free. Both experiment gateways are stopped. Historical custom GBrain costs remain separate.
+Reported cost for model compatibility checks, the initial one-case check and the full pilot was **$9.224531784**, including external BYOK charges. Three unresolved requests retain **$0.1653932** in reservations; they are not treated as free. Both experiment gateways are stopped. Historical custom Foresights costs remain separate.
 
 The final pilot scope is `4b8e85146d3b6ff27422b208`; its receipt SHA-256 is `093a9e91fc3c5c92aac8e02caa8dac48b92d878325d2ad9fc9ba37a6d910519c`. The [reproduction bundle](tmem-reproduction-results.tar.gz) contains the frozen runner, tests, gateway, data pins, dependency inventory, per-case labels/provenance results and receipt hashes, but no credentials, raw benchmark conversations, rendered benchmark requests or generated personal-name text. Public prompt templates remain in the methods audit. The paired results are also available directly as [CSV](paired-results.csv).
 
 The checked-in CSV uses LF line endings; its cells are identical to the original CSV in the unchanged bundle. The methods audit is a publication copy with portable source links. The protocol retains its original text beneath an archival note; the bundle preserves the unmodified research records.
 
-**Conclusion:** a small descriptive-trigger retrieval signal exists, but this run supplies no demonstrated answer-quality benefit or additional target-memory recall from Horizon. It does not justify resuming or shipping the custom GBrain integration. An exact Table 4 claim still requires resolving the missing paper execution path, not merely running more cases through this released route.
+**Conclusion:** a small descriptive-trigger retrieval signal exists, but this run supplies no demonstrated answer-quality benefit or additional target-memory recall from Horizon. It does not justify resuming or shipping the custom Foresights integration. An exact Table 4 claim still requires resolving the missing paper execution path, not merely running more cases through this released route.

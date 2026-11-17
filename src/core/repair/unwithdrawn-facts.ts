@@ -1,5 +1,5 @@
 /**
- * `gbrain repair unwithdrawn-facts` (#8819): restore fact rows a facts-fence generation retired although no fence of
+ * `foresights repair unwithdrawn-facts` (#8819): restore fact rows a facts-fence generation retired although no fence of
  * their page ever held them.
  *
  * Before the fix, the page publication's projection and the extract_facts reconcile retired every fact row attached to a
@@ -200,7 +200,7 @@ function detail(fact: UnwithdrawnFactCandidate): string {
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
   const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
-  return `gbrain repair unwithdrawn-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
+  return `foresights repair unwithdrawn-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
 function requestIdFor(hash: string, page: Pick<UnwithdrawnFactsPage, 'source_id' | 'slug'>): string {
@@ -257,7 +257,7 @@ export const unwithdrawnFactsRepair: RepairHandler = {
     }
     const command = await previewCommand(engine, scope, includeAmbiguous);
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair unwithdrawn-facts --apply restores only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair unwithdrawn-facts --apply restores only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

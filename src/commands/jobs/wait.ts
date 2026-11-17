@@ -1,8 +1,8 @@
 /**
- * `gbrain jobs wait <id> [--timeout <dur>] [--json]` (#7242): block until the job is completed, failed, dead or
+ * `foresights jobs wait <id> [--timeout <dur>] [--json]` (#7242): block until the job is completed, failed, dead or
  * cancelled, then print it like `jobs get`. Exit codes follow the agent operator protocol: 0 completed,
  * 1 failed, dead or cancelled (the job's outcome, not a wait error), 124 the --timeout elapsed and the job is
- * still running (it is NOT cancelled; wait again or `gbrain jobs get <id>`), 2 usage. A thin client waits
+ * still running (it is NOT cancelled; wait again or `foresights jobs get <id>`), 2 usage. A thin client waits
  * through the wait_job MCP op in chunks of at most WAIT_JOB_MAX_S.
  */
 import { hasFlag, parseFlag, rehydrateJobDates, type JobsCommandContext } from './shared.ts';
@@ -18,7 +18,7 @@ export const JOBS_WAIT_EXIT = { completed: 0, unsuccessful: 1, usage: 2, timeout
 export async function runJobsWait({ args, queue, engine }: JobsCommandContext): Promise<void> {
   const id = Number(args[1]);
   if (!Number.isSafeInteger(id) || id <= 0) {
-    console.error('Error: job ID required. Usage: gbrain jobs wait <id> [--timeout 10m] [--json]');
+    console.error('Error: job ID required. Usage: foresights jobs wait <id> [--timeout 10m] [--json]');
     process.exit(JOBS_WAIT_EXIT.usage);
   }
   let timeoutS: number | undefined;
@@ -63,7 +63,7 @@ export async function runJobsWait({ args, queue, engine }: JobsCommandContext): 
   }
   await printJob(job!, json, thin ? null : engine);
   if (timedOut) {
-    console.error(`Job #${id} is still ${job!.status} after ${Math.round(timeoutMs / 1000)}s; it keeps running. Wait again: gbrain jobs wait ${id}, or check it: gbrain jobs get ${id}`);
+    console.error(`Job #${id} is still ${job!.status} after ${Math.round(timeoutMs / 1000)}s; it keeps running. Wait again: foresights jobs wait ${id}, or check it: foresights jobs get ${id}`);
     process.exit(JOBS_WAIT_EXIT.timeout);
   }
   if (job!.status !== 'completed') {

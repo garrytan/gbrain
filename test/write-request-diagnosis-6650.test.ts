@@ -1,5 +1,5 @@
 /**
- * #6650 (L3 item 2): `gbrain write-request <id>` (get_write_request) returns the suggestion `writeFailureDiagnostic`
+ * #6650 (L3 item 2): `foresights write-request <id>` (get_write_request) returns the suggestion `writeFailureDiagnostic`
  * already computes and the structured fix of the receipt's read-time classification, instead of dropping both.
  * A compacted receipt whose code covers several causes gets `diagnosis_required` with a read-only inspection,
  * never a guessed fix. PGLite in-memory.
@@ -47,7 +47,7 @@ test('a drift refusal returns the computed suggestion and the scoped file-drift 
   const receipt = await receiptFor('notes/drifted', { state: 'conflict', error_code: 'source_changed', error_message: 'The canonical file contains an uncoordinated local edit.' });
   expect(receipt.write_error).toBe('source_changed');
   expect(receipt.write_error_reason).toBe('file_database_drift');
-  expect(receipt.suggestion).toContain('gbrain sources reconcile <source> <slug>');
+  expect(receipt.suggestion).toContain('foresights sources reconcile <source> <slug>');
   expect(receipt.diagnosis).toMatchObject({ category: 'file_conflict', class: 'page', safe_actions: ['reconcile'], needs_human: true });
   // #6712 PR 2 (L4): the scoped file-drift preview is the drift exit.
   expect(receipt.diagnosis.fix.argv).toEqual(['gbrain', 'repair', 'file-drift', '--source', SOURCE, '--slug', 'notes/drifted', '--prefer', 'database']);

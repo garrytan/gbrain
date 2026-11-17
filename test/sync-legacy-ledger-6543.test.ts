@@ -1,7 +1,7 @@
 /**
  * #6543 D5 (+ #6518): on a managed brain, rows the pre-managed sync left in the local ledger
  * (`sync-failures.jsonl`, often `auto_skipped`) were never retried or cleared by a managed sync, while doctor told the
- * operator to run `gbrain sync --no-pull --retry-failed`, which printed "No local ledger entries" and left them.
+ * operator to run `foresights sync --no-pull --retry-failed`, which printed "No local ledger entries" and left them.
  *
  * Now a successful managed sync reconciles each legacy row of its source on its own against the imported commit, the
  * live page and any hold: a row whose file the commit holds with a live page (or whose file is gone with no page)
@@ -78,7 +78,7 @@ test('a successful managed sync settles legacy rows it imports, keeps unindexed 
 
   const before = await checkSyncFailures(engine, { sourceIds: [id], remote: false });
   expect(before?.message).toContain('legacy ledger');
-  expect(before?.message).toContain(`gbrain sync --source ${id}`);
+  expect(before?.message).toContain(`foresights sync --source ${id}`);
 
   capture();
   try { await runSyncInner(engine, ['--source', id, '--no-pull', '--retry-failed', '--no-embed', '--no-extract']); } finally { release(); }

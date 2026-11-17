@@ -3,7 +3,7 @@
  * and read-only.
  *
  * - `generation_retirements`: items live generations retired inside the restore window (`generations.restore_days`),
- *   which `gbrain repair generations --mode restore` can bring back. Retiring what a complete successor no longer has is
+ *   which `foresights repair generations --mode restore` can bring back. Retiring what a complete successor no longer has is
  *   the normal path, so this is `ok` with the counts and the read-only preview; it never warns by itself.
  * - `generation_held`: results the primitive held instead of publishing (shrunk, oversize, valve, no_proof, ...). The
  *   previous generation stays live and nothing was retired; `warn` names each reason and the preview that lists them.

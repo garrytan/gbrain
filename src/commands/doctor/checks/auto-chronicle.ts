@@ -4,7 +4,7 @@
  * Reports the setting, 24 h use of the daily limit with the largest writer's share, 7-day outcomes
  * and spend (priced dollars, unpriced calls and missing cost records apart), and the command that
  * runs pending pages now. `auto_chronicle_default_on` stays visible (info) until the operator
- * answers the default-on change with `gbrain config set auto_chronicle true|false`.
+ * answers the default-on change with `foresights config set auto_chronicle true|false`.
  * Config-plane only: no provider calls.
  */
 import {
@@ -72,7 +72,7 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
     const stats = await readChronicleLedgerStats(engine);
     const chat = await chatAvailable();
     const activity = stats.available ? describeChronicleActivity(stats, settings.dailyLimit)
-      : 'The chronicle ledger is not created yet; run `gbrain apply-migrations --yes --no-autopilot-install`.';
+      : 'The chronicle ledger is not created yet; run `foresights apply-migrations --yes --no-autopilot-install`.';
     const summary = { enabled: true, source: raw == null ? 'default' : 'explicit', daily_limit: settings.dailyLimit,
       job_budget_usd: settings.jobBudgetUsd, ledger_available: stats.available, pending: stats.pending,
       auto_calls_24h: stats.autoCalls24h, principals_24h: stats.principals24h, last_7d: stats.last7d, spend_7d: stats.spend7d,
@@ -110,7 +110,7 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
     checks.push({ name: 'chronicle_config_invalid', ...warn('chronicle_config_invalid',
       `${settings.invalid.map((i) => `${i.key}='${i.raw}'`).join(', ')} ${settings.invalid.length === 1 ? 'is' : 'are'} out of range, so the default ` +
       `${settings.invalid.length === 1 ? 'applies' : 'apply'} (${settings.invalid.map((i) => `${i.key}=${i.fallback}`).join(', ')}). ` +
-      `Set a valid value, for example \`gbrain config set ${first.key} ${first.fallback}\`.`,
+      `Set a valid value, for example \`foresights config set ${first.key} ${first.fallback}\`.`,
       { argv: ['gbrain', 'config', 'set', first.key, String(first.fallback)], consent: [], actor: 'agent', requires_exclusive: false,
         why: `${first.key}: ${CHRONICLE_NUMERIC_KEYS[first.key].meaning}.` },
       { invalid: settings.invalid }) });

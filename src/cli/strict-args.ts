@@ -70,7 +70,7 @@ export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
   },
   'integrity reset-progress': {
     maxPositionals: 0,
-    fix: { ask_user: 'Clear the integrity repair progress log so the next `gbrain integrity auto` starts over?' },
+    fix: { ask_user: 'Clear the integrity repair progress log so the next `foresights integrity auto` starts over?' },
   },
   'search modes': {
     flags: ['--reset', '--json'],
@@ -84,7 +84,7 @@ export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
 
 /**
  * Strict subcommands of self-help commands that print their own per-subcommand
- * help (not routers: `gbrain skillpack reference --help` is the reference
+ * help (not routers: `foresights skillpack reference --help` is the reference
  * command's usage, not an inventory usage). cli.ts applies them exactly like
  * STRICT_SUBCOMMANDS, after help is resolved and before dispatch; the command
  * re-checks on its own entry so an in-process caller gets the same refusal.
@@ -140,14 +140,14 @@ export function strictArgsProblem(spec: StrictSpec, args: readonly string[]): St
   return null;
 }
 
-/** The spec governing `gbrain <command> <sub> ...rest`, or null when the subcommand is not strict here. */
+/** The spec governing `foresights <command> <sub> ...rest`, or null when the subcommand is not strict here. */
 export function strictSpecFor(command: string, subArgs: readonly string[]): StrictSpec | null {
   const key = `${command} ${subArgs[0] ?? ''}`;
   const spec = STRICT_SUBCOMMANDS[key] ?? STRICT_SELF_HELP_SUBCOMMANDS[key];
   return spec && (!spec.when || spec.when(subArgs.slice(1))) ? spec : null;
 }
 
-/** The `invalid_params` refusal for `gbrain <command> <sub> ...rest`, or null when the subcommand is not strict or the arguments parse. */
+/** The `invalid_params` refusal for `foresights <command> <sub> ...rest`, or null when the subcommand is not strict or the arguments parse. */
 export function strictArgsRefusal(command: string, subArgs: readonly string[]): OperationError | null {
   const key = `${command} ${subArgs[0] ?? ''}`;
   const spec = strictSpecFor(command, subArgs);
@@ -156,12 +156,12 @@ export function strictArgsRefusal(command: string, subArgs: readonly string[]): 
   const p = strictArgsProblem(spec, rest);
   if (!p) return null;
   const name = p.token.split('=')[0]!;
-  const why = [`gbrain ${key} refuses an argument it would ignore, because an ignored argument would still run the destructive command. Nothing was changed.`,
+  const why = [`foresights ${key} refuses an argument it would ignore, because an ignored argument would still run the destructive command. Nothing was changed.`,
     spec.refusedWhy?.[name]].filter(Boolean).join(' ');
   const fix: Action = 'ask_user' in spec.fix
     ? { argv: ['gbrain', ...key.split(' ')], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
       user_message: spec.fix.ask_user, why: 'No read-only form exists; run it without extra arguments only after the user agrees.' }
     : { argv: ['gbrain', ...spec.fix.argv], consent: [], actor: 'agent', requires_exclusive: false, why: spec.fix.why };
-  return opError('invalid_params', `gbrain ${key}: \`${p.token}\` ${p.problem}.`,
-    `Run \`gbrain ${key} --help\` for the accepted arguments.`, { why, fix });
+  return opError('invalid_params', `foresights ${key}: \`${p.token}\` ${p.problem}.`,
+    `Run \`foresights ${key} --help\` for the accepted arguments.`, { why, fix });
 }

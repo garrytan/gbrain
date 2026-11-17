@@ -1,5 +1,5 @@
 /**
- * `gbrain repair accepted-takes` (v0.60.253.0 accept bug): restore takes that
+ * `foresights repair accepted-takes` (v0.60.253.0 accept bug): restore takes that
  * an owner accept of a held strike-through or kind change removed.
  *
  * On v0.60.253.0, accepting a held `forget` proposal whose take the page's
@@ -45,7 +45,7 @@ import { compareTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts'
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#accepted-takes';
-const COMMAND = 'gbrain repair accepted-takes';
+const COMMAND = 'foresights repair accepted-takes';
 
 /** One take the records prove an accept removed, with the fence row to restore. */
 export interface RemovedTake {

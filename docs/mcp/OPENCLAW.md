@@ -1,4 +1,4 @@
-# Connect GBrain to OpenClaw
+# Connect Foresights to OpenClaw
 
 > This page is the MCP-registration reference card. For the full brain install
 > — CLI, engine, skills, dream cycle — follow
@@ -19,7 +19,7 @@ ClawHub is an unofficial upload of an old 0.10.1 build whose manifest has no
 `id`, so `openclaw plugins install clawhub:gbrain` stops with
 `plugin manifest requires id`. Don't install it; use Option 2.
 
-GBrain ships [`openclaw.plugin.json`](../../openclaw.plugin.json) at the repo
+Foresights ships [`openclaw.plugin.json`](../../openclaw.plugin.json) at the repo
 root. Installing the bundle plugin registers the MCP server for you — the
 manifest carries an `mcpServers.gbrain` entry that runs the bundled
 `.agents/gbrain-launcher serve` (the same launcher the Codex and Claude Code
@@ -27,7 +27,7 @@ plugins use; it resolves your installed `gbrain` via `GBRAIN_BIN`, then
 `~/.bun/bin/gbrain`, then `PATH`, so it works under launchd's bare PATH and
 never needs a build step) plus the bundled skills — and declares the
 `gbrain-context-engine` context engine. To route OpenClaw's context-engine slot
-through gbrain, two steps, in this order:
+through foresights, two steps, in this order:
 
 1. Install and enable the plugin by its own id, `gbrain-context-engine`
    (the `id` in `openclaw.plugin.json`).
@@ -62,10 +62,10 @@ so it does not certify paid-model recall or provenance.
 ## Option 2: `openclaw mcp add`
 
 OpenClaw keeps MCP servers under `mcp.servers` in `~/.openclaw/openclaw.json`
-(`openclaw config schema` shows the key path). Register gbrain with the CLI:
+(`openclaw config schema` shows the key path). Register foresights with the CLI:
 
 ```bash
-openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+openclaw mcp add foresights --command "$(command -v foresights)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
 ```
 
 Use an absolute `--command` path: the launchd-started gateway's `PATH` does
@@ -91,9 +91,9 @@ database access.
 
 ```bash
 openclaw gateway stop
-openclaw mcp add gbrain --url https://<brain-host>/mcp --transport streamable-http --auth oauth
-openclaw mcp login gbrain
-openclaw mcp doctor gbrain --probe
+openclaw mcp add foresights --url https://<brain-host>/mcp --transport streamable-http --auth oauth
+openclaw mcp login foresights
+openclaw mcp doctor foresights --probe
 openclaw gateway start
 ```
 
@@ -104,25 +104,25 @@ client registration, so the brain owner turns that on and approves the consent
 ([native OAuth path](../guides/hosted-harness-access.md#native-oauth-path),
 [self-service registration](ADMIN.md#self-service-dynamic-registration)). Until
 the login succeeds, OpenClaw leaves the server out of agent turns. Publish the
-endpoint with `gbrain mcp expose` ([remote MCP](../guides/remote-mcp.md)).
+endpoint with `foresights mcp expose` ([remote MCP](../guides/remote-mcp.md)).
 
 ### Or: a thin client's stdio bridge
 
-When OpenClaw should keep a stdio entry, install gbrain on the OpenClaw
-machine as a thin client of the brain host and register its `gbrain serve`,
+When OpenClaw should keep a stdio entry, install foresights on the OpenClaw
+machine as a thin client of the brain host and register its `foresights serve`,
 which relays every call to the host with that client's grant (it opens no
-local database). On the brain host, `gbrain agent register` with
+local database). On the brain host, `foresights agent register` with
 `--harness openclaw` prints these lines with your client filled in; run them
 on the OpenClaw machine:
 
 ```bash
-gbrain init --mcp-only --issuer-url https://<brain-host> --mcp-url https://<brain-host>/mcp \
+foresights init --mcp-only --issuer-url https://<brain-host> --mcp-url https://<brain-host>/mcp \
   --oauth-client-id <client_id> --oauth-client-secret <client_secret>
-openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs
+openclaw mcp add foresights --command "$(command -v foresights)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs
 ```
 
-If gbrain's bundle plugin is installed there, it already registers gbrain:
-run only the `init` line. To keep this client apart from another gbrain on
+If foresights's bundle plugin is installed there, it already registers gbrain:
+run only the `init` line. To keep this client apart from another foresights on
 that machine, put `GBRAIN_HOME=<dir>` before the `init` line and add
 `--env GBRAIN_HOME=<dir>` to the `mcp add` line. What the bridge relays and
 how it reports failures: [stdio bridge](../architecture/thin-client.md#stdio-bridge).
@@ -142,7 +142,7 @@ arguments is refused (`on_behalf_of_in_arguments`).
 
 **Say to your agent:** *"Set up my OpenClaw bot so each DM reads only what that
 person may read"*, then *"Show what alice-example's DMs can read"* (it runs
-`gbrain access check --token openclaw-dm-bot --as alice-example` on the brain host).
+`foresights access check --token openclaw-dm-bot --as alice-example` on the brain host).
 
 **DMs only.** The resolver learns who sent the turn (`requesterSenderId`, with
 `messageChannel` and `agentAccountId`), not whether the turn came from a group
@@ -170,12 +170,12 @@ member relaxes it for every person the bot serves:
   full view.
 - **Pages only you should read name you as their reader.** Today `access:
   private` and `visibility: private` hide a page from this bot. Clearing those
-  labels, by hand or in bulk with `gbrain repair private-labels`, makes the
+  labels, by hand or in bulk with `foresights repair private-labels`, makes the
   pages readable in every DM and by `guest`. Before you clear them, give the
   pages you want to keep to yourself `readable_by: [<your member>]` or a folder
-  rule (`gbrain access rule add --prefix <folder>/ --readers <your member>`).
+  rule (`foresights access rule add --prefix <folder>/ --readers <your member>`).
 
-`gbrain access check --token openclaw-dm-bot --as <member>` must show
+`foresights access check --token openclaw-dm-bot --as <member>` must show
 `Private pages: none` for the bot.
 
 ### Keep the gateway's people apart too
@@ -200,16 +200,16 @@ other need separate gateways):
 
 ### On the brain host
 
-Run `gbrain serve --http` ([deploy guide](DEPLOY.md)). Add each person as a
+Run `foresights serve --http` ([deploy guide](DEPLOY.md)). Add each person as a
 member, make a read-only token for the bot, and list whom it may act for: each
 person's member id, plus `guest` for senders who have none. Never `*`.
 
 ```bash
-gbrain access member add alice-example
-gbrain access member add bob-example
-gbrain auth create openclaw-dm-bot --scopes read     # prints the token once
-gbrain auth rescope --token openclaw-dm-bot --sources <source-id> --may-act-for alice-example,bob-example,guest
-gbrain access check --token openclaw-dm-bot --as alice-example
+foresights access member add alice-example
+foresights access member add bob-example
+foresights auth create openclaw-dm-bot --scopes read     # prints the token once
+foresights auth rescope --token openclaw-dm-bot --sources <source-id> --may-act-for alice-example,bob-example,guest
+foresights access check --token openclaw-dm-bot --as alice-example
 ```
 
 **Keep the token read-only.** An audience limits which existing pages a write
@@ -231,7 +231,7 @@ entry, and an `mcp.servers` entry also takes the place of the bundle plugin's
 server of the same name:
 
 ```bash
-openclaw mcp set gbrain '{"url":"https://brain.example.com/mcp","transport":"streamable-http"}'
+openclaw mcp set foresights '{"url":"https://brain.example.com/mcp","transport":"streamable-http"}'
 ```
 
 Then write the plugin, a directory `gbrain-dm-audience` with three files.
@@ -247,8 +247,8 @@ Then write the plugin, a directory `gbrain-dm-audience` with three files.
 ```json
 {
   "id": "gbrain-dm-audience",
-  "name": "GBrain DM audience",
-  "description": "Names each DM's sender to gbrain as X-Gbrain-On-Behalf-Of",
+  "name": "Foresights DM audience",
+  "description": "Names each DM's sender to foresights as X-Gbrain-On-Behalf-Of",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -265,8 +265,8 @@ Then write the plugin, a directory `gbrain-dm-audience` with three files.
 ```js
 export default {
   id: 'gbrain-dm-audience',
-  name: 'GBrain DM audience',
-  description: "Names each DM's sender to gbrain as X-Gbrain-On-Behalf-Of",
+  name: 'Foresights DM audience',
+  description: "Names each DM's sender to foresights as X-Gbrain-On-Behalf-Of",
   register(api) {
     const { url, members = {} } = api.pluginConfig ?? {};
     api.registerMcpServerConnectionResolver({
@@ -305,12 +305,12 @@ openclaw config set plugins.entries.gbrain-dm-audience.config '{"url":"https://b
   (`on_behalf_of_not_permitted`), and one that names no enabled member is refused
   (`on_behalf_of_unknown_member`); nothing is read either way
   ([shared-agent refusals](../guides/write-refusals.md#shared-agent-refusals)).
-- Runs without a trusted sender (cron, heartbeat, subagents) get no gbrain
+- Runs without a trusted sender (cron, heartbeat, subagents) get no foresights
   server from the resolver. Scheduled jobs that use the
   [wrapper below](#scheduled-jobs-and-workspace-scripts) read as the brain
   owner, so never send their output to someone's DM.
 
-To stop the bot reading for someone, take them out of `--may-act-for`. gbrain
+To stop the bot reading for someone, take them out of `--may-act-for`. foresights
 reads that list on every call; OpenClaw may keep a resolved connection for a
 few minutes. To check from a DM, ask the bot to call `whoami`: its
 `access.applied` names the audience the call read as, and `relaxation` must
@@ -323,7 +323,7 @@ brain nobody told them about, so finish either option with the primary route,
 the per-turn rule:
 
 ```bash
-gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
+foresights setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
 ```
 
 It writes one short marked block into the workspace `AGENTS.md` (from
@@ -356,7 +356,7 @@ its directory. A re-run after an upgrade rewrites the plugin with the new text.
 Every agent on the gateway gets the plugin's rule, so a `--workspace` run leaves
 it when it would name another server and `--no-instructions` there keeps it.
 
-OpenClaw lists no gbrain tool after `openclaw mcp set`: the model reaches them
+OpenClaw lists no foresights tool after `openclaw mcp set`: the model reaches them
 only through `tool_search`, whose results it frames as external data. With an
 MCP connection the rule therefore names the tools (`recall`, `entity`, `search`,
 `query`) and says to find them with `tool_search` and run them with `tool_call`.
@@ -367,14 +367,14 @@ with `turn_hook_not_loaded` unless the plugin shows as loaded with
 
 ## Skills (fallback)
 
-`gbrain skillpack scaffold --harness openclaw` adds gbrain's skills to the
+`foresights skillpack scaffold --harness openclaw` adds foresights's skills to the
 workspace. OpenClaw lists them in its prompt, but in harness-evals a listed
 skill was followed on 1-3% of turns against 97-100% for the per-turn rule, so
 install skills beside the rule, never instead of it. OpenClaw serves a skill
 only whole: a SKILL.md larger than one read (64,000 characters on a model with
 200k+ context, 32,000 at 100k-200k, 16,000 below, a 32,768-byte page when the
 context window is unknown) gets "cannot be partially served" and nothing else.
-Every SKILL.md gbrain installs for OpenClaw is at most 32,000 bytes
+Every SKILL.md foresights installs for OpenClaw is at most 32,000 bytes
 (`test/openclaw-route.test.ts`), so it loads on any model with 100k+ context
 and when the window is unknown; on smaller models the 16,000-character cap
 applies and the larger skills do not load.
@@ -387,21 +387,21 @@ single wrapper that sets `GBRAIN_HOME`, loads the brain's env file and runs the
 installed `gbrain` by absolute path; log its stderr and check its exit code
 ([the wrapper and its rules](../guides/cron-schedule.md#calling-gbrain-unattended)).
 On a managed brain, scripts commit the files they write with
-`gbrain git commit-push -- <paths>` (never plain `git commit`); a scheduled
-`gbrain sources refresh <id>`
+`foresights git commit-push -- <paths>` (never plain `git commit`); a scheduled
+`foresights sources refresh <id>`
 keeps it current
 ([scripts and the managed checkout](../guides/shared-checkout-git.md#scripts-and-the-managed-checkout)).
 
-## Have gbrain report back to this chat
+## Have foresights report back to this chat
 
 When the brain owner has turned on [reporting back](../guides/wakeshift.md)
-(`gbrain wakeshift enable` on the brain host), gbrain can wake an OpenClaw
+(`foresights wakeshift enable` on the brain host), foresights can wake an OpenClaw
 session when a job, a pending write or a cron run it watches finishes. OpenClaw
 needs Wakeshift's own plugin for that. Where the gateway runs (in its container,
 if it's in one):
 
 ```bash
-gbrain setup openclaw --wakeshift
+foresights setup openclaw --wakeshift
 ```
 
 It asks for consent, then runs OpenClaw's installer for the pinned
@@ -411,8 +411,8 @@ the plugin loads. The plugin turns on OpenClaw's hooks endpoint with its own
 token. On a gateway that listens beyond this computer, setup prints
 Wakeshift's question about that endpoint; agreeing is yours to do
 (`openclaw config set plugins.entries.wakeshift.config.allowNetworkHooks true --strict-json`),
-and gbrain never sets it. The session shows a note starting `Wakeshift: connected`
-after its first watch. `gbrain doctor` warns when the installed plugin is not
+and foresights never sets it. The session shows a note starting `Wakeshift: connected`
+after its first watch. `foresights doctor` warns when the installed plugin is not
 the pinned version. Remove it with
 `openclaw wakeshift reset && openclaw plugins uninstall wakeshift --force`.
 
@@ -431,5 +431,5 @@ brain can do (gated by `mcp.publish_skills` on the host).
 ## Remove
 
 Delete `mcp.servers.gbrain` from `~/.openclaw/openclaw.json` (or run
-`openclaw mcp remove gbrain` if your version has it), or uninstall the bundle
+`openclaw mcp remove foresights` if your version has it), or uninstall the bundle
 plugin.

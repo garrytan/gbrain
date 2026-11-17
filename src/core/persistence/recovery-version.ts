@@ -1,5 +1,5 @@
 /**
- * Recovery record versions this binary reads, and the refusal of every other version. A recovery record a newer gbrain
+ * Recovery record versions this binary reads, and the refusal of every other version. A recovery record a newer foresights
  * wrote (a version not listed here) is refused `recovery_version_unsupported` before any of its fields is read: it is
  * never misread, rewritten (`upgradeRecoveryStaging`), cleared, or its staged files removed, so the binary that wrote it
  * finishes it once this host is upgraded. v0.60.290.0, which predates this check, reads a version 2 withdrawal-mirror
@@ -24,19 +24,19 @@ export function recoveryVersionKnown(table: RecoveryTable, record: unknown): boo
   return version === undefined || (typeof version === 'number' && KNOWN[table].includes(version));
 }
 
-/** The upgrade fix: only a newer gbrain on the canonical owner host reads the record. */
+/** The upgrade fix: only a newer foresights on the canonical owner host reads the record. */
 export function recoveryUpgradeFix(sourceId: string | null): Action {
   return { argv: ['gbrain', 'upgrade'], consent: [], actor: 'host_admin', requires_exclusive: false,
-    why: 'A newer gbrain wrote this recovery record; only a gbrain that knows its version can finish it.',
-    user_message: `Run gbrain upgrade on the host that owns ${sourceId ? `source ${sourceId}'s` : 'the source\'s'} canonical worktree, and restart its serve, sync or worker processes; the upgraded writer finishes the recovery. Do not delete the record or its staged files.`,
+    why: 'A newer foresights wrote this recovery record; only a foresights that knows its version can finish it.',
+    user_message: `Run foresights upgrade on the host that owns ${sourceId ? `source ${sourceId}'s` : 'the source\'s'} canonical worktree, and restart its serve, sync or worker processes; the upgraded writer finishes the recovery. Do not delete the record or its staged files.`,
     verify: { argv: ['gbrain', 'sources', 'writer', 'status', ...(sourceId ? ['--source', sourceId] : []), '--json'] } };
 }
 
 export function recoveryVersionUnsupported(table: RecoveryTable, record: unknown, sourceId: string | null): OperationError {
   const version = JSON.stringify((record as { version?: unknown } | null)?.version ?? null);
   const what = table === 'persistence_effects' ? 'withdrawal-mirror effect' : 'write request';
-  return opError('recovery_version_unsupported', `A newer gbrain wrote this ${what}'s recovery record (version ${version}); this gbrain cannot read it.`,
-    `The ${what} recovery record${sourceId ? ` of source ${sourceId}` : ''} has version ${version}, which this gbrain does not know, so it left the record, its staged files and the canonical file untouched; writes on that worktree wait for it. Tell the user to upgrade gbrain on the owner host (fix); the upgraded writer finishes the recovery.`,
+  return opError('recovery_version_unsupported', `A newer foresights wrote this ${what}'s recovery record (version ${version}); this foresights cannot read it.`,
+    `The ${what} recovery record${sourceId ? ` of source ${sourceId}` : ''} has version ${version}, which this foresights does not know, so it left the record, its staged files and the canonical file untouched; writes on that worktree wait for it. Tell the user to upgrade foresights on the owner host (fix); the upgraded writer finishes the recovery.`,
     { fix: recoveryUpgradeFix(sourceId) });
 }
 

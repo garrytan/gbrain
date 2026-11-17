@@ -1,5 +1,5 @@
 /**
- * #2556 — `gbrain think --take` actually persists a take row.
+ * #2556 — `foresights think --take` actually persists a take row.
  *
  * The flag was documented + parsed + remote-gated since v0.28, but
  * RunThinkOpts.take was never read: no think path called addTakeToPage, so

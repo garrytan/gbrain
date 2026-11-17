@@ -4,7 +4,7 @@
 // Per A26 lint opt-out.
 //
 // v0.41.18.0 (A6 + A25 + A17, T11). Before/after stats for remediation job
-// steps, the rows `gbrain onboard --history` reads ("you reduced orphans
+// steps, the rows `foresights onboard --history` reads ("you reduced orphans
 // 47% (88% → 41%)"). runRemediation is the writer: it opens a probe before
 // it submits a step's job and closes it once that job is terminal. Steps
 // whose job moves no tracked metric, dry runs, and steps that throw before

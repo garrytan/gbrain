@@ -1,5 +1,5 @@
 /**
- * `gbrain sources push` CLI wrapper (sources.ts:runPush, via the exported
+ * `foresights sources push` CLI wrapper (sources.ts:runPush, via the exported
  * runSources dispatcher) — the seams the core workspace-push serial suite
  * does NOT cover:
  *
@@ -145,7 +145,7 @@ describe('usage errors → exit 2', () => {
   test('neither <id> nor --path → exit 2 with usage line; engine untouched', async () => {
     const r = await runPushCli(untouchableEngine, []);
     expect(r.exitCode).toBe(2);
-    expect(r.stderr.join('\n')).toContain('Usage: gbrain sources push');
+    expect(r.stderr.join('\n')).toContain('Usage: foresights sources push');
   }, T);
 
   test('BOTH <id> and --path → exit 2 (mutually exclusive)', async () => {
@@ -306,7 +306,7 @@ describe('--json output', () => {
     expect(res.findings[0].file).toBe('notes.md');
     expect(r.stdout[0].includes(OPENAI)).toBe(false); // redacted in JSON too
     // json mode suppresses the wrapper's human finding dump (the core logger
-    // line still reaches stderr via `[gbrain]` — that one is expected).
+    // line still reaches stderr via `[foresights]` — that one is expected).
     expect(r.stderr.join('\n')).not.toContain('allow this finding:');
   }, T);
 });
@@ -366,9 +366,9 @@ describe('blocked_secrets guidance — runnable from outside the source dir', ()
     expect(allowCommand).toEndWith(` >> ${quotedAllowlist}`);
     expect(err).toContain('fingerprint: sha256:');
     expect(err).toContain(`(it appends to ${quotedAllowlist})`);
-    expect(err).toContain(`  gbrain sources push --path ${quotedDir} --allow-unverified-remote`);
+    expect(err).toContain(`  foresights sources push --path ${quotedDir} --allow-unverified-remote`);
     expect(err).toContain('Remove a real credential from the file (and rotate it) first. Allowlist only a reviewed false positive');
-    expect(err).toContain('Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction');
+    expect(err).toContain('Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction');
 
     const json = await inDir(root, () => runPushCli(untouchableEngine, ['--path', name, '--allow-unverified-remote', '--json']));
     expect(json.exitCode).toBe(5);
@@ -378,9 +378,9 @@ describe('blocked_secrets guidance — runnable from outside the source dir', ()
     const f = res.findings[0];
     expect(f.allowCommand).toBe(allowCommand);
     expect(f.allowlistPath).toBe(join(spaced, SCAN_ALLOW_FILENAME));
-    expect(f.retryCommand).toBe(`gbrain sources push --path ${quotedDir} --allow-unverified-remote`);
+    expect(f.retryCommand).toBe(`foresights sources push --path ${quotedDir} --allow-unverified-remote`);
     expect(err).toContain(`fingerprint: ${f.fingerprint}`);
-    expect(f.docs).toBe('https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction');
+    expect(f.docs).toBe('https://github.com/aimonk2025/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction');
 
     const appended = spawnSync('bash', ['-c', allowCommand], { cwd: tmpdir(), encoding: 'utf-8' });
     expect(appended.status).toBe(0);

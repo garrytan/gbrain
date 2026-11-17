@@ -186,7 +186,7 @@ Five definitions. Three layers. One principle. Thin harness, fat skills.
 
 ## Agent Decision Guide: Skill or Code?
 
-When building GBrain features, use this decision guide:
+When building Foresights features, use this decision guide:
 
 | Question | If YES | If NO |
 |----------|--------|-------|
@@ -196,11 +196,11 @@ When building GBrain features, use this decision guide:
 | Is it a lookup, list, or status check? | **Code** | Probably skill |
 | Does it change behavior based on conversation context? | **Skill** | Code |
 
-**GBrain examples:**
-- `gbrain integrations list` = **Code** (reads files, checks env vars, deterministic)
-- `gbrain integrations status` = **Code** (checks env vars + heartbeat, deterministic)
-- `gbrain integrations doctor` = **Code** (runs health checks, deterministic)
-- `gbrain integrations stats` = **Code** (aggregates JSONL, deterministic)
+**Foresights examples:**
+- `foresights integrations list` = **Code** (reads files, checks env vars, deterministic)
+- `foresights integrations status` = **Code** (checks env vars + heartbeat, deterministic)
+- `foresights integrations doctor` = **Code** (runs health checks, deterministic)
+- `foresights integrations stats` = **Code** (aggregates JSONL, deterministic)
 - Recipe setup flow = **Skill** (asks for API keys, adapts to environment, validates)
 - Recipe changelog surfacing = **Skill** (agent describes changes conversationally)
 - Entity detection = **Skill** (reads message, decides what's important, creates pages)

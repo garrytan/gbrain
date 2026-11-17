@@ -99,8 +99,8 @@ async function databaseOnlyActivation(engine: BrainEngine): Promise<void> {
       expect(await sourceStatus()).toBe('claim_required');
       const refused = await outcome(activatePersistence(engine, { confirmQuiesced: true, dryRun: true }));
       expect(refused).toMatchObject({ state: 'refused', code: 'writer_registration_required' });
-      expect(refused.suggestion).toContain(`gbrain sources writer claim ${sourceId} --path ${root} --dry-run --json`);
-      expect(refused.suggestion).toContain('gbrain config set sync.write_through false');
+      expect(refused.suggestion).toContain(`foresights sources writer claim ${sourceId} --path ${root} --dry-run --json`);
+      expect(refused.suggestion).toContain('foresights config set sync.write_through false');
       expect(await managedPersistenceEnabled(engine)).toBe(false);
 
       // write_through off: status says database_only and activation now agrees (before the fix: writer_registration_required).
@@ -127,7 +127,7 @@ async function databaseOnlyActivation(engine: BrainEngine): Promise<void> {
       expect(await sourceStatus()).toBe('claim_required');
       const flipped = await put('notes/after-flip', content('Written after the flip.'));
       expect(flipped).toMatchObject({ state: 'refused', code: 'owner_unavailable', detail: 'unbound_source' });
-      expect(flipped.suggestion).toContain(`gbrain sources writer claim ${sourceId}`);
+      expect(flipped.suggestion).toContain(`foresights sources writer claim ${sourceId}`);
       expect(await bindings()).toEqual([]);
       expect(filesUnderRoot()).toEqual([]);
       expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, 'notes/after-flip'])).toEqual([]);
@@ -142,7 +142,7 @@ async function databaseOnlyActivation(engine: BrainEngine): Promise<void> {
       // Managed sync on the unbound source refuses as before, and the hint names the claim instead of forbidding it.
       const sync = await outcome(resolveManagedSyncContext(engine, { sourceId, noPull: true } as never));
       expect(sync).toMatchObject({ state: 'refused', code: 'owner_unavailable' });
-      expect(sync.suggestion).toContain(`gbrain sources writer claim ${sourceId} --path ${root} --dry-run --json`);
+      expect(sync.suggestion).toContain(`foresights sources writer claim ${sourceId} --path ${root} --dry-run --json`);
       expect(sync.suggestion).not.toContain('do not claim');
       expect(existsSync(root)).toBe(true);
 

@@ -247,7 +247,7 @@ describe('find_contradictions for scoped readers (D9)', () => {
     const { body } = await remoteCall({ limit: 100 });
     const kept = body.contradictions.find(f => [f.a.text, f.b.text].some(t => t.includes(PUBLIC.take)) && [f.a.text, f.b.text].some(t => t.includes(PUBLIC.a)))!;
     expect(kept.resolution_kind).toBe('temporal_supersede');
-    expect(kept.resolution_command).toContain('gbrain takes supersede');
+    expect(kept.resolution_command).toContain('foresights takes supersede');
   });
 
   test('a source-filtered local caller gets the same scoped view', async () => {

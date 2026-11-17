@@ -88,7 +88,7 @@ export function setResolverHarness(read: Exclude<ResolverConfigRead, { state: 'u
 }
 
 export const SKILL_RESOLVER_KEY_PREFIX = 'skills.resolver.';
-/** The leaves `gbrain config set|unset|get` accepts (harnesses is setup's: --skill-loading resolve|off). */
+/** The leaves `foresights config set|unset|get` accepts (harnesses is setup's: --skill-loading resolve|off). */
 export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'top_gate', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.<harness>.top_gate', 'per_harness.<harness>.dirs', 'per_harness.hermes.owner_sender_ids'] as const;
 const PER_HARNESS_LEAF = /^per_harness\.([a-z-]+)\.(top_k|min_match|top_gate|dirs|owner_sender_ids)$/;
 
@@ -113,7 +113,7 @@ function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean
 }
 
 /**
- * `gbrain config set|unset|get skills.resolver.<leaf>`, engine-free (before
+ * `foresights config set|unset|get skills.resolver.<leaf>`, engine-free (before
  * any brain connection, on a brainless install and on a thin client alike):
  * the file plane is the only plane these keys have. A per_harness entry that
  * is not an object (a hand-edited null, list or scalar) reads as unset, and
@@ -125,7 +125,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   if (!key?.startsWith(SKILL_RESOLVER_KEY_PREFIX) || !['set', 'unset', 'get'].includes(action ?? '')) return false;
   const leaf = key.slice(SKILL_RESOLVER_KEY_PREFIX.length);
   const fail = (msg: string): true => { console.error(`[config] ${msg}`); setCliExitVerdict(1); return true; };
-  if (leaf === 'harnesses') return fail(`${key} is written by gbrain setup <claude-code|codex|hermes> --skill-loading resolve (and removed by --skill-loading off); nothing was written.`);
+  if (leaf === 'harnesses') return fail(`${key} is written by foresights setup <claude-code|codex|hermes> --skill-loading resolve (and removed by --skill-loading off); nothing was written.`);
   const nested = leaf.match(PER_HARNESS_LEAF);
   if (!nested && !(SKILL_RESOLVER_CONFIG_LEAVES as readonly string[]).includes(leaf)) return fail(`Unknown config key "${key}". skills.resolver keys: ${SKILL_RESOLVER_CONFIG_LEAVES.join(', ')}. Nothing was written.`);
   const read = readResolverConfig(home);
@@ -147,7 +147,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
     delete holder[field];
   } else {
     const value = rest.find((a) => !a.startsWith('-'));
-    if (value === undefined) return fail(`usage: gbrain config set ${key} <value>`);
+    if (value === undefined) return fail(`usage: foresights config set ${key} <value>`);
     const parsed = parseLeafValue(leaf, value);
     if (!parsed.ok) return fail(`${key} ${parsed.error}`);
     holder[field] = parsed.value;

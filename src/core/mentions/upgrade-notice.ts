@@ -1,5 +1,5 @@
 /**
- * `gbrain post-upgrade`: while index-due pages exist (including every page
+ * `foresights post-upgrade`: while index-due pages exist (including every page
  * behind the binary's mention or alias version on an otherwise unchanged
  * brain), an `[AGENT]` block names the catch-up sweep and how long it takes,
  * so an upgraded brain gets its entity mention index without waiting for
@@ -32,7 +32,7 @@ export async function mentionIndexUpgradeNotice(engine: BrainEngine): Promise<st
       consent: 'none (free: no model calls, no egress)',
       actor: 'agent',
       next: `run: ${MENTION_CATCH_UP_ARGV.join(' ')} (about ${minutes} minute(s) for ${preview.due} page(s); resumable, and autopilot cycles continue it otherwise)`,
-      verify: 'gbrain extract --stale --dry-run --json (mention_due_pages: 0)',
+      verify: 'foresights extract --stale --dry-run --json (mention_due_pages: 0)',
     }).trimEnd(),
     '',
   ];

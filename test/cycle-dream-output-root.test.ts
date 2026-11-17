@@ -218,7 +218,7 @@ describe('#2397: allow-list resolution ladder (engine repo beats compiled-binary
   });
 
   test('cwd rung still wins over the engine rung (dev runs from the brain repo)', async () => {
-    // bun test runs from the gbrain repo root, so the cwd candidate exists
+    // bun test runs from the foresights repo root, so the cwd candidate exists
     // and wins even though sync.repo_path points at repoA.
     const globs = await loadAllowedSlugPrefixes('wiki', engine);
     expect(globs).toContain('dream-cycle-summaries/*');

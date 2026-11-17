@@ -52,11 +52,11 @@ This skill guarantees:
 - Citations on every fact written
 
 Ambient routing is a harness convention that a well-behaved agent
-follows, not a mechanical guarantee; nothing in the gbrain runtime blocks
+follows, not a mechanical guarantee; nothing in the foresights runtime blocks
 a reply if the skill never loads. On harnesses without per-message ambient
 routing (Claude Code, Codex), apply this skill as an agent convention or
 wire it via a prompt-submit hook. When the operator has enabled
-`memory.auto_writeback` (off by default; `gbrain config set
+`memory.auto_writeback` (off by default; `foresights config set
 memory.auto_writeback salient`), the MCP server's initialize instructions
 and the managed bootstrap instruction blocks carry the ambient-writeback
 contract to the agent, and on Claude Code a Stop-hook extraction backstop
@@ -77,7 +77,7 @@ Every time this skill creates or updates a brain page that mentions a person or 
 Automatic capture is off by default. Before writing, establish an explicit
 user choice for this brain and capture scope. A stored opt-in or an explicitly
 enabled `memory.auto_writeback` mode can supply that choice; `off`, a missing or
-unreadable choice cannot. Reading this skill, installing GBrain, an available
+unreadable choice cannot. Reading this skill, installing Foresights, an available
 API key, silence, or an announcement that capture is on does not authorize it.
 
 If the user asks to enable capture, explain what will be retained and record
@@ -115,16 +115,16 @@ meetings, and concepts. An original without cross-links is a dead original.
 
 1. Extract entity mentions (people, companies, media titles)
 2. For each entity:
-   - `gbrain search "name"` — does a page exist?
+   - `foresights search "name"` — does a page exist?
    - If NO page → check notability. If notable, save the supplied information with provenance.
    - If page exists but THIN → enrich only within separately authorized capabilities and spending
    - If page exists and RICH → no action
-3. For new FACTS with specific dates → call `gbrain timeline-add <slug> <date> "<summary>"`
+3. For new FACTS with specific dates → call `foresights timeline-add <slug> <date> "<summary>"`
 
 **Auto-link (v0.10.1):** When you write/update an originals or ideas page that
 references a person or company, the auto-link post-hook on `put_page`
 automatically creates the link from the new page to that entity. You don't
-need to call `gbrain link` manually. Timeline entries still need explicit calls.
+need to call `foresights link` manually. Timeline entries still need explicit calls.
 
 ### Phase 3: Signal Logging
 
@@ -144,7 +144,7 @@ interrupt every response or ask for enablement repeatedly.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - No automatic-capture opt-in on record: do nothing. An API key, silence or a first-fire announcement is not consent.
 - A capture write returns `write_pending` (exit 10) or `revision_conflict`: never block the main reply; poll the receipt or re-read and merge on the next turn.

@@ -1,15 +1,15 @@
 /**
- * gbrain claw-test — end-to-end "fresh user" test harness.
+ * foresights claw-test — end-to-end "fresh user" test harness.
  *
  * Two tiers:
- *   gbrain claw-test                              — scripted (no LLM, CI gate)
- *   gbrain claw-test --live --agent openclaw      — real agent, friction discovery
+ *   foresights claw-test                              — scripted (no LLM, CI gate)
+ *   foresights claw-test --live --agent openclaw      — real agent, friction discovery
  *
  * Phases (scripted mode):
  *   setup → install_brain → import → query → extract → verify → render
  *
  * The harness sets GBRAIN_HOME=<tempdir> so the run is hermetic. Each child
- * gbrain invocation runs with --progress-json and the harness captures stderr
+ * foresights invocation runs with --progress-json and the harness captures stderr
  * to assert expected_phases from scenario.json fired.
  *
  * See ~/.claude/plans/system-instruction-you-are-working-noble-biscuit.md
@@ -46,8 +46,8 @@ interface HarnessOpts {
   keepTempdir: boolean;
   listAgents: boolean;
   help: boolean;
-  /** Path to the gbrain binary used to invoke child commands (always set by
-   *  parseArgs: GBRAIN_BIN_OVERRIDE when valid; else the compiled gbrain
+  /** Path to the foresights binary used to invoke child commands (always set by
+   *  parseArgs: GBRAIN_BIN_OVERRIDE when valid; else the compiled foresights
    *  binary, or a synthesized launcher when running under the bun runtime —
    *  see resolveGbrainBin). */
   gbrainBin: string;
@@ -65,7 +65,7 @@ interface PhaseOutcome {
 }
 
 const TAIL_BYTES = 4_096;
-/** Per-phase cap for the harness's own gbrain children (staging, scripted
+/** Per-phase cap for the harness's own foresights children (staging, scripted
  *  phases, oracle probes). Env override is a test/incident escape hatch. */
 const SUBPROCESS_TIMEOUT_MS = envTimeoutMs('GBRAIN_CLAW_PHASE_TIMEOUT_MS', 5 * 60_000);
 /** Wall clock for the live agent turn — real fresh-install turns run long
@@ -120,7 +120,7 @@ export async function runClawTest(args: string[]): Promise<number> {
   console.log(`run-id: ${runId}`);
   console.log(`tempdir: ${runRoot}`);
 
-  // Run-start meta record. Agent-name resolution in `gbrain friction diff`
+  // Run-start meta record. Agent-name resolution in `foresights friction diff`
   // depends on this: a fully clean run otherwise writes zero agent-stamped
   // entries and could never be resolved by agent name. Uses the existing
   // phase-marker kind (no new FrictionKind) + additive scenario/harness_schema
@@ -217,7 +217,7 @@ export async function runClawTest(args: string[]): Promise<number> {
   // Always render at the end so the operator can immediately see the report.
   console.log('---');
   console.log(`friction log:    ${join(frictionDir(), runId + '.jsonl')}`);
-  console.log(`render report:   gbrain friction render --run-id ${runId}`);
+  console.log(`render report:   foresights friction render --run-id ${runId}`);
 
   if (interrupted) return 130;
   return exitCode;
@@ -230,7 +230,7 @@ export async function runClawTest(args: string[]): Promise<number> {
 /**
  * v0.32.x: env vars that, when inherited from the parent process, would
  * break the claw-test scripted harness's "hermetic PGLite tempdir"
- * contract. The harness runs `gbrain init --pglite` then a sequence of
+ * contract. The harness runs `foresights init --pglite` then a sequence of
  * subsequent phases that ALL must hit the same tempdir brain. If the
  * parent process (e.g. a CI runner with DATABASE_URL set for OTHER e2e
  * tests) leaks DATABASE_URL into the children, loadConfig sees the env
@@ -245,7 +245,7 @@ export async function runClawTest(args: string[]): Promise<number> {
 const POSTGRES_POLLUTION_ENV_VARS = ['DATABASE_URL', 'GBRAIN_DATABASE_URL'];
 
 /**
- * Child env for gbrain invocations (scripted phases AND live-mode staging /
+ * Child env for foresights invocations (scripted phases AND live-mode staging /
  * oracle probes): parent env minus Postgres-pointing vars AND minus every
  * other GBRAIN_* routing/tuning var — a stray operator GBRAIN_BRAIN_ID /
  * GBRAIN_SOURCE / threshold override would misroute the staging and oracle
@@ -295,7 +295,7 @@ async function runScripted(
   // Phase 3: import (only when scenario has a brain dir)
   // Capture brainDir for downstream phases that need an explicit --dir
   // (extract requires it post-#688 — defaults to configured source, and
-  // gbrain init --pglite doesn't register a fs source).
+  // foresights init --pglite doesn't register a fs source).
   let brainDir: string | undefined;
   if (scenario.brainRelative) {
     brainDir = join(scenario.dir, scenario.brainRelative);
@@ -368,7 +368,7 @@ async function runScripted(
       logFriction({
         runId: ctx.runId,
         phase: phase.name,
-        message: `command failed (exit ${outcome.exitCode}): gbrain ${phase.argv.join(' ')}`,
+        message: `command failed (exit ${outcome.exitCode}): foresights ${phase.argv.join(' ')}`,
         severity: 'error',
         hint: outcome.stderrTail.trim().slice(0, 500),
         source: 'harness',
@@ -463,16 +463,16 @@ async function runLive(
   // ---- Stage the scenario (scenario-driven; mirrors the scripted branch) ----
   // The BRIEF's preconditions must actually exist before the agent reads it:
   // fresh-install promises "workspace already has an AGENTS.md", "3 small
-  // markdown pages already there" (./brain), and "user just ran gbrain init".
+  // markdown pages already there" (./brain), and "user just ran foresights init".
   // Without staging, every live run starts in an empty tempdir and the run
-  // measures recovery-from-broken-fixture, not gbrain friction.
+  // measures recovery-from-broken-fixture, not foresights friction.
   const childEnv = buildChildEnv(ctx);
   const gbrainBin = opts.gbrainBin;
   const stageFailed = await stageLiveScenario(opts, scenario, ctx, childEnv, gbrainBin);
   if (stageFailed !== 0) return stageFailed;
 
   // Upgrade oracle needs the pre-turn schema version (non-mutating probe —
-  // any gbrain CLI connect would auto-apply migrations and do the agent's
+  // any foresights CLI connect would auto-apply migrations and do the agent's
   // work for it).
   const dbPath = pgliteDbPath(ctx.gbrainHome);
   let preVersion: number | null = null;
@@ -481,7 +481,7 @@ async function runLive(
     preVersion = await readPgliteSchemaVersion(dbPath);
   }
 
-  // ---- PATH shim: the BRIEF says `gbrain …`; make bare `gbrain` resolve to
+  // ---- PATH shim: the BRIEF says `foresights …`; make bare `gbrain` resolve to
   // THIS harness's binary (operator PATH may have none, or a stale global). ----
   const shimDir = join(ctx.runRoot, '.harness-bin');
   mkdirSync(shimDir, { recursive: true });
@@ -553,7 +553,7 @@ async function stageLiveScenario(
   if (scenario.kind === 'upgrade') {
     // Seed ONLY — running init here would walk the migration chain forward
     // and do the very upgrade the agent turn is supposed to perform (any
-    // gbrain connect auto-migrates). Same seed-first order as scripted mode.
+    // foresights connect auto-migrates). Same seed-first order as scripted mode.
     if (scenario.seedRelative) {
       const seedSql = join(scenario.dir, scenario.seedRelative, 'dump.sql');
       if (existsSync(seedSql)) {
@@ -576,7 +576,7 @@ async function stageLiveScenario(
   }
 
   // fresh-install: copy the scenario's brain pages + an AGENTS.md stub, then
-  // init the brain (the BRIEF says the user "just ran gbrain init").
+  // init the brain (the BRIEF says the user "just ran foresights init").
   if (scenario.brainRelative) {
     const src = join(scenario.dir, scenario.brainRelative);
     if (!existsSync(src)) {
@@ -603,7 +603,7 @@ async function stageLiveScenario(
   }
   const init = await invokeGbrain(gbrainBin, ['init', '--pglite', '--no-embedding'], ctx.runRoot, childEnv);
   if (init.exitCode !== 0) {
-    return failStage(`gbrain init failed during staging (exit ${init.exitCode})`, init.stderrTail.trim().slice(0, 500));
+    return failStage(`foresights init failed during staging (exit ${init.exitCode})`, init.stderrTail.trim().slice(0, 500));
   }
   console.log('[stage] fresh-install workspace staged (brain pages + AGENTS.md + init)');
   return 0;
@@ -635,14 +635,14 @@ async function verifyLiveOutcome(
     } else if (postVersion <= preVersion) {
       failures.push({
         message: `upgrade oracle: schema version did not advance during the agent turn (pre=${preVersion} post=${postVersion})`,
-        hint: 'the agent never ran a gbrain command that walks the migration chain',
+        hint: 'the agent never ran a foresights command that walks the migration chain',
       });
     } else if (postVersion < LATEST_VERSION) {
-      // Advancing one step is not an upgrade: any gbrain connect migrates to
+      // Advancing one step is not an upgrade: any foresights connect migrates to
       // latest, so a partial version means the agent's run died mid-chain.
       failures.push({
         message: `upgrade oracle: schema version advanced but stopped short of latest (pre=${preVersion} post=${postVersion} latest=${LATEST_VERSION})`,
-        hint: 'a gbrain command started the migration chain but did not complete it',
+        hint: 'a foresights command started the migration chain but did not complete it',
       });
     }
   } else {
@@ -931,7 +931,7 @@ function parseArgs(args: string[]): HarnessOpts {
 }
 
 /**
- * Resolve the gbrain binary child invocations use. GBRAIN_BIN_OVERRIDE goes
+ * Resolve the foresights binary child invocations use. GBRAIN_BIN_OVERRIDE goes
  * through the same absolute/no-dotdot/no-metacharacter validation as the
  * *_BIN runner overrides — the value is interpolated into a generated
  * PATH-shim script in live mode, so a relative value would re-resolve through
@@ -941,10 +941,10 @@ function parseArgs(args: string[]): HarnessOpts {
  *
  * The fallback is NOT bare process.execPath: under `bun run src/cli.ts` (the
  * canonical source install) or a bun-global launcher, execPath is the Bun
- * RUNTIME, and children would run `bun init` / `bun import` instead of gbrain
+ * RUNTIME, and children would run `bun init` / `bun import` instead of foresights
  * — scaffolding a Bun project in the hermetic workspace and failing the rest
  * of the run. When execPath looks like bun, synthesize a launcher shim that
- * re-enters this checkout's cli.ts; only a compiled gbrain binary returns
+ * re-enters this checkout's cli.ts; only a compiled foresights binary returns
  * execPath directly.
  */
 let cachedGbrainBin: string | null = null;
@@ -965,7 +965,7 @@ function resolveGbrainBinUncached(): string {
   const exe = process.execPath;
   if (/^bun(-profile)?(\.exe)?$/i.test(basename(exe))) {
     // src/commands/claw-test.ts → ../cli.ts. Under a compiled binary this
-    // branch never fires (execPath is the gbrain binary itself); under bun
+    // branch never fires (execPath is the foresights binary itself); under bun
     // (dev checkout or bun-global install) import.meta resolves to the real
     // source file next to cli.ts.
     const cliTs = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'cli.ts');
@@ -977,8 +977,8 @@ function resolveGbrainBinUncached(): string {
       return launcher;
     }
     console.error(
-      'claw-test: running under the bun runtime but the gbrain CLI entrypoint could not be located — ' +
-      'child gbrain invocations would run bun itself. Set GBRAIN_BIN_OVERRIDE to a gbrain binary.',
+      'claw-test: running under the bun runtime but the foresights CLI entrypoint could not be located — ' +
+      'child foresights invocations would run bun itself. Set GBRAIN_BIN_OVERRIDE to a foresights binary.',
     );
   }
   return exe;
@@ -1019,11 +1019,11 @@ async function cmdListAgents(): Promise<number> {
 }
 
 function printHelp() {
-  console.log(`gbrain claw-test — end-to-end claw-setup friction harness
+  console.log(`foresights claw-test — end-to-end claw-setup friction harness
 
 Usage:
-  gbrain claw-test [--scenario <name>] [--live --agent <name>] [--keep-tempdir]
-  gbrain claw-test --list-agents
+  foresights claw-test [--scenario <name>] [--live --agent <name>] [--keep-tempdir]
+  foresights claw-test --list-agents
 
 Defaults:
   --scenario fresh-install
@@ -1037,10 +1037,10 @@ e.g. ~/.openclaw or ~/.hermes) against a hermetic brain. The door e2e suite is
 the fully hermetic lane.
 
 Examples:
-  gbrain claw-test --scenario fresh-install
-  gbrain claw-test --scenario upgrade-from-v0.18 --keep-tempdir
-  gbrain claw-test --live --agent openclaw
-  gbrain claw-test --live --agent opencode
-  gbrain claw-test --live --agent hermes
-  gbrain claw-test --live --agent grok`);
+  foresights claw-test --scenario fresh-install
+  foresights claw-test --scenario upgrade-from-v0.18 --keep-tempdir
+  foresights claw-test --live --agent openclaw
+  foresights claw-test --live --agent opencode
+  foresights claw-test --live --agent hermes
+  foresights claw-test --live --agent grok`);
 }

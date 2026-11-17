@@ -1,10 +1,10 @@
 /**
  * skill-pins.ts — the operator's always-on skills for one catalog
- * (`gbrain skills pin add|remove|list`), stored in the file plane at
+ * (`foresights skills pin add|remove|list`), stored in the file plane at
  * config.json `skills.resolver.pins.<catalog>` so a `--skill-loading off`
  * (which removes the derived skill-index state) never deletes them.
  *
- * gbrain ships no pins: a catalog with none renders no pinned block. Each pin
+ * foresights ships no pins: a catalog with none renders no pinned block. Each pin
  * is a skill id that must be in the catalog's index and an optional
  * trigger-first line (one line, at most 100 characters, no angle brackets).
  * Rendering drops any pin the catalog no longer holds and reports it, so an

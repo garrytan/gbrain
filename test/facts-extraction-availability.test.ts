@@ -1,5 +1,5 @@
 /**
- * #5735: the corpus-harvest gates ask whether the extraction model GBrain
+ * #5735: the corpus-harvest gates ask whether the extraction model Foresights
  * will actually use is servable — the engine-resolved model (DB-plane
  * `facts.extraction_model` included) checked against the configured
  * gateway — instead of the engine-blind detectCapabilities() file/env probe.

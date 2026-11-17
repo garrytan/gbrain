@@ -199,7 +199,7 @@ describe('#5827 trusted local link reads', () => {
     expect(rows).toEqual(await engine.getBacklinks('companies/acme-example', { sourceId: 'business' }));
   });
 
-  test('`gbrain backlinks <slug> --source business` reads business through makeContext', async () => {
+  test('`foresights backlinks <slug> --source business` reads business through makeContext', async () => {
     const ctx = await withEnv({ GBRAIN_SOURCE: undefined }, () => makeContext(engine as never, { source: 'business' }));
     expect(ctx.sourceId).toBe('business');
     const rows = await runOp('get_backlinks', ctx, { slug: 'companies/acme-example' });
@@ -223,15 +223,15 @@ describe('#5827 trusted local link reads', () => {
     const rows = await runOp('get_backlinks', localCtx({}, warnings), { slug: 'companies/priv-only-co' });
     expect(rows).toEqual([]);
     expect(warnings).toEqual([
-      '[gbrain] backlinks: no incoming links for companies/priv-only-co in sources default, business, wiki; '
-      + 'found 1 in source priv. Rerun with:\n  gbrain backlinks companies/priv-only-co --source priv',
+      '[foresights] backlinks: no incoming links for companies/priv-only-co in sources default, business, wiki; '
+      + 'found 1 in source priv. Rerun with:\n  foresights backlinks companies/priv-only-co --source priv',
     ]);
     const quiet: string[] = [];
     expect(await runOp('get_backlinks', localCtx({}, quiet), { slug: 'companies/priv-only-co', json: true })).toEqual([]);
     expect(quiet).toEqual([]);
   });
 
-  test('`gbrain graph` keeps same-slug roots from two federated sources as two nodes', async () => {
+  test('`foresights graph` keeps same-slug roots from two federated sources as two nodes', async () => {
     const nodes = await runOp('traverse_graph', localCtx(), { slug: 'people/alice-example', depth: 1 }) as GraphNode[];
     expect(nodes.filter((n) => n.depth === 0).map((n) => `${n.slug}(${n.source_id})`).sort()).toEqual([
       'people/alice-example(business)',

@@ -1,4 +1,4 @@
-# GBrain Skill Resolver
+# Foresights Skill Resolver
 
 This is the dispatcher. Skills are the implementation. **Read the skill file before acting.** If two skills could match, read both. They are designed to chain (e.g., ingest then enrich for each entity).
 
@@ -9,32 +9,32 @@ map of the same routing: one place to scan every skill and its trigger
 phrases. If a row here and a skill's frontmatter disagree, the frontmatter
 wins; fix the row.
 
-**A gbrain call failed or printed `[AGENT]` or a notice block:** follow the
+**A foresights call failed or printed `[AGENT]` or a notice block:** follow the
 [agent operator protocol](./conventions/agent-operator-protocol.md). Read the
 error's `code` (fall back to `error`), follow `fix.next`, then run `fix.verify`.
 
-## Which gbrain call for which lookup
+## Which foresights call for which lookup
 
 <!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
-Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+Ask foresights before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
 reads the index across every source, ranks, filters and names the slug to read
-next. With the gbrain MCP server connected, call the tool of the same name
+next. With the foresights MCP server connected, call the tool of the same name
 instead of the CLI (one connection, no per-call startup).
 
 | Lookup | CLI | MCP tool |
 |---|---|---|
-| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
-| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
-| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
-| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
-| Read a known page | `gbrain get <slug>` | `get_page` |
-| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
-| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
-| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
-| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
-| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
-| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
-| Find something archived to B2, Supabase or S3 | `gbrain storage-find "<phrase>"` | `storage_find` |
+| Find a page by name or path | `foresights find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `foresights stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
+| Answer a question, search a topic | `foresights query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `foresights search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `foresights get <slug>` | `get_page` |
+| Read only the part a search hit points at | `foresights get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `foresights entity <slug>`, then `foresights recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `foresights backlinks <slug>`, `foresights timeline <slug>`, `foresights list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `foresights remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `foresights query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `foresights skills resolve --text "<request>" --json` (after `foresights skills index build`) | none (CLI only) |
+| Find something archived to B2, Supabase or S3 | `foresights storage-find "<phrase>"` | `storage_find` |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -73,9 +73,9 @@ off until the user opts in, and paid enrichment is a separate choice.
 | Share a brain page as a link | `skills/publish/SKILL.md` |
 | "bring back", "restore the archived", "where did X go", "what's in B2", "what did we archive", "register this archive" | `skills/storage-manifest/SKILL.md` |
 | "validate frontmatter", "check frontmatter", "fix frontmatter", "frontmatter audit", "brain lint" | `skills/frontmatter-guard/SKILL.md` |
-| "what search mode", "is my cache hot", "tune my retrieval", "compare search modes", "clear search overrides" | `gbrain search modes/stats/tune` directly. See `skills/conventions/search-modes.md` |
-| "turn on System One", "enable Jev", "TypeSafe decide", "why is the evidence gate inactive", "turn System One off" | `gbrain decide probe/status/enable/disable` directly (brain host only). See `docs/guides/system-one.md` |
-| "eval results", "search benchmark", "haters-immune methodology", "regression check on retrieval" | `gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record` per mode, `gbrain eval run-all` (BrainBench), then `gbrain eval compare`. See `docs/eval/SEARCH_MODE_METHODOLOGY.md` |
+| "what search mode", "is my cache hot", "tune my retrieval", "compare search modes", "clear search overrides" | `foresights search modes/stats/tune` directly. See `skills/conventions/search-modes.md` |
+| "turn on System One", "enable Jev", "TypeSafe decide", "why is the evidence gate inactive", "turn System One off" | `foresights decide probe/status/enable/disable` directly (brain host only). See `docs/guides/system-one.md` |
+| "eval results", "search benchmark", "haters-immune methodology", "regression check on retrieval" | `foresights eval longmemeval <dataset.jsonl> --mode <mode> --record` per mode, `foresights eval run-all` (BrainBench), then `foresights eval compare`. See `docs/eval/SEARCH_MODE_METHODOLOGY.md` |
 | "bulk delete", "wipe the", "rm -rf", "purge the", "bulk forget" | `skills/data-loss-gate/SKILL.md` |
 | "fact check", "fact-check", "verify the facts", "check the claims" | `skills/fact-check/SKILL.md` |
 | "resolve before asking", "before asking the user", "unidentified contact", "unknown relationship" | `skills/resolve-before-asking/SKILL.md` |
@@ -87,8 +87,8 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "compendium", "research everything about", "read them all and summarize", "definitive guide" | `skills/research-compendium/SKILL.md` |
 | "enrich this article", "enrich brain pages", "batch enrich", "make brain pages useful" | `skills/article-enrichment/SKILL.md` |
 | "make pdf from brain", "brain pdf", "convert brain page to pdf", "publish this page as pdf", "export brain page" | `skills/brain-pdf/SKILL.md` |
-| "add a page type", "add a type to my schema", "schema author", "schema mutate", "schema pack add", "my brain has untyped pages", "propose new types from my corpus", "backfill page types", "evolve my schema", "researcher type", "make X an expert type" (dispatcher for: gbrain schema active/list/show/validate/graph/lint/stats/explain/use/downgrade/reload/init/fork/edit/diff/add-type/remove-type/update-type/add-alias/remove-alias/add-prefix/remove-prefix/add-link-type/remove-link-type/set-extractable/set-expert-routing/detect/suggest/review-candidates/review-orphans/sync) | `skills/schema-author/SKILL.md` |
-| "unify my types", "migrate to gbrain-base-v2", "94 types to 14", "apply canonical taxonomy", "clean up my page types", "pack upgrade", "shrink type proliferation", "consolidate page types", "retype pages to canonical" (dispatcher for: gbrain onboard --check, gbrain onboard --check --explain, gbrain jobs submit unify-types, gbrain restore) | `skills/schema-unify/SKILL.md` |
+| "add a page type", "add a type to my schema", "schema author", "schema mutate", "schema pack add", "my brain has untyped pages", "propose new types from my corpus", "backfill page types", "evolve my schema", "researcher type", "make X an expert type" (dispatcher for: foresights schema active/list/show/validate/graph/lint/stats/explain/use/downgrade/reload/init/fork/edit/diff/add-type/remove-type/update-type/add-alias/remove-alias/add-prefix/remove-prefix/add-link-type/remove-link-type/set-extractable/set-expert-routing/detect/suggest/review-candidates/review-orphans/sync) | `skills/schema-author/SKILL.md` |
+| "unify my types", "migrate to gbrain-base-v2", "94 types to 14", "apply canonical taxonomy", "clean up my page types", "pack upgrade", "shrink type proliferation", "consolidate page types", "retype pages to canonical" (dispatcher for: foresights onboard --check, foresights onboard --check --explain, foresights jobs submit unify-types, foresights restore) | `skills/schema-unify/SKILL.md` |
 
 ## Content & media ingestion
 
@@ -139,24 +139,24 @@ off until the user opts in, and paid enrichment is a separate choice.
 | Daily briefing, "what's happening today" | `skills/briefing/SKILL.md` |
 | "connect gmail" / "connect google", "who is waiting on me", "open loops", "unanswered email" | `skills/google-loops/SKILL.md` |
 | Cron scheduling, quiet hours, job staggering | `skills/cron-scheduler/SKILL.md` |
-| "get more out of gbrain", "is my brain set up right", "weekly brain checkup", "advise me on my brain", "gbrain advisor" | `skills/gbrain-advisor/SKILL.md` |
+| "get more out of foresights", "is my brain set up right", "weekly brain checkup", "advise me on my brain", "foresights advisor" | `skills/gbrain-advisor/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
 | "optimize this skill", "tune the skill against the benchmark", "run skillopt", "make the skill better" | `skills/skill-optimizer/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |
-| "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
-| "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
+| "Is foresights healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
+| "harvest this skill into foresights", "publish this skill to foresights", "lift this skill upstream", "share this skill with other foresights clients", "promote my skill to foresights" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
-| `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
-| Doctor `timeline_history` / `derived_visibility` / `atom_fence_rows` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair` (or `gbrain repair <kind>` for an explicit-only kind), apply one kind with the `--apply` command its preview prints, on the brain host after the user agrees. See `docs/guides/repair.md` |
-| A page write refused `owner_unavailable` with `detail: unbound_source` (classic Postgres) | Write the file, commit, `gbrain sync --source <id>` (remote: relay to the user); never claim or activate to get one write through. See `skills/conventions/agent-operator-protocol.md` |
+| `GBRAIN_DB_ACCESS`, "foresights database error", "foresights connection refused", "brain database is down", "cannot reach the brain database", "fix foresights database access", "repair foresights postgres" | `skills/db-repair/SKILL.md` |
+| Doctor `timeline_history` / `derived_visibility` / `atom_fence_rows` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `foresights repair` (or `foresights repair <kind>` for an explicit-only kind), apply one kind with the `--apply` command its preview prints, on the brain host after the user agrees. See `docs/guides/repair.md` |
+| A page write refused `owner_unavailable` with `detail: unbound_source` (classic Postgres) | Write the file, commit, `foresights sync --source <id>` (remote: relay to the user); never claim or activate to get one write through. See `skills/conventions/agent-operator-protocol.md` |
 | A write or sync refused with `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity`, or doctor `parked_effects` | Relay the error's `suggestion` command; see `docs/guides/write-refusals.md` before running it |
-| A gbrain command or MCP tool returned an error, exited 3 (`confirmation_required`), 10 or 11, or printed `[AGENT]` / a notice block; "what does this error code mean" | Follow the agent operator protocol, `docs/protocol/AGENT_OPERATOR_v1.md` (read `code`, follow `fix.next`); look a code up offline with `gbrain errors <code>` |
+| A foresights command or MCP tool returned an error, exited 3 (`confirmation_required`), 10 or 11, or printed `[AGENT]` / a notice block; "what does this error code mean" | Follow the agent operator protocol, `docs/protocol/AGENT_OPERATOR_v1.md` (read `code`, follow `fix.next`); look a code up offline with `foresights errors <code>` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
-| "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent", "gbrain jobs submit", "submit a gbrain job", "submit a shell job", "shell job" | `skills/minion-orchestrator/SKILL.md` |
+| "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent", "foresights jobs submit", "submit a foresights job", "submit a shell job", "shell job" | `skills/minion-orchestrator/SKILL.md` |
 | "present options", "ask before proceeding", "choice gate", "user decision" | `skills/ask-user/SKILL.md` |
 | "keeps timing out", "ETIMEDOUT", "why is this data stale", "freshness alert" | `skills/measure-before-you-fix/SKILL.md` |
 | "draft in voice", "write this as", "make this sound like", "ghostwrite" | `skills/draft-in-voice/SKILL.md` |
@@ -167,13 +167,13 @@ off until the user opts in, and paid enrichment is a separate choice.
 
 | Trigger | Skill |
 |---------|-------|
-| "Set up GBrain", "install gbrain into this agent workspace", "add gbrain to my agent", first boot | `skills/setup/SKILL.md` (existing identity, keyless memory by default) |
-| "GBrain admin login link", "open the MCP admin panel", "manage MCP clients", "register an MCP client", "set up MCP OAuth", "connect this harness to my hosted brain", "invalidate MCP tokens", "revoke an MCP client", "delete an MCP client", "edit MCP access levels" | `skills/mcp-access/SKILL.md` (owner administration is separate from MCP OAuth access) |
+| "Set up Foresights", "install foresights into this agent workspace", "add foresights to my agent", first boot | `skills/setup/SKILL.md` (existing identity, keyless memory by default) |
+| "Foresights admin login link", "open the MCP admin panel", "manage MCP clients", "register an MCP client", "set up MCP OAuth", "connect this harness to my hosted brain", "invalidate MCP tokens", "revoke an MCP client", "delete an MCP client", "edit MCP access levels" | `skills/mcp-access/SKILL.md` (owner administration is separate from MCP OAuth access) |
 | "Now what?", "fill my brain", "cold start", "bootstrap my data", "import my data", "what should I import first" | `skills/cold-start/SKILL.md` |
-| Explicit request to create a new personal agent with identity and private repository, "gbrain bootstrap" | Run `gbrain bootstrap`; see `BOOTSTRAP_FOR_AGENTS.md`. A generic paste-in install request routes to `skills/setup/SKILL.md`. |
-| "wire this box's coding agents to the brain", "framework-spawned sessions need brain access", "wire gbrain hooks without a workspace", "hook Claude Code/Codex to the running serve" | Run `gbrain bootstrap harness --yes` (machine-level wiring to a running `serve --http`: scoped token + user-scope MCP + headless pre-approval + hooks; no agent.json). See the "Local harness mode" section of `docs/guides/bootstrap.md` |
-| "which gbrain engine", "pglite or postgres", "gbrain engine status", "upgrade to postgres", "switch gbrain to postgres", "install postgres for gbrain", "move my brain to supabase", "set up postgres for the brain" | `skills/postgres-adopt/SKILL.md` |
-| "use my brain over mcp", "serve my brain over mcp", "expose my brain over mcp", "gbrain mcp server", "remote mcp access to my brain", "put my brain on tailscale", "gbrain mcp expose" | `skills/remote-mcp/SKILL.md` (publish the local `serve --http` on the tailnet; Funnel only for cloud agents) |
+| Explicit request to create a new personal agent with identity and private repository, "foresights bootstrap" | Run `foresights bootstrap`; see `BOOTSTRAP_FOR_AGENTS.md`. A generic paste-in install request routes to `skills/setup/SKILL.md`. |
+| "wire this box's coding agents to the brain", "framework-spawned sessions need brain access", "wire foresights hooks without a workspace", "hook Claude Code/Codex to the running serve" | Run `foresights bootstrap harness --yes` (machine-level wiring to a running `serve --http`: scoped token + user-scope MCP + headless pre-approval + hooks; no agent.json). See the "Local harness mode" section of `docs/guides/bootstrap.md` |
+| "which foresights engine", "pglite or postgres", "foresights engine status", "upgrade to postgres", "switch foresights to postgres", "install postgres for foresights", "move my brain to supabase", "set up postgres for the brain" | `skills/postgres-adopt/SKILL.md` |
+| "use my brain over mcp", "serve my brain over mcp", "expose my brain over mcp", "foresights mcp server", "remote mcp access to my brain", "put my brain on tailscale", "foresights mcp expose" | `skills/remote-mcp/SKILL.md` (publish the local `serve --http` on the tailnet; Funnel only for cloud agents) |
 | "connect grok bot to my brain", "connect muse to my brain", "connect claude desktop to my brain", "reach my brain from my phone" | `skills/remote-mcp/SKILL.md` (host-side publishing, then `skills/mcp-access/SKILL.md` / hosted access selects native OAuth or a private machine handoff) |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
 | "connect our company brain", "connect our existing company brain", "import an existing company brain" | `skills/migrate/SKILL.md` (company repository workflow; preview and approval before import, not sanitization) |
@@ -181,9 +181,9 @@ off until the user opts in, and paid enrichment is a separate choice.
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run", "retriage the backlog", "re-score the triage" | `skills/maintain/SKILL.md` (dream cycle section) |
-| "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
-| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain maintain --status`. An open `gbrain serve` runs free upkeep while idle. For a brain no agent opens most days, offer `gbrain maintain --schedule` (asks consent). A Postgres brain with a repo can use `gbrain autopilot --install --repo ~/brain` |
-| "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |
+| "Brain health", "what features am I missing", "brain score" | Run `foresights features --json` |
+| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `foresights maintain --status`. An open `foresights serve` runs free upkeep while idle. For a brain no agent opens most days, offer `foresights maintain --schedule` (asks consent). A Postgres brain with a repo can use `foresights autopilot --install --repo ~/brain` |
+| "Upgrade foresights", "update foresights", "foresights update available", `UPGRADE_AVAILABLE`, "is foresights up to date" | `skills/gbrain-upgrade/SKILL.md` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
 | "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |
 | "Populate timeline", "extract timeline entries" | `skills/maintain/SKILL.md` (graph population phase) |
@@ -208,14 +208,14 @@ When multiple skills could match:
 6. Publication/feed URL or a whole blog archive → blog-ingest; a single article/tweet URL → idea-ingest; video/audio/PDF → media-ingest; AI-chat export FILE or session transcripts → conversation-archive; CONNECT an account for live/automatic sync ("connect my chatgpt", "keep synced") → chat-connectors
 7. Identity/personality content (who the agent is, voice, persona) → soul-audit; token/structure hygiene of the always-loaded context stack → context-audit
 8. "Why is X slow/stale" measurement-first ops triage → measure-before-you-fix; code debugging ("why is this function broken") → investigate (GStack)
-9. GBrain MCP server/client OAuth, dashboard login, or client permissions → mcp-access; importing chat account history (including "chatgpt oauth") → chat-connectors. An existing hosted endpoint does not require local initialization.
-10. "connect <agent> to my brain" when the brain runs on the user's own machine and is not already reachable → remote-mcp (publish over Tailscale), then mcp-access / hosted access for the intended harness's native OAuth or private machine handoff. When the brain is ALREADY served over HTTPS by other means or hosted elsewhere, use mcp-access / hosted access against that endpoint; no `gbrain mcp expose`. "connect my chatgpt" / "connect my claude account" (pull an account's chat history INTO the brain) → chat-connectors; "connect gmail" / "connect google" → google-loops.
+9. Foresights MCP server/client OAuth, dashboard login, or client permissions → mcp-access; importing chat account history (including "chatgpt oauth") → chat-connectors. An existing hosted endpoint does not require local initialization.
+10. "connect <agent> to my brain" when the brain runs on the user's own machine and is not already reachable → remote-mcp (publish over Tailscale), then mcp-access / hosted access for the intended harness's native OAuth or private machine handoff. When the brain is ALREADY served over HTTPS by other means or hosted elsewhere, use mcp-access / hosted access against that endpoint; no `foresights mcp expose`. "connect my chatgpt" / "connect my claude account" (pull an account's chat history INTO the brain) → chat-connectors; "connect gmail" / "connect google" → google-loops.
 
 ## Conventions (cross-cutting)
 
 These apply to ALL brain-writing skills:
 - `skills/conventions/quality.md` — citations, back-links, notability gate
-- `skills/conventions/brain-first.md` — search gbrain before external APIs, brain files or SQL; copyable retrieval filters
+- `skills/conventions/brain-first.md` — search foresights before external APIs, brain files or SQL; copyable retrieval filters
 - `skills/conventions/brain-routing.md` — which brain (DB) and which source (repo) to target; cross-brain federation is latent-space only
 - `skills/conventions/schema-evolution.md` — when to add a type vs alias vs prefix (read before `schema-author`)
 - `skills/conventions/line-grammar.md` — typed relation lines (`- works_at [[companies/x]]`), fact lines and `@effective[...)` ranges in compiled truth

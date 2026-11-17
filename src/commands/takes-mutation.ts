@@ -19,7 +19,7 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 const names = ['add', 'update', 'supersede', 'resolve', 'remove'] as const;
 export type TakesMutation = typeof names[number];
 export function isTakesMutation(value: string): value is TakesMutation { return (names as readonly string[]).includes(value); }
-const USAGE_FIX = readFix('Prints every gbrain takes form with its flags.', { argv: ['gbrain', 'takes', '--help'] });
+const USAGE_FIX = readFix('Prints every foresights takes form with its flags.', { argv: ['gbrain', 'takes', '--help'] });
 const invalid = (message: string, suggestion: string, fix: Action = USAGE_FIX) => opError('invalid_params', message, suggestion, { fix });
 const REQUIRED_USAGE: Record<TakesMutation, string> = {
   add: '--claim "..." --kind fact|take|bet|hunch --who HOLDER', update: '--row N', supersede: '--row N --claim "..."', resolve: '--row N --quality correct|incorrect|partial',
@@ -28,9 +28,9 @@ const REQUIRED_USAGE: Record<TakesMutation, string> = {
 
 export function parseTakesMutation(args: string[]): { operation: `takes_${TakesMutation}`; params: Record<string, unknown>; sourceId?: string; json: boolean } {
   const [sub, slug, ...rest] = args;
-  if (!isTakesMutation(sub) || !slug || slug.startsWith('-')) throw invalid('Usage: gbrain takes add|update|supersede|resolve|remove <slug> [options].',
-    isTakesMutation(sub) ? `Name the page slug right after takes ${sub}: gbrain takes ${sub} people/alice-example ${REQUIRED_USAGE[sub]}.`
-      : 'Start with the mutation and the page slug, e.g. gbrain takes add people/alice-example --claim "..." --kind take --who alice-example.');
+  if (!isTakesMutation(sub) || !slug || slug.startsWith('-')) throw invalid('Usage: foresights takes add|update|supersede|resolve|remove <slug> [options].',
+    isTakesMutation(sub) ? `Name the page slug right after takes ${sub}: foresights takes ${sub} people/alice-example ${REQUIRED_USAGE[sub]}.`
+      : 'Start with the mutation and the page slug, e.g. foresights takes add people/alice-example --claim "..." --kind take --who alice-example.');
   const params: Record<string, unknown> = { slug };
   let sourceId: string | undefined, json = false;
   const fields: Record<string, string> = { '--claim': 'claim', '--kind': 'kind', '--who': 'holder', '--weight': 'weight',
@@ -57,7 +57,7 @@ export function parseTakesMutation(args: string[]): { operation: `takes_${TakesM
     if (['weight', 'value', 'row_num'].includes(key)) {
       const number = Number(value);
       if (!value.trim() || !Number.isFinite(number) || key === 'row_num' && (!Number.isSafeInteger(number) || number < 1)) throw invalid(`${flag} requires ${key === 'row_num' ? 'a positive integer' : 'a finite number'}.`,
-        key === 'row_num' ? `Pass --row as the take's row number from gbrain takes ${slug} --json, e.g. --row 2.` : `Pass ${flag} as a plain number, e.g. ${flag} ${key === 'weight' ? '0.7' : '1000'}.`,
+        key === 'row_num' ? `Pass --row as the take's row number from foresights takes ${slug} --json, e.g. --row 2.` : `Pass ${flag} as a plain number, e.g. ${flag} ${key === 'weight' ? '0.7' : '1000'}.`,
         key === 'row_num' ? readFix(`Lists ${slug}'s takes with their row numbers, read-only.`, { argv: ['gbrain', 'takes', slug, '--json'] }) : USAGE_FIX);
       params[key] = number;
     } else params[key] = key === 'local_dir' ? resolve(value) : value;
@@ -73,7 +73,7 @@ export function parseTakesMutation(args: string[]): { operation: `takes_${TakesM
     `Remove ${flagOf(key)}; takes ${sub} takes ${allowed.map(flagOf).join(', ')} (plus --request-id, --expected-revision, --force and --dir).`);
   for (const key of sub === 'add' ? ['claim', 'kind', 'holder'] : sub === 'supersede' ? ['row_num', 'claim'] : ['row_num']) {
     if (params[key] === undefined || params[key] === '') throw invalid(`Missing ${key === 'holder' ? '--who' : key === 'row_num' ? '--row' : `--${key}`}.`,
-      `takes ${sub} needs ${REQUIRED_USAGE[sub]}: gbrain takes ${sub} ${slug} ${REQUIRED_USAGE[sub]}.`,
+      `takes ${sub} needs ${REQUIRED_USAGE[sub]}: foresights takes ${sub} ${slug} ${REQUIRED_USAGE[sub]}.`,
       key === 'row_num' ? readFix(`Lists ${slug}'s takes with their row numbers, read-only.`, { argv: ['gbrain', 'takes', slug, '--json'] }) : USAGE_FIX);
   }
   if (params.kind !== undefined && !['fact', 'take', 'bet', 'hunch'].includes(String(params.kind))) throw invalid('Invalid --kind. Expected fact, take, bet, or hunch.',
@@ -88,7 +88,7 @@ export function parseTakesMutation(args: string[]): { operation: `takes_${TakesM
       delete params.outcome;
     }
     if (!['correct', 'incorrect', 'partial', 'unresolvable'].includes(String(params.quality))) throw invalid('--quality requires correct, incorrect, partial, or unresolvable.',
-      `Pass --quality as correct, incorrect, partial or unresolvable, e.g. gbrain takes resolve ${slug} --row ${String(params.row_num ?? 1)} --quality correct.`);
+      `Pass --quality as correct, incorrect, partial or unresolvable, e.g. foresights takes resolve ${slug} --row ${String(params.row_num ?? 1)} --quality correct.`);
     if (params.evidence !== undefined && params.source !== undefined && params.evidence !== params.source) throw invalid('--evidence and --source specify different evidence; use one.',
       'Keep --evidence and drop --source (on resolve both name the evidence), or give them the same value.');
     if (params.evidence === undefined && params.source !== undefined) params.evidence = params.source;
@@ -109,7 +109,7 @@ export async function runTakesMutation(engine: BrainEngine | (() => Promise<Brai
     let result: Record<string, unknown>;
     if (isThinClient(config)) {
       if (operation === 'takes_remove') throw invalid('takes remove runs only on the brain host.',
-        'Run gbrain takes remove on the brain host; a remote connection cannot remove takes.');
+        'Run foresights takes remove on the brain host; a remote connection cannot remove takes.');
       if (args.some(arg => arg === '--outcome' || arg.startsWith('--outcome='))) console.error('[deprecated] --outcome is the v0.28 alias for --quality. Prefer --quality correct|incorrect|partial in new scripts.');
       if (cli.brain || parsed.sourceId || params.local_dir !== undefined) throw invalid('--brain, --source-id, and --dir require a local brain host; the remote credential selects its source.',
         'Drop --brain, --source-id and --dir on this thin client: the remote connection\'s credential selects the brain and source.',
@@ -155,8 +155,8 @@ export async function runTakesMutation(engine: BrainEngine | (() => Promise<Brai
 }
 
 /**
- * W9F item 8: `gbrain takes rebuild <slug> [--source-id <id>] [--json]`. A
- * resident owner (`gbrain serve` holding PGLite) runs the `takes_rebuild`
+ * W9F item 8: `foresights takes rebuild <slug> [--source-id <id>] [--json]`. A
+ * resident owner (`foresights serve` holding PGLite) runs the `takes_rebuild`
  * operation; otherwise it runs here on the local engine. Both render the same
  * operation result, so JSON, warnings and exit codes match: exit 1 when the
  * page is missing or the rebuild warned.
@@ -165,7 +165,7 @@ export async function runTakesRebuild(engine: BrainEngine | (() => Promise<Brain
   const [slug, ...rest] = args;
   const json = rest.includes('--json');
   if (!slug || slug.startsWith('-')) {
-    console.error('Usage: gbrain takes rebuild <slug> [--source-id <id>] [--json]');
+    console.error('Usage: foresights takes rebuild <slug> [--source-id <id>] [--json]');
     setCliExitVerdict(1);
     return;
   }
@@ -174,7 +174,7 @@ export async function runTakesRebuild(engine: BrainEngine | (() => Promise<Brain
   try {
     const config = configOverride ?? loadConfig(), cli = getCliOptions();
     if (isThinClient(config)) throw invalid('takes rebuild runs only on the brain host.',
-      'Run gbrain takes rebuild on the brain host; a remote connection cannot rebuild the takes index.');
+      'Run foresights takes rebuild on the brain host; a remote connection cannot rebuild the takes index.');
     const params: Record<string, unknown> = { slug, request_id: randomUUID() };
     const delegated = await maybeDelegateLocalOperation('takes_rebuild', params, config, {
       brain: cli.brain, source: sourceId ?? null, timeoutMs: cli.timeoutMs ?? undefined,

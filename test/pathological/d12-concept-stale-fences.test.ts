@@ -94,7 +94,7 @@ async function withBrain(databaseUrl: string | undefined, run: (b: Brain) => Pro
 
 const claims = (text: string) => parseFactsFence(text).facts.map(f => f.claim);
 const deferredForDrift = (outcome: string) => outcome.startsWith('revision_conflict: ') && outcome.includes(`${SLUG} (file_database_drift`)
-  && outcome.includes('gbrain sync --source default');
+  && outcome.includes('foresights sync --source default');
 
 for (const { backend, databaseUrl } of pathologicalArms()) {
   describe(`D-12 concept republication and stale file fences/timeline (${backend})`, () => {

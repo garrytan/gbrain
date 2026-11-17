@@ -1,5 +1,5 @@
 /**
- * skillpack/doctor.ts — `gbrain skillpack doctor` runner.
+ * skillpack/doctor.ts — `foresights skillpack doctor` runner.
  *
  * Two modes (codex T1 decision: layered doctor, agent picks):
  *   --quick  — structural-only sweep (~5s); walks the rubric, no sandbox
@@ -91,7 +91,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
           passed: false,
           detail: (err as Error).message,
           fix_hint:
-            'Run `gbrain skillpack init <name>` to regenerate a valid stub manifest, or fix the field listed above.',
+            'Run `foresights skillpack init <name>` to regenerate a valid stub manifest, or fix the field listed above.',
           auto_fixable: false,
         },
       ],
@@ -110,7 +110,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
     return buildResult(opts, manifest, newScore, fixesApplied);
   }
 
-  // Log the run for the gbrain doctor activity surface.
+  // Log the run for the foresights doctor activity surface.
   logSkillpackEvent({
     event: 'doctor_run',
     pack: manifest.name,
@@ -152,7 +152,7 @@ function buildResult(
     fixes_applied: fixesApplied,
     full_mode_hint:
       opts.mode === 'full'
-        ? '--full mode runs the publish-gate test + LLM-judge + routing-eval suites in a sandbox. Implementation lands in a follow-up wave; for now use `gbrain skillpack test <pack-dir>` once W4 ships.'
+        ? '--full mode runs the publish-gate test + LLM-judge + routing-eval suites in a sandbox. Implementation lands in a follow-up wave; for now use `foresights skillpack test <pack-dir>` once W4 ships.'
         : null,
   };
 }
@@ -274,11 +274,11 @@ async function applyAutoFixes(
             '# Bootstrap',
             '',
             '1. show user: "<pack-name> is installed. Try one of the trigger phrases listed in skills/."',
-            // #3697: `gbrain put_page ... --frontmatter` never resolved (CLI name
+            // #3697: `foresights put_page ... --frontmatter` never resolved (CLI name
             // is `put`, content arrives on stdin, and no --frontmatter flag exists).
-            "2. (edit me) agent: printf -- '---\\ntype: stub\\n---\\n\\nstub body\\n' | gbrain put wiki/_bootstrap-stub",
+            "2. (edit me) agent: printf -- '---\\ntype: stub\\n---\\n\\nstub body\\n' | foresights put wiki/_bootstrap-stub",
             '',
-            '<!-- v0.36 contract: gbrain displays this post-scaffold but DOES NOT auto-execute. -->',
+            '<!-- v0.36 contract: foresights displays this post-scaffold but DOES NOT auto-execute. -->',
             '',
           ].join('\n');
           plan.push({ name: dim.name, path, content: stub });

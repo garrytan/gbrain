@@ -1,12 +1,12 @@
 /**
- * GBRA-175 / GBRA-224 W1: the stable release channel, now the default. `gbrain upgrade` on stable installs the release
+ * GBRA-175 / GBRA-224 W1: the stable release channel, now the default. `foresights upgrade` on stable installs the release
  * the evidence record names (checked against the `stable` and `v<version>` tags), pinned to its tag, never
  * downgrades except off a version the record withdrew, refuses with a typed code (stable_missing, stable_invalid,
  * stable_unreadable) when stable has no usable release, and then restarts every process onto it. Alpha (`latest` is its
  * alias) keeps the install method's own path.
  *
  * Subprocess: detectInstallMethod keys on argv[1] living under node_modules,
- * and git, bun and gbrain must hit PATH shims, which Bun snapshots at start. The driver stubs fetch with the record.
+ * and git, bun and foresights must hit PATH shims, which Bun snapshots at start. The driver stubs fetch with the record.
  */
 import { describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
@@ -26,7 +26,7 @@ const C_OLDER = '1'.repeat(40);
 const C_NEWER = '2'.repeat(40);
 const C_NEWEST = '3'.repeat(40);
 const COMMIT_OF: Record<string, string> = { [OLDER]: C_OLDER, [NEWER]: C_NEWER, [NEWEST]: C_NEWEST };
-const SOAK = 'https://github.com/garrytan/gbrain/actions/runs/123456';
+const SOAK = 'https://github.com/aimonk2025/gbrain/actions/runs/123456';
 
 const tags = (stableCommit: string | null, annotated = true) => [
   `${C_OLDER}\trefs/tags/v${OLDER}`, `${C_NEWER}\trefs/tags/v${NEWER}`, `${C_NEWEST}\trefs/tags/v${NEWEST}`, `${C_NEWEST}\trefs/tags/latest-stable`,
@@ -95,10 +95,10 @@ describe('channel selection', () => {
   });
 
   test('the switch command is rendered against what decided the channel', () => {
-    expect(channelSwitchCommand('alpha', { ok: true, channel: 'stable', source: 'default' })).toBe('gbrain config set self_upgrade.channel alpha');
-    expect(channelSwitchCommand('alpha', { ok: true, channel: 'stable', source: 'config' })).toBe('gbrain config set self_upgrade.channel alpha');
+    expect(channelSwitchCommand('alpha', { ok: true, channel: 'stable', source: 'default' })).toBe('foresights config set self_upgrade.channel alpha');
+    expect(channelSwitchCommand('alpha', { ok: true, channel: 'stable', source: 'config' })).toBe('foresights config set self_upgrade.channel alpha');
     expect(channelSwitchCommand('alpha', { ok: true, channel: 'stable', source: 'env' })).toStartWith('GBRAIN_RELEASE_CHANNEL=alpha');
-    expect(channelSwitchCommand('alpha', { ok: true, channel: 'stable', source: 'flag' })).toBe('gbrain upgrade --channel alpha');
+    expect(channelSwitchCommand('alpha', { ok: true, channel: 'stable', source: 'flag' })).toBe('foresights upgrade --channel alpha');
   });
 });
 
@@ -113,8 +113,8 @@ async function runStableUpgrade(args: string[], opts: RunOpts = {}): Promise<Run
   writeFileSync(state, VERSION);
   writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$1" in ls-remote) cat '${join(home, 'tags.txt')}'; exit 0;; esac\nexit 1\n`);
   writeFileSync(join(home, 'tags.txt'), tags(opts.stableCommit === undefined ? C_NEWER : opts.stableCommit));
-  // `bun add -g --backend=copyfile github:garrytan/gbrain#v<x>` installs <x>; `gbrain --version` reports what is installed.
-  writeFileSync(join(bin, 'bun'), `#!/bin/sh\necho "$*" >> '${join(home, 'bun-calls.log')}'\n${opts.failAdd ? `case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v${opts.failAdd}") exit 1;; esac\n` : ''}case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v"*) echo "$4" | sed 's/.*#v//' > '${state}';; esac\nexit 0\n`);
+  // `bun add -g --backend=copyfile github:aimonk2025/gbrain#v<x>` installs <x>; `foresights --version` reports what is installed.
+  writeFileSync(join(bin, 'bun'), `#!/bin/sh\necho "$*" >> '${join(home, 'bun-calls.log')}'\n${opts.failAdd ? `case "$*" in "add -g --backend=copyfile github:aimonk2025/gbrain#v${opts.failAdd}") exit 1;; esac\n` : ''}case "$*" in "add -g --backend=copyfile github:aimonk2025/gbrain#v"*) echo "$4" | sed 's/.*#v//' > '${state}';; esac\nexit 0\n`);
   writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gbrain $(cat '${state}')"; exit 0; fi\necho "$*" >> '${join(home, 'gbrain-calls.log')}'\nexit 0\n`);
   for (const f of ['git', 'bun', 'gbrain']) chmodSync(join(bin, f), 0o755);
   if (opts.config) {
@@ -124,8 +124,8 @@ async function runStableUpgrade(args: string[], opts: RunOpts = {}): Promise<Run
   const globalRoot = join(home, '.bun', 'install', 'global');
   const pkgDir = join(globalRoot, 'node_modules', 'gbrain');
   mkdirSync(pkgDir, { recursive: true });
-  writeFileSync(join(globalRoot, 'package.json'), JSON.stringify({ dependencies: { gbrain: opts.spec ?? 'github:garrytan/gbrain#latest-stable' } }));
-  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:garrytan/gbrain' }));
+  writeFileSync(join(globalRoot, 'package.json'), JSON.stringify({ dependencies: { gbrain: opts.spec ?? 'github:aimonk2025/gbrain#latest-stable' } }));
+  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:aimonk2025/gbrain' }));
   const body = opts.record === undefined ? record(NEWER) : opts.record;
   const driver = join(pkgDir, 'driver.ts');
   writeFileSync(driver, [
@@ -157,17 +157,17 @@ async function withRun(args: string[], opts: RunOpts, check: (r: Run) => void): 
   try { check(r); } finally { rmSync(r.home, { recursive: true, force: true }); }
 }
 
-describe('gbrain upgrade on the stable channel', () => {
+describe('foresights upgrade on the stable channel', () => {
   test('installs exactly the stable release pinned to its tag (remove, then add), not the newest release', () => withRun(['--channel', 'stable', '--swap-only'], {}, r => {
-    expect(r.stdout).toContain(`Stable channel: installing gbrain ${NEWER}`);
-    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
-    expect(r.stdout).toContain(`Now running: gbrain ${NEWER}`);
+    expect(r.stdout).toContain(`Stable channel: installing foresights ${NEWER}`);
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWER}`]);
+    expect(r.stdout).toContain(`Now running: foresights ${NEWER}`);
     expect(r.exitCode).toBe(0);
   }));
 
   test('then the new build restarts every process and the summary says so', () => withRun(['--channel', 'stable'], {}, r => {
     expect(r.gbrainCalls).toContain('upgrade --restart-only');
-    expect(r.stdout).toContain(`Restart: every gbrain process on this host runs ${NEWER}`);
+    expect(r.stdout).toContain(`Restart: every foresights process on this host runs ${NEWER}`);
     expect(r.exitCode).toBe(0);
   }));
 
@@ -177,18 +177,18 @@ describe('gbrain upgrade on the stable channel', () => {
   }));
 
   test('default flip: a home that never set a channel follows stable on a bare upgrade (repo-less config and no config at all)', async () => {
-    await withRun(['--swap-only'], {}, r => expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]));
+    await withRun(['--swap-only'], {}, r => expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWER}`]));
     await withRun(['--swap-only'], { config: { engine: 'pglite', database_path: '/tmp/gbrain-stable-example.pglite' } }, r => {
-      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWER}`]);
     });
   });
 
   test('self_upgrade.channel stable and GBRAIN_RELEASE_CHANNEL=stable both select stable over the other sources', async () => {
     await withRun(['--swap-only'], { config: { engine: 'pglite', database_path: '/tmp/gbrain-stable-example.pglite', self_upgrade: { channel: 'stable' } } }, r => {
-      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWER}`]);
     });
     await withRun(['--swap-only'], { config: { engine: 'pglite', database_path: '/tmp/gbrain-stable-example.pglite', self_upgrade: { channel: 'alpha' } }, env: { GBRAIN_RELEASE_CHANNEL: 'stable' } }, r => {
-      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWER}`]);
     });
   });
 
@@ -199,14 +199,14 @@ describe('gbrain upgrade on the stable channel', () => {
   }));
 
   test('known_bad: a build the record withdrew is moved to the current stable, the one move below the running build', () => withRun(['--channel', 'stable', '--swap-only'], { stableCommit: C_OLDER, record: record(OLDER, { known_bad: [VERSION] }) }, r => {
-    expect(r.stdout).toContain(`gbrain ${VERSION} was withdrawn from the stable channel`);
-    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${OLDER}`]);
+    expect(r.stdout).toContain(`foresights ${VERSION} was withdrawn from the stable channel`);
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${OLDER}`]);
     expect(r.exitCode).toBe(0);
   }));
 
   test('a failed add restores the release that was installed and records the recovery step', () => withRun(['--channel', 'stable', '--swap-only'], { failAdd: NEWER }, r => {
-    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`, `add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`]);
-    expect(r.stderr).toContain(`Restored gbrain ${VERSION}.`);
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWER}`, `add -g --backend=copyfile github:aimonk2025/gbrain#v${VERSION}`]);
+    expect(r.stderr).toContain(`Restored foresights ${VERSION}.`);
     const rec = JSON.parse(readFileSync(join(r.home, '.gbrain', 'upgrade-errors.jsonl'), 'utf8').trim().split('\n').at(-1)!);
     expect(rec).toMatchObject({ phase: 'stable-reinstall', from_version: VERSION, to_version: NEWER });
     expect(rec.hint).toContain(`#v${NEWER}`);
@@ -215,11 +215,11 @@ describe('gbrain upgrade on the stable channel', () => {
 
   test('alpha (and its alias latest): a global install pinned to a commit is replaced with the newest release tag, not left on its pin', async () => {
     for (const channel of ['alpha', 'latest']) {
-      await withRun(['--channel', channel, '--swap-only'], { spec: 'github:garrytan/gbrain#0123456789abcdef0123456789abcdef01234567' }, r => {
-        expect(r.stdout).toContain('pinned to github:garrytan/gbrain#0123456789abcdef0123456789abcdef01234567');
-        expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWEST}`]);
-        expect(r.bunCalls).not.toContain('update --backend=copyfile gbrain');
-        expect(r.stdout).toContain(`Now running: gbrain ${NEWEST}`);
+      await withRun(['--channel', channel, '--swap-only'], { spec: 'github:aimonk2025/gbrain#0123456789abcdef0123456789abcdef01234567' }, r => {
+        expect(r.stdout).toContain('pinned to github:aimonk2025/gbrain#0123456789abcdef0123456789abcdef01234567');
+        expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:aimonk2025/gbrain#v${NEWEST}`]);
+        expect(r.bunCalls).not.toContain('update --backend=copyfile foresights');
+        expect(r.stdout).toContain(`Now running: foresights ${NEWEST}`);
         expect(r.exitCode).toBe(0);
       });
     }
@@ -228,7 +228,7 @@ describe('gbrain upgrade on the stable channel', () => {
   test('stable_missing: nothing promoted exits non-zero with the code and the config fix, and installs nothing', () => withRun(['--json'], { stableCommit: null, record: 'Not Found', recordStatus: 404 }, r => {
     const env = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
     expect(env).toMatchObject({ code: 'stable_missing' });
-    expect(JSON.stringify(env)).toContain('gbrain config set self_upgrade.channel alpha');
+    expect(JSON.stringify(env)).toContain('foresights config set self_upgrade.channel alpha');
     expect(r.bunCalls).toEqual([]);
     expect(r.exitCode).not.toBe(0);
   }));
@@ -243,7 +243,7 @@ describe('gbrain upgrade on the stable channel', () => {
 
   test('stable_unreadable: an unreachable record exits non-zero with a retry, never falls back to alpha', () => withRun([], { record: null }, r => {
     expect(r.stderr).toContain('stable_unreadable');
-    expect(r.stderr).toContain('Fix: gbrain self-upgrade --check-only --json');
+    expect(r.stderr).toContain('Fix: foresights self-upgrade --check-only --json');
     expect(r.stderr).not.toContain('config set self_upgrade.channel alpha');
     expect(r.bunCalls).toEqual([]);
     expect(r.exitCode).not.toBe(0);
@@ -265,7 +265,7 @@ describe('gbrain upgrade on the stable channel', () => {
   test('--dry-run prints the effective channel, its source and the target, and installs nothing', async () => {
     await withRun(['--dry-run'], {}, r => {
       expect(r.stdout).toContain('Channel: stable (from default)');
-      expect(r.stdout).toContain(`Would install gbrain ${NEWER}`);
+      expect(r.stdout).toContain(`Would install foresights ${NEWER}`);
       expect(r.bunCalls).toEqual([]);
       expect(r.exitCode).toBe(0);
     });

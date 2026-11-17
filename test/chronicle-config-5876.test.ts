@@ -3,7 +3,7 @@
  *
  * Protects: unset auto_chronicle reads as on; true/false words parse; any other word reads as off
  * and is reported as invalid; a malformed stored chronicle.* value falls back to its default;
- * `gbrain config set` refuses out-of-range chronicle.* values, unknown chronicle.* leaves and
+ * `foresights config set` refuses out-of-range chronicle.* values, unknown chronicle.* leaves and
  * non-boolean auto_chronicle values, and an explicit set records the operator's answer.
  * Fails when: the default reverts to off, a typo silently becomes a cap, or `config set
  * auto_chronicle` stops clearing the default-on notice.
@@ -71,7 +71,7 @@ describe('auto_chronicle parsing', () => {
   });
 });
 
-describe('gbrain config set', () => {
+describe('foresights config set', () => {
   test('refuses chronicle.auto_daily_limit 0 with the valid range and writes nothing', async () => {
     const r = await runConfigCapture(['set', 'chronicle.auto_daily_limit', '0']);
     expect(r.exit).toBe(1);
@@ -90,7 +90,7 @@ describe('gbrain config set', () => {
   test('refuses auto_chronicle flase and names the opt-out', async () => {
     const r = await runConfigCapture(['set', 'auto_chronicle', 'flase']);
     expect(r.exit).toBe(1);
-    expect(r.err).toContain('gbrain config set auto_chronicle false');
+    expect(r.err).toContain('foresights config set auto_chronicle false');
     expect(await engine.getConfig('auto_chronicle')).toBeNull();
   });
 
@@ -99,7 +99,7 @@ describe('gbrain config set', () => {
     expect(await autoChronicleNeedsAcknowledgement(engine)).toBe(true);
     const r = await runConfigCapture(['set', 'auto_chronicle', 'true']);
     expect(r.exit).toBeNull();
-    expect(r.out).toContain('gbrain config set auto_chronicle false');
+    expect(r.out).toContain('foresights config set auto_chronicle false');
     expect(await engine.getConfig(CHRONICLE_ACK_KEY)).not.toBeNull();
     expect(await autoChronicleNeedsAcknowledgement(engine)).toBe(false);
   });
@@ -108,6 +108,6 @@ describe('gbrain config set', () => {
     await engine.setConfig('auto_chronicle', 'false');
     const r = await runConfigCapture(['unset', 'auto_chronicle']);
     expect(r.out).toContain('default, which is ON');
-    expect(r.out).toContain('gbrain config set auto_chronicle false');
+    expect(r.out).toContain('foresights config set auto_chronicle false');
   });
 });

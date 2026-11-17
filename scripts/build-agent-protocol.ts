@@ -8,7 +8,7 @@
  * 1. docs/protocol/AGENT_OPERATOR_v1.md "Transcripts": rendered from the
  *    frozen wire goldens in test/fixtures/agent-contract/v1/. Goldens never
  *    store `next`; it is recomputed here with deriveNext (the same decision
- *    table gbrain renders with) and checked against each transcript's
+ *    table foresights renders with) and checked against each transcript's
  *    expected value, so a contract change cannot silently rewrite the story.
  * 2. AGENTS.md "Agent operator protocol" quick contract: copied verbatim from
  *    the protocol page's quick-contract region.
@@ -36,7 +36,7 @@ export const PROTOCOL_PATH = join(ROOT, 'docs', 'protocol', 'AGENT_OPERATOR_v1.m
 export const AGENTS_PATH = join(ROOT, 'AGENTS.md');
 export const BUNDLED_PROTOCOL_PATH = join(ROOT, BUNDLED_PROTOCOL);
 /** Transcripts show the source-checkout base; the wire pins the installed version. */
-const DOCS_BASE = 'https://github.com/garrytan/gbrain/blob/master';
+const DOCS_BASE = 'https://github.com/aimonk2025/gbrain/blob/master';
 
 const TRANSCRIPT_REGION = 'agent-protocol:transcripts';
 const QUICK_BEGIN = /<!-- BEGIN quick-contract[^>]*-->\n/;
@@ -146,14 +146,14 @@ export const TRANSCRIPTS: readonly Transcript[] = [
     transport: 'cli',
     expectNext: 'ask_user',
     setting: 'An agent runs remediation from a non-interactive shell without `--yes` or `--max-usd`.',
-    call: 'gbrain doctor --remediate --json',
+    call: 'foresights doctor --remediate --json',
     after: (doc) => {
       const fix = doc.fix as Json;
       const preview = (doc.preview as Json | null)?.command;
       return `Nothing ran and the command exited 3. The agent reads \`fix.next: ${fix.next}\`, relays \`user_message\` `
         + `("${doc.user_message}") and stops. It may offer the read-only preview \`${preview}\`. `
         + `Only after the user agrees does it run \`${fix.command}\`. Passing \`--yes\` on its own would be a consent violation `
-        + 'even though gbrain cannot tell the difference.';
+        + 'even though foresights cannot tell the difference.';
     },
   },
   {
@@ -176,13 +176,13 @@ export const TRANSCRIPTS: readonly Transcript[] = [
     golden: 'journey/init-first-run.json',
     transport: 'cli',
     expectNext: 'ask_user',
-    setting: 'An agent installs gbrain for a user with no provider keys, from a non-interactive shell (H1a journey, recorded from the real CLI).',
-    call: 'gbrain init --pglite --no-embedding --json',
+    setting: 'An agent installs foresights for a user with no provider keys, from a non-interactive shell (H1a journey, recorded from the real CLI).',
+    call: 'foresights init --pglite --no-embedding --json',
     nextOf: (doc) => (((doc.notices as Json[]).find(n => n.code === 'first_run_decisions')?.kind) === 'ask' ? 'ask_user' : ''),
     after: (doc) => {
       const bundle = (doc.notices as Json[]).find(n => n.code === 'first_run_decisions') as Json;
       const ids = (bundle.decisions as Json[]).map(d => `\`${d.id}\` (default \`${d.default}\`)`).join(', ');
-      return `stdout is one document; the brain is ready and nothing blocks using it. The agent first does the \`harness_wiring\` step: connecting gbrain to itself is part of the install, not a setting. `
+      return `stdout is one document; the brain is ready and nothing blocks using it. The agent first does the \`harness_wiring\` step: connecting foresights to itself is part of the install, not a setting. `
         + `It then reports the install and relays the \`first_run_decisions\` \`user_message\` ("${bundle.user_message}") once in that reply, without waiting for an answer. `
         + `The settings in effect are ${ids}; each option carries the exact argv to apply it when the user picks one.`;
     },
@@ -192,7 +192,7 @@ export const TRANSCRIPTS: readonly Transcript[] = [
     golden: 'journey/caller-mistake.json',
     transport: 'stdio',
     expectNext: 'run',
-    setting: 'A harness on `gbrain serve --surface verbs` passes a string where `recall` expects a number (H1a journey, recorded from a real stdio session).',
+    setting: 'A harness on `foresights serve --surface verbs` passes a string where `recall` expects a number (H1a journey, recorded from a real stdio session).',
     call: 'recall {"query":"quokka-journey-marker","limit":"abc"}',
     after: (doc) => {
       const env = body(doc);
@@ -206,7 +206,7 @@ export const TRANSCRIPTS: readonly Transcript[] = [
     golden: 'journey/status-only-lock-held.json',
     transport: 'stdio',
     expectNext: 'tell_user_to_run',
-    setting: 'A second agent session starts `gbrain serve` while another session\'s serve owns the PGLite brain. The handshake still completes, with one tool, `gbrain_status` (H1a journey, recorded).',
+    setting: 'A second agent session starts `foresights serve` while another session\'s serve owns the PGLite brain. The handshake still completes, with one tool, `gbrain_status` (H1a journey, recorded).',
     call: 'gbrain_status {}',
     after: (doc) => {
       const env = body(doc);
@@ -241,10 +241,10 @@ function renderTranscript(t: Transcript, i: number): string {
       parts.push('Without `--json`, the same refusal prints as an `[AGENT]` block:', '', fence('text', human.stdout ?? ''), '');
     }
   } else if (doc.isError || !Array.isArray(doc.content)) {
-    parts.push('gbrain returns (`isError: true`, the envelope shown parsed):', '', fence('json', JSON.stringify(env, null, 2)), '');
+    parts.push('foresights returns (`isError: true`, the envelope shown parsed):', '', fence('json', JSON.stringify(env, null, 2)), '');
   } else {
     const content = doc.content as { text: string }[];
-    parts.push('gbrain returns these content blocks:', '');
+    parts.push('foresights returns these content blocks:', '');
     content.forEach((c, j) => parts.push(`\`content[${j}]\`:`, '', fence(j === 0 ? 'json' : 'text', c.text), ''));
   }
   parts.push(t.after(doc));

@@ -21,7 +21,7 @@ describe('D1 CLI error rendering', () => {
     expect(r.exitCode).toBe(2);
     expect(r.stdout).toBe('');
     expect(r.stderr).toContain('Error [unknown_command]: Unknown command: definitely-not-a-command');
-    expect(r.stderr).toContain('Fix: Run `gbrain --help`');
+    expect(r.stderr).toContain('Fix: Run `foresights --help`');
   });
 
   test('unknown command --json: one envelope on stdout', async () => {
@@ -41,7 +41,7 @@ describe('D1 CLI error rendering', () => {
     expect(doc).toMatchObject({ status: 'error', reason: 'invalid_flag', error: 'unknown_flag', code: 'unknown_flag', contract_version: 1 });
     expect(doc.suggestion).toContain('--limit');
     expect(doc.fix).toMatchObject({ argv: ['gbrain', 'search', '--help', '--brain', 'host'], next: 'run' });
-    expect(r.stderr).toContain("unknown flag --limitt for 'gbrain search'");
+    expect(r.stderr).toContain("unknown flag --limitt for 'foresights search'");
   });
 
   test('missing required param names the param, exit 2', async () => {
@@ -50,7 +50,7 @@ describe('D1 CLI error rendering', () => {
     const doc = JSON.parse(r.stdout);
     expect(doc).toMatchObject({ code: 'invalid_params' });
     expect(doc.message).toContain("'slug'");
-    expect(doc.suggestion).toContain('Usage: gbrain get <slug>');
+    expect(doc.suggestion).toContain('Usage: foresights get <slug>');
   });
 
   test('fatal seam: a parser OperationError thrown out of main() renders the envelope', async () => {
@@ -65,7 +65,7 @@ describe('D1 CLI error rendering', () => {
     const human = await cli(['stats']);
     expect(human.exitCode).toBe(1);
     expect(human.stderr).toContain('Error [no_brain]: No brain configured');
-    expect(human.stderr).toContain('Fix: gbrain init --pglite --no-embedding');
+    expect(human.stderr).toContain('Fix: foresights init --pglite --no-embedding');
     const json = await cli(['stats', '--json']);
     expect(json.exitCode).toBe(1);
     expect(JSON.parse(json.stdout)).toMatchObject({

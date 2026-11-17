@@ -621,7 +621,7 @@ describe('CLI: repeated -m, --path <subdir>, and the printed repair step', () =>
     writeFileSync(join(brain, 'notes', 'model.md'), 'repaired\n');
     writeFileSync(join(brain, 'notes', 'other.md'), 'another writer\n');
     const step = legacyCommitStep(brain, 'notes/model.md', ['no_header'], 'llm');
-    expect(step).toBe(`gbrain git commit-push --path ${brain} -m 'gbrain: repair fence in notes/model.md (no_header)' -m 'gbrain-repair: invalid_fence llm high' -- notes/model.md`);
+    expect(step).toBe(`foresights git commit-push --path ${brain} -m 'gbrain: repair fence in notes/model.md (no_header)' -m 'gbrain-repair: invalid_fence llm high' -- notes/model.md`);
     const argv = argvFromCommand(step)!;
     expect(argv.slice(0, 2)).toEqual(['gbrain', 'git']);
     expect(await runGit(argv.slice(2))).toBe(0);

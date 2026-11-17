@@ -24,7 +24,7 @@ cost_estimate: "$8/mo for Hobby tier (fixed domain). Free tier works but URLs ch
 
 # Public Tunnel: Fixed URL for Your Brain
 
-> **Alternative path.** For MCP alone, `gbrain mcp expose` publishes the
+> **Alternative path.** For MCP alone, `foresights mcp expose` publishes the
 > server on your Tailscale tailnet over HTTPS and keeps it running as a user
 > service, with no ngrok account (`--funnel` for agents that run in a
 > vendor's cloud). That is the recommended shape; see
@@ -33,7 +33,7 @@ cost_estimate: "$8/mo for Hobby tier (fixed domain). Free tier works but URLs ch
 > webhooks for voice-to-brain) or prefer ngrok. **Say to your agent:**
 > *"use my brain over mcp"*.
 
-Your GBrain MCP server and voice agent need public URLs so Claude Desktop,
+Your Foresights MCP server and voice agent need public URLs so Claude Desktop,
 Perplexity, and Twilio can reach them. ngrok gives you a fixed domain that
 never changes.
 
@@ -54,8 +54,8 @@ never changes.
 
 ```
 Local services (your machine)
-  ├── GBrain MCP server (port 3131)    gbrain serve --http [--port N]
-  │                                    (plain `gbrain serve` is stdio-only — not tunnelable)
+  ├── Foresights MCP server (port 3131)    foresights serve --http [--port N]
+  │                                    (plain `foresights serve` is stdio-only — not tunnelable)
   └── Voice agent (port 8765)          node server.mjs
          │
          ▼
@@ -185,7 +185,7 @@ echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_
 
 **Claude Code:**
 ```bash
-claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp \
+claude mcp add foresights -t http https://your-brain.ngrok.app/mcp \
   -H "Authorization: Bearer YOUR_GBRAIN_TOKEN"
 ```
 
@@ -265,4 +265,4 @@ to debug MCP connection issues (see request/response headers, latency, errors).
 
 ---
 
-*Part of the [GBrain Skillpack](../docs/GBRAIN_SKILLPACK.md). See also: [Voice-to-Brain](twilio-voice-brain.md), [Remote MCP Deployment](../docs/mcp/DEPLOY.md)*
+*Part of the [Foresights Skillpack](../docs/GBRAIN_SKILLPACK.md). See also: [Voice-to-Brain](twilio-voice-brain.md), [Remote MCP Deployment](../docs/mcp/DEPLOY.md)*

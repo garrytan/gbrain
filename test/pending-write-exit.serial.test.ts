@@ -4,7 +4,7 @@
  * (0 with --accept-pending or GBRAIN_ACCEPT_PENDING=1); terminal failure → 1;
  * pre-admission refusal → 1 even with the opt-in; lost transport → 1 with an
  * unknown submission, distinct from pending. Covers generated write commands,
- * `gbrain call` and custom mutation commands over a resident-owner socket and
+ * `foresights call` and custom mutation commands over a resident-owner socket and
  * an HTTP thin client. The direct path runs in pending-write-exit-owner.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -87,7 +87,7 @@ async function withOwner(outcome: Outcome, run: (dir: string, calls: Persistence
 
 const COMMANDS: Array<[string, (dir: string) => string[], string?]> = [
   ['generated put', () => ['put', 'notes/example', '--request-id', ID, '--json'], '---\ntitle: Example\n---\n\nBody.\n'],
-  ['gbrain call', () => ['call', 'put_page', JSON.stringify({ slug: 'notes/example', content: 'Body.', request_id: ID })]],
+  ['foresights call', () => ['call', 'put_page', JSON.stringify({ slug: 'notes/example', content: 'Body.', request_id: ID })]],
   ['custom capture', dir => { writeFileSync(join(dir, 'in.md'), '# Example\n'); return ['capture', '--file', join(dir, 'in.md'), '--request-id', ID, '--json']; }],
 ];
 
@@ -113,9 +113,9 @@ describe('resident owner: pending-write exit codes', () => {
             expect(body.write_request).toMatchObject({ request_id: ID, state: 'running' });
             expect(body).toMatchObject({ request_id: ID, state: 'running' });
             // #6255: the poll command is the envelope's receipt fix, pinned to the brain it ran against.
-            expect(body.poll_command).toBe(`gbrain write-request --brain host -- ${ID}`);
+            expect(body.poll_command).toBe(`foresights write-request --brain host -- ${ID}`);
             expect(body.poll_command).toBe(body.fix.argv.join(' '));
-            expect(result.stderr).toContain(`Poll: gbrain write-request --brain host -- ${ID}`);
+            expect(result.stderr).toContain(`Poll: foresights write-request --brain host -- ${ID}`);
           }
         });
       }
@@ -178,7 +178,7 @@ describe('resident owner: pending-write exit codes', () => {
       const result = await spawnCli(dir, ['call', 'put_page', JSON.stringify({ slug: 'notes/a', content: 'A', request_id: ID }), '--wait', '0']);
       expect(result.code).toBe(PENDING_WRITE_EXIT_CODE);
       expect(result.stderr).toContain(`Request: ${ID} (running)`);
-      expect(result.stderr).toContain(`Poll: gbrain write-request --brain host -- ${ID}`);
+      expect(result.stderr).toContain(`Poll: foresights write-request --brain host -- ${ID}`);
       expect(result.stderr).toContain('#cli-exit-status-for-writes');
     });
   }, 30_000);

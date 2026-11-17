@@ -5,8 +5,8 @@ prompt_version: 1
 description: |
   Filing gate for ALL brain writes. Consulted before creating any new
   brain page to determine the correct path. Reads the ACTIVE schema pack
-  via `gbrain schema show --json` — no hardcoded directory table. Also
-  runs periodic taxonomy drift detection via `gbrain schema review-orphans`.
+  via `foresights schema show --json` — no hardcoded directory table. Also
+  runs periodic taxonomy drift detection via `foresights schema review-orphans`.
 triggers:
   - "where does this brain page go"
   - "file this in the brain"
@@ -39,13 +39,13 @@ This skill guarantees:
 ## Critical: this skill reads the ACTIVE schema pack as data
 
 `brain-taxonomist` has NO hardcoded directory table. Every decision is
-driven by `gbrain schema show --json`. This means:
-- A user who runs `gbrain schema use gbrain-recommended` gets the full
+driven by `foresights schema show --json`. This means:
+- A user who runs `foresights schema use gbrain-recommended` gets the full
   recommended directory set (deal, meeting, concept, project, source,
   daily, personal, civic, original, place, trip, conversation, writing,
   plus all gbrain-base types).
-- A user who authored a custom pack via `gbrain schema init` + edit gets
-  filing recommendations based on THEIR taxonomy, not gbrain's defaults.
+- A user who authored a custom pack via `foresights schema init` + edit gets
+  filing recommendations based on THEIR taxonomy, not foresights's defaults.
 - Per-source overrides (tier 3 in the 7-tier resolution chain) are honored
   when `--source <id>` is passed to brain-taxonomist.
 
@@ -80,7 +80,7 @@ Walk these questions in order:
 ### Step 2: Look up the directory for that type in the active pack
 
 ```bash
-gbrain schema show --json | jq '.page_types[] | select(.primitive == "entity")'
+foresights schema show --json | jq '.page_types[] | select(.primitive == "entity")'
 ```
 
 Each `page_types[]` entry has a `path_prefixes:` array. The first prefix
@@ -94,7 +94,7 @@ The `gbrain-recommended` pack treats books as `media/books/<category>/<slug>.md`
 where category is one of: psychology, philosophy, spirituality, business,
 media-and-society, family-and-divorce, heritage, science, fiction,
 biography, arts-and-design. If your active pack has a different scheme,
-walk it from `gbrain schema show --json` instead of hardcoding here.
+walk it from `foresights schema show --json` instead of hardcoding here.
 
 ### Step 4: Construct the slug
 
@@ -125,10 +125,10 @@ type is needed and let the schema-pack cathedral handle the proposal flow.
 ```bash
 # Which pages have no type matching the active pack? Counts untyped pages AND
 # pages whose type the pack neither declares nor aliases (undeclared_types).
-gbrain schema review-orphans --json
+foresights schema review-orphans --json
 
 # Per-type audit of the stored corpus (stored_type_undeclared / stored_type_is_alias).
-gbrain schema lint --with-db --json
+foresights schema lint --with-db --json
 ```
 
 Both commands run locally. Over MCP, the `run_doctor` report carries the
@@ -136,7 +136,7 @@ same verdict as its `schema_pack_consistency` check (an undeclared type
 warns with code `page_type_undeclared`).
 
 When undeclared types show up, declare them in the pack
-(`gbrain schema add-type <type> --primitive <p> --prefix <dir/>`) or rewrite
+(`foresights schema add-type <type> --primitive <p> --prefix <dir/>`) or rewrite
 the pages with a declared type. When more than 10% of a source is untyped,
 run the EIIRP Phase 3 SCHEMA CHECK flow to surface candidate types via
 `schema detect`.
@@ -162,21 +162,21 @@ When the active pack has NO matching type, signal to EIIRP Phase 3
 
 ```markdown
 **No match in active pack `<name>`.**
-**Suggested next step:** `gbrain schema detect --source <source_id>` then
-`gbrain schema review-candidates`.
+**Suggested next step:** `foresights schema detect --source <source_id>` then
+`foresights schema review-candidates`.
 ```
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain schema show` / `gbrain schema lint` fails because no schema pack is active or the pack is corrupt: report it and route to the schema-author skill; do not guess a directory from memory.
-- A recommendation needs a schema change (`gbrain schema add-type`, `gbrain schema use`): this skill is advisory. Hand it to EIIRP or schema-author with the user's agreement; never mutate the active pack from here.
+- `foresights schema show` / `foresights schema lint` fails because no schema pack is active or the pack is corrupt: report it and route to the schema-author skill; do not guess a directory from memory.
+- A recommendation needs a schema change (`foresights schema add-type`, `foresights schema use`): this skill is advisory. Hand it to EIIRP or schema-author with the user's agreement; never mutate the active pack from here.
 
 ## Anti-Patterns
 
 - **Hardcoded directory table in this skill.** Every decision goes through
-  `gbrain schema show --json`. v0.39+ broke the old hardcoded table on
+  `foresights schema show --json`. v0.39+ broke the old hardcoded table on
   purpose so users on `gbrain-recommended` or custom packs get the right
   routing automatically.
 - **Picking the closest-fitting type when no type matches.** Closest-fit
@@ -184,14 +184,14 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - **Ignoring `--source <id>` on multi-brain setups.** Per-source overrides
   are tier-3 in the 7-tier resolution chain; missing the flag silently
   uses the brain-wide active pack.
-- **Auto-applying a `gbrain schema review-candidates --apply` decision.**
+- **Auto-applying a `foresights schema review-candidates --apply` decision.**
   Even high-confidence suggestions need user approval — this skill is a
   GATE, not an automator.
 
 ## Hard Rules
 
 - **Never hardcode a directory table in this skill.** Every decision goes
-  through `gbrain schema show --json`. The active pack is canonical.
+  through `foresights schema show --json`. The active pack is canonical.
 - **Per-source flag is first-class.** Pass `--source <id>` to every CLI
   call when working with a non-default source.
 - **Confidence-floor honor.** EIIRP's Phase 3 produces suggestions with
@@ -200,11 +200,11 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 ## Changelog
 
-### v1.0.0 — gbrain v0.39.0.0
+### v1.0.0 — foresights v0.39.0.0
 - Initial port from upstream OpenClaw. Genericized — no references to
   private fork names per CLAUDE.md privacy rules.
 - Hardcoded directory table REMOVED. Every decision now reads the active
-  schema pack via `gbrain schema show --json`. Single source of truth.
+  schema pack via `foresights schema show --json`. Single source of truth.
 - Book taxonomy moved from skill-text to the `gbrain-recommended` pack's
   media/books/ branch (see `src/core/schema-pack/base/gbrain-recommended.yaml`).
 - `--source <id>` propagation documented for multi-brain users (Persona B).

@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "companion": "_brain-filing-rules.md",
-  "description": "Canonical (machine-readable) brain filing rules. The .md companion is the human explainer; this JSON is what `gbrain check-resolvable` audits against. Keep both in sync.",
+  "description": "Canonical (machine-readable) brain filing rules. The .md companion is the human explainer; this JSON is what `foresights check-resolvable` audits against. Keep both in sync.",
   "rules": [
     {
       "kind": "person",
@@ -139,7 +139,7 @@
       "kind": "inbox",
       "directory": "inbox/",
       "examples": ["captured thoughts", "pasted snippets awaiting filing"],
-      "description": "Raw captured content awaiting filing; `gbrain capture` writes here. Move a page to its primary-subject directory once it is understood."
+      "description": "Raw captured content awaiting filing; `foresights capture` writes here. Move a page to its primary-subject directory once it is understood."
     },
     {
       "kind": "conversation",

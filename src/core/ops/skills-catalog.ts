@@ -285,7 +285,7 @@ const advisor: Operation = {
           'permission_denied',
           'The advisor is not published over MCP by the brain owner, so it is hidden from your ' +
             'tool catalog. Ask the owner to enable it if you need it.',
-          'The owner can enable it with `gbrain config set mcp.publish_advisor true`.',
+          'The owner can enable it with `foresights config set mcp.publish_advisor true`.',
           { fix: hostFix(ctx, ['gbrain', 'config', 'set', 'mcp.publish_advisor', 'true'],
             'Publishing the advisor over MCP is the brain owner\'s choice; only the trusted CLI on the brain host changes it.') },
         );
@@ -311,16 +311,16 @@ const advisor: Operation = {
   },
   scope: 'read',
   // NOT localOnly — exposed over MCP (E1) behind mcp.publish_advisor.
-  // No cliHints: the CLI surface is the richer `gbrain advisor` command
+  // No cliHints: the CLI surface is the richer `foresights advisor` command
   // (commands/advisor.ts) which adds --json exit codes + --apply.
   cliHints: { name: 'advisor', hidden: true },
 };
 
 /**
- * v0.41.19.0 — `gbrain status` thin-client surface.
+ * v0.41.19.0 — `foresights status` thin-client surface.
  *
  * Returns a snapshot of sync freshness + last cycle state for thin-client
- * `gbrain status` callers. Per D2/D10 in the plan:
+ * `foresights status` callers. Per D2/D10 in the plan:
  *
  *   - Scope: admin (NOT localOnly). The op exposes operational state
  *     including sync timestamps and cycle metadata. Locking it to admin
@@ -347,7 +347,7 @@ const get_status_snapshot: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. Admin-scope.',
+  description: 'Snapshot for `foresights status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. Admin-scope.',
   params: {},
   handler: async (ctx) => {
     const { buildSyncStatusReport } = await import('../../commands/sync.ts');
@@ -407,7 +407,7 @@ const get_status_snapshot: Operation = {
     } catch {
       workers = { error: 'unavailable' as const };
     }
-    // #1984: report the brain server's version so a thin-client `gbrain status`
+    // #1984: report the brain server's version so a thin-client `foresights status`
     // can surface remote_version alongside its own local CLI version.
     const { VERSION } = await import('../../version.ts');
     return { schema_version: 2 as const, version: VERSION, sync, cycle, queue, workers };

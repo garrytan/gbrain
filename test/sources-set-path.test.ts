@@ -1,5 +1,5 @@
 /**
- * gbrain sources set-path <id> <path> (#4739)
+ * foresights sources set-path <id> <path> (#4739)
  *
  * Non-destructive local_path pointer repair. Validates:
  *   - Happy path: updates sources.local_path for an existing source +
@@ -23,7 +23,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runSources } from '../src/commands/sources.ts';
 
-describe('gbrain sources set-path', () => {
+describe('foresights sources set-path', () => {
   let engine: PGLiteEngine;
   let origExit: typeof process.exit;
   let exitCode: number | null;

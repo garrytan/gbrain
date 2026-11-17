@@ -192,7 +192,7 @@ describe('synthesize paid-loop breaker', () => {
       expect(await liveRows(rig, keyFor('2026-08-10-loop.txt'))).toBe(0);
       const refusal = details.skips.find(s => s.filePath === looping)!;
       expect(refusal.reason).toStartWith('dream_breaker_tripped: 3 dead submissions');
-      expect(refusal.reason).toContain(`gbrain dream reset-key '${keyFor('2026-08-10-loop.txt')}'`);
+      expect(refusal.reason).toContain(`foresights dream reset-key '${keyFor('2026-08-10-loop.txt')}'`);
     } finally { await rig.cleanup(); }
   }, 60_000);
 
@@ -225,7 +225,7 @@ describe('synthesize paid-loop breaker', () => {
       expect(await liveRows(rig, keyFor('2026-08-14-growing.txt'))).toBe(0);
       const refusal = details.skips.find(s => s.filePath === growing)!;
       expect(refusal.reason).toStartWith('dream_breaker_tripped: 3 dead submissions');
-      expect(refusal.reason).toContain(`gbrain dream reset-key '${fileKey}'`);
+      expect(refusal.reason).toContain(`foresights dream reset-key '${fileKey}'`);
       const { resetDreamBreakerKey } = await import('../src/core/cycle/dream-breaker.ts');
       await resetDreamBreakerKey(rig.engine, fileKey);
       expect((await runPhase(rig)).children_submitted).toBe(1);

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair extractor-facts` (#5731, CEO-A9, ENG-O8, DX-O4, DX-T1), on
+ * `foresights repair extractor-facts` (#5731, CEO-A9, ENG-O8, DX-O4, DX-T1), on
  * PGLite and, with a safe DATABASE_URL, Postgres
  * (test/e2e/repair-extractor-facts-postgres.test.ts).
  *
@@ -130,7 +130,7 @@ for (const backend of testBackends()) {
     return row.id;
   }
 
-  describe(`gbrain repair extractor-facts, managed (${backend})`, () => {
+  describe(`foresights repair extractor-facts, managed (${backend})`, () => {
     test('the fix holds: a managed write to a conversation page leaves its extractor facts active', async () => {
       let ids: number[] = [];
       await managedBrain(async ({ engine, ctx }) => {
@@ -184,16 +184,16 @@ for (const backend of testBackends()) {
         expect(preview.results[0].residuals).toEqual({ evidenced: 3, ambiguous: 3, excluded: 3 });
         expect(preview.results[0].affected).toBe(2);
         const hash = hashOf(preview);
-        expect(preview.results[0].apply_command).toBe(`gbrain repair extractor-facts --apply --expect ${hash}`);
+        expect(preview.results[0].apply_command).toBe(`foresights repair extractor-facts --apply --expect ${hash}`);
         const everything = Object.values(seeded).flat();
         const activeBefore = await activeIds(engine, everything);
 
         const unbound = await refusal(() => repair(engine, null, ['--apply']));
         expect(unbound.toJSON()).toMatchObject({ error: 'invalid_params', docs: 'docs/guides/repair.md#explicit-only-repair-kinds',
-          suggestion: 'Preview first: gbrain repair extractor-facts — then run the apply command it prints: gbrain repair extractor-facts --apply --expect <preview-hash>' });
+          suggestion: 'Preview first: foresights repair extractor-facts — then run the apply command it prints: foresights repair extractor-facts --apply --expect <preview-hash>' });
         const stale = await refusal(() => repair(engine, null, ['--apply', '--expect', 'f'.repeat(64)]));
         expect(stale.toJSON()).toMatchObject({ error: 'preview_changed', docs: 'docs/guides/repair.md#preview-changed',
-          message: `The preview changed since ${'f'.repeat(64)}; re-run gbrain repair extractor-facts and use the new hash.` });
+          message: `The preview changed since ${'f'.repeat(64)}; re-run foresights repair extractor-facts and use the new hash.` });
         expect(await activeIds(engine, everything)).toEqual(activeBefore);
 
         const applied = await repair(engine, null, ['--apply', '--expect', hash]);
@@ -228,7 +228,7 @@ for (const backend of testBackends()) {
         const wide = await repair(engine, null, ['--include-ambiguous']);
         expect(wide.results[0].residuals).toEqual({ evidenced: 0, ambiguous: 3, excluded: 3 });
         const wideHash = hashOf(wide);
-        expect(wide.results[0].apply_command).toBe(`gbrain repair extractor-facts --include-ambiguous --apply --expect ${wideHash}`);
+        expect(wide.results[0].apply_command).toBe(`foresights repair extractor-facts --include-ambiguous --apply --expect ${wideHash}`);
         expect((await refusal(() => repair(engine, null, ['--apply', '--expect', wideHash]))).code).toBe('preview_changed');
         const wideApplied = await repair(engine, null, ['--include-ambiguous', '--apply', '--expect', wideHash]);
         expect(wideApplied.results[0].outcomes).toEqual({ restored: 3 });
@@ -362,7 +362,7 @@ for (const backend of testBackends()) {
         await prefixExpire(engine, ctx, 'conversations/journey');
         const before = await extractorFactsCheck(engine);
         expect(before).toMatchObject({ name: 'extractor_facts_expired', status: 'warn', details: { evidenced: 3, ambiguous: 0 } });
-        const printed = before.message.match(/gbrain repair extractor-facts(?= )/)![0];
+        const printed = before.message.match(/(?:foresights|gbrain) repair extractor-facts(?= )/)![0];
         const preview = await repair(engine, null, printed.split(' ').slice(3));
         const applied = await repair(engine, null, preview.results[0].apply_command.split(' ').slice(3));
         expect(applied.results[0].outcomes).toEqual({ restored: 1 });
@@ -465,7 +465,7 @@ for (const backend of testBackends()) {
     }, 180_000);
   });
 
-  describe(`gbrain repair extractor-facts, unmanaged (${backend})`, () => {
+  describe(`foresights repair extractor-facts, unmanaged (${backend})`, () => {
     let engine: BrainEngine;
     let close: (() => Promise<void>) | undefined;
     beforeAll(async () => {

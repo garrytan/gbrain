@@ -2,7 +2,7 @@ name: Sync freshness gate
 
 # Commit -> keyword-visible regression gate for the resident commit notifier
 # (GBRA-133 PR 2b.6; procedure and baseline in the header of scripts/bench/sync-freshness-gate.ts).
-# Cells: gbrain serve with sync.on_commit=true, watch detection, a single-file commit,
+# Cells: foresights serve with sync.on_commit=true, watch detection, a single-file commit,
 # 10k synthetic pages, on Postgres managed, PGLite managed and Postgres classic. The gate
 # value is the p50 of 10 reps after one discarded warm-up; a cell fails above the committed
 # baseline (scripts/bench/sync-freshness-baseline.json) + 25%. The baseline is valid only

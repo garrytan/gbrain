@@ -114,7 +114,7 @@ describe('buildSystemPrompt', () => {
     const tools = [fakeTool('shell', { usage_hint: 'Run commands.' })];
     const out = buildSystemPrompt(tools, undefined);
     expect(out).toContain('`shell` or `bash` tool');
-    expect(out).toContain('gbrain database');
+    expect(out).toContain('foresights database');
     expect(out).toContain('not to local files');
   });
 

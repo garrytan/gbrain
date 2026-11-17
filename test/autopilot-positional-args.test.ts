@@ -1,5 +1,5 @@
 /**
- * #1525 — `gbrain autopilot status` must not START the daemon.
+ * #1525 — `foresights autopilot status` must not START the daemon.
  *
  * Positional args were never validated: runAutopilot branched only on
  * --help/--install/--uninstall/--status flags, so the natural spellings

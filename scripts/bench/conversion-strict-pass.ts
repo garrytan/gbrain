@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
- * #7866: the speed and side effects of `gbrain sources canonical --to git --apply` on a synthetic production-shaped source.
+ * #7866: the speed and side effects of `foresights sources canonical --to git --apply` on a synthetic production-shaped source.
  * Opt-in, never run in CI.
  *
  *   bun scripts/bench/conversion-strict-pass.ts [--pages 25000] [--timebox-min 30] [--legacy 1]
  *     [--database-url postgres://postgres:postgres@localhost:5434/gbrain_test] [--work ~/.capy/work/conversion-bench] [--label <name>] [--out <file.json>]
  *
  * It builds a Git checkout of N markdown pages in nested directories, syncs it into a fresh Postgres database (created and
- * dropped), and with --legacy 1 leaves the pages as an older gbrain did: every chunk holding a vector for its text and no
+ * dropped), and with --legacy 1 leaves the pages as an older foresights did: every chunk holding a vector for its text and no
  * contextual-mode stamp. It then plans the conversion and applies it with nothing changed, timing each step and counting
  * the write requests and embedding effects the apply made. An apply still running at --timebox-min is stopped and its
  * rate read from the pages it settled. It prints one JSON report on stdout and writes it to --out.

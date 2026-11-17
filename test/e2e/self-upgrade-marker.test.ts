@@ -66,12 +66,12 @@ describe('self-upgrade marker on a real invocation', () => {
     writeCache(`UPGRADE_AVAILABLE ${VERSION} 0.99.0`);
     const { stderr } = runGbrain('notify');
     expect(stderr).toContain(`UPGRADE_AVAILABLE ${VERSION} 0.99.0`);
-    expect(stderr).not.toContain('Run: gbrain self-upgrade');
+    expect(stderr).not.toContain('Run: foresights self-upgrade');
   });
 
   test('#7147: one banner per window across calls; a newer latest prints again at once', () => {
     writeCache(`UPGRADE_AVAILABLE ${VERSION} 0.99.0`);
-    const banners = (stderr: string) => stderr.split('\n').filter(line => line.startsWith('UPGRADE_AVAILABLE') || line.includes('available. Run: gbrain self-upgrade'));
+    const banners = (stderr: string) => stderr.split('\n').filter(line => line.startsWith('UPGRADE_AVAILABLE') || line.includes('available. Run: foresights self-upgrade'));
     expect(banners(runGbrain('notify').stderr)).toEqual([`UPGRADE_AVAILABLE ${VERSION} 0.99.0`]);
     expect(banners(runGbrain('notify').stderr)).toEqual([]);
     writeCache(`UPGRADE_AVAILABLE ${VERSION} 0.99.1`);
@@ -94,11 +94,11 @@ describe('self-upgrade marker on a real invocation', () => {
     writeCache(`UPGRADE_AVAILABLE ${VERSION} ${VERSION}`);
     const { stderr } = runGbrain('notify');
     expect(stderr).not.toContain('UPGRADE_AVAILABLE');
-    expect(stderr).not.toContain('Run: gbrain self-upgrade');
+    expect(stderr).not.toContain('Run: foresights self-upgrade');
   });
 
   test('foreign-writer cache → marker prints the RUNNING version, not the writer\'s', () => {
-    // An older gbrain on PATH wrote the cache: marker.current is 0.0.1, not us.
+    // An older foresights on PATH wrote the cache: marker.current is 0.0.1, not us.
     writeCache('UPGRADE_AVAILABLE 0.0.1 0.99.0');
     const { stderr } = runGbrain('notify');
     expect(stderr).toContain(`UPGRADE_AVAILABLE ${VERSION} 0.99.0`);
@@ -119,7 +119,7 @@ describe('self-upgrade marker on a real invocation', () => {
     const first = runGbrain('notify').stderr;
     expect(first).not.toContain('UPGRADE_AVAILABLE');
     expect(first.split('\n').filter(l => l.startsWith('[gbrain notice release_channel]'))).toHaveLength(1);
-    expect(first).toContain('gbrain config set self_upgrade.channel alpha');
+    expect(first).toContain('foresights config set self_upgrade.channel alpha');
     expect(runGbrain('notify').stderr).not.toContain('[gbrain notice release_channel]');
   });
 

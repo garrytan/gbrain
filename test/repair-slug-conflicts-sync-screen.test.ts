@@ -82,7 +82,7 @@ function each(run: () => Promise<void>) {
   return withEnv(env, async () => { try { await run(); } finally { await disposePersistenceConsumer(engine); } });
 }
 
-/** The state an older gbrain left: the page the file's slug: line names records the file as its origin, and a hold from before still stands. */
+/** The state an older foresights left: the page the file's slug: line names records the file as its origin, and a hold from before still stands. */
 async function ownPageRecordsTheFile(sourceId: string, slug: string, sourcePath: string) {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   await engine.putPage(slug, { type: 'company', title: 'Acme Example', compiled_truth: 'An older import of the company page.' }, { sourceId });

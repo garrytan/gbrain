@@ -1,7 +1,7 @@
 /**
  * harness-bridge.ts — plan/apply core for the cathedral-7 skill bridge.
  *
- * Hermetic synthetic gbrain root (the skillpack-scaffold.test.ts fixture
+ * Hermetic synthetic foresights root (the skillpack-scaffold.test.ts fixture
  * pattern): every path — persona filtering through the manifest universe,
  * the frontmatter fail-loud gate (the codex session-brick guard), stub
  * rendering with shared-dep closure, mode-conflict ground truth from the
@@ -56,7 +56,7 @@ function tmp(prefix: string): string {
 const SKILL_MD = (name: string) =>
   `---\nname: ${name}\ndescription: fixture skill ${name}\ntriggers:\n  - ${name} things\n---\n# ${name}\n\nBody of ${name}. See ../conventions/style.md.\n`;
 
-/** Synthetic gbrain root: lane = ({alpha, gamma} ∖ {gamma}) ∪ {beta}. */
+/** Synthetic foresights root: lane = ({alpha, gamma} ∖ {gamma}) ∪ {beta}. */
 function fixtureRoot(): string {
   const root = tmp('gb-bridge-root-');
   mkdirSync(join(root, 'src'), { recursive: true });
@@ -210,7 +210,7 @@ describe('stub mode', () => {
     expect(stub).toContain(STUB_MARKER);
     expect(stub.startsWith('---\nname: alpha\n')).toBe(true); // frontmatter verbatim
     expect(stub).toContain('get_skill');
-    expect(stub).toContain('gbrain skill alpha'); // CLI fallback (a real generated command)
+    expect(stub).toContain('foresights skill alpha'); // CLI fallback (a real generated command)
     expect(stub).not.toContain('Body of alpha'); // cold invariant: no source body
     // Shared deps AND aux files ship even in stub mode — cold-pulled bodies
     // reference both (../conventions/… and sibling files); get_skill serves

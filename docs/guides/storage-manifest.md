@@ -18,28 +18,28 @@ The skill behind these is `skills/storage-manifest/SKILL.md`.
 
 | Step | CLI | MCP tool |
 |---|---|---|
-| Find a card from a phrase (closest cards on a miss) | `gbrain storage-find "<phrase>"` | `storage_find` |
-| Read one card, its restore form and revision | `gbrain storage-get <id>` | `storage_get` |
-| List cards by store, status or source machine | `gbrain storage-list [--store b2] [--status archived]` | `storage_list` |
-| Register a card after a verified archive | `gbrain storage-register --card '<json>'` (or stdin) | local CLI only |
-| Change a card, or record a restore | `gbrain storage-update <id> --expected-revision <rev> [--patch '<json>'] [--restored-to <path> --restored-verified]` | local CLI only |
+| Find a card from a phrase (closest cards on a miss) | `foresights storage-find "<phrase>"` | `storage_find` |
+| Read one card, its restore form and revision | `foresights storage-get <id>` | `storage_get` |
+| List cards by store, status or source machine | `foresights storage-list [--store b2] [--status archived]` | `storage_list` |
+| Register a card after a verified archive | `foresights storage-register --card '<json>'` (or stdin) | local CLI only |
+| Change a card, or record a restore | `foresights storage-update <id> --expected-revision <rev> [--patch '<json>'] [--restored-to <path> --restored-verified]` | local CLI only |
 
 A restore runs through the agent's own restore skill: the card's `restore.skill` with `restore.args`. Cards never
-carry commands or credentials, and gbrain never contacts a store. After the restore, `storage-update` with
+carry commands or credentials, and foresights never contacts a store. After the restore, `storage-update` with
 `--restored-to` records where it landed (newest first); pass `--restored-verified` only when the checksums matched.
 An update keeps the card page's access labels (`visibility`, `readable_by`), so a restricted card stays restricted.
 
 ## Repo-less brains and brains with a Git checkout
 
-On a repo-less brain, including a fresh keyless install whose content directory (created by `gbrain init`) holds no
-Git checkout, the database is the record: the first `storage-register` (or `gbrain storage init`) creates the
+On a repo-less brain, including a fresh keyless install whose content directory (created by `foresights init`) holds no
+Git checkout, the database is the record: the first `storage-register` (or `foresights storage init`) creates the
 `storage` source, database-only and not federated, and every verb works there. If that first creation stopped part
-way (a crash, two first registers at once), the next register or `gbrain storage init` finishes it, so an empty
+way (a crash, two first registers at once), the next register or `foresights storage init` finishes it, so an empty
 `storage` source with no directory of its own counts as the shelf. A `storage` source that holds pages, or (on a
 repo-less brain) has its own directory, is never taken over: the verbs refuse `storage_manifest_missing`, as they do while the shelf is archived (until
-`gbrain sources restore storage`).
+`foresights sources restore storage`).
 
-On a brain with a Git checkout, Git stays the parent. `gbrain storage init --dir <absolute path> --dry-run` previews a
+On a brain with a Git checkout, Git stays the parent. `foresights storage init --dir <absolute path> --dry-run` previews a
 hosted Git repository for the shelf, and the printed `--expect <plan_hash>` command creates it after the user agrees
 (it needs managed persistence). Every card is then a commit before the database indexes it. Until init has run,
 register, adopt and import refuse `storage_manifest_missing` with that preview as the fix.
@@ -48,9 +48,9 @@ register, adopt and import refuse `storage_manifest_missing` with that preview a
 
 Agents that archived before the shelf existed often kept interim pages: `type: stored-object` pages under
 `storage-manifest/`, each with its record as JSON in a fenced `json` block under a `## Record` heading.
-`gbrain storage adopt` moves them onto the shelf in three preview-first steps:
+`foresights storage adopt` moves them onto the shelf in three preview-first steps:
 
-1. `gbrain storage adopt [--source <id>] [--from-prefix <prefix>]` previews: per page, the card it maps to and each
+1. `foresights storage adopt [--source <id>] [--from-prefix <prefix>]` previews: per page, the card it maps to and each
    field a card refuses with its reason (`command_field` such as `restore.command`, `unknown_field`,
    `stamped_field`). It writes nothing and prints a `plan_hash`. The index page (`<prefix>index`) is skipped.
 2. The printed apply, `--apply --expect <plan_hash>` with one `--drop-field <dotted.name>` per refused field, runs
@@ -68,11 +68,11 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
    the original also lists (readers match literally, so a member is not matched to its groups), so no card is read
    wider than its original. An original whose readers and folder rules share no reader (`access_unpreservable`), or
    whose rules are still being applied (`access_pending`), is blocked until you restrict the card some other way.
-3. `gbrain storage adopt --finalize` previews soft-deleting the tagged originals; its `--expect <plan_hash>` run deletes
-   them (restorable for 72 hours with `gbrain restore`), only when every adopted card is on the shelf and matches its
+3. `foresights storage adopt --finalize` previews soft-deleting the tagged originals; its `--expect <plan_hash>` run deletes
+   them (restorable for 72 hours with `foresights restore`), only when every adopted card is on the shelf and matches its
    original's mapped card and carries the access labels the original needs. A restore recorded with `storage-update` since adoption is not a difference. The preview
    names any `##` section in an original's body other than `## Record` (notes the card does not carry, which go with
-   the page; a timeline section gbrain stores apart from the body is not listed) and flags an original longer than the 64 KiB it reads, so you read the rest first. The plan_hash binds each
+   the page; a timeline section foresights stores apart from the body is not listed) and flags an original longer than the 64 KiB it reads, so you read the rest first. The plan_hash binds each
    original's whole content, checked again just before each delete, so an original edited after the preview refuses
    `preview_changed`.
 
@@ -80,24 +80,24 @@ A rerun skips cards already on the shelf that match and originals already tagged
 a conflict (a card without the original's access labels too): it is reported and never overwritten, and its original
 stays untagged. Every apply reports `side_effects: none | partial | complete`; an adopt apply also reports `counts`
 (`adopted`, `skipped`, `refused`, `pending`) and, on each `results` row that wrote, the write's `request_id`. A run that stopped part way prints the
-command that finishes it. A write gbrain accepted that has not committed yet is listed under `pending` with its
-receipt: poll it with `gbrain write-request <id>` (the command exits 10) and rerun once it has committed, never submit
+command that finishes it. A write foresights accepted that has not committed yet is listed under `pending` with its
+receipt: poll it with `foresights write-request <id>` (the command exits 10) and rerun once it has committed, never submit
 it again.
 
 ## Export and import (JSONL)
 
-`gbrain storage export --jsonl [--out <new file>]` writes every card as one JSON line, sorted by id, with the fields
-gbrain stamps (`registered_by`, `origin`) and, under `labels`, the card page's access labels. `gbrain storage import
+`foresights storage export --jsonl [--out <new file>]` writes every card as one JSON line, sorted by id, with the fields
+foresights stamps (`registered_by`, `origin`) and, under `labels`, the card page's access labels. `foresights storage import
 --jsonl <file>` previews each line as
 `create`, `identical`, `conflict` or `invalid` with a `plan_hash`; `--apply --expect <plan_hash>` registers the
-missing cards with `origin: import` (gbrain stamps both fields again) and the line's labels, so a restricted card stays
+missing cards with `origin: import` (foresights stamps both fields again) and the line's labels, so a restricted card stays
 restricted, never overwrites a differing card (other labels count as a difference), and skips
 invalid lines without showing their values. Export leaves out a stored card that fails the card rules (a hand-edited card file, say) and names it. Export
 from one brain and import into an empty one reproduces every valid card.
 
 ## Doctor
 
-`gbrain doctor --only storage_manifest` (read-only) warns about cards that fail the current card schema, interim
+`foresights doctor --only storage_manifest` (read-only) warns about cards that fail the current card schema, interim
 records under `storage-manifest/` that are not adopted yet, and a hosted shelf whose directory is gone. It reports
 not applicable on a brain with no shelf and no interim record.
 

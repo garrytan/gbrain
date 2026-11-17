@@ -1,13 +1,13 @@
 /**
- * gbrain eval — Retrieval Evaluation Command
+ * foresights eval — Retrieval Evaluation Command
  *
  * Runs search quality benchmarks against user-defined ground truth (qrels).
  * Supports single-config runs and A/B comparison mode for tuning parameters.
  *
  * Usage:
- *   gbrain eval --qrels <path|json>
- *   gbrain eval --qrels <path> --config-a <path|json> --config-b <path|json>
- *   gbrain eval --qrels <path> --strategy hybrid --rrf-k 30 --k 5
+ *   foresights eval --qrels <path|json>
+ *   foresights eval --qrels <path> --config-a <path|json> --config-b <path|json>
+ *   foresights eval --qrels <path> --strategy hybrid --rrf-k 30 --k 5
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -21,7 +21,7 @@ import {
 } from '../core/search/eval.ts';
 
 export async function runEvalCommand(engine: BrainEngine, args: string[]): Promise<void> {
-  // v0.25.0 — sub-subcommand dispatch. Bare `gbrain eval --qrels ...`
+  // v0.25.0 — sub-subcommand dispatch. Bare `foresights eval --qrels ...`
   // falls through to the legacy IR-metrics flow so existing callers
   // don't break.
   const sub = args[0];
@@ -412,12 +412,12 @@ function truncate(s: string, max: number): string {
 
 function printHelp(): void {
   console.log(`
-gbrain eval — measure and compare retrieval quality
+foresights eval — measure and compare retrieval quality
 
 USAGE
-  gbrain eval --qrels <path>
-  gbrain eval --qrels <path> --config-a <path> --config-b <path>
-  gbrain eval <subcommand> [flags]     (run \`gbrain eval <subcommand> --help\` where available)
+  foresights eval --qrels <path>
+  foresights eval --qrels <path> --config-a <path> --config-b <path>
+  foresights eval <subcommand> [flags]     (run \`foresights eval <subcommand> --help\` where available)
 
 SUBCOMMANDS (#3686 — each has its own flag surface)
   replay                     Re-run captured production queries against the current config
@@ -465,20 +465,20 @@ QRELS FORMAT
   }
   "grades" is optional — enables graded nDCG. Without it, binary relevance is used.
   A bare array of entries (no wrapper) is also accepted, as are the
-  \`gbrain eval gate\` per-entry keys ("relevant_slugs" / "first_relevant_slug",
+  \`foresights eval gate\` per-entry keys ("relevant_slugs" / "first_relevant_slug",
   in a {"schema_version": 1, "queries": [...]} wrapper) — they map onto
   "relevant". The gate's federated shape ("relevant" as {source_id, slug}
   objects) is gate-only: this command compares unqualified slugs and rejects
-  it with a pointer to \`gbrain eval gate\`. Every entry is validated BEFORE
+  it with a pointer to \`foresights eval gate\`. Every entry is validated BEFORE
   any search is billed.
 
 CONFIG FORMAT
   { "name": "rrf-k-30", "strategy": "hybrid", "rrf_k": 30, "expand": false }
 
 EXAMPLES
-  gbrain eval --qrels ./my-queries.json
-  gbrain eval --qrels ./qrels.json --strategy keyword
-  gbrain eval --qrels ./qrels.json --rrf-k 30
-  gbrain eval --qrels ./qrels.json --config-a baseline.json --config-b experiment.json
+  foresights eval --qrels ./my-queries.json
+  foresights eval --qrels ./qrels.json --strategy keyword
+  foresights eval --qrels ./qrels.json --rrf-k 30
+  foresights eval --qrels ./qrels.json --config-a baseline.json --config-b experiment.json
 `.trim());
 }

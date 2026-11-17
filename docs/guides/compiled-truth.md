@@ -66,10 +66,10 @@ sarah@acmecorp.com | @sarahchen | linkedin.com/in/sarahchen
 
 ```
 update_brain_page(slug, new_info, source):
-  page = gbrain get {slug}
+  page = foresights get {slug}
 
   // TIMELINE: always APPEND (never edit existing entries)
-  gbrain timeline-add {slug} {
+  foresights timeline-add {slug} {
     date: today,
     summary: new_info.summary,
     detail: new_info.detail,
@@ -81,7 +81,7 @@ update_brain_page(slug, new_info, source):
   // Integrate new information
   // Write the updated synthesis
   updated_truth = rewrite_compiled_truth(page.compiled_truth, new_info)
-  gbrain put {slug} {
+  foresights put {slug} {
     compiled_truth: updated_truth,
     // timeline is NOT passed — it's managed by add_timeline_entry
   }
@@ -109,14 +109,14 @@ support that claim.
    turns out to be wrong, add a NEW entry correcting it:
    `- 2026-04-10 | Correction: Sarah is VP Eng, not CTO. Previous entry was wrong.`
 
-3. **GBrain search weights compiled truth higher.** `gbrain query` returns compiled
+3. **Foresights search weights compiled truth higher.** `foresights query` returns compiled
    truth chunks with higher relevance than timeline chunks. This means the freshest
    synthesis surfaces first in search results.
 
-4. **The timeline sentinel matters — and a bare `---` is NOT one.** GBrain
+4. **The timeline sentinel matters — and a bare `---` is NOT one.** Foresights
    splits compiled_truth from timeline at the first recognized sentinel, in
    order of precedence:
-   1. `<!-- timeline -->` — preferred; unambiguous, and what GBrain itself
+   1. `<!-- timeline -->` — preferred; unambiguous, and what Foresights itself
       emits when it writes a page.
    2. `--- timeline ---` — decorated separator.
    3. `---` ONLY when the next non-empty line is `## Timeline` or
@@ -138,7 +138,7 @@ support that claim.
    the sentinel, so it does not show the hazard. The one placement that mints
    nothing is a citation alone in its own paragraph — blank line above and
    below. Timeline rows commit with their page on every write;
-   `gbrain config set auto_timeline off` stops only the maintenance sweep's
+   `foresights config set auto_timeline off` stops only the maintenance sweep's
    timeline pass, not write-path extraction. There is no timeline-remove
    command, only exact-duplicate dedup.
 
@@ -150,7 +150,7 @@ support that claim.
 
 1. **Update a person page.** Add new meeting info. Check: compiled truth was
    REWRITTEN (not appended), timeline has new entry at the top.
-2. **Search for the person.** `gbrain query "Sarah Chen"`. The compiled truth
+2. **Search for the person.** `foresights query "Sarah Chen"`. The compiled truth
    (current synthesis) should appear first, not a random timeline entry.
 3. **Check traceability.** Every claim in compiled truth should have a
    corresponding timeline entry. Read both sections and verify.
@@ -159,4 +159,4 @@ support that claim.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Source Attribution](source-attribution.md), [Entity Detection](entity-detection.md)*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). See also: [Source Attribution](source-attribution.md), [Entity Detection](entity-detection.md)*

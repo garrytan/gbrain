@@ -63,7 +63,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
 });
 
-/** Run `gbrain config` against the stub; returns stdout and stderr lines. */
+/** Run `foresights config` against the stub; returns stdout and stderr lines. */
 async function config(args: string[], extra: Record<string, string | undefined> = {}): Promise<{ out: string[]; err: string[] }> {
   const out: string[] = [];
   const err: string[] = [];
@@ -145,7 +145,7 @@ for (const [key, touchpoint, model] of [
       expect(await stub.getConfig(key)).toBe(model);
       expect(readFileSync(path, 'utf8')).toBe(before);
       expect(text.err.join('\n')).toContain(`[config] WARN: ${key} was stored in the database, but the ${key} pin in ${path} outranks it`);
-      expect(text.err.join('\n')).toContain(`gbrain config unset ${key} --file`);
+      expect(text.err.join('\n')).toContain(`foresights config unset ${key} --file`);
       expect(text.err.join('\n')).not.toContain(OTHER);
       const { out } = await config(['set', key, model, '--json']);
       const doc = JSON.parse(out.join(''));

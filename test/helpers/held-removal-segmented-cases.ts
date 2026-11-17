@@ -1,6 +1,6 @@
 /**
  * #6792/#6807 on a page stored in segments: the owner accepts a held take
- * removal and, separately, a held timeline removal through `gbrain trust
+ * removal and, separately, a held timeline removal through `foresights trust
  * confirm tp<id>` (previewOwnerAction + applyOwnerAction, the CLI's path).
  * Shared by the PGLite arm (test/large-pages/held-removal-segmented.test.ts)
  * and the Postgres arm (test/e2e/held-removal-segmented-postgres.test.ts).
@@ -85,7 +85,7 @@ async function searchHits(b: Brain, slug: string, token: string): Promise<{ keyw
   return { keyword, chunks };
 }
 
-/** What `gbrain trust confirm tp<id>` does once the owner types the token: preview, then apply bound to it. */
+/** What `foresights trust confirm tp<id>` does once the owner types the token: preview, then apply bound to it. */
 async function ownerConfirm(engine: BrainEngine, proposalId: number) {
   const input = { action: 'confirm' as const, ref: `tp${proposalId}` };
   const preview = await previewOwnerAction(engine, input);

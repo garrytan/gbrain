@@ -4,7 +4,7 @@
  * holds the Wakeshift app) must show each person one step before the first
  * wake: what watching does, the operator's own terms and privacy links, the
  * Wakeshift disclosure and Wakeshift's Connector Terms and Privacy Policy.
- * `gbrain wakeshift enable` stores the two operator links in the file plane;
+ * `foresights wakeshift enable` stores the two operator links in the file plane;
  * the terms version is a hash of them, so changing a link asks everyone again.
  * Acceptances live in wake_terms_acceptances, keyed by the principal (the bound
  * member when there is one). A brain with no live members skips the step.
@@ -62,7 +62,7 @@ export function agreementStep(terms: OperatorTerms, tool: string): Record<string
     watching: false,
     agreement_required: true,
     terms_version: terms.version,
-    what: `${tool} asks gbrain to wake this conversation through Wakeshift when the thing you watch finishes. Each wake sends Wakeshift a pointer (an id, a status, times, a hashed user id and your MCP client name), never page text, titles or slugs. You can stop any watch with unwatch.`,
+    what: `${tool} asks foresights to wake this conversation through Wakeshift when the thing you watch finishes. Each wake sends Wakeshift a pointer (an id, a status, times, a hashed user id and your MCP client name), never page text, titles or slugs. You can stop any watch with unwatch.`,
     operator_terms_url: terms.terms_url,
     operator_privacy_url: terms.privacy_url,
     wakeshift_disclosure: 'Wakes pass through Wakeshift, operated by Clawvisor Inc. as this brain operator\'s service provider. Wakeshift\'s Connector Terms and Privacy Policy apply to that delivery and to the wakeshift program, if your agent needs it.',

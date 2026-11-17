@@ -142,7 +142,7 @@ export function fenceHoldWhere(meta: HoldMeta): string {
   return fenceWhere(meta.fence ? { ...meta.fence, line: meta.line ?? meta.fence.line } : undefined);
 }
 
-/** `gbrain repair fences --source <id> [--only <path>]`: the read-only preview (no model call). */
+/** `foresights repair fences --source <id> [--only <path>]`: the read-only preview (no model call). */
 export function fencePreviewArgv(sourceId: string, path?: string): string[] {
   return ['gbrain', 'repair', 'fences', '--source', sourceId, ...(path ? ['--only', path] : [])];
 }
@@ -150,12 +150,12 @@ export function fencePreviewArgv(sourceId: string, path?: string): string[] {
 /** The exact command a paid state waits on; `<...>` placeholders are described by `inputs`. */
 function paidStep(reason: FenceReason): { argv: string[]; inputs?: ActionInput[] } {
   if (reason === 'budget_exhausted') return { argv: ['gbrain', 'config', 'set', 'fences.repair.max_usd_per_day', '<usd>'],
-    inputs: [{ name: 'usd', how: 'The daily cap in USD the user agreed to; read the current one with gbrain config get fences.repair.max_usd_per_day.' }] };
+    inputs: [{ name: 'usd', how: 'The daily cap in USD the user agreed to; read the current one with foresights config get fences.repair.max_usd_per_day.' }] };
   if (reason === 'llm_disabled') return { argv: ['gbrain', 'config', 'set', 'fences.repair.llm', 'true'] };
   if (reason === 'no_measured_model') return { argv: ['gbrain', 'config', 'set', 'models.fence_repair', '<model>'],
     inputs: [{ name: 'model', how: `The provider:model the user chooses to trust with fence repair. Measured accurate enough: ${FENCE_REPAIR_MEASURED_MODELS.join(', ')}; each needs its provider's key.` }] };
   return { argv: ['gbrain', 'pricing', 'set', '<model>', '--input', '<usd>', '--output', '<usd>'],
-    inputs: [{ name: 'model', how: 'The fence repair model: models.fence_repair in gbrain models --json.' },
+    inputs: [{ name: 'model', how: 'The fence repair model: models.fence_repair in foresights models --json.' },
       { name: 'usd', how: "The provider's price in USD per 1M input tokens after --input and per 1M output tokens after --output, from its pricing page." }] };
 }
 
@@ -164,7 +164,7 @@ function paidWait(reason: FenceReason): string {
   if (reason === 'budget_exhausted') return "today's fence repair budget (fences.repair.max_usd_per_day) is spent";
   if (reason === 'llm_disabled') return 'model repair is off (fences.repair.llm false)';
   if (reason === 'no_measured_model') return 'no model measured accurate enough for fence repair has a provider key here and models.fence_repair is unset';
-  return 'a fence repair spend cap is set but gbrain has no price for the repair model, so it will not call it';
+  return 'a fence repair spend cap is set but foresights has no price for the repair model, so it will not call it';
 }
 
 /** Why an `apply` hold is not repaired by itself. */
@@ -195,7 +195,7 @@ export function fenceHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 
     case 'manual': {
       const at = record.meta.fence ? { ...record.meta.fence, reason: status.reason, rows: record.meta.fence_repair?.rows ?? record.meta.fence.rows } : null;
       const gate = record.meta.fence_repair?.gate;
-      return { ...base, argv: preview, why: `${held} ${gate ? `The proposed repair failed gate ${gate}, so it was not written.` : 'gbrain will not guess this repair.'} ${at ? `${renderFenceFix(at)} ` : ''}`
+      return { ...base, argv: preview, why: `${held} ${gate ? `The proposed repair failed gate ${gate}, so it was not written.` : 'foresights will not guess this repair.'} ${at ? `${renderFenceFix(at)} ` : ''}`
         + `The preview names the exact edit, read-only: make it in ${path} (never the frontmatter), commit, then sync. ${rest}`,
       then: { ...step, argv: ['gbrain', 'sync', '--source', source, '--no-pull'],
         why: `Imports the corrected ${path} and clears the hold; a fence that still does not parse stays held without blocking the sync.` } };
@@ -205,7 +205,7 @@ export function fenceHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 
       return { ...base, ...paid, consent: ['paid'], preview_argv: preview,
         why: `${held} Its model repair waits because ${paidWait(status.reason)}${status.reason === 'budget_exhausted' && status.auto_retry ? '; the maintenance run retries it after 00:00 UTC with no action' : ''}. `
           + `Spending more on fence repair is the user's call, so ask before running this; without it, fix the rows by hand (${command} names them, read-only, with the estimated cost). ${rest}`,
-        user_message: `gbrain can repair a malformed facts or takes table in ${path} with the paid repair model, but ${paidWait(status.reason)}. May I run '${paid.argv.join(' ')}'? Otherwise I can fix the rows by hand.` };
+        user_message: `foresights can repair a malformed facts or takes table in ${path} with the paid repair model, but ${paidWait(status.reason)}. May I run '${paid.argv.join(' ')}'? Otherwise I can fix the rows by hand.` };
     }
     case 'owner':
       return { ...base, actor: 'host_admin', argv: preview, why: `${held} Fence repairs write files only on the source's canonical owner host, and this host is not it (${status.reason}). `
@@ -213,9 +213,9 @@ export function fenceHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 
       user_message: `Please run '${command}' on the brain's owner host to preview the repair of a malformed facts or takes table, then run the apply command it prints.` };
     case 'approval':
       return { ...base, actor: 'user', argv: preview, docs: 'docs/guides/write-refusals.md#fence-tail_exposure_approval',
-        why: `${held} gbrain can close the fence directly after its last table row, but the lines after the table would then be visible to readers of this world-visible page, `
+        why: `${held} foresights can close the fence directly after its last table row, but the lines after the table would then be visible to readers of this world-visible page, `
           + `so no unattended run closes it. The preview (read-only, no model call) prints those exact lines and the apply command with --expect <hash>; show them to the user and run that command only if they agree. ${rest}`,
-        user_message: `A facts or takes table in ${path} has no end marker, and some text follows it. gbrain can close the table after its last row, which would make that text visible to readers of the page. `
+        user_message: `A facts or takes table in ${path} has no end marker, and some text follows it. foresights can close the table after its last row, which would make that text visible to readers of the page. `
           + `May I show you the lines ('${command}' prints them) and, if they look right, apply the close?`,
         then: { ...step, argv: [...preview, '--apply', '--expect', '<hash>'], inputs: [{ name: 'hash', how: 'The hash the preview printed; it binds the exact file bytes and the lines that become visible.' }],
           why: `Closes the fence in ${path} exactly as previewed and clears the hold; the lines the preview listed become visible.` } };
@@ -227,7 +227,7 @@ function relayText(status: FenceHoldStatus, auto: FenceAutoRepair | undefined, r
   switch (status.state) {
     case 'auto': return `It clears by itself: the brain host's maintenance run repairs it automatically${status.next_attempt_after ? ` (next attempt after ${status.next_attempt_after})` : ''}, so nothing is needed now. To see the planned repair, the brain host operator can run ${run}.`;
     case 'apply': return `It does not clear by itself because ${auto?.enabled === false ? 'automatic fence repair is paused on the brain host' : 'no maintenance run is active on the brain host'}. Please run ${run} on the brain host to preview the repair, then run the apply command it prints.`;
-    case 'manual': return `It does not clear by itself: it needs an edit gbrain will not guess. Please run ${run} on the brain host; it names the exact edit to make in the file, then commit and sync.`;
+    case 'manual': return `It does not clear by itself: it needs an edit foresights will not guess. Please run ${run} on the brain host; it names the exact edit to make in the file, then commit and sync.`;
     case 'paid': return `It does not clear by itself: its repair needs the paid repair model, and ${paidWait(status.reason)}. Raising spend or enabling the model is your call: if you agree, run '${paid}' on the brain host; otherwise ${run} there names the rows to fix by hand.`;
     case 'owner': return `Fence repairs run on the brain's owner host: please run ${run} there, then the apply command it prints.`;
     case 'approval': return `It does not clear by itself: closing the table would make the text after it visible to readers of the page, so it waits for your approval. On the brain host, ${run} prints those lines and the apply command; run that command if they look right.`;

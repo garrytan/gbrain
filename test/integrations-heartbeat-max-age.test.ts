@@ -199,7 +199,7 @@ Body.
     // v0.47 rewrote the recipe onto the native google source kind: event
     // pages land in the source's MANAGED dir (not the brain repo), so there
     // is deliberately no repo-relative output for the collision check to
-    // guard, and freshness is enforced natively (`gbrain waiting` refuses on
+    // guard, and freshness is enforced natively (`foresights waiting` refuses on
     // stale sources) instead of via a recipe heartbeat whose id would not
     // match the connector's funnel path.
     const content = require('node:fs').readFileSync(

@@ -102,7 +102,7 @@ test('rotation does not carry a private-pages grant and names the rescope that g
   expect(granted.uncarriedPrivatePages).toBe('granted_sources');
   expect(await privatePagesOf(granted.id)).toBe('none');
   expect(uncarriedPrivatePagesNote(granted.name, granted.uncarriedPrivatePages!))
-    .toBe('token bootstrap-harness: private-pages grant not carried; run `gbrain auth rescope --token bootstrap-harness --private-pages granted-sources` to grant it again.');
+    .toBe('token bootstrap-harness: private-pages grant not carried; run `foresights auth rescope --token bootstrap-harness --private-pages granted-sources` to grant it again.');
   const plain = await rotate('none');
   expect(plain.uncarriedPrivatePages).toBeUndefined();
   expect(await privatePagesOf(plain.id)).toBe('none');

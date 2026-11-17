@@ -166,14 +166,14 @@ export async function importRendered(
   markdown = await carryStoredFences(deps.sourceId, slug, relPath, existing, markdown, 'Google connector fence carry');
   // #8644: content the owner purged is skipped before any file is touched, as the managed connector skips it (#6831).
   if (await intentCarriesPurgedContent(deps.engine, { source_id: deps.sourceId, slug, intent: { content: markdown } }, { facts: false, pages: true })) {
-    deps.log(`[google] skipped ${slug}: its content matches a page purge tombstone; the rest of the sync continues. To let it back in: gbrain pages unpurge ${slug}`);
+    deps.log(`[google] skipped ${slug}: its content matches a page purge tombstone; the rest of the sync continues. To let it back in: foresights pages unpurge ${slug}`);
     return null;
   }
   const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
   const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence : undefined);
   const drift = () => new OperationError('file_database_drift',
-    `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run gbrain sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
-    'Import the newer file with gbrain sync, or ask the user which version to keep; the item is held until then.');
+    `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run foresights sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
+    'Import the newer file with foresights sync, or ask the user which version to keep; the item is held until then.');
   if (guard && !guard.ok) throw drift();
   const before = databaseOnly ? !!existing : existsSync(filePath);
   // Temp-write → import → rename: a failed import never destroys the

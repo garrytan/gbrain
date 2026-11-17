@@ -25,13 +25,13 @@ export function findIpcPathTooLong(paths: ReadonlyArray<string | null | undefine
 
 export function ipcPathTooLongMessage(problem: IpcPathTooLong): string {
   return `ipc_path_too_long: the local IPC socket path ${problem.path} is ${problem.bytes} bytes, over this platform's ${problem.limit}-byte limit, ` +
-    'so hooks and local commands cannot reach gbrain serve on this brain. Move the brain to a shorter path, then restart serve.';
+    'so hooks and local commands cannot reach foresights serve on this brain. Move the brain to a shorter path, then restart serve.';
 }
 
 export function ipcPathTooLongFix(): Action {
   return {
     argv: ['gbrain', 'config', 'set', 'database_path', '<SHORTER_DATA_DIR>'],
-    inputs: [{ name: 'SHORTER_DATA_DIR', how: 'Stop gbrain serve, move the PGLite data directory to a path near the drive root (for example C:\\gbrain\\brain.pglite), and pass that new path.' }],
+    inputs: [{ name: 'SHORTER_DATA_DIR', how: 'Stop foresights serve, move the PGLite data directory to a path near the drive root (for example C:\\foresights\\brain.pglite), and pass that new path.' }],
     consent: [],
     actor: 'user',
     why: 'The socket path is derived from the data directory; a shorter data directory gives a socket path the operating system accepts.',

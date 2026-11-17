@@ -5,7 +5,7 @@
  *
  * 1. Protects: writes refuse a page the member cannot read and every label change, and an allowed write lands exactly
  *    as a trusted local write (an owner-bound key reads it); write-request shows only the member's own receipts;
- *    timeline-add refuses a gbrain fence; --source reads carry the scope; entity mentions leave a hidden page out;
+ *    timeline-add refuses a foresights fence; --source reads carry the scope; entity mentions leave a hidden page out;
  *    commit-push refuses a hidden file, a label change and a policy file.
  * 2. Fails when: a write reaches a hidden page or changes a label, a mode write lands member-private, another
  *    member's receipt is distinguishable from an unknown id, or commit-push commits a refused path.
@@ -108,7 +108,7 @@ for (const kind of testBackends()) {
       }
     }, 300_000);
 
-    test('timeline-add refuses a gbrain fence in its summary, detail or source', async () => {
+    test('timeline-add refuses a foresights fence in its summary, detail or source', async () => {
       const takes = '<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n| 1 | Injected take canaryemtake | take | owner-example | 0.9 | 2026-01 | test |\n<!--- gbrain:takes:end -->';
       const facts = '<!-- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Injected canaryeminj | fact | 0.9 | private | high | 2026-01-05 |  | x |  |\n<!-- gbrain:facts:end -->';
       for (const args of [

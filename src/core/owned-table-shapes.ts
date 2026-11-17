@@ -1,9 +1,9 @@
 /**
- * #9190: gbrain creates its tables with CREATE TABLE IF NOT EXISTS, so a table of the same name that another
+ * #9190: foresights creates its tables with CREATE TABLE IF NOT EXISTS, so a table of the same name that another
  * application created in the brain's schema was adopted silently; later migrations then added columns to it and an
  * upgrade stopped midway on the first statement that compared the wrong type, naming neither table nor column.
  * Before the schema blob replays (engine-sql/bootstrap.ts) and before a migration run (migrate.ts), every table here
- * that already exists must have every column gbrain has given it since it first created the table (v32), with the
+ * that already exists must have every column foresights has given it since it first created the table (v32), with the
  * same type. Otherwise schema setup refuses with `foreign_table` and changes nothing: the table is another
  * application's data, so moving it is the user's decision.
  */
@@ -47,24 +47,24 @@ interface ShapeMismatch { schema_name: string; table_name: string; column_name: 
 
 function foreignTableError(m: ShapeMismatch): OperationError {
   const qualified = `${m.schema_name}.${m.table_name}`;
-  const command = 'gbrain apply-migrations --force-schema --yes';
+  const command = 'foresights apply-migrations --force-schema --yes';
   return opError('foreign_table',
-    `Schema setup stopped before changing anything: ${qualified}.${m.column_name} is ${m.found_type ?? 'missing'}, but gbrain's ${m.table_name} needs ${m.expected_type}. ` +
-    `A table named ${m.table_name} that gbrain did not create (probably another application sharing this database) is in the way. ` +
+    `Schema setup stopped before changing anything: ${qualified}.${m.column_name} is ${m.found_type ?? 'missing'}, but foresights's ${m.table_name} needs ${m.expected_type}. ` +
+    `A table named ${m.table_name} that foresights did not create (probably another application sharing this database) is in the way. ` +
     `Give gbrain its own database, or move that table to a schema of its own with ALTER TABLE ${qualified} SET SCHEMA <other_schema> ` +
     `(its indexes and constraints move with it) and point that application there; then run ${command}.`,
     'Ask the user before changing that table: it holds another application\'s data, and moving it affects that application.',
     { detail: qualified, fix: {
       ask_user: true, argv: ['gbrain', 'apply-migrations', '--force-schema', '--yes'], consent: [], actor: 'user', requires_exclusive: false,
-      why: `Once ${qualified} has moved, this creates gbrain's own ${m.table_name} and applies the pending migrations.`,
-      user_message: `Your database already has a table named ${qualified} that gbrain did not create; it is probably another application's. ` +
+      why: `Once ${qualified} has moved, this creates foresights's own ${m.table_name} and applies the pending migrations.`,
+      user_message: `Your database already has a table named ${qualified} that foresights did not create; it is probably another application's. ` +
         `gbrain stopped before changing anything. Either give gbrain its own database, or move that table with ALTER TABLE ${qualified} SET SCHEMA <other_schema> ` +
         `and point its application at the new schema. Then run ${command}.`,
       verify: { argv: ['gbrain', 'doctor', '--only', 'schema_version', '--json'] },
     } });
 }
 
-/** Throws `foreign_table` when a table gbrain owns by name exists with a shape gbrain never gave it. */
+/** Throws `foreign_table` when a table foresights owns by name exists with a shape foresights never gave it. */
 export async function assertOwnedTableShapes(queryOne: (sql: string) => Promise<Record<string, unknown> | undefined>): Promise<void> {
   const mismatch = await queryOne(SHAPE_PROBE_SQL);
   if (mismatch?.table_name) throw foreignTableError(mismatch as unknown as ShapeMismatch);

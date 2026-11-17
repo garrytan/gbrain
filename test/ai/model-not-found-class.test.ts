@@ -3,7 +3,7 @@
  * have access") was normalized to AIConfigError and classified `auth`, so
  * `(cause=AIConfigError auth)` sent operators to debug a valid key. It is now
  * its own whole-run class, `model_not_found`, with a fix naming the model,
- * the provider, `gbrain models`, and a known rename when there is one.
+ * the provider, `foresights models`, and a known rename when there is one.
  */
 import { describe, test, expect } from 'bun:test';
 import {
@@ -36,13 +36,13 @@ describe('model_not_found class (B-N7)', () => {
     expect(classifyGlobalLlmError(new AIConfigError('OpenAI chat requires OPENAI_API_KEY.'))).toBe('auth');
   });
 
-  test('the 404 fix names the model, the provider and gbrain models', () => {
+  test('the 404 fix names the model, the provider and foresights models', () => {
     const err = normalizeAIError(openai404(), 'chat(openai:gpt-5.6-terra)');
     expect(err).toBeInstanceOf(AIConfigError);
     const fix = (err as AIConfigError).fix!;
     expect(fix).toContain('openai:gpt-5.6-terra');
     expect(fix).toContain('the openai provider does not serve openai:gpt-5.6-terra');
-    expect(fix).toContain('`gbrain models`');
+    expect(fix).toContain('`foresights models`');
     expect(fix).not.toContain('renamed');
   });
 
@@ -86,7 +86,7 @@ describe('a 403 model-access denial is model_not_found, not auth (#5394)', () =>
     expect(err.message).not.toContain(secret);
     const fix = (err as AIConfigError).fix!;
     expect(fix).toContain('the openai provider does not serve openai:gpt-5.6-terra');
-    expect(fix).toContain('`gbrain models`');
+    expect(fix).toContain('`foresights models`');
     expect(fix).not.toContain('API key');
     expect(classifyGlobalLlmError(err)).toBe('model_not_found');
   });

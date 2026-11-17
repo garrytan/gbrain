@@ -1,7 +1,7 @@
 /**
  * #8342: the claude-cli child must not read the user's own Claude Code
  * settings and instructions (~/.claude/CLAUDE.md, settings.json): they would
- * steer gbrain's background calls. `--setting-sources ""` loads no settings
+ * steer foresights's background calls. `--setting-sources ""` loads no settings
  * source and keeps the subscription login. The child gets it only when
  * `claude --version` reports SETTING_SOURCES_MIN_VERSION or newer, probed once
  * per binary; an older or unreadable version keeps today's argv, and a probe

@@ -64,7 +64,7 @@ test('a database-only row on a page past the cap is found by a later run', async
   let last;
   for (let i = 0; i < 3; i++) last = await run();
   expect(last).toMatchObject({ status: 'warn', details: { count: 'exact', materializable_rows: 1, pages_affected: 1, pages_inspected: PAGES } });
-  expect(last!.message).toContain('gbrain repair timeline --apply');
+  expect(last!.message).toContain('foresights repair timeline --apply');
 });
 
 test('a timeline row written after a clean pass withdraws the trust in that pass', async () => {

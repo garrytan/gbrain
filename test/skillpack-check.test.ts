@@ -1,10 +1,10 @@
 /**
- * Tests for `gbrain skillpack-check` — the agent-readable health report.
+ * Tests for `foresights skillpack-check` — the agent-readable health report.
  *
  * Covers:
  *   - Healthy fresh install → exit 0, healthy:true, actions:[], no DB needed.
  *   - Half-migrated (partial entry in completed.jsonl) → exit 1,
- *     healthy:false, actions includes `gbrain apply-migrations --yes`,
+ *     healthy:false, actions includes `foresights apply-migrations --yes`,
  *     summary mentions the action.
  *   - --quiet → no stdout, same exit code.
  *   - --help → prints usage, exits 0.
@@ -66,13 +66,13 @@ afterAll(() => {
   }
 });
 
-describe('gbrain skillpack-check', () => {
+describe('foresights skillpack-check', () => {
   test('healthy fresh install → exit 0, healthy:true, empty actions', () => {
     expect(healthy.exitCode).toBe(0);
     const report = JSON.parse(healthy.stdout);
     expect(report.healthy).toBe(true);
     expect(report.actions).toEqual([]);
-    expect(report.summary).toBe('gbrain skillpack healthy');
+    expect(report.summary).toBe('foresights skillpack healthy');
     expect(report.version).toBeTruthy();
     expect(report.ts).toBeTruthy();
   });
@@ -81,8 +81,8 @@ describe('gbrain skillpack-check', () => {
     expect(broken.exitCode).toBe(1);
     const report = JSON.parse(broken.stdout);
     expect(report.healthy).toBe(false);
-    expect(report.actions).toContain('gbrain apply-migrations --yes');
-    expect(report.summary).toContain('gbrain apply-migrations --yes');
+    expect(report.actions).toContain('foresights apply-migrations --yes');
+    expect(report.summary).toContain('foresights apply-migrations --yes');
     expect(report.summary).toContain('needs attention');
     // Doctor check surfaced the MINIONS HALF-INSTALLED line
     const doctorChecks = (report.doctor as { checks: Array<{ name: string; status: string }> }).checks;
@@ -139,7 +139,7 @@ describe('gbrainSpawn — argv[1] vs execPath resolution (#4094)', () => {
     expect(prefix).toEqual([]);
   });
 
-  test('gbrain shim script on PATH: argv[1] is used when execPath is the bun runtime, not gbrain', () => {
+  test('foresights shim script on PATH: argv[1] is used when execPath is the bun runtime, not foresights', () => {
     process.argv[1] = '/usr/local/bin/gbrain';
     process.execPath = '/opt/homebrew/Cellar/bun/1.2.15/bin/bun';
     const { cmd, prefix } = __testing.gbrainSpawn();
@@ -165,9 +165,9 @@ describe('gbrainSpawn — argv[1] vs execPath resolution (#4094)', () => {
 
   test('Windows compiled binary: execPath ending in gbrain.exe wins over bunfs argv[1]', () => {
     process.argv[1] = 'B:\\~BUN\\root\\gbrain.exe';
-    process.execPath = 'C:\\Program Files\\gbrain\\gbrain.exe';
+    process.execPath = 'C:\\Program Files\\foresights\\gbrain.exe';
     const { cmd, prefix } = __testing.gbrainSpawn();
-    expect(cmd).toBe('C:\\Program Files\\gbrain\\gbrain.exe');
+    expect(cmd).toBe('C:\\Program Files\\foresights\\gbrain.exe');
     expect(prefix).toEqual([]);
   });
 });

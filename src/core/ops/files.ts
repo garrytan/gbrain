@@ -104,18 +104,18 @@ const file_upload: Operation = {
     // inserted the row and returned status:'uploaded' anyway — every later
     // read (file_url, files verify, restore) would trust a phantom object.
     // Typed error BEFORE any insert; git-tracked small files have their own
-    // lane (`gbrain files upload-raw --page <slug>`).
+    // lane (`foresights files upload-raw --page <slug>`).
     const embedded = isEmbeddedEngine(ctx.engine) ? await embeddedFileStore(ctx, 'file_upload') : null;
     if (!embedded && !ctx.config.storage) {
       const slugOk = pageSlug !== null && /^[a-z0-9][a-z0-9._/-]*$/i.test(pageSlug);
       // #5963: the git-tracked lane is refused on a managed worktree, so it is not offered there.
       if (slugOk && await (await import('../raw-file-upload.ts')).rawUploadRefusedFor(ctx.engine, pageSlug!, ctx.sourceId ?? 'default')) throw opError('storage_error',
         'No storage backend configured — file_upload would record a files row with no stored bytes.',
-        'Configure `storage` in your gbrain config (supabase | s3 | local), then upload again. This page lives in a managed canonical worktree, which does not accept raw files from outside the persistence coordinator, so a storage backend is the only way to store it.');
+        'Configure `storage` in your foresights config (supabase | s3 | local), then upload again. This page lives in a managed canonical worktree, which does not accept raw files from outside the persistence coordinator, so a storage backend is the only way to store it.');
       throw opError(
         'storage_error',
         'No storage backend configured — file_upload would record a files row with no stored bytes.',
-        `Configure \`storage\` in your gbrain config (supabase | s3 | local), or use \`gbrain files upload-raw ${filePath} --page ${slugOk ? pageSlug : '<slug>'}\` for git-tracked small files.`,
+        `Configure \`storage\` in your foresights config (supabase | s3 | local), or use \`foresights files upload-raw ${filePath} --page ${slugOk ? pageSlug : '<slug>'}\` for git-tracked small files.`,
         ...(slugOk ? [{ fix: hostFix(ctx, ['gbrain', 'files', 'upload-raw', filePath, '--page', pageSlug!],
           'With no storage backend, a small file goes into the brain repo next to its page instead (git-tracked, with a .redirect.yaml pointer).') }] : []),
       );
@@ -127,7 +127,7 @@ const file_upload: Operation = {
     // The source is checked before any bytes are written, so a refused upload leaves the object at storagePath as it was.
     const sourceId = ctx.sourceId ?? 'default';
     if (!(await ctx.engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) throw opError('unknown_source',
-      `No source "${sourceId}", so nothing was uploaded.`, 'Upload under a registered source (gbrain sources list).');
+      `No source "${sourceId}", so nothing was uploaded.`, 'Upload under a registered source (foresights sources list).');
     const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
 
     const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
@@ -167,7 +167,7 @@ const file_upload: Operation = {
       await uploadUnchangedFile(storage, storagePath, filePath, hash, mimeType || undefined);
     } catch (uploadErr) {
       throw opError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
-        'Nothing was recorded. Check the storage backend (credentials, bucket, disk) with `gbrain doctor --json`, then upload again; the upload is keyed by content hash, so repeating it is safe.');
+        'Nothing was recorded. Check the storage backend (credentials, bucket, disk) with `foresights doctor --json`, then upload again; the upload is keyed by content hash, so repeating it is safe.');
     }
 
     try {
@@ -229,7 +229,7 @@ const file_url: Operation = {
       throw opError(
         'storage_error',
         `No storage backend configured — cannot produce a URL for ${p.storage_path}.`,
-        'Configure `storage` in your gbrain config (supabase | s3 | local).',
+        'Configure `storage` in your foresights config (supabase | s3 | local).',
       );
     }
     const { createStorage } = await import('../storage.ts');
@@ -242,7 +242,7 @@ const file_url: Operation = {
       throw opError(
         'storage_error',
         `File row exists but the storage backend has no object at ${rows[0].storage_path} — re-upload it.`,
-        'The bytes are missing from storage. Re-upload the original file with file_upload (same path); `gbrain files verify` lists every row in this state.',
+        'The bytes are missing from storage. Re-upload the original file with file_upload (same path); `foresights files verify` lists every row in this state.',
       );
     }
     return { storage_path: rows[0].storage_path, url: await storage.getUrl(rows[0].storage_path as string) };
@@ -252,7 +252,7 @@ const file_url: Operation = {
 /** file_register and file_verify serve a host that stores bytes itself: they run only on an engine opened from settings, against its settings.storage, which every file op on such an engine uses. */
 async function embeddedStorage(ctx: OperationContext, op: string) {
   if (!isEmbeddedEngine(ctx.engine)) throw opError('embedded_engine_required', `${op} runs only on an engine an embedding host opened from settings (embedded_core: true).`,
-    'A brain the CLI or a server opens stores files only through file_upload (gbrain files upload), so there is nothing to register or check this way.');
+    'A brain the CLI or a server opens stores files only through file_upload (foresights files upload), so there is nothing to register or check this way.');
   const settings = embeddedSettingsRecord(ctx.engine)?.storage;
   if (!settings) throw opError('storage_error', `This engine was opened with no settings.storage, so ${op} cannot check any stored object.`,
     'Open the engine with storage (local or s3, with its values) in its settings; the process storage config is never used for an engine opened from settings. Nothing was recorded.');
@@ -268,7 +268,7 @@ async function embeddedFileStore(ctx: OperationContext, op: string) {
 
 function storeUnavailable(op: string, error: unknown) {
   return opError('store_unavailable', `${op} could not ask the storage backend: ${error instanceof Error ? error.message : String(error)}`,
-    'The backend did not answer, so nothing is known about the object and nothing was recorded or reported missing. Check the backend with gbrain doctor --json, then call again.');
+    'The backend did not answer, so nothing is known about the object and nothing was recorded or reported missing. Check the backend with foresights doctor --json, then call again.');
 }
 
 /** The path file_upload stores a file under; file_register accepts no other, so a registered row only names what an upload could have written. */

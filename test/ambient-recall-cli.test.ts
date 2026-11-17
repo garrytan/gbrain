@@ -1,6 +1,6 @@
 /**
  * v0.45.7 — ambient recall CLI surface: the commands the bootstrap templates
- * tell agents to run (`gbrain context-pack …`, `gbrain delta …`) actually
+ * tell agents to run (`foresights context-pack …`, `foresights delta …`) actually
  * execute end-to-end against the real cli.ts entrypoint. Subprocess tests
  * against a shared temp PGLite home (schema init is paid once in beforeAll;
  * later spawns reuse the persisted brain). Pins:
@@ -50,7 +50,7 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-describe('gbrain context-pack (CLI)', () => {
+describe('foresights context-pack (CLI)', () => {
   test('--entities + --budget-tokens --json: exit 0, protocol_version 1, budget fields', () => {
     const { stdout, status } = run([
       'context-pack', '--entities', 'alice-example', '--budget-tokens', '2000', '--json',
@@ -68,7 +68,7 @@ describe('gbrain context-pack (CLI)', () => {
   }, 60_000);
 });
 
-describe('gbrain delta (CLI)', () => {
+describe('foresights delta (CLI)', () => {
   test('--since <ISO> --json: exit 0, protocol_version 1, ISO-normalized echo', () => {
     const { stdout, status } = run(['delta', '--since', '1970-01-01T00:00:00Z', '--json']);
     expect(status).toBe(0);

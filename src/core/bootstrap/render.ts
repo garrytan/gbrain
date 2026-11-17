@@ -1,5 +1,5 @@
 /**
- * Render engine for `gbrain bootstrap render` (library module — the dispatcher
+ * Render engine for `foresights bootstrap render` (library module — the dispatcher
  * in src/commands/bootstrap/ calls `renderWorkspace`).
  *
  * One rendering code path, two consumers [D4]: the normal bootstrap render
@@ -71,7 +71,7 @@ export class UnresolvedTokenError extends BootstrapRenderError {
     super(
       'unresolved_tokens',
       `render refused — unresolved template tokens (nothing was written): ${tokens.join(', ')}. ` +
-        `Answer the missing interview questions (gbrain bootstrap interview --status) and re-run.`
+        `Answer the missing interview questions (foresights bootstrap interview --status) and re-run.`
     );
     this.name = 'UnresolvedTokenError';
     this.tokens = tokens;
@@ -96,7 +96,7 @@ export interface RenderOptions {
    * Ignored in minimal mode (determinism). Missing entries use canonical
    * fallbacks. */
   derived?: Record<string, string>;
-  /** Recorded as agent.json `created_by` (the dispatcher passes the gbrain
+  /** Recorded as agent.json `created_by` (the dispatcher passes the foresights
    * version). */
   createdBy?: string;
   /** Recorded as agent.json `source_id`. When unset, an existing initialized

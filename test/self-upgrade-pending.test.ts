@@ -6,7 +6,7 @@
  * get_brain_identity) routes through it, so this file pins the suppression
  * rule centrally: a stale or foreign cache (latest <= running version) must
  * return null. The cache records the version of whatever binary WROTE it —
- * an older gbrain on PATH can write `UPGRADE_AVAILABLE 0.0.1 X` — so the
+ * an older foresights on PATH can write `UPGRADE_AVAILABLE 0.0.1 X` — so the
  * comparison must be against the RUNNING version, never `marker.current`.
  *
  * Also covers the advisor consumer (collect-version.ts): version_drift fires

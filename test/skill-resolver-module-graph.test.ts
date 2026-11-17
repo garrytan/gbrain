@@ -6,7 +6,7 @@
  *    statically and after a bundled build and a turn (dynamic imports); the
  *    CLI module loads no engine, database driver, operations table or AI
  *    gateway. So a resolve works on a thin client, a brainless install and
- *    while `gbrain serve` holds the PGLite lock.
+ *    while `foresights serve` holds the PGLite lock.
  * 2. Fails when: a resolver module imports skill-catalog.ts, operations.ts,
  *    an engine or a provider, statically or dynamically.
  * 3. Seam: none. A child process loads each entry into a fresh registry

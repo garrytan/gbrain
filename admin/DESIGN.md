@@ -1,8 +1,8 @@
-# Design System — GBrain Admin Dashboard
+# Design System — Foresights Admin Dashboard
 
 ## Product Context
-- **What this is:** Admin dashboard for GBrain MCP server — manage OAuth agents, API keys, monitor requests
-- **Who it's for:** GBrain operators managing multi-agent access to their brain
+- **What this is:** Admin dashboard for Foresights MCP server — manage OAuth agents, API keys, monitor requests
+- **Who it's for:** Foresights operators managing multi-agent access to their brain
 - **Space/industry:** Developer infrastructure (peers: Supabase dashboard, Vercel, Railway)
 - **Project type:** Dense utilitarian admin panel — Steve Krug "Don't Make Me Think"
 
@@ -153,6 +153,6 @@
 | 2026-05-01 | Steve Krug lens | Zero happy talk, mindless choices, scannable tables, billboard-speed comprehension. |
 | 2026-05-01 | JetBrains Mono for data | Anything copyable or technical should be monospace. |
 | 2026-05-03 | Left-align everything | Garry preference. Centered text is a design crutch. Left-align forces hierarchy through typography weight and spacing, not position. |
-| 2026-05-03 | Incorporate GStack design DNA | Same family: Inter + JetBrains Mono, dark base, semantic-only color. Diverges on accent (GStack: amber; GBrain: none — data is the color). |
+| 2026-05-03 | Incorporate GStack design DNA | Same family: Inter + JetBrains Mono, dark base, semantic-only color. Diverges on accent (GStack: amber; Foresights: none — data is the color). |
 | 2026-05-03 | Per-client config export tabs | Claude Code, ChatGPT, Claude.ai, Cursor, Perplexity, JSON. Every agent has a copy-paste setup path. |
 | 2026-05-03 | Magic link auth | Login page tells you to ask your agent. No pasting hex strings into forms. |

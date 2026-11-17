@@ -94,7 +94,7 @@ describe('frontmatter install-hook (B13)', () => {
     const hookPath = join(tmp, '.githooks', 'pre-commit');
     expect(existsSync(hookPath)).toBe(true);
     const content = readFileSync(hookPath, 'utf8');
-    expect(content).toContain('gbrain frontmatter');
+    expect(content).toContain('foresights frontmatter');
     expect(content).toContain('git diff --cached');
     // install() masks the developer's global config, so the clean-machine
     // branch is the only one here; the "already set elsewhere" branch has its
@@ -142,10 +142,10 @@ describe('frontmatter install-hook (B13)', () => {
     expect(result).toBe('installed');
     expect(existsSync(hookPath + '.bak')).toBe(true);
     expect(readFileSync(hookPath + '.bak', 'utf8')).toContain('user hook');
-    expect(readFileSync(hookPath, 'utf8')).toContain('gbrain frontmatter');
+    expect(readFileSync(hookPath, 'utf8')).toContain('foresights frontmatter');
   });
 
-  test('installHook on existing gbrain hook refreshes silently (no .bak)', async () => {
+  test('installHook on existing foresights hook refreshes silently (no .bak)', async () => {
     await install(tmp);
     const hookPath = join(tmp, '.githooks', 'pre-commit');
     expect(existsSync(hookPath + '.bak')).toBe(false);
@@ -154,7 +154,7 @@ describe('frontmatter install-hook (B13)', () => {
     expect(second).toBe('unchanged');
   });
 
-  test('uninstallHook removes the gbrain hook and restores .bak when present', async () => {
+  test('uninstallHook removes the foresights hook and restores .bak when present', async () => {
     const hooksDir = join(tmp, '.githooks');
     mkdirSync(hooksDir, { recursive: true });
     const hookPath = join(hooksDir, 'pre-commit');
@@ -180,7 +180,7 @@ describe('frontmatter install-hook (B13)', () => {
   });
 
   // ── #4600: local_path is a SUBDIRECTORY of the host repo (the `<ws>/brain`
-  // layout `gbrain bootstrap` creates) — the hook lands at the discovered git
+  // layout `foresights bootstrap` creates) — the hook lands at the discovered git
   // root, pathspec-scoped to the source, one hook per root.
 
   test('#4600 nested source: hook installs at the discovered git root, scoped to the subdirectory', async () => {
@@ -339,7 +339,7 @@ describe('frontmatter install-hook (B13)', () => {
 
   test('the hooks-off reason names the clone setting it checked and no cause it did not check', () => {
     execFileSync('git', ['-C', tmp, 'config', 'core.hooksPath', '/dev/null']);
-    expect(hooksPathBlocker(tmp)).toBe("hooks are off in this clone's own config (core.hooksPath=/dev/null), and gbrain leaves them off");
+    expect(hooksPathBlocker(tmp)).toBe("hooks are off in this clone's own config (core.hooksPath=/dev/null), and foresights leaves them off");
   });
 
   test('inherited GIT_DIR, GIT_WORK_TREE or GIT_CONFIG* variables cannot change the hooks-off decision', async () => {
@@ -381,7 +381,7 @@ describe('frontmatter install-hook (B13)', () => {
     }
   });
 
-  test('doctor does not ask to refresh an old gbrain hook in a clone with hooks off on purpose (install-hook would skip it)', () => {
+  test('doctor does not ask to refresh an old foresights hook in a clone with hooks off on purpose (install-hook would skip it)', () => {
     mkdirSync(join(tmp, '.githooks'), { recursive: true });
     writeFileSync(join(tmp, '.githooks', 'pre-commit'), '#!/bin/sh\n# gbrain frontmatter pre-commit hook (v0.22.4+)\ngbrain frontmatter validate "$f"\n');
     expect(inspectFrontmatterHook(tmp, 'source-a')).toMatchObject({ version: 1, current: false });
@@ -389,7 +389,7 @@ describe('frontmatter install-hook (B13)', () => {
     expect(inspectFrontmatterHook(tmp, 'source-a')).toBeNull();
   });
 
-  test('a fresh clone that carries the committed gbrain hook gets wired on install (not "unchanged" while inert)', async () => {
+  test('a fresh clone that carries the committed foresights hook gets wired on install (not "unchanged" while inert)', async () => {
     // The hook FILE travels with the repo; core.hooksPath is per-clone config
     // and does not. Install on the clone must fall through to the wiring step
     // instead of stopping at "the script is already current".
@@ -415,7 +415,7 @@ describe('frontmatter install-hook (B13)', () => {
     writeFileSync(join(tmp, '.githooks', 'post-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     writeFileSync(join(tmp, '.githooks', 'README.md'), 'docs, not a hook\n');
     expect(await install(tmp)).toBe('installed_unwired');
-    expect(readFileSync(join(tmp, '.githooks', 'pre-commit'), 'utf8')).toContain('gbrain frontmatter');
+    expect(readFileSync(join(tmp, '.githooks', 'pre-commit'), 'utf8')).toContain('foresights frontmatter');
     expect(localHooksPath(tmp)).toBe('');
   });
 
@@ -494,7 +494,7 @@ describe('frontmatter install-hook (B13)', () => {
     expect(runHookRecordingGbrain(tmp, 1).status).toBe(1);
   });
 
-  test('#5988 hook version detection: old gbrain hooks are outdated and name the refresh; foreign hooks are not ours', async () => {
+  test('#5988 hook version detection: old foresights hooks are outdated and name the refresh; foreign hooks are not ours', async () => {
     expect(inspectFrontmatterHook(tmp)).toBeNull();
     const hooksDir = join(tmp, '.githooks');
     mkdirSync(hooksDir, { recursive: true });
@@ -503,7 +503,7 @@ describe('frontmatter install-hook (B13)', () => {
     expect(frontmatterHookVersion(readFileSync(hookPath, 'utf8'))).toBeNull();
     expect(inspectFrontmatterHook(tmp)).toBeNull();
 
-    // A pre-marker gbrain hook (validated working-tree bytes) is version 1.
+    // A pre-marker foresights hook (validated working-tree bytes) is version 1.
     writeFileSync(hookPath, '#!/bin/sh\n# gbrain frontmatter pre-commit hook (v0.22.4+)\n# gbrain-scope: brain/\ngbrain frontmatter validate "$f"\n');
     expect(inspectFrontmatterHook(tmp, 'wiki')).toEqual({
       hookPath, version: 1, current: false, fix: ['gbrain', 'frontmatter', 'install-hook', '--source', 'wiki', '--force'],
@@ -538,7 +538,7 @@ describe('frontmatter install-hook (B13)', () => {
       const blocked = hook();
       expect(blocked.status).toBe(1);
       expect(blocked.stderr).toContain('the staged version of note.md is broken; the working copy passes. Review it and git add note.md');
-      expect(blocked.stderr).toContain('importable but not canonical; run gbrain frontmatter validate note.md --fix (quoting only)');
+      expect(blocked.stderr).toContain('importable but not canonical; run foresights frontmatter validate note.md --fix (quoting only)');
       execFileSync('git', ['-C', tmp, 'add', 'note.md']);
       expect(hook().status).toBe(0);
     } finally {

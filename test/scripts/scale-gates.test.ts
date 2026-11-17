@@ -315,7 +315,7 @@ describe('scale gates under --enforce', () => {
     const verdict = evaluateScaleGates(small, ENFORCE);
     expect(verdict.failures.map(f => f.gate)).toEqual(['planner_stats']);
     expect(verdict.failures[0]!.message).toContain(`no pg_stats rows after get_health for takes (${PLANNER_STATS_MIN_ROWS + 1} rows)`);
-    expect(verdict.failures[0]!.message).toContain('gbrain repair planner-stats --apply');
+    expect(verdict.failures[0]!.message).toContain('foresights repair planner-stats --apply');
   });
 
   test('missing pg_stats rows on Postgres are report-only: autovacuum owns its statistics', () => {

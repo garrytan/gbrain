@@ -1,16 +1,16 @@
 /**
- * cursor-skill-pins.ts — gbrain setup cursor --skill-loading resolve|off:
+ * cursor-skill-pins.ts — foresights setup cursor --skill-loading resolve|off:
  * the operator's pinned skills for one Cursor project, and nothing per turn.
  * No Cursor hook can add text to the model's request, so Cursor gets no
  * suggestions; its pinned skills go in a separate, always-applied project
- * rule that gbrain owns (.cursor/rules/gbrain-pinned-skills.mdc). The
- * user's own rules and gbrain's brain-first rule are never touched.
+ * rule that foresights owns (.cursor/rules/gbrain-pinned-skills.mdc). The
+ * user's own rules and foresights's brain-first rule are never touched.
  *
  * Setup builds the project's catalog, cursor-project-<sha16 of the project
  * path>, from the skill directories Cursor loads there (the project's
  * .agents, .cursor, .claude and .codex skills, then the same four under the
  * home directory), and records the project in ~/.gbrain/cursor-skill-pins.json
- * so gbrain skills pin can rewrite the rule from any directory. Pins are
+ * so foresights skills pin can rewrite the rule from any directory. Pins are
  * checked against that catalog, and each line names the skill's SKILL.md;
  * with no pins there is no rule file. Inside a git repository the rule's path
  * goes in the repository's info/exclude (never .gitignore), so it is never
@@ -126,7 +126,7 @@ function dropExclude(ex: { file: string; line: string }, dryRun: boolean): Curso
 /** Write (or, with no pins, remove) the project's rule and its exclude line, and record the project. */
 function place(home: string, out: CursorPinsResult, dirs: string[], dryRun: boolean): CursorPinsResult {
   const path = cursorPinsRulePath(out.project);
-  if (existsSync(path) && !ours(path)) return { ...out, error: { code: 'skill_resolver_setup_incomplete', message: path + ' exists and is not gbrain\'s, so it was left as it is and no pins were placed. Move it, then run setup again.' } };
+  if (existsSync(path) && !ours(path)) return { ...out, error: { code: 'skill_resolver_setup_incomplete', message: path + ' exists and is not foresights\'s, so it was left as it is and no pins were placed. Move it, then run setup again.' } };
   const pins = cursorPinnedBlock(home, out.catalog);
   out.pins = pins.ids.length;
   if (pins.unknown.length) out.notes.push('pinned skill(s) not in ' + out.catalog + ', left out of the rule: ' + pins.unknown.join(', ') + ' (skill_resolver_pin_unknown)');
@@ -138,7 +138,7 @@ function place(home: string, out: CursorPinsResult, dirs: string[], dryRun: bool
       out.steps.push({ step: 'rule', action: 'remove', detail: path + ' (no pins left)' });
       const d = ex && dropExclude(ex, dryRun);
       if (d) out.steps.push(d);
-    } else out.steps.push({ step: 'rule', action: 'skip', detail: 'no pins for ' + out.catalog + ', so no rule file; add one with gbrain skills pin add <skill-id> --catalog ' + out.catalog });
+    } else out.steps.push({ step: 'rule', action: 'skip', detail: 'no pins for ' + out.catalog + ', so no rule file; add one with foresights skills pin add <skill-id> --catalog ' + out.catalog });
   } else {
     const text = CURSOR_PINS_HEAD + pins.block + '\n';
     const same = (() => { try { return readFileSync(path, 'utf8') === text; } catch { return false; } })();
@@ -188,17 +188,17 @@ export async function syncCursorSkillPins(opts: { home: string; project: string;
   return placed;
 }
 
-/** Rewrite the rule of the project whose catalog this is (gbrain skills pin add|remove). Null when no project has it. */
+/** Rewrite the rule of the project whose catalog this is (foresights skills pin add|remove). Null when no project has it. */
 export function refreshCursorPins(home: string, catalog: string): CursorPinsResult | null {
   const state = readCursorPinsState(home);
   const project = Object.keys(state.projects).find((p) => state.projects[p]!.catalog === catalog);
   if (!project) return null;
   const out: CursorPinsResult = { mode: 'pinned', project, catalog, skills: 0, pins: 0, steps: [], notes: [] };
-  if (!existsSync(project)) return { ...out, error: { code: 'skill_resolver_setup_incomplete', message: project + ' no longer exists, so no rule was written there; the pins are saved in config.json. Recreate the project and run gbrain setup cursor --skill-loading resolve in it.' } };
+  if (!existsSync(project)) return { ...out, error: { code: 'skill_resolver_setup_incomplete', message: project + ' no longer exists, so no rule was written there; the pins are saved in config.json. Recreate the project and run foresights setup cursor --skill-loading resolve in it.' } };
   return place(home, out, state.projects[project]!.skill_dirs, false);
 }
 
-/** Remove the project's rule (only gbrain's), its exclude line and its record; pins stay in config.json. Null when none of them exists. */
+/** Remove the project's rule (only foresights's), its exclude line and its record; pins stay in config.json. Null when none of them exists. */
 export function removeCursorSkillPins(opts: { home: string; project: string; dryRun: boolean }): CursorPinsResult | null {
   const { home, project, dryRun } = opts;
   const path = cursorPinsRulePath(project);
@@ -212,7 +212,7 @@ export function removeCursorSkillPins(opts: { home: string; project: string; dry
   if (mine) {
     if (!dryRun) unlinkSync(path);
     out.steps.push({ step: 'rule', action: 'remove', detail: path });
-  } else if (existsSync(path)) out.notes.push(path + ' is not gbrain\'s, so it was left as it is');
+  } else if (existsSync(path)) out.notes.push(path + ' is not foresights\'s, so it was left as it is');
   if (exStep) out.steps.push(exStep);
   if (rec) {
     if (!dryRun) { delete state.projects[project]; writeState(home, state); }

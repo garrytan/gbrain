@@ -1,5 +1,5 @@
 /**
- * v0.28: `gbrain think` — INTENT → GATHER → SYNTHESIZE → (optional) COMMIT.
+ * v0.28: `foresights think` — INTENT → GATHER → SYNTHESIZE → (optional) COMMIT.
  *
  * v0.28.0 ships the full pipeline. The Anthropic call is dependency-injected
  * (MessagesClient interface) so tests can stub it without an API key. Live
@@ -231,7 +231,7 @@ export interface ThinkResult {
    * `think.excerpt_ceiling_chars`) and soft; see think/pages-budget.ts.
    */
   evidence_truncated?: boolean;
-  /** GBRA-504: the outside-guest notes that reached the prompt; `answer` then ends with the fixed guest line gbrain appends. */
+  /** GBRA-504: the outside-guest notes that reached the prompt; `answer` then ends with the fixed guest line foresights appends. */
   guest_evidence?: Array<{ source_id: string; slug: string; guest: GuestStamp }>;
   /** Gathered pages with the revision retrieved, for retrieval-feedback recording; the op layer strips it. */
   feedback_evidence?: Array<{ source_id: string; slug: string; content_hash: string | null }>;
@@ -865,13 +865,13 @@ export async function runThink(
     // Build a ThinkLLMClient. Three sources, in priority order:
     //   1. opts.client (test injection — preserved as test seam)
     //   2. Gateway adapter (routes through gateway.chat() — picks up
-    //      anthropic_api_key from gbrain config OR env, gateway rate-leases,
+    //      anthropic_api_key from foresights config OR env, gateway rate-leases,
     //      retry, prompt caching, the canonical seam per CLAUDE.md)
     //   3. Graceful fallback ("no LLM available" stub) — when gateway is
     //      unconfigured AND no env var is set, return without throwing.
     //
     // Pre-v0.36, this code path constructed `new Anthropic()` directly.
-    // That bypassed gateway config (gbrain config set anthropic_api_key)
+    // That bypassed gateway config (foresights config set anthropic_api_key)
     // because the Anthropic SDK only reads process.env.ANTHROPIC_API_KEY.
     // Closes #952 (think over MCP returns "no LLM available").
     const client = opts.client ?? await tryBuildGatewayClient(modelUsed, { explicitModel: opts.modelExplicit, allowFallback: opts.allowFallback });
@@ -1197,12 +1197,12 @@ export async function persistSynthesis(
 // ─────────────────────────────────────────────────────────────────
 // Pre-v0.36, runThink instantiated `new Anthropic()` directly and read
 // ANTHROPIC_API_KEY from process.env. Claude Desktop's stdio MCP launch
-// doesn't inherit shell env, so `gbrain config set anthropic_api_key sk-...`
+// doesn't inherit shell env, so `foresights config set anthropic_api_key sk-...`
 // (which writes to ~/.gbrain/config.json) never reached the SDK and every
 // MCP think call degraded to "no LLM available."
 //
 // The adapter routes through gateway.chat() — the canonical seam per
-// CLAUDE.md. Gateway reads the API key from gbrain config OR env, picks
+// CLAUDE.md. Gateway reads the API key from foresights config OR env, picks
 // up prompt caching, rate-leases, retry, and the test seam
 // (__setChatTransportForTests) that v0.31.12 already established.
 //
@@ -1417,7 +1417,7 @@ function buildGracefulMessage(modelStr: string, err?: AIConfigError): {
       type: 'text',
       text: err
         ? `(no LLM available — ${err.message}${err.fix ? ` Fix: ${err.fix}` : ''})`
-        : '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)',
+        : '(no LLM available — set anthropic_api_key via foresights config or ANTHROPIC_API_KEY env)',
     }],
     usage: { input_tokens: 0, output_tokens: 0 },
     stop_reason: 'end_turn',

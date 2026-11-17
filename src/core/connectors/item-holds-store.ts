@@ -4,10 +4,10 @@
  * Holds live in each connector's cursor state (`item_holds`): the managed
  * connector checkpoint (`op_checkpoints` op `managed-connector`) on a managed
  * brain, the `.google-source.json` / `.github-source.json` state file
- * otherwise. `gbrain sources status`, the doctor check `connector_held_items`
- * and `gbrain waiting` read them here.
+ * otherwise. `foresights sources status`, the doctor check `connector_held_items`
+ * and `foresights waiting` read them here.
  *
- * `gbrain sources retry-held <id>` records a retry request row (op
+ * `foresights sources retry-held <id>` records a retry request row (op
  * `connector-hold-retry`, one per source incarnation) naming the held keys;
  * the connector re-attempts those items on its next run and removes each key
  * it attempted. On a managed brain it also writes, for each held item that

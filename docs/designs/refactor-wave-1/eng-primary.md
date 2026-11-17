@@ -1,7 +1,7 @@
-# Eng Review (Phase 3, primary voice): GBrain Refactor Wave 1
+# Eng Review (Phase 3, primary voice): Foresights Refactor Wave 1
 
 - Target: `~/.gstack/projects/garrytan-gbrain/autoplan-eng-M2VyUI/eng-implementation.md` (plan already amended by CEO and DX phases).
-- Baseline: `garrytan/gbrain` master @ `608a174dc` (v0.60.10.0), clean tree. Read-only review: nothing in the repo was modified.
+- Baseline: `aimonk2025/gbrain` master @ `608a174dc` (v0.60.10.0), clean tree. Read-only review: nothing in the repo was modified.
 - Methodology: gstack `/plan-eng-review` (full file read, 2,256 lines), executed at full depth with the autoplan overrides:
   skipped Preamble, Scope gate, AskUserQuestion format, Completeness Principle, Search Before Building, Completion Status,
   Telemetry, base-branch detection, Readiness Dashboard, Plan File Review Report, Prerequisite Skill Offer, Outside Voice.
@@ -88,7 +88,7 @@ branded types for capability-scoped handles are **[Layer 1]** TypeScript practic
 - Interacts: `TODOS.md` "Test-audit follow-ups (filed 2026-09-29)" item "Extract a testable autopilot tick function, then retire
   the 8 autopilot wiring greps": if autopilot stays on the cut line, leave it; if it lands, do the extraction the TODO names in the
   same commit instead of re-pointing 8 grep files twice.
-- Interacts: same section, "`gbrain auth rescope-client ... --dry-run` fail with unknown flag" (flag-registry generator drops
+- Interacts: same section, "`foresights auth rescope-client ... --dry-run` fail with unknown flag" (flag-registry generator drops
   `--dry-run` for `auth`). DX O6 requires the regenerated registry to be byte-identical, which deliberately preserves this bug.
   Correct for a behavior-preserving PR; do not fix it here, do not let the generator rewrite "fix" it silently.
 - Deferred D3 (T3 phase-named sync errors, `TODOS.md:5338`) stays deferred.
@@ -97,7 +97,7 @@ branded types for capability-scoped handles are **[Layer 1]** TypeScript practic
 
 No new artifact is published. Compiled binary must keep bundling: 170 migration modules (static imports only), engine-sql modules
 (static), command modules (lazy but with string-literal specifiers, AR8). Existing gates: `check-compile-autoload.sh`,
-`check-pglite-embedded.sh`, `check-cli-executable.sh`. The dominant install path `bun install -g github:garrytan/gbrain` runs
+`check-pglite-embedded.sh`, `check-cli-executable.sh`. The dominant install path `bun install -g github:aimonk2025/gbrain` runs
 source, so module count does affect engine-connect cold start (PF3).
 
 ### C. Scope Challenge findings
@@ -124,7 +124,7 @@ source, so module count does affect engine-connect cold start (PF3).
 | SC18 | P2 | 7 | Plan W7 lists the path-consumer inventory "before the first move" and the 11-key snapshot test, but W7 lands last | Intermediate commits (each gated by the full parity run per W1 rule) would run with guards scanning empty files and stale cache keys. | Accepted: inventory + scanner re-point in W0; snapshot test lands with W3 (ordering fix, AR9). |
 | SC19 | P2 | 8 | E5 "green on both engines before any W1 conversion"; executor does not exist on master | Ambiguous what E5 runs against on master. | Accepted: on master E5 drives `engine.executeRaw` (the same `unsafe()` path); after C10 the same table runs against the executor adapters. |
 | SC20 | P2 | 8 | `pglite-schema.ts:1305-1309` runtime `applyFtsLanguagePolicy(applyChunkEmbeddingIndexPolicy(TEMPLATE, dims)).replace(/__EMBEDDING_DIMS__/g, ...)`; blob interpolates TS fragments (`${PAGE_STATE_SCHEMA_SQL}` etc.) | The generator must evaluate TS fragment modules (so `build:schema` becomes a Bun TS script, not sed) and emit a template, not a finished string. | Accepted: `scripts/build-schema.ts` (the `.sh` becomes a one-line wrapper to keep `build:schema` stable); generated PGLite output keeps placeholders; `getPGLiteSchema` signature unchanged. |
-| SC21 | P3 | 8 | Import walk from `src/cli.ts`: 555 modules, `migrate.ts` not reachable | 170 migration files do not touch `gbrain --version`; they do load on every engine connect for source installs. | Accepted (PF3). |
+| SC21 | P3 | 8 | Import walk from `src/cli.ts`: 555 modules, `migrate.ts` not reachable | 170 migration files do not touch `foresights --version`; they do load on every engine connect for source installs. | Accepted (PF3). |
 | SC22 | P3 | 7 | `TODOS.md` test-audit item on `auth --dry-run` | Byte-identical flag registry preserves a known bug. | Noted, no change. |
 
 Scope Challenge result: **scope accepted as-is** (MODE: FULL_REVIEW). 22 findings, all accepted as amendments; none reduce scope.
@@ -471,7 +471,7 @@ content and apply (A11 + W3 apply-from-older), CLI (A16b + EO5), HTTP auth (A16 
 | T-G12 | `test/scripts/verify-move-only.test.ts` | unit | wrapper mode passes a real W3 move; rename-map mode passes SyncRun rewrite; single edited token fails both | protects=move proof usable at ~50k lines; fails_when=normalizer ignores a changed token; why_new=new tool; seam=none |
 | T-G13 | extend `test/helpers/schema-diff.ts` + E4 test | E2E | PGLite master-vs-branch includes `ordinal_position`; PG-vs-PGLite stays name-based | protects=column order for `SELECT *` consumers; fails_when=generator reorders columns; why_new=diff is name-based; seam=none |
 | T-G14 (CQ8) | rows in E5 | unit + E2E | UPDATE/DELETE/ON CONFLICT DO NOTHING affectedRows equal across engines | protects=boolean/count results of write methods; fails_when=adapter reads wrong field; why_new=per-engine code read different fields; seam=none |
-| T-G15 (EO14) | perf harness under `scripts/` (bench, not a test) | bench | PGLite connect+initSchema cold (snapshot on/off), `gbrain --version`, hot paths; within noise / +20 ms | protects=cold start and hot-path latency; fails_when=170-module load or lost prepare; why_new=no budget exists; seam=none |
+| T-G15 (EO14) | perf harness under `scripts/` (bench, not a test) | bench | PGLite connect+initSchema cold (snapshot on/off), `foresights --version`, hot paths; within noise / +20 ms | protects=cold start and hot-path latency; fails_when=170-module load or lost prepare; why_new=no budget exists; seam=none |
 | T-G16 (EO8) | `test/engine-sql-sql-text.test.ts` (W0 golden per converted Postgres method) | unit | SQL text emitted by each converted method == master tagged-template text with `$N` renumbering (captured with fake sql on master) | protects=no semantic SQL drift during tagged-to-positional conversion; fails_when=a clause, literal or cast changes; why_new=parity tests check results on fixtures, not text; seam=none |
 
 Rejected (value bar): a separate "executor unit test with mocked driver" beyond E5 (covered_elsewhere: E5 runs both real engines).
@@ -490,7 +490,7 @@ Budget: T-G4 + EO14 bench, no regression beyond noise.
 
 **PF2 [P2] (8/10) RLS wrap would add a pool hold per read.** Avoided by AR2 (preserve).
 
-**PF3 [P2] (8/10) Cold start.** `gbrain --version` does not load migrate.ts (import walk: 555 modules from `src/cli.ts`, migrate.ts
+**PF3 [P2] (8/10) Cold start.** `foresights --version` does not load migrate.ts (import walk: 555 modules from `src/cli.ts`, migrate.ts
 absent), so the CEO budget holds trivially there. Every DB-touching command on source installs now loads ~175 extra modules through
 `engine-factory -> engine -> migrate -> registry`. Budget (EO14): PGLite connect + initSchema (snapshot path) cold start ≤ +20 ms
 on the 4-core machine; if exceeded, fallback is a single generated bundle module for the registry, not dynamic imports (engine
@@ -798,7 +798,7 @@ User Challenge from the CEO phase and gates C16+.
 - (3/10) Generated `registry.generated.ts` with 170 static imports could slow `tsc --incremental` typecheck noticeably on Windows
   (verify's 120 s per-check cap). Measure during C6.
 
-No durable learnings logged by this voice (read-only phase). Candidate learnings for the driver: "GBrain engine `transaction()`
+No durable learnings logged by this voice (read-only phase). Candidate learnings for the driver: "Foresights engine `transaction()`
 clones the engine with `Object.create(this)` and a `sql`/`db` getter; any per-engine helper must resolve the connection per call"
 (observed, confidence 9) and "postgres.js `unsafe()` per-call `prepare` is ANDed with the connection option
 (`vendor/postgres/src/connection.js:238`); zero-arg `unsafe()` uses the simple protocol unless `simple:false`" (observed, 9).

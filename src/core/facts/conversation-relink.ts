@@ -1,7 +1,7 @@
 /**
- * #6764: `gbrain facts relink --conversation`, the free relink of the
+ * #6764: `foresights facts relink --conversation`, the free relink of the
  * conversation extractor's derived rows (`cli:extract-conversation-facts*`)
- * that were stored without an entity. `gbrain facts relink` never examines
+ * that were stored without an entity. `foresights facts relink` never examines
  * them (they are row-numbered rows of the conversation page), and before
  * write-time inference (conversation-subject-infer.ts) every such row was
  * stored unlinked.
@@ -183,7 +183,7 @@ export async function prepareConversationRelink(engine: BrainEngine, row: WriteR
   if (row.slug !== CONVERSATION_RELINK_ANCHOR || typeof page !== 'string' || !Array.isArray(rows) || !rows.length
     || rows.some(r => !Number.isSafeInteger(r?.id) || typeof r.fact !== 'string' || typeof r.entity_slug !== 'string' || typeof r.context !== 'string')) {
     throw opError('invalid_params', 'The conversation relink intent does not name its page and rows.',
-      `Request ${row.request_id} in source ${row.source_id} does not name the conversation page and the rows it links, so nothing changed. Preview the relink again with gbrain facts relink --conversation --source ${row.source_id} --dry-run.`);
+      `Request ${row.request_id} in source ${row.source_id} does not name the conversation page and the rows it links, so nothing changed. Preview the relink again with foresights facts relink --conversation --source ${row.source_id} --dry-run.`);
   }
   const authorize = async (db: BrainEngine) => {
     await authorizeWrite(db, row.authority, 'submit_job', row.slug);

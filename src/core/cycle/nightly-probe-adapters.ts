@@ -12,7 +12,7 @@
  *
  * Per codex round-2 #12: in-process invocation avoids the gbrain-version-
  * drift bug class. The adapter calls the CLI functions directly (not via
- * subprocess), so the workspace gbrain runs — not whatever's installed.
+ * subprocess), so the workspace foresights runs — not whatever's installed.
  */
 
 import { readFileSync, existsSync } from 'node:fs';

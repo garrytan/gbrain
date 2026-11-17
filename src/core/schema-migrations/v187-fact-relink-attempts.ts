@@ -2,7 +2,7 @@ import type { Migration } from './types.ts';
 import { FACT_RELINK_TABLE_SQL, FACT_UNLINKED_INDEX_SQL } from '../facts/relink-schema.ts';
 import { dropInvalidConcurrentIndex } from './helpers.ts';
 
-// #5836 `gbrain facts relink`: the per-fact attempt/journal table and the
+// #5836 `foresights facts relink`: the per-fact attempt/journal table and the
 // keyset index over active unlinked facts; DDL in src/core/facts/relink-schema.ts.
 export const v187: Migration = {
   version: 187, name: 'fact_relink_attempts', idempotent: true, transaction: false, sql: '',

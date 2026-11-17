@@ -149,13 +149,13 @@ export function forwardProgressPast(version: string, entries: readonly Completed
   return entries.find(e => e.status === 'complete' && !isFreshInstallStamp(e) && compareVersions(e.version, version) > 0)?.version ?? null;
 }
 
-/** A ledger entry `gbrain init` wrote for a `fresh_install_noop` migration (src/commands/migrations/fresh-install.ts). */
+/** A ledger entry `foresights init` wrote for a `fresh_install_noop` migration (src/commands/migrations/fresh-install.ts). */
 export function isFreshInstallStamp(entry: CompletedMigrationEntry): boolean {
   return entry.fresh_install === true;
 }
 
 /**
- * The gbrain version that created this brain, read from init's fresh-install
+ * The foresights version that created this brain, read from init's fresh-install
  * stamps; null for a brain created before stamping existed. A pending
  * migration at or below it is `pending_fresh_install`: setup work the new
  * brain has not run yet, never an interrupted upgrade.
@@ -189,8 +189,8 @@ export interface MigrationLedgerSummary {
   /** Registered migrations ≤ installed version with no ledger completion (upgrade work). */
   pending: string[];
   /**
-   * Not yet run on a brain `gbrain init` created at or after their version:
-   * expected setup work (`gbrain apply-migrations --yes`), not a broken upgrade.
+   * Not yet run on a brain `foresights init` created at or after their version:
+   * expected setup work (`foresights apply-migrations --yes`), not a broken upgrade.
    */
   pending_fresh_install: string[];
   /** Started but unfinished (some phases recorded partial). */

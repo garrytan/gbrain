@@ -6,10 +6,10 @@
  *
  *   1. Detection marker reality: `detectInstallMethod()` returns 'bun-link'
  *      when a `.git/config` within 6 parent hops of `process.argv[1]` contains
- *      the substring `garrytan/gbrain` (case-insensitive). There is NO bun-link
+ *      the substring `aimonk2025/gbrain` (case-insensitive). There is NO bun-link
  *      receipt file — the git remote URL text is the whole marker. The fixture
  *      manufactures it by hosting the bare origin at a local path that itself
- *      contains `garrytan/gbrain`, so the clone's `.git/config` carries the
+ *      contains `aimonk2025/gbrain`, so the clone's `.git/config` carries the
  *      marker while every git operation stays on the local filesystem.
  *   2. The upgrade sequence: REAL `git -C <root> pull --ff-only` against the
  *      local bare origin (one commit ahead), THEN `bun install` in the clone.
@@ -23,7 +23,7 @@
  *      runApplyMigrations tail of runPostUpgrade), plus the
  *      `self_upgrade.mode/mode_prompted` one-shot in config.json.
  *   4. `--swap-only` stops after the swap + verify + breadcrumb: no
- *      `gbrain post-upgrade`, no `gbrain features` child.
+ *      `foresights post-upgrade`, no `foresights features` child.
  *
  * Drive mode (and why nothing here is in-process except pure detection):
  *   - `detectInstallMethod` spawns nothing on the bun-link path, so test 1
@@ -42,7 +42,7 @@
  *     (exit(0) on "All migrations up to date"), which would kill an in-process
  *     test run.
  *
- * Safety: the dev checkout's own origin IS garrytan/gbrain, so the driver
+ * Safety: the dev checkout's own origin IS aimonk2025/gbrain, so the driver
  * carries a tripwire — if the "Upgrading bun-link source clone at ..." banner
  * ever names a root outside the fixture clone, it exits 3 BEFORE any git/bun
  * child runs. The real repo is never touched.
@@ -69,7 +69,7 @@ const REPO_ROOT = join(import.meta.dir, '..');
 const CLI_PATH = join(REPO_ROOT, 'src', 'cli.ts');
 const REAL_UPGRADE_TS = join(REPO_ROOT, 'src', 'commands', 'upgrade.ts');
 
-/** Version the gbrain shim reports, so verifyUpgrade's parse is deterministic. */
+/** Version the foresights shim reports, so verifyUpgrade's parse is deterministic. */
 const SHIM_NEW_VERSION = '9.9.9.9';
 
 const cleanupDirs: string[] = [];
@@ -97,7 +97,7 @@ function git(args: string[], cwd?: string): string {
 interface BaseFixture {
   root: string;
   home: string;    // temp HOME + GBRAIN_HOME parent (`.gbrain` appended by config resolution)
-  shimDir: string; // PATH-prepended recorder shims: bun, gbrain (+ crontab/systemctl containment)
+  shimDir: string; // PATH-prepended recorder shims: bun, foresights (+ crontab/systemctl containment)
   argvLog: string;
 }
 
@@ -171,7 +171,7 @@ function buildFixture(label: string, aheadFloor = '>=1.4.0'): Fixture {
   git(['add', '-A'], seed);
   git([...GIT_IDENTITY, 'commit', '-q', '-m', 'c1'], seed);
 
-  // The bare origin lives at a path whose text contains `garrytan/gbrain`,
+  // The bare origin lives at a path whose text contains `aimonk2025/gbrain`,
   // so the clone's .git/config remote URL carries the detection marker.
   const origin = join(base.root, 'remotes', 'garrytan', 'gbrain');
   mkdirSync(join(base.root, 'remotes', 'garrytan'), { recursive: true });
@@ -196,7 +196,7 @@ function buildFixture(label: string, aheadFloor = '>=1.4.0'): Fixture {
   // Detection-marker reality check: no receipt file — the marker is the
   // remote URL text inside the clone's .git/config.
   const cloneGitConfig = readFileSync(join(clone, '.git', 'config'), 'utf-8');
-  expect(cloneGitConfig.toLowerCase()).toContain('garrytan/gbrain');
+  expect(cloneGitConfig.toLowerCase()).toContain('aimonk2025/gbrain');
 
   // UNTRACKED driver at the bun-link entry-point path. Mirrors a real
   // bun-link install: argv[1] lives inside the checkout, so detectBunLink
@@ -299,7 +299,7 @@ afterAll(() => {
 // ── 1. detection (in-process: the bun-link path spawns nothing) ─────────────
 
 describe('detectInstallMethod — bun-link marker', () => {
-  test("a .git/config within the argv[1] walk containing 'garrytan/gbrain' → 'bun-link'", () => {
+  test("a .git/config within the argv[1] walk containing 'aimonk2025/gbrain' → 'bun-link'", () => {
     const fx = buildFixture('detect');
     try {
       process.argv[1] = fx.driver;
@@ -352,11 +352,11 @@ describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain
     // then verify → post-upgrade → features → the new build's restart (GBRA-175), in order, and nothing else.
     expect(argvLines(fx)).toEqual([
       `bun install ::head=${fx.originHead}`,
-      'gbrain --version',
-      'gbrain --help',
-      'gbrain post-upgrade',
-      'gbrain features',
-      'gbrain upgrade --restart-only',
+      'foresights --version',
+      'foresights --help',
+      'foresights post-upgrade',
+      'foresights features',
+      'foresights upgrade --restart-only',
     ]);
 
     // saveUpgradeState checkpoint: $HOME/.gbrain/upgrade-state.json.
@@ -381,8 +381,8 @@ describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain
     // ...but the child chain stops after the version verify and runtime smoke.
     expect(argvLines(fx)).toEqual([
       `bun install ::head=${fx.originHead}`,
-      'gbrain --version',
-      'gbrain --help',
+      'foresights --version',
+      'foresights --help',
     ]);
 
     // State + breadcrumb still written (the next launch runs post-upgrade).
@@ -400,8 +400,8 @@ describe('runUpgrade — bun-link Bun floor gate (#5855)', () => {
     const fx = buildFixture('floor-unmet', '>=9.9.9');
     const run = await spawnWithShims(fx, [fx.driver, '--swap-only']);
     expect(run.code).toBe(78);
-    expect(run.err).toContain(`gbrain ${SHIM_NEW_VERSION} requires Bun >=9.9.9; bun on PATH (${join(fx.shimDir, 'bun')}) is 1.4.2. `
-      + 'Fix: bun upgrade, then gbrain upgrade. Docs: docs/guides/upgrades-auto-update.md#bun-floor');
+    expect(run.err).toContain(`foresights ${SHIM_NEW_VERSION} requires Bun >=9.9.9; bun on PATH (${join(fx.shimDir, 'bun')}) is 1.4.2. `
+      + 'Fix: bun upgrade, then foresights upgrade. Docs: docs/guides/upgrades-auto-update.md#bun-floor');
     expect(run.err).toContain('Nothing was changed.');
     expect(git(['rev-parse', 'HEAD'], fx.clone).trim()).toBe(fx.cloneHeadBefore);
     expect(argvLines(fx)).toEqual([]);
@@ -413,7 +413,7 @@ describe('runUpgrade — bun-link Bun floor gate (#5855)', () => {
     const fx = buildFixture('floor-unreadable', '^1.4.0');
     const refused = await spawnWithShims(fx, [fx.driver, '--swap-only']);
     expect(refused.code).toBe(78);
-    expect(refused.err).toContain(`Could not read the Bun floor of gbrain ${SHIM_NEW_VERSION}: \`git show ${fx.originHead.slice(0, 12)}:package.json\` has no \`engines.bun\` floor of the form >=X.Y.Z.`);
+    expect(refused.err).toContain(`Could not read the Bun floor of foresights ${SHIM_NEW_VERSION}: \`git show ${fx.originHead.slice(0, 12)}:package.json\` has no \`engines.bun\` floor of the form >=X.Y.Z.`);
     expect(refused.err).toContain('Re-run with --no-bun-floor-check to upgrade without this check.');
     expect(git(['rev-parse', 'HEAD'], fx.clone).trim()).toBe(fx.cloneHeadBefore);
 
@@ -443,9 +443,9 @@ describe('runUpgrade — bun-link Bun floor gate (#5855)', () => {
     const fx = buildFixture('smoke');
     const run = await spawnWithShims(fx, [fx.driver, '--swap-only'], { GBRAIN_TEST_HELP_EXIT: '1' });
     expect(run.code).toBe(1);
-    expect(run.err).toContain(`gbrain ${SHIM_NEW_VERSION} was installed but does not start: \`gbrain --help\` failed (exit 1).`);
-    expect(run.err).toContain('GBrain requires Bun 1.4.0 or newer (found Bun 1.3.14).');
-    expect(run.err).toContain('If it names an old Bun: bun upgrade, then gbrain post-upgrade');
+    expect(run.err).toContain(`foresights ${SHIM_NEW_VERSION} was installed but does not start: \`foresights --help\` failed (exit 1).`);
+    expect(run.err).toContain('Foresights requires Bun 1.4.0 or newer (found Bun 1.3.14).');
+    expect(run.err).toContain('If it names an old Bun: bun upgrade, then foresights post-upgrade');
     expect(run.err).toContain(`To return to ${VERSION}: git -C ${fx.clone} checkout ${fx.cloneHeadBefore} && bun install`);
     const errors = readFileSync(join(fx.home, '.gbrain', 'upgrade-errors.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
     expect(errors.at(-1)).toMatchObject({ phase: 'post-swap-smoke', from_version: VERSION, to_version: SHIM_NEW_VERSION });

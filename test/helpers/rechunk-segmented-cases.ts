@@ -1,5 +1,5 @@
 /**
- * The re-chunk of segmented pages sealed at an older segmented chunker (`gbrain reindex --segmented`,
+ * The re-chunk of segmented pages sealed at an older segmented chunker (`foresights reindex --segmented`,
  * core/page-body/rechunk.ts), shared by the PGLite arm (test/large-pages/rechunk-segmented.test.ts) and the Postgres arm
  * (test/e2e/rechunk-segmented-postgres.test.ts). The page is N14's 24 MiB needle layout reduced to a 1.3 MB chat whose
  * first day is the reduction test/large-pages/needle-sentence-chunk.test.ts pins: under the old cuts its needle

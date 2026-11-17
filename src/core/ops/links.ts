@@ -410,9 +410,9 @@ async function hintScopedLinkMiss(
     const command = direction === 'out' ? 'links' : 'backlinks';
     const label = readSources.length === 1 ? `source ${readSources[0]}` : `sources ${readSources.join(', ')}`;
     ctx.logger.warn(
-      `[gbrain] ${command}: no ${direction === 'out' ? 'outgoing' : 'incoming'} links for ${slug} in ${label}; ` +
+      `[foresights] ${command}: no ${direction === 'out' ? 'outgoing' : 'incoming'} links for ${slug} in ${label}; ` +
       `found ${counts.map((c) => `${c.count} in source ${c.sourceId}`).join(', ')}. Rerun with:\n` +
-      counts.map((c) => `  gbrain ${command} ${slug} --source ${c.sourceId}`).join('\n'),
+      counts.map((c) => `  foresights ${command} ${slug} --source ${c.sourceId}`).join('\n'),
     );
   } catch { /* the hint is best-effort; the empty result stands */ }
 }
@@ -603,7 +603,7 @@ const traverse_graph: Operation = {
       ? (p.depth as number)
       : directionDefaultedToBoth ? REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH : DEFAULT_TRAVERSE_DEPTH;
     if (requestedDepth > TRAVERSE_DEPTH_CAP) {
-      ctx.logger.warn(`[gbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
+      ctx.logger.warn(`[foresights] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
     }
     const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     // v0.34.1 (#861 — P0 leak seal): thread caller's source scope so graph
@@ -618,7 +618,7 @@ const traverse_graph: Operation = {
     const scope = temporal.disabled ? readScope : { ...readScope, temporal };
     reportTemporal(ctx, 'traverse_graph', p, temporal, null);
     // Backward compat: trusted local no-filter callers keep the legacy
-    // GraphNode[] shape used by `gbrain graph`. Remote MCP callers need the
+    // GraphNode[] shape used by `foresights graph`. Remote MCP callers need the
     // natural no-filter invocation to surface inbound-only typed edges too,
     // so they default to direction=both and get explicit GraphPath[] edges.
     if (linkType === undefined && requestedDirection === undefined && ctx.remote === false) {
@@ -630,7 +630,7 @@ const traverse_graph: Operation = {
     // The stderr note stays; a per-call notice (GBRA-200 stamps it) tells MCP callers, so the GraphPath[] wire shape stays unchanged.
     if (truncated) {
       ctx.logger.warn(
-        `[gbrain] traverse_graph output truncated (walk cap ${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first). ` +
+        `[foresights] traverse_graph output truncated (walk cap ${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first). ` +
         `Lower depth or narrow with link_type/direction for a complete walk.`,
       );
       const why = `The walk stopped at its cap (${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first), so deeper edges are missing; walk one level shallower or narrow with link_type or direction for a complete walk.`;

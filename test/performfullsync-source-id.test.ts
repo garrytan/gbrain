@@ -5,7 +5,7 @@
  *   - PR #707 fixed source_id routing for sync's incremental loop (sync.ts:581 + 641),
  *     but `performFullSync` (the path `--full` invokes) at sync.ts:892 called
  *     `runImport(engine, importArgs, { commit: headCommit })` without threading sourceId.
- *   - Result: `gbrain sync --source X --full` updated `sources.last_sync_at` to look
+ *   - Result: `foresights sync --source X --full` updated `sources.last_sync_at` to look
  *     like binding worked, but actual page rows landed in source_id='default'.
  *   - The 19 tests at test/source-id-tx-regression.test.ts validate the engine-layer
  *     transaction surface (putPage / addTag / etc.) but do NOT exercise performFullSync.
@@ -13,7 +13,7 @@
  *
  * Fix (this PR-E follow-up to PR #707):
  *   - runImport accepts opts.sourceId (programmatic-only — no CLI flag, preserves
- *     PR #707's design intent of `gbrain import` being default-only).
+ *     PR #707's design intent of `foresights import` being default-only).
  *   - runImport threads sourceId to importFile + importImageFile.
  *   - performFullSync passes opts.sourceId to runImport.
  *   - ImportImageOptions type accepts sourceId (TS-only fix; image-import body

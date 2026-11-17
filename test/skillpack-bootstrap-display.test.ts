@@ -75,7 +75,7 @@ describe('buildBootstrapDisplay', () => {
     mkdirSync(join(packRoot, 'runbooks'), { recursive: true });
     writeFileSync(
       join(packRoot, 'runbooks/bootstrap.md'),
-      '1. agent: gbrain put_page wiki/example\n2. show user: "All set."\n',
+      '1. agent: foresights put_page wiki/example\n2. show user: "All set."\n',
     );
     const r = buildBootstrapDisplay({
       packRoot,
@@ -86,7 +86,7 @@ describe('buildBootstrapDisplay', () => {
     expect(r.text).toContain('BOOTSTRAP STEPS');
     expect(r.text).toContain('agent decides what to run');
     expect(r.text).toContain('deliberately does NOT auto-execute');
-    expect(r.text).toContain('1. agent: gbrain put_page wiki/example');
+    expect(r.text).toContain('1. agent: foresights put_page wiki/example');
     expect(r.text).toContain('2. show user: "All set."');
     expect(r.text).toContain('End of bootstrap steps');
   });

@@ -208,7 +208,7 @@ function rungLog(rungs: RungResult[]): string {
  * once so push, verify, and status degrade with the same instruction. */
 export const UNVERIFIED_REMOTE_HINT =
   'confirm the repo is private in the GitHub UI, then set GBRAIN_ALLOW_UNVERIFIED_REMOTE=1 ' +
-  '(or `gbrain config set push.allow_unverified_remote true`) to push anyway';
+  '(or `foresights config set push.allow_unverified_remote true`) to push anyway';
 
 export async function verifyRepoVisibility(opts: VerifyRepoVisibilityOpts): Promise<RepoVisibilityVerdict> {
   const runner = opts.runner ?? defaultRunner;

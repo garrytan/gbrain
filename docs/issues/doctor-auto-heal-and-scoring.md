@@ -2,7 +2,7 @@
 
 ## Summary
 
-The `gbrain doctor` health score system has several false-positive patterns and missing auto-heal capabilities. After the crash classification fix (shipped in this PR), these are the remaining improvements ranked by impact.
+The `foresights doctor` health score system has several false-positive patterns and missing auto-heal capabilities. After the crash classification fix (shipped in this PR), these are the remaining improvements ranked by impact.
 
 ---
 

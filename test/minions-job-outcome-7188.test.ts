@@ -29,7 +29,7 @@ describe('#7188 jobResultOutcome', () => {
     const result = {
       partial: true, status: 'partial',
       report: { status: 'partial', phases: [{ phase: 'lint', status: 'ok' }, { phase: 'synthesize', status: 'fail', duration_ms: 3, summary: 'error: synthesis failed', code: 'SYNTH_PHASE_FAIL', details: {} }] },
-      phase_streaks: [{ phase: 'synthesize', count: 1, fix: 'gbrain dream --phase synthesize' }],
+      phase_streaks: [{ phase: 'synthesize', count: 1, fix: 'foresights dream --phase synthesize' }],
     };
     expect(jobResultOutcome(result)).toEqual({ outcome: 'failed', phase: 'synthesize', reason: 'phase synthesize failed (SYNTH_PHASE_FAIL): error: synthesis failed' });
   });

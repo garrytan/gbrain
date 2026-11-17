@@ -1,23 +1,23 @@
 <!-- /autoplan restore point: "/home/user/.gstack/projects/garrytan-gbrain/plan-memory-proof-wave-autoplan-restore-20261005-005821.md" -->
 # Memory proof wave: matched receipts against extract-first memory servers
 
-Status: approved October 5, 2026 (as written; spend cap later raised to $2,800, margin set to 3.0 points). Revised after the CEO, DX and engineering reviews. Covers garrytan/gbrain and garrytan/gbrain-evals.
+Status: approved October 5, 2026 (as written; spend cap later raised to $2,800, margin set to 3.0 points). Revised after the CEO, DX and engineering reviews. Covers aimonk2025/gbrain and garrytan/gbrain-evals.
 
 ## Implementation plan
 
 ### Goal
 
 Find, with matched and reproducible receipts, the lowest total cost at which an agent memory
-reliably answers, corrects and withdraws what it was told, and show where gbrain is ahead of
+reliably answers, corrects and withdraws what it was told, and show where foresights is ahead of
 the strongest extract-first memory server on that measure. "Extract-first" means a system
 that calls an LLM on writes to pull facts out of the text, keeps those facts in a database,
-and generates readable pages from it. gbrain's writes call no LLM, keep everything, and its
+and generates readable pages from it. foresights's writes call no LLM, keep everything, and its
 markdown pages are the record. The comparator also keeps raw chunks and has correction
 operations; the wave tests workloads, not impossibility claims.
 
 **Primary claim (preregistered).** On untouched sealed conversations, under one audited
 protocol with the same answer model, judge and delivered-context targets for both systems,
-gbrain's graded accuracy on BEAM 500k + 1M is non-inferior to the comparator's (one-sided 95%
+foresights's graded accuracy on BEAM 500k + 1M is non-inferior to the comparator's (one-sided 95%
 bound of the paired difference above −2.0 points, small-cluster-robust bootstrap stratified by
 split, coverage validated by simulation), at a lower total cost per correct answer under a
 preregistered cost formula. Before any sealed cell runs, the preregistration states what is
@@ -63,30 +63,30 @@ single-turn 66/77 total and 33/43 active passes. Facts established while plannin
 
 | Need | Where it lives today |
 |---|---|
-| Batch writes with per-page receipts and `wait_ms` | `put_pages`, gbrain#6025 (merge train) |
+| Batch writes with per-page receipts and `wait_ms` | `put_pages`, foresights#6025 (merge train) |
 | Unchanged-chunk embedding reuse on edit | `planEmbeddingReuse` in `src/core/embed-reuse.ts`, used by `src/core/import-file.ts` |
-| Observation / validity / recorded dates | `src/core/ai/date-grounding.ts`, gbrain#6020 (draft) |
-| Relationship edges with validity windows; multi-hop planner | gbrain#6018, gbrain#6019 (drafts) |
+| Observation / validity / recorded dates | `src/core/ai/date-grounding.ts`, foresights#6020 (draft) |
+| Relationship edges with validity windows; multi-hop planner | foresights#6018, foresights#6019 (drafts) |
 | Token-budgeted evidence delivery (`return_unit` page/chunk) | `src/core/search/evidence-delivery.ts`; remote budgets clamp at 32k today |
 | Takes with holder, weight, prediction grading | `src/core/cycle/extract-takes.ts`, `grade-takes.ts` |
 | Scheduled saved-question answering | `src/core/cycle/auto-think.ts` (7 config keys incl. `enabled`, `auto_commit`, budget, cooldown, model; default off; not in the cycle dispatcher) |
 | Revision-guarded publication and same-transaction invalidation | `src/core/persistence/memory-prepare.ts`, `src/core/facts/withdrawal.ts` |
 | Consent machinery for paid work | `src/core/consent.ts`, `consent-preapproval.ts` |
-| Hermetic gbrain runs in evals | gbrain-evals `eval/runner/hermetic-env.ts`, `gbrain-under-test.ts` (`GBRAIN_UNDER_TEST`) |
+| Hermetic foresights runs in evals | gbrain-evals `eval/runner/hermetic-env.ts`, `gbrain-under-test.ts` (`GBRAIN_UNDER_TEST`) |
 | Opaque LongMemEval session ids with scorer-only reverse map | gbrain-evals `eval/runner/longmemeval-session-ids.ts` |
 | Sealed-data commitment hashes, access log, `--decision-id` | gbrain-evals sealed-confirmation machinery |
 | Spend ledger (single Bun process, five paid hosts) | gbrain-evals `eval/runner/budget-ledger.ts` |
-| PrecisionMemBench gbrain adapters | gbrain-evals `eval/precisionmembench/` |
+| PrecisionMemBench foresights adapters | gbrain-evals `eval/precisionmembench/` |
 
 ### Workstream A (gbrain-evals): one audited protocol, both systems
 
 A0. **Protocol and safety gate. Free contract work first; no broad paid run until it passes.**
-1. *Power simulation (free).* From the committed per-question files and gbrain's paired
+1. *Power simulation (free).* From the committed per-question files and foresights's paired
    LongMemEval discordance, simulate the primary test on BEAM 500k + 1M (70 conversations,
    split by conversation 14 dev / 14 validation / 42 sealed). Validate the bootstrap's coverage.
    The result sets the margin and the go/no-go before money is spent.
 2. *Launcher.* `bun run harness:cell <cell-id>` in gbrain-evals installs the pinned harness
-   with `uv` (CPU wheels), registers the gbrain and comparator providers into the harness
+   with `uv` (CPU wheels), registers the foresights and comparator providers into the harness
    registry at runtime, sets resolved model ids through `OMB_*` variables with `.env` loading
    disabled, wraps the answer model, and runs the harness CLI. Output directories and
    `memory_provider` fields use `gbrain` and `comparator`; a CI grep guard blocks the
@@ -98,7 +98,7 @@ A0. **Protocol and safety gate. Free contract work first; no broad paid run unti
    judge) and refuses mismatches; sealed cells never use `--only-failed` or merged reruns.
    Each answer receipt keeps the exact serialized model request.
 4. *Paid-request boundary.* Every model, embedding and rerank request from the harness
-   (Python), the gbrain MCP child and the comparator server goes through one local metering
+   (Python), the foresights MCP child and the comparator server goes through one local metering
    proxy (base-URL overrides per provider) that prices Gemini, Groq, OpenAI, Anthropic and
    Voyage requests, reserves before dispatch against one shared ledger, decodes actual usage,
    and refuses at the cap. Tests prove a zero balance blocks network dispatch from each
@@ -118,18 +118,18 @@ A0. **Protocol and safety gate. Free contract work first; no broad paid run unti
    never promoted to observation dates; both systems receive the same dates.
 8. *Delivered-context targets.* The wrapper counts the exact context text inserted into the
    final prompt (raw JSON included when a builder substitutes it) with `cl100k_base`. Prompts
-   are never truncated. Each system's knobs (gbrain `token_budget` with `return_unit`; the
+   are never truncated. Each system's knobs (foresights `token_budget` with `return_unit`; the
    comparator's fact and chunk budgets) are tuned on dev to hit each target, and cells are
-   gated on mean and p95 delivered tokens within ±10% of the target. gbrain's remote budget
+   gated on mean and p95 delivered tokens within ±10% of the target. foresights's remote budget
    clamp is raised for this path and the run asserts no clamp occurred.
 9. *Mode smoke.* A free protocol smoke for every dataset × mode × provider (the `agentic-rag`
    constructor is fixed in the wrapper), then one tiny paid acceptance cell per provider path.
    Its measured usage rebuilds the cell ledger; if the ledger exceeds the cap, the plan comes
    back for approval before broad runs.
 
-A1. **gbrain provider.** About 300 lines of Python in gbrain-evals `eval/harness-provider/`.
+A1. **foresights provider.** About 300 lines of Python in gbrain-evals `eval/harness-provider/`.
 - Hermetic process contract (reusing `hermetic-env.ts` rules): absolute per-unit `GBRAIN_HOME`
-  and working directory, a pinned gbrain launcher from `GBRAIN_UNDER_TEST`, only the cell's
+  and working directory, a pinned foresights launcher from `GBRAIN_UNDER_TEST`, only the cell's
   declared credentials, no service installation or background enrichment, children reaped on
   success, interruption and failure. A sentinel test proves the operator's real `~/.gbrain` is
   untouched, an unrelated key is never called and units can't read each other's pages.
@@ -140,7 +140,7 @@ A1. **gbrain provider.** About 300 lines of Python in gbrain-evals `eval/harness
   drained and no stale pages before the first question.
 - `retrieve`: `query` with `token_budget` and `return_unit: page`, each block with a one-line
   date header from the timestamp manifest.
-- `direct_answer` (agent mode): `gbrain think` with the same answer model; delivered tokens and
+- `direct_answer` (agent mode): `foresights think` with the same answer model; delivered tokens and
   tool calls recorded; agent mode is labeled exploratory.
 - One preregistered per-dataset config.
 - A quickstart linked from the gbrain-evals README: install, a keyless fixture that exercises the
@@ -156,14 +156,14 @@ config choice is confirmed on validation, and sealed runs once. A failed sealed 
 that decision. LongMemEval-S and LoCoMo10 are matched public benchmarks, not confirmation.
 
 A3. **Same-day comparator runs.** The comparator's current release runs as a pinned server
-beside gbrain on every primary and secondary cell: same day, same answer model, same targets,
+beside foresights on every primary and secondary cell: same day, same answer model, same targets,
 blinded and shuffled joint re-judging that calls each dataset's own judge and asserts its model
 id. Its best supported mode (facts plus raw chunks) is used. The statistical comparator never
 switches after results are seen; committed rows appear as attributed historical reference with
 reproduction deltas.
 
 A4. **Lanes.** Raw-only, facts-only and combined for both systems where supported, on
-LongMemEval-S, LoCoMo10 and the dev slices. gbrain's facts lanes run its opt-in extraction and
+LongMemEval-S, LoCoMo10 and the dev slices. foresights's facts lanes run its opt-in extraction and
 count that spend.
 
 A5. **Equal-context frontier.** Targets 4k, 8k, 16k and 32k plus each system's own default,
@@ -177,20 +177,20 @@ ratio, with sensitivity at 1× and 10× reads. Wall-clock ingest is reported, no
 
 A7. **Agent modes and the coding-agent benchmark.** `agentic-rag` and `agent` on the dev slices of
 LongMemEval-S, LoCoMo10 and LifeBench (exploratory). A spike runs the harness's coding-agent
-memory benchmark (61 tasks) with gbrain as the memory; the full run (budget line 6) follows a
+memory benchmark (61 tasks) with foresights as the memory; the full run (budget line 6) follows a
 positive spike.
 
 A8. **Baselines.** The harness's hybrid-search baseline and a full-context reader where the
 history fits, on every primary cell.
 
 A9. **PrecisionMemBench and scale.** PrecisionMemBench in `retrieval` mode, reporting active
-passes, precision and recall with denominators. gbrain uses its zero-LLM write path and does not
+passes, precision and recall with denominators. foresights uses its zero-LLM write path and does not
 claim `supports_filters`; a structural gap is reported, not chased. BEAM 10M runs for both systems (budget line 7); LongMemEval-M runs from line 8.
 
 ### Workstream B (gbrain-evals): workload suites
 
 Each suite has a seeded generator, a `bun run eval:<suite>` entry point, a solvability check,
-a presence assertion, and runs both systems from the same raw records. Structure gbrain uses
+a presence assertion, and runs both systems from the same raw records. Structure foresights uses
 (facts, typed edges, takes) is built inside the measured pipeline with its LLM spend counted;
 structured-oracle runs are separate ceilings. Readers: one fixed reader for all cells (the
 newest frontier Sonnet), plus a preregistered subset swept across the newest Opus, GPT, Sonnet
@@ -207,13 +207,13 @@ re-retain), plus an identical append-a-correction arm. Corrected-value accuracy 
 rate after 1 and 5 unrelated writes; inspectability reported separately.
 
 B3. **Time and relationships.** The as-of and composed-question suites rendered as
-conversations; gbrain builds edges in-pipeline. An external-system comparison, not a
+conversations; foresights builds edges in-pipeline. An external-system comparison, not a
 confirmation of the relationship features.
 
 B4. **Beliefs.** 150 questions on who holds a view, how its weight changed and which predictions
-resolved; gbrain extracts and grades takes in-pipeline.
+resolved; foresights extracts and grades takes in-pipeline.
 
-### Workstream C (gbrain): product changes, gated on evidence
+### Workstream C (foresights): product changes, gated on evidence
 
 C1. **Dated evidence blocks.** Evidence delivery renders each block's observation date and, for
 facts, its validity window in a fixed one-line header, with unknown dates shown as unknown.
@@ -227,12 +227,12 @@ with `interleaveFusion` (each arm's #1, then each arm's #2, de-duplicated by fac
 (same entity, changed numbers or dates, private rows, concurrent corrections), not candidate
 recall alone. RRF stays everywhere else.
 
-C3. **Fix lane.** Where dev shows gbrain behind on a primary cell, up to three fix rounds, each
+C3. **Fix lane.** Where dev shows foresights behind on a primary cell, up to three fix rounds, each
 confirmed on validation, never on sealed. A fix that doesn't confirm is removed.
 
 C4. **Pinned questions.** Replaces the config-list form of `auto_think`. Version 1 is
 owner-private.
-- *Surface.* CLI `gbrain questions pin|list|status|refresh|unpin`; MCP `questions_list` and
+- *Surface.* CLI `foresights questions pin|list|status|refresh|unpin`; MCP `questions_list` and
   `questions_status` (read scope, owner-capable grants only), `questions_pin`,
   `questions_refresh` and `questions_unpin` (write scope). Scope is a structured selector
   `{source, slug_prefix?, entity?}` defaulting to the current source; ids are source-qualified;
@@ -292,7 +292,7 @@ C4 is default-on only if it passes both gates; otherwise opt-in (safety passed) 
 
 1. A0 steps 1–9 (power simulation first) and A1; C2 in parallel.
 2. Dev: A3–A8 on dev slices; C1 and C3 decisions on validation.
-3. gbrain wave PR opened with C1–C3; the measured build is that PR's head SHA installed from
+3. foresights wave PR opened with C1–C3; the measured build is that PR's head SHA installed from
    GitHub. The preregistration names the SHA.
 4. Sealed primary cells for both systems, then secondary cells the ledger can afford.
 5. B1–B4 in parallel with 2–4; C4 + B5 after dev results, in the same PR.
@@ -320,14 +320,14 @@ back for approval.
 
 - An opinion network with a conviction score.
 - LLM extraction on every write by default.
-- Reducing the MCP tool count (gbrain#6027 owns the advertised surface; `questions_*` ops join
+- Reducing the MCP tool count (foresights#6027 owns the advertised surface; `questions_*` ops join
   the full surface only).
 - Partial-index and query-plan tuning.
 - Batch writes, date grounding, edge validity and the multi-hop planner (measured here, built
   in other PRs).
 - Sentence-level privacy projection for pinned questions shared with restricted grants (version 1
   is owner-private).
-- Submitting gbrain to the harness's upstream leaderboard (decided after sealed results).
+- Submitting foresights to the harness's upstream leaderboard (decided after sealed results).
 
 ## Review record
 
@@ -384,7 +384,7 @@ lifecycle contract (C4).
 - A0 protocol audit gate: pinned harness/datasets/prompts, final-prompt token counting and hashing, opaque ids with leak guard, fallback answer model on an overlap, one joint judge pass, executable cell ledger with dispatch guard.
 - Splits by history: 20/20/60 dev/validation/sealed; fixes confirmed on validation only; LongMemEval-S and LoCoMo10 reported as matched public benchmarks, not confirmation.
 - Comparator runs in its best supported mode with its native correction operations; no impossibility claims.
-- gbrain structures used in B suites are built in-pipeline from the same raw records with their cost counted.
+- foresights structures used in B suites are built in-pipeline from the same raw records with their cost counted.
 - Agent-mode lanes, coding-agent spike, hybrid and full-context baselines added.
 - C4 pinned questions carry the evidence-dependency and lifecycle contract and ship on only if B5 shows a win with zero stale leakage.
 - Freeze on a released tag; open PRs measured only as named arms.
@@ -460,7 +460,7 @@ Architecture (v3):
  gbrain-evals launcher (cell id, prereg hashes, OMB_* models)
    └─ harness (Python, pinned) ──► A0 wrapper: final-prompt capture, cl100k count,
         │                          provenance leak check, target gate, typed scorer
-        ├─ gbrain provider ── hermetic GBRAIN_HOME per unit ── stdio MCP: put_pages
+        ├─ foresights provider ── hermetic GBRAIN_HOME per unit ── stdio MCP: put_pages
         │     + completion barrier (batches terminal, embeddings drained) ── query
         │     (token_budget, return_unit=page, date header) / think (agent mode)
         └─ comparator provider (opaque-id wrapper) ── pinned current server
@@ -543,7 +543,7 @@ Decision Audit Trail (continued):
 
 ### Deferred to TODOS
 
-- A continuously re-run public lane on every gbrain release (pinned subset, cheap).
+- A continuously re-run public lane on every foresights release (pinned subset, cheap).
 - Sentence-level privacy projection so pinned questions can be shared with restricted grants.
 
 
@@ -554,7 +554,7 @@ Decision Audit Trail (continued):
 3. (P1, A0) Content-addressed cells, plan/run/resume, request receipts.
 4. (P1, A0) Metering proxy and shared ledger, zero-balance tests per process.
 5. (P1, A0) Scorer conformance, provenance leak model, timestamp manifests, context targets, mode smoke.
-6. (P1, A1) gbrain provider with hermetic contract, template brains, completion barrier, quickstart.
+6. (P1, A1) foresights provider with hermetic contract, template brains, completion barrier, quickstart.
 7. (P1, A2–A3) Grouping manifest sealed with existing machinery; comparator pinned server and opaque-id wrapper; joint re-judge.
 8. (P2, A4–A9) Lanes, frontier, cost formula, agent modes, coding spike, baselines, PrecisionMemBench.
 9. (P2, B1–B4) Workload suite generators and runs.
@@ -576,4 +576,4 @@ Garry approved:
 - **Margin 3.0 points**, with the BEAM 100k reserve added to the primary endpoint: BEAM 100k + 500k + 1M, split by conversation (100k 4/4/12, 500k 7/7/21, 1M 7/7/21), so 54 sealed conversations. Simulated power at a true difference of 0 is 87% (central assumptions). The restricted wild cluster bootstrap-t with Webb weights is the primary method; CR1 t and cluster bootstrap-t are reported beside it. LifeBench and PersonaMem are descriptive rows only.
 - **Spend cap $2,800** (rebuilt ledger $2,720 at a 25% frontier sweep in the B suites).
 - **Answer model for every A cell: `gemini-3.8-flash`**, identical for both systems; judge `gemini-3.5-flash` (BEAM's harness judge) and the dataset's own judge elsewhere, in one joint blinded re-judge.
-- Agent mode runs on an OpenAI model until gbrain's native Google chat path accepts a base-URL override (added in this wave so it can be metered).
+- Agent mode runs on an OpenAI model until foresights's native Google chat path accepts a base-URL override (added in this wave so it can be metered).

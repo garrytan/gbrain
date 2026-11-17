@@ -1,6 +1,6 @@
 /**
  * #7776 on Postgres: an older binary's initSchema replayed its whole schema (CREATE OR REPLACE FUNCTION ...) over a
- * database a newer gbrain migrated, reinstalling superseded writer-fence guard bodies, then applied nothing. initSchema
+ * database a newer foresights migrated, reinstalling superseded writer-fence guard bodies, then applied nothing. initSchema
  * now refuses with client_behind under the schema lock, before anything in the schema runs, and doctor's
  * schema_function_bodies check names bodies an older replay already reverted. A forced schema run of apply-migrations
  * (runMigrations under the orchestration lease) refuses the same way before its drift repairs touch the newer schema. PGLite (repo-less default):

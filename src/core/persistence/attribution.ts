@@ -22,10 +22,10 @@ export { withWriteAttribution };
 
 /**
  * The HTTP MCP request header a caller uses to say which AI made a write ("Claude Code", "Codex", a job name). The
- * host knows which agent is calling through one credential; gbrain does not. It is a label the caller declares and
- * gbrain never verifies: it is stored on the write request and shown as `agent_label` by attribution reads, and
+ * host knows which agent is calling through one credential; foresights does not. It is a label the caller declares and
+ * foresights never verifies: it is stored on the write request and shown as `agent_label` by attribution reads, and
  * nothing that authorizes (grants, access rules, trust tiers) reads it. Not "writer": that word names the principal
- * and the write owner (persistence_local_writers, `gbrain sources writer`). Stdio and the local CLI have no request
+ * and the write owner (persistence_local_writers, `foresights sources writer`). Stdio and the local CLI have no request
  * headers and record none; their principal already names the lane.
  */
 export const AGENT_LABEL_HEADER = 'X-Gbrain-Agent-Label';

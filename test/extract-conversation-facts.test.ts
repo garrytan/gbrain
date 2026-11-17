@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain extract-conversation-facts` — deterministic parsing,
+ * Tests for `foresights extract-conversation-facts` — deterministic parsing,
  * segmenting, rendering, checkpoint encoding, and core wiring contracts.
  *
  * Hermetic via __setChatTransportForTests + __setEmbedTransportForTests
@@ -577,7 +577,7 @@ describe('runExtractConversationFactsCore', () => {
         const warning = warnings.find(w => w.includes('conversation_segment_gap_minutes'));
         expect(warning).toContain(`ignoring frontmatter conversation_segment_gap_minutes=${JSON.stringify(bad)}`);
         expect(warning).toContain(`a whole number of minutes from 1 to ${MAX_PAGE_SEGMENT_GAP_MINUTES}`);
-        expect(warning).toContain('rerun gbrain extract-conversation-facts --slug conversations/bad-gap');
+        expect(warning).toContain('rerun foresights extract-conversation-facts --slug conversations/bad-gap');
       }
     } finally {
       (process.stderr as unknown as { write: unknown }).write = origWrite;
@@ -1603,7 +1603,7 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_failed).toBe(1);
     expect(result.pages_processed).toBe(2);
     expect(err).toContain('conversations/batch-malformed failed (malformed_output) and stays unfinished; ' +
-      'retry: gbrain extract-conversation-facts --source-id default --slug conversations/batch-malformed');
+      'retry: foresights extract-conversation-facts --source-id default --slug conversations/batch-malformed');
     const terminal = await engine.executeRaw<{ slug: string }>(
       `SELECT source_markdown_slug AS slug FROM facts WHERE source = $1 ORDER BY source_markdown_slug`,
       [TERMINAL_AUDIT_SOURCE],

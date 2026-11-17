@@ -1,13 +1,13 @@
 /**
- * `gbrain repair url-clone-fences` (#6946, GBRA-130 C-2): clear the local changes an
- * older gbrain left in a clone it owns (`sources add --url`), which block every
+ * `foresights repair url-clone-fences` (#6946, GBRA-130 C-2): clear the local changes an
+ * older foresights left in a clone it owns (`sources add --url`), which block every
  * `git pull --ff-only` that touches the same file (`pull_blocked_local_changes`,
  * url-clone.ts). Current releases never write into such a clone on an unmanaged
  * brain; this kind exits the state the older fence writer left behind.
  *
  * The preview lists every tracked file of each owned clone in scope that differs
  * from HEAD and proves, per file, that the difference is only `## Facts` fence
- * rows gbrain appended: both sides' fences parse, HEAD's rows are an unchanged
+ * rows foresights appended: both sides' fences parse, HEAD's rows are an unchanged
  * prefix of the working copy's, and re-rendering HEAD's bytes with the working
  * fence reproduces the working copy byte for byte. Any other difference (a user
  * edit, a struck or changed row, a staged change, a deleted file) refuses that
@@ -66,7 +66,7 @@ interface ClonedFile { source_id: string; incarnation: string; root: string; pat
 type FileItem = RepairItem & { file: ClonedFile; hash?: string; last?: boolean };
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
-const preview = (sourceId: string | undefined) => sourceId ? urlCloneRepairPreviewArgv(sourceId).join(' ') : 'gbrain repair url-clone-fences';
+const preview = (sourceId: string | undefined) => sourceId ? urlCloneRepairPreviewArgv(sourceId).join(' ') : 'foresights repair url-clone-fences';
 
 function git(root: string, args: string[]): string {
   return execFileSync('git', ['-C', root, ...args], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }) as string;
@@ -140,7 +140,7 @@ async function survey(engine: BrainEngine, sourceIds: string[]): Promise<{ files
       const item = `${source.id}:${path}`;
       const work = existsSync(join(root, path)) ? readFileSync(join(root, path), 'utf8') : null;
       const head = headBytes(root, path);
-      const proof: Proof = staged.has(path) ? { ok: false, class: 'staged_change', reason: 'the file has a staged change, which gbrain never makes' } : proveFenceRowsOnly(head, work);
+      const proof: Proof = staged.has(path) ? { ok: false, class: 'staged_change', reason: 'the file has a staged change, which foresights never makes' } : proveFenceRowsOnly(head, work);
       if (!proof.ok) {
         listing.push({ item, class: proof.class, detail: `${proof.reason}, so it is left as it is. Keep or remove that change yourself (git -C ${root} diff HEAD -- ${path} shows it), then preview again: ${preview(source.id)}` });
         continue;
@@ -150,8 +150,8 @@ async function survey(engine: BrainEngine, sourceIds: string[]): Promise<{ files
       files.push({ source_id: source.id, incarnation: source.incarnation, root, path, slug, page_id, head_sha256: sha256(head!), work_sha256: sha256(work!),
         rows: proof.added.map(row => row.rowNum), selection: sourceIds });
       listing.push(hold
-        ? { item, class: hold.code, detail: `${proof.added.length} fence row(s) gbrain appended to ${slug}: kept database-only, then the file is restored from HEAD so the clone can pull again, but HEAD's bytes are not imported as the page: ${hold.message} The page keeps its last imported version: the restored file equals HEAD, so sync does not screen it again and records no hold; the page changes once a commit that fixes the file upstream is pulled and synced.` }
-        : { item, class: 'fence_rows_only', detail: `${proof.added.length} fence row(s) gbrain appended to ${slug}: kept database-only, then the file is restored from HEAD` });
+        ? { item, class: hold.code, detail: `${proof.added.length} fence row(s) foresights appended to ${slug}: kept database-only, then the file is restored from HEAD so the clone can pull again, but HEAD's bytes are not imported as the page: ${hold.message} The page keeps its last imported version: the restored file equals HEAD, so sync does not screen it again and records no hold; the page changes once a commit that fixes the file upstream is pulled and synced.` }
+        : { item, class: 'fence_rows_only', detail: `${proof.added.length} fence row(s) foresights appended to ${slug}: kept database-only, then the file is restored from HEAD` });
     }
   }
   return { files, listing };
@@ -187,7 +187,7 @@ async function restoreFile(engine: BrainEngine, file: ClonedFile, runId: string)
   if (changed) return { applied: false, outcome: 'preview_changed', reason: changed, detail: { path: file.path } };
   if (!await urlCloneReadOnly(engine, file.source_id)) return { applied: false, outcome: 'refused', reason: 'not_url_clone', detail: { path: file.path } };
   if (git(file.root, ['diff', '--cached', '--name-only', '--relative', '-z', 'HEAD', '--', file.path])) {
-    return { applied: false, outcome: 'preview_changed', reason: `${file.path} has a staged change since the preview, which gbrain never makes`, detail: { path: file.path } };
+    return { applied: false, outcome: 'preview_changed', reason: `${file.path} has a staged change since the preview, which foresights never makes`, detail: { path: file.path } };
   }
   const abs = join(file.root, file.path);
   const head = headBytes(file.root, file.path);
@@ -213,10 +213,10 @@ export const urlCloneFencesRepair: RepairHandler = {
   async plan(engine, scope, after, opts = { apply: false }): Promise<RepairPlan> {
     const source = scope.source_ids.length === 1 ? scope.source_ids[0] : undefined;
     if (await managedPersistenceEnabled(engine)) {
-      return { items: [], residuals: {}, warnings: ['This brain is managed: gbrain repair url-clone-fences applies to unmanaged brains. On a managed brain, gbrain sources mirror-readonly <id> keeps a clone\'s checkout unwritten.'] };
+      return { items: [], residuals: {}, warnings: ['This brain is managed: foresights repair url-clone-fences applies to unmanaged brains. On a managed brain, foresights sources mirror-readonly <id> keeps a clone\'s checkout unwritten.'] };
     }
     if (opts.apply) {
-      if (!opts.expect) throw new OperationError('invalid_params', 'gbrain repair url-clone-fences --apply needs the preview hash.',
+      if (!opts.expect) throw new OperationError('invalid_params', 'foresights repair url-clone-fences --apply needs the preview hash.',
         `Preview first: ${preview(source)} — then run the apply command it prints (--apply --expect <preview-hash> --yes).`, DOCS);
       const { items: files } = await loadApprovedSet<ClonedFile>(engine, { ...APPROVAL, hash: opts.expect, previewCommand: preview(source) });
       for (const file of files) {

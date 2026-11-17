@@ -1,5 +1,5 @@
 /**
- * #9449: `gbrain sync --source <id> --dry-run` on a connector source of an unmanaged brain fetched from the provider and
+ * #9449: `foresights sync --source <id> --dry-run` on a connector source of an unmanaged brain fetched from the provider and
  * wrote what it fetched (pages, chunks, soft-deletes); only the cursor was left alone. Every connector kind the sync
  * command dispatches to now says it has no preview and returns before any provider call or write.
  */

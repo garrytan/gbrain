@@ -111,7 +111,7 @@ export async function runExhaustedCapacityChain(databaseUrl: string | undefined,
     expect(ledger.filter(e => e.status !== 'complete').map(e => e.version)).toEqual(['0.28.0']);
     const detail = phaseDetail(ledger, '0.28.0', 'backfill');
     expect(detail).toStartWith('write_quota_exhausted: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
-    expect(detail).toContain(`gbrain config set ${key} `);
+    expect(detail).toContain(`foresights config set ${key} `);
 
     engine = await fixture.open();
     try {

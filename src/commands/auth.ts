@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * GBrain token management.
+ * Foresights token management.
  *
  * Wired into the CLI as of v0.22.5:
- *   gbrain auth create "claude-desktop"
- *   gbrain auth list
- *   gbrain auth revoke "claude-desktop"
- *   gbrain auth test <url> --token <token>
+ *   foresights auth create "claude-desktop"
+ *   foresights auth list
+ *   foresights auth revoke "claude-desktop"
+ *   foresights auth test <url> --token <token>
  *
  * Also runs standalone (no compiled binary required):
  *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop"
@@ -55,7 +55,7 @@ async function withConfiguredSql<T>(
 ): Promise<T> {
   const config = loadConfig();
   if (!config) {
-    console.error('No GBrain config found. Run `gbrain init` first, or set DATABASE_URL / GBRAIN_DATABASE_URL.');
+    console.error('No Foresights config found. Run `foresights init` first, or set DATABASE_URL / GBRAIN_DATABASE_URL.');
     process.exit(1);
   }
   const engineConfig = toEngineConfig(config);
@@ -103,8 +103,8 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       if (bound) console.log(`${bindingLine(bound)}\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
-      console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
-      console.log(`Change its grants: gbrain auth rescope --token "${name}" --takes-holders world,garry (or --sources, --operations)`);
+      console.log(`Revoke with: foresights auth revoke "${name}" (or foresights auth revoke --id <id> from auth list)`);
+      console.log(`Change its grants: foresights auth rescope --token "${name}" --takes-holders world,garry (or --sources, --operations)`);
       const grant = { principal: { kind: 'legacy_token' as const, id }, scopes: opts.scopes ?? ['read', 'write', 'admin'], sources: { kind: 'default' as const } };
       if (!opts.binding?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'legacy_token', name }, { census: await credentialCensus(engine, grant), serves: await exposureServes(engine) }));
     });
@@ -142,7 +142,7 @@ async function setMinTrustCmd(rest: string[]) {
 /** `auth permissions <name> set-takes-holders <list>`: alias of `auth rescope --token <name> --takes-holders <list>`. */
 async function permissions(name: string, action: string, value: string | undefined) {
   if (!name || action !== 'set-takes-holders' || !value) {
-    console.error('Usage: auth permissions <name> set-takes-holders world,garry,brain  (alias of: gbrain auth rescope --token <name> --takes-holders <list>)');
+    console.error('Usage: auth permissions <name> set-takes-holders world,garry,brain  (alias of: foresights auth rescope --token <name> --takes-holders <list>)');
     process.exit(1);
   }
   await runRescope(['--token', name, '--takes-holders', value]);
@@ -178,7 +178,7 @@ async function list(json: boolean) {
       return;
     }
     if (rows.length === 0) {
-      console.log('No tokens found. Create one: gbrain auth create "my-client"');
+      console.log('No tokens found. Create one: foresights auth create "my-client"');
       return;
     }
     console.log('ID                                    Name                  Scopes                 Created              Last Used            Status   Private pages');
@@ -221,7 +221,7 @@ async function revoke(name: string) {
  * RETURN the name for the confirmation line — keep the two in lockstep. */
 async function revokeById(id: string) {
   if (!id || !TOKEN_ID_RE.test(id)) {
-    console.error('Usage: auth revoke --id <uuid>   (ids are shown by `gbrain auth list`)');
+    console.error('Usage: auth revoke --id <uuid>   (ids are shown by `foresights auth list`)');
     process.exit(1);
   }
   await withConfiguredSql(async (sql) => {
@@ -388,7 +388,7 @@ async function revokeClient(clientId: string) {
 }
 
 /**
- * Parse `gbrain auth register-client` argv. Walks the array once instead of
+ * Parse `foresights auth register-client` argv. Walks the array once instead of
  * the prior `indexOf`-based pattern which (a) silently took only the FIRST
  * occurrence of a repeatable flag (defeated `--redirect-uri https://a
  * --redirect-uri https://b` — only `https://a` made it through), and (b)
@@ -756,7 +756,7 @@ export function formatRegisterClientOutput(name: string, r: RegisteredClient, pa
   } else {
     lines.push('Public client (PKCE-only) — no secret needed.');
   }
-  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}"`);
+  lines.push(`Revoke with: foresights auth revoke-client "${r.clientId}"`);
   return lines;
 }
 
@@ -787,7 +787,7 @@ async function registerClient(name: string, args: string[]) {
       const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
       if (bound) auditReadsUnscoped(bound, `OAuth client ${registered.clientId}`, false);
       if (registered.skipped?.tokenTtl) {
-        console.error('Note: this brain predates the token_ttl column; run `gbrain apply-migrations --yes`, then rescope. The server default TTL applies.');
+        console.error('Note: this brain predates the token_ttl column; run `foresights apply-migrations --yes`, then rescope. The server default TTL applies.');
       }
       for (const line of formatRegisterClientOutput(name, registered, parsed)) {
         console.log(line);
@@ -823,17 +823,17 @@ export function parseRescopeSurfaceValue(value: string): 'verbs' | 'starter' | '
 }
 
 async function rescopeClient(clientId: string, args: string[]) {
-  if (!clientId) { console.error('Usage: auth rescope-client <client_id> [--profile PROFILE] [grant flags] [--repair] [--dry-run] [--json]  (alias of: gbrain auth rescope --client <client_id>)'); process.exit(1); }
+  if (!clientId) { console.error('Usage: auth rescope-client <client_id> [--profile PROFILE] [grant flags] [--repair] [--dry-run] [--json]  (alias of: foresights auth rescope --client <client_id>)'); process.exit(1); }
   await runRescope(['--client', clientId, ...args], parseRescopeGrantArgs);
 }
 
-/** `gbrain auth rescope-token`: alias of `gbrain auth rescope --token` (src/core/grants/legacy-token.ts). */
+/** `foresights auth rescope-token`: alias of `foresights auth rescope --token` (src/core/grants/legacy-token.ts). */
 async function rescopeToken(args: string[]) {
   await runRescope(args, undefined, true);
 }
 
 /**
- * F3 `gbrain auth rescope`: one grant editor for legacy tokens and OAuth
+ * F3 `foresights auth rescope`: one grant editor for legacy tokens and OAuth
  * clients (src/core/grants/cli.ts splits the target). Refusals print the
  * reason and the next command; with --json they also print a JSON error on
  * stdout so an agent never has to read stderr.
@@ -884,14 +884,14 @@ async function runRescope(rawArgs: string[], clientParser?: (args: string[]) => 
       console.log(JSON.stringify({ error: { code: grantError?.code ?? 'rescope_failed', reasons: grantError?.reasons ?? [], message, ...(fix ? { fix, docs: 'docs/guides/error-codes.md#client_not_found' } : {}) } }, null, 2));
     }
     console.error('Error:', message);
-    if (fix) console.error('Fix: Run gbrain auth clients --json on this brain, then retry with an existing client id. No grants or tokens changed.');
+    if (fix) console.error('Fix: Run foresights auth clients --json on this brain, then retry with an existing client id. No grants or tokens changed.');
     process.exit(1);
   }
 }
 
 /** GST-363: every grant or removal of --reads-unscoped lands in the access-reads-unscoped audit trail. */
 function auditReadsUnscoped(b: BindingResult, credential: string, dryRun: boolean): void {
-  if (b.reads_unscoped !== undefined && b.changed && !dryRun) logReadsUnscopedChange({ credential, reads_unscoped: b.reads_unscoped, by: 'gbrain auth' });
+  if (b.reads_unscoped !== undefined && b.changed && !dryRun) logReadsUnscopedChange({ credential, reads_unscoped: b.reads_unscoped, by: 'foresights auth' });
 }
 
 const CLIENT_NOT_FOUND_FIX = {
@@ -912,7 +912,7 @@ async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: 
     console.log(`  Revision: ${existing.revision}`);
     printClientGrantAxes(existing);
     if (bound) { console.log(bindingLine(bound, parsed.dryRun)); return; }
-    console.log(`No change made. To change a grant, pass a grant flag, for example: gbrain auth rescope --client ${clientId} --sources default --dry-run`);
+    console.log(`No change made. To change a grant, pass a grant flag, for example: foresights auth rescope --client ${clientId} --sources default --dry-run`);
     return;
   }
   const profile = parsed.profile ? resolveGrantProfile({
@@ -963,12 +963,12 @@ function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: Bi
   if (bound) console.log(bindingLine(bound, result.dryRun));
   if (result.drift.length && !result.written) {
     console.log(`  Drift: ${result.drift.join(', ')} deny every request (the permissions JSON disagrees with the grant columns). `
-      + `Ask the user which grant is intended, then run gbrain auth rescope --token ${result.name} --adopt-permissions or --adopt-columns.`);
+      + `Ask the user which grant is intended, then run foresights auth rescope --token ${result.name} --adopt-permissions or --adopt-columns.`);
   }
   if (result.shape === 'legacy_permissions' && !result.written) {
-    console.log(`  Shape: legacy permissions JSON (still enforced). The next grant edit migrates it, or run gbrain auth rescope --migrate-legacy.`);
+    console.log(`  Shape: legacy permissions JSON (still enforced). The next grant edit migrates it, or run foresights auth rescope --migrate-legacy.`);
   }
-  if (result.migrated) console.log('  Migrated to the unified grant columns; the permissions JSON is kept as a mirror for older gbrain binaries.');
+  if (result.migrated) console.log('  Migrated to the unified grant columns; the permissions JSON is kept as a mirror for older foresights binaries.');
   if (result.refresh) {
     const { available, added, unregistered, materialized } = result.refresh;
     if (materialized) {
@@ -980,7 +980,7 @@ function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: Bi
     if (added.length) console.log(`  Added: ${added.join(', ')}`);
     else if (available.length) {
       const add = available.length <= 8 ? `--add ${available.join(',')}` : '--add <op,...>';
-      console.log(`  Nothing widened. Grant them with: gbrain auth rescope --token ${result.name} --refresh-operations ${add}${materialized ? '' : ' (or --all-new)'}`);
+      console.log(`  Nothing widened. Grant them with: foresights auth rescope --token ${result.name} --refresh-operations ${add}${materialized ? '' : ' (or --all-new)'}`);
     }
   }
   if (result.changed && !result.dryRun) console.log('Grants apply on the next request; the token secret is unchanged.');
@@ -994,11 +994,11 @@ function printMigrateLegacy(result: MigrateLegacyResult, json: boolean) {
     console.log(`  ${t.name} (${t.id}): sources ${renderLegacyGrantAxis(t.grant.sources)}; takes holders ${renderLegacyGrantAxis(t.grant.takesHolders)}; operations ${renderLegacyGrantAxis(t.grant.operations)}`);
   }
   for (const t of result.skipped) console.log(`  Skipped ${t.name} (${t.id}): ${t.reason}. Fix: ${t.fix}`);
-  if (result.dryRun && result.migrated.length) console.log('Apply with: gbrain auth rescope --migrate-legacy');
+  if (result.dryRun && result.migrated.length) console.log('Apply with: foresights auth rescope --migrate-legacy');
 }
 
 /**
- * E4 (WP4 expansion): `gbrain auth clients [--usage] [--days N] [--json]`.
+ * E4 (WP4 expansion): `foresights auth clients [--usage] [--days N] [--json]`.
  *
  * Lists OAuth clients with their scopes + per-client MCP tool surface
  * (`surface` / `surface_set_by`, WP4), and with `--usage` joins the
@@ -1072,7 +1072,7 @@ export function clientOperationsView(row: ClientRow): ClientOperationsView {
     if (revoked) return view;
     view.fix = renderAction({
       argv: ['gbrain', 'auth', 'rescope', '--client', row.client_id, '--operations', '<OPERATIONS>'],
-      inputs: [{ name: 'OPERATIONS', how: `Ask the user which operations this client should keep (comma-separated, e.g. search,get_page,remember), or pin a profile instead: gbrain auth rescope --client ${row.client_id} --profile <profile> (${GRANT_PROFILES.join(', ')}).` }],
+      inputs: [{ name: 'OPERATIONS', how: `Ask the user which operations this client should keep (comma-separated, e.g. search,get_page,remember), or pin a profile instead: foresights auth rescope --client ${row.client_id} --profile <profile> (${GRANT_PROFILES.join(', ')}).` }],
       consent: [], actor: 'agent', requires_exclusive: false,
       why: 'This client has no operation snapshot, so it reaches every operation its scopes and surface allow, including operations later upgrades add. A pinned list or profile keeps new operations from arriving without a regrant.',
       verify: { argv: ['gbrain', 'auth', 'clients', '--json'] },
@@ -1094,7 +1094,7 @@ export function clientOperationsLines(row: ClientRow): string[] {
     lines.push(`  operations: ${ops.length} pinned (${ops.slice(0, 8).join(', ')}${ops.length > 8 ? ', ...' : ''})`);
   } else {
     lines.push('  operations: all (no snapshot; includes operations later upgrades add; scopes, surface and source limits still apply)');
-    if (view.fix) lines.push(`    re-pin: gbrain auth rescope --client ${row.client_id} --operations <op,...>  (or --profile <profile>)`);
+    if (view.fix) lines.push(`    re-pin: foresights auth rescope --client ${row.client_id} --operations <op,...>  (or --profile <profile>)`);
   }
   return lines;
 }
@@ -1220,7 +1220,7 @@ async function clientsCmd(args: string[]) {
       }
 
       if (clients.length === 0 && legacyUsage.length === 0) {
-        console.log('No OAuth clients registered. Register one: gbrain auth register-client "my-client"');
+        console.log('No OAuth clients registered. Register one: foresights auth register-client "my-client"');
         return;
       }
       if (windowNote) console.log(`${windowNote}\n`);
@@ -1264,7 +1264,7 @@ async function clientsCmd(args: string[]) {
 }
 
 /**
- * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
+ * Entry point for the `foresights auth` CLI subcommand. Also reused by the
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
  * still works.
  */
@@ -1275,7 +1275,7 @@ async function clientsCmd(args: string[]) {
  * excludes flag VALUES from the positional search when their flag is
  * present — the pre-v0.41 inline version used `rest[takesIdx + 1]` which
  * resolved to `rest[0]` when `takesIdx === -1`, silently dropping the name on
- * the bare `gbrain auth create <name>` form.
+ * the bare `foresights auth create <name>` form.
  *
  * --scopes accepts comma- and/or whitespace-separated input (the
  * register-client #3990 normalization precedent). Validation against the
@@ -1310,17 +1310,17 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}), ...(isTrustTier(minValue) ? { minTrust: minValue } : {}) };
 }
 
-const AUTH_USAGE = `GBrain Token Management
+const AUTH_USAGE = `Foresights Token Management
 
 Admin dashboard login (running HTTP server):
-  For "Give me the GBrain admin login link", use POST /admin/api/issue-magic-link
+  For "Give me the Foresights admin login link", use POST /admin/api/issue-magic-link
   with the server bootstrap credential through the host's protected credential flow.
   It returns a five-minute, single-use owner login link. Deliver it privately;
   do not GET the generated link to check it. A static /admin/ URL only opens the login page.
   This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]
+  foresights auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
@@ -1335,12 +1335,12 @@ Usage:
                                                           On a brain that serves several people a new token needs
                                                           --member <id>, or --reads-unscoped --yes to read every
                                                           page no rule restricts on purpose (credential_scope_required)
-  gbrain auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
+  foresights auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
                                                           or legacy token (id or name). Local CLI only.
-  gbrain auth list [--json]                                List all tokens (id, scopes, usage, private pages)
-  gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
-  gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
-  gbrain auth rescope --token <name>|--id <uuid>|--client <client_id>|<name> [options]
+  foresights auth list [--json]                                List all tokens (id, scopes, usage, private pages)
+  foresights auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
+  foresights auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
+  foresights auth rescope --token <name>|--id <uuid>|--client <client_id>|<name> [options]
                                                           Change a legacy token's or OAuth client's grants in
                                                           place. Only the flags you pass change; the secret is
                                                           unchanged. With no grant flag it prints the stored
@@ -1357,12 +1357,12 @@ Usage:
      --scopes <read,write,...>                            Replace the scopes
      --member <id|none>                                   Bind the token or client to a member: remote reads of
                                                           pages naming readers (readable_by) see what that member
-                                                          may read; 'none' unbinds (see gbrain access --help)
+                                                          may read; 'none' unbinds (see foresights access --help)
      --may-act-for <list|none>                            Shared agents: member ids, group:<id>, guest or * the
                                                           harness may name as a request's audience
                                                           (X-Gbrain-On-Behalf-Of or _meta.on_behalf_of)
      --attest-actor <qm|none> [--attest-ops <op,...>]     A client-credentials client or member-less token may name
-                                                          the person a QM call serves (x-qm-actor; linked with gbrain
+                                                          the person a QM call serves (x-qm-actor; linked with foresights
                                                           access member link); ops default get_write_request,
                                                           memory_recall,memory_write
      --attest-read <person|scope|none>                    How an attested call that names sources reads them:
@@ -1377,17 +1377,17 @@ Usage:
                                                           widen only by the ones --add names (or all with --all-new)
      --if-version <N>                                     Refuse unless the stored grant revision is N
      --adopt-permissions | --adopt-columns                Token only: resolve grant drift by keeping the permissions
-                                                          JSON (an older gbrain's edit) or restoring the columns
+                                                          JSON (an older foresights's edit) or restoring the columns
      --dry-run / --json                                   Preview without writing / machine-readable output
                                                           (--json also prints refusals as JSON on stdout)
      Client-only flags of rescope-client (--surface, --bound-*, --profile, ...) pass through.
-  gbrain auth rescope --migrate-legacy [--dry-run] [--json]
+  foresights auth rescope --migrate-legacy [--dry-run] [--json]
                                                           Write the unified grant columns for every token still on
                                                           the permissions-JSON shape; changes no effective grant
-  gbrain auth rescope-token <name>|--id <uuid> [options]  Alias of: auth rescope --token <name> [options]
-  gbrain auth permissions <name> set-takes-holders <h1,h2,h3>
+  foresights auth rescope-token <name>|--id <uuid> [options]  Alias of: auth rescope --token <name> [options]
+  foresights auth permissions <name> set-takes-holders <h1,h2,h3>
                                                           Alias of: auth rescope --token <name> --takes-holders
-  gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
+  foresights auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
      --grant-types <client_credentials,authorization_code>  (default: client_credentials;
                                                             auto-set to authorization_code,refresh_token
                                                             when --redirect-uri is passed)
@@ -1413,7 +1413,7 @@ Usage:
                                                           unavailable to a bound client. Omit = full-source writes.
      --bound-max-concurrent <n>                            Bound submit_agent concurrency (default: 1)
      --budget-usd-per-day <usd>                            Bound submit_agent daily spend cap
-  gbrain auth rescope-client <client_id> [options]        Alias of: auth rescope --client <client_id>, with these
+  foresights auth rescope-client <client_id> [options]        Alias of: auth rescope --client <client_id>, with these
                                                           legacy flags. Change an existing client's source scope
                                                           (e.g. a DCR client stuck on the 'default' source). Only
                                                           the flags you pass change; the other axes are left as-is.
@@ -1424,7 +1424,7 @@ Usage:
                                                           request_tools cannot override; 'clear' removes the pin
                                                           so server/config resolution applies again). Always
                                                           bounded by the server's --surface ceiling.
-  gbrain auth clients [--usage] [--days N] [--json]       List OAuth clients with scopes, write source, federated
+  foresights auth clients [--usage] [--days N] [--json]       List OAuth clients with scopes, write source, federated
                                                           reads, tool surface + operation snapshot ('all' = no
                                                           snapshot, includes future operations; re-pin with
                                                           auth rescope --client <id> --operations|--profile). --usage
@@ -1433,9 +1433,9 @@ Usage:
                                                           only — stdio use is not logged). Automation-shaped
                                                           clients (>90% context_pack/delta) are flagged. A window
                                                           reaching past pruned request-log history says so.
-  gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
-  gbrain auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
-  gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
+  foresights auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  foresights auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
+  foresights auth test <url> --token <token>                  Smoke-test a remote MCP server
 `;
 
 export async function runAuth(args: string[]): Promise<void> {
@@ -1445,7 +1445,7 @@ export async function runAuth(args: string[]): Promise<void> {
   }
   // #4083 follow-up: print usage whenever --help/-h appears ANYWHERE in
   // args, before dispatching to a subcommand. Without this early return,
-  // `gbrain auth create foo --help` (or revoke/register-client/... +
+  // `foresights auth create foo --help` (or revoke/register-client/... +
   // --help) actually EXECUTES the subcommand instead of showing help,
   // once `auth` joined CLI_ONLY_SELF_HELP and the generic --help
   // short-circuit in cli.ts stopped intercepting it first. Same pattern
@@ -1478,7 +1478,7 @@ export async function runAuth(args: string[]): Promise<void> {
       return;
     }
     case 'permissions': {
-      // gbrain auth permissions <name> set-takes-holders world,garry
+      // foresights auth permissions <name> set-takes-holders world,garry
       await permissions(rest[0] || '', rest[1] || '', rest[2]);
       return;
     }
@@ -1503,6 +1503,7 @@ export async function runAuth(args: string[]): Promise<void> {
 // Direct-script entry point — only runs when this file is invoked as the main module
 // (e.g. `bun run src/commands/auth.ts ...`). When imported by cli.ts, this block is skipped.
 if (import.meta.main) {
+  (await import('../core/brand.ts')).adoptAliasEnv(process.env);
   const { directEntryArgs } = await import('../cli/flag-equals.ts');
   const { exitCliError } = await import('../cli/cli-error.ts');
   const argv = await directEntryArgs('auth', process.argv.slice(2)).catch((e: unknown) => exitCliError(e, 'auth'));

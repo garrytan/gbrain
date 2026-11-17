@@ -1,10 +1,10 @@
 /**
- * #6524: `gbrain capture` has sent its provenance trio (`source_kind`,
+ * #6524: `foresights capture` has sent its provenance trio (`source_kind`,
  * `source_uri`, `ingested_via`) since #5622; since #5970 dispatch rejects any
  * undeclared key on a write. A CLI delegating to a running serve (IPC owner)
  * and every thin client reach capture through `dispatchToolCall`, so the
  * trio must be declared on the op. The literal below is the CLI's shape for
- * `gbrain capture "<text>" --slug <slug>` (the builder itself is pinned by
+ * `foresights capture "<text>" --slug <slug>` (the builder itself is pinned by
  * test/capture-cli-params-contract-6524.test.ts). Dispatch admits it; the
  * owner keeps a trusted local caller's values and replaces a remote caller's
  * with the server stamp, so declaring the keys lends no trust.

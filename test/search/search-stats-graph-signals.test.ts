@@ -1,5 +1,5 @@
 /**
- * v0.40.4.0 — `gbrain search stats` graph_signals section.
+ * v0.40.4.0 — `foresights search stats` graph_signals section.
  *
  * Pins:
  *   - readGraphSignalsStats reads search.graph_signals config first

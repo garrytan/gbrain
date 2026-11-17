@@ -11,7 +11,7 @@
  * resolveSocketPathForConfig.
  *
  * Pre-#4474 this block lived inline in the STDIO path (src/mcp/server.ts)
- * only, so `gbrain serve --http` — the exact posture `gbrain bootstrap
+ * only, so `foresights serve --http` — the exact posture `foresights bootstrap
  * harness` targets — never bound the socket and every wired lifecycle hook
  * degraded to `no_serve` forever (with serve-delegated sync losing its
  * rung too). Both transports now bind through this helper.
@@ -84,7 +84,7 @@ export async function turnContextWithBrief(engine: BrainEngine, sourceId: string
     sessionId: req.sessionId,
     sessionOnly: await readHotMemorySessionOnly(engine),
     maxBytes: briefOn ? Math.max(1024, (req.maxBytes ?? TURN_CONTEXT_DEFAULT_MAX_BYTES) - BRIEF_MAX_BYTES - 2) : req.maxBytes,
-    // Per-request config read: `gbrain serve` is long-running, and the
+    // Per-request config read: `foresights serve` is long-running, and the
     // lexical-arms switch reverts a false-fire regression on the NEXT turn
     // (adversarial F3).
     lexicalArms: lexicalArmsEnabled(loadConfig()),
@@ -258,7 +258,7 @@ export async function bindResolveIpcForServe(
             suppression: req.suppression,
             // v0.46.15 kill switch: either side may disable — a client
             // `false` wins, else the server's own file-config gate.
-            // Config is re-read PER REQUEST (adversarial F3): `gbrain
+            // Config is re-read PER REQUEST (adversarial F3): `foresights
             // serve` is long-running, and the switch's whole value is
             // reverting a false-fire regression on the NEXT TURN with a
             // config edit — a startup snapshot would freeze it until a

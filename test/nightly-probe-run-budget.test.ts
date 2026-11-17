@@ -128,7 +128,7 @@ describe('one budget across LongMemEval and the judges (CEO B4)', () => {
       expect(event!.cap_source).toBe('default');
       expect(event!.chat_calls).toBe(providerCalls.length);
       expect(event!.detail).toContain('No further paid call was made.');
-      expect(event!.detail).toContain('gbrain config set autopilot.nightly_quality_probe.max_usd <usd>');
+      expect(event!.detail).toContain('foresights config set autopilot.nightly_quality_probe.max_usd <usd>');
     });
   });
 
@@ -205,7 +205,7 @@ describe('pricing policy for the run cap', () => {
       const [event] = readRecentQualityProbeEvents(1);
       expect(event!.reason).toBe('no_pricing');
       expect(event!.cap_source).toBe('user');
-      expect(event!.detail).toContain(`gbrain pricing set ${UNPRICED} --input <usd-per-1M-input-tokens>`);
+      expect(event!.detail).toContain(`foresights pricing set ${UNPRICED} --input <usd-per-1M-input-tokens>`);
       expect(event!.detail).toContain('$3.00 cost cap');
     });
   });

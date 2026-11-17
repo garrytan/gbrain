@@ -4,7 +4,7 @@
  * escape hatch reaches sync's pull. Pre-fix they hardcoded GIT_SSRF_FLAGS
  * (protocol.file.allow=never, unconditionally), so a self-hosted
  * local-filesystem remote could be CLONED (via the harden/durability paths)
- * but `gbrain sync` could never pull it again.
+ * but `foresights sync` could never pull it again.
  *
  * Default posture stays never — asserted below.
  *

@@ -8,7 +8,7 @@
  * 3. slugPathFile took an exact `<slug>.md` that existsSync found (a symlink, or a case-insensitive match) and always read
  *    source-root slugs. It now reads through slugDerivedOrigin in the source's slug-root mode.
  * 4. release_hold was offered when the agreeing file was not the held one; such a page is listed unknown now.
- * 7. A file_drift hold an older gbrain wrote without meta.page_revision reads as moved; its re-screen records the revision,
+ * 7. A file_drift hold an older foresights wrote without meta.page_revision reads as moved; its re-screen records the revision,
  *    so the next pass is idle again.
  *
  * Holds exist only where sync imports a Git checkout, so there is no repo-less arm.

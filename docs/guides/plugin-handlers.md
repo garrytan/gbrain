@@ -1,14 +1,14 @@
 # Plugin handlers — registering host-specific Minion handlers
 
-GBrain's Minion worker ships with a full set of built-in handlers,
+Foresights's Minion worker ships with a full set of built-in handlers,
 registered by `registerBuiltinHandlers` in `src/commands/jobs.ts` —
 that registry is the source of truth (handler bodies live in
 `src/core/minions/handlers/`). Examples: `sync`, `embed`,
 `lint`, `import`, `extract`, `backlinks`, `autopilot-cycle`, `shell`,
 `subagent`, `orphans`, `integrity`, plus dream-cycle phases and other
 maintenance jobs. Submitting an unknown job name with
-`gbrain jobs submit <name> --follow` prints the full registered list.
-These cover every background operation the gbrain CLI itself performs.
+`foresights jobs submit <name> --follow` prints the full registered list.
+These cover every background operation the foresights CLI itself performs.
 
 Host platforms (OpenClaw deployments, future hosts) register their own
 handlers via a plugin bootstrap that imports
@@ -68,7 +68,7 @@ main().catch(err => { console.error(err); process.exit(1); });
 ```
 
 Ship this as a separate binary in the host repo (e.g. `your-openclaw-worker`)
-or as a side-effect module that the stock `gbrain jobs work` command
+or as a side-effect module that the stock `foresights jobs work` command
 auto-loads on startup (configurable via a host-provided entry point).
 
 ## Handler contract
@@ -111,10 +111,10 @@ not a parameter: the dream paid-loop breaker, the synthesize daily cap and
 doctor's queue checks read it so a resubmitted key's earlier deaths and
 submissions still count.
 
-## Gbrain's migration flow
+## Foresights's migration flow
 
-The migration orchestrator (run by `gbrain apply-migrations`)
-detects cron entries whose handler name is NOT in GBrain's builtin set
+The migration orchestrator (run by `foresights apply-migrations`)
+detects cron entries whose handler name is NOT in Foresights's builtin set
 and emits a structured TODO to `~/.gbrain/migrations/pending-host-work.jsonl`.
 Each TODO has shape:
 
@@ -125,7 +125,7 @@ Each TODO has shape:
   "cron_schedule": "0 */30 * * *",
   "manifest_path": "/path/to/cron/jobs.json",
   "current_cmd": "agentTurn ea-inbox-sweep",
-  "recommendation": "Add a handler registration for `ea-inbox-sweep` in your host worker bootstrap per docs/guides/plugin-handlers.md. Once registered, re-run `gbrain apply-migrations` to auto-rewrite this entry.",
+  "recommendation": "Add a handler registration for `ea-inbox-sweep` in your host worker bootstrap per docs/guides/plugin-handlers.md. Once registered, re-run `foresights apply-migrations` to auto-rewrite this entry.",
   "status": "pending"
 }
 ```
@@ -137,10 +137,10 @@ The host agent walks these entries using `skills/migrations/v0.11.0.md`:
    registration in the host's worker bootstrap following the pattern
    above.
 3. Deploy the updated worker.
-4. Re-run `gbrain apply-migrations --yes`. The orchestrator
+4. Re-run `foresights apply-migrations --yes`. The orchestrator
    recognizes the newly-registerable handler (worker writes the
    registered names to a discovery file on startup) and rewrites the
-   cron entry to use `gbrain jobs submit`. The JSONL row is marked
+   cron entry to use `foresights jobs submit`. The JSONL row is marked
    `status: "complete"`.
 
 ## Trust boundary

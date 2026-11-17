@@ -44,7 +44,7 @@ async function runRevisionBackfill(ctx: DoctorContext): Promise<Check[]> {
         : `${status.pending} page(s) still have no revision; the page revision backfill is incomplete, and a write that names their revision is refused with revision_backfill_pending.`,
       ...(status.failed.length ? [`${status.failed.length} row(s) failed: ${listed(status.failed)}.`] : []),
       ...(spent.length ? [`${spent.length} of them used all ${REVISION_BACKFILL_MAX_ATTEMPTS} attempts, so resuming no longer retries them; `
-        + 'the usual cause is a torn page body. Preview with gbrain repair orphan-children (torn_pages lists them) and recover those pages from a backup or a re-sync.'] : []),
+        + 'the usual cause is a torn page body. Preview with foresights repair orphan-children (torn_pages lists them) and recover those pages from a backup or a re-sync.'] : []),
       ...(resumable > 0 || status.pending === 0 ? [`Resume the backfill on the brain host: ${REVISION_BACKFILL_RESUME_COMMAND} (it prints its progress).`] : []),
     ];
     const fix = resumable > 0 || status.pending === 0

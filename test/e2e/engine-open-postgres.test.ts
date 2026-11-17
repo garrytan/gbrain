@@ -115,7 +115,7 @@ describeE2E('openEngine on Postgres', () => {
     });
     // The connection-events audit log (connection-audit.ts) is a process-wide diagnostic sink, not an engine setting;
     // nothing else, and no host.json or writer credential, lands under the home.
-    expect(filesUnder(gbrainHome).filter(path => !/^\.gbrain\/audit\/connection-events-\d{4}-W\d{2}\.jsonl$/.test(path))).toEqual([]);
+    expect(filesUnder(gbrainHome).filter(path => !/^\.(?:foresights|gbrain)\/audit\/connection-events-\d{4}-W\d{2}\.jsonl$/.test(path))).toEqual([]);
     expect(filesUnder(home)).toEqual([]);
   }, 300_000);
 

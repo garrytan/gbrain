@@ -1,6 +1,6 @@
 /**
  * #6825: atom_provenance_drift compared an atom's source_hash with the page's whole content_hash, so a
- * metadata-only frontmatter edit, or a gbrain fence write (takes or facts) that leaves the prose byte-identical, read
+ * metadata-only frontmatter edit, or a foresights fence write (takes or facts) that leaves the prose byte-identical, read
  * as an edited source.
  *
  * 1. Protects: when the edition the atom was extracted from is recoverable (a page_versions row whose content hash

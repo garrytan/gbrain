@@ -3,7 +3,7 @@
  *   - A pass that committed work before it was stopped no longer counts toward the abandoned streak, so status stops
  *     calling a source that banks work every pass "abandoned". A pass that committed nothing (only a heartbeat) still
  *     counts.
- *   - A read-only mirror carries its database-only pages (file gone upstream, page edited in gbrain) as a counted class
+ *   - A read-only mirror carries its database-only pages (file gone upstream, page edited in foresights) as a counted class
  *     that never blocks the pass, and status never advises `--prefer database`, which would write the mirror.
  *   - A symlink whose target does not exist is skipped instead of held as unreadable; one whose path is a live page's
  *     stays held; an unreadable hold an older pass wrote for a dangling link is released.
@@ -148,7 +148,7 @@ describe.each(testBackends())('GST-2515: dangling symlinks (%s)', backend => {
     rmSync(join(root, 'keep', 'k0.md'));
     symlinkSync(join(root, 'nowhere', 'k0.md'), join(root, 'keep', 'k0.md'));
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'upstream adds links');
-    // The hold an older gbrain wrote for a dangling link (it read the link as an unreadable file).
+    // The hold an older foresights wrote for a dangling link (it read the link as an unreadable file).
     const inc = await incarnation(engine);
     await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation: inc, path: 'links/l0.md', source_path: 'links/l0.md', slug: 'links/l0', page_id: null,
       code: 'file_unreadable', message: 'links/l0.md: unreadable', upstream_version: null, observed_at: new Date(Date.now() - 60_000).toISOString(), run_id: null, mode: 'managed', meta: {} } as any));

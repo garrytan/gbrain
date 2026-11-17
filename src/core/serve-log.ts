@@ -1,8 +1,8 @@
 /**
  * serve's own log hygiene (#7246): size-based rotation and dedupe of repeated
- * lines for a `gbrain serve` whose stdout or stderr is a regular file.
+ * lines for a `foresights serve` whose stdout or stderr is a regular file.
  *
- * The service installs `gbrain mcp expose` writes (launchd StandardOutPath,
+ * The service installs `foresights mcp expose` writes (launchd StandardOutPath,
  * systemd `append:`, the nohup `>>` fallback) and any operator `>>` redirect
  * hand serve an append-mode file descriptor it cannot reopen. So rotation is
  * copy-then-truncate on that descriptor: shift <path>.N-1 → <path>.N, copy
@@ -11,7 +11,7 @@
  *
  * Dedupe: a line seen again inside the window (a leading timestamp ignored)
  * is counted instead of written; when the window ends, or the process exits,
- * one "[gbrain serve-log] repeated N more time(s) in the last Ws: <line>" line
+ * one "[foresights serve-log] repeated N more time(s) in the last Ws: <line>" line
  * follows. The first occurrence is always written immediately.
  *
  * TTYs, pipes and journald are left alone. Knobs (env, read at serve start):
@@ -39,7 +39,7 @@ export function resolveServeLogPolicy(env: Record<string, string | undefined>, w
     if (raw === undefined || raw === '') return fallback;
     const n = Number(raw);
     if (Number.isInteger(n) && n >= min) return n;
-    warn(`[gbrain serve] ignoring invalid ${name}=${JSON.stringify(raw)} — using default ${fallback}`);
+    warn(`[foresights serve] ignoring invalid ${name}=${JSON.stringify(raw)} — using default ${fallback}`);
     return fallback;
   };
   return {
@@ -84,7 +84,7 @@ export class LineDeduper {
     const entry = this.seen.get(key)!;
     this.seen.delete(key);
     return entry.repeats > 0
-      ? [`[gbrain serve-log] repeated ${entry.repeats} more time(s) in the last ${Math.round(this.windowMs / 1000)}s: ${entry.line}`]
+      ? [`[foresights serve-log] repeated ${entry.repeats} more time(s) in the last ${Math.round(this.windowMs / 1000)}s: ${entry.line}`]
       : [];
   }
 }

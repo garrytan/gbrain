@@ -10,7 +10,7 @@
  * - `consolidation`: the dream consolidate phase closes the older members of a cluster at the next member's
  *   `valid_from` (`valid_until`) and marks them consolidated. A cluster whose members are not in strict chronological
  *   order is held (`tie`, #6023); a strict chain records each member's `valid_until`, `consolidated_at` and
- *   `consolidated_into` before it changes them, and `gbrain repair generations --kind consolidation --mode restore` puts
+ *   `consolidated_into` before it changes them, and `foresights repair generations --kind consolidation --mode restore` puts
  *   them back.
  */
 import type { BrainEngine } from '../../engine.ts';

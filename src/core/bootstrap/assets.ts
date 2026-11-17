@@ -106,7 +106,7 @@ export interface QuestionSpec {
   /** Silent consent: resolved from `default` at install time, NEVER prompted.
    * Used for consents where installing gbrain-for-your-agent is itself the
    * consent and the alternative defeats the product (per-turn hooks, search
-   * mode). Off-ramps (a `--flag`, `GBRAIN_HOOKS=0`, `gbrain search modes`)
+   * mode). Off-ramps (a `--flag`, `GBRAIN_HOOKS=0`, `foresights search modes`)
    * replace the prompt. */
   silent?: boolean;
   phase?: string;

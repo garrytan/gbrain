@@ -2,7 +2,7 @@
  * Refactor wave 1 (W4 jobs, A15): built-in Minion handler registry golden.
  *
  * `registerBuiltinHandlers` (exported from src/commands/jobs.ts) is the one
- * place a `gbrain jobs work` worker learns which job names it can claim, and
+ * place a `foresights jobs work` worker learns which job names it can claim, and
  * the supervisor derives its wedge-watchdog name scope from the same call
  * (supervisor.ts deriveHandlerNames, issue #1801). Moving the handler bodies
  * into src/core/minions/handlers/ must keep the registered names AND their

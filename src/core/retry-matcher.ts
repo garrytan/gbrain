@@ -30,7 +30,7 @@ const CONN_PATTERNS = [
   /connection.*closed/i,
   /server closed the connection/i,
   /could not connect to server/i,
-  // v0.41.2.1: gbrain's own GBrainError thrown by getConnection() when
+  // v0.41.2.1: foresights's own GBrainError thrown by getConnection() when
   // the singleton pool was nulled (engine.disconnect mid-cycle, or
   // postgres.js's auto-recovery between queries). Matches the literal
   // message shape from PR #1416's reported batch-loss incident.
@@ -63,7 +63,7 @@ interface PgError {
   code?: string;
   message?: string;
   cause?: unknown;
-  // v0.41.2.1: gbrain's GBrainError uses `problem` (typed) + `detail` so
+  // v0.41.2.1: foresights's GBrainError uses `problem` (typed) + `detail` so
   // callers can switch on the engine-state class without string matching.
   problem?: string;
 }
@@ -181,7 +181,7 @@ export function isRetryableConnError(err: unknown): boolean {
   // exhaustion. Starts with 53 not 08, so the /^08/ test above misses it.
   // Transient: the spike clears as in-flight queries release connections.
   if (code === '53300') return true;
-  // v0.41.2.1: typed-shape match for gbrain's own GBrainError
+  // v0.41.2.1: typed-shape match for foresights's own GBrainError
   // (problem === 'No database connection'). Avoids brittle string match
   // when the error wrapper is gbrain-internal.
   if (

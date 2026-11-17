@@ -3,7 +3,7 @@
  *
  * Several embedding models served via Ollama (Qwen3-Embedding family) support
  * Matryoshka truncation through the `dimensions` field on /v1/embeddings.
- * Without this passthrough, gbrain ignores user-selected reduced dims and the
+ * Without this passthrough, foresights ignores user-selected reduced dims and the
  * provider returns its native size, causing dim-mismatch failures against
  * brains configured for smaller widths.
  */

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "skill-resolver.v1.turn-input.json",
-  "title": "gbrain skill resolver: turn input (schema_version 1)",
-  "description": "One user turn for `gbrain skills resolve --input-json -` or resolveSkills(). Unknown fields are refused. Within v1, changes are additive only. Guide: docs/guides/skill-resolver.md.",
+  "title": "foresights skill resolver: turn input (schema_version 1)",
+  "description": "One user turn for `foresights skills resolve --input-json -` or resolveSkills(). Unknown fields are refused. Within v1, changes are additive only. Guide: docs/guides/skill-resolver.md.",
   "type": "object",
   "additionalProperties": false,
   "required": [

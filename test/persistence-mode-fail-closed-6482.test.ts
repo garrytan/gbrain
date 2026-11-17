@@ -73,7 +73,7 @@ describe('readManagedMode', () => {
     const env = JSON.parse(renderCliError(error, { json: true, command: 'sync', tty: false }).stdout!);
     expect(env.code).toBe('storage_error');
     expect(env.why).toContain('persistence_brain singleton is missing');
-    expect(env.fix).toMatchObject({ next: 'run', command: 'gbrain sources writer status --probe --json', consent: [], actor: 'agent', verify: { argv: ['gbrain', 'doctor', '--json'] } });
+    expect(env.fix).toMatchObject({ next: 'run', command: 'foresights sources writer status --probe --json', consent: [], actor: 'agent', verify: { argv: ['gbrain', 'doctor', '--json'] } });
     const dup = await readManagedMode(fake([{ enabled: true }, { enabled: true }])).catch((e: unknown) => e) as { why: string };
     expect(dup.why).toContain('duplicated (2 row(s))');
   });

@@ -1,7 +1,7 @@
 /**
  * Managed atom generations, two leftovers of GBRA-161 PR 1b.
  *
- * #9079: `gbrain repair generations --mode release-held` published a released atom result under the drain's run key, so
+ * #9079: `foresights repair generations --mode release-held` published a released atom result under the drain's run key, so
  * its completion request collided with the completion the drain had already journaled for the same input and every
  * release ended idempotency_conflict; the held result could never publish.
  * #9275: an activation recorded its members without the identity each overwrite replaces, so a member interrupted after

@@ -2,7 +2,7 @@
  * #6712 PR 2 (L4): every hold code's printed exit, driven the way an agent drives it under AGENT_OPERATOR_v1.
  *
  * Protects: for each of the 13 Git hold codes on master plus `file_drift`, a real managed sync of a fixture holds the
- * file; the agent reads `gbrain sync status --source <id> --json` and then either
+ * file; the agent reads `foresights sync status --source <id> --json` and then either
  *  - relays the one decision sentence: the hold `needs_human`, `next.user_message` carries its `human_reason` (one
  *    sentence), and the first printed step writes nothing; or
  *  - runs the hold's fix chain step by step (`next: run` only; a repair preview, then the apply command it printed,
@@ -102,7 +102,7 @@ async function managed(engine: BrainEngine, files: Record<string, string | Buffe
 async function each(run: (engine: BrainEngine) => Promise<void>) {
   await withEnv(env, async () => {
     for (const engine of engines) {
-      // A printed plain `gbrain sync` embeds: the transport answers locally, so no provider is called.
+      // A printed plain `foresights sync` embeds: the transport answers locally, so no provider is called.
       __setEmbedTransportForTests((async (args: { values: unknown[] }) => ({ embeddings: args.values.map(() => Array.from({ length: 1536 }, () => 0.01)) })) as never);
       try { await run(engine); }
       finally { __setEmbedTransportForTests(null); installFaultHook(undefined); await disposePersistenceConsumer(engine); for (const key of CONFIG) await engine.unsetConfig(key); }
@@ -121,7 +121,7 @@ const oneSentence = (text: string) => /[.!?]$/.test(text) && !/[.!?]\s+[A-Z]/.te
 
 class CliExit extends Error { constructor(readonly code: number) { super(`process.exit(${code})`); } }
 
-/** Runs one printed gbrain argv in process through the entry point the CLI dispatches it to; stdout and the exit code. */
+/** Runs one printed foresights argv in process through the entry point the CLI dispatches it to; stdout and the exit code. */
 async function cli(engine: BrainEngine, argv: string[]): Promise<{ out: string; err: string; exit: number }> {
   expect(argv[0]).toBe('gbrain');
   const [verb, ...rest] = argv.slice(1);
@@ -228,8 +228,8 @@ test('invalid_frontmatter: the preview, then its hash-bound apply, clears the ho
   await s.sync();
   expect(await s.held()).toEqual([{ path: 'notes/folded.md', code: 'invalid_frontmatter' }]);
   const result = await agent(engine, s.id, 'notes/folded.md');
-  expect(result.ran[0]).toBe(`gbrain repair frontmatter --source ${s.id} --include-ambiguous`);
-  expect(result.ran[1]).toMatch(new RegExp(`^gbrain repair frontmatter --source ${s.id} --include-ambiguous --apply --expect \\S+ --yes$`));
+  expect(result.ran[0]).toBe(`foresights repair frontmatter --source ${s.id} --include-ambiguous`);
+  expect(result.ran[1]).toMatch(new RegExp(`^foresights repair frontmatter --source ${s.id} --include-ambiguous --apply --expect \\S+ --yes$`));
   expect(result.outcome).toBe('cleared');
 }), 180_000);
 
@@ -247,7 +247,7 @@ test('rename_held: re-binding the rename to the current page clears the hold', (
   await s.sync();
   expect(await s.held()).toEqual([{ path: 'notes/y.md', code: 'rename_held' }]);
   const result = await agent(engine, s.id, 'notes/y.md');
-  expect(result.ran[0]).toBe(`gbrain repair frontmatter --source ${s.id} --include-ambiguous`);
+  expect(result.ran[0]).toBe(`foresights repair frontmatter --source ${s.id} --include-ambiguous`);
   expect(result.outcome).toBe('cleared');
   expect((await engine.getPage('notes/y', { sourceId: s.id }))?.id).toBe(x.id);
 }), 180_000);
@@ -257,7 +257,7 @@ test('frontmatter_slug_conflict: the content lane preview for the file, then its
   await s.sync();
   expect(await s.held()).toEqual([{ path: 'notes/stray.md', code: 'frontmatter_slug_conflict' }]);
   const result = await agent(engine, s.id, 'notes/stray.md');
-  expect(result.ran[0]).toBe(`gbrain repair content --source ${s.id} --only notes/stray.md`);
+  expect(result.ran[0]).toBe(`foresights repair content --source ${s.id} --only notes/stray.md`);
   expect(result.outcome).toBe('cleared');
 }), 180_000);
 
@@ -266,7 +266,7 @@ test('invalid_fence: the file\'s fence repair preview, then its apply, resolves 
   await s.sync();
   expect(await s.held()).toEqual([{ path: 'people/holder.md', code: 'invalid_fence' }]);
   const result = await agent(engine, s.id, 'people/holder.md');
-  expect(result.ran[0]).toBe(`gbrain repair fences --source ${s.id} --only people/holder.md`);
+  expect(result.ran[0]).toBe(`foresights repair fences --source ${s.id} --only people/holder.md`);
   expect(result.outcome).toBe('cleared');
 }), 180_000);
 
@@ -282,7 +282,7 @@ test('worktree_dirty: once the editor commits, unblock schedules the file and th
   commit(s.root, 'the editor commits');
   const result = await agent(engine, s.id, 'notes/b.md');
   // #6712 PR 4b: the pass that held b converged and closed its opt-out episode, so the printed sync carries no inherited flags.
-  expect(result.ran).toEqual([`gbrain sync unblock --source ${s.id} --apply --json`, `gbrain sync --source ${s.id} --no-pull`]);
+  expect(result.ran).toEqual([`foresights sync unblock --source ${s.id} --apply --json`, `foresights sync --source ${s.id} --no-pull`]);
   expect(result.outcome).toBe('cleared');
   expect((await engine.getPage('notes/b', { sourceId: s.id }))?.compiled_truth).toContain('A private edit still in progress.');
 }), 180_000);
@@ -330,15 +330,15 @@ test('preparation_stalled: writer status, retry-held and the stored sync clear t
   installFaultHook(undefined);
   expect(await s.held()).toEqual([{ path: 'notes/stalled.md', code: 'preparation_stalled' }]);
   const result = await agent(engine, s.id, 'notes/stalled.md');
-  expect(result.ran.slice(0, 2)).toEqual([`gbrain sources writer status --source ${s.id} --json`, `gbrain sources retry-held ${s.id}`]);
-  expect(result.ran[2]).toStartWith(`gbrain sync --source ${s.id}`);
+  expect(result.ran.slice(0, 2)).toEqual([`foresights sources writer status --source ${s.id} --json`, `foresights sources retry-held ${s.id}`]);
+  expect(result.ran[2]).toStartWith(`foresights sync --source ${s.id}`);
   expect(result.outcome).toBe('cleared');
 }), 180_000);
 
 test('managed_image_sync_unsupported: never escalates and is nobody\'s next step; the user\'s exclude decision clears it', () => each(async engine => {
   const s = await managed(engine, { 'notes/a.md': note('A'), 'images/photo.png': PNG });
   await s.sync();
-  // Multimodal is off, so the image is not an entry; a gbrain that held images at freeze left this hold.
+  // Multimodal is off, so the image is not an entry; a foresights that held images at freeze left this hold.
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [s.id]);
   await writeGitHold(engine, { source_id: s.id, incarnation: source!.incarnation, path: 'images/photo.png', source_path: 'images/photo.png', slug: 'images/photo.png', page_id: null,
     code: 'managed_image_sync_unsupported', message: 'images/photo.png is an image, and managed sync imports images only with GBRAIN_EMBEDDING_MULTIMODAL=true.', upstream_version: sha256(PNG.toString('utf8')),
@@ -440,8 +440,8 @@ test('file_too_large, content_rejected, write_gate_rejected, purged_content and 
     'notes/big.md': ['file_too_large', 'over the page size limit'],
     'notes/junk.md': ['content_rejected', 'content-sanity gate'],
     'notes/vendor.md': ['write_gate_rejected', 'write_gate.external_mode=reject'],
-    'notes/leaked-copy.md': ['purged_content', 'gbrain pages unpurge'],
-    'notes/regressed.md': ['parser_regression', 'Report the file and gbrain version'],
+    'notes/leaked-copy.md': ['purged_content', 'foresights pages unpurge'],
+    'notes/regressed.md': ['parser_regression', 'Report the file and foresights version'],
   };
   expect(Object.fromEntries((await s.held()).map(hold => [hold.path, hold.code as string]))).toEqual(Object.fromEntries(Object.entries(expected).map(([path, [code]]) => [path, code])));
   for (const [path, [, says]] of Object.entries(expected)) expect(expectAsked(await agent(engine, s.id, path))).toContain(says);

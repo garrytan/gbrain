@@ -68,7 +68,7 @@ const SHOWN = 20;
 export function roomSummaryLine(meta: RoomMeta): string {
   const who = meta.principals.length ? meta.principals.join(', ') : 'no one readable';
   const c = meta.counts;
-  const lines = [`[gbrain room: ${who}] ${meta.unavailable
+  const lines = [`[foresights room: ${who}] ${meta.unavailable
     ? `no item could be judged (${meta.unavailable}); treat all ${c.items} as above the room's level`
     : `${c.readable} of ${c.items} items readable by the room, ${c.above} above its level, ${c.unknown} unknown`}`];
   for (const a of meta.above.slice(0, SHOWN)) {
@@ -99,5 +99,5 @@ export async function routedWithRoom(op: string, result: unknown, envelopeMeta: 
 
 /** A command outside the operations cannot mark what it prints; it runs unchanged and says so. */
 export function roomNotMarkedLine(command: string): string {
-  return `[gbrain room] gbrain ${command} does not mark its results for a room: treat all of its output as above the room's level.\n`;
+  return `[foresights room] foresights ${command} does not mark its results for a room: treat all of its output as above the room's level.\n`;
 }

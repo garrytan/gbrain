@@ -1,7 +1,7 @@
 /**
  * mcp-registration-blocks.test.ts — cathedral-6 lane B pins:
  * - openclawThinClientBlock is run on the OpenClaw machine: the scoped
- *   `gbrain init` thin-client command with all four connection args, then
+ *   `foresights init` thin-client command with all four connection args, then
  *   OpenClaw's own `mcp add` for that thin client's stdio bridge (#8543),
  *   with the launcher resolved there, no host path, no mcpServers key, and
  *   one GBRAIN_HOME on both lines when a narrow home is chosen.
@@ -21,9 +21,9 @@ const OPTS = {
 };
 
 describe('openclawThinClientBlock', () => {
-  test('carries the gbrain init thin-client command with all four connection args', () => {
+  test('carries the foresights init thin-client command with all four connection args', () => {
     const block = openclawThinClientBlock(OPTS);
-    expect(block).toContain('gbrain init --mcp-only');
+    expect(block).toContain('foresights init --mcp-only');
     expect(block).toContain('--issuer-url https://brain.example.com');
     expect(block).toContain('--mcp-url https://brain.example.com/mcp');
     expect(block).toContain('--oauth-client-id client_abc123');
@@ -32,9 +32,9 @@ describe('openclawThinClientBlock', () => {
 
   test('registers the thin client\'s stdio bridge with OpenClaw, launcher resolved on the OpenClaw machine', () => {
     const block = openclawThinClientBlock(OPTS);
-    expect(block).toContain('# On the OpenClaw machine, install the gbrain CLI, then run:');
+    expect(block).toContain('# On the OpenClaw machine, install the foresights CLI, then run:');
     expect(block).toContain('openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs');
-    expect(block).toContain("If gbrain's OpenClaw bundle plugin is installed there, it already registers");
+    expect(block).toContain("If foresights's OpenClaw bundle plugin is installed there, it already registers");
     expect(block).toContain("OpenClaw's native remote MCP client (streamable HTTP + `openclaw mcp login`) is the other scoped");
     expect(block).not.toContain('FULL local DB access');
   });
@@ -49,7 +49,7 @@ describe('openclawThinClientBlock', () => {
   test('a narrow home rides on both the init line and the entry', () => {
     const block = openclawThinClientBlock({ ...OPTS, gbrainHome: '/home/alice-example/.gbrain-openclaw' });
     const lines = block.split('\n');
-    expect(lines.find(l => l.includes('gbrain init'))).toStartWith('GBRAIN_HOME=/home/alice-example/.gbrain-openclaw gbrain init --mcp-only');
+    expect(lines.find(l => l.includes('foresights init'))).toStartWith('GBRAIN_HOME=/home/alice-example/.gbrain-openclaw foresights init --mcp-only');
     expect(lines.find(l => l.startsWith('openclaw mcp add'))).toEndWith(' --env GBRAIN_HOME=/home/alice-example/.gbrain-openclaw');
     expect(block).not.toContain('GBRAIN_HOME=<dir>');
   });
@@ -65,7 +65,7 @@ describe('OAUTH_SECRET_NOTE (moved to core)', () => {
   test('text is unchanged by the move', () => {
     expect(OAUTH_SECRET_NOTE).toBe(
       'Note: the client secret is sensitive — store it like a password. It mints ' +
-        'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.',
+        'short-lived, scoped access tokens; revoke with `foresights auth revoke-client`.',
     );
   });
 

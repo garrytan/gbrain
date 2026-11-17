@@ -1,8 +1,8 @@
 /**
- * #6497 `gbrain decide status`: the "newer reference available" hint only
+ * #6497 `foresights decide status`: the "newer reference available" hint only
  * names a shipped reference for the same slot, call site, provider and model
  * as the calibration in use, and the command it prints
- * (`gbrain decide calibrations adopt ref:<id>`) runs: `adopt` accepts a
+ * (`foresights decide calibrations adopt ref:<id>`) runs: `adopt` accepts a
  * `ref:` id for a reference whose slot matches and stores it verbatim in
  * `decide.slots.<slot>.calibration`.
  *

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/pregate-remote-gate.sh — gbrain's remote test gate for gstack-pregate.
+# scripts/pregate-remote-gate.sh — foresights's remote test gate for gstack-pregate.
 #
 # .gstack/pregate.json names this script as `remote_gate`. Under 8 cores
 # gstack-pregate records the local test tier as a requires-remote obligation

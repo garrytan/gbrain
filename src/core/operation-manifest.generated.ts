@@ -449,7 +449,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "put_page",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps later, `gbrain serve --http` does not self-sweep). Edits: edit_page; appends: append_page; >3 pages: put_pages.",
+    "description": "Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `foresights serve` sweeps later, `foresights serve --http` does not self-sweep). Edits: edit_page; appends: append_page; >3 pages: put_pages.",
     "params": {
       "source_id": {
         "type": "string",
@@ -548,7 +548,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "delete_page",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names gbrain repair file-drift --prefer file, which imports the file's current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials. Before the row is removed, pages that are private only through this page get their own visibility: private; a purge that cannot label them soft-deletes the page instead and returns purge_held (doctor derived_origin_parked).",
+    "description": "Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names foresights repair file-drift --prefer file, which imports the file's current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials. Before the row is removed, pages that are private only through this page get their own visibility: private; a purge that cannot label them soft-deletes the page instead and returns purge_held (doctor derived_origin_parked).",
     "params": {
       "source_id": {
         "type": "string",
@@ -709,7 +709,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "purge_deleted_pages",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72), in every source. Cascades through content_chunks, page_links, chunk_relations. Trusted local CLI only; the command is `gbrain pages purge-deleted`, which asks first (yes: true is the consent). Manual escape hatch alongside the autopilot purge phase.",
+    "description": "Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72), in every source. Cascades through content_chunks, page_links, chunk_relations. Trusted local CLI only; the command is `foresights pages purge-deleted`, which asks first (yes: true is the consent). Manual escape hatch alongside the autopilot purge phase.",
     "params": {
       "older_than_hours": {
         "type": "number",
@@ -1530,7 +1530,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "query",
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.",
+    "description": "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `foresights transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.",
     "params": {
       "query": {
         "type": "string",
@@ -1962,7 +1962,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL (SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text refinement merges via weighted RRF. Matching images to full-text knowledge needs multimodal indexing (`gbrain reindex --multimodal` + `search.unified_multimodal: true`).",
+    "description": "Image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL (SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text refinement merges via weighted RRF. Matching images to full-text knowledge needs multimodal indexing (`foresights reindex --multimodal` + `search.unified_multimodal: true`).",
     "params": {
       "image_path": {
         "type": "string",
@@ -3024,7 +3024,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. Admin-scope.",
+    "description": "Snapshot for `foresights status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. Admin-scope.",
     "params": {},
     "scope": "admin",
     "localOnly": false,
@@ -4446,7 +4446,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Job queue statistics. PER-BLOCK scoping: by_status and queue_health are GLOBAL (unfiltered); by_type is windowed by since_hours; only the wedge block is scoped to the queue param. wedged: true is the silent-halt signal (a worker is alive but claiming nothing while work waits) — suggest restarting the jobs supervisor on the brain host. no_worker: true means work is waiting and NO worker is running for the queue (always on PGLite unless a gbrain jobs work drain is live); wedged is then false and the no_worker notice names the fix. private_queue: true means the queue is a parent-owned dream-inline queue: wedged is NEVER true for it and a worker restart cannot help — recovery runs automatically at worker spawn / dream-cycle start; suggest gbrain doctor for the per-queue verdict. by_queue has one row per queue (every dream-inline-* queue folded into one dream-inline row). Host-process diagnostics (renice, backpressure hints) stay on the gbrain jobs stats CLI.",
+    "description": "Job queue statistics. PER-BLOCK scoping: by_status and queue_health are GLOBAL (unfiltered); by_type is windowed by since_hours; only the wedge block is scoped to the queue param. wedged: true is the silent-halt signal (a worker is alive but claiming nothing while work waits) — suggest restarting the jobs supervisor on the brain host. no_worker: true means work is waiting and NO worker is running for the queue (always on PGLite unless a foresights jobs work drain is live); wedged is then false and the no_worker notice names the fix. private_queue: true means the queue is a parent-owned dream-inline queue: wedged is NEVER true for it and a worker restart cannot help — recovery runs automatically at worker spawn / dream-cycle start; suggest foresights doctor for the per-queue verdict. by_queue has one row per queue (every dream-inline-* queue folded into one dream-inline row). Host-process diagnostics (renice, backpressure hints) stay on the foresights jobs stats CLI.",
     "params": {
       "queue": {
         "type": "string",
@@ -4470,7 +4470,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
-    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+    "description": "This tool notifies you: it has foresights wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
     "params": {
       "id": {
         "type": "number",
@@ -4506,7 +4506,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
-    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when your write request settles (committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. The wake names the request and says to call get_write_request; it carries no slug or page text. You can watch only your own receipts. If no wake arrives, call get_write_request.",
+    "description": "This tool notifies you: it has foresights wake this conversation through Wakeshift when your write request settles (committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. The wake names the request and says to call get_write_request; it carries no slug or page text. You can watch only your own receipts. If no wake arrives, call get_write_request.",
     "params": {
       "request_id": {
         "type": "string",
@@ -4542,7 +4542,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
-    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift the next time the named cron reports its run (ok or failed) with gbrain wakeshift emit. One wake per watch; call it again for the run after. The wake names the cron and the status; read the output where the cron writes it. Only crons the brain owner registered with gbrain wakeshift cron add can be watched.",
+    "description": "This tool notifies you: it has foresights wake this conversation through Wakeshift the next time the named cron reports its run (ok or failed) with foresights wakeshift emit. One wake per watch; call it again for the run after. The wake names the cron and the status; read the output where the cron writes it. Only crons the brain owner registered with foresights wakeshift cron add can be watched.",
     "params": {
       "name": {
         "type": "string",
@@ -5243,7 +5243,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "takes_remove",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Remove one take row from a page's takes fence and the takes table together. Local-only. Other rows keep their numbers. Refuses a resolved row, a row another row cites as \"superseded by\" it, and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). CLI: `gbrain takes remove <slug> --row N`.",
+    "description": "Remove one take row from a page's takes fence and the takes table together. Local-only. Other rows keep their numbers. Refuses a resolved row, a row another row cites as \"superseded by\" it, and a row whose database copy disagrees with the fence (run `foresights takes rebuild <slug>` first). CLI: `foresights takes remove <slug> --row N`.",
     "params": {
       "request_id": {
         "type": "string",
@@ -5285,7 +5285,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "local-only: rebuild warnings quote malformed takes fence rows to the trusted local CLI owner, as the local rebuild always printed them"
     },
-    "description": "Rebuild one page's takes index from the takes fence the page holds. Local-only. Rows whose number and claim still match keep their resolution; rows the index and the fence disagree on are re-inserted from the fence. CLI: `gbrain takes rebuild <slug>`.",
+    "description": "Rebuild one page's takes index from the takes fence the page holds. Local-only. Rows whose number and claim still match keep their resolution; rows the index and the fence disagree on are re-inserted from the fence. CLI: `foresights takes rebuild <slug>`.",
     "params": {
       "request_id": {
         "type": "string",
@@ -5360,7 +5360,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "List registered sources with page counts and remote_url. remote_url lets a remote MCP caller confirm a source is managed by clone+pull rather than user-supplied path. Results are confined to the caller's resolved source scope (federated read grant > bound source) and carry no marker when rows were withheld, so a listing may be incomplete. Only the trusted local CLI (`gbrain sources list`) sees the full registry.",
+    "description": "List registered sources with page counts and remote_url. remote_url lets a remote MCP caller confirm a source is managed by clone+pull rather than user-supplied path. Results are confined to the caller's resolved source scope (federated read grant > bound source) and carry no marker when rows were withheld, so a listing may be incomplete. Only the trusted local CLI (`foresights sources list`) sees the full registry.",
     "params": {
       "include_archived": {
         "type": "boolean",
@@ -5378,7 +5378,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "sources_remove",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Hard-remove a source (cascades pages/chunks/embeddings). Refuses to delete the auto-managed clone dir unless its resolved path is confined under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most workflows prefer the soft-delete path (`gbrain sources archive`). Confined to the caller's WRITE authority, not its read scope: an untrusted caller may remove only its own write source (a federated read grant naming a source does not make it removable); any other id answers not_found, indistinguishable from a nonexistent source. Only the trusted local CLI (`gbrain sources remove`) can remove any source.",
+    "description": "Hard-remove a source (cascades pages/chunks/embeddings). Refuses to delete the auto-managed clone dir unless its resolved path is confined under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most workflows prefer the soft-delete path (`foresights sources archive`). Confined to the caller's WRITE authority, not its read scope: an untrusted caller may remove only its own write source (a federated read grant naming a source does not make it removable); any other id answers not_found, indistinguishable from a nonexistent source. Only the trusted local CLI (`foresights sources remove`) can remove any source.",
     "params": {
       "id": {
         "type": "string",
@@ -5477,7 +5477,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Read-only: what gbrain did with each file path of a source, by its own rules. Per path: the slug sync gives it, whether sync skips it (metafile, excluded, pruned) and why, its sync hold, its page with chunk and embedding counts, whether search finds it now, and the command that moves it on. A deleted path is checked by the page that records it as its origin, never by slug. Use it in landing checks instead of re-implementing slugging. Confined to the caller's source scope.",
+    "description": "Read-only: what foresights did with each file path of a source, by its own rules. Per path: the slug sync gives it, whether sync skips it (metafile, excluded, pruned) and why, its sync hold, its page with chunk and embedding counts, whether search finds it now, and the command that moves it on. A deleted path is checked by the page that records it as its origin, never by slug. Use it in landing checks instead of re-implementing slugging. Confined to the caller's source scope.",
     "params": {
       "id": {
         "type": "string",
@@ -5599,7 +5599,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Returns one-line summaries of recent raw conversation transcripts (NOT polished reflections). Use this FIRST for questions about 'what's going on with me', 'what have I been thinking about', or anything personal/emotional. Raw transcripts are the canonical source for the user's own state — polished pages summarize and flatten. Local-only: rejects remote (MCP/HTTP) callers with a clear permission_denied; call via the gbrain CLI.",
+    "description": "Returns one-line summaries of recent raw conversation transcripts (NOT polished reflections). Use this FIRST for questions about 'what's going on with me', 'what have I been thinking about', or anything personal/emotional. Raw transcripts are the canonical source for the user's own state — polished pages summarize and flatten. Local-only: rejects remote (MCP/HTTP) callers with a clear permission_denied; call via the foresights CLI.",
     "scope": "read",
     "localOnly": true,
     "cliOnly": {
@@ -5700,7 +5700,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle: events + timeline entries on a given day (or its ISO week when week=true), ordered chronologically; each row backlinks to its depth page. Distinct from `get_timeline`/`gbrain timeline <slug>`, which shows ONE page's timeline. CLI: `gbrain day <date>`.",
+    "description": "Life Chronicle: events + timeline entries on a given day (or its ISO week when week=true), ordered chronologically; each row backlinks to its depth page. Distinct from `get_timeline`/`foresights timeline <slug>`, which shows ONE page's timeline. CLI: `foresights day <date>`.",
     "scope": "read",
     "params": {
       "date": {
@@ -5734,7 +5734,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle: events from the same calendar day in PRIOR years (\"on this day\"). CLI: `gbrain on-this-day [--date YYYY-MM-DD]`.",
+    "description": "Life Chronicle: events from the same calendar day in PRIOR years (\"on this day\"). CLI: `foresights on-this-day [--date YYYY-MM-DD]`.",
     "scope": "read",
     "params": {
       "date": {
@@ -5756,7 +5756,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle: events + timeline entries on or after a date, optionally filtered by event kind. CLI: `gbrain since <date> [--kind commitment]`.",
+    "description": "Life Chronicle: events + timeline entries on or after a date, optionally filtered by event kind. CLI: `foresights since <date> [--kind commitment]`.",
     "scope": "read",
     "params": {
       "date": {
@@ -5786,7 +5786,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle: when an entity was last seen — its own timeline rows OR an event's `who`. Returns last_date, the event slug, and days_ago. CLI: `gbrain last-seen <entity-slug>`.",
+    "description": "Life Chronicle: when an entity was last seen — its own timeline rows OR an event's `who`. Returns last_date, the event slug, and days_ago. CLI: `foresights last-seen <entity-slug>`.",
     "scope": "read",
     "params": {
       "entity": {
@@ -5812,7 +5812,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` (default now), with provenance + confidence + validity. CLI: `gbrain ontology <entity> [--asof YYYY-MM-DD]`.",
+    "description": "Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` (default now), with provenance + confidence + validity. CLI: `foresights ontology <entity> [--asof YYYY-MM-DD]`.",
     "scope": "read",
     "params": {
       "entity": {
@@ -5845,7 +5845,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "ontology_propose",
     "idempotent": false,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle: record one ontology observation (entity has dimension=value), sourced + confidence-weighted + bi-temporal. Idempotent on (entity,dimension,value,source). A new value supersedes the prior; a backdated conflict is flagged not rewritten. CLI: `gbrain ontology-add <entity> <dimension> <value>`.",
+    "description": "Life Chronicle: record one ontology observation (entity has dimension=value), sourced + confidence-weighted + bi-temporal. Idempotent on (entity,dimension,value,source). A new value supersedes the prior; a backdated conflict is flagged not rewritten. CLI: `foresights ontology-add <entity> <dimension> <value>`.",
     "scope": "write",
     "mutating": true,
     "params": {
@@ -5904,7 +5904,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with entity + observation counts. CLI: `gbrain ontology-dimensions`.",
+    "description": "Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with entity + observation counts. CLI: `foresights ontology-dimensions`.",
     "scope": "read",
     "params": {},
     "cliHints": {
@@ -5917,7 +5917,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle: dimensions with ≥2 distinct current values from ≥2 provenances (genuine disagreement, not temporal supersession). CLI: `gbrain ontology-contradictions`.",
+    "description": "Life Chronicle: dimensions with ≥2 distinct current values from ≥2 provenances (genuine disagreement, not temporal supersession). CLI: `foresights ontology-contradictions`.",
     "scope": "read",
     "params": {
       "min_confidence": {
@@ -5935,7 +5935,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Life Chronicle agent-orientation: the recent timeline (last N days) + the current validity-resolved ontology for the named entities, in one zero-LLM payload, so an agent orients before acting. Diary-sourced ontology is redacted for remote callers. CLI: `gbrain orient [--days 7] [--entities people/a,people/b]`.",
+    "description": "Life Chronicle agent-orientation: the recent timeline (last N days) + the current validity-resolved ontology for the named entities, in one zero-LLM payload, so an agent orients before acting. Diary-sourced ontology is redacted for remote callers. CLI: `foresights orient [--days 7] [--entities people/a,people/b]`.",
     "scope": "read",
     "params": {
       "days": {
@@ -5960,7 +5960,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "chronicle_backfill",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Life Chronicle: queue existing meeting/conversation/calendar pages (by type or under meetings/, conversations/, cal/, calendar/) for timeline-event extraction. One paid chat call per page, so it needs --yes; --dry-run reports the candidates, an estimated cost and skip reasons. The chronicle_page_state ledger skips content already extracted or queued, so repeats never pay twice. Queued pages run in the `chronicle` cycle phase (`gbrain dream --phase chronicle`), exempt from the daily limit. --max-usd is a hard bound counting retries: pages queue only while their worst case fits, and an unpriced chat model then refuses with no_pricing. Local-only bulk op. CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--max-usd USD] [--dry-run | --yes]`.",
+    "description": "Life Chronicle: queue existing meeting/conversation/calendar pages (by type or under meetings/, conversations/, cal/, calendar/) for timeline-event extraction. One paid chat call per page, so it needs --yes; --dry-run reports the candidates, an estimated cost and skip reasons. The chronicle_page_state ledger skips content already extracted or queued, so repeats never pay twice. Queued pages run in the `chronicle` cycle phase (`foresights dream --phase chronicle`), exempt from the daily limit. --max-usd is a hard bound counting retries: pages queue only while their worst case fits, and an unpriced chat model then refuses with no_pricing. Local-only bulk op. CLI: `foresights chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--max-usd USD] [--dry-run | --yes]`.",
     "scope": "admin",
     "mutating": true,
     "localOnly": true,
@@ -6667,7 +6667,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "purge_fact",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Owner-only, trusted local CLI on the brain host (`gbrain forget <id> --purge`). Removes a fact's claim from every live store the deletion inventory sweeps (fact rows, verbatim takes, fence rows in page bodies and versions, chunks, stored write intents, review rows), blocks it from returning (text-free tombstone), hides model-derived rows for re-derivation, and returns a receipt listing residuals first. Not a mode of forget: forget expires, purge deletes. dry_run returns the receipt and a confirmation token; a real run needs confirm equal to that token. Purge removes content from live stores; it never claims physical erasure.",
+    "description": "Owner-only, trusted local CLI on the brain host (`foresights forget <id> --purge`). Removes a fact's claim from every live store the deletion inventory sweeps (fact rows, verbatim takes, fence rows in page bodies and versions, chunks, stored write intents, review rows), blocks it from returning (text-free tombstone), hides model-derived rows for re-derivation, and returns a receipt listing residuals first. Not a mode of forget: forget expires, purge deletes. dry_run returns the receipt and a confirmation token; a real run needs confirm equal to that token. Purge removes content from live stores; it never claims physical erasure.",
     "params": {
       "request_id": {
         "type": "string",
@@ -6742,7 +6742,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "list_page_purges",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Owner-only (`gbrain pages purges list`). Lists page purge tombstones: slug, content hash prefix, request and time. Never returns content.",
+    "description": "Owner-only (`foresights pages purges list`). Lists page purge tombstones: slug, content hash prefix, request and time. Never returns content.",
     "params": {
       "source_id": {
         "type": "string",
@@ -6773,7 +6773,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "unpurge_page",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Owner-only (`gbrain pages unpurge <slug>`). Clears the purge tombstones recorded for a slug so the same content can be imported again. Restores nothing.",
+    "description": "Owner-only (`foresights pages unpurge <slug>`). Clears the purge tombstones recorded for a slug so the same content can be imported again. Restores nothing.",
     "params": {
       "slug": {
         "type": "string",
@@ -7065,7 +7065,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Return suspected-contradiction findings from the most recent `gbrain eval suspected-contradictions` probe run, optionally filtered by slug and/or severity. Use this when the user asks 'what's inconsistent in my brain', 'show me contradictions about Acme', 'high-severity issues only', or wants to act on the probe's findings without re-running it. Returns {contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. Remote, source-scoped or min_trust callers get only findings whose two sides they can read now (each side re-read live, with source_id, trust_tier and origin) and total_visible instead of the run total. Reads the stored run without triggering a new probe; users run `gbrain eval suspected-contradictions` for that.",
+    "description": "Return suspected-contradiction findings from the most recent `foresights eval suspected-contradictions` probe run, optionally filtered by slug and/or severity. Use this when the user asks 'what's inconsistent in my brain', 'show me contradictions about Acme', 'high-severity issues only', or wants to act on the probe's findings without re-running it. Returns {contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. Remote, source-scoped or min_trust callers get only findings whose two sides they can read now (each side re-read live, with source_id, trust_tier and origin) and total_visible instead of the run total. Reads the stored run without triggering a new probe; users run `foresights eval suspected-contradictions` for that.",
     "scope": "read",
     "params": {
       "slug": {
@@ -7146,7 +7146,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
+    "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `foresights founder scorecard <slug>` for an aggregated rollup of the same data.",
     "scope": "read",
     "params": {
       "entity_slug": {
@@ -7404,7 +7404,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "migrate_embeddings",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Re-embed the brain onto a different embedding provider/model: schema dimension transition, NULL-signature invalidation, query-cache purge, resumable re-embed. Without yes=true returns the plan + cost estimate only. Local-only admin op; the primary surface is `gbrain migrate embeddings`.",
+    "description": "Re-embed the brain onto a different embedding provider/model: schema dimension transition, NULL-signature invalidation, query-cache purge, resumable re-embed. Without yes=true returns the plan + cost estimate only. Local-only admin op; the primary surface is `foresights migrate embeddings`.",
     "params": {
       "to": {
         "type": "string",
@@ -7862,7 +7862,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "questions_pin",
-    "description": "Pin a question: gbrain keeps a cited answer current from your notes and flags sentences whose evidence changed. Idempotent. Pins made over MCP stay inactive (paid refresh) until the owner activates them; returns the first answer when a key and consent exist, else awaiting_refresh with next_action.",
+    "description": "Pin a question: foresights keeps a cited answer current from your notes and flags sentences whose evidence changed. Idempotent. Pins made over MCP stay inactive (paid refresh) until the owner activates them; returns the first answer when a key and consent exist, else awaiting_refresh with next_action.",
     "params": {
       "question": {
         "type": "string",

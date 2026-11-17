@@ -115,8 +115,8 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
   const sql = query(db);
   const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
   if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
-  if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
-  if (patch.privatePages !== undefined && !('private_pages' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-pages grant');
+  if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run foresights apply-migrations --yes before changing client grants');
+  if (patch.privatePages !== undefined && !('private_pages' in rows[0])) throw new GrantError('grant_schema_required', 'Run foresights apply-migrations --yes before changing the private-pages grant');
   const before = grantFromRow(rows[0]);
   if (opts.expectedRevision !== undefined && before.revision !== opts.expectedRevision) {
     throw new GrantError('grant_conflict', `Grant changed (expected revision ${opts.expectedRevision}, current ${before.revision}); review a fresh preview`);
@@ -174,7 +174,7 @@ export async function recordFirstConsentInTransaction(db: GrantDatabase, clientI
   const sql = query(db);
   const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
   if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
-  if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
+  if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run foresights apply-migrations --yes before changing client grants');
   const before = grantFromRow(rows[0]);
   if (before.revision !== 0) throw new GrantError('grant_conflict', `Grant changed (expected revision 0, current ${before.revision}); review a fresh request`);
   if (await clientHoldsAuthorization(sql, clientId)) throw new GrantError('grant_conflict', 'The client already holds an authorization; review a fresh request');

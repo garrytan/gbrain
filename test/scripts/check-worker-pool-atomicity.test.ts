@@ -42,7 +42,7 @@ function runGuardIn(files: FakeFile[]): RunResult {
     writeFileSync(full, f.contents);
   }
   // Initialize as a git repo so `git rev-parse --show-toplevel` finds
-  // the tmpdir, not the real gbrain repo. Otherwise the guard would
+  // the tmpdir, not the real foresights repo. Otherwise the guard would
   // run against the real worktree.
   spawnSync('git', ['init', '-q'], { cwd: dir });
   const r = spawnSync('bash', [GUARD_SH], {

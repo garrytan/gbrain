@@ -4,7 +4,7 @@
  * Pre-v0.30.3 putPage misrouted multi-source writes from intended source X
  * to (default, slug). The fixwave fixed forward-going writes but explicitly
  * deferred backfilling the misrouted rows. This module surfaces evidence of
- * misroute to operators via `gbrain doctor`.
+ * misroute to operators via `foresights doctor`.
  *
  * Heuristic (codex OV12 — softened from "is misrouted" to "appears misrouted"):
  * a non-default source X is configured with `local_path`, AND the filesystem
@@ -14,7 +14,7 @@
  *   2. Source X never completed initial sync, and the default page is
  *      unrelated content that happens to share the slug.
  * The doctor warning surfaces evidence; the operator decides which cause
- * applies and runs `gbrain sync --source X --full` or `gbrain delete <slug>`
+ * applies and runs `foresights sync --source X --full` or `foresights delete <slug>`
  * accordingly.
  *
  * Implementation notes:
@@ -129,7 +129,7 @@ function walkMarkdownAndMdxFiles(
       if (entry.startsWith('.')) continue;
       // Skip heavy non-content dirs so the walk doesn't exhaust the time
       // budget on dependency/build trees (node_modules can be 50k+ files
-      // with zero .md). These are never gbrain page sources.
+      // with zero .md). These are never foresights page sources.
       if (entry === 'node_modules' || entry === 'dist' || entry === 'build' ||
           entry === '.next' || entry === 'vendor' || entry === 'target') continue;
       const full = join(d, entry);

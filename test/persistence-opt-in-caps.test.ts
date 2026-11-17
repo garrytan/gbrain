@@ -1,5 +1,5 @@
 /**
- * GBRA-108: gbrain's own receipt bookkeeping never refuses, pauses or throttles a write by default. The cumulative caps
+ * GBRA-108: foresights's own receipt bookkeeping never refuses, pauses or throttles a write by default. The cumulative caps
  * (permanent request ids, reserved receipt bytes) are opt-in; housekeeping compacts settled receipts early while receipt
  * storage is above its target, never a failed or conflicted receipt whose intent a replay needs; doctor tells the brain
  * host's operator when storage stays above the target. Both backends.
@@ -93,7 +93,7 @@ for (const kind of testBackends()) {
       await editRequest(engine, failed!.id, "state='failed',error_code='example_failure'");
       await editRequest(engine, conflict!.id, "state='conflict',error_code='revision_conflict'");
       const id = async (slug: string) => (await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE slug=$1', [slug]))[0]!.id;
-      // Refusals gbrain's own producers write again from current content: a maintenance page and a managed sync import.
+      // Refusals foresights's own producers write again from current content: a maintenance page and a managed sync import.
       await editRequest(engine, await id('old-maintenance-failed'), `operation='submit_job',state='conflict',error_code='source_changed',intent=intent||'{"kind":"managed_maintenance_page"}'::jsonb`);
       await editRequest(engine, await id('old-sync-failed'), `state='failed',error_code='example_failure',intent=intent||'{"kind":"managed_sync_import"}'::jsonb`);
       // A producer that recovers from its refused intent (the frozen extraction), and a settled job whose intent later runs read.
@@ -133,7 +133,7 @@ for (const kind of testBackends()) {
       for (const slug of ['drifted', 'guarded', 'resolved', 'other-failure', 'no-code-failure']) await requests.publish(await requests.admit(slug));
       await settleEffects(engine);
       const id = async (slug: string) => (await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE slug=$1 ORDER BY sequence LIMIT 1', [slug]))[0]!.id;
-      // Refusals `gbrain repair failed-writes` replays: a file/database drift and a writer guard on a caller's own page write.
+      // Refusals `foresights repair failed-writes` replays: a file/database drift and a writer guard on a caller's own page write.
       await editRequest(engine, await id('drifted'), "state='conflict',error_code='source_changed'");
       await editRequest(engine, await id('guarded'), "state='failed',error_code='writer_coordinator_required'");
       await editRequest(engine, await id('resolved'), "state='conflict',error_code='source_changed'");
@@ -155,7 +155,7 @@ for (const kind of testBackends()) {
       expect(first('resolved')).toMatchObject({ compacted: true });
       expect(first('other-failure')).toMatchObject({ compacted: true });
       expect(first('no-code-failure')).toMatchObject({ compacted: true });
-      // Explicitly dropping it stays the operator's call (gbrain repair receipt-compaction --include-failures).
+      // Explicitly dropping it stays the operator's call (foresights repair receipt-compaction --include-failures).
     });
 
     check('a long synthetic run: storage above the target keeps a week of settled receipts, failed intents wait for the retention, writes never refuse', async engine => {

@@ -1,5 +1,5 @@
 /**
- * GST-2116: `gbrain git commit-push` and the committed `scripts/brain-commit-push.sh` exited 0 while a path the caller
+ * GST-2116: `foresights git commit-push` and the committed `scripts/brain-commit-push.sh` exited 0 while a path the caller
  * named was never committed. `git add -A` stages nothing and still exits 0 for a modified entry flagged assume-unchanged
  * or skip-worktree, and for a file inside an untracked nested repository, so the helper answered "nothing to commit" (or
  * pushed the other paths) and the write sat uncommitted with nothing in any log. Every named path git leaves out now
@@ -175,7 +175,7 @@ test('remoteless: a skipped path fails commit_paths_skipped instead of nothing t
   expect(head(f)).toBe(before);
 }, 60_000);
 
-/** Run the rendered helper from the checkout; `cli` is recorded as gbrain.cliPath, otherwise no gbrain is reachable (the fallback). */
+/** Run the rendered helper from the checkout; `cli` is recorded as gbrain.cliPath, otherwise no foresights is reachable (the fallback). */
 function helper(f: Fixture, cli: boolean, ...args: string[]) {
   mkdirSync(join(f.brain, 'scripts'), { recursive: true });
   const script = join(f.brain, 'scripts', 'brain-commit-push.sh');
@@ -194,7 +194,7 @@ function helper(f: Fixture, cli: boolean, ...args: string[]) {
     env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: f.home, GBRAIN_HOME: f.home, GBRAIN_SKIP_STARTUP_HOOKS: '1', ...identity } });
 }
 
-test('#7793: helper without gbrain commits a named page when git exported GIT_LITERAL_PATHSPECS=1 to it', () => {
+test('#7793: helper without foresights commits a named page when git exported GIT_LITERAL_PATHSPECS=1 to it', () => {
   const f = fixture('helper-literal', 'remoteless');
   helper(f, false);
   writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
@@ -214,9 +214,9 @@ test('helper without gbrain: a skipped path fails loudly instead of printing not
   expect(headBlob(f, 'people/alice-example.md')).toContain('First version.');
 }, 60_000);
 
-test('helper delegating to gbrain on a managed checkout: a skipped page exits non-zero with writer_coordinator_required', () => {
+test('helper delegating to foresights on a managed checkout: a skipped page exits non-zero with writer_coordinator_required', () => {
   const f = fixture('helper-managed', 'managed');
-  // The helper refuses on the Git-metadata marker itself; without it (an owner claim or the registry marks the root) it hands over to gbrain.
+  // The helper refuses on the Git-metadata marker itself; without it (an owner claim or the registry marks the root) it hands over to foresights.
   rmSync(join(f.brain, '.git', 'gbrain-managed.json'));
   editHidden(f, 'people/alice-example.md');
   const r = helper(f, true, 'write pages', 'people/alice-example.md');

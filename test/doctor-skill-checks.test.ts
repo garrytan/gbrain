@@ -8,9 +8,9 @@
  *   - a tampered file -> warn listing it in details.modified;
  *   - >5 drifted files -> the ", … +N more" sample truncation;
  *   - fresh manifest -> ok naming the tracked-file count;
- *   - skillCurrencyCheck with workspace === gbrain repo root -> ok / N-A;
+ *   - skillCurrencyCheck with workspace === foresights repo root -> ok / N-A;
  *   - skillCurrencyCheck against an empty workspace -> warn recommending
- *     `gbrain skillpack sync` (bundled skills classify as `new`);
+ *     `foresights skillpack sync` (bundled skills classify as `new`);
  *   - skillPreconditionsCheck with a null engine -> ok skip.
  *
  * All fixtures live in mkdtemp dirs; no engine and no env mutation needed.
@@ -116,28 +116,28 @@ describe('skillsManifestIntegrityCheck', () => {
 });
 
 describe('skillCurrencyCheck', () => {
-  test('workspace === gbrain repo root -> ok / not applicable', () => {
+  test('workspace === foresights repo root -> ok / not applicable', () => {
     const root = findGbrainRoot();
     expect(root).not.toBeNull();
     const check = skillCurrencyCheck(join(root!, 'skills'));
     expect(check.name).toBe('skill_currency');
     expect(check.status).toBe('ok');
-    expect(check.message).toBe('skill currency not applicable (running inside the gbrain repo)');
+    expect(check.message).toBe('skill currency not applicable (running inside the foresights repo)');
   });
 
-  test('workspace missing bundled skills -> warn recommending `gbrain skillpack sync`', () => {
+  test('workspace missing bundled skills -> warn recommending `foresights skillpack sync`', () => {
     const workspace = makeDir('gbrain-currency-ws-');
     const skillsDir = join(workspace, 'skills');
     mkdirSync(skillsDir, { recursive: true });
     const check = skillCurrencyCheck(skillsDir);
     expect(check.status).toBe('warn');
     expect(check.message).toContain('new built-in skill(s) available');
-    expect(check.message).toContain('`gbrain skillpack sync`');
+    expect(check.message).toContain('`foresights skillpack sync`');
     const details = check.details as { new: string[]; drifted: string[] };
     expect(details.new.length).toBeGreaterThan(0);
   });
 
-  test('skills the spring-loaded index already lists are not reported as missing or sent to `gbrain skillpack sync`', () => {
+  test('skills the spring-loaded index already lists are not reported as missing or sent to `foresights skillpack sync`', () => {
     const workspace = makeDir('gbrain-currency-spring-');
     const skillsDir = join(workspace, 'skills');
     mkdirSync(skillsDir, { recursive: true });
@@ -154,7 +154,7 @@ describe('skillCurrencyCheck', () => {
   });
 
   // #5606: on a managed canonical worktree `skillpack sync` is refused, so the hint names the coordinator route instead.
-  test('a managed workspace is pointed at import_skill_proposal, never at `gbrain skillpack sync`', () => {
+  test('a managed workspace is pointed at import_skill_proposal, never at `foresights skillpack sync`', () => {
     const workspace = makeDir('gbrain-currency-managed-');
     const skillsDir = join(workspace, 'skills');
     mkdirSync(skillsDir, { recursive: true });
@@ -163,10 +163,10 @@ describe('skillCurrencyCheck', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('managed canonical worktree');
     expect(check.message).toContain('import_skill_proposal');
-    expect(check.message).not.toContain('Add them with `gbrain skillpack sync`');
+    expect(check.message).not.toContain('Add them with `foresights skillpack sync`');
     let refusal: unknown;
     try { assertLegacySkillFilesystemWrite(join(skillsDir, 'brain-ops', 'SKILL.md')); } catch (error) { refusal = error; }
-    expect(refusal).toMatchObject({ code: 'skill_bundle_required', suggestion: expect.stringContaining('gbrain call --source <source> import_skill_proposal') });
+    expect(refusal).toMatchObject({ code: 'skill_bundle_required', suggestion: expect.stringContaining('foresights call --source <source> import_skill_proposal') });
     expect((refusal as { message: string }).message).toContain('reference --apply-clean-hunks');
   });
 });

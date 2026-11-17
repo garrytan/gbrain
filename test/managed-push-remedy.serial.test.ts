@@ -1,9 +1,9 @@
 /**
- * #6083 / W2.9: on a managed canonical worktree, `gbrain sources push` refuses
+ * #6083 / W2.9: on a managed canonical worktree, `foresights sources push` refuses
  * by design (the persistence coordinator commits and pushes it as Git
  * effects), so nothing may keep recommending it or re-recording its refusal.
  *
- * 1. Protects: backup coverage never counts gbrain's own `.gbrain-owner.json`
+ * 1. Protects: backup coverage never counts foresights's own `.gbrain-owner.json`
  *    as dirt, classifies a root with no origin as `no_remote` even after a
  *    recorded refusal, and gives a managed root the read-only writer-status
  *    fix; doctor `bootstrap_push_health` lets a tree that matches its real
@@ -140,9 +140,9 @@ describe('the managed guard refusal record (#6083)', () => {
     manage(root);
     const refusal = await workspacePush({ dir: root }).catch(error => error);
     expect(refusal).toMatchObject({ code: 'writer_coordinator_required' });
-    expect(refusal.message).toContain('gbrain sources push is not its Git writer');
-    expect(refusal.suggestion).toContain('gbrain sources writer status');
-    expect(refusal.suggestion).toContain('gbrain sources writer git-durability');
+    expect(refusal.message).toContain('foresights sources push is not its Git writer');
+    expect(refusal.suggestion).toContain('foresights sources writer status');
+    expect(refusal.suggestion).toContain('foresights sources writer git-durability');
     expect(refusal.suggestion).toContain('--pat-file');
     expect(refusal.suggestion).toContain('plain git');
     expect(refusal.suggestion).not.toContain('Submit the change through the persistence coordinator');
@@ -151,13 +151,13 @@ describe('the managed guard refusal record (#6083)', () => {
   test('bootstrap verify push_probe never recommends sources push on a managed worktree', async () => {
     const root = await repository();
     const before = checkPushProbe(root);
-    expect(before.detail).toContain('gbrain sources push');
+    expect(before.detail).toContain('foresights sources push');
     manage(root);
     const probe = checkPushProbe(root);
     expect(probe).toMatchObject({ id: 'push_probe', ok: true });
     expect(probe.warn).toBeFalsy();
     expect(probe.detail).toContain('managed canonical worktree');
-    expect(probe.detail).toContain('gbrain sources writer git-durability');
-    expect(probe.detail).not.toContain('gbrain sources push');
+    expect(probe.detail).toContain('foresights sources writer git-durability');
+    expect(probe.detail).not.toContain('foresights sources push');
   });
 });

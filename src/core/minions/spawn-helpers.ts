@@ -1,5 +1,5 @@
 /**
- * Pure helpers for spawning the gbrain worker, optionally wrapped in tini.
+ * Pure helpers for spawning the foresights worker, optionally wrapped in tini.
  *
  * Background: zombie children spawned by the worker (shell jobs, embed
  * batches, sub-agents) need a SIGCHLD handler to be reaped. The cli.ts
@@ -38,7 +38,7 @@ export function detectTini(): string {
 }
 
 /**
- * Build the (cmd, args) tuple for spawning the gbrain worker, optionally
+ * Build the (cmd, args) tuple for spawning the foresights worker, optionally
  * wrapped in tini. When `tiniPath` is non-empty, returns
  *   { cmd: tiniPath, args: ['-s', '--', cliPath, ...args] }
  * enabling subreaping without assuming PID 1. When empty, returns

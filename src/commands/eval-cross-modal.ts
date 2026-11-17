@@ -1,5 +1,5 @@
 /**
- * gbrain eval cross-modal — multi-model quality gate (v0.27.x).
+ * foresights eval cross-modal — multi-model quality gate (v0.27.x).
  *
  * Three different-provider frontier models score the OUTPUT against the TASK
  * on a fixed dimension list. Verdict: PASS (exit 0) / FAIL (exit 1) /
@@ -7,8 +7,8 @@
  *
  * Reuses `src/core/ai/gateway.ts` for provider config + auth (T1+T2). Bypasses
  * `connectEngine()` via the cli.ts no-DB branch (T3=A) so onboarding works
- * before `gbrain init`. Receipts are bound to (slug, SKILL.md sha-8) so
- * `gbrain skillify check` can detect stale audits (T10=A).
+ * before `foresights init`. Receipts are bound to (slug, SKILL.md sha-8) so
+ * `foresights skillify check` can detect stale audits (T10=A).
  *
  * Cost guardrails (T11=B):
  *   - Default cycles = 3 in TTY, 1 in non-TTY (limits scripted bulk spend).
@@ -40,11 +40,11 @@ import type {
 import type { ParsedModelResult } from '../core/cross-modal-eval/json-repair.ts';
 import { splitProviderModelId } from '../core/model-id.ts';
 
-const HELP = `gbrain eval cross-modal — multi-model quality gate
+const HELP = `foresights eval cross-modal — multi-model quality gate
 
 USAGE:
-  gbrain eval cross-modal --task "<description>" --output <path-or-skill-slug> [flags]
-  gbrain eval cross-modal --batch <jsonl> [--limit N] [--output <receipt-path>] [flags]   (v0.40.1.0 Track D)
+  foresights eval cross-modal --task "<description>" --output <path-or-skill-slug> [flags]
+  foresights eval cross-modal --batch <jsonl> [--limit N] [--output <receipt-path>] [flags]   (v0.40.1.0 Track D)
 
 REQUIRED (single-task mode):
   --task "..."             What the OUTPUT was meant to achieve.
@@ -53,7 +53,7 @@ REQUIRED (single-task mode):
                            to bind the receipt to that skill (T10).
 
 REQUIRED (batch mode, v0.40.1.0 Track D / T3):
-  --batch <jsonl>          LongMemEval-shape JSONL (output of \`gbrain eval
+  --batch <jsonl>          LongMemEval-shape JSONL (output of \`foresights eval
                            longmemeval --output\`). Each row: {question, hypothesis,
                            question_id, ...}. Summary rows (kind:by_type_summary)
                            are filtered out. Mutually exclusive with --task.
@@ -94,19 +94,19 @@ EXIT CODES:
      is still written for forensics; the gate is not authoritative.
 
 CONFIGURATION:
-  Models resolve via the gbrain AI gateway. Configure with:
-    gbrain providers test            # see what's configured
-    gbrain config                    # set keys
+  Models resolve via the foresights AI gateway. Configure with:
+    foresights providers test            # see what's configured
+    foresights config                    # set keys
   Or set env vars: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY,
   TOGETHER_API_KEY, etc. The gateway reads from \`~/.gbrain/config.json\` plus
   process.env.
 
 EXAMPLES:
-  gbrain eval cross-modal \\
+  foresights eval cross-modal \\
     --task "Skillify SKILL.md teaches the 11-item meta-skill checklist" \\
     --output skills/skillify/SKILL.md
 
-  gbrain eval cross-modal \\
+  foresights eval cross-modal \\
     --task "PR description sells the value of cross-modal eval" \\
     --output /tmp/pr-description.md \\
     --cycles 1
@@ -303,7 +303,7 @@ function configureGatewayForCli(): boolean {
  *
  * Exported for the hermetic unit test (the batch DI seam skips gateway
  * configuration entirely, so the policy is pinned at this boundary) and for
- * `gbrain models`, which reports the nightly probe's panel with a silent log.
+ * `foresights models`, which reports the nightly probe's panel with a silent log.
  */
 export function substituteUnavailableDefaultSlots(
   slots: SlotConfig[],
@@ -440,7 +440,7 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
     process.stderr.write(
       'Error: AI gateway has no usable chat provider. ' +
         'Configure one of OPENAI_API_KEY / ANTHROPIC_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY ' +
-        'in your shell or run `gbrain config` to set keys.\n',
+        'in your shell or run `foresights config` to set keys.\n',
     );
     return 1;
   }
@@ -556,7 +556,7 @@ interface BatchRow {
 
 /**
  * v0.40.1.0 Track D (codex CDX-1) — upstream-error row from
- * `gbrain eval longmemeval`. Carries `question`+`question_type` and an
+ * `foresights eval longmemeval`. Carries `question`+`question_type` and an
  * `error` field but no usable hypothesis. Counted in the batch summary's
  * `upstream_error_count` so the denominator includes failed rows, never
  * silently dropped (which would let the gate pass on a surviving subset).
@@ -705,7 +705,7 @@ function readBatchRows(path: string): BatchReadResult {
       continue;
     }
     // v0.40.1.0 Track D (codex CDX-1): upstream error rows from
-    // `gbrain eval longmemeval` carry an `error` field and an empty/missing
+    // `foresights eval longmemeval` carry an `error` field and an empty/missing
     // hypothesis. Treat them as upstream_error verdicts in the batch summary
     // so they count in the denominator instead of silently disappearing.
     if (typeof obj.error === 'string' && obj.error.length > 0) {

@@ -9,7 +9,7 @@ import { MANAGED_WRITER_GUARD_FUNCTION_SQL } from '../persistence/writer-guard-s
 // strict-source counter (git_canonical_brain, kept by row triggers on sources)
 // and the git-canonical fence branch of the managed writer guard, which refuses a
 // row of a source with config.canonical = "git" from a writer that does not
-// declare gbrain.git_protocol (an older gbrain). Replaces only the guard
+// declare gbrain.git_protocol (an older foresights). Replaces only the guard
 // function: its triggers already call it, and re-creating them would take
 // ACCESS EXCLUSIVE locks on the largest tables. Additive: no source is strict
 // until conversion, so the fence refuses nothing; no page row is read or changed.

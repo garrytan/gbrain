@@ -64,7 +64,7 @@ async function stubPage(engine: BrainEngine, slug: string, sourceUri: string | n
     VALUES('default', $1, 'concept', $1, 'A stub.', '', '{}'::jsonb, $2)`, [slug, sourceUri]);
 }
 
-/** notes/n0 as an older gbrain left it (imported, then its origin and write request forgotten), with a stub body, then a commit edits its file. */
+/** notes/n0 as an older foresights left it (imported, then its origin and write request forgotten), with a stub body, then a commit edits its file. */
 async function heldUnknownPage(engine: BrainEngine, root: string): Promise<void> {
   expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
   await coordinated(engine, `DELETE FROM op_checkpoints WHERE op='sync-import-provenance'
@@ -84,7 +84,7 @@ const HAND_WRITTEN = '---\ntitle: Alpha Example\ntype: concept\naliases:\n  - al
 const STACKED_RULES = '---\ntitle: "Beta Example"\ntype: concept\ncreated: 2026-01-01\ntags: [zeta-tag, alpha-tag, mid-tag]\nsource_label: \'quoted value\'\n---\n\n'
   + 'Intro paragraph.\n\n---\n\n---\n\n---\n\n## Timeline\n\n- 2026-01-01: First event.\n';
 
-/** notes/alpha as an older gbrain left it, with a database-only timeline row and protected key, then a commit edits its file: held unknown. */
+/** notes/alpha as an older foresights left it, with a database-only timeline row and protected key, then a commit edits its file: held unknown. */
 async function heldProtectedPage(engine: BrainEngine, root: string, file = HAND_WRITTEN, dbKeys: Record<string, unknown> = { embed_skip: true },
   events = ['A database-only event.'], dbTruthEdit = false): Promise<void> {
   writeFileSync(join(root, 'notes/alpha.md'), file); commitAll(root, 'alpha');
@@ -184,7 +184,7 @@ for (const backend of testBackends()) {
     const [head, body] = [before.slice(0, before.indexOf('\n---\n', 3) + 1), before.slice(before.indexOf('\n---\n', 3) + 1)];
     const timelineAt = body.indexOf('## Timeline');
     expect(after.startsWith(`${head}embed_skip: true\n${body.slice(0, timelineAt)}<!-- timeline -->\n\n${body.slice(timelineAt)}`)).toBe(true);
-    expect(after.slice(before.length + 'embed_skip: true\n<!-- timeline -->\n\n'.length)).toMatch(/^<!-- gbrain:materialized v1 [0-9a-f]+ -->\n- \*\*2026-02-01\*\* \| example — A database-only event\.\n$/);
+    expect(after.slice(before.length + 'embed_skip: true\n<!-- timeline -->\n\n'.length)).toMatch(/^<!-- (?:foresights|gbrain):materialized v1 [0-9a-f]+ -->\n- \*\*2026-02-01\*\* \| example — A database-only event\.\n$/);
     await performManagedSync(engine, OPTS);
     expect(await holds(engine)).toEqual([]);
   }, { databaseUrl, setup }), 180_000);
@@ -209,7 +209,7 @@ for (const backend of testBackends()) {
     expect((await heldPreview(engine, 'file', preview.preview_hash!)).outcomes).toEqual({ repaired: 1 });
     const after = readFileSync(join(root, 'notes/alpha.md'), 'utf8');
     expect(after.slice(0, before.length)).toBe(before);
-    expect(after.slice(before.length)).toMatch(/^<!-- gbrain:materialized v1 [0-9a-f]+ -->\n- \*\*2026-02-01\*\* \| example — A database-only event\.\n(<!-- gbrain:materialized v1 [0-9a-f]+ -->\n)?- \*\*2026-02-02\*\* \| example — A second database-only event\.\n$/);
+    expect(after.slice(before.length)).toMatch(/^<!-- (?:foresights|gbrain):materialized v1 [0-9a-f]+ -->\n- \*\*2026-02-01\*\* \| example — A database-only event\.\n(<!-- (?:foresights|gbrain):materialized v1 [0-9a-f]+ -->\n)?- \*\*2026-02-02\*\* \| example — A second database-only event\.\n$/);
     // Git durability is off in this checkout, so the preview says to commit the appended file; committed, the next sync imports it as is.
     commitAll(root, 'repair');
     await performManagedSync(engine, OPTS);

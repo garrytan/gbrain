@@ -168,7 +168,7 @@ describe('harness_wiring by state', () => {
   const BIN = '/opt/gbrain/bin/gbrain';
   const owner = (transport: 'stdio' | 'http', is_self = false): LockOwner => ({ pid: 4242, transport, is_self });
 
-  test('one harness, no serve: gbrain setup registers the absolute binary behind the hook launcher, --surface starter and --advertise verbs', () => {
+  test('one harness, no serve: foresights setup registers the absolute binary behind the hook launcher, --surface starter and --advertise verbs', () => {
     const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: BIN });
     expect(claude.fix?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN]);
     expect(claude.fix?.why).toContain(`/hook-launcher/gbrain-hook ${BIN} serve --surface starter --advertise verbs`);
@@ -180,7 +180,7 @@ describe('harness_wiring by state', () => {
       .toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
   });
 
-  test('never a bare gbrain binary: unresolved binary yields no registration', () => {
+  test('never a bare foresights binary: unresolved binary yields no registration', () => {
     const e = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: null });
     expect(e.reason).toBe('binary_unresolved');
     expect(e.fix?.argv).toBeUndefined();
@@ -222,7 +222,7 @@ describe('exclusive fixes and lock ownership', () => {
   test('a live serve owner: two-step plan, step one (actor user) stops it, then the command', () => {
     const plan = exclusiveFix(action, { pid: 4242, transport: 'http', is_self: false });
     expect(plan).toMatchObject({ actor: 'user', argv: ['kill', '4242'], requires_exclusive: false, then: action });
-    expect(plan.why).toContain('gbrain serve --http');
+    expect(plan.why).toContain('foresights serve --http');
     const rendered = renderAction(plan, cliRenderContext());
     expect(rendered.next).toBe('tell_user_to_run');
     expect(rendered.then?.next).toBe('ask_user');

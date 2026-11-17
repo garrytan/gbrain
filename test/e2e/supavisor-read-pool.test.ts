@@ -2,7 +2,7 @@
  * #6543 (A3): through Supavisor's transaction mode, pipelined statements that
  * span transaction boundaries come back with another statement's rows or hang
  * (lane A: 13-22 wrong-row answers in 20 s on 8 workers over a pool of 3).
- * gbrain's engine read pool on a port-6543 URL is built with
+ * foresights's engine read pool on a port-6543 URL is built with
  * `max_pipeline: 0`; this file drives that engine pool with concurrent
  * autocommit and transaction statements and requires every statement to read
  * its own rows with no connection errors.

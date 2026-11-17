@@ -1,5 +1,5 @@
 /**
- * gbrain guests init and gbrain sources writers (GBRA-504 slice 1).
+ * foresights guests init and foresights sources writers (GBRA-504 slice 1).
  *
  * Protects: init previews by default and writes nothing; --yes creates the
  * guest source database-only, federated and marked guest with its ceiling, and
@@ -63,7 +63,7 @@ const guestRow = async (id: string) => (await engine.executeRaw<{ writers: strin
   'SELECT writers, trust_ceiling FROM guest_sources WHERE source_id=$1', [id]))[0];
 const configOf = (config: unknown) => (typeof config === 'string' ? JSON.parse(config) : config) as Record<string, unknown>;
 
-describe('gbrain guests init', () => {
+describe('foresights guests init', () => {
   test('refuses an existing source that already holds pages, in the preview and with --yes', async () => {
     await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['source-a']);
     await engine.putPage('notes/owner-a', { title: 'Owner', type: 'note' as never, compiled_truth: 'Mine.', frontmatter: {}, timeline: '' }, { sourceId: 'source-a' } as never);
@@ -141,7 +141,7 @@ describe('gbrain guests init', () => {
   });
 });
 
-describe('gbrain sources writers', () => {
+describe('foresights sources writers', () => {
   test('lists, adds, removes and clears the writers of a guest source', async () => {
     await run(() => runGuests(engine, ['init', '--writer', 'oauth_client:client-a', '--yes']));
     await run(() => runSources(engine, ['writers', 'guests', '--add', 'oauth_client:client-b']));

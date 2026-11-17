@@ -1,5 +1,5 @@
 /**
- * #3674 — `gbrain extract links --by-mention --rebuild`.
+ * #3674 — `foresights extract links --by-mention --rebuild`.
  *
  * The by-mention write path is purely additive, so a mentions row outlives
  * its own justification (body rewritten, entity deleted, tokenizer changed).

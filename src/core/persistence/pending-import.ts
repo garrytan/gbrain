@@ -200,7 +200,7 @@ export function pendingImportRefusal(row: { source_id: string; slug: string; ope
   const fix: Action = remember
     ? { argv: status, consent: [], actor: 'provider', requires_exclusive: false, verify: { argv: status }, docs: 'docs/guides/write-refusals.md#pending_import',
       why: `The fact is kept in this request's receipt and queued for one automatic replay attempt by the first managed sync that imports the file; do not save it again. `
-        + `This read-only status shows when the source has synced; until the replay commits, gbrain repair failed-writes --source ${row.source_id} lists the fact (a replay that is refused stays there for a person to replay).` }
+        + `This read-only status shows when the source has synced; until the replay commits, foresights repair failed-writes --source ${row.source_id} lists the fact (a replay that is refused stays there for a person to replay).` }
     : { argv: status, consent: [], actor: remote ? 'host_admin' : 'agent', requires_exclusive: false,
       verify: { argv: status }, docs: 'docs/guides/write-refusals.md#pending_import',
       why: `${PENDING_IMPORT_OWNER.replace('<source>', row.source_id)} Once it has, read the page again and resubmit the intended write with a new request_id.` };

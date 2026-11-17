@@ -18,7 +18,7 @@ export interface ArchiveEnablement {
   /** explicit: the switch is set; default: the audience decided; the rest resolve off. */
   source: 'explicit' | 'default' | 'thin_client' | 'remote' | 'config_unreadable';
   audience: BrainAudience | null;
-  /** A shared or unknown brain with the switch unset: offered with gbrain transcripts archive on, never turned on. */
+  /** A shared or unknown brain with the switch unset: offered with foresights transcripts archive on, never turned on. */
   offered: boolean;
   reason: string;
 }
@@ -47,5 +47,5 @@ export async function resolveArchiveEnabled(
   if (OFF.has(value)) return { enabled: false, source: 'explicit', audience: null, offered: false, reason: ARCHIVE_ENABLED_KEY + ' is off' };
   const { audience } = await classifyBrainAudience(engine as BrainEngine, config);
   if (audience === 'personal') return { enabled: true, source: 'default', audience, offered: false, reason: 'on by default on a personal brain' };
-  return { enabled: false, source: 'default', audience, offered: true, reason: 'off by default on a ' + audience + ' brain; offered with gbrain transcripts archive on' };
+  return { enabled: false, source: 'default', audience, offered: true, reason: 'off by default on a ' + audience + ' brain; offered with foresights transcripts archive on' };
 }

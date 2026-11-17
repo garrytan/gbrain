@@ -1,5 +1,5 @@
 /**
- * E2E: `gbrain bootstrap harness` lifecycle against a REAL `serve --http` on
+ * E2E: `foresights bootstrap harness` lifecycle against a REAL `serve --http` on
  * a hermetic PGLite brain (#4043).
  *
  * The real seams the unit suite injects away: an actual /health probe, the
@@ -218,9 +218,9 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     const steps = [...err.matchAll(/^\s+\d\. (.*)$/gm)].map((m) => m[1]!);
     expect(steps).toHaveLength(5);
     expect(steps[0]).toMatch(/stop the serve/);
-    expect(steps[1]).toBe('gbrain auth create harness-e2e --scopes read,write,skills_member_self');
-    expect(steps[2]).toMatch(/^gbrain auth rescope --token harness-e2e --operations \S*join_brain\S*$/);
-    expect(steps[3]).toMatch(/gbrain serve --http/);
+    expect(steps[1]).toBe('foresights auth create harness-e2e --scopes read,write,skills_member_self');
+    expect(steps[2]).toMatch(/^(?:foresights|gbrain) auth rescope --token harness-e2e --operations \S*join_brain\S*$/);
+    expect(steps[3]).toMatch(/(?:foresights|gbrain) serve --http/);
     expect(steps[4]).toMatch(/--token/);
 
     const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: parent };

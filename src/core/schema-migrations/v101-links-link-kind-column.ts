@@ -3,7 +3,7 @@ import type { Migration } from './types.ts';
 export const v101: Migration = {
   version: 101,
   name: 'links_link_kind_column',
-  // v0.41.18.0 (gbrain onboard wave, A10 + codex finding #12):
+  // v0.41.18.0 (foresights onboard wave, A10 + codex finding #12):
   // NER link extraction adds a nullable link_kind column instead of
   // splitting link_source='ner' as a new provenance — keeps
   // backlink-count + orphan-ratio queries stable while letting

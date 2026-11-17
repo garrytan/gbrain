@@ -1,5 +1,5 @@
 // #6393: the cycle's pack gate resolves through the same tiers
-// `gbrain schema active` uses (DB config, per-source DB config), and a paid
+// `foresights schema active` uses (DB config, per-source DB config), and a paid
 // phase that only those tiers newly activate waits for explicit consent
 // (`cycle.<phase>.enabled true`) instead of starting silently (T4).
 
@@ -71,7 +71,7 @@ describe('newly activated paid phases wait for consent (T4)', () => {
       const r = report.phases.find(p => p.phase === phase);
       expect(r?.status).toBe('skipped');
       expect(r?.details).toMatchObject({ reason: 'consent_required', resolved_pack: 'gbrain-creator', source_tier: 'db-config' });
-      expect(r?.summary).toContain(`gbrain config set cycle.${phase}.enabled true`);
+      expect(r?.summary).toContain(`foresights config set cycle.${phase}.enabled true`);
     }
   }, 60_000);
 

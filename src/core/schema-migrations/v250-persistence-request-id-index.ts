@@ -11,7 +11,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // table it ran as a sequential scan and hit the statement timeout after the
 // paid children had run. Postgres builds the index CONCURRENTLY outside a
 // transaction, after dropping an INVALID leftover (the blob omits it); PGLite
-// builds it inline. `gbrain repair request-indexes` runs the same helper on a
+// builds it inline. `foresights repair request-indexes` runs the same helper on a
 // brain whose schema is already current. DDL only: no column, no backfill.
 export const v250: Migration = {
   version: 250,

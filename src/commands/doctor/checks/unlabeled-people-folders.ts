@@ -2,7 +2,7 @@
  * GST-363 (PR 1): unlabeled_people_folders. On a brain that serves several people (config access.serves, else two or
  * more enabled members: core/access/serves.ts), a top-level people/<x>/ folder that holds pages and that no folder
  * rule covers (a rule on people/<x>/ or on people/) is read by every caller entitled to the source, so one person's
- * bot can read another person's notes. Fails per folder; the fix previews the rule `gbrain setup --serves several`
+ * bot can read another person's notes. Fails per folder; the fix previews the rule `foresights setup --serves several`
  * would have added, and the user decides who reads it. Not applicable on a brain that serves one person.
  */
 import type { Check } from '../../doctor.ts';

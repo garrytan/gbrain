@@ -261,7 +261,7 @@ export interface ModeBundle {
   /**
    * D8 Phase 3 flag: route ALL queries through the multimodal query embed
    * + `embedding_multimodal` column. Default false. Operator opt-in after
-   * `gbrain reindex --multimodal` populates the unified column.
+   * `foresights reindex --multimodal` populates the unified column.
    */
   unified_multimodal: boolean;
   /**
@@ -464,12 +464,12 @@ export interface ModeBundle {
    * the only voter they are skipped and the vector order stands. Untouched
    * either way: supersede downrank, exact-match boost, title-phrase boost,
    * compiled-truth boost, cosine re-score, dedup, reranker, autocut.
-   * Receipt (Cat 13 E1 localization, tuning split): gbrain's own vector arm
+   * Receipt (Cat 13 E1 localization, tuning split): foresights's own vector arm
    * nDCG@5 60.3 vs live hybrid 50.6; 73/105 gap probes had BOTH lexical arms
    * empty while hub pages carried backlink / graph-adjacency / recency boosts
    * of 1.035–1.124x that the gold concept page never carried (0/96); the gate
    * fixes 73/105 with 0 collateral (tuning 57.3). Every bundle is `lexical`:
-   * the pre-registered Phase E3 held-out receipt passed (gbrain 57.8 nDCG@5 vs
+   * the pre-registered Phase E3 held-out receipt passed (foresights 57.8 nDCG@5 vs
    * 53.0 before; NamedThingBench, BrainBench and the LongMemEval dev slice
    * byte-identical). `always` restores the pre-wave pipeline.
    * Parse contract in ONE place: `normalizeMetadataBoostGate`. Override: per-call
@@ -593,7 +593,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // diversification stops same-session weak chunks from competing
     // with strong hits for token budget. Conservative magnitudes
     // (1.05/1.10/0.95) with floor-gate inheritance keep regression risk
-    // bounded. Opt out with `gbrain config set search.graph_signals false`.
+    // bounded. Opt out with `foresights config set search.graph_signals false`.
     graph_signals: true,
     // v0.40.3.0 contextual retrieval — title-only for balanced (free at
     // runtime; pure string concat, no Haiku). Default mode for most users
@@ -970,9 +970,9 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
 }
 
 /**
- * Per-knob source attribution for `gbrain search modes` dashboard.
+ * Per-knob source attribution for `foresights search modes` dashboard.
  * Tells the user where each resolved value came from so override drift
- * is legible. Mirrors `gbrain models` (v0.31.12) attribution shape.
+ * is legible. Mirrors `foresights models` (v0.31.12) attribution shape.
  */
 export type KnobSource = 'per-call' | 'override' | 'mode' | 'fallback';
 
@@ -1675,7 +1675,7 @@ export const KNOB_CONFIG_KEY: Readonly<Record<keyof ModeBundle, string>> = Objec
   metadata_boost_gate: 'search.metadata_boost_gate',
 });
 
-/** The full list of config keys this module reads. Used by `gbrain search modes --reset`. */
+/** The full list of config keys this module reads. Used by `foresights search modes --reset`. */
 export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze(Object.values(KNOB_CONFIG_KEY));
 
 /**

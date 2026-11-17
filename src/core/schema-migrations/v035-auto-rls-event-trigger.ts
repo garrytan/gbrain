@@ -7,7 +7,7 @@ export const v035: Migration = {
   // v0.26.7 — Postgres event trigger that auto-enables RLS on every new public.*
   // table, plus one-time backfill on every existing public.* table without it.
   //
-  // Problem: tables created outside gbrain migrations (Baku's face_detections,
+  // Problem: tables created outside foresights migrations (Baku's face_detections,
   // manual SQL, other apps sharing the Supabase project) shipped without RLS.
   // doctor caught them after the fact; the gap window between create and next
   // doctor run was the silent vector.
@@ -25,7 +25,7 @@ export const v035: Migration = {
   //   - ENABLE only, no FORCE — matches v24/v29/schema.sql. FORCE would lock
   //     out non-BYPASSRLS apps from their own newly-created tables (the
   //     trigger function inherits the caller's role, and the new table is
-  //     owned by that role). gbrain has BYPASSRLS so gbrain itself is unaffected.
+  //     owned by that role). foresights has BYPASSRLS so foresights itself is unaffected.
   //   - public-only schema scope — Supabase manages auth/storage/realtime/etc.
   //     and runs its own RLS posture there; we must not disturb those schemas.
   //   - No EXCEPTION wrap inside the trigger — ddl_command_end fires inside

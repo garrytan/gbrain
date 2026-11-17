@@ -1,7 +1,7 @@
 /**
  * #6858 ask 1: a managed sync import whose publication recovery parked on `unexpected_file_bytes` (a marker stamped into
  * its canonical file while the publication was in flight, then the connection dropped, so the recovery recorded no
- * failure), resolved the documented way (`gbrain repair stuck-recovery --keep disk`). The request then ends
+ * failure), resolved the documented way (`foresights repair stuck-recovery --keep disk`). The request then ends
  * `conflict` / `source_changed` with the abandonment message, which no classifier knew: the run parked
  * `blocked_by_failures` and every later plain sync returned the same parked run. The abandoned page is a changed-file
  * page fault now: it is retried after the manifest end in the same pass, imported when the disk bytes are HEAD's
@@ -81,7 +81,7 @@ async function abandonedMidRun(engine: BrainEngine, stamped: (root: string) => v
   const applied = await fx.repair(f.id, { apply: true, expect: preview.preview_hash, keep: 'disk' });
   expect(applied.outcomes).toEqual({ resolved: 1 });
   // The follow-up names the plain sync that finishes the abandoned import, not a reconcile first.
-  expect(String(applied.outcome_items![0]!.detail!.next)).toContain(`Next: gbrain sync --source ${f.id} --no-pull.`);
+  expect(String(applied.outcome_items![0]!.detail!.next)).toContain(`Next: foresights sync --source ${f.id} --no-pull.`);
   const [abandoned] = await engine.executeRaw<Pick<WriteRequest, 'state' | 'error_code' | 'error_message'>>(
     "SELECT state,error_code,error_message FROM persistence_requests WHERE source_id=$1 AND slug='b' ORDER BY created_at DESC LIMIT 1", [f.id]);
   expect(abandoned).toMatchObject({ state: 'conflict', error_code: 'source_changed' });

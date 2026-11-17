@@ -14,7 +14,7 @@
 #   - 'wintermute' / 'openclaw' (real downstream agent names)
 #   - 'palantir' (real company per Garry's history)
 #   - common real-fund names (sequoia, andreessen, founders fund, etc.)
-#   - 'ycombinator' / 'y combinator' (the org running gbrain)
+#   - 'ycombinator' / 'y combinator' (the org running foresights)
 #
 # Allowed (placeholder convention):
 #   - alice-example / bob-example / charlie-example / diana-example
@@ -22,7 +22,7 @@
 #   - fund-a / fund-b / fund-c
 #
 # evals/ and docs/test-audit/ are scanned with the real-entity tokens only:
-# the product and repository names (openclaw, garrytan/gbrain) are
+# the product and repository names (openclaw, aimonk2025/gbrain) are
 # legitimate there. evals/ carries generated corpora and qrels, where a real
 # person's brain-page slug once shipped in a public repo; docs/test-audit/
 # carries audit evidence that quotes eval data.

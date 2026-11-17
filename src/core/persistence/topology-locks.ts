@@ -29,7 +29,7 @@ export async function topologyPrincipal(engine: BrainEngine): Promise<string> {
 export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Promise<void> {
   const [writer] = await engine.executeRaw<{ lane: string; revoked_at: unknown }>('SELECT lane,revoked_at FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE', [id]);
   if (!writer || writer.lane !== 'cli' || writer.revoked_at != null) throw opError('permission_denied', 'The administering CLI registration was revoked.',
-    `CLI writer registration ${id}, which started this source lifecycle change, was revoked, so nothing changed. Replacing it is the user's decision: review the registrations with the command in fix; the user stops any running owner and runs gbrain auth local-writer register cli --replace with the complete intended grant, then starts the lifecycle command again.`,
+    `CLI writer registration ${id}, which started this source lifecycle change, was revoked, so nothing changed. Replacing it is the user's decision: review the registrations with the command in fix; the user stops any running owner and runs foresights auth local-writer register cli --replace with the complete intended grant, then starts the lifecycle command again.`,
     {reason:'trusted_cli_required',fix:readFix('Lists the local writer registrations with their lane, grant and revocation state, read-only.',{argv:['gbrain','auth','local-writer','list','--json']})});
 }
 
@@ -117,7 +117,7 @@ export async function inspectClaimedPhysicalRoot(engine: BrainEngine, sourceId: 
 
 /**
  * Keep the complete affected membership locked, including absent target keys.
- * An active `gbrain sources refresh` on an affected worktree refuses with
+ * An active `foresights sources refresh` on an affected worktree refuses with
  * `refresh_in_progress`, except for the refresh named by `refreshId` itself.
  */
 export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindings: TopologyBinding[], refreshId?: string): Promise<string[]> {
@@ -134,7 +134,7 @@ export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindin
     WHERE worktree_id=ANY($1::uuid[]) AND state IN ${ACTIVE_REFRESH_STATES_SQL} AND ($2::uuid IS NULL OR id<>$2::uuid) LIMIT 1`, [ids, refreshId ?? null]);
   if (refresh) throw catalogueError('refresh_in_progress',
     `Refresh ${refresh.id} of the worktree holding source ${refresh.source_ids[0]} is ${refresh.state}; source topology cannot change until it finishes.`,
-    `gbrain sources refresh ${refresh.source_ids[0]} --resume, then retry this source command with the same request_id.`);
+    `foresights sources refresh ${refresh.source_ids[0]} --resume, then retry this source command with the same request_id.`);
   const members = await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=ANY($1::uuid[]) ORDER BY source_id', [ids]);
   const sources = [...new Set([sourceId,...members.map(row => row.source_id)])].sort();
   await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE', [sources]);

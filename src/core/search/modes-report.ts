@@ -91,7 +91,7 @@ export const KNOB_NULL_LABELS: Partial<Record<keyof ModeBundle, string>> = {
   keyword_arm_confidence_floor: 'off (null)',
 };
 
-/** Render one resolved knob value for the human `gbrain search modes` table. */
+/** Render one resolved knob value for the human `foresights search modes` table. */
 export function formatKnobValue(knob: string, value: unknown): string {
   if (value === undefined) return '(undefined)';
   if (value === null) return KNOB_NULL_LABELS[knob as keyof ModeBundle] ?? '(null)';
@@ -135,7 +135,7 @@ export interface SearchModesReport {
   /**
    * #8744: when the configured contextual-retrieval tier is per_chunk_synopsis,
    * how many chunks actually carry synopsis vectors (import and sync embed at
-   * the title tier; the sweep is `gbrain reindex --synopsis`). Brain-wide
+   * the title tier; the sweep is `foresights reindex --synopsis`). Brain-wide
    * counts, so ABSENT on the remote surface.
    */
   synopsis_coverage?: SynopsisCoverageReport;
@@ -244,7 +244,7 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
       required_key: null,
       key_present: false,
       self_hosted: false,
-      fix: `readiness check failed: ${e instanceof Error ? e.message : String(e)} — run gbrain doctor`,
+      fix: `readiness check failed: ${e instanceof Error ? e.message : String(e)} — run foresights doctor`,
     };
   }
 

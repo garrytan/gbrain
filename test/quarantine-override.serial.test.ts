@@ -1,5 +1,5 @@
 /**
- * #6259 (fix wave 12, W1.2): `gbrain quarantine clear` on a managed brain and
+ * #6259 (fix wave 12, W1.2): `foresights quarantine clear` on a managed brain and
  * the `quarantine_override` an operator's --force records.
  *
  * Protects: a managed clear publishes through the canonical owner with the
@@ -188,7 +188,7 @@ describe('quarantine clear on a managed brain (#6259)', () => {
     const { out, err } = await withEnv({ GBRAIN_WRITE_WAIT_MS: '0' }, () => capture(() => runQuarantine(engine, ['clear', SLUG, '--force'])));
     expect(out).not.toContain('Cleared');
     expect(err).toContain('write_pending');
-    expect(err).toContain('Poll: gbrain write-request');
+    expect(err).toContain('Poll: foresights write-request');
     expect(currentExitCode()).toBe(PENDING_WRITE_EXIT_CODE);
   }), 120_000);
 
@@ -196,7 +196,7 @@ describe('quarantine clear on a managed brain (#6259)', () => {
     const before = await engine.executeRaw('SELECT slug,knowledge_revision FROM pages ORDER BY id');
     const { err } = await capture(() => runQuarantine(engine, ['scan', '--apply']));
     expect(err).toContain('writer_coordinator_required');
-    expect(err).toContain('passing its slug to gbrain quarantine clear with --force');
+    expect(err).toContain('passing its slug to foresights quarantine clear with --force');
     expect(currentExitCode()).toBe(1);
     expect(await engine.executeRaw('SELECT slug,knowledge_revision FROM pages ORDER BY id')).toEqual(before);
   }), 120_000);

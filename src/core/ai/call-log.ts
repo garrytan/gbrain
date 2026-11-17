@@ -46,7 +46,7 @@ export function installAICallLogFromEnv(env: NodeJS.ProcessEnv = process.env): v
     catch (error) {
       if (!warned) {
         warned = true;
-        process.stderr.write(`[gbrain] GBRAIN_AI_CALL_LOG: cannot write ${path} (${error instanceof Error ? error.message : String(error)}); model-call lines are being dropped. Fix the path or unset the variable.\n`);
+        process.stderr.write(`[foresights] GBRAIN_AI_CALL_LOG: cannot write ${path} (${error instanceof Error ? error.message : String(error)}); model-call lines are being dropped. Fix the path or unset the variable.\n`);
       }
     }
   });

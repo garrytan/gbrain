@@ -31,7 +31,7 @@ export interface OnboardRecommendation extends RemediationStep {
   migration_id?: string;
 }
 
-/** Stable JSON envelope for `gbrain onboard --json`. */
+/** Stable JSON envelope for `foresights onboard --json`. */
 export interface OnboardReport {
   schema_version: 1;
   /** brain_id from engine.getHealth(). Identifies the brain across runs. */

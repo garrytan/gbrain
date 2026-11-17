@@ -1,5 +1,5 @@
 // test/remediation-run-extras.serial.test.ts
-// Regression for PR #2161 takeover: `gbrain onboard --apply --auto` dropped
+// Regression for PR #2161 takeover: `foresights onboard --apply --auto` dropped
 // onboard-check extraRemediations. Two distinct halves of the bug:
 //   1. runRemediation built the pre-flight plan + initial recs WITHOUT the
 //      extras, so an extras-only plan reported "Nothing to do".

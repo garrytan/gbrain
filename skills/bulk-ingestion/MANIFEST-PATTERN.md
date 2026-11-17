@@ -192,23 +192,23 @@ per [conventions/cron-via-minions.md](../conventions/cron-via-minions.md) —
 a recurring shell job shaped like:
 
 ```bash
-gbrain jobs submit shell --params '{"cmd": "cd <brain-repo> && gbrain git commit-push -m \"<pipeline-name> ingest checkpoint\" -- projects/<pipeline-name> <output-dirs>"}'
+foresights jobs submit shell --params '{"cmd": "cd <brain-repo> && foresights git commit-push -m \"<pipeline-name> ingest checkpoint\" -- projects/<pipeline-name> <output-dirs>"}'
 ```
 
-`gbrain git commit-push` (or the brain's `scripts/brain-commit-push.sh`)
+`foresights git commit-push` (or the brain's `scripts/brain-commit-push.sh`)
 takes the checkout's writer lock, commits only the named paths, and merges a
 rejected push without touching other workers' files. A failed checkpoint
 fails the job; read its error: retry once on `commit_lock_busy`, and stop and
 tell the user on `integrate_conflict` or `writer_coordinator_required` (a
 managed brain: checkpoint pages through `put_page` instead). Never fall back to
 stash, `pull --rebase` or a plain push
-([shared-checkout git](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
+([shared-checkout git](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/shared-checkout-git.md#outcomes)).
 
-Shell jobs require the WORKER to be started with `gbrain jobs work --allow-shell-jobs`
+Shell jobs require the WORKER to be started with `foresights jobs work --allow-shell-jobs`
 (or `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker) — see
 minion-orchestrator Preconditions. Do not set it yourself: it is an RCE-class
 authorization that belongs to the operator running the daemon, and a submit-side
-env prefix (`GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit ...`) is a no-op in
+env prefix (`GBRAIN_ALLOW_SHELL_JOBS=1 foresights jobs submit ...`) is a no-op in
 the daemon lane anyway (the worker's environment decides, not the submitter's).
 
 Pre-commit hooks (privacy/durability) intentionally run on checkpoint
@@ -241,11 +241,11 @@ schedule when the job completes.
 
 ## Boundaries
 
-- **Native `gbrain sync` checkpoints** cover resumable file sync for brain
+- **Native `foresights sync` checkpoints** cover resumable file sync for brain
   repo sources only. The manifest covers arbitrary external corpora and
   multi-stage pipelines (transcription, extraction, curation) that sync
   knows nothing about.
-- **Minion job progress** (`gbrain jobs`) is per-job and DB-backed; the
+- **Minion job progress** (`foresights jobs`) is per-job and DB-backed; the
   manifest is per-CORPUS and survives across any number of jobs, sessions,
   and workers. Use both: jobs report liveness, the manifest holds truth.
 - **`skills/archive-crawler/SKILL.md`** renders human-readable status

@@ -12,7 +12,7 @@ import { buildOriginIndexIfClean, originTwinsRepairCommand } from '../persistenc
 // built online (CONCURRENTLY on Postgres, inline on PGLite) only when the
 // brain holds no live twins. With twins, nothing is written or repaired here
 // (repairs are preview-first operator steps, never upgrade steps): the
-// migration prints `gbrain repair origin-twins --source <id>` for each source
+// migration prints `foresights repair origin-twins --source <id>` for each source
 // and succeeds; that repair builds the index once the last group is resolved,
 // and doctor's origin_twins check reports "index pending" until then. Not in
 // schema.sql: the schema replay on every initSchema would fail on a brain with

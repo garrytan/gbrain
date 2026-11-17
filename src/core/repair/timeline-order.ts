@@ -1,5 +1,5 @@
 /**
- * `gbrain repair timeline-order` (#7247): put existing timelines back in date
+ * `foresights repair timeline-order` (#7247): put existing timelines back in date
  * order. Bulk imports and hand edits appended entries at the end of a page's
  * timeline, copied the same bullet twice, or started a second timeline
  * section; `add_timeline_entry` already inserts in date order
@@ -57,7 +57,7 @@ const HOLD_TEXT: Record<Hold, string> = {
 };
 
 function previewCommand(scope: RepairScope, slugs: string[]): string {
-  return `gbrain repair timeline-order${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${slugs.map(slug => ` --slug ${slug}`).join('')}`;
+  return `foresights repair timeline-order${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${slugs.map(slug => ` --slug ${slug}`).join('')}`;
 }
 
 const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
@@ -94,8 +94,8 @@ async function plannedChange(engine: BrainEngine, snapshot: PageSnapshot): Promi
 
 function holdDetail(hold: Hold, rows: number | undefined, scope: RepairScope): string {
   const source = scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : '';
-  if (hold === 'pending_materialization') return `${rows} ${HOLD_TEXT[hold]}; run gbrain repair timeline${source}; for rows an edit removed, run `
-    + 'gbrain extract timeline --prune-orphans; then preview again';
+  if (hold === 'pending_materialization') return `${rows} ${HOLD_TEXT[hold]}; run foresights repair timeline${source}; for rows an edit removed, run `
+    + 'foresights extract timeline --prune-orphans; then preview again';
   return `${HOLD_TEXT[hold]}; fix the timeline by hand, then preview again`;
 }
 
@@ -160,10 +160,10 @@ export const timelineOrderRepair: RepairHandler = {
       const segmented = selection.slugs.length ? { pages: 0, rows: 0, sample: [] } : await segmentedTimelinePages(engine, scope.source_ids);
       if (segmented.pages) residuals.segmented_pages = segmented.pages;
       return { items: planned.map((page, index) => item(page, hash, index === planned.length - 1)), preview_hash: hash, residuals, listing,
-        ...(segmented.pages ? { warnings: [`segmented_pages: ${segmentedTimelineNote(segmented)} gbrain repair timeline-order does not reorder them either.`] } : {}) };
+        ...(segmented.pages ? { warnings: [`segmented_pages: ${segmentedTimelineNote(segmented)} foresights repair timeline-order does not reorder them either.`] } : {}) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair timeline-order --apply reorders only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair timeline-order --apply reorders only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, DOCS);
     }
     const expect = opts.expect;

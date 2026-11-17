@@ -110,7 +110,7 @@ export function mirrorContent(snapshot: PageSnapshot): string {
 }
 
 /**
- * Under the native lock, before anything publishes a stuck withdrawal-mirror record's `after` bytes (`gbrain repair
+ * Under the native lock, before anything publishes a stuck withdrawal-mirror record's `after` bytes (`foresights repair
  * stuck-recovery --keep withdrawn`): when the page moved past the record (a later withdrawal committed), the recorded bytes
  * would put that withdrawal's fact back on disk, so the record is rebased on the latest snapshot under its page lock: `after`
  * becomes the bytes `mirrorPage` renders for it, `pageId`/`revision` follow the snapshot, and the publication stage and
@@ -195,7 +195,7 @@ async function stageStreamedMirror(engine: BrainEngine, effect: PersistenceEffec
 }
 
 /**
- * The stage write ended with an error this process saw (a filesystem error such as EIO or ENOSPC, or a gbrain refusal),
+ * The stage write ended with an error this process saw (a filesystem error such as EIO or ENOSPC, or a foresights refusal),
  * not with its death: the writer removed its in-progress file, so nothing of the stage is on disk.
  */
 function stagingReported(error: unknown): boolean {

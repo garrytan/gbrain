@@ -1,7 +1,7 @@
 /**
- * GST-359 C1: the attested actor over the real `gbrain serve --http` (serve-http-mcp.ts), with a client-credentials
- * client granted the attest right and person links made by the real CLI (`gbrain auth rescope --attest-actor`,
- * `gbrain access member link`).
+ * GST-359 C1: the attested actor over the real `foresights serve --http` (serve-http-mcp.ts), with a client-credentials
+ * client granted the attest right and person links made by the real CLI (`foresights auth rescope --attest-actor`,
+ * `foresights access member link`).
  *
  * 1. Protects: the x-qm-actor boundary on the production HTTP transport, not only dispatch: the header reaches
  *    dispatch on tools/call, initialize accepts and ignores it on a stateless server (no Mcp-Session-Id) and carries

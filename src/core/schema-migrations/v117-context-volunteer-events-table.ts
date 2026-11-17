@@ -7,7 +7,7 @@ export const v117: Migration = {
   name: 'context_volunteer_events_table',
   // #2095 push-based context: feedback-loop log of every page the brain
   // VOLUNTEERED (via the volunteer_context op, the retrieval-reflex pointer
-  // path, or `gbrain watch`). "Used" is derived later by joining
+  // path, or `foresights watch`). "Used" is derived later by joining
   // pages.last_retrieved_at > volunteered_at — no second write path.
   // session_id/turn are caller-supplied attribution (nullable). rationale is
   // a deterministic template string, NEVER raw conversation text. Rows are

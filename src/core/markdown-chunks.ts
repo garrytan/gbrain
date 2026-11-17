@@ -89,7 +89,7 @@ export async function fencedCodeChunks(markdown: string, startChunkIndex: number
   budget.fences -= fences.length;
   if (capped) {
     console.warn(
-      `[gbrain] markdown fence cap hit (${MAX_FENCES_PER_PAGE} fences/page); skipping additional fences. ` +
+      `[foresights] markdown fence cap hit (${MAX_FENCES_PER_PAGE} fences/page); skipping additional fences. ` +
       `Override via GBRAIN_MAX_FENCES_PER_PAGE env var.`,
     );
   }
@@ -109,7 +109,7 @@ export async function fencedCodeChunks(markdown: string, startChunkIndex: number
     // (their text is still in the page's body chunks).
     const remaining = fenceParseBudgetMs() - (performance.now() - started);
     if (remaining <= 0) {
-      console.warn(`[gbrain] fence parse budget (${fenceParseBudgetMs()}ms/page) spent; remaining fenced code stays in the prose chunks.`);
+      console.warn(`[foresights] fence parse budget (${fenceParseBudgetMs()}ms/page) spent; remaining fenced code stays in the prose chunks.`);
       break;
     }
     try {
@@ -129,7 +129,7 @@ export async function fencedCodeChunks(markdown: string, startChunkIndex: number
     } catch (e: unknown) {
       // One fence failing shouldn't sink the page. Log + continue.
       console.warn(
-        `[gbrain] fence extraction failed for lang=${fence.lang}: ${e instanceof Error ? e.message : String(e)}`,
+        `[foresights] fence extraction failed for lang=${fence.lang}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }

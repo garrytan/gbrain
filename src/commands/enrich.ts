@@ -1,5 +1,5 @@
 /**
- * gbrain enrich — batch enrichment primitive (issue #1700).
+ * foresights enrich — batch enrichment primitive (issue #1700).
  *
  * 93.6% of people/company pages are stubs. There was no first-class way to
  * develop them at scale — you drove the agent-only `enrich` SKILL one page at a
@@ -15,7 +15,7 @@
  *   3. One grounded LLM call consolidates that context into a real, cited page.
  *      If the brain knows too little, SKIP rather than fabricate.
  *
- * Why brain-internal: gbrain's own LLM tooling can only see brain tools
+ * Why brain-internal: foresights's own LLM tooling can only see brain tools
  * (search/get_page/facts). External research (web/LinkedIn/Perplexity) is a
  * host-agent capability and stays the agent-driven `enrich` SKILL's job.
  *
@@ -442,7 +442,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
   }
 
   // Write via the put_page op handler (trusted local: remote=false) so
-  // auto-link + disk write-through fire, exactly like `gbrain capture`. The
+  // auto-link + disk write-through fire, exactly like `foresights capture`. The
   // retrieved context was sanitized in buildEnrichPrompt; the synthesized body
   // is the model's grounded output, with any neutralized span it copied from
   // the prompt restored from the raw stub and evidence (#7125).
@@ -470,7 +470,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     return;
   }
   const putPageOp = operations.find((o) => o.name === 'put_page');
-  if (!putPageOp) throw new Error('put_page operation missing (gbrain build issue)');
+  if (!putPageOp) throw new Error('put_page operation missing (foresights build issue)');
   const opCtx: OperationContext = {
     engine,
     config: ctx.config ?? { engine: 'pglite' as const },
@@ -817,7 +817,7 @@ export function parseArgs(args: string[]): ParsedArgs {
   return out;
 }
 
-const HELP = `Usage: gbrain enrich [options]
+const HELP = `Usage: foresights enrich [options]
 
 Develop thin (stub) pages into real, cited pages by consolidating what the
 brain ALREADY knows about each entity — scattered mentions, inbound-link
@@ -945,7 +945,7 @@ export function budgetExhaustedMessage(reason?: BudgetReason, modelId?: string, 
     const m = modelId ? ` for ${modelId}` : '';
     const steps = pricing
       ? noPricingSteps(pricing)
-      : `Look up the model's per-token price and register it with \`gbrain pricing set\` (see ${ERROR_CATALOGUE.no_pricing.docs}), then retry.`;
+      : `Look up the model's per-token price and register it with \`foresights pricing set\` (see ${ERROR_CATALOGUE.no_pricing.docs}), then retry.`;
     return `  No pricing${m} — the cost cap cannot be enforced. ${steps} Or re-run uncapped (--max-usd off).`;
   }
   return '  Budget cap reached. Re-run with a higher --max-usd to continue.';
@@ -979,7 +979,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     console.error(
       'Chat gateway unavailable. Set a provider key (OPENAI_API_KEY or ANTHROPIC_API_KEY — ' +
       'chat routes to whichever is present), or configure a model explicitly ' +
-      '(`gbrain config set models.chat <provider:model>`), or pass --dry-run to preview candidates.',
+      '(`foresights config set models.chat <provider:model>`), or pass --dry-run to preview candidates.',
     );
     process.exit(1);
   }
@@ -1044,7 +1044,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
       ));
     }
     console.log(`Submitted ${jobs.length} enrich job(s) (one per source): ${jobs.map((j) => `job_id=${j.id}`).join(' ')}`);
-    console.log('Follow with: gbrain jobs follow <id>');
+    console.log('Follow with: foresights jobs follow <id>');
     if (spend) for (const line of spendSubmitSummary(spend, jobs, spend.argv!).lines) console.error(line);
     return;
   }

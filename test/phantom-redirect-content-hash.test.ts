@@ -1,9 +1,9 @@
 /**
  * The phantom redirect re-stamps the canonical's `content_hash` so the next
- * `gbrain sync` sees it as unchanged. It did that with a private copy of the
+ * `foresights sync` sees it as unchanged. It did that with a private copy of the
  * hash shape that had drifted from the canonical `contentHash` helper — it
  * never stripped HASH_EPHEMERAL_FRONTMATTER_KEYS. `captured_at` is stamped
- * per capture call, so for any canonical that arrived through `gbrain
+ * per capture call, so for any canonical that arrived through `foresights
  * capture` the stamped hash was one the importer could not reproduce, and
  * the next sync re-chunked + re-embedded the page — the exact opposite of
  * what the stamp is for. Same drift class #3694 consolidated.
@@ -62,7 +62,7 @@ function withTempDirs<T>(fn: (dirs: { brainDir: string }) => Promise<T>): Promis
   });
 }
 
-/** The hash `gbrain sync` will compute for this file — import-file.ts's shape. */
+/** The hash `foresights sync` will compute for this file — import-file.ts's shape. */
 function importerHashOf(filePath: string): string {
   const parsed = parseMarkdown(fs.readFileSync(filePath, 'utf-8'), path.basename(filePath));
   parsed.tags.sort();

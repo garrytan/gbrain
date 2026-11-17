@@ -82,7 +82,7 @@ describe('dead-submission counter', () => {
     expect(dreamBreakerRefusal(breaker, KEY)).toBeNull();
     await seedJob({ key: KEY, status: 'dead', queue: 'd3', released: true });
     const tripped = (await loadDreamBreaker(engine))!;
-    expect(dreamBreakerRefusal(tripped, KEY)).toContain(`gbrain dream reset-key '${KEY}'`);
+    expect(dreamBreakerRefusal(tripped, KEY)).toContain(`foresights dream reset-key '${KEY}'`);
   });
 
   test('the threshold is configurable and 0 disables the breaker', async () => {
@@ -134,12 +134,12 @@ describe('doctor dream_paid_loop', () => {
     const check = await dreamPaidLoopCheck(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain(KEY);
-    expect(check.message).toContain('gbrain dream reset-key');
+    expect(check.message).toContain('foresights dream reset-key');
     expect((check.details!.keys as Array<{ key_prefix: string }>)[0]!.key_prefix).toBe('dream:synth-v2:');
   });
 });
 
-describe('gbrain dream reset-key', () => {
+describe('foresights dream reset-key', () => {
   async function captured(run: () => Promise<void>): Promise<string> {
     const lines: string[] = [];
     const log = console.log;

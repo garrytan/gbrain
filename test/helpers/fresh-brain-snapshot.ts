@@ -11,7 +11,7 @@
  *   logical state is the schema/config/row-count part of the snapshot);
  * - lock files and owner records (rewritten with the opener's pid);
  * - the CLI startup hook's update cache and its one-time channel notice marker;
- * - Bun's install cache under HOME (not gbrain state).
+ * - Bun's install cache under HOME (not foresights state).
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';

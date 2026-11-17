@@ -67,7 +67,7 @@ async function main(): Promise<number> {
   let engineConfig: EngineConfig;
   if (url) engineConfig = { engine: 'postgres', database_url: url };
   else if (config) engineConfig = toEngineConfig(config);
-  else { console.error('No GBrain config found. Pass --database-url, or run on the brain host.'); return 1; }
+  else { console.error('No Foresights config found. Pass --database-url, or run on the brain host.'); return 1; }
   let copyDir: string | null = null;
   if ((engineConfig.engine ?? (engineConfig.database_url ? 'postgres' : 'pglite')) === 'pglite') {
     if (!engineConfig.database_path) { console.error('PGLite brain has no database_path in its config.'); return 1; }

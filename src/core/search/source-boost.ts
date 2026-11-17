@@ -9,7 +9,7 @@
  * inside sql-ranking.ts). Defaults grounded in the composition of the
  * canonical brain at ~/git/brain/.
  *
- * Per brain: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"`
+ * Per brain: `foresights config set search.source_boosts "wiki/:1.3,daily/:1.0"`
  * (`none` drops the defaults). Per process (wins over the brain):
  * GBRAIN_SOURCE_BOOST="originals/:1.8,openclaw/chat/:0.3"
  * Hard-exclude via env: GBRAIN_SEARCH_EXCLUDE="test/,scratch/"

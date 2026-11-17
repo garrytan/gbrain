@@ -7,7 +7,7 @@
  *    writes away, checked restores the per-page check; member reads and the trusted CLI are unchanged under each.
  * 2. Fails when: a member write lands or names a slug under refuse, a read changes, or a trusted write is refused.
  * 3. Existing coverage: test/enforced-member-writes-off.test.ts (the key's parsing, in process).
- * 4. Real seams: src/cli.ts dispatch, gbrain config set, local writes.
+ * 4. Real seams: src/cli.ts dispatch, foresights config set, local writes.
  */
 import { describe, expect, test } from 'bun:test';
 import { testBackends } from './helpers/test-backends.ts';

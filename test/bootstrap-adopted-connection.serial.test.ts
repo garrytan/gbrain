@@ -5,7 +5,7 @@
  * verify is DONE, a drifted fingerprint is PARTIAL again. The evidence lives in
  * a versioned sidecar beside the receipt and never carries header values.
  *
- * Serial: the dispatcher resolves the gbrain home from GBRAIN_HOME.
+ * Serial: the dispatcher resolves the foresights home from GBRAIN_HOME.
  */
 import { describe, test, expect, beforeEach, afterAll, beforeAll } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -92,7 +92,7 @@ describe('bootstrap status wire phase with a Codex project config (#4082)', () =
     const wire = await wirePhase();
     expect(wire.state).toBe('partial');
     expect(wire.detail).toContain('.codex/config.toml defines mcp_servers.gbrain (streamable_http)');
-    expect(wire.detail).toContain('gbrain bootstrap hooks --adopt --harness codex');
+    expect(wire.detail).toContain('foresights bootstrap hooks --adopt --harness codex');
     expect(wire.detail).toContain('no user-global `codex mcp add` needed');
     expect(wire.detail).not.toContain('secret-token-value');
     expect(wire.resume_hint).toContain('project-scoped .codex/config.toml server');
@@ -125,7 +125,7 @@ describe('detectCodexProjectServer + fingerprint', () => {
     expect(detectCodexProjectServer(ws)).toBeNull();
     writeProjectConfig('[mcp_servers.other]\ncommand = "gbrain"\nargs = ["serve", "--source", "ws"]\n');
     expect(detectCodexProjectServer(ws)).toBeNull();
-    expect(detectCodexProjectServer(ws, 'other')).toMatchObject({ transport: 'stdio', target: 'gbrain serve --source ws', header_names: [] });
+    expect(detectCodexProjectServer(ws, 'other')).toMatchObject({ transport: 'stdio', target: 'foresights serve --source ws', header_names: [] });
     writeProjectConfig('[mcp_servers.gbrain\nurl = "https://x"\n');
     expect(() => detectCodexProjectServer(ws)).toThrow();
     expect(adoptedConnectionState(ws, home)).toEqual({ state: 'none' });
@@ -139,7 +139,7 @@ describe('adoptConnection evidence gate', () => {
     writeProjectConfig(HTTP_SERVER(URL, 't'), new Date('2026-01-02T00:00:00Z'));
     const none = adoptConnection(ws, home, 'codex');
     expect(none.code).toBe(1);
-    expect(none.lines[0]).toContain('no `gbrain bootstrap verify` run on record');
+    expect(none.lines[0]).toContain('no `foresights bootstrap verify` run on record');
 
     writeVerifyRun('2026-01-03T00:00:00.000Z', false);
     const failed = adoptConnection(ws, home, 'codex');
@@ -203,7 +203,7 @@ describe('adoptConnection evidence gate', () => {
   });
 });
 
-describe('gbrain bootstrap hooks --adopt (dispatcher)', () => {
+describe('foresights bootstrap hooks --adopt (dispatcher)', () => {
   test('records the project connection without touching .codex/config.toml; refuses non-Codex', async () => {
     writeManifest(ws, { format_version: 1, initialized: true, agent_name: 'Testy', created_by: 'test', created_at: new Date().toISOString(), source_id: 'workspace' });
     const toml = HTTP_SERVER('https://brain.example.test/mcp', 'tok');

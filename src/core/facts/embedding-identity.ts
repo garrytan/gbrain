@@ -49,7 +49,7 @@ export async function countStaleFactEmbeddings(engine: Pick<BrainEngine, 'execut
 export interface OversizedFact { id: string; source_id: string; slug: string | null; tokens: number }
 
 const OVERSIZED_SCAN_CAP = 10_000;
-export const OVERSIZED_FACT_FIX = 'A skipped fact stays stale, with its text unchanged, until it fits: shorten or split it (edit its row in the page\'s ## Facts fence, then sync), or withdraw it with gbrain forget <fact-id>.';
+export const OVERSIZED_FACT_FIX = 'A skipped fact stays stale, with its text unchanged, until it fits: shorten or split it (edit its row in the page\'s ## Facts fence, then sync), or withdraw it with foresights forget <fact-id>.';
 
 /**
  * #7211: stale, embeddable facts whose text is over the embedding input limit,

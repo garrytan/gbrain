@@ -164,7 +164,7 @@ async function runExtractionBacklogs(ctx: DoctorContext): Promise<Check[]> {
             `${malformed.length} page(s) backed by malformed filenames (bracket/control ` +
             `characters) pollute search: ${preview}` +
             `${malformed.length > 3 ? `, and ${malformed.length - 3} more` : ''}. ` +
-            (poisoned > 0 ? `${poisoned} junk row(s): run a full 'gbrain sync' to reconcile them away. ` : '') +
+            (poisoned > 0 ? `${poisoned} junk row(s): run a full 'foresights sync' to reconcile them away. ` : '') +
             (bare > 0 ? `${bare} bare-bracket row(s) are kept — rename the backing file(s) and re-sync.` : ''),
         });
       }
@@ -186,7 +186,7 @@ async function runExtractionBacklogs(ctx: DoctorContext): Promise<Check[]> {
     let probeEnabled = false;
     try {
       // Dual-plane read, matching the autopilot gate: the DB row (what the
-      // enable hint's `gbrain config set` writes) wins; file plane fallback.
+      // enable hint's `foresights config set` writes) wins; file plane fallback.
       let dbVal: string | null = null;
       try {
         dbVal = engine ? await engine.getConfig('autopilot.nightly_quality_probe.enabled') : null;
@@ -234,7 +234,7 @@ async function runExtractionBacklogs(ctx: DoctorContext): Promise<Check[]> {
   if (engine) {
     try {
       const check = await computeConversationFactsBacklogCheck(engine);
-      // Wire a remediation step on WARN so `gbrain doctor --remediate`
+      // Wire a remediation step on WARN so `foresights doctor --remediate`
       // picks it up. The CLI command honors --max-cost-usd; the
       // remediation step caps at $5 default (matches doctor's max_usd
       // default for the remediate flow).
@@ -406,7 +406,7 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // src/core/npm-squat-check.ts) and warn when an unrelated install wins on
   // PATH or the entry is broken. The `gbrain` packages under `npm root -g`
   // and Bun's global dir are classified too, so an unrelated global install
-  // whose bin is not on PATH still warns when no real gbrain is. Skips
+  // whose bin is not on PATH still warns when no real foresights is. Skips
   // silently when neither finds anything (e.g. running via `bun src/cli.ts`).
   try {
     const { homedir } = await import('node:os');
@@ -414,9 +414,9 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
     const globalPackages = [join(bunGlobalRoot, 'node_modules', 'gbrain')];
     // No npm (or it failed): only Bun's global dir is checked.
     const npmRoot = (await localProbe(entryDeadlineAt, 'npm', ['root', '-g']))?.trim() || undefined;
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- npmRoot is the local operator's own `npm root -g` output, joined only to look for an installed gbrain package; trusted local CLI only
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- npmRoot is the local operator's own `npm root -g` output, joined only to look for an installed foresights package; trusted local CLI only
     if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
-    // `which` exits non-zero when gbrain isn't on PATH (or is missing
+    // `which` exits non-zero when foresights isn't on PATH (or is missing
     // entirely on this platform) — nothing to check.
     const candidates = ((await localProbe(entryDeadlineAt, 'which', ['-a', 'gbrain'])) ?? '')
       .split('\n')
@@ -440,7 +440,7 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   }
 
   // 3g. pglite_leftovers (#3856). A pglite -> postgres migration leaves the
-  // old engine store (`brain.pglite/`) under the gbrain home forever — dead
+  // old engine store (`brain.pglite/`) under the foresights home forever — dead
   // weight roughly the size of the live DB that nothing surfaces, silently
   // riding along in any backup that archives the home dir. Assessment is a
   // pure helper (src/core/pglite-leftovers-check.ts); it warns ONLY for a
@@ -492,7 +492,7 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
             argv: ['rm', '-rf', copy.path], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
             verify: { argv: ['gbrain', 'doctor', '--only', 'pglite_leftovers', '--json'] }, docs: 'docs/guides/move-to-postgres.md#after-the-move',
             why: `${copy.path} is the PGLite brain engine graduation moved to Postgres; it still holds private memory and token hashes. Deleting it frees the disk and ends the option to roll back: afterwards a rollback to PGLite refuses with not_found and the brain stays on Postgres.`,
-            user_message: `After moving your brain to Postgres, gbrain kept the old local copy at ${copy.path}. It still contains your private memory and access-token hashes. Should I delete it? You could then no longer roll back to it.`,
+            user_message: `After moving your brain to Postgres, foresights kept the old local copy at ${copy.path}. It still contains your private memory and access-token hashes. Should I delete it? You could then no longer roll back to it.`,
           },
         } : {}),
       });
@@ -501,7 +501,7 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
     // Best-effort filesystem-hygiene check; never block doctor (a missing/
     // unparseable config.json lands here and skips, same fail-open posture).
   }
-  // GBRA-108: cron lines (and scripts they run) that call gbrain without GBRAIN_HOME (doctor/checks/cron-gbrain-home.ts).
+  // GBRA-108: cron lines (and scripts they run) that call foresights without GBRAIN_HOME (doctor/checks/cron-gbrain-home.ts).
   // No environment gate: a container can run cron too; without a crontab the check emits nothing.
   try {
     const { cronGbrainHomeCheck } = await import('./cron-gbrain-home.ts');
@@ -585,7 +585,7 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
     checks.push(multiSourceDriftNotVerified(e));
   }
 
-  // 3c. Orphan clone temp dirs (v0.28 P1). `gbrain sources add --url` clones
+  // 3c. Orphan clone temp dirs (v0.28 P1). `foresights sources add --url` clones
   // into $GBRAIN_HOME/clones/.tmp/<id>-<rand>/ and renames atomically; if the
   // process is SIGKILL'd between clone-finish and rename, the temp dir
   // orphans. Surface entries older than 24h so operators notice before the
@@ -624,7 +624,7 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
           message:
             `${stale.length} stale clone temp dir(s) in ${tmpRoot}: ` +
             stale.map(s => `${s.name} (${s.ageHours}h)`).join(', ') +
-            `. Run \`gbrain sources purge-orphan-clones\` or wait for the autopilot purge phase.`,
+            `. Run \`foresights sources purge-orphan-clones\` or wait for the autopilot purge phase.`,
         });
       }
     }

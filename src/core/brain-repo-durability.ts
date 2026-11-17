@@ -4,7 +4,7 @@ import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesyst
  *
  * Problem: fresh headless agents (OpenClaw/Hermes) fall out of sync with their
  * knowledge-wiki git repos — writes sit local-only and never push, long-lived
- * sessions edit a stale tree. The moment gbrain is given a PAT + a GitHub URL
+ * sessions edit a stale tree. The moment foresights is given a PAT + a GitHub URL
  * for a brain repo, `hardenBrainRepo` makes durability work, idempotently:
  *
  *   1. pull current state (fast-forward or in-memory merge; skip-on-dirty)
@@ -16,10 +16,10 @@ import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesyst
  *   6. a DB-free pull cron (every 30 min)
  *   7. verify by authenticated push-probe (proves push auth; no heartbeat)
  *
- * Trust boundary (this is gbrain's FIRST push path + FIRST secret storage):
+ * Trust boundary (this is foresights's FIRST push path + FIRST secret storage):
  *  - The hook is LOCAL + untracked so a pulled commit can't rewrite executed
  *    code next to the PAT. Since #6530 both hook and helper delegate to
- *    `gbrain git commit-push` (src/core/git/commit-push.ts); the hook runs the
+ *    `foresights git commit-push` (src/core/git/commit-push.ts); the hook runs the
  *    absolute CLI path captured at harden time, never the committed helper.
  *  - Credential is repo-scoped (local git config), token redacted everywhere
  *    via shell-redact's exact-value scrubber, store file 0600.
@@ -113,15 +113,15 @@ function gbrainHome(): string {
   return resolveGbrainHome();
 }
 
-/** Resolve the gbrain CLI path for the cron wrapper (inlined to avoid a
- *  core→commands import). which gbrain → process.execPath → argv[1] → "gbrain". */
+/** Resolve the foresights CLI path for the cron wrapper (inlined to avoid a
+ *  core→commands import). which foresights → process.execPath → argv[1] → "gbrain". */
 function resolveGbrainCliPath(): string {
   try {
     // #2747: `env: process.env` required under Bun — see the sibling copy
     // of this function in commands/autopilot.ts for the full explanation
     // (Bun snapshots process.env at its own startup; execSync without an
     // explicit env is blind to any PATH mutation since then).
-    const which = execSync('which gbrain', {
+    const which = execSync('which foresights', {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
       env: process.env,
@@ -164,7 +164,7 @@ export function maintainPushLog(): void {
 }
 
 // ── Helper + hook templates (#6530) ─────────────────────────────────────────
-// Both delegate to `gbrain git commit-push` (src/core/git/commit-push.ts):
+// Both delegate to `foresights git commit-push` (src/core/git/commit-push.ts):
 // a short commit lock plus a separate push lock per checkout, path-scoped commits, remote commits merged in
 // memory, the checkout advanced fast-forward only. Neither ever runs
 // `pull --rebase`, `stash` or `reset` in the shared tree. The banners above
@@ -381,7 +381,7 @@ exit 4
 
 // ── Managed AGENTS/RESOLVER block (taxonomy from filing rules; no drift) ─────
 
-/** Top-level folders that hold gbrain plumbing rather than filed content. */
+/** Top-level folders that hold foresights plumbing rather than filed content. */
 const NON_CONTENT_DIRS = new Set(['skills', 'scripts', 'node_modules']);
 
 /** Folder names rendered into the durability block: no dot-folders, markup, newlines or code-span breakers. */
@@ -414,7 +414,7 @@ function resolveFilingRules(repoPath: string): { rules: FilingRulesDoc; from: st
       .sort()
       .slice(0, MAX_DERIVED_FOLDERS);
   } catch { /* unreadable — use the bundled default */ }
-  if (folders.length === 0) return { rules: bundled, from: "gbrain's default taxonomy" };
+  if (folders.length === 0) return { rules: bundled, from: "foresights's default taxonomy" };
   const rules = folders.flatMap((folder) => {
     const known = (bundled.rules ?? []).filter((r) => String(r.directory || '').split('/')[0] === folder);
     return known.length > 0 ? known : [{ kind: 'existing folder', directory: `${folder}/` }];
@@ -438,42 +438,42 @@ function renderTaxonomyLines(rules: FilingRulesDoc): string {
  * The classic rules tell agents to run the push helper after every write and
  * its `--pull` mode before writing (#6530: never `git pull --rebase`). On a managed canonical worktree
  * (#5808) both route agents around the persistence owner, so the block has a
- * managed variant: page writes through gbrain, non-page files with plain git,
- * never pull or rebase the checkout. `gbrain sources writer git-durability
+ * managed variant: page writes through foresights, non-page files with plain git,
+ * never pull or rebase the checkout. `foresights sources writer git-durability
  * <source> --enable` (and `--pat-file`) regenerates it there.
  */
 function renderManagedBlock(repoPath: string, managed?: { sourceId: string }): string {
   const { rules, from } = resolveFilingRules(repoPath);
-  const regeneratedBy = managed ? `gbrain sources writer git-durability ${managed.sourceId} --enable` : 'gbrain sources harden';
-  const writeRules = managed ? `2. **Page writes go through gbrain, never through git.** This checkout is the
-   managed canonical worktree of gbrain source \`${managed.sourceId}\`: the persistence
+  const regeneratedBy = managed ? `foresights sources writer git-durability ${managed.sourceId} --enable` : 'foresights sources harden';
+  const writeRules = managed ? `2. **Page writes go through foresights, never through git.** This checkout is the
+   managed canonical worktree of foresights source \`${managed.sourceId}\`: the persistence
    owner writes each page file, commits only the page paths it wrote and pushes
-   HEAD after every page write. Save pages with the gbrain tools (\`put_page\`,
+   HEAD after every page write. Save pages with the foresights tools (\`put_page\`,
    \`edit_page\`, \`remember\`, \`capture\`); do not run the classic commit-and-push
    helper, \`git add -A\` or \`git commit\` for pages. Confirm a write landed with
-   \`gbrain sources writer status ${managed.sourceId} --json\` (its receipts and parked
-   effects), and that links resolve with \`gbrain check-resolvable\`.
+   \`foresights sources writer status ${managed.sourceId} --json\` (its receipts and parked
+   effects), and that links resolve with \`foresights check-resolvable\`.
 
 3. **Never pull, rebase or reset this checkout.** The owner publishes from local
    HEAD and never pulls, so a pull, rebase, reset or checkout of page paths moves
    files under it. To bring in remote commits run
-   \`gbrain sources refresh ${managed.sourceId}\`. Files that are not pages (this file,
+   \`foresights sources refresh ${managed.sourceId}\`. Files that are not pages (this file,
    \`MEMORY.md\`, daily notes) are yours: commit them with
-   \`gbrain git commit-push -m "<msg>" -- <paths>\`, which commits only those paths
+   \`foresights git commit-push -m "<msg>" -- <paths>\`, which commits only those paths
    under this checkout's commit lock and never fetches, pushes or moves the
    checkout. They reach the remote on the owner's next push, or publish them with
-   \`gbrain git commit-push --push-only --keep-checkout\` (never \`git push --force\`).` : `2. **Every write is committed AND pushed — push is never deferred.** After any
+   \`foresights git commit-push --push-only --keep-checkout\` (never \`git push --force\`).` : `2. **Every write is committed AND pushed — push is never deferred.** After any
    persistent write, run \`scripts/brain-commit-push.sh "<msg>" <path>\` (or
-   \`gbrain git commit-push -m "<msg>" -- <path>\`). It commits only the paths you
+   \`foresights git commit-push -m "<msg>" -- <path>\`). It commits only the paths you
    name, takes this checkout's writer lock, merges remote commits without
    touching other agents' files, and FAILS LOUDLY if the push doesn't land. Then
-   confirm links resolve with \`gbrain check-resolvable\`. On \`integrate_conflict\`
+   confirm links resolve with \`foresights check-resolvable\`. On \`integrate_conflict\`
    stop and ask the user; on \`commit_lock_busy\` retry once. The post-commit hook
    is only a best-effort fallback — the helper is the guarantee.
 
 3. **Bring in remote commits safely; never rebase this checkout.** Other agents
    share it. Run \`scripts/brain-commit-push.sh --pull\` (or
-   \`gbrain git commit-push --pull\`) at session start and before each batch of
+   \`foresights git commit-push --pull\`) at session start and before each batch of
    writes (a cron also pulls every ~30 min). Never run \`git pull --rebase\`,
    \`git stash\`, \`--autostash\`, \`git reset --hard\` or \`git push --force\` here, and
    never delete \`.git/rebase-merge\` without first saving its autostash with
@@ -589,7 +589,7 @@ function installLocalHook(repoPath: string, dryRun: boolean): { status: StepStat
     const cur = readFileSync(hookPath, 'utf-8');
     if (cur.includes(HOOK_BANNER)) {
       if (durabilityProtocolOf(cur) > DURABILITY_PROTOCOL) {
-        return { status: 'needs_attention', detail: `${relative(repoPath, hookPath)} was written by a newer gbrain (protocol ${durabilityProtocolOf(cur)}); upgrade gbrain instead of downgrading it` };
+        return { status: 'needs_attention', detail: `${relative(repoPath, hookPath)} was written by a newer foresights (protocol ${durabilityProtocolOf(cur)}); upgrade foresights instead of downgrading it` };
       }
       if (tracked && !dryRun) ensureExcluded(repoPath, relative(repoPath, hookPath));
       if (cur === script) return { status: 'ok', detail: `${relative(repoPath, hookPath)} already current` };
@@ -620,8 +620,8 @@ function uninstallLocalHook(repoPath: string): boolean {
 }
 
 /**
- * True when the gbrain durability post-commit hook is installed — i.e. the
- * user opted this repo into push-durability via `gbrain sources harden`.
+ * True when the foresights durability post-commit hook is installed — i.e. the
+ * user opted this repo into push-durability via `foresights sources harden`.
  * Cheap (one git-config read + one file read); used as the gate for
  * write-through auto-commit (#2426).
  */
@@ -695,7 +695,7 @@ export async function isDurabilityHardenedAsync(repoPath: string): Promise<boole
  * commit lock. GBRA-180: a writer that holds the lock past the short budget
  * no longer gets a lockless commit racing it on the shared index; the page
  * write stands, the file goes into the pending ledger, and the next locked
- * write-through (or `gbrain git commit-push --pending`) commits it. A commit
+ * write-through (or `foresights git commit-push --pending`) commits it. A commit
  * git refuses unstages the path again, so nothing is left staged for another
  * writer's commit to sweep up. Never throws; returns false when nothing was
  * committed — the DB row and the on-disk file remain the durable sinks.
@@ -738,7 +738,7 @@ const PUSH_LOG_LOCAL_ONLY = /^(\S+) \[push\] (?:LOCAL-ONLY|CONFLICT|SKIPPED), NE
 export type PushLogKind = 'ok' | 'ok-after-merge' | 'nothing' | 'local-only' | 'refused' | 'conflict' | 'lock-timeout' | 'checkout-lagging' | 'skipped';
 
 /**
- * #6530: one `brain-push.log` line per `gbrain git commit-push` outcome, in the
+ * #6530: one `brain-push.log` line per `foresights git commit-push` outcome, in the
  * grammar {@link getLastPushOutcome} parses (put_page's `lastPushStatus`).
  * `checkout-lagging` is informational: the push landed. Best-effort.
  */
@@ -752,10 +752,10 @@ export function appendPushLog(kind: PushLogKind, branch: string, sha: string, de
       : kind === 'nothing' ? `[push] ok-already-on-remote ${branch} ${short}`
       : kind === 'lock-timeout' ? `[push] lock-timeout ${branch}`
       : kind === 'checkout-lagging' ? `[push] checkout-lagging ${branch} ${short} ${clean}`
-      : kind === 'skipped' ? `[push] SKIPPED, NEEDS ATTENTION: ${branch} @ ${short} git did not commit named path(s), ${clean}. Run: gbrain errors commit_paths_skipped`
-      : kind === 'refused' ? `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} the push was refused (${clean}). Run: gbrain git commit-push --push-only`
-      : kind === 'conflict' ? `[push] CONFLICT, NEEDS ATTENTION: ${branch} local and remote changed the same file. Run: gbrain git commit-push --push-only --resolve <path>=ours|theirs`
-      : `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} could not reach the remote. Run: gbrain git commit-push --push-only`;
+      : kind === 'skipped' ? `[push] SKIPPED, NEEDS ATTENTION: ${branch} @ ${short} git did not commit named path(s), ${clean}. Run: foresights errors commit_paths_skipped`
+      : kind === 'refused' ? `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} the push was refused (${clean}). Run: foresights git commit-push --push-only`
+      : kind === 'conflict' ? `[push] CONFLICT, NEEDS ATTENTION: ${branch} local and remote changed the same file. Run: foresights git commit-push --push-only --resolve <path>=ours|theirs`
+      : `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} could not reach the remote. Run: foresights git commit-push --push-only`;
     const p = pushLogPath();
     mkdirSync(dirname(p), { recursive: true });
     if (!existsSync(p)) writeFileSync(p, '', { mode: 0o600 });
@@ -782,7 +782,7 @@ export function getLastPushOutcome(branch: string, repo?: string): PushLogOutcom
   const conflict = repo ? readIntegrateConflict(repo) : null;
   if (conflict && conflict.branch === branch) {
     return { status: 'needs_attention', at: conflict.at,
-      detail: `unresolved integrate_conflict on ${branch} (${conflict.paths.join(', ')}): run gbrain git commit-push --push-only --expect-remote ${String(conflict.remote).slice(0, 12)} --resolve <path>=ours|theirs` };
+      detail: `unresolved integrate_conflict on ${branch} (${conflict.paths.join(', ')}): run foresights git commit-push --push-only --expect-remote ${String(conflict.remote).slice(0, 12)} --resolve <path>=ours|theirs` };
   }
   const log = pushLogPath();
   if (!existsSync(log)) return { status: 'unknown', detail: 'no push attempts logged yet' };
@@ -813,7 +813,7 @@ function installHelper(repoPath: string, dryRun: boolean): { status: StepStatus;
   const helperPath = join(repoPath, HELPER_REL);
   const script = renderCommitPushHelper();
   if (existsSync(helperPath) && durabilityProtocolOf(readFileSync(helperPath, 'utf-8')) > DURABILITY_PROTOCOL) {
-    return { status: 'needs_attention', detail: `${HELPER_REL} was written by a newer gbrain (protocol ${durabilityProtocolOf(readFileSync(helperPath, 'utf-8'))}); upgrade gbrain instead of downgrading it` };
+    return { status: 'needs_attention', detail: `${HELPER_REL} was written by a newer foresights (protocol ${durabilityProtocolOf(readFileSync(helperPath, 'utf-8'))}); upgrade foresights instead of downgrading it` };
   }
   if (existsSync(helperPath) && readFileSync(helperPath, 'utf-8') === script) {
     // Ensure exec bit even when content is current — but not in dry-run: a
@@ -1038,7 +1038,7 @@ export function installDurabilityCron(
       detail:
         'no crontab on this host (container/cloud sandbox) — scheduled pull skipped; ' +
         'the post-commit auto-push and per-turn/session-end pushes cover persistence here. ' +
-        'Run `gbrain sources harden <id>` on a persistent machine to add the scheduled pull.',
+        'Run `foresights sources harden <id>` on a persistent machine to add the scheduled pull.',
     };
   }
   const wrapper = dryRun ? cronWrapperPath(sourceId) : writeCronWrapper(sourceId, repoPath, branch);
@@ -1135,7 +1135,7 @@ function isGitRepo(repoPath: string): boolean {
  */
 /**
  * GBRA-180: a source whose root sits below the checkout toplevel (a brain folder inside a larger repository)
- * records that root in `gbrain.sourceRoot`, so `gbrain git commit-push` refuses commits and publishes that
+ * records that root in `gbrain.sourceRoot`, so `foresights git commit-push` refuses commits and publishes that
  * change files outside it. A source at the toplevel records nothing unless another source already narrowed
  * the checkout. Best-effort.
  */
@@ -1202,7 +1202,7 @@ export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityRepor
     const sourceId = managed.sourceId ?? opts.sourceId;
     throw opError('writer_coordinator_required',
       `${opts.repoPath} is the managed canonical worktree of source ${sourceId}; its Git durability is an owner setting, not a hook.`,
-      `Run gbrain sources writer git-durability ${sourceId} --enable${opts.pat ? ' --pat-file <path>' : ''} (add --dry-run to preview). The owner commits and pushes page writes itself; no pull cron or post-commit hook is installed on a managed root.`,
+      `Run foresights sources writer git-durability ${sourceId} --enable${opts.pat ? ' --pat-file <path>' : ''} (add --dry-run to preview). The owner commits and pushes page writes itself; no pull cron or post-commit hook is installed on a managed root.`,
       { fix: readFix('Shows the owner and whether it commits and pushes page writes, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'] }) });
   }
   if (!opts.dryRun) assertManagedFilesystemWrite(opts.repoPath);
@@ -1252,7 +1252,7 @@ export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityRepor
       gitConfigSet(repoPath, 'rebase.autoStash', 'false');
       gitConfigSet(repoPath, 'merge.autoStash', 'false');
       gitConfigSet(repoPath, 'pull.ff', 'only');
-    } catch { /* best-effort: the helper still resolves gbrain from PATH */ }
+    } catch { /* best-effort: the helper still resolves foresights from PATH */ }
     recordSourceRoot(repoPath, opts.repoPath);
   }
   // 4. committed helper
@@ -1299,7 +1299,7 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
   const resolver = findResolverFile(repoPath);
   if (resolver) paths.push(relative(repoPath, resolver));
   try {
-    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(gbrain): install brain durability scaffolding', allowOutsideSourceRoot: true });
+    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(foresights): install brain durability scaffolding', allowOutsideSourceRoot: true });
     if (r.branch !== branch) return { status: 'needs_attention', detail: `checkout is on ${r.branch}, not ${branch}` };
     if (r.outcome === 'nothing_to_commit') return { status: 'ok', detail: 'scaffolding already committed' };
     return { status: 'fixed', detail: `committed + pushed durability scaffolding${r.checkout === 'lagging' ? ` (checkout lagging: ${r.lagging_reason})` : ''}` };
@@ -1327,9 +1327,9 @@ export async function unhardenBrainRepo(opts: UnhardenOpts): Promise<DurabilityS
   const cronRemoved = removeDurabilityCron(sourceId);
   steps.push({ step: 'cron', status: cronRemoved ? 'fixed' : 'skipped', detail: cronRemoved ? 'cron removed' : 'no cron' });
   const hookRemoved = isGitRepo(repoPath) ? uninstallLocalHook(repoPath) : false;
-  steps.push({ step: 'hook', status: hookRemoved ? 'fixed' : 'skipped', detail: hookRemoved ? 'hook removed' : 'no gbrain hook' });
+  steps.push({ step: 'hook', status: hookRemoved ? 'fixed' : 'skipped', detail: hookRemoved ? 'hook removed' : 'no foresights hook' });
   const credRemoved = isGitRepo(repoPath) ? removeCredentialWiring(repoPath) : false;
-  steps.push({ step: 'credential', status: credRemoved ? 'fixed' : 'skipped', detail: credRemoved ? 'credential wiring removed' : 'no gbrain credential wiring' });
+  steps.push({ step: 'credential', status: credRemoved ? 'fixed' : 'skipped', detail: credRemoved ? 'credential wiring removed' : 'no foresights credential wiring' });
   opts.logger?.(steps.map(s => `[${s.step}] ${s.status}: ${s.detail}`).join('\n'));
   return steps;
 }

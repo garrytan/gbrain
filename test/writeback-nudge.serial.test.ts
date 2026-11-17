@@ -130,8 +130,8 @@ describe('runWritebackNudge — one-time ask, never auto-enables, never throws',
       const out = await captureLog(() => runWritebackNudge(engine, { context: 'init' }));
       expect(out).toContain('[AGENT]');
       expect(out).toContain('ask: Enable ambient memory writeback');
-      expect(out).toContain('if_yes: gbrain config set memory.auto_writeback salient');
-      expect(out).toContain('if_no: gbrain config set memory.auto_writeback off');
+      expect(out).toContain('if_yes: foresights config set memory.auto_writeback salient');
+      expect(out).toContain('if_no: foresights config set memory.auto_writeback off');
       expect(out).toContain('[SHOW USER]');
       expect(out).toContain('Off switch');
       expect(await engine.getConfig(AUTO_WRITEBACK_NOTICE_KEY)).toBeNull();

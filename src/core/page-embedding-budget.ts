@@ -24,7 +24,7 @@
  * page waits for the user's approval (the oversized-page upgrade backfill, or
  * a sampled junk hit). Held and capped pages leave the stale-chunk queue
  * (engine-sql/chunks.ts staleChunkWhere) so the sweep never retries them; an explicit
- * approval (`gbrain embed --held --source S --max-usd N`, or `--slugs <slug>
+ * approval (`foresights embed --held --source S --max-usd N`, or `--slugs <slug>
  * --source S --max-usd N`) passes `approvedCapUsd`, lifts the hold and raises the
  * cap. Every printed approve and its N come from held-embedding-action.ts.
  *
@@ -120,7 +120,7 @@ async function segmentedSampleWindows(engine: BrainEngine, pageId: number): Prom
  * GST-2768: holds that apply to a page of any size. A small page is otherwise unmetered, so the conversation archive's
  * backfill (archive_backfill: waits for the owner's approval of the previewed cost) and its open day (archive_open_day:
  * waits until the day closes or goes quiet) name the page here and the embed paths skip it until then. GST-2731: an
- * imported call transcript (call_import: gbrain import --calls) is held the same way until the owner approves it.
+ * imported call transcript (call_import: foresights import --calls) is held the same way until the owner approves it.
  */
 export const ANY_SIZE_HOLD_REASONS: readonly string[] = ['archive_backfill', 'archive_open_day', 'call_import'];
 
@@ -360,7 +360,7 @@ export function estimatePageEmbedUsd(chars: number, signature: string | null | u
   return estimateCostFromChars(chars, ledgerPricePerMTok(signature).rate);
 }
 
-/** Held and capped pages with their stale chunk counts (`gbrain embed --held`); `limit: null` lists every one. */
+/** Held and capped pages with their stale chunk counts (`foresights embed --held`); `limit: null` lists every one. */
 export async function listBudgetLimitedPages(engine: Pick<BrainEngine, 'executeRaw'>, opts: { state?: 'held' | 'capped'; sourceId?: string; limit?: number | null } = {}): Promise<PageBudgetReport[]> {
   const params: unknown[] = [opts.limit === undefined ? 1000 : opts.limit];
   // #7185: an embed_skip page is never embedded, so a hold on one (a backfill rewrite that did not land) is not approvable work.

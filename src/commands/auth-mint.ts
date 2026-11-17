@@ -1,5 +1,5 @@
 /**
- * The token mint behind `gbrain auth create`, shared with `gbrain access serves
+ * The token mint behind `foresights auth create`, shared with `foresights access serves
  * several` (GST-363), which mints one member-bound key per person through the
  * same path. Returns the token value to the caller; never prints it.
  */

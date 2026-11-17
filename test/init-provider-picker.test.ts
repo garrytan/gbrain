@@ -18,9 +18,9 @@ describe('printSubagentAnthropicCaveat', () => {
     let buf = '';
     printSubagentAnthropicCaveat((s) => { buf += s; });
     expect(buf).toContain('subagent features');
-    expect(buf).toContain('gbrain dream');
-    expect(buf).toContain('gbrain agent run');
-    expect(buf).toContain('gbrain autopilot');
+    expect(buf).toContain('foresights dream');
+    expect(buf).toContain('foresights agent run');
+    expect(buf).toContain('foresights autopilot');
     expect(buf).toContain('ANTHROPIC_API_KEY');
     // The caveat must clarify chat alone is fine without it.
     expect(buf).toContain('Chat alone');

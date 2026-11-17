@@ -2,7 +2,7 @@ name: Actionlint
 
 # Lints the GitHub Actions workflow YAML on every change so a malformed
 # workflow / bad action ref / missing-permission bug is caught before it ships
-# a broken pipeline. gbrain edits .github/workflows/* often (sharding, cache,
+# a broken pipeline. foresights edits .github/workflows/* often (sharding, cache,
 # timeouts); this is the cheap guard that keeps those edits honest.
 
 on:

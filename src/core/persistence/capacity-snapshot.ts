@@ -3,18 +3,18 @@
  * light forecast (capacity-forecast.ts) fills at most once a minute (the
  * #6650 `cachedTerminalSummary` pattern); a write never computes a forecast.
  *
- * `write_capacity_low` (notice kind `info`, so `gbrain notices mute
+ * `write_capacity_low` (notice kind `info`, so `foresights notices mute
  * write_capacity_low` mutes it on receipts) names every cumulative cap at or
  * past 80% or out within `persistence.capacity.warn_days`. Write and sync
  * receipts carry it at most once an hour per process per scope and resource;
- * `gbrain sync status`, doctor and autopilot cycle output carry it every time.
+ * `foresights sync status`, doctor and autopilot cycle output carry it every time.
  * `write_capacity_backpressure` (kind `degraded`, never muted) fires once
  * when a scope passes the background pause line (A5), again only after it
  * clears and passes it anew.
  *
  * #6803 C4: the shared fetch carries its own server-side bound
  * (CAPACITY_FETCH_BOUND_MS) and a timed-out fetch is never cached, so the next
- * caller fetches again. Read paths that must answer quickly (`gbrain sync
+ * caller fetches again. Read paths that must answer quickly (`foresights sync
  * status`, write and sync receipts) wait on the shared fetch only until one
  * absolute deadline (`capacitySnapshotWithin`, CAPACITY_READ_WAIT_MS) and get
  * `unknown` for that call alone. An unknown snapshot yields no notices and
@@ -76,7 +76,7 @@ export function cachedCapacitySnapshot(engine: SqlEngine, now: number = Date.now
   const value: Promise<CapacitySnapshot> = fetch.then(([forecast, { pauseShare: share }]): CapacitySnapshot => {
     const attention = (row: typeof forecast.rows[number]): CapacityAttention => ({ scope: row.scope, resource: row.resource, used: row.used, limit: row.limit,
       pct: row.pct, days_to_exhaustion: row.days_to_exhaustion, config_key: row.config_key, recommended_limit: row.recommended_limit,
-      command: `gbrain config set ${row.config_key} ${row.recommended_limit}` });
+      command: `foresights config set ${row.config_key} ${row.recommended_limit}` });
     return { rows: forecast.rows.map(attention), low: forecast.rows.filter(row => row.status !== 'ok').map(attention),
       paused: forecast.rows.filter(row => row.used >= Math.floor(row.limit * share)).map(attention), pause_pct: Math.round(share * 100), status: 'ok' };
   }).catch((error: unknown): CapacitySnapshot => {
@@ -111,7 +111,7 @@ const VERIFY = CAPACITY_VERIFY;
 function lowNotice(rows: CapacityAttention[]): Notice {
   return { code: 'write_capacity_low', kind: 'info',
     why: `This notice is not a refusal: writes still work, and this call's own result says what it did. Write capacity is running low: ${rows.map(describe).join('; ')}; admission refuses only at the cap. `
-      + 'gbrain doctor --only persistence_capacity --json reads the forecast and the remedy for the brain host.',
+      + 'foresights doctor --only persistence_capacity --json reads the forecast and the remedy for the brain host.',
     fix: { argv: [...VERIFY.argv], mcp: VERIFY.mcp, consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Reads which cap is running low, its forecast and the remedy, read-only; nothing needs to change for this call.', verify: VERIFY,
       docs: 'docs/guides/concurrent-writes.md#quota-near-exhaustion' } };

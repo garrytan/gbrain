@@ -10,7 +10,7 @@
  *     dir), never a workspace — paired `sources:` files are skipped (a
  *     harness skills dir cannot host src/ trees);
  *   - optional cold-pull STUB mode swaps each SKILL.md body for a pointer at
- *     the gbrain MCP `get_skill` op while shipping the shared-dep closure
+ *     the foresights MCP `get_skill` op while shipping the shared-dep closure
  *     (32 skills reference sibling convention files; a cold body without
  *     them is broken).
  *
@@ -135,7 +135,7 @@ function entryMeta(entry: { relWorkspaceTarget: string; sharedDep: boolean }): E
 }
 
 export interface BridgePlanItem {
-  /** Absolute source path in the gbrain tree. */
+  /** Absolute source path in the foresights tree. */
   source: string;
   /** Absolute target path under destDir. */
   target: string;
@@ -284,7 +284,7 @@ function readTargetFile(target: string): string {
 /**
  * Render a cold-pull stub for one skill. The source SKILL.md's frontmatter
  * block is preserved VERBATIM (name / description / triggers are the warm
- * discovery contract); the body becomes a pointer at the gbrain MCP
+ * discovery contract); the body becomes a pointer at the foresights MCP
  * `get_skill` op. The fallback text is honest about reachability: on stdio
  * servers a per-client surface cannot be persisted, and `request_tools`
  * never widens past the operator's ceiling.
@@ -299,17 +299,17 @@ export function renderSkillStub(sourceContent: string, slug: string): string {
   }
   const body =
     `${STUB_MARKER}\n\n` +
-    `This is a cold-pull stub installed by \`gbrain skillpack scaffold\`. The full\n` +
-    `skill body is served by your gbrain brain, so it is always current.\n\n` +
-    `To use this skill: call the gbrain MCP tool \`get_skill\` with\n` +
+    `This is a cold-pull stub installed by \`foresights skillpack scaffold\`. The full\n` +
+    `skill body is served by your foresights brain, so it is always current.\n\n` +
+    `To use this skill: call the foresights MCP tool \`get_skill\` with\n` +
     `\`{"name": "${slug}"}\`, read the returned instructions, and follow them\n` +
     `exactly.\n\n` +
-    `If \`get_skill\` is not in your tool list, the gbrain MCP server's surface is\n` +
-    `too narrow for skill serving — ask the operator to run \`gbrain serve\` with\n` +
+    `If \`get_skill\` is not in your tool list, the foresights MCP server's surface is\n` +
+    `too narrow for skill serving — ask the operator to run \`foresights serve\` with\n` +
     `surface \`full\` (HTTP clients may try the \`request_tools\` tool; stdio\n` +
     `servers cannot persist a wider surface, and no client can exceed the\n` +
     `operator's ceiling). Local CLI fallback that always works:\n` +
-    `\`gbrain skill ${slug}\`.\n`;
+    `\`foresights skill ${slug}\`.\n`;
   return `${fmMatch[0]}\n\n${body}`;
 }
 
@@ -771,7 +771,7 @@ export function runHarnessReferenceApply(
         hunksApplied: 0,
         hunksConflicted: 0,
         conflicts: [
-          'stub-mode file: stubs are never merged — remove the skill (gbrain skillpack remove with the harness and skill flags), then re-run the scaffold to regenerate it',
+          'stub-mode file: stubs are never merged — remove the skill (foresights skillpack remove with the harness and skill flags), then re-run the scaffold to regenerate it',
         ],
       });
       continue;

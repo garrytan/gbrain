@@ -79,7 +79,7 @@ describe('jobs stats — Backpressure line + suppression hint wiring', () => {
       expect(out).toContain('Backpressure (24h)');
       expect(out).toContain('autopilot-cycle: 1');
       expect(out).toContain(`dispatch suppressed by in-flight job #${job.id}`);
-      expect(out).toContain(`gbrain jobs get ${job.id}`);
+      expect(out).toContain(`foresights jobs get ${job.id}`);
     } finally {
       rmSync(auditDir, { recursive: true, force: true });
     }

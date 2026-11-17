@@ -6,7 +6,7 @@ import type { Migration } from './types.ts';
 // GST-2462 (D2): page rules. A folder rule (v283) can't name a page at the root
 // of a source, and put_page can't tighten a page whose file left git outside
 // the write door, so such a page could not be restricted at all. A page rule
-// names one exact slug (slug: in .gbrain/access.yml, --slug on gbrain access
+// names one exact slug (slug: in .gbrain/access.yml, --slug on foresights access
 // rule add) and is stored in access_rules.prefix without the trailing '/'.
 // This widens both prefix checks to accept that form and makes the rule and
 // pending-coverage matchers cover a slash-less prefix only when it equals the

@@ -4,14 +4,14 @@
  * add`, a fresh managed brain) after the timed ops, and lands in the report as
  * an enforced data check plus its measurement:
  *
- *   f4d_sync_deadline      `gbrain sync` of a fresh source (1,000 files at 10k and up)
+ *   f4d_sync_deadline      `foresights sync` of a fresh source (1,000 files at 10k and up)
  *                          past a 1 s progress-aware deadline keeps importing and completes.
- *   f4d_embed_budget_stop  `gbrain embed --stale` stopped by its time budget exits 11
+ *   f4d_embed_budget_stop  `foresights embed --stale` stopped by its time budget exits 11
  *                          with the remaining count and the resume command (a local
  *                          stub embedding endpoint; no provider call leaves the machine).
- *   f4d_serve_boot         `gbrain serve` on the brain answers initialize and a search
+ *   f4d_serve_boot         `foresights serve` on the brain answers initialize and a search
  *                          inside its boot window and does not exit on the boot deadline.
- *   f4d_sources_add_20k    `gbrain sources add` registers a 20,000-file checkout on a
+ *   f4d_sources_add_20k    `foresights sources add` registers a 20,000-file checkout on a
  *                          fresh managed brain (tiers of 20,000 pages and up only).
  */
 import { execFileSync } from 'node:child_process';
@@ -109,7 +109,7 @@ async function embedBudgetStop(ctx: F4dContext): Promise<{ check: DataCheck; mea
     const left = Number(/with (\d+) stale chunk\(s\) left/.exec(verdict)?.[1] ?? NaN);
     const problem = embed.code !== 11 ? `embed exited ${embed.code}, expected the budget-stop status 11: ${tail(embed)}`
       : !(left > 0) ? `the budget-stop verdict does not name the remaining stale chunks: ${verdict || tail(embed)}`
-        : !verdict.includes('gbrain embed --stale --catch-up') ? `the budget-stop verdict does not name the resume command: ${verdict}` : null;
+        : !verdict.includes('foresights embed --stale --catch-up') ? `the budget-stop verdict does not name the resume command: ${verdict}` : null;
     return { check: { check: 'f4d_embed_budget_stop', status: problem ? 'fail' : 'pass', ...(problem ? { detail: problem } : {}) },
       measured: { budget_ms: EMBED_BUDGET_MS, wall_ms: embed.ms, exit_code: embed.code, remaining_stale: Number.isFinite(left) ? left : null } };
   } finally {

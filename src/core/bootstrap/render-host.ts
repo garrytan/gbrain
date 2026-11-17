@@ -2,7 +2,7 @@
  * Which harness a bootstrap render targets (#7470). OpenClaw 2026.10.6+ retired
  * its own HEARTBEAT.md: `openclaw doctor --fix` imports a workspace file by that
  * name into its heartbeat monitor and removes it, so an OpenClaw render writes
- * gbrain's due-job list under another name (assets.ts `openclawDest`).
+ * foresights's due-job list under another name (assets.ts `openclawDest`).
  */
 
 import { homedir } from 'node:os';
@@ -10,7 +10,7 @@ import { join, relative, resolve, sep } from 'node:path';
 
 /**
  * Whether a workspace belongs to OpenClaw, from OpenClaw's own layout: the
- * configured workspace (OPENCLAW_WORKSPACE_DIR, or gbrain's OPENCLAW_WORKSPACE),
+ * configured workspace (OPENCLAW_WORKSPACE_DIR, or foresights's OPENCLAW_WORKSPACE),
  * or a `workspace` tree under the state directory (OPENCLAW_STATE_DIR,
  * ~/.openclaw, or a profile's ~/.openclaw-<profile>). A workspace elsewhere
  * that OpenClaw was pointed at by config alone needs `render --host openclaw`.

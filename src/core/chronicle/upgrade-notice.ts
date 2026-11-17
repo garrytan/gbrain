@@ -1,5 +1,5 @@
 // #5876: one-shot post-upgrade notice for the auto_chronicle default flip. Printed by
-// `gbrain post-upgrade` while the operator has not answered the change (key unset, or an explicit
+// `foresights post-upgrade` while the operator has not answered the change (key unset, or an explicit
 // `true` written before this release, when it had no effect). The doctor/advisor
 // `auto_chronicle_default_on` notice stays visible after this prints, until the key is set.
 import type { BrainEngine } from '../engine.ts';
@@ -44,14 +44,14 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
   const cost = provider.priced
     ? `Worst case: ${settings.dailyLimit} calls/day x $${settings.jobBudgetUsd.toFixed(2)} per-page cap = $${ceiling.toFixed(2)}/day with ${provider.model}. ` +
       'The cap is per page, not a daily budget; typical pages cost far less.'
-    : `gbrain has no price for ${provider.model ?? 'the configured chat model'}, so the per-page cap ($${settings.jobBudgetUsd.toFixed(2)}) cannot apply: ` +
+    : `foresights has no price for ${provider.model ?? 'the configured chat model'}, so the per-page cap ($${settings.jobBudgetUsd.toFixed(2)}) cannot apply: ` +
       `calls are unbounded in dollars (still at most ${settings.dailyLimit} per day).`;
   return [
     '',
     '═══════════════════════════════════════════════════════════════',
-    '[gbrain] Automatic event extraction (auto_chronicle) is now ON by default.',
-    '[gbrain] Each new or changed meeting, conversation or calendar page gets one',
-    '[gbrain] paid chat call that turns it into timeline events (life/events/).',
+    '[foresights] Automatic event extraction (auto_chronicle) is now ON by default.',
+    '[foresights] Each new or changed meeting, conversation or calendar page gets one',
+    '[foresights] paid chat call that turns it into timeline events (life/events/).',
     '═══════════════════════════════════════════════════════════════',
     ...agentBlock({
       ask: 'Keep automatic event extraction on, or turn it off?',
@@ -65,7 +65,7 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
       if_yes: `Run ${AUTO_CHRONICLE_KEEP_ARGV.join(' ')} (records the user's answer). History is paid too; ask before running it. ` +
         `Preview: ${chronicleBackfillArgv({ since, dryRun: true }).join(' ')}. Guide: docs/guides/life-chronicle.md`,
       if_no: `Run ${AUTO_CHRONICLE_OPT_OUT_ARGV.join(' ')}.`,
-      verify: 'gbrain doctor --only auto_chronicle_default_on --json',
+      verify: 'foresights doctor --only auto_chronicle_default_on --json',
     }, {
       showUser: 'Automatic event extraction is now on: each new or changed meeting, conversation or calendar page gets one paid chat call ' +
         'and its text goes to your chat provider. Keep it on, or turn it off?',

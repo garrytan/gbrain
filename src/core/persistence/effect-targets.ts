@@ -43,7 +43,7 @@ export async function upgradeWithdrawalEffect(engine: BrainEngine, effect: Persi
     const claims = requested.length ? requested : await tx.executeRaw<WithdrawalClaim>(`SELECT visibility,fact_hash,subject FROM fact_withdrawals
       WHERE source_id=$1 ORDER BY visibility,fact_hash,subject LIMIT $2`, [effect.source_id, WITHDRAWAL_LIMITS.targets + 1]);
     if (!claims.length) throw opError('withdrawal_provenance', 'Legacy withdrawal intent has no verifiable ledger. Its queued work remains retained.',
-      `Request ${effect.request_id} withdrew a fact in source ${effect.source_id} before withdrawals were ledgered, so its targets cannot be rediscovered; the effect stays parked and nothing was rewritten. Show it to the user with the writer status; report it with gbrain --version if it should have a ledger.`,
+      `Request ${effect.request_id} withdrew a fact in source ${effect.source_id} before withdrawals were ledgered, so its targets cannot be rediscovered; the effect stays parked and nothing was rewritten. Show it to the user with the writer status; report it with foresights --version if it should have a ledger.`,
       { fix: readFix(`Shows source ${effect.source_id}'s parked effects, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', effect.source_id, '--json'] }) });
     const discovered = await discoverWithdrawalTargets(tx, effect.source_id, claims).catch(withdrawalDiscoveryFailure);
     const remaining = await tx.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE source_id=$1 AND id=ANY($2::int[])

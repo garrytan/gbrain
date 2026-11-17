@@ -41,7 +41,7 @@ describe('put_page and put_pages say the gate hid the page (#6259 item 6)', () =
     expect(junk.quarantined).toEqual({ reason: 'junk_pattern', detail: 'cloudflare_ray_id' });
     expect(junk.chunk_skip_reason).toBe('embed_skip');
     expect(notices.map(n => [n.code, n.kind])).toEqual([['page_quarantined', 'safety']]);
-    expect(notices[0]!.why).toContain('gbrain quarantine clear notes/junk-write --force');
+    expect(notices[0]!.why).toContain('foresights quarantine clear notes/junk-write --force');
     const clean: Notice[] = [];
     const ok = await op('put_page').handler(ctx({ notices: clean }), { slug: 'notes/clean-write', content: CLEAN('Clean write') }) as Record<string, unknown>;
     expect(ok.quarantined).toBeUndefined();

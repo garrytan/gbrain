@@ -7,12 +7,12 @@
  * Phases (all idempotent, additive):
  *   A. Schema     — verify migrations v37 + v38 already applied (the schema
  *                   runner in src/core/migrate.ts does the actual DDL during
- *                   `gbrain upgrade`/initSchema). This phase asserts post-condition.
- *   B. Backfill   — submit `gbrain extract takes` as a Minion job so any
+ *                   `foresights upgrade`/initSchema). This phase asserts post-condition.
+ *   B. Backfill   — submit `foresights extract takes` as a Minion job so any
  *                   pre-existing fenced takes tables in markdown populate the
  *                   takes table without blocking the foreground upgrade.
  *                   Falls back to inline run on PGLite (no Minion worker).
- *   C. Re-chunk   — emit a pending-host-work TODO for `gbrain reindex
+ *   C. Re-chunk   — emit a pending-host-work TODO for `foresights reindex
  *                   --markdown` (Codex P0 #3 fix: pages with
  *                   pre-v0.28 chunks still contain the fenced takes content;
  *                   the chunker strip only applies to NEW imports). Re-chunk
@@ -20,8 +20,8 @@
  *                   of running it inline.
  *   D. Record     — runner-owned ledger write (handled by apply-migrations.ts).
  *
- * No content mutation. No data loss. Operator runs `gbrain doctor` after
- * upgrade, then `gbrain reindex --markdown` for pages chunked before the
+ * No content mutation. No data loss. Operator runs `foresights doctor` after
+ * upgrade, then `foresights reindex --markdown` for pages chunked before the
  * fence strip.
  */
 
@@ -68,7 +68,7 @@ async function phaseASchema(
       return {
         name: 'schema',
         status: 'failed',
-        detail: `expected schema version >= 38 (takes + access_tokens.permissions); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
+        detail: `expected schema version >= 38 (takes + access_tokens.permissions); got ${v}. Run \`foresights apply-migrations --yes\` to apply.`,
       };
     }
     // Quick post-condition: takes + synthesis_evidence tables exist
@@ -99,8 +99,8 @@ async function phaseBBackfill(
 
   try {
     // Inline run on both engines for v0.28.0 simplicity. Re-running this
-    // backfill is `gbrain apply-migrations --migration 0.28.0`; one page's
-    // index rebuilds with `gbrain takes rebuild <slug>`. The migration's job
+    // backfill is `foresights apply-migrations --migration 0.28.0`; one page's
+    // index rebuilds with `foresights takes rebuild <slug>`. The migration's job
     // is to get the table populated for upgrade-time doctor checks.
     const { extractTakes } = await import('../../core/cycle/extract-takes.ts');
     const result = await extractTakes(engine, { source: 'db' });
@@ -166,7 +166,7 @@ function phaseCRechunkTodo(opts: OrchestratorOpts): OrchestratorPhaseResult {
       ts: new Date().toISOString(),
       skill: 'skills/migrations/v0.28.0.md',
       reason: 'Pages with pre-v0.28 chunks still contain fenced takes content. Re-chunk so the new chunker strip rule is applied (Codex P0 #3 fix).',
-      command: 'gbrain reindex --markdown',
+      command: 'foresights reindex --markdown',
       _key: key,
     };
     appendFileSync(pendingHostWorkPath(), JSON.stringify(entry) + '\n');
@@ -227,10 +227,10 @@ export const v0_28_0: Migration = {
     description:
       'v0.28 adds the takes layer: typed/weighted/attributed claims (fact/take/bet/hunch) ' +
       'stored as fenced markdown tables on every page, indexed in Postgres for fast queries. ' +
-      'Plus `gbrain takes` CLI (list/search/add/update/supersede/resolve), unified model config ' +
+      'Plus `foresights takes` CLI (list/search/add/update/supersede/resolve), unified model config ' +
       '(`models.default` replaces every per-phase config key), per-token MCP allow-list for ' +
       'visibility (private hunches stay private), and three new MCP ops (takes_list, takes_search, ' +
-      'think). `gbrain think` op surface lands now; the synthesis pipeline lands incrementally in ' +
+      'think). `foresights think` op surface lands now; the synthesis pipeline lands incrementally in ' +
       'v0.28.x. Migration backfills takes from any pre-existing fenced markdown tables; queues a ' +
       're-chunk TODO so the chunker-strip rule (Codex P0 fix — keeps takes content out of page ' +
       'chunks where the per-token allow-list cannot reach) catches up on legacy pages.',

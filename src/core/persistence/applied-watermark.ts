@@ -108,7 +108,7 @@ export async function readCheckoutRoot(engine: Pick<BrainEngine, 'executeRaw'>, 
   return source;
 }
 
-/** The full watermark of one source for `gbrain sources status --json` and MCP `sources_status`. */
+/** The full watermark of one source for `foresights sources status --json` and MCP `sources_status`. */
 export async function readAppliedWatermark(engine: BrainEngine, sourceId: string,
   opts: { remote?: boolean; now?: number; behind?: BehindReader; filesBehind?: FilesBehindReader } = {}): Promise<AppliedWatermark> {
   const now = opts.now ?? Date.now();

@@ -1,6 +1,6 @@
 /**
  * mcp-registration.ts — shared MCP-registration helpers: the one stdio
- * registration surface and serve argv every stdio registration gbrain writes
+ * registration surface and serve argv every stdio registration foresights writes
  * builds from (readiness, init's quickstart, `bootstrap hooks` for Claude
  * Code / Codex / opencode, the plugin generator), plus the HTTP+bearer
  * wiring helpers (extracted from src/commands/connect.ts for #4043 [F5]: the
@@ -20,7 +20,7 @@ export { shellQuote };
  * list (Garry, 2026-10-24: new installs register starter instead of full;
  * gbrain-evals#191 measured unchanged reach and accuracy with 17-23% fewer
  * input tokens). Every install path reads this one value: README, docs/mcp,
- * the plugin manifests and every registration gbrain writes. An existing
+ * the plugin manifests and every registration foresights writes. An existing
  * registration keeps its surface; `--surface full` is the opt-in for every
  * operation, and any hidden parameter or tool stays reachable through
  * `request_tools`.
@@ -106,7 +106,7 @@ export type UrlResult =
  * never a legitimate brain endpoint but IS a token-exfil target (e.g. the AWS/
  * GCP metadata service at 169.254.169.254). Deliberately does NOT block
  * localhost or RFC1918/LAN ranges: self-hosted brains on a private network are
- * a documented, supported topology (`gbrain serve --http --bind`).
+ * a documented, supported topology (`foresights serve --http --bind`).
  */
 export function isLinkLocalOrMetadata(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
@@ -136,7 +136,7 @@ export function isLoopbackHostname(hostname: string): boolean {
 export function normalizeMcpUrl(input: string): UrlResult {
   const raw = (input ?? '').trim();
   if (!raw) {
-    return { ok: false, error: 'Missing MCP URL. Usage: gbrain connect <https://host/mcp> --token <bearer>' };
+    return { ok: false, error: 'Missing MCP URL. Usage: foresights connect <https://host/mcp> --token <bearer>' };
   }
   // Require an explicit scheme. A bare `host:3131` parses as scheme `host:`
   // under WHATWG URL, so reject anything without `://`.
@@ -252,16 +252,16 @@ export function cmdString(binary: string, argv: string[]): string {
  */
 export const OAUTH_SECRET_NOTE =
   'Note: the client secret is sensitive — store it like a password. It mints ' +
-  'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.';
+  'short-lived, scoped access tokens; revoke with `foresights auth revoke-client`.';
 
 /**
  * Paste-ready OpenClaw wiring block, run on the OpenClaw machine (never the
- * host that printed it, so it names no host path): a thin gbrain install for
+ * host that printed it, so it names no host path): a thin foresights install for
  * the OAuth client minted for it, then OpenClaw's own `mcp add` for that
- * thin client's `gbrain serve`, which is a stdio bridge to the brain host
+ * thin client's `foresights serve`, which is a stdio bridge to the brain host
  * with this client's grant (#8543). The launcher resolves on the OpenClaw
  * machine. Deliberately NOT an mcpServers JSON entry: that key belongs to
- * installed bundle manifests, and the bundle plugin already registers gbrain.
+ * installed bundle manifests, and the bundle plugin already registers foresights.
  * A narrow home (`gbrainHome`) goes on both the init line and the entry.
  */
 export function openclawThinClientBlock(opts: {
@@ -283,14 +283,14 @@ export function openclawThinClientBlock(opts: {
   const add = 'openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs'
     + (home ? ` --env ${home}` : '');
   return [
-    '# On the OpenClaw machine, install the gbrain CLI, then run:',
+    '# On the OpenClaw machine, install the foresights CLI, then run:',
     init,
     add,
     '',
-    "On that thin client `gbrain serve` is a stdio bridge: OpenClaw's tool calls reach the brain host with this",
-    "client's grant and nothing more. If gbrain's OpenClaw bundle plugin is installed there, it already registers",
+    "On that thin client `foresights serve` is a stdio bridge: OpenClaw's tool calls reach the brain host with this",
+    "client's grant and nothing more. If foresights's OpenClaw bundle plugin is installed there, it already registers",
     'gbrain: run only the init line.',
-    ...(home ? [] : ['To keep this client apart from another gbrain on that machine, put the same GBRAIN_HOME=<dir> before',
+    ...(home ? [] : ['To keep this client apart from another foresights on that machine, put the same GBRAIN_HOME=<dir> before',
       'the init line and add --env GBRAIN_HOME=<dir> to the mcp add line.']),
     "OpenClaw's native remote MCP client (streamable HTTP + `openclaw mcp login`) is the other scoped",
     'route, with its own OAuth login (docs/mcp/OPENCLAW.md).',

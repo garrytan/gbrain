@@ -69,8 +69,8 @@ export interface DeletedPagePurge {
 
 /**
  * D6 (#6114): the one consent request for a manual hard purge, used by
- * `gbrain pages purge-deleted` and by the `purge_deleted_pages` op (reached
- * through `gbrain call`), so no manual entry point purges without it. The
+ * `foresights pages purge-deleted` and by the `purge_deleted_pages` op (reached
+ * through `foresights call`), so no manual entry point purges without it. The
  * approved command is always the gated `pages purge-deleted --yes`. The
  * autopilot purge phase calls `purgeDeletedPagesCoordinated` directly, with `automatic` (#7130).
  */
@@ -82,7 +82,7 @@ export function purgeConsentRequest(count: number, olderThanHours: number, json:
     command: 'pages purge-deleted', effects: ['destructive'], actor: 'agent',
     what: `Permanently purge ${count} soft-deleted page(s)${retried}${sync}`,
     why: 'A hard purge removes soft-deleted pages, their chunks and links, from every source of this brain.',
-    risk: 'Purged pages cannot be restored with `gbrain restore`; they can only come back from a backup.',
+    risk: 'Purged pages cannot be restored with `foresights restore`; they can only come back from a backup.',
     user_message: `Permanently delete ${count} page(s) soft-deleted more than ${olderThanHours}h ago${retried}, across every source in this brain${sync}? They cannot be restored afterwards; only a backup brings them back.`,
     argv: ['gbrain', 'pages', 'purge-deleted', '--older-than', `${olderThanHours}h`, ...retry, ...(json ? ['--json'] : []), '--yes'],
     preview_argv: ['gbrain', 'pages', 'purge-deleted', '--older-than', `${olderThanHours}h`, ...retry, '--dry-run', '--json'],
@@ -90,7 +90,7 @@ export function purgeConsentRequest(count: number, olderThanHours: number, json:
   };
 }
 
-/** The `purge_deleted_pages` op (`gbrain call`): the D6 consent first (`yes` is `--yes`); an empty purge set needs none. */
+/** The `purge_deleted_pages` op (`foresights call`): the D6 consent first (`yes` is `--yes`); an empty purge set needs none. */
 export async function consentedPurgeDeletedPages(engine: BrainEngine, olderThanHours: number, yes: boolean) {
   const forecast = await (await import('../repair/origin-carry.ts')).forecastCarry(engine, olderThanHours);
   const preview = await selectPurgeCandidates(engine, olderThanHours, { forecast });
@@ -124,7 +124,7 @@ async function recordedTombstones(engine: BrainEngine, hours: string, released: 
 }
 
 const parkedReason = (park: PurgePark) =>
-  `Parked after ${park.failures} failed purges (last: ${park.code ?? 'error'}: ${park.reason}); retry once with gbrain pages purge-deleted --retry-parked.`;
+  `Parked after ${park.failures} failed purges (last: ${park.code ?? 'error'}: ${park.reason}); retry once with foresights pages purge-deleted --retry-parked.`;
 
 interface RecordedExpiry { slugs: string[]; exclude: number[]; blocked: DeletedPagePurge['blocked']; failed: number; parked: number; reparked: DerivedOriginPark[] }
 
@@ -185,7 +185,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
       out.exclude.push(row.id);
       out.blocked.push({ source_id: row.source_id, slug: row.slug, code: failure.code,
         reason: `${failure.message}; ${failure.class === 'content'
-          ? `parked after ${PURGE_PARK_LIMIT} failed purges (gbrain doctor: purge_parked_pages), then retried once with gbrain pages purge-deleted --retry-parked`
+          ? `parked after ${PURGE_PARK_LIMIT} failed purges (foresights doctor: purge_parked_pages), then retried once with foresights pages purge-deleted --retry-parked`
           : 'retried on the next run'}` });
     }
   }
@@ -287,7 +287,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
     if (!active) {
       selection.inactive++;
       selection.blocked.push({ source_id: row.source_id, slug: row.slug, code: 'writer_not_active', binding_state: writer!.state,
-        reason: `Source ${row.source_id}'s writer is ${writer!.state}${writer!.physical_error ? ` (${writer!.physical_error})` : ''}, so the purge submitted nothing; it resumes once gbrain sources writer status --source ${row.source_id} shows the writer ready.` });
+        reason: `Source ${row.source_id}'s writer is ${writer!.state}${writer!.physical_error ? ` (${writer!.physical_error})` : ''}, so the purge submitted nothing; it resumes once foresights sources writer status --source ${row.source_id} shows the writer ready.` });
       continue;
     }
     const syncUnreviewed = unreviewed.has(Number(id));
@@ -326,11 +326,11 @@ export function purgePhaseStatus(result: DeletedPagePurge): 'ok' | 'warn' | 'fai
 /** The purge phase summary's note on the pages it did not submit (empty when there are none). */
 export function purgePhaseNote(result: DeletedPagePurge): string {
   const parts = [result.inactive ? `${result.inactive} waiting on a writer in recovery` : '', !result.error && result.failed ? `${result.failed} failed (see details)` : '',
-    result.parked ? `${result.parked} parked (gbrain doctor: purge_parked_pages)` : '',
+    result.parked ? `${result.parked} parked (foresights doctor: purge_parked_pages)` : '',
     result.capacity_deferred ? `${result.capacity_deferred} deferred to the next run (write capacity in use)` : '',
-    result.held ? `${result.held} deleted by a managed sync held for review (gbrain pages purge-deleted --dry-run; purge with --yes or restore each)` : '',
-    result.write_deferred ? `${result.write_deferred} deferred: an accepted purge is still publishing (gbrain doctor: dream_write_deferred)` : '',
-    result.origin_parked ? `${result.origin_parked} kept: a page derived from each could not be labelled private (gbrain doctor: derived_origin_parked)` : ''].filter(Boolean);
+    result.held ? `${result.held} deleted by a managed sync held for review (foresights pages purge-deleted --dry-run; purge with --yes or restore each)` : '',
+    result.write_deferred ? `${result.write_deferred} deferred: an accepted purge is still publishing (foresights doctor: dream_write_deferred)` : '',
+    result.origin_parked ? `${result.origin_parked} kept: a page derived from each could not be labelled private (foresights doctor: derived_origin_parked)` : ''].filter(Boolean);
   return parts.length ? ` (${parts.join(', ')})` : '';
 }
 
@@ -345,7 +345,7 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
  * #6741 C: each attempt is a new permanent request id, so the selection
  * (selectPurgeCandidates) submits nothing for a source whose writer needs
  * recovery and skips a tombstone that failed PURGE_PARK_LIMIT times (parked,
- * purge-parks.ts); `retryParked` (`gbrain pages purge-deleted --retry-parked`)
+ * purge-parks.ts); `retryParked` (`foresights pages purge-deleted --retry-parked`)
  * gives each parked tombstone the cutoff selects one more attempt.
  *
  * #6884: the run submits only while the writer has outstanding-request room
@@ -360,7 +360,7 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
  * GST-2689: every run first labels private the pages an expired origin is the only privacy of (repair/origin-carry.ts);
  * an origin it could not carry is parked and kept by every path below (code `derived_origin_parked`).
  */
-/** Limits a purge to pages the caller already showed the person (`gbrain maintain --purge --expect`). */
+/** Limits a purge to pages the caller already showed the person (`foresights maintain --purge --expect`). */
 export type PurgeFilter = (page: { source_id: string; slug: string }) => boolean;
 
 export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter; release?: readonly number[] } = {}): Promise<DeletedPagePurge> {
@@ -385,7 +385,7 @@ export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderTha
 function originParked(parks: DerivedOriginPark[]): DeletedPagePurge['blocked'] {
   return parks.map(park => ({ source_id: park.source_id, slug: park.slug, code: DERIVED_ORIGIN_PARKED_CODE,
     reason: `Kept: ${park.blocking_slug ?? 'a page derived from it'} is private only through this page and could not be labelled private (${park.code ?? 'error'}: ${park.reason}); `
-      + 'the next purge tries again once the cause is fixed (gbrain doctor: derived_origin_parked).' }));
+      + 'the next purge tries again once the cause is fixed (foresights doctor: derived_origin_parked).' }));
 }
 
 /**

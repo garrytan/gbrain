@@ -5,7 +5,7 @@
  * fails with the same code at the same knowledge revision and extractor generation in `LINK_HOLD_THRESHOLD_RUNS`
  * consecutive runs is held: stale extraction skips it (`stalePagesWhere` `held: 'exclude'`) and doctor's
  * `links_extraction_lag` reports it. A held page is retried when it is edited (new revision), when the extractor
- * generation changes, or after `gbrain extract --stale --retry-held` clears the records; publishing its links clears
+ * generation changes, or after `foresights extract --stale --retry-held` clears the records; publishing its links clears
  * its record with the watermark (`markPagesExtractedBatch`). The counting mirrors connectors/item-holds.ts. The
  * record is a derived column outside the managed writer guard's tracked set, so it is written without coordination.
  */

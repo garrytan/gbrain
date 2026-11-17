@@ -1,5 +1,5 @@
 /**
- * `gbrain sources refresh <source-id>` (F0): fast-forward a managed source's
+ * `foresights sources refresh <source-id>` (F0): fast-forward a managed source's
  * checkout to its upstream through the drained, worktree-wide refresh in
  * `src/core/persistence/worktree-refresh.ts`, then run the managed `--no-pull`
  * sync for every source bound to that worktree. Trusted local CLI on the
@@ -14,7 +14,7 @@ import { OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { refreshWorktree, type RefreshOptions, type WorktreeRefreshResult } from '../core/persistence/worktree-refresh.ts';
 
-const USAGE = 'Usage: gbrain sources refresh <source-id> [--dry-run] [--wait-drain <seconds>] [--fetch-timeout-ms <ms>] [--resume | --abandon] [--json]';
+const USAGE = 'Usage: foresights sources refresh <source-id> [--dry-run] [--wait-drain <seconds>] [--fetch-timeout-ms <ms>] [--resume | --abandon] [--json]';
 
 function numberFlag(args: string[], flag: string): number | undefined {
   const index = args.indexOf(flag);
@@ -55,7 +55,7 @@ function describe(result: WorktreeRefreshResult): string {
   const lines = [`Refresh ${result.status}: sources ${result.source_ids.join(', ')}; ${head(result.old_head)} -> ${head(result.target_head)}${result.upstream_ref ? ` (${result.upstream_ref})` : ''}.`];
   if (result.recovered) lines.push(`Recovered orphaned refresh ${result.recovered.refresh_id} (${result.recovered.status}; previous holder: ${result.recovered.previous_holder ? `pid ${result.recovered.previous_holder.pid} on ${result.recovered.previous_holder.hostname}` : 'not recorded'}).`);
   if (result.published) lines.push(`Published ${result.published.local_commits} local commit(s) merged with ${result.published.integrated} upstream commit(s) as ${head(result.published.sha)} before the fast-forward (sources.refresh_publish_diverged).`);
-  if (result.published?.quarantined) lines.push(`The remote also changed ${result.published.quarantined.paths.join(', ')}: its version was published and this machine's version is kept under ${result.published.quarantined.ref}; gbrain doctor lists it (quarantined_changes).`);
+  if (result.published?.quarantined) lines.push(`The remote also changed ${result.published.quarantined.paths.join(', ')}: its version was published and this machine's version is kept under ${result.published.quarantined.ref}; foresights doctor lists it (quarantined_changes).`);
   if (result.published?.superseded_remote_paths) lines.push(`Kept this machine's version of ${result.published.superseded_remote_paths.join(', ')}: the remote held a version this checkout had already replaced (docs/guides/shared-checkout-git.md#conflicts).`);
   if (result.incoming_files !== undefined) lines.push(`Incoming files: ${result.incoming_files}.`);
   for (const member of result.synced) lines.push(`  ${member.source_id}: sync ${member.status}, last_commit ${head(member.last_commit)}`);

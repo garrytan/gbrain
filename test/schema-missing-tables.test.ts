@@ -1,5 +1,5 @@
 /**
- * #6911: the recreate steps behind `gbrain repair missing-tables` rebuild each rebuildable cache in exactly the shape
+ * #6911: the recreate steps behind `foresights repair missing-tables` rebuild each rebuildable cache in exactly the shape
  * a fully migrated brain has (columns, types, defaults and indexes), and the expected-table check scopes itself to the
  * brain's schema version. A later migration that changes one of these tables without a matching recreate line fails
  * here. Real PGLite, plus Postgres when DATABASE_URL is set.

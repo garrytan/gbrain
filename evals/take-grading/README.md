@@ -1,10 +1,10 @@
 # Take-grading eval (W6, wave 4b)
 
-Measures which chat models may grade a forecasting take: when the `grade_takes` cycle phase's auto-resolve rule would apply a verdict (not `unresolvable`, confidence at or above `GRADE_TAKES_AUTO_RESOLVE_THRESHOLD`, 0.95), how often is it wrong? The result decides `GRADE_TAKES_MEASURED_MODELS` (`src/core/cycle/grade-takes-measured.ts`), which `gbrain takes grades` uses to mark verdicts no measurement backs. Auto-resolve stays off. The preregistration is [`PREREGISTRATION.md`](PREREGISTRATION.md); raw results and the verdict are mirrored into gbrain-evals (`docs/benchmarks/2026-10-16-take-grading*`).
+Measures which chat models may grade a forecasting take: when the `grade_takes` cycle phase's auto-resolve rule would apply a verdict (not `unresolvable`, confidence at or above `GRADE_TAKES_AUTO_RESOLVE_THRESHOLD`, 0.95), how often is it wrong? The result decides `GRADE_TAKES_MEASURED_MODELS` (`src/core/cycle/grade-takes-measured.ts`), which `foresights takes grades` uses to mark verdicts no measurement backs. Auto-resolve stays off. The preregistration is [`PREREGISTRATION.md`](PREREGISTRATION.md); raw results and the verdict are mirrored into gbrain-evals (`docs/benchmarks/2026-10-16-take-grading*`).
 
 ## Current result
 
-Measured 2026-10-16 at gbrain `d99b84694` (branch `capy/w6-take-grading`, prompt `hybrid-evidence-v2`, threshold 0.95), the commit that froze the preregistration; one run per model over the 790 counted takes, $9.25 in all. Only gpt-6.1-sol qualifies.
+Measured 2026-10-16 at foresights `d99b84694` (branch `capy/w6-take-grading`, prompt `hybrid-evidence-v2`, threshold 0.95), the commit that froze the preregistration; one run per model over the 790 counted takes, $9.25 in all. Only gpt-6.1-sol qualifies.
 
 | Model | Applied | Wrong applied | Upper 95% | Coverage | Abstention | No answer | USD per verdict | Latency p50 / p95 | Qualifies |
 |---|---|---|---|---|---|---|---|---|---|
@@ -53,6 +53,6 @@ bun evals/take-grading/harness.ts --score results/*.jsonl --json summary.json --
 - **Coverage**: resolvable takes applied and right, over resolvable takes in the rule.
 - **Abstention**: unresolvable takes not applied, over unresolvable takes in the rule.
 - **No answer**: no usable verdict (parse failure, provider unavailable); safe, reported apart.
-- **Cost and latency**: USD per verdict from gbrain's price table; wall time p50 and p95.
+- **Cost and latency**: USD per verdict from foresights's price table; wall time p50 and p95.
 
 Ranking: qualifying models first, by coverage, ties to the cheaper model.

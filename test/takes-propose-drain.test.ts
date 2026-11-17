@@ -1,7 +1,7 @@
 /**
  * #4102 — end-to-end drain of the take_proposals queue over a real PGLite
  * engine: the propose_takes cycle phase PRODUCES pending proposals, and the
- * new `gbrain takes propose` surface CONSUMES them (list → accept → fence).
+ * new `foresights takes propose` surface CONSUMES them (list → accept → fence).
  *
  * Before this wave the queue had a producer and no consumer: nothing in the
  * codebase ever wrote status='accepted', so proposals accumulated forever

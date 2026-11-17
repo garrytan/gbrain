@@ -51,7 +51,7 @@ export async function remotePagesFederationExposes(engine: BrainEngine, sourceId
     check: shellQuote(['gbrain', 'access', 'who-can-read', first.slug, '--source', sourceId]),
     restrict: bound
       ? shellQuote(['gbrain', 'access', 'rule', 'add', '--prefix', bound.slug.slice(0, bound.slug.lastIndexOf('/') + 1), '--readers', await hintReaders(engine, [bound.member!]), '--source', sourceId])
-      : `gbrain access rule add --prefix <folder/> --readers <member> --source ${shellQuote([sourceId])}`,
+      : `foresights access rule add --prefix <folder/> --readers <member> --source ${shellQuote([sourceId])}`,
   };
 }
 
@@ -77,6 +77,6 @@ export function pagesExposedLines(sourceId: string, exposed: PagesExposed): stri
     ...(more > 0 ? [`  ... and ${more} more`] : []),
     `  Check one: ${exposed.check}`,
     `  Keep a folder to its member (previews the pages it covers; --yes applies): ${exposed.restrict}`,
-    `  Or give a page readable_by: [<member>] in its frontmatter, or undo with: gbrain sources unfederate ${shellQuote([sourceId])}`,
+    `  Or give a page readable_by: [<member>] in its frontmatter, or undo with: foresights sources unfederate ${shellQuote([sourceId])}`,
   ];
 }

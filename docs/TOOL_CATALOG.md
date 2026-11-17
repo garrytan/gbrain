@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`foresights config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -13,7 +13,7 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 | `get_brain_health` | Brain health as bands for agents without admin scope: write capacity (ok, low or critical, with a days band) and counts of write failures, ghost pages and unsearchable chunks as bands, for the sources you can read. | read |  |  |
 | `get_health` | Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. | admin |  |  |
 | `get_stats` | Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant. | admin |  |  |
-| `get_status_snapshot` | Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. | admin |  |  |
+| `get_status_snapshot` | Snapshot for `foresights status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. | admin |  |  |
 | `get_usage` | Aggregate chat usage + cost from the chat_usage_log ledger (per-model and per-phase token counts, cache reads/writes, USD estimates) with explicit coverage fields. | admin |  |  |
 | `get_write_attribution` | Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. | admin |  |  |
 | `mute_notice` | Mute a coaching or info notice (or first_run_decisions) for this client. | write | yes |  |
@@ -67,7 +67,7 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `purge_fact` | Owner-only, trusted local CLI on the brain host (`gbrain forget <id> --purge`). | admin |  |  |
+| `purge_fact` | Owner-only, trusted local CLI on the brain host (`foresights forget <id> --purge`). | admin |  |  |
 
 ## identity
 
@@ -88,7 +88,7 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `find_anomalies` | Anomalies in recent page activity, grouped by cohort (tag or type) against a baseline. | read | yes |  |
-| `find_contradictions` | Return suspected-contradiction findings from the most recent `gbrain eval suspected-contradictions` probe run, optionally filtered by slug and/or severity. | read |  |  |
+| `find_contradictions` | Return suspected-contradiction findings from the most recent `foresights eval suspected-contradictions` probe run, optionally filtered by slug and/or severity. | read |  |  |
 | `find_experts` | Answers 'who in my brain knows about <topic>'. | read |  |  |
 | `find_trajectory` | Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). | read |  |  |
 | `get_calibration_profile` | Read the active calibration profile for a holder. | read |  |  |
@@ -116,9 +116,9 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 | `submit_job` | Submit a background job. | admin |  |  |
 | `unwatch` | Stop watching: ends this connection's open Wakeshift watches on one job, write request or cron (or one watch by its id), so no wake comes for it. | write |  | `mcp.publish_wakeshift` |
 | `wait_job` | Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. | admin |  |  |
-| `watch_cron` | This tool notifies you: it has gbrain wake this conversation through Wakeshift the next time the named cron reports its run (ok or failed) with gbrain wakeshift emit. | admin |  | `mcp.publish_wakeshift` |
-| `watch_job` | This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. | admin |  | `mcp.publish_wakeshift` |
-| `watch_write_request` | This tool notifies you: it has gbrain wake this conversation through Wakeshift when your write request settles (committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. | write |  | `mcp.publish_wakeshift` |
+| `watch_cron` | This tool notifies you: it has foresights wake this conversation through Wakeshift the next time the named cron reports its run (ok or failed) with foresights wakeshift emit. | admin |  | `mcp.publish_wakeshift` |
+| `watch_job` | This tool notifies you: it has foresights wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. | admin |  | `mcp.publish_wakeshift` |
+| `watch_write_request` | This tool notifies you: it has foresights wake this conversation through Wakeshift when your write request settles (committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. | write |  | `mcp.publish_wakeshift` |
 
 ## links
 
@@ -203,7 +203,7 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
 | `get_versions` | Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. | read |  |  |
 | `get_write_request` | Your write's receipt by request_id (after write_pending or a lost reply). | write | yes |  |
-| `list_page_purges` | Owner-only (`gbrain pages purges list`). | admin |  |  |
+| `list_page_purges` | Owner-only (`foresights pages purges list`). | admin |  |  |
 | `list_pages` | List pages by type, slug_prefix, frontmatter where; what did I touch this week: sort=updated_desc. | read | yes |  |
 | `list_write_conflicts` | Pages whose writes keep ending in a source_changed conflict, grouped by slug. | read |  |  |
 | `list_write_requests` | Your write receipts in one source, newest first (for a lost request_id). | write | yes |  |
@@ -214,7 +214,7 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 | `resolve_slugs` | Fuzzy-match a partial slug or title to page slugs. | read | yes |  |
 | `restore_page` | Restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). | write |  |  |
 | `revert_version` | Restore a page to an earlier version from its history (a new revision; history is kept). | write |  |  |
-| `unpurge_page` | Owner-only (`gbrain pages unpurge <slug>`). | admin |  |  |
+| `unpurge_page` | Owner-only (`foresights pages unpurge <slug>`). | admin |  |  |
 | `upload_page_part` | Send the next part of an upload: part equals next_part, the whole call within part_max_frame_bytes, cut between code points. | write |  |  |
 | `whois` | Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. | read |  |  |
 
@@ -223,7 +223,7 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `questions_list` | List pinned questions with freshness, blocked reason and next action, plus fresh/stale/pending counts. | read |  |  |
-| `questions_pin` | Pin a question: gbrain keeps a cited answer current from your notes and flags sentences whose evidence changed. | write |  |  |
+| `questions_pin` | Pin a question: foresights keeps a cited answer current from your notes and flags sentences whose evidence changed. | write |  |  |
 | `questions_refresh` | Refresh a pinned answer now (a paid model call): re-retrieves current evidence and edits the answer, or recomputes with full or after deletions. | write |  |  |
 | `questions_status` | One pinned question: the answer with per-sentence stale flags, evidence watermark, last refresh, blocked reason, next action and verify step. | read |  |  |
 | `questions_unpin` | Unpin a question: refreshes stop and its page is archived (your notes on it are kept). | write |  |  |
@@ -280,7 +280,7 @@ Every non-localOnly operation on the MCP surface: 179 tools across 27 areas. **S
 | `sources_add` | Register a new source. | sources_admin |  |  |
 | `sources_list` | List registered sources with page counts and remote_url. | read |  |  |
 | `sources_remove` | Hard-remove a source (cascades pages/chunks/embeddings). | sources_admin |  |  |
-| `sources_resolve_path` | Read-only: what gbrain did with each file path of a source, by its own rules. | read |  |  |
+| `sources_resolve_path` | Read-only: what foresights did with each file path of a source, by its own rules. | read |  |  |
 | `sources_status` | Per-source diagnostic. | read |  |  |
 
 ## storage

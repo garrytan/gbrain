@@ -1,11 +1,11 @@
 /**
  * The `behavior_changes` notice on the real CLI (fix wave lane B3, W-A3).
  *
- * Protects: `gbrain init` stamps the database it creates as a fresh install,
+ * Protects: `foresights init` stamps the database it creates as a fresh install,
  * so later commands stay silent; a brain with no recorded baseline that was
  * created before the grace window (a `bun install -g` upgrade with no
  * upgrade-state.json) gets the disclosure on stderr once, on the first
- * command (an [AGENT] block off a TTY), and never again; `gbrain doctor`
+ * command (an [AGENT] block off a TTY), and never again; `foresights doctor`
  * shows it without consuming it.
  * Fails when: init stops stamping, the CLI startup hook stops delivering or
  * marking, or doctor writes the marker.

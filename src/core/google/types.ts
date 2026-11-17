@@ -74,11 +74,11 @@ export interface GoogleSourceConfig {
   dir: string;
   /**
    * How the sweep obtains a Google access token (default 'vault'):
-   *  - 'vault'   — gbrain's credential vault (BYO OAuth / hosted relay).
+   *  - 'vault'   — foresights's credential vault (BYO OAuth / hosted relay).
    *  - 'command' — run `tokenCommand`, expect a token on stdout (gog,
    *                gcloud, a credential gateway's mint command).
    *  - 'env'     — read a live token from the env var named `tokenEnv`
-   *                (refreshed by something outside gbrain).
+   *                (refreshed by something outside foresights).
    */
   access: 'vault' | 'command' | 'env';
   tokenCommand?: string;
@@ -139,7 +139,7 @@ export interface GoogleSourceState {
   /**
    * #5012: the record of reply-owed loops the detector withheld, per sender
    * (src/core/google/loop-catchup.ts, capped). A sender leaves it when a later
-   * thread of theirs opens a loop. `gbrain waiting` counts the open loops
+   * thread of theirs opens a loop. `foresights waiting` counts the open loops
    * from these senders that the rule would not have opened.
    */
   loop_withheld_senders?: Record<string, LoopWithheldSender>;
@@ -148,13 +148,13 @@ export interface GoogleSourceState {
   /**
    * #5012 item 9: set when `events.list` on the configured calendar returned
    * 403 or 404 (the account cannot read it), cleared by the next successful
-   * list. `gbrain doctor` and `gbrain google status --no-probe` read it.
+   * list. `foresights doctor` and `foresights google status --no-probe` read it.
    */
   calendar_unreadable?: CalendarUnreadable | null;
   /**
    * #7073: services the last sweep could not reach (API disabled, scope not
    * granted). A service leaves it when its sweep reaches the API again.
-   * `gbrain doctor` (google_api_access) reads it with no network call.
+   * `foresights doctor` (google_api_access) reads it with no network call.
    */
   api_access?: { problems: GoogleApiProblem[]; at: string } | null;
   calendar_sync_token: string | null;
@@ -211,7 +211,7 @@ export interface GoogleSourceState {
 
 /**
  * Derive the suggested/created source id for a connected account. Shared by
- * `gbrain google setup` (which creates it) and connect's next-step hint
+ * `foresights google setup` (which creates it) and connect's next-step hint
  * (which prints it) so the two can never diverge — SOURCE_ID_RE rejects
  * dots, so a dotted Gmail local part must be sanitized identically in both.
  */

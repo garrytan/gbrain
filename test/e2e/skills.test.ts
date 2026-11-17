@@ -1,10 +1,10 @@
 /**
  * E2E Skill Tests — Tier 2 (requires API keys + openclaw)
  *
- * Tests gbrain skills via OpenClaw agent CLI invocations. Each test requires
- * that the agent called a gbrain MCP tool and gbrain answered at least one call
+ * Tests foresights skills via OpenClaw agent CLI invocations. Each test requires
+ * that the agent called a foresights MCP tool and foresights answered at least one call
  * with a result, not an error: OpenClaw exits 0 and prints text even when it
- * never reached gbrain (no MCP server configured, a rejected model key, a tool
+ * never reached foresights (no MCP server configured, a rejected model key, a tool
  * that failed), so exit code and output alone prove nothing (#8002, #8011).
  *
  * Requires:
@@ -12,7 +12,7 @@
  *   - OPENAI_API_KEY
  *   - ANTHROPIC_API_KEY
  *   - openclaw CLI installed with at least one agent configured
- *   - GBRAIN_TEST_TIER2_MCP_TAP_LOG: the JSON-RPC log of gbrain's MCP server, which
+ *   - GBRAIN_TEST_TIER2_MCP_TAP_LOG: the JSON-RPC log of foresights's MCP server, which
  *     scripts/ci-openclaw-mcp.sh registers with OpenClaw behind
  *     scripts/ci-mcp-tap.sh
  *
@@ -120,7 +120,7 @@ function runOpenClaw(prompt: string, timeoutMs = 120_000) {
 }
 
 /**
- * The gbrain MCP tools the agent called while `run` ran, and those gbrain answered with a result rather than an
+ * The foresights MCP tools the agent called while `run` ran, and those foresights answered with a result rather than an
  * error (#8011), read from the tap's request and response logs.
  */
 function gbrainToolCalls<T>(run: () => T): { result: T; calls: string[]; succeeded: string[] } {
@@ -155,13 +155,13 @@ Action: Sarah to draft VP Sales job description by April 7.
     `.trim();
 
     const { result: { text, exitCode, durationMs }, calls, succeeded } = gbrainToolCalls(() => runOpenClaw(
-      `Using the gbrain MCP tools, ingest this meeting transcript into gbrain. Create or update pages for each person mentioned. Add timeline entries for today's date. Here is the transcript:\n\n${transcript}`,
+      `Using the foresights MCP tools, ingest this meeting transcript into foresights. Create or update pages for each person mentioned. Add timeline entries for today's date. Here is the transcript:\n\n${transcript}`,
       180_000,
     ));
 
-    console.log(`  Ingest skill completed in ${durationMs}ms; gbrain tool calls: ${calls.join(', ') || 'none'}; succeeded: ${succeeded.join(', ') || 'none'}`);
+    console.log(`  Ingest skill completed in ${durationMs}ms; foresights tool calls: ${calls.join(', ') || 'none'}; succeeded: ${succeeded.join(', ') || 'none'}`);
 
-    expect(succeeded.length, `no gbrain MCP tool call succeeded (calls: ${calls.join(', ') || 'none'}); the agent said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
+    expect(succeeded.length, `no foresights MCP tool call succeeded (calls: ${calls.join(', ') || 'none'}); the agent said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   }, 240_000);
@@ -180,13 +180,13 @@ describeT2('E2E Tier 2: Query Skill', () => {
 
   test('query skill returns results for known topic', async () => {
     const { result: { text, exitCode, durationMs }, calls, succeeded } = gbrainToolCalls(() => runOpenClaw(
-      'Use the gbrain MCP search tool to search gbrain for "NovaMind" and tell me what you found.',
+      'Use the foresights MCP search tool to search foresights for "NovaMind" and tell me what you found.',
       180_000,
     ));
 
-    console.log(`  Query skill completed in ${durationMs}ms; gbrain tool calls: ${calls.join(', ') || 'none'}; succeeded: ${succeeded.join(', ') || 'none'}`);
+    console.log(`  Query skill completed in ${durationMs}ms; foresights tool calls: ${calls.join(', ') || 'none'}; succeeded: ${succeeded.join(', ') || 'none'}`);
 
-    expect(succeeded.length, `no gbrain MCP tool call succeeded (calls: ${calls.join(', ') || 'none'}); the agent said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
+    expect(succeeded.length, `no foresights MCP tool call succeeded (calls: ${calls.join(', ') || 'none'}); the agent said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   }, 240_000);
@@ -205,13 +205,13 @@ describeT2('E2E Tier 2: Health Skill', () => {
 
   test('health skill reports brain status', async () => {
     const { result: { text, exitCode, durationMs }, calls, succeeded } = gbrainToolCalls(() => runOpenClaw(
-      'Use the gbrain MCP tools to report the brain\'s status: call whoami and list_pages, then tell me what you found.',
+      'Use the foresights MCP tools to report the brain\'s status: call whoami and list_pages, then tell me what you found.',
       180_000,
     ));
 
-    console.log(`  Health skill completed in ${durationMs}ms; gbrain tool calls: ${calls.join(', ') || 'none'}; succeeded: ${succeeded.join(', ') || 'none'}`);
+    console.log(`  Health skill completed in ${durationMs}ms; foresights tool calls: ${calls.join(', ') || 'none'}; succeeded: ${succeeded.join(', ') || 'none'}`);
 
-    expect(succeeded.length, `no gbrain MCP tool call succeeded (calls: ${calls.join(', ') || 'none'}); the agent said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
+    expect(succeeded.length, `no foresights MCP tool call succeeded (calls: ${calls.join(', ') || 'none'}); the agent said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   }, 240_000);

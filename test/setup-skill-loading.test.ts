@@ -9,7 +9,7 @@
  *  - idempotence and remembered choice: a re-run without the flag keeps the
  *    recorded mode; `off` strips the index and is remembered;
  *  - --no-instructions strips both blocks; --remove strips both and deletes a
- *    file only gbrain created once nothing else is in it, in either order;
+ *    file only foresights created once nothing else is in it, in either order;
  *  - Hermes: SOUL.md is never created;
  *  - dry-run writes nothing; GBRAIN_SKILL_LOADING selects the mode; a bad
  *    value is refused.
@@ -32,7 +32,7 @@ const BIN_DIR = mkdtempSync(join(tmpdir(), 'gbrain-skill-bin-'));
 const LAUNCHER = join(BIN_DIR, 'gbrain');
 writeFileSync(LAUNCHER, `#!/bin/sh\nexec '${process.execPath}' --no-env-file '${CLI}' "$@"\n`);
 chmodSync(LAUNCHER, 0o755);
-/** A gbrain that serves another skill catalog (a different install on PATH, a stale --gbrain-bin). */
+/** A foresights that serves another skill catalog (a different install on PATH, a stale --gbrain-bin). */
 const OTHER = join(BIN_DIR, 'gbrain-other');
 writeFileSync(OTHER, '#!/bin/sh\necho \'{"schema_version":1,"catalog":"000000000000","skills":[]}\'\n');
 chmodSync(OTHER, 0o755);
@@ -125,7 +125,7 @@ for (const lane of LANES) {
       expect(read(lane.file(b))).toBe(lane.existing);
     });
 
-    test(lane.refusesCreate ? 'a missing SOUL.md is never created' : 'a file gbrain created goes away only when both blocks are removed, in either order', async () => {
+    test(lane.refusesCreate ? 'a missing SOUL.md is never created' : 'a file foresights created goes away only when both blocks are removed, in either order', async () => {
       const b = box();
       const r = await run(b, ['--skill-loading', 'spring']);
       if (lane.refusesCreate) {
@@ -209,7 +209,7 @@ describe('skill loading: selection', () => {
 });
 
 describe('skill loading: launcher, permission and refresh', () => {
-  test('an index is never written naming a gbrain that serves another catalog, or a bare name', async () => {
+  test('an index is never written naming a foresights that serves another catalog, or a bare name', async () => {
     const b = box();
     const other = await setup(b, ['claude-code', '--instructions-only', '--gbrain-bin', OTHER, '--skill-loading', 'spring']);
     expect(other.exitCode).toBe(1);
@@ -239,7 +239,7 @@ describe('skill loading: launcher, permission and refresh', () => {
     expect(JSON.parse(read(cSettings)).permissions.allow).toEqual([rule, 'Read']);
   });
 
-  test('an index is never written naming a gbrain that serves fewer skills than it lists (a thin-client launcher)', async () => {
+  test('an index is never written naming a foresights that serves fewer skills than it lists (a thin-client launcher)', async () => {
     const b = box();
     const thin = join(BIN_DIR, 'gbrain-thin');
     writeFileSync(thin, `#!/bin/sh\necho '${JSON.stringify({ schema_version: 1, catalog: bundledCatalogId(), skills: bundledSkills('downstream').map((s) => ({ name: s.name })) })}'\n`);
@@ -277,8 +277,8 @@ describe('skill loading: launcher, permission and refresh', () => {
       const { installerBrainFirst, brainFirstTargetAt } = await import('../src/core/setup/brain-first.ts');
       const { installerSkillsBlock } = await import('../src/core/setup/skills-block.ts');
       const target = brainFirstTargetAt('codex', file);
-      installerBrainFirst({ target, access: { kind: 'mcp', server: 'team-a' }, writer: 'gbrain connect --agent codex --install' });
-      return installerSkillsBlock({ target, launcher: LAUNCHER, writer: 'gbrain connect --agent codex --install', brainFirstDeclined: false, skillLoading: 'spring', audience: 'downstream' });
+      installerBrainFirst({ target, access: { kind: 'mcp', server: 'team-a' }, writer: 'foresights connect --agent codex --install' });
+      return installerSkillsBlock({ target, launcher: LAUNCHER, writer: 'foresights connect --agent codex --install', brainFirstDeclined: false, skillLoading: 'spring', audience: 'downstream' });
     });
     expect(team.action).toBe('write');
     const written = read(file);

@@ -5,7 +5,7 @@
  * change that. Neither prints a key or any part of one.
  *
  * - warnShadowedProviderKeys: the CLI startup seam (src/cli.ts, which also
- *   starts `gbrain serve`) calls it for every command except `gbrain hook`.
+ *   starts `foresights serve`) calls it for every command except `foresights hook`.
  * - reportEmbeddingAuthFailure: the gateway calls it on the first embedding
  *   401/403, so a revoked key no longer fails silently.
  */
@@ -31,8 +31,8 @@ const removeVariable = (variable: string) =>
   `To use the config key, remove ${variable} from the environment of the process that reported this (shell profile, ~/.gbrain/.env, or for a daemon its service definition) and restart that process.`;
 
 export function keyShadowWarning(shadow: ProviderKeyShadow, file = configPath()): string {
-  return `[gbrain] warning: ${shadow.variable} in this process's environment differs from ${shadow.config_key} in ${file}; the environment value is in effect. `
-    + `${removeVariable(shadow.variable)} If the environment key is intended, run \`gbrain config unset ${shadow.config_key}\`, which also stops this warning.`;
+  return `[foresights] warning: ${shadow.variable} in this process's environment differs from ${shadow.config_key} in ${file}; the environment value is in effect. `
+    + `${removeVariable(shadow.variable)} If the environment key is intended, run \`foresights config unset ${shadow.config_key}\`, which also stops this warning.`;
 }
 
 export function warnShadowedProviderKeys(fileCfg: GBrainConfig | null = loadConfigFileOnly(), env: Env = process.env): void {
@@ -55,25 +55,25 @@ export function embeddingAuthFailedError(provider: AuthFailedProvider, status: n
   fileCfg: GBrainConfig | null = loadConfigFileOnly(), env: Env = process.env, file = configPath()): OperationError {
   const name = credentialEnvName(provider.auth_env);
   const rejected = `The ${provider.name} embedding provider rejected its key (HTTP ${status})`;
-  const backfill = 'Then run `gbrain embed --stale` to embed what was saved while the key was rejected.';
+  const backfill = 'Then run `foresights embed --stale` to embed what was saved while the key was rejected.';
   if (provider.id === 'azure-openai' && mergedProviderEnv(fileCfg, env).AZURE_OPENAI_USE_ENTRA === '1') {
     return catalogueError('embedding_auth_failed', `${rejected}; Azure Entra mode is on (AZURE_OPENAI_USE_ENTRA), so the rejected credential is the Azure CLI's Entra token, not an API key.`,
-      `Run \`az login\` as an identity with the "Cognitive Services OpenAI User" role on the resource, restart the process that reported this, then run \`gbrain embed --stale\`.`);
+      `Run \`az login\` as an identity with the "Cognitive Services OpenAI User" role on the resource, restart the process that reported this, then run \`foresights embed --stale\`.`);
   }
-  if (!name) return catalogueError('embedding_auth_failed', `${rejected}.`, `Check the ${provider.name} credentials, restart the process that reported this, then run \`gbrain embed --stale\`.`);
+  if (!name) return catalogueError('embedding_auth_failed', `${rejected}.`, `Check the ${provider.name} credentials, restart the process that reported this, then run \`foresights embed --stale\`.`);
   const source = providerKeySource(fileCfg, env, name);
   if (source.kind === 'config') {
     return catalogueError('embedding_auth_failed',
       `${rejected}; the key in effect is ${source.config_key} in ${file} (${source.variable} is not set).`,
-      `Run \`gbrain config set ${source.config_key} <valid key>\` and restart any daemon that uses it. ${backfill}`);
+      `Run \`foresights config set ${source.config_key} <valid key>\` and restart any daemon that uses it. ${backfill}`);
   }
   if (source.kind === 'missing') {
     return catalogueError('embedding_auth_failed', `${rejected}; no API key is set in this process (${source.variable}${source.config_key ? ` or ${source.config_key}` : ''}), so it authenticated another way (an injected gateway environment or a token such as Azure Entra).`,
-      `${source.config_key ? `Run \`gbrain config set ${source.config_key} <valid key>\`` : `Set ${source.variable} to a valid key in the environment of the process that reported this`}, restart that process, then run \`gbrain embed --stale\`.`);
+      `${source.config_key ? `Run \`foresights config set ${source.config_key} <valid key>\`` : `Set ${source.variable} to a valid key in the environment of the process that reported this`}, restart that process, then run \`foresights embed --stale\`.`);
   }
   const differs = source.shadows_config && source.config_key ? `, which differs from ${source.config_key} in ${file}` : '';
   const intended = source.config_key
-    ? `If the environment key is intended, replace it with a valid key, restart, and run \`gbrain config unset ${source.config_key}\`.`
+    ? `If the environment key is intended, replace it with a valid key, restart, and run \`foresights config unset ${source.config_key}\`.`
     : 'Replace it with a valid key and restart that process.';
   return catalogueError('embedding_auth_failed',
     `${rejected}; the key in effect is ${source.variable} from this process's environment${differs}.`,
@@ -95,6 +95,6 @@ export function reportEmbeddingAuthFailure(provider: AuthFailedProvider, failure
   authFailureReported = true;
   try {
     const error = embeddingAuthFailedError(provider, status, fileCfg === undefined ? loadConfigFileOnly() : fileCfg, env ?? process.env);
-    sink(`[gbrain] Error [${error.code}]: ${error.message}\nFix: ${error.suggestion}\nDocs: ${error.docs}`);
+    sink(`[foresights] Error [${error.code}]: ${error.message}\nFix: ${error.suggestion}\nDocs: ${error.docs}`);
   } catch { /* a diagnostic must never replace the provider error */ }
 }

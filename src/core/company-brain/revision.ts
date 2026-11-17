@@ -50,7 +50,7 @@ async function gitRead(root: string, args: string[], maxBytes: number, onChunk?:
       bytes += chunk.length;
       if (bytes > maxBytes) {
         failure = opError('request_too_large', 'Inspection exceeds its bounded metadata or file limit; partition the repository or narrow selection.',
-          `Git output from ${root} passed its ${maxBytes}-byte cap. Split the content into a smaller checkout and inspect that path, or exclude the oversized files with --exclude on gbrain sources inspect.`);
+          `Git output from ${root} passed its ${maxBytes}-byte cap. Split the content into a smaller checkout and inspect that path, or exclude the oversized files with --exclude on foresights sources inspect.`);
         child.kill('SIGKILL');
         return;
       }
@@ -59,12 +59,12 @@ async function gitRead(root: string, args: string[], maxBytes: number, onChunk?:
     });
     child.stderr.resume();
     child.on('error', () => { failure = opError('invalid_source', 'Git is unavailable for local inspection.',
-      'Install Git and make sure `git` is on the PATH of the gbrain process, then run the inspection again; company sources are read only through local Git.'); });
+      'Install Git and make sure `git` is on the PATH of the foresights process, then run the inspection again; company sources are read only through local Git.'); });
     child.on('close', code => {
       clearTimeout(timer);
       if (failure) reject(failure);
       else if (code !== 0) reject(opError('invalid_source', 'The local Git revision is unavailable or invalid; inspect a committed checkout.',
-        `Git could not read ${root} at the requested revision. Confirm it is a Git checkout with at least one commit and that an approved commit still exists locally (no fetch is attempted), then inspect it again with gbrain sources inspect.`));
+        `Git could not read ${root} at the requested revision. Confirm it is a Git checkout with at least one commit and that an approved commit still exists locally (no fetch is attempted), then inspect it again with foresights sources inspect.`));
       else accept(Buffer.concat(chunks));
     });
   });
@@ -104,7 +104,7 @@ export async function resolveCommittedRevision(path: string, revision?: string):
     if (realpathSync(root) !== root || !lstatSync(root).isDirectory() || /[\x00-\x1f\x7f]/.test(root)) throw new Error();
   } catch {
     throw opError('invalid_source', 'Inspect a real local directory without symlink components.',
-      `Pass the checkout's real path to gbrain sources inspect: ${root} must be an existing directory reached without symlinks or control characters.`);
+      `Pass the checkout's real path to foresights sources inspect: ${root} must be an existing directory reached without symlinks or control characters.`);
   }
   if (revision !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision)) {
     throw opError('invalid_source', 'An approved revision must be a full Git commit object ID.',
@@ -128,7 +128,7 @@ export async function resolveCommittedRevision(path: string, revision?: string):
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tree) ||
     (objectFormat !== 'sha1' && objectFormat !== 'sha256')) {
     throw opError('invalid_source', 'Unsupported Git object identity.',
-      `Git reported a commit, tree, or object format for ${gitRoot} that gbrain cannot verify. Inspect a SHA-1 or SHA-256 repository checked out at a normal commit.`);
+      `Git reported a commit, tree, or object format for ${gitRoot} that foresights cannot verify. Inspect a SHA-1 or SHA-256 repository checked out at a normal commit.`);
   }
   const rootStat = lstatSync(root, { bigint: true });
   const gitStat = lstatSync(gitDir, { bigint: true });
@@ -144,7 +144,7 @@ export async function inventoryCommittedRevision(revision: RevisionIdentity, inp
     const match = /^(\d{6}) (blob|commit) ([a-f0-9]{40,64}) +(-|\d+)$/.exec(record.slice(0, tab));
     if (tab < 0 || !match) {
       throw opError('invalid_source', 'Git returned an invalid tree entry.',
-        `Git listed a tree entry in ${revision.git_root} that gbrain cannot parse. Check the repository with git fsck, then inspect it again.`);
+        `Git listed a tree entry in ${revision.git_root} that foresights cannot parse. Check the repository with git fsck, then inspect it again.`);
     }
     const path = record.slice(tab + 1);
     if (revision.scope && !path.startsWith(`${revision.scope}/`)) return;
@@ -179,7 +179,7 @@ export async function readCommittedBlob(revision: RevisionIdentity, entry: Commi
   const expected = `${entry.mode} blob ${entry.object_id} ${entry.bytes}`;
   if (separator < 0 || treeEntry.slice(0, separator).replace(/ +/g, ' ') !== expected || treeEntry.slice(separator + 1) !== `${gitPath}\0`) {
     throw opError('invalid_source', 'The blob does not belong to the approved revision and path.',
-      `${entry.path} at approved commit ${revision.commit} is not in the checkout at ${revision.root} as planned. Inspect the checkout again; gbrain never substitutes current HEAD for an approved commit, so a missing commit needs a new reviewed plan.`,
+      `${entry.path} at approved commit ${revision.commit} is not in the checkout at ${revision.root} as planned. Inspect the checkout again; foresights never substitutes current HEAD for an approved commit, so a missing commit needs a new reviewed plan.`,
       { fix: inspectAgain(revision.root, 'Shows what the checkout holds now without changing the brain or the repository.') });
   }
   const result = await gitRead(revision.git_root, ['cat-file', 'blob', entry.object_id], limits.maxFileBytes);
@@ -228,7 +228,7 @@ export async function inspectUncommitted(revision: RevisionIdentity, entries: Co
     const match = /^(\d{6}) ([a-f0-9]{40,64}) ([0-3])$/.exec(record.slice(0, tab));
     if (!match) {
       throw opError('invalid_source', 'Git returned an invalid index entry.',
-        `Git listed an index entry in ${revision.git_root} that gbrain cannot parse. Check the index with git status and git fsck, then inspect ${revision.root} again.`);
+        `Git listed an index entry in ${revision.git_root} that foresights cannot parse. Check the index with git status and git fsck, then inspect ${revision.root} again.`);
     }
     const path = local(record.slice(tab + 1));
     if (path !== null) index.set(path, { oid: match[2]!, mode: match[1]!, stage: match[3]! });

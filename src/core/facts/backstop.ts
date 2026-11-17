@@ -345,7 +345,7 @@ async function surfaceExtractionFailure(
   warnOnce(
     `facts-extract-fail-${reason}`,
     `[facts] extraction ${reason}${model ? ` (model=${model})` : ''}. ` +
-    `Fix: set the provider's API key, or \`gbrain config set facts.extraction_model <provider:model>\`.`,
+    `Fix: set the provider's API key, or \`foresights config set facts.extraction_model <provider:model>\`.`,
   );
 }
 
@@ -387,7 +387,7 @@ export async function runFactsBackstop(
     if (mode !== 'inline') {
       const { opError } = await import('../ops/contract.ts');
       throw opError('writer_coordinator_required', 'Managed page backstops must use the durable publication outbox.',
-        `On a managed brain the publication outbox queues facts for ${parsedPage.slug ?? 'a page'}; a direct ${mode} backstop is a gbrain bug in its caller. The page write is unaffected. Report it with gbrain --version.`);
+        `On a managed brain the publication outbox queues facts for ${parsedPage.slug ?? 'a page'}; a direct ${mode} backstop is a foresights bug in its caller. The page write is unaffected. Report it with foresights --version.`);
     }
     return { mode: 'inline', ...await runPipeline(parsedPage, ctx, ctx.abortSignal) };
   }
@@ -464,7 +464,7 @@ export async function runFactsBackstop(
             // execution-time chat_unavailable is config drift the operator
             // fixes on a human timescale — 3 attempts in ~seconds would
             // exhaust before any fix lands. On exhaustion the job parks as a
-            // VISIBLE failure (`gbrain jobs list --status failed`,
+            // VISIBLE failure (`foresights jobs list --status failed`,
             // re-runnable), never a silent consume.
             max_attempts: 5,
             backoff_delay: 60_000,
@@ -989,13 +989,13 @@ async function runPipelineBodyInner(
     if (!writeThroughDisabled) {
       // #4489: name the REAL remedy. The sources dispatcher has no
       // "update" verb — attaching a working tree to a path-less source goes
-      // through `gbrain sources add <id> --path <dir>` (the #3903
+      // through `foresights sources add <id> --path <dir>` (the #3903
       // non-destructive attach path in sources-ops.ts). Pinned by
       // test/facts-backstop-remedy-verb.test.ts.
       warnOnce(
         'facts:thin-client-fallback',
         '[facts] sources.local_path unset for source_id=' + ctx.sourceId +
-        ' — falling through to DB-only inserts. Attach a working tree via `gbrain sources add ' + ctx.sourceId +
+        ' — falling through to DB-only inserts. Attach a working tree via `foresights sources add ' + ctx.sourceId +
         ' --path <dir>` to enable system-of-record fence writes.',
       );
     }

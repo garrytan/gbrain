@@ -10,7 +10,7 @@ export const v021: Migration = {
   //   UNIQUE(slug) → UNIQUE(source_id, slug) in one go. Between v21
   //   committing and v23 (which adds the replacement files.page_id
   //   path), a process-death left files WITHOUT any FK to pages
-  //   while file_upload / `gbrain files` kept accepting writes.
+  //   while file_upload / `foresights files` kept accepting writes.
   //
   // On Postgres: additive-only here. The FK drop + UNIQUE swap move
   // into v23's handler (wrapped in engine.transaction) so they commit

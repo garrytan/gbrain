@@ -252,7 +252,7 @@ for (const kind of testBackends()) {
 
       test('low write capacity: the capacity code, exit 0, tell_user_to_run', async () => {
         const outcome = await upkeep(engine, { runner: 'test', providers: KEYLESS,
-          capacityPaused: async () => ({ command: 'gbrain config set persistence.capacity.max_request_ids 2000000', config_key: 'persistence.capacity.max_request_ids' }) });
+          capacityPaused: async () => ({ command: 'foresights config set persistence.capacity.max_request_ids 2000000', config_key: 'persistence.capacity.max_request_ids' }) });
         expect(outcome).toMatchObject({ status: 'skipped', exit: 0, code: 'write_capacity_backpressure', fix: { actor: 'host_admin' } });
       });
 

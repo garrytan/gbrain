@@ -1,5 +1,5 @@
 /**
- * `gbrain decide sweep --slot conflict` and `gbrain decide proposals` (S9).
+ * `foresights decide sweep --slot conflict` and `foresights decide proposals` (S9).
  *
  * sweep: runs the conflict sweep on demand for one source (--source) or every
  * active source, and prints duplicates, proposals written, independents and
@@ -23,7 +23,7 @@ import { isConsentRefusal, printConsentRefusal, requireConsent } from '../../cor
 import { confirmTierCrossingAccepts, reportTrustCliError } from '../trust.ts';
 
 function sweepLine(r: ConflictSweepResult): string {
-  if (r.mode === 'off') return `${r.source_id}: the contradiction slot is off; nothing was swept (turn it on: gbrain decide enable conflict).`;
+  if (r.mode === 'off') return `${r.source_id}: the contradiction slot is off; nothing was swept (turn it on: foresights decide enable conflict).`;
   if (r.effective === 'off') return `${r.source_id}: conflict sweep did not run. ${refusalLine(r.inactive ?? 'no_provider', 'conflict')}`;
   if (r.first_run) return `${r.source_id}: first sweep; watermark set to fact ${r.watermark.to}. Facts written from now on are swept (use --since <fact id> to sweep earlier facts).`;
   const shadow = r.effective === 'shadow' ? ` (shadow: ${r.shadow_proposals} would-be proposals, none written)` : '';
@@ -35,7 +35,7 @@ function sweepLine(r: ConflictSweepResult): string {
 export async function runSweepCommand(engine: BrainEngine, args: string[]): Promise<number> {
   if (args.includes('--claims')) return (await import('./claims-sweep.ts')).runClaimsSweepCommand(engine, args);
   const json = args.includes('--json');
-  if (flagValue(args, '--slot') !== 'conflict') { console.error('Usage: gbrain decide sweep --slot conflict [--since <fact id>] [--source <id>] [--json] | --claims [--source <id>] [--dry-run] [--json]'); return 1; }
+  if (flagValue(args, '--slot') !== 'conflict') { console.error('Usage: foresights decide sweep --slot conflict [--since <fact id>] [--source <id>] [--json] | --claims [--source <id>] [--dry-run] [--json]'); return 1; }
   const sinceRaw = flagValue(args, '--since');
   if (sinceRaw !== undefined && !/^\d+$/.test(sinceRaw)) { console.error('--since takes a fact id (a non-negative integer)'); return 1; }
   const source = flagValue(args, '--source');
@@ -50,12 +50,12 @@ export async function runSweepCommand(engine: BrainEngine, args: string[]): Prom
   if (json) { console.log(JSON.stringify({ sweeps: results, reviews }, null, 2)); return 0; }
   for (const r of results) console.log(sweepLine(r));
   for (const r of reviews) console.log(reviewLine(r));
-  if (results.some((r) => r.proposals > 0) || reviews.some((r) => r.proposals > 0)) console.log('Review: gbrain decide proposals list');
+  if (results.some((r) => r.proposals > 0) || reviews.some((r) => r.proposals > 0)) console.log('Review: foresights decide proposals list');
   return results.every((r) => r.effective === 'off') ? 1 : 0;
 }
 
 function reviewLine(r: ReviewLaneResult): string {
-  if (r.effective === 'off') return `${r.source_id}: ${r.kind} review did not run (${r.inactive ?? 'off'}).${r.inactive === 'no_qualification' ? ` Qualify it: gbrain decide calibrate --slot conflict --call-site review_${r.kind} --dataset <jsonl>, then gbrain decide qualify --slot conflict --call-site review_${r.kind} --dataset <jsonl>` : ''}`;
+  if (r.effective === 'off') return `${r.source_id}: ${r.kind} review did not run (${r.inactive ?? 'off'}).${r.inactive === 'no_qualification' ? ` Qualify it: foresights decide calibrate --slot conflict --call-site review_${r.kind} --dataset <jsonl>, then foresights decide qualify --slot conflict --call-site review_${r.kind} --dataset <jsonl>` : ''}`;
   const shadow = r.effective === 'shadow' ? ` (shadow: ${r.shadow_proposals} would-be proposals, none written)` : '';
   return `${r.source_id}: ${r.kind} review ${r.sweep_id}: ${r.anchors} item(s), ${r.pairs} pair(s) judged, ${r.proposals} proposal(s) written, `
     + `${r.independents} not the same, ${r.skipped} skipped (${r.deferred} deferred)${shadow}${r.stopped ? `; stopped early: ${r.stopped}` : ''}`;
@@ -83,7 +83,7 @@ function resultLine(r: ProposalActionResult): string {
   if (r.status === 'not_found') return `proposal ${r.id}: not found`;
   if (r.status === 'refused') return `proposal ${r.id}: ${r.action} refused (${r.reason})`;
   if (r.status === 'stale') return `proposal ${r.id}: stale (${r.reason}); nothing was changed`;
-  if (r.status === 'accepted') return `proposal ${r.id}: accepted; the old fact is superseded. Reverse with: gbrain decide proposals undo ${r.id}`;
+  if (r.status === 'accepted') return `proposal ${r.id}: accepted; the old fact is superseded. Reverse with: foresights decide proposals undo ${r.id}`;
   if (r.status === 'undone') return `proposal ${r.id}: undone; the old fact and its fence row are restored`;
   return `proposal ${r.id}: rejected`;
 }
@@ -108,9 +108,9 @@ async function listCommand(engine: BrainEngine, args: string[]): Promise<number>
     console.log(`  new #${r.new_fact_id}: ${r.new_fact ?? '(fact missing)'}`);
     console.log(`  old #${r.old_fact_id}: ${r.old_fact ?? '(fact missing)'}`);
   }
-  if (status === 'pending') console.log('Accept: gbrain decide proposals accept <id> | reject: gbrain decide proposals reject <id> | undo after accept: gbrain decide proposals undo <id>');
+  if (status === 'pending') console.log('Accept: foresights decide proposals accept <id> | reject: foresights decide proposals reject <id> | undo after accept: foresights decide proposals undo <id>');
   if (status === 'pending' && review.some(r => r.kind === 'withdraw')) {
-    console.log('WITHDRAW rows are permanent once accepted (the withdrawal ledger has no undo). These are owner decisions: an agent shows them to the user and accepts only what the user confirms. Accept: gbrain decide proposals accept r<id> --yes');
+    console.log('WITHDRAW rows are permanent once accepted (the withdrawal ledger has no undo). These are owner decisions: an agent shows them to the user and accepts only what the user confirms. Accept: foresights decide proposals accept r<id> --yes');
   }
   return 0;
 }
@@ -160,7 +160,7 @@ async function actionCommand(engine: BrainEngine, action: 'accept' | 'reject' | 
   }
   const idArg = args.find((a) => /^\d+$/.test(a));
   if (action === 'undo' && sweep) { console.error('undo takes one proposal id'); return 1; }
-  if (!sweep && !idArg) { console.error(`Usage: gbrain decide proposals ${action} <id>${action === 'undo' ? '' : ' | --all-from <sweep id>'}`); return 1; }
+  if (!sweep && !idArg) { console.error(`Usage: foresights decide proposals ${action} <id>${action === 'undo' ? '' : ' | --all-from <sweep id>'}`); return 1; }
   const ids = sweep ? await proposalIdsFromSweep(engine, sweep, 'pending') : [Number(idArg)];
   const reviewIds = sweep && action !== 'undo' ? await reviewProposalIdsFromSweep(engine, sweep, { includeWithdrawals: args.includes('--include-withdrawals') }) : [];
   const review = reviewIds.length ? await reviewActionCommand(engine, action, reviewIds, args, true) : { results: [], refusedForConfirmation: false };
@@ -190,6 +190,6 @@ export async function runProposalsCommand(engine: BrainEngine, args: string[]): 
   const sub = args[0] ?? 'list';
   if (sub === 'list') return listCommand(engine, args.slice(1));
   if (sub === 'accept' || sub === 'reject' || sub === 'undo') return actionCommand(engine, sub, args.slice(1));
-  console.error('Usage: gbrain decide proposals list [--status <status>|all] [--json] | accept <id>|r<id> [--yes]|--all-from <sweep id> [--include-withdrawals --yes] | reject <id>|r<id>|--all-from <sweep id> | undo <id>|r<id>');
+  console.error('Usage: foresights decide proposals list [--status <status>|all] [--json] | accept <id>|r<id> [--yes]|--all-from <sweep id> [--include-withdrawals --yes] | reject <id>|r<id>|--all-from <sweep id> | undo <id>|r<id>');
   return 1;
 }

@@ -1,5 +1,5 @@
 /**
- * `gbrain sources canonical <source-id> --to git|mixed` (git-canonical memory, G8a, docs/designs/GIT_CANONICAL_MEMORY.md#conversion):
+ * `foresights sources canonical <source-id> --to git|mixed` (git-canonical memory, G8a, docs/designs/GIT_CANONICAL_MEMORY.md#conversion):
  * the one verb that makes a source strict (`config.canonical = "git"`) or returns it to mixed. The default `--dry-run`
  * prints the plan, by category with counts and a capped sample of paths, and its hash; `--apply --expect <hash>` runs it
  * (persistence/git-conversion.ts). Trusted local CLI on a managed brain only; not an MCP operation, since it prints paths.
@@ -15,7 +15,7 @@ import { applyApprovedConversion, applyGitConversion, applyMixedConversion, asse
   conversionReviewList, planGitConversion, planMixedConversion, readConversionApproval, readConversionDecisions, writeConversionFile,
   type ConversionProgress, type ConversionRecovery, type GitConversionPreview, type GitConversionResult, type MixedConversionPreview } from '../core/persistence/git-conversion.ts';
 
-const USAGE = 'Usage: gbrain sources canonical <source-id> --to git|mixed [--dry-run [--list-out <file>] [--approval-out <file>] | --apply (--expect <hash> | --approved <file>) [--no-embed] [--no-extract]] [--decisions <file>] [--json]';
+const USAGE = 'Usage: foresights sources canonical <source-id> --to git|mixed [--dry-run [--list-out <file>] [--approval-out <file>] | --apply (--expect <hash> | --approved <file>) [--no-embed] [--no-extract]] [--decisions <file>] [--json]';
 const DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#conversion';
 /** How often a running apply says where it stands (stderr), besides each change of phase. */
 export const PROGRESS_EVERY_MS = 10_000;
@@ -134,7 +134,7 @@ async function withConversionReport<T>(engine: BrainEngine, sourceId: string, js
       const canonical = await canonicalState(engine, sourceId);
       const at = progress ?? { phase: 'adopt', groups_committed: 0, scanned: 0, total: 0 };
       const error = opError('git_conversion_incomplete', `The conversion of source ${sourceId} was interrupted by ${signal} during ${at.phase}; the source is ${canonical === 'git' ? 'git-canonical' : canonical === 'mixed' ? 'still mixed' : 'in an unknown state'}.`,
-        `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run once gbrain sync status --source ${sourceId} --json shows the source idle, then apply the new hash; the groups already committed read equal.`,
+        `Preview again with foresights sources canonical ${sourceId} --to git --dry-run once foresights sync status --source ${sourceId} --json shows the source idle, then apply the new hash; the groups already committed read equal.`,
         { docs: DOCS, detail: 'interrupted', fix: conversionIncompleteFix(sourceId) });
       const report = { status: 'interrupted', signal, source_id: sourceId, ...at, canonical };
       process.stdout.write(`${json ? JSON.stringify({ ...report, ...toAgentError(error, { transport: 'cli', command: 'sources canonical', render: cliRenderContext() }) })
@@ -193,10 +193,10 @@ export async function runSourcesCanonical(engine: BrainEngine, args: string[]): 
       const closing = result.closing_passes ? ` and ${result.closing_passes} closing pass(es), with Git still ahead at ${result.after.git_wins.count} path(s)` : '';
       const error = result.after.strict
         ? opError('git_conversion_incomplete', `Source ${parsed.sourceId} is git-canonical, and ${result.after.remaining} item(s) were still open after its strict passes${closing}.`,
-          `Writes landed during the conversion. Git wins on the source now; preview again with gbrain sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
+          `Writes landed during the conversion. Git wins on the source now; preview again with foresights sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
           { docs: DOCS, detail: 'work_left', fix: conversionIncompleteFix(parsed.sourceId) })
         : opError('git_conversion_incomplete', `Source ${parsed.sourceId} is mixed: its canonical: git flag was removed (a --to mixed apply) while the conversion ran, so it did not convert.`,
-          `Nothing is undone: the door commits stay in Git and the source syncs as a mixed source. If it should be git-canonical, preview again with gbrain sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
+          `Nothing is undone: the door commits stay in Git and the source syncs as a mixed source. If it should be git-canonical, preview again with foresights sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
           { docs: DOCS, detail: 'flag_removed', fix: conversionIncompleteFix(parsed.sourceId) });
       print({ status: 'incomplete', result, ...toAgentError(error, { transport: 'cli', command: 'sources canonical', render: cliRenderContext() }) }, describeResult(result));
       setCliExitVerdict(1);

@@ -44,7 +44,7 @@ flat summary instead, route them to a different skill.
 
 ## Trust contract (read this before running)
 
-book-mirror runs as a CLI command (`gbrain book-mirror`), NOT as a pure
+book-mirror runs as a CLI command (`foresights book-mirror`), NOT as a pure
 markdown skill that the agent dispatches via tools. The CLI is the trusted
 runtime; the skill is the orchestration prose around it.
 
@@ -67,7 +67,7 @@ What this means for the agent:
                not currently shipped — see "Acquiring the book" below).
 2. EXTRACT   → Pull chapter text from EPUB/PDF into one .txt per chapter.
 3. CONTEXT   → Gather everything the brain knows about the reader.
-4. ANALYZE   → `gbrain book-mirror` fans out N read-only subagents.
+4. ANALYZE   → `foresights book-mirror` fans out N read-only subagents.
 5. ASSEMBLE  → CLI reads each child result and writes one put_page.
 6. PDF       → Optional: render via skills/brain-pdf for delivery.
 ```
@@ -87,7 +87,7 @@ ls path/to/book.pdf
 ls $BRAIN_DIR/media/books/
 ```
 
-Resolve `$BRAIN_DIR` from the gbrain config (`gbrain config get sync.repo_path`)
+Resolve `$BRAIN_DIR` from the foresights config (`foresights config get sync.repo_path`)
 or accept it from the user.
 
 ## 2. Text extraction
@@ -159,17 +159,17 @@ context fed to each chapter subagent.
 ### What to pull
 
 1. **Templates: USER.md and SOUL.md** if the user maintains them
-   (gbrain ships templates at `templates/USER.md` and `templates/SOUL.md`;
+   (foresights ships templates at `templates/USER.md` and `templates/SOUL.md`;
    they live in the brain repo when populated). Read full.
 2. **Recent daily memory** — last 14 days of brain pages under
    `wiki/personal/reflections/` or wherever the user files daily notes.
 3. **Topic-relevant brain searches** tuned to the book's themes:
-   - `gbrain query "marriage"`, `gbrain query "couples therapy"` for a
+   - `foresights query "marriage"`, `foresights query "couples therapy"` for a
      marriage book.
-   - `gbrain query "founders"`, `gbrain query "fundraising"` for a
+   - `foresights query "founders"`, `foresights query "fundraising"` for a
      business book.
-   - `gbrain query "shame"`, `gbrain query "anger"` for a psychology book.
-4. **Brain pages for relevant entities** — `gbrain query "<name>"` for
+   - `foresights query "shame"`, `foresights query "anger"` for a psychology book.
+4. **Brain pages for relevant entities** — `foresights query "<name>"` for
    people who will likely come up.
 5. **Standing patterns** — anything in the user's reflections or
    originals that's been recurring.
@@ -198,8 +198,8 @@ into one file. Do per-section retrieval before invoking the CLI:
 **Execution:**
 
 ```bash
-gbrain query "QUERY" --limit 3
-gbrain get "PAGE_SLUG"
+foresights query "QUERY" --limit 3
+foresights get "PAGE_SLUG"
 ```
 
 **Budget:** 15–20 searches per section × N sections, plus 40–60 full page
@@ -282,7 +282,7 @@ is the root cause, not a styling nit.
 
 **Two valid containers — both are correct, pick by destination:**
 
-1. **Top-aligned HTML table (the CLI default).** The `gbrain book-mirror`
+1. **Top-aligned HTML table (the CLI default).** The `foresights book-mirror`
    chapter prompt already mandates an HTML `<table>` with `valign="top"`
    on EVERY `<td>` — this is baked into the trusted runtime. Facts worth
    knowing when hand-writing or repairing a mirror: GitHub KEEPS
@@ -358,7 +358,7 @@ thoroughness.
 
 ### Cross-modal eval gate (recommended for high-stakes mirrors)
 
-After generating a mirror, run `gbrain eval cross-modal` (or the manual
+After generating a mirror, run `foresights eval cross-modal` (or the manual
 gate in `skills/cross-modal-review/SKILL.md`) with these custom
 dimensions:
 
@@ -369,7 +369,7 @@ dimensions:
 - EMOTIONAL_RANGE (joy as well as struggle?)
 
 ```bash
-gbrain eval cross-modal --slug <slug>-personalized \
+foresights eval cross-modal --slug <slug>-personalized \
   --dimensions VARIETY,SPECIFICITY,DEPTH,LEFT_COLUMN_FIDELITY,EMOTIONAL_RANGE
 ```
 
@@ -395,10 +395,10 @@ For picture books and children's books (under ~5K words), use a
 
 Hand-assembled variants like this use the stacked-sections container.
 
-## 4. Analysis: invoke `gbrain book-mirror`
+## 4. Analysis: invoke `foresights book-mirror`
 
 ```bash
-gbrain book-mirror \
+foresights book-mirror \
   --chapters-dir "$WORK/chapters" \
   --context-file "$CONTEXT" \
   --slug "$SLUG" \
@@ -561,7 +561,7 @@ writing even with every citation stripped.
 - [ ] Chapter texts under `$WORK/chapters/*.txt` with sane word counts.
 - [ ] Context pack at `$WORK/context.md` is dense: deep-retrieval results
       grouped per chapter + domain map + phrase caps.
-- [ ] `gbrain book-mirror --chapters-dir … --context-file … --slug … --title …` returned exit 0.
+- [ ] `foresights book-mirror --chapters-dir … --context-file … --slug … --title …` returned exit 0.
 - [ ] `media/books/<slug>-personalized.md` exists in the brain.
 - [ ] Layout check: no bare markdown pipe tables in the page.
 - [ ] Anti-repetition self-check: no theme anchors more than 3 chapters.
@@ -578,7 +578,7 @@ writing even with every citation stripped.
 - `skills/article-enrichment/SKILL.md` — same shape applied to articles
   rather than books.
 - `skills/cross-modal-review/SKILL.md` — the manual second-model quality
-  gate; `gbrain eval cross-modal` is the scripted sibling surface.
+  gate; `foresights eval cross-modal` is the scripted sibling surface.
 
 
 ## Contract
@@ -598,10 +598,10 @@ The skill's output shape is documented inline in the body sections above (see "O
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The CLI stops for cost confirmation (exit 3, or a non-TTY refusal without `--yes`): relay the per-chapter estimate and wait for the user's agreement before adding `--yes`.
-- A paid run stops with `no_pricing` under a user cost cap: look up the model's per-token rate, tell the user, and after they agree ask the brain host's operator to run `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`; then retry.
+- A paid run stops with `no_pricing` under a user cost cap: look up the model's per-token rate, tell the user, and after they agree ask the brain host's operator to run `foresights pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`; then retry.
 - Exit 1 with `chapters_failed > 0`: the finished chapters are kept; re-run the same command to retry only the failed ones and tell the user how many chapters are still missing.
 
 ## Anti-Patterns

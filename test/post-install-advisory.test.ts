@@ -2,7 +2,7 @@
  * Tests for src/core/skillpack/post-install-advisory.ts (v0.25.1).
  *
  * The advisory is meant to be read by the agent (openclaw, claude-code)
- * from the terminal output of `gbrain init` and `gbrain post-upgrade`.
+ * from the terminal output of `foresights init` and `foresights post-upgrade`.
  * These tests pin:
  *   - empty/no-workspace path renders a workspace-detection note
  *   - all-installed path returns null (no-op)
@@ -116,7 +116,7 @@ describe('detectInstalledSlugs', () => {
 
 describe('recommended set — OOBE invariants', () => {
   it('cold-start is the FIRST recommendation (the day-one "now what?" answer)', () => {
-    // The compact init advisory previews the first slugs and `gbrain advisor`
+    // The compact init advisory previews the first slugs and `foresights advisor`
     // ranks by list order — cold-start leads because every other recommended
     // skill only becomes magical once the brain holds the user's real life.
     expect(currentRecommendedSet()[0]!.slug).toBe('cold-start');
@@ -147,7 +147,7 @@ describe('buildAdvisory — partial-install path', () => {
     expect(advisory).toContain('book-mirror');
     expect(advisory).not.toContain('article-enrichment');
     expect(advisory).not.toContain('strategic-reading');
-    expect(advisory).toContain('gbrain skillpack scaffold book-mirror');
+    expect(advisory).toContain('foresights skillpack scaffold book-mirror');
   });
 
   it('uses --all command when ALL recommended are missing (fresh workspace)', () => {
@@ -159,7 +159,7 @@ describe('buildAdvisory — partial-install path', () => {
       targetSkillsDir: skillsDir,
     });
     expect(advisory).not.toBeNull();
-    expect(advisory).toContain('gbrain skillpack scaffold --all');
+    expect(advisory).toContain('foresights skillpack scaffold --all');
     expect(advisory).toContain('book-mirror');
     expect(advisory).toContain('article-enrichment');
     expect(advisory).toContain('strategic-reading');
@@ -248,7 +248,7 @@ describe('buildAdvisory — agent-readable framing', () => {
       targetWorkspace: workspace,
       targetSkillsDir: skillsDir,
     })!;
-    expect(advisory).toContain('gbrain skillpack scaffold --all');
+    expect(advisory).toContain('foresights skillpack scaffold --all');
     expect(advisory).toContain('ACTION FOR THE AGENT');
   });
 });
@@ -314,6 +314,6 @@ describe('buildAdvisory — no workspace detected', () => {
     });
     expect(advisory).not.toBeNull();
     // No workspace -> empty installed set -> all recommended treated as missing.
-    expect(advisory).toContain('gbrain skillpack scaffold --all');
+    expect(advisory).toContain('foresights skillpack scaffold --all');
   });
 });

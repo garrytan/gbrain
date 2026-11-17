@@ -9,7 +9,7 @@
 #   BENCH_ENGINES   "pglite postgres" (default)
 #   BENCH_N         samples per hot path (default 20)
 #   BENCH_EMBED     1 = embed during import (default 1); BENCH_EMBED_SKIP="pglite:synth-full" skips pairs
-#   BENCH_MAX_USD   per-embed cap passed to gbrain embed --max-usd (default 2)
+#   BENCH_MAX_USD   per-embed cap passed to foresights embed --max-usd (default 2)
 #   BENCH_PG_PORT   host port of the pgvector container (default 5440)
 #   BENCH_PG_CONTAINER  pgvector container name (default gbrain-bench-pg)
 #   BUN             bun >= 1.4.4 binary (default: bun on PATH)

@@ -72,7 +72,7 @@ describe('decorateEmbeddingDimError', () => {
     expect(op.message).toContain("page 'my-page' was NOT written");
     expect(op.message).toContain('1280d vectors');
     expect(op.message).toContain('column is 1024d');
-    expect(op.suggestion).toContain('gbrain migrate embeddings');
+    expect(op.suggestion).toContain('foresights migrate embeddings');
     expect(op.suggestion).toContain('--dim 1280');
   });
 

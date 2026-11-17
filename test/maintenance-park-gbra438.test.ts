@@ -6,7 +6,7 @@
  *    UPKEEP_PARK_AFTER_SLICES budgeted slices is parked, the items behind it
  *    run and the round finishes, so the idle serve goes quiet until the next
  *    round instead of restarting the same item forever. --status and doctor
- *    name the parked item; an unbudgeted run (gbrain maintain --unattended)
+ *    name the parked item; an unbudgeted run (foresights maintain --unattended)
  *    finishes it and clears it; retryParked (a serve's first idle run) gives
  *    it exactly one more set of slices.
  * 2. Fails when: a slow item is retried without bound, blocks the items
@@ -86,7 +86,7 @@ describe('budgeted upkeep parks an item that cannot finish inside its slices (PG
     expect(status.state).toBe('parked');
     expect(status.parked).toEqual(record.parked!);
     expect(status.message).toContain(`parked source:default after ${UPKEEP_PARK_AFTER_SLICES} slices`);
-    expect(status.message).toContain('gbrain maintain --unattended');
+    expect(status.message).toContain('foresights maintain --unattended');
     const check = await checkUnattendedMaintenance(engine);
     expect(check).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'maintain', '--unattended'] },
       details: { state: 'parked', parked: record.parked, alternative_fix: { argv: ['gbrain', 'maintain', '--schedule'] } } });
@@ -114,7 +114,7 @@ describe('budgeted upkeep parks an item that cannot finish inside its slices (PG
     expect(retried.next_due_at).toBe(dueAt);
     expect(await slice()).toBeNull();
 
-    // (v): an unbudgeted run (gbrain maintain --unattended) finishes the parked item and clears it.
+    // (v): an unbudgeted run (foresights maintain --unattended) finishes the parked item and clears it.
     calls.length = 0;
     const full = await runUnattendedMaintenance(engine, { runner: 'cli', providers: KEYLESS, cycle: counted });
     expect(full).toMatchObject({ status: 'ran', exit: 0 });

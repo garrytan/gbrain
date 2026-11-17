@@ -1,7 +1,7 @@
 // v0.27.1 follow-up: searchVector column routing — `embedding_image`
 // path returns image rows only, default `embedding` path returns text/code
 // rows only. Verifies the modality-filter contract that backs the
-// `gbrain query --image <path>` flag.
+// `foresights query --image <path>` flag.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -43,7 +43,7 @@ beforeEach(async () => {
  * Build a fake text-column vector at the column's runtime dim. Reads
  * `TEXT_DIM` populated in `beforeAll` from the actual column. Works
  * on any default — 1024 (CI fresh-install) and 1536 (local dev with
- * gbrain config from older default) both pass.
+ * foresights config from older default) both pass.
  */
 function fakeTextDefault(seed: number): Float32Array {
   const n = TEXT_DIM;

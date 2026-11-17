@@ -48,13 +48,13 @@ function requestIdError(): OperationError {
 
 function brainUninitialized(message: string, brainId: string): OperationError {
   return opError('destination_not_ready', message,
-    `Brain ${brainId} has no persistence identity yet. Check it with gbrain doctor; initializing or migrating a brain is a separate step the user approves, and connect never does it.`,
+    `Brain ${brainId} has no persistence identity yet. Check it with foresights doctor; initializing or migrating a brain is a separate step the user approves, and connect never does it.`,
     { fix: readFix(`Shows brain ${brainId}'s schema and migration state without changing it.`, { argv: ['gbrain', 'doctor', '--brain', brainId, '--json'] }) });
 }
 
 function sourceTaken(message: string, input: CompanyBrainDestination): OperationError {
   return opError('source_id_taken', message,
-    `Source ${input.sourceId} already exists in brain ${input.brainId}. If it is this company source, resume it with gbrain sync --brain ${input.brainId} --source ${input.sourceId} --no-embed --no-pull (or repeat connect with its original --request-id); otherwise choose a new --source id.`,
+    `Source ${input.sourceId} already exists in brain ${input.brainId}. If it is this company source, resume it with foresights sync --brain ${input.brainId} --source ${input.sourceId} --no-embed --no-pull (or repeat connect with its original --request-id); otherwise choose a new --source id.`,
     { fix: sourceStatusFix(input.brainId, `Shows source ${input.sourceId}'s registration and ingestion receipt so you can tell whether it is the company source to resume.`) });
 }
 
@@ -72,7 +72,7 @@ export function unwrapCompanyBrainPlan(value: unknown): CompanyBrainPlan {
   if (value && typeof value === 'object' && 'plan' in value) value = (value as { plan: unknown }).plan;
   if (!value || typeof value !== 'object' || Array.isArray(value) || !('plan_digest' in value)) {
     throw opError('plan_stale', 'A raw inspection plan or inspection envelope with plan is required.',
-      'Pass the JSON that gbrain sources inspect --profile company-brain --json writes (the raw plan, or its envelope with a plan key); inspect the repository again if the file is not one.');
+      'Pass the JSON that foresights sources inspect --profile company-brain --json writes (the raw plan, or its envelope with a plan key); inspect the repository again if the file is not one.');
   }
   return value as CompanyBrainPlan;
 }
@@ -234,7 +234,7 @@ export async function admitCompanyBrain(engine: BrainEngine, input: CompanyBrain
     const validation = await validateCompanyBrainPlan(input.plan, { path: input.path, mode: 'resume' });
     if (!validation.valid) {
       throw opError(validation.code as RegistryCode, 'The admitted request no longer matches its approved repository identity.',
-        `Request ${requestId} already admitted source ${input.sourceId}, but the checkout no longer matches its approved commit. Check the receipt; resume with gbrain sync --brain ${input.brainId} --source ${input.sourceId} --no-embed --no-pull once that commit is present again. gbrain never substitutes current HEAD.`,
+        `Request ${requestId} already admitted source ${input.sourceId}, but the checkout no longer matches its approved commit. Check the receipt; resume with foresights sync --brain ${input.brainId} --source ${input.sourceId} --no-embed --no-pull once that commit is present again. foresights never substitutes current HEAD.`,
         { fix: sourceStatusFix(input.brainId, `Shows source ${input.sourceId}'s ingestion receipt and outstanding phase.`) });
     }
     return replay;
@@ -251,7 +251,7 @@ export async function admitCompanyBrain(engine: BrainEngine, input: CompanyBrain
     const preview = await checkCompanyBrainDestination(tx, input);
     if (preview.databaseId !== profile.databaseId) {
       throw opError('source_changed', 'The selected database identity changed during admission.',
-        `Brain ${input.brainId} now resolves to a different database than the one previewed, so nothing was admitted. Check it with gbrain doctor, then preview the connect again before approving.`,
+        `Brain ${input.brainId} now resolves to a different database than the one previewed, so nothing was admitted. Check it with foresights doctor, then preview the connect again before approving.`,
         { fix: readFix(`Shows which database brain ${input.brainId} resolves to now.`, { argv: ['gbrain', 'doctor', '--brain', input.brainId, '--json'] }) });
     }
     const validation = await validateCompanyBrainPlan(plan, { path: input.path, mode: 'apply' });

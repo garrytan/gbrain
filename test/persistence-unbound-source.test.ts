@@ -74,7 +74,7 @@ describe('decideUnboundWrite', () => {
     expect(error.detail).toBe('unbound_source');
     expect(error.retryable).toBe(false);
     expect(error.fix?.ask_user).toBe(true);
-    expect(error.suggestion).toContain('gbrain config set persistence.unbound_write database_only');
+    expect(error.suggestion).toContain('foresights config set persistence.unbound_write database_only');
     expect(error.suggestion).toContain('write the page as /srv/notes/<slug>.md');
   });
 
@@ -82,7 +82,7 @@ describe('decideUnboundWrite', () => {
     const error = await refusal(decideUnboundWrite(engine('postgres', DATABASE_ONLY), input({ fileBacked: true, path: null })));
     expect(error.detail).toBe('unbound_source');
     expect(error.suggestion).toContain('came from a canonical file');
-    expect(error.suggestion).not.toContain('gbrain config set persistence.unbound_write database_only');
+    expect(error.suggestion).not.toContain('foresights config set persistence.unbound_write database_only');
     expect(error.suggestion).not.toContain('/srv/notes');
   });
 });

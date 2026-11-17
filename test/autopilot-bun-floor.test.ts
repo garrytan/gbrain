@@ -8,7 +8,7 @@
  * Protects: a quiet-hours `apply` on a bun-link clone or a global package is
  * held as `unsupported_runtime` (audited, breadcrumb not written, not
  * known-bad) when the target's floor is above the host Bun or unreadable;
- * a met floor still swaps; a swap that `gbrain upgrade` itself refuses for
+ * a met floor still swaps; a swap that `foresights upgrade` itself refuses for
  * the floor (exit 78) is a hold, while any other swap failure stays known-bad.
  * Regression: the channel deciding without reading the target's floor (the
  * #5855 crash loop), or recording a floor refusal as a failed version.
@@ -96,15 +96,15 @@ function bunLinkInstall(h: Harness, floor: string): string {
   return driver;
 }
 
-/** A Bun global install of `github:garrytan/gbrain` with the driver inside node_modules. */
+/** A Bun global install of `github:aimonk2025/gbrain` with the driver inside node_modules. */
 function packageInstall(h: Harness): { driver: string; bunInstall: string } {
   const bunInstall = join(h.root, 'bunhome');
   const globalRoot = join(bunInstall, 'install', 'global');
   mkdirSync(join(globalRoot, 'node_modules'), { recursive: true });
-  writeFileSync(join(globalRoot, 'package.json'), JSON.stringify({ dependencies: { gbrain: 'github:garrytan/gbrain' } }));
+  writeFileSync(join(globalRoot, 'package.json'), JSON.stringify({ dependencies: { gbrain: 'github:aimonk2025/gbrain' } }));
   const pkgDir = join(globalRoot, 'node_modules', 'gbrain');
   mkdirSync(pkgDir, { recursive: true });
-  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'git+https://github.com/garrytan/gbrain.git' } }));
+  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'git+https://github.com/aimonk2025/gbrain.git' } }));
   const driver = join(pkgDir, 'src', 'cli.ts');
   writeDriver(driver, h);
   return { driver, bunInstall };
@@ -151,14 +151,14 @@ describe('autopilot self-upgrade Bun floor gate (#5855)', () => {
   test('bun-link: the fetched upstream floor above the PATH bun holds the upgrade', async () => {
     const h = harness('link-unmet');
     const r = await tick(h, bunLinkInstall(h, '>=1.4.0'), { FAKE_BUN_VERSION: '1.3.14' });
-    expectHeld(r, `gbrain ${TARGET} requires Bun >=1.4.0; bun on PATH is 1.3.14. Fix: bun upgrade, then gbrain upgrade.`);
+    expectHeld(r, `foresights ${TARGET} requires Bun >=1.4.0; bun on PATH is 1.3.14. Fix: bun upgrade, then foresights upgrade.`);
   }, 60_000);
 
   test('bun-link: a met floor swaps and exits for relaunch', async () => {
     const h = harness('link-met');
     const r = await tick(h, bunLinkInstall(h, '>=1.4.0'), { FAKE_BUN_VERSION: Bun.version });
     expect(r.out).toContain('EXIT_CALLED 0');
-    expect(r.swaps).toEqual(['gbrain upgrade --swap-only']);
+    expect(r.swaps).toEqual(['foresights upgrade --swap-only']);
     expect(r.su.attempting_version).toBe(TARGET);
   }, 60_000);
 
@@ -166,20 +166,20 @@ describe('autopilot self-upgrade Bun floor gate (#5855)', () => {
     const h = harness('pkg');
     const { driver, bunInstall } = packageInstall(h);
     const unmet = await tick(h, driver, { FAKE_BUN_VERSION: Bun.version, BUN_INSTALL: bunInstall, FAKE_PACKAGE_BODY: JSON.stringify({ version: TARGET, engines: { bun: '>=9.9.9' } }) });
-    expectHeld(unmet, `gbrain ${TARGET} requires Bun >=9.9.9;`);
-    expect(unmet.fetched).toContain('https://raw.githubusercontent.com/garrytan/gbrain/HEAD/package.json');
+    expectHeld(unmet, `foresights ${TARGET} requires Bun >=9.9.9;`);
+    expect(unmet.fetched).toContain('https://raw.githubusercontent.com/aimonk2025/gbrain/HEAD/package.json');
 
     const unreadable = await tick(h, driver, { FAKE_BUN_VERSION: Bun.version, BUN_INSTALL: bunInstall, FAKE_PACKAGE_BODY: JSON.stringify({ version: TARGET, engines: { bun: '^1.4.0' } }) });
-    expectHeld(unreadable, `Could not read the Bun floor of gbrain ${TARGET}`);
+    expectHeld(unreadable, `Could not read the Bun floor of foresights ${TARGET}`);
     expect(unreadable.audit.at(-1).reason).toContain('The next quiet-hours tick retries.');
   }, 60_000);
 
-  test('a swap refused by `gbrain upgrade` for the floor is a hold; another swap failure is known-bad', async () => {
+  test('a swap refused by `foresights upgrade` for the floor is a hold; another swap failure is known-bad', async () => {
     const h = harness('swap-exit');
     const { driver, bunInstall } = packageInstall(h);
     const env = { FAKE_BUN_VERSION: Bun.version, BUN_INSTALL: bunInstall, FAKE_PACKAGE_BODY: JSON.stringify({ version: TARGET, engines: { bun: '>=1.4.0' } }) };
     const held = await tick(h, driver, { ...env, FAKE_GBRAIN_EXIT: '78' });
-    expect(held.swaps).toEqual(['gbrain upgrade --swap-only']);
+    expect(held.swaps).toEqual(['foresights upgrade --swap-only']);
     expect(held.su.attempting_version).toBeUndefined();
     expect(held.su.failed_versions ?? []).toEqual([]);
     expect(held.audit.at(-1)).toMatchObject({ action: 'unsupported_runtime', outcome: 'skipped', latest: TARGET });

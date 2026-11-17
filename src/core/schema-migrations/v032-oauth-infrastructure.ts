@@ -3,7 +3,7 @@ import type { Migration } from './types.ts';
 export const v032: Migration = {
   version: 32,
   name: 'oauth_infrastructure',
-  // v0.26 OAuth 2.1 tables for `gbrain serve --http`. Supports client credentials,
+  // v0.26 OAuth 2.1 tables for `foresights serve --http`. Supports client credentials,
   // authorization code + PKCE, and refresh token rotation. Renumbered from v30
   // → v32 on merge with master's v0.23 (dream_verdicts at v30) + v0.25
   // (eval_capture_tables at v31). OAuth is independent of those chains so

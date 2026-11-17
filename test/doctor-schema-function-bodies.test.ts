@@ -1,6 +1,6 @@
 /**
- * schema_function_bodies doctor check (#7776): every function this gbrain's schema defines has this gbrain's body.
- * An older gbrain's initSchema replay reinstalls its superseded bodies over a newer schema; the check names each one.
+ * schema_function_bodies doctor check (#7776): every function this foresights's schema defines has this foresights's body.
+ * An older foresights's initSchema replay reinstalls its superseded bodies over a newer schema; the check names each one.
  * Read-only. The cold replay that clears it is in test/init-schema-client-behind.test.ts; Postgres in
  * test/e2e/init-schema-client-behind-postgres.test.ts.
  */

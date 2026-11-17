@@ -1,11 +1,11 @@
 /**
- * `gbrain sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha> [--dry-run] [--json]`
+ * `foresights sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha> [--dry-run] [--json]`
  * (GBRA-133 S-58/S-59): the fix for `upstream_rewritten` and `upstream_unknown`.
  * A classic source whose upstream was force-pushed cannot fast-forward, and
  * merging would bring back the commits the force-push removed, so the checkout
  * is moved to the new upstream instead, after the user agrees.
  *
- * Under the checkout's commit lock (the lock `gbrain git commit-push` and
+ * Under the checkout's commit lock (the lock `foresights git commit-push` and
  * scripts/brain-commit-push.sh take) it refuses a git operation in progress,
  * a HEAD or upstream that moved since the observation (`--expect-local` /
  * `--expect-upstream`), a dirty tracked tree, and local commits that were never
@@ -15,7 +15,7 @@
  * `refs/gbrain/backup/<UTC stamp>-<sha>`, runs `git reset --keep <upstream>`,
  * verifies HEAD is the expected upstream, records it as the source's upstream
  * baseline and clears the upstream observation. It never fetches; the next
- * `gbrain sync --source <id>` imports the upstream commits. `--dry-run` runs
+ * `foresights sync --source <id>` imports the upstream commits. `--dry-run` runs
  * every check, takes no lock and changes nothing.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -31,7 +31,7 @@ import {
   clearUpstreamDivergence, gitRead, hasCommit, readCheckoutUpstream, readUpstreamBaseline, writeUpstreamBaseline, UPSTREAM_DOCS,
 } from '../core/sync-upstream-rewrite.ts';
 
-const USAGE = 'Usage: gbrain sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha> [--dry-run] [--json]';
+const USAGE = 'Usage: foresights sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha> [--dry-run] [--json]';
 const LIST_CAP = 20;
 const REFLOG_CAP = 500;
 
@@ -96,7 +96,7 @@ function trackingRefHistory(root: string, trackingRef: string): string[] {
 export async function resetUpstream(engine: BrainEngine, opts: { sourceId: string; expectLocal: string; expectUpstream: string; dryRun?: boolean }): Promise<ResetUpstreamReceipt> {
   const { sourceId } = opts;
   const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1 AND archived IS NOT TRUE', [sourceId]);
-  if (!source) throw opError('unknown_source', `Source ${sourceId} is not registered (or is archived).`, 'List the sources with gbrain sources list --json.');
+  if (!source) throw opError('unknown_source', `Source ${sourceId} is not registered (or is archived).`, 'List the sources with foresights sources list --json.');
   if (!source.local_path) throw opError('unknown_source', `Source ${sourceId} has no local checkout.`, 'reset-upstream applies to a Git source with a local_path.');
   const root = checkoutRoot(source.local_path);
   await assertLegacyFilesystemWriter(engine, root);
@@ -110,12 +110,12 @@ export async function resetUpstream(engine: BrainEngine, opts: { sourceId: strin
     const state = readCheckoutUpstream(root);
     if (!state) {
       throw refused('no_upstream', `The checkout ${root} has no commit or no upstream branch, so there is nothing to reset to.`,
-        'Set the branch upstream (git branch --set-upstream-to <remote>/<branch>), run gbrain sync --source <id>, then follow the doctor fix.', sync);
+        'Set the branch upstream (git branch --set-upstream-to <remote>/<branch>), run foresights sync --source <id>, then follow the doctor fix.', sync);
     }
     const resolved = (sha: string) => gitRead(root, ['rev-parse', '--verify', '-q', `${sha}^{commit}`]);
     if (resolved(opts.expectLocal) !== state.head || resolved(opts.expectUpstream) !== state.upstream) {
       throw refused('expect_mismatch', `The checkout moved since the reset was proposed: HEAD is ${state.head} and ${state.tracking_ref} is ${state.upstream} (expected ${opts.expectLocal} and ${opts.expectUpstream}). Nothing was changed.`,
-        'Run gbrain sync --source <id> to observe the checkout again; gbrain doctor --only sync_failures then names the current reset command.', sync,
+        'Run foresights sync --source <id> to observe the checkout again; foresights doctor --only sync_failures then names the current reset command.', sync,
         { local: state.head, upstream: state.upstream });
     }
     const dirty = lines(gitRead(root, ['diff', '--name-only', 'HEAD', '--']));
@@ -124,7 +124,7 @@ export async function resetUpstream(engine: BrainEngine, opts: { sourceId: strin
     if (dirty.length) {
       const paths = dirty.slice(0, LIST_CAP);
       throw refused('dirty_tree', `The checkout ${root} has uncommitted changes to tracked files (${paths.join(', ')}${dirty.length > LIST_CAP ? `, and ${dirty.length - LIST_CAP} more` : ''}); nothing was changed.`,
-        'Commit the edits (gbrain git commit-push -m <msg> -- <paths>) or discard them, then run the same reset-upstream command again.',
+        'Commit the edits (foresights git commit-push -m <msg> -- <paths>) or discard them, then run the same reset-upstream command again.',
         { ...askAgain, user_message: `The checkout of source ${sourceId} has uncommitted edits to ${paths.join(', ')}. Commit or discard them before resetting to the upstream?` }, { paths });
     }
     const baseline = (await readUpstreamBaseline(engine, sourceId))?.sha;
@@ -147,7 +147,7 @@ export async function resetUpstream(engine: BrainEngine, opts: { sourceId: strin
     const receipt = { ...base, backup_ref: backupRef, dropped: dropped.slice(0, LIST_CAP), dropped_count: dropped.length };
     if (opts.dryRun) return { ...receipt, status: 'would_reset' };
     const write = (args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, env: gitChildEnv({ ...GIT_ENV, LC_ALL: 'C' }) });
-    write(['update-ref', '-m', 'gbrain sources reset-upstream backup', backupRef, state.head, '']);
+    write(['update-ref', '-m', 'foresights sources reset-upstream backup', backupRef, state.head, '']);
     try { write(['reset', '--keep', state.upstream]); } catch (e) {
       throw opError('git_unavailable', `git reset --keep ${state.upstream} failed in ${root}: ${String((e as { stderr?: unknown }).stderr ?? (e as Error).message).trim().slice(0, 300)}`,
         `The old HEAD is kept under ${backupRef}. Run git status in ${root}, fix what git reports, then rerun the same reset-upstream command.`);

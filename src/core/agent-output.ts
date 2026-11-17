@@ -125,7 +125,7 @@ export interface RenderContext {
   isCallable(opName: string): boolean;
   preapproved(effects: Effect[], estUsd?: number | null): boolean;
   principal?: string;
-  /** A1: the brain/source the failing call acted on; renderAction pins them into gbrain argv (src/core/fix-routing.ts). */
+  /** A1: the brain/source the failing call acted on; renderAction pins them into foresights argv (src/core/fix-routing.ts). */
   routing?: FixRouting;
 }
 
@@ -156,7 +156,7 @@ export function cliRenderContext(overrides: Partial<RenderContext> = {}): Render
 
 // ── text safety ────────────────────────────────────────────────────────────
 
-const MARKER_RE = /\[(\/?)(AGENT|SHOW USER|gbrain notice)/gi;
+const MARKER_RE = /\[(\/?)(AGENT|SHOW USER|(?:foresights|gbrain) notice)/gi;
 const MAX_INLINE = 2_000;
 
 /**
@@ -183,12 +183,12 @@ export function shellQuote(argv: readonly string[]): string {
 /**
  * Split a literal shell command that a legacy site stored as a string (F0's
  * refusal `fix`, a `suggestion` that is exactly one command) into argv. Only
- * `gbrain …` commands made of plain or single-quoted words qualify; anything
+ * `foresights …` commands made of plain or single-quoted words qualify; anything
  * with pipes, substitutions or placeholders returns undefined (prose stays prose).
  */
 export function argvFromCommand(command: string): string[] | undefined {
   const s = command.trim().replace(/^`|`$/g, '');
-  if (!s.startsWith('gbrain ') && s !== 'gbrain') return undefined;
+  if (!/^(?:foresights|gbrain)(?: |$)/.test(s)) return undefined;
   const out: string[] = [];
   const re = /\s*(?:'([^']*)'|([^\s'"`$|;&<>()\\]+))/y;
   let i = 0;
@@ -200,6 +200,8 @@ export function argvFromCommand(command: string): string[] | undefined {
     i = re.lastIndex;
     while (i < s.length && s[i] === ' ') i++;
   }
+  // Either command name parses to the stored one, so argv compares equal everywhere downstream (core/brand.ts).
+  if (out[0] === 'foresights') out[0] = 'gbrain';
   return out.length ? out : undefined;
 }
 
@@ -210,7 +212,7 @@ export function paramRef(ctx: { transport: Transport }, param: string): string {
 
 // ── docs URLs ──────────────────────────────────────────────────────────────
 
-const REPO_BLOB = 'https://github.com/garrytan/gbrain/blob';
+const REPO_BLOB = 'https://github.com/aimonk2025/gbrain/blob';
 let docsRefOverride: string | null = null;
 
 /** Test seam: pin the ref docsUrl() uses (null restores detection). */
@@ -240,7 +242,7 @@ let warnedRepoBase: string | null = null;
 function warnInvalidRepoBase(value: string): void {
   if (warnedRepoBase === value) return;
   warnedRepoBase = value;
-  process.stderr.write('[gbrain] LLMS_REPO_BASE is not a plain https URL, so documentation links use the default repository. Unset it or set an https base.\n');
+  process.stderr.write('[foresights] LLMS_REPO_BASE is not a plain https URL, so documentation links use the default repository. Unset it or set an https base.\n');
 }
 
 // ── next + rendering ───────────────────────────────────────────────────────
@@ -512,7 +514,7 @@ const RECEIPT_CHANNEL: Record<Transport, string> = { cli: 'local_cli', stdio: 'l
 /**
  * A1 safe-recovery invariant, principal-aware: a write with an unknown or
  * pending outcome, or a replayed terminal receipt, is never told to retry. The
- * fix reads the receipt on the channel that owns it: `gbrain write-request` on
+ * fix reads the receipt on the channel that owns it: `foresights write-request` on
  * the CLI for a CLI-principal receipt, `get_write_request` over MCP where it is
  * callable for this principal; another principal's receipt (or no callable
  * receipt tool) gets the separately authorized host inspection, actor
@@ -542,7 +544,7 @@ function recoveryFix(p: EnvelopeParts, ctx: AgentErrorContext, fields?: ReceiptF
     argv: ['gbrain', 'sources', 'writer', 'status', ...source, '--probe', '--json'],
     consent: [], actor: 'host_admin',
     why: `${why} This connection cannot read that receipt itself, so the brain host's operator inspects the write on the owner.`,
-    user_message: 'A write gbrain accepted needs a check on the brain host before anything is resubmitted. Please ask whoever runs this brain to run the command shown.',
+    user_message: 'A write foresights accepted needs a check on the brain host before anything is resubmitted. Please ask whoever runs this brain to run the command shown.',
     requires_exclusive: false,
   };
 }
@@ -664,7 +666,7 @@ const ROWS: Row[] = [
       error: 'page_projection_conflict', code: 'page_projection_conflict', message: e.message,
       detail: `changed: ${e.changed.join(', ')}`,
       why: `Another worker (the persistence owner's projection rebuild, an embed or an import) installed a newer search projection of ${e.slug} while this command prepared its own; the guard keeps that newer installation instead of overwriting it.`,
-      suggestion: `Re-run ${ctx.command ? `gbrain ${ctx.command}` : 'the same command'}; it re-reads the current projection. If it conflicts again, another worker is still installing: wait for it to finish, then re-run.`,
+      suggestion: `Re-run ${ctx.command ? `foresights ${ctx.command}` : 'the same command'}; it re-reads the current projection. If it conflicts again, another worker is still installing: wait for it to finish, then re-run.`,
       fix: { argv: ['gbrain', 'get', '--source', e.sourceId, '--', e.slug], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Reads the page as stored now (read-only) before the command is re-run.' },
     }),
@@ -690,7 +692,7 @@ const ROWS: Row[] = [
       const code = e.message.startsWith('Invalid ') ? 'invalid_source' : 'unknown_source';
       return {
         error: code, code, message: e.message,
-        suggestion: 'Pass a registered, active source id with --source or GBRAIN_SOURCE (or unset it for the default source); `gbrain sources list --json` shows them.',
+        suggestion: 'Pass a registered, active source id with --source or GBRAIN_SOURCE (or unset it for the default source); `foresights sources list --json` shows them.',
         fix: {
           argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} }, consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Lists the source ids this brain has, so the next call can name one that exists.',
@@ -712,7 +714,7 @@ const ROWS: Row[] = [
     map: (e: Error & { recipeMessage?: string }) => {
       const [first, ...rest] = (e.recipeMessage ?? e.message).split('\n').filter(l => l.trim());
       return { error: 'embedding_width_mismatch', code: 'embedding_width_mismatch', message: first ?? e.message,
-        suggestion: rest.join(' ').trim() || 'Run `gbrain doctor --json` to see the brain\'s vector width.' };
+        suggestion: rest.join(' ').trim() || 'Run `foresights doctor --json` to see the brain\'s vector width.' };
     },
   },
   // ── generic rows: the DB classifier runs before these ──
@@ -775,7 +777,7 @@ function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined 
   if (d.reason === 'schema_missing') {
     return {
       error: 'unavailable', code: 'unavailable', reason: 'schema_missing', message: d.message,
-      suggestion: 'Run gbrain apply-migrations on the brain host, then retry.',
+      suggestion: 'Run foresights apply-migrations on the brain host, then retry.',
       fix: {
         argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent',
         why: 'The code expects a table or column this brain does not have yet.', requires_exclusive: true,
@@ -786,7 +788,7 @@ function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined 
   }
   return {
     error: verb ? 'unavailable' : 'database_error', code: verb ? 'unavailable' : 'database_error', reason: d.reason,
-    message: d.message, suggestion: `${formatDbAccessMarker(d)}. ${d.remediation} Run: gbrain db-repair`,
+    message: d.message, suggestion: `${formatDbAccessMarker(d)}. ${d.remediation} Run: foresights db-repair`,
     fix: {
       argv: ['gbrain', 'db-repair'], consent: [], actor: 'agent',
       why: 'db-repair diagnoses the database connection without changing anything.', requires_exclusive: false,
@@ -805,7 +807,7 @@ function unknownParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts {
   return {
     error: verb ? 'internal' : 'internal_error', code: verb ? 'internal' : 'internal_error',
     message: redactForTransport(message, ctx.transport),
-    suggestion: `Server-side failure in ${where}, not a caller mistake.${resubmit} Run \`gbrain doctor --json\` on the brain host; if it repeats, report it to the user.`,
+    suggestion: `Server-side failure in ${where}, not a caller mistake.${resubmit} Run \`foresights doctor --json\` on the brain host; if it repeats, report it to the user.`,
     fix: statusReadFix(ctx) ?? diagnosticFix(ctx, 'Doctor checks the brain host for the failing dependency.'),
     ...(verb ? { protocol_version: 1 as const } : {}),
   };
@@ -817,7 +819,7 @@ function genericEnvelope(e: unknown, ctx: AgentErrorContext): AgentEnvelope {
   const where = ctx.op ?? ctx.command ?? 'this operation';
   return {
     error: 'internal_error', code: 'internal_error', message: redactUrlsInText(redactConnectionInfo(redactForTransport(message, ctx.transport))),
-    suggestion: `Server-side failure in ${where}, not a caller mistake. Run \`gbrain doctor --json\` on the brain host; if it repeats, report it to the user.`,
+    suggestion: `Server-side failure in ${where}, not a caller mistake. Run \`foresights doctor --json\` on the brain host; if it repeats, report it to the user.`,
     docs_cmd: ['gbrain', 'errors', 'internal_error'], class: 'server', retryable: false, contract_version: CONTRACT_VERSION,
   };
 }
@@ -944,7 +946,7 @@ export function fallbackJsonDocument(exitCode: number, lastCode?: string): Recor
     error: 'command_failed',
     code: lastCode ?? 'command_failed',
     message: `The command exited with status ${exitCode} without writing its JSON result.`,
-    suggestion: 'Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.',
+    suggestion: 'Re-run without --json to read the error on stderr, or run `foresights doctor --json`.',
     exit_code: exitCode,
     contract_version: CONTRACT_VERSION,
   };

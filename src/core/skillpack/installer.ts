@@ -81,7 +81,7 @@ export interface InstallOptions {
   targetWorkspace: string;
   /** Absolute path to the target skills directory. */
   targetSkillsDir: string;
-  /** Gbrain repo root (source). Defaults to the one found by findGbrainRoot. */
+  /** Foresights repo root (source). Defaults to the one found by findGbrainRoot. */
   gbrainRoot: string;
   /** Scope to a single skill slug, or `null` for --all. */
   skillSlug: string | null;
@@ -263,16 +263,16 @@ const MANAGED_BEGIN = SKILLPACK_MANAGED_BEGIN;
 const MANAGED_END = '<!-- gbrain:skillpack:end -->';
 
 // Receipt comment embedded inside the fence on every write. Lets the
-// next install distinguish "row gbrain installed previously" from
+// next install distinguish "row foresights installed previously" from
 // "row a user hand-added inside the fence." Format is intentionally
 // regex-friendly.
 //
 //   <!-- gbrain:skillpack:manifest cumulative-slugs="a,b,c" version="0.19.0" -->
 //
-// Sorted, comma-separated slug list. version is the gbrain version
+// Sorted, comma-separated slug list. version is the foresights version
 // that wrote this receipt.
 const RECEIPT_RE =
-  /<!-- gbrain:skillpack:manifest cumulative-slugs="([^"]*)" version="([^"]*)" -->/;
+  /<!-- (?:foresights|gbrain):skillpack:manifest cumulative-slugs="([^"]*)" version="([^"]*)" -->/;
 
 function buildReceipt(cumulativeSlugs: string[], version: string): string {
   const sorted = [...cumulativeSlugs].sort();
@@ -311,7 +311,7 @@ export function buildManagedBlock(
   return [
     MANAGED_BEGIN,
     '',
-    `<!-- Installed by gbrain ${manifest.version} — do not hand-edit between markers. -->`,
+    `<!-- Installed by foresights ${manifest.version} — do not hand-edit between markers. -->`,
     receipt,
     '',
     '| Trigger | Skill |',
@@ -471,7 +471,7 @@ function applyManagedBlock(
   }
   const existing = readFileSync(resolver, 'utf-8');
 
-  // Step 1: figure out what gbrain previously installed into this fence.
+  // Step 1: figure out what foresights previously installed into this fence.
   //   - If receipt is present, trust it as the cumulative-slug history.
   //   - If receipt is absent (pre-v0.19 fence), fall back to the rows
   //     currently in the fence — they were ALL gbrain-written before
@@ -507,7 +507,7 @@ function applyManagedBlock(
 
   // Step 3: detect unknown rows. A row inside the fence whose slug
   // is NOT in newCumulative AND NOT in bundleSlugs AND NOT in the
-  // intentionally-pruned set is something gbrain never wrote: a user
+  // intentionally-pruned set is something foresights never wrote: a user
   // hand-add, a typo, or stale debris from an unknown bundle.
   // Preserve it (do not destroy data) and emit a single stderr
   // warning per slug instructing the agent to investigate.
@@ -530,7 +530,7 @@ function applyManagedBlock(
   }
   for (const slug of unknownSlugs) {
     console.error(
-      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in gbrain's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
+      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in foresights's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
     );
   }
 
@@ -615,12 +615,12 @@ export function diffSkill(
 // ---------------------------------------------------------------------------
 
 /**
- * `gbrain skillpack uninstall <name>` is the inverse of install. Two
+ * `foresights skillpack uninstall <name>` is the inverse of install. Two
  * data-loss safeguards mirror install's existing posture:
  *
  *   D8 (refuse-and-warn for user-added rows):
  *     If the slug isn't in the managed-block's cumulative-slugs receipt,
- *     gbrain didn't install it; gbrain won't uninstall it either. Exit
+ *     foresights didn't install it; foresights won't uninstall it either. Exit
  *     1 with a message instructing the user to remove it manually.
  *
  *   D11 (content-hash guard, symmetric to install's
@@ -663,7 +663,7 @@ export interface UninstallOptions {
   targetWorkspace: string;
   /** Absolute path to the target skills directory. */
   targetSkillsDir: string;
-  /** Gbrain repo root (source-of-truth bundle). */
+  /** Foresights repo root (source-of-truth bundle). */
   gbrainRoot: string;
   /** Required: a single skill slug. v0.25.1 has no --all uninstall. */
   skillSlug: string;
@@ -723,17 +723,17 @@ export function applyUninstall(opts: UninstallOptions): UninstallResult {
       const existingRowSlugs = extractManagedSlugs(resolverContent);
       if (!existingRowSlugs.includes(opts.skillSlug)) {
         throw new UninstallError(
-          `Skill '${opts.skillSlug}' is not in the managed block. Either it was never installed by gbrain, or the slug is mistyped. Inspect ${resolver} and the skills/${opts.skillSlug}/ directory before retrying.`,
+          `Skill '${opts.skillSlug}' is not in the managed block. Either it was never installed by foresights, or the slug is mistyped. Inspect ${resolver} and the skills/${opts.skillSlug}/ directory before retrying.`,
           'unknown_skill',
         );
       }
       // Otherwise proceed; we'll write a fresh receipt on the way out.
     } else if (!receipt.cumulativeSlugs.includes(opts.skillSlug)) {
       // D8 — slug IS NOT in the receipt's cumulative set. Either
-      // user-added (not gbrain's row) or the slug doesn't exist at all.
+      // user-added (not foresights's row) or the slug doesn't exist at all.
       // Either way, refuse-and-warn.
       throw new UninstallError(
-        `Skill '${opts.skillSlug}' is not in gbrain's installed set (cumulative-slugs receipt has no record of it). gbrain refuses to uninstall what it didn't install. If you hand-added this row to ${resolver}, remove it manually. If the slug is mistyped, run \`gbrain skillpack list\` to see what's installed.`,
+        `Skill '${opts.skillSlug}' is not in foresights's installed set (cumulative-slugs receipt has no record of it). foresights refuses to uninstall what it didn't install. If you hand-added this row to ${resolver}, remove it manually. If the slug is mistyped, run \`foresights skillpack list\` to see what's installed.`,
         'user_added_slug',
       );
     }
@@ -751,7 +751,7 @@ export function applyUninstall(opts: UninstallOptions): UninstallResult {
 
     if (entries.length === 0) {
       throw new UninstallError(
-        `Skill '${opts.skillSlug}' has no bundle entries — likely an unknown slug or stale receipt. Verify with \`gbrain skillpack list\`.`,
+        `Skill '${opts.skillSlug}' has no bundle entries — likely an unknown slug or stale receipt. Verify with \`foresights skillpack list\`.`,
         'unknown_skill',
       );
     }
@@ -792,7 +792,7 @@ export function applyUninstall(opts: UninstallOptions): UninstallResult {
     // Refuse loudly BEFORE any filesystem mutation if anything blocked.
     if (blockedByLocalMod.length > 0) {
       throw new UninstallError(
-        `Refusing to uninstall '${opts.skillSlug}': ${blockedByLocalMod.length} file(s) differ from the bundle (you've hand-edited them):\n  ${blockedByLocalMod.join('\n  ')}\n\nPass --overwrite-local to drop your edits, or run \`gbrain skillpack diff ${opts.skillSlug}\` to inspect first.`,
+        `Refusing to uninstall '${opts.skillSlug}': ${blockedByLocalMod.length} file(s) differ from the bundle (you've hand-edited them):\n  ${blockedByLocalMod.join('\n  ')}\n\nPass --overwrite-local to drop your edits, or run \`foresights skillpack diff ${opts.skillSlug}\` to inspect first.`,
         'locally_modified',
       );
     }
@@ -903,7 +903,7 @@ function applyManagedBlockUninstall(
   }
   for (const slug of unknownSlugs) {
     console.error(
-      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in gbrain's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
+      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in foresights's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
     );
   }
 

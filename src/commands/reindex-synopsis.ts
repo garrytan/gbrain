@@ -1,5 +1,5 @@
 /**
- * `gbrain reindex --synopsis` (#8744): the explicit, operator-run per-chunk
+ * `foresights reindex --synopsis` (#8744): the explicit, operator-run per-chunk
  * synopsis sweep for pages whose configured contextual-retrieval tier is
  * per_chunk_synopsis (search.mode tokenmax, or a source or page override).
  * Import and sync embed those pages at the free title tier and nothing else
@@ -124,7 +124,7 @@ export async function runReindexSynopsis(engine: BrainEngine, args: string[], op
   });
   if (!plan.config.configured) {
     const reason = `The configured contextual-retrieval tier is ${plan.config.kill_switch ? 'off (kill switch)' : plan.config.global_tier}, not per_chunk_synopsis, so no page needs the synopsis sweep. `
-      + 'search.mode tokenmax (or search.contextual_retrieval per_chunk_synopsis, or gbrain sources set-cr-mode <id> per_chunk_synopsis) selects it.';
+      + 'search.mode tokenmax (or search.contextual_retrieval per_chunk_synopsis, or foresights sources set-cr-mode <id> per_chunk_synopsis) selects it.';
     say(`[reindex --synopsis] Nothing to do. ${reason}`);
     return emit({ mode: 'not_applicable', reason, plan });
   }
@@ -228,7 +228,7 @@ export async function runReindexSynopsis(engine: BrainEngine, args: string[], op
   }
   const coverageAfter = await readSynopsisCoverage(engine, { config: plan.config, ...(sourceId ? { sourceIds: [sourceId] } : {}) });
   say(`  Done: ${run.synopsis} page(s) on the synopsis tier, ${run.title} on the title tier (synopsis refused), ${run.skipped} skipped, ${run.failed} failed.`);
-  if (run.failed) say(`  Failed jobs keep their reason: gbrain jobs list --status dead. Run the same command again to resume.`);
+  if (run.failed) say(`  Failed jobs keep their reason: foresights jobs list --status dead. Run the same command again to resume.`);
   say(`  ${formatSynopsisCoverageLine(coverageAfter)}`);
   if (run.failed) setCliExitVerdict(1);
   return emit({ mode: 'run', plan, coverage, run, coverage_after: coverageAfter });

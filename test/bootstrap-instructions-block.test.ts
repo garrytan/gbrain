@@ -62,7 +62,7 @@ describe('spliceAmbientWritebackBlock', () => {
     const outOfOrder = `${AMBIENT_WRITEBACK_BLOCK_END}\nx\n${AMBIENT_WRITEBACK_BLOCK_BEGIN}\n`;
     expect(() => spliceAmbientWritebackBlock(outOfOrder, BODY)).toThrow(/out of order/);
     // Actionable: names the fix and the re-run.
-    expect(() => spliceAmbientWritebackBlock(dupBegin, BODY)).toThrow(/gbrain bootstrap harness/);
+    expect(() => spliceAmbientWritebackBlock(dupBegin, BODY)).toThrow(/(?:foresights|gbrain) bootstrap harness/);
   });
 
   test('marker-equal lines INSIDE the body are neutralized (leading space) and a re-splice still works', () => {
@@ -138,7 +138,7 @@ describe('renderAmbientInstructionBlock', () => {
       serveUrl: URL,
     });
     const header = block.split('\n')[0];
-    expect(header).toContain('managed by `gbrain bootstrap harness`');
+    expect(header).toContain('managed by `foresights bootstrap harness`');
     expect(header).toContain('mode: salient');
     expect(header).toContain(`serve: ${URL}`);
     expect(header).toContain('do not hand-edit inside markers');

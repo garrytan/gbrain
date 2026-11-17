@@ -34,7 +34,7 @@ export interface PackInventory {
 function inventoryOverflow(root: string, limit: keyof InventoryLimits, value: number, what: string) {
   const key = inventoryLimitKey(limit);
   return opError('payload_too_large', `The skillpack in ${root} exceeds the migration inventory bound ${key}=${value}: ${what}.`,
-    `Raise ${key} with gbrain config set, opt the source out with gbrain sources shared-skills followed by its source id and off, or move large assets out of the declared skills and shared_deps; then run gbrain apply-migrations --migration 0.53.0 --yes.`,
+    `Raise ${key} with foresights config set, opt the source out with foresights sources shared-skills followed by its source id and off, or move large assets out of the declared skills and shared_deps; then run foresights apply-migrations --migration 0.53.0 --yes.`,
     { detail: key, docs: 'docs/guides/shared-brain-skills.md#oversized-skill-packs' });
 }
 

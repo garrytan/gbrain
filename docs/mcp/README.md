@@ -1,4 +1,4 @@
-# Connect and administer GBrain MCP
+# Connect and administer Foresights MCP
 
 Choose the task first. Connecting a harness and administering the server use
 different credentials.
@@ -8,8 +8,8 @@ different credentials.
 | Run an HTTP MCP server | [Deployment](DEPLOY.md) | Access to the brain host and its service configuration |
 | Open the admin panel or manage clients | [MCP administration](ADMIN.md) | The running server's separate owner bootstrap credential |
 | Connect an existing agent | [Hosted harness setup](../guides/hosted-harness-access.md) | Native OAuth/PKCE, or a private machine-client handoff |
-| Wire Claude Code to a local brain in one command | [`gbrain setup claude-code`](../guides/setup.md) | A local GBrain installation; setup resolves the brain, writes MCP and read-context hooks, and verifies them |
-| Run a local MCP pipe | [Local stdio](DEPLOY.md#local-stdio-zero-setup) | A local GBrain installation; no HTTP admin panel is created |
+| Wire Claude Code to a local brain in one command | [`foresights setup claude-code`](../guides/setup.md) | A local Foresights installation; setup resolves the brain, writes MCP and read-context hooks, and verifies them |
+| Run a local MCP pipe | [Local stdio](DEPLOY.md#local-stdio-zero-setup) | A local Foresights installation; no HTTP admin panel is created |
 | Diagnose a failed connection | [Recovery table](ADMIN.md#recover-a-failed-step) | Start with the failed stage and the authority you actually hold |
 | A tool call returned an error | [A tool call returned an error](#a-tool-call-returned-an-error) | None: the error says who acts |
 
@@ -24,11 +24,11 @@ login, client creation, or client revocation. A public PKCE client has no client
 secret. Ask the server-hosting harness or a separately authorized administrator
 to perform owner actions.
 
-Say to that administrator: “Open the admin panel for my running GBrain server.
+Say to that administrator: “Open the admin panel for my running Foresights server.
 Use its configured endpoint and protected owner credential. Give me a fresh
 single-use login link without opening it yourself.”
 
-Say to the connecting agent: “Connect this harness to my hosted GBrain. Use its
+Say to the connecting agent: “Connect this harness to my hosted Foresights. Use its
 native OAuth flow if available; otherwise use a private machine handoff. Follow
 the hosted setup guide and report configuration separately from an observed
 connection in this harness.”
@@ -44,7 +44,7 @@ Client-specific details: [ChatGPT](CHATGPT.md), [Claude Code](CLAUDE_CODE.md),
 
 ## A tool call returned an error
 
-Every gbrain tool error is one content block holding a JSON envelope. Read
+Every foresights tool error is one content block holding a JSON envelope. Read
 `code` (an older server sends only `error`), then follow `fix.next`:
 
 - `run`: call `fix.mcp` (or run `fix.argv` where you have a shell) exactly as given.
@@ -52,7 +52,7 @@ Every gbrain tool error is one content block holding a JSON envelope. Read
 - `tell_user_to_run`: the fix needs the user or the brain host's operator
   (for example a scope grant or a CLI-only repair); give them `fix.command`.
 - `wait`: retry after the stated delay with the same request.
-- `report`: tell the user what happened; the host operator runs `gbrain doctor --json`.
+- `report`: tell the user what happened; the host operator runs `foresights doctor --json`.
 
 Then run `fix.verify`, which is always read-only. A mutating call with an
 unknown outcome points at its write receipt (`get_write_request`), never at a
@@ -128,7 +128,7 @@ the recorded bodies of these pages the same way. `fetch` quotes `text` the
 same way (`metadata.quoted`). `search_exact` and `get_chunks` quote their
 text too and summarize tool calls on conversation pages; `get_timeline`
 quotes its entries. The
-trusted local CLI (`gbrain get`, `gbrain put`) reads and writes the body as
+trusted local CLI (`foresights get`, `foresights put`) reads and writes the body as
 stored.
 
 Over MCP, text is also quoted by its stored trust tier: anything below "your
@@ -139,14 +139,14 @@ back quoted on search, `query`, `recall`, `assemble_evidence`, `get_page`
 `chronicle_on_this_day`, `volunteer_chronicle` (its ontology values too), `ontology_get`, `ontology_conflicts`, `takes_list`, `takes_search` (claim and source),
 where a timeline row's free-text `source` is quoted with its summary and detail,
 `get_chunks`, `search_exact`, `get_versions`, `known_as_of`, `think`'s extractive
-answer, `context_pack`, hot memory and write receipts. The context gbrain's
+answer, `context_pack`, hot memory and write receipts. The context foresights's
 hooks inject (the per-turn hook and the pushed context pack) quotes facts below
 the owner's tier the same way, so hook output can hold quote fences. A fact or
 timeline entry an agent copies back from a quoted read into `remember` or
 `add_timeline_entry` (its `source` too), an ontology value copied into `ontology_propose`, or a claim or source copied
-into `takes_add`, `takes_update` or `takes_supersede`, is stored without the fence. A note saved before gbrain
+into `takes_add`, `takes_update` or `takes_supersede`, is stored without the fence. A note saved before foresights
 tracked trust reads as unverified, so it is quoted until the owner runs
-`gbrain trust claim-sources` or `gbrain trust backfill` (`gbrain doctor` names how
+`foresights trust claim-sources` or `foresights trust backfill` (`foresights doctor` names how
 many pages that is); a remote `get_page` or `fetch` of such a page carries a
 `quoted_unverified_origin` notice naming those commands, once per session. A quoted page's title is quoted on
 `get_page`, `fetch` and search and `query` rows, and its tags on `get_page`, `fetch` and `get_tags` (`add_tag` and
@@ -158,7 +158,7 @@ which kind: `date`, `published` or `filename` is a document date,
 `event_date` an event date, and `created` or `fallback` only when the page
 was created or imported. It is never a contract's effective or validity
 date; that date is in the text. Every reply with dated rows adds one line
-after the rows that says so (`[gbrain dates] ...`).
+after the rows that says so (`[foresights dates] ...`).
 
 ```json
 {"query": "acme-example renewal terms"}
@@ -180,13 +180,13 @@ graph signals, the full `delivered` object):
 
 | Client | Rows by default | How to get full rows |
 | --- | --- | --- |
-| Any MCP client (stdio or HTTP) | lean | `fields: "full"` per call, or the host sets `gbrain config set mcp.result_rows full` |
-| gbrain thin CLI, v0.60.44.0 or later | full (it sends `X-Gbrain-Client`) | nothing to do |
-| gbrain thin CLI, older than v0.60.44.0 | lean | upgrade the CLI, or the host sets `mcp.result_rows full` |
-| Trusted local CLI (`gbrain search`, `gbrain call`) | full | nothing to do |
+| Any MCP client (stdio or HTTP) | lean | `fields: "full"` per call, or the host sets `foresights config set mcp.result_rows full` |
+| foresights thin CLI, v0.60.44.0 or later | full (it sends `X-Gbrain-Client`) | nothing to do |
+| foresights thin CLI, older than v0.60.44.0 | lean | upgrade the CLI, or the host sets `mcp.result_rows full` |
+| Trusted local CLI (`foresights search`, `foresights call`) | full | nothing to do |
 
 The host setting is read per request over OAuth HTTP and at start-up for
-`gbrain serve` (stdio), so restart a stdio server after changing it. The
+`foresights serve` (stdio), so restart a stdio server after changing it. The
 `X-Gbrain-Client` header selects a row shape only; it is not an identity
 claim and never grants access.
 

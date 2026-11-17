@@ -1,6 +1,6 @@
 # Refresh algorithm (diff-and-propose)
 
-`gbrain integrations install agent-voice --refresh` re-walks the manifest, classifies every file into one of six states, and applies a deterministic decision per state. The implementation is in `src/commands/integrations.ts` under the `install_kind: copy-into-host-repo` branch (`refreshRecipeIntoHostRepo` / `classifyForRefresh`).
+`foresights integrations install agent-voice --refresh` re-walks the manifest, classifies every file into one of six states, and applies a deterministic decision per state. The implementation is in `src/commands/integrations.ts` under the `install_kind: copy-into-host-repo` branch (`refreshRecipeIntoHostRepo` / `classifyForRefresh`).
 
 This file is the single home for refresh semantics. `recipes/agent-voice.md` and `install/post-install-hint.md` summarize and link here.
 
@@ -36,7 +36,7 @@ A path-mapping renames table in the manifest (`renames: [{from, to}]`, not yet s
 ## The "locally-modified" decision
 
 - **keep-mine** (the default) — leave the host file untouched. The recorded `sha256` in `.gbrain-source.json` is re-baselined to the current host hash, so future refreshes won't re-flag this file until either side changes again.
-- **take-theirs** (`--auto take-theirs`) — copy the gbrain reference over the host file. The recorded SHA becomes the new src_hash.
+- **take-theirs** (`--auto take-theirs`) — copy the foresights reference over the host file. The recorded SHA becomes the new src_hash.
 
 There is no `merge` option and no diff output. To hand-merge: run `--dry-run` to find locally-modified files, diff them yourself against the gbrain-side reference (the `src` path printed per file), merge in your editor, then re-run `--refresh`.
 
@@ -53,10 +53,10 @@ The journal is an **audit log only** — grep it to see which files were touched
 ## CLI surface
 
 ```bash
-gbrain integrations install agent-voice --target <repo> --refresh
-gbrain integrations install agent-voice --target <repo> --refresh --dry-run              # report-only, per-file detail
-gbrain integrations install agent-voice --target <repo> --refresh --auto take-theirs     # always take upstream
-gbrain integrations install agent-voice --target <repo> --refresh --auto keep-mine       # explicit form of the default
+foresights integrations install agent-voice --target <repo> --refresh
+foresights integrations install agent-voice --target <repo> --refresh --dry-run              # report-only, per-file detail
+foresights integrations install agent-voice --target <repo> --refresh --auto take-theirs     # always take upstream
+foresights integrations install agent-voice --target <repo> --refresh --auto keep-mine       # explicit form of the default
 ```
 
 `--auto <decision>` applies the named decision to ALL `locally-modified` files (and, for `take-theirs`, also restores host-deleted files and cleans up source-deleted orphans). Useful for CI lanes.

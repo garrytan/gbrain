@@ -1,7 +1,7 @@
-// Compiled-binary smoketest for gbrain's bundled skills (GBRA-194): prints
+// Compiled-binary smoketest for foresights's bundled skills (GBRA-194): prints
 // one line per embedded file, "<path>\t<sha256>", from inside a
 // `bun build --compile` binary. scripts/check-skills-embedded.sh compares the
-// lines with skills/ so a compiled gbrain is proven to serve the same skill
+// lines with skills/ so a compiled foresights is proven to serve the same skill
 // text and files the source tree has (a .json text import, for one, comes
 // back parsed in a compiled binary).
 import { createHash } from 'node:crypto';

@@ -7,13 +7,13 @@ import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from '../postgres-
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
-// RLS backfill on Postgres for every table gbrain creates. Supabase grants anon
+// RLS backfill on Postgres for every table foresights creates. Supabase grants anon
 // and authenticated default privileges on public tables, so a table left
 // without RLS is readable and writable with the anon key whenever the Data API
 // is on. A table could be left without it because its RLS came from a path that
 // does not run on every brain:
 // - the schema blob's RLS blocks, which only a full initSchema replays:
-//   `gbrain apply-migrations --yes` runs migrations without the blob (v273's
+//   `foresights apply-migrations --yes` runs migrations without the blob (v273's
 //   four tables, and page_derivation_spend was missing from the blob's list);
 // - v35's auto-RLS event trigger, which needs a superuser to create and is
 //   absent or inert on managed brains that never had it or lost it (a dump
@@ -33,7 +33,7 @@ import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from '../postgres-
 // done. Each table is its own short transaction with the migration's
 // transaction-local statement and lock timeouts (safe behind a transaction
 // pooler), so no lock is held while the next one waits. Both the public table
-// (what the Data API serves) and the relation gbrain's unqualified statements
+// (what the Data API serves) and the relation foresights's unqualified statements
 // resolve to through the search path are covered. Flag change only: no row is
 // read or written. PGLite has no role system and enforces no RLS: no-op.
 const TABLES = [
@@ -105,7 +105,7 @@ async function relationsWithoutRls(engine: BrainEngine, tables: readonly string[
 }
 
 /**
- * Enables RLS on the named gbrain tables where it is still off (Postgres; a no-op elsewhere), one transaction per
+ * Enables RLS on the named foresights tables where it is still off (Postgres; a no-op elsewhere), one transaction per
  * table, and names on stderr any the role could not protect. Returns those names.
  */
 export async function protectTables(engine: BrainEngine, tables: readonly string[], label: string): Promise<string[]> {
@@ -126,7 +126,7 @@ export async function protectTables(engine: BrainEngine, tables: readonly string
   const left = (await relationsWithoutRls(engine, tables)).map(r => r.name);
   if (left.length > 0) {
     process.stderr.write(`  ${label}: row-level security is still off on ${left.length} table(s) (${left.join(', ')}): `
-      + 'the role must bypass RLS and own them. Run gbrain doctor for the fix.\n');
+      + 'the role must bypass RLS and own them. Run foresights doctor for the fix.\n');
   }
   return left;
 }

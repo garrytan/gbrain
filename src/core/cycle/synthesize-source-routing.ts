@@ -142,9 +142,9 @@ export async function refuseChangedSessionSource(engine: BrainEngine,
  * releases the rest, since a session's frozen source is never rewritten.
  */
 const HOLD_RELEASE: Record<string, { fix: string[] } | { why: string }> = {
-  corpus_legacy_unstamped: { fix: ['gbrain sweep --assign-corpus <source>'] },
-  corpus_source_unresolved: { fix: ['gbrain sweep --assign-corpus <source>'] },
-  corpus_source_archived: { fix: ['gbrain sources archived', 'gbrain sources restore <archived-source>'] },
+  corpus_legacy_unstamped: { fix: ['foresights sweep --assign-corpus <source>'] },
+  corpus_source_unresolved: { fix: ['foresights sweep --assign-corpus <source>'] },
+  corpus_source_archived: { fix: ['foresights sources archived', 'foresights sources restore <archived-source>'] },
   corpus_source_incarnation_changed: { why: 'their source was removed and re-created under the same id' },
   corpus_source_missing: { why: 'the source they name is not in this brain' },
   corpus_stamp_missing: { why: 'their spool name carries no source' },
@@ -170,9 +170,9 @@ export function withSessionSourceRouting(result: PhaseResult, routing: SessionSo
   const memberCount = members.reduce((n, [, c]) => n + c, 0);
   const release = corpusHoldRelease(held.map(([r]) => r));
   const fix = [
-    ...others.map(([id]) => `gbrain dream --source ${id} --phase ${phase}`),
+    ...others.map(([id]) => `foresights dream --source ${id} --phase ${phase}`),
     ...release.fix,
-    ...(memberCount ? [`gbrain doctor --only generation_pending --json`] : []),
+    ...(memberCount ? [`foresights doctor --only generation_pending --json`] : []),
   ];
   const parts = [
     ...(otherCount ? [`${otherCount} corpus file(s) belong to other sources (${others.map(([id, c]) => `${id}: ${c}`).join(', ')}) and ${phase === 'synthesize' ? 'synthesize' : 'extract'} only under their own source`] : []),

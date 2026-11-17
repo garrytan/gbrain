@@ -355,11 +355,11 @@ describe('Voyage openai-compatible request shim', () => {
     const err = proxied.error as { message: string; fix?: string };
     expect(err.message).toContain('returned 1024 but schema expects 2048');
     expect(err.message).toContain('ai-gateway.vercel.sh (provider_base_urls.voyage)');
-    expect(err.fix).toContain('gbrain doctor --only embedding_provider --probe --json');
+    expect(err.fix).toContain('foresights doctor --only embedding_provider --probe --json');
     const direct = await captureVoyageRequest(undefined, 1024);
     const directErr = direct.error as { message: string; fix?: string };
     expect(directErr.message).not.toContain('base_urls');
-    expect(directErr.fix).toContain('gbrain migrate --embedding-model');
+    expect(directErr.fix).toContain('foresights migrate --embedding-model');
   });
 });
 

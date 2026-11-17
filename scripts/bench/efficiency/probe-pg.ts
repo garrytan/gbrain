@@ -4,7 +4,7 @@
  *
  *   bun scripts/bench/efficiency/probe-pg.ts --label synth-full --tool list_pages --args '{"limit":50}' [--n 25] [--jit on|off|default]
  *
- * Starts one `gbrain serve` stdio process against engines/postgres-<label>, resets
+ * Starts one `foresights serve` stdio process against engines/postgres-<label>, resets
  * pg_stat_statements on that brain's database, runs the tool N times, and prints
  * p50/p95 plus the statements that ran at least N times (calls, mean ms, share of
  * DB time). `--jit off` sets `ALTER DATABASE ... SET jit = off` for the run and resets

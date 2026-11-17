@@ -103,6 +103,6 @@ export async function discoverPoolerUrl(
 
   throw new Error(
     `The Supabase Management API did not return a connection string for ${projectRef}. ` +
-    'Get it from the dashboard (Connect > Connection String > Transaction pooler) and run: gbrain init --url <conn>',
+    'Get it from the dashboard (Connect > Connection String > Transaction pooler) and run: foresights init --url <conn>',
   );
 }

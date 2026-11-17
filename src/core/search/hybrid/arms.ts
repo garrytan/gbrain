@@ -82,14 +82,14 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
             if (isDatetimeInputError(err)) throw err;
             if (isKeywordSkippedAfterTimeout(err)) {
               pushDegraded(degraded, 'keyword_arm_failed', 'skipped_after_timeout');
-              warnOncePerProcess('search-keyword-arm-skipped', `[gbrain] searchKeyword arm skipped (fail-open): ${err.message}`);
+              warnOncePerProcess('search-keyword-arm-skipped', `[foresights] searchKeyword arm skipped (fail-open): ${err.message}`);
               return [] as SearchResult[];
             }
             if (isDbAccessFailure(err)) keywordAccessError = err;
             pushDegraded(degraded, 'keyword_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
             warnOncePerProcess(
               'search-keyword-arm-failed',
-              `[gbrain] searchKeyword arm failed (fail-open, keyword candidates skipped): ` +
+              `[foresights] searchKeyword arm failed (fail-open, keyword candidates skipped): ` +
                 `${err instanceof Error ? err.message : String(err)}`,
             );
             return [] as SearchResult[];
@@ -100,7 +100,7 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
             pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
             warnOncePerProcess(
               'search-titles-arm-failed',
-              `[gbrain] searchTitles arm failed (fail-open, title candidates skipped): ` +
+              `[foresights] searchTitles arm failed (fail-open, title candidates skipped): ` +
                 `${err instanceof Error ? err.message : String(err)}`,
             );
             return [] as SearchResult[];
@@ -480,7 +480,7 @@ export async function runVectorArms(
         pushDegraded(degraded, timedOut ? 'embed_timeout' : 'embed_unavailable', timedOut ? 'timeout' : 'provider_error');
         warnOncePerProcess(
           'search-embed-fanout-failed',
-          `[gbrain] query embed/vector fan-out failed (keyword fallback): ` +
+          `[foresights] query embed/vector fan-out failed (keyword fallback): ` +
             `${err instanceof Error ? err.message : String(err)}`,
         );
       }
@@ -498,7 +498,7 @@ export async function runVectorArms(
       if (embedFailures.length > 0) {
         warnOncePerProcess(
           'search-embed-fanout-failed',
-          `[gbrain] ${embedFailures.length}/${settled.length} query embeds failed (salvaging survivors): ` +
+          `[foresights] ${embedFailures.length}/${settled.length} query embeds failed (salvaging survivors): ` +
             `${embedFailures[0] instanceof Error ? (embedFailures[0] as Error).message : String(embedFailures[0])}`,
         );
       }
@@ -545,7 +545,7 @@ export async function runVectorArms(
           pushDegraded(degraded, 'vector_arm_failed', isTimeoutError(vFirstErr) ? 'timeout' : 'provider_error');
           warnOncePerProcess(
             'search-vector-arm-failed',
-            `[gbrain] ${vFailed}/${vSettled.length} searchVector arms failed (salvaging survivors): ` +
+            `[foresights] ${vFailed}/${vSettled.length} searchVector arms failed (salvaging survivors): ` +
               `${vFirstErr instanceof Error ? vFirstErr.message : String(vFirstErr)}`,
           );
         }

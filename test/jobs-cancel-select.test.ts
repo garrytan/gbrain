@@ -1,5 +1,5 @@
 /**
- * DX-T2 / ENG-O5: `gbrain jobs cancel --select <filter>` previews and hashes
+ * DX-T2 / ENG-O5: `foresights jobs cancel --select <filter>` previews and hashes
  * the complete cancellation closure (selected rows plus parent transitions),
  * cancels exactly that set through cancelJobs with `--expect <hash> --yes`,
  * and refuses a selection that would cascade to a descendant outside it.
@@ -59,7 +59,7 @@ describe('jobs cancel --select', () => {
     expect(preview.summary.first_ids).toEqual([child, loner]);
     expect(preview.unsupported_ids).toEqual([loner]);
     expect(preview.parent_transitions).toEqual([{ id: parent, from: 'waiting-children', to: 'waiting' }]);
-    expect(preview.apply_command).toBe(`gbrain jobs cancel --select "status=waiting" --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights jobs cancel --select "status=waiting" --expect ${preview.preview_hash} --yes`);
     expect(await statuses()).toEqual(before);
     expect(before[keep]).toBe('completed');
   });
@@ -89,7 +89,7 @@ describe('jobs cancel --select', () => {
     await engine.executeRaw('UPDATE minion_jobs SET priority = priority + 1, updated_at = now() + interval \'1 second\' WHERE id = $1', [a]);
     const error = await refusal(() => applyLegacyCancel(engine, sel('status=waiting'), preview.preview_hash!, true));
     expect(error.code).toBe('preview_changed');
-    expect(error.message).toBe(`The preview changed since ${preview.preview_hash}; re-run gbrain jobs cancel --select "status=waiting" and use the new hash.`);
+    expect(error.message).toBe(`The preview changed since ${preview.preview_hash}; re-run foresights jobs cancel --select "status=waiting" and use the new hash.`);
     expect((await statuses())[a]).toBe('waiting');
   });
 
@@ -100,7 +100,7 @@ describe('jobs cancel --select', () => {
     const error = await refusal(() => previewLegacyCancel(engine, sel('status=waiting-children')));
     expect(error.code).toBe('legacy_job_selection_invalid');
     expect(error.message).toBe(`Cancelling the selection would also cancel 1 descendant job(s) outside it: ${appChild}.`);
-    expect(error.suggestion).toContain(`gbrain jobs cancel ${appChild}`);
+    expect(error.suggestion).toContain(`foresights jobs cancel ${appChild}`);
     expect((await statuses())[appChild]).toBe('waiting');
   });
 
@@ -122,7 +122,7 @@ describe('jobs cancel --select', () => {
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'active', lock_token = 't', lock_until = now() + interval '1 hour', claim_generation = claim_generation + 1 WHERE id = $1`, [busy]);
     const error = await refusal(() => previewLegacyCancel(engine, sel('status=waiting')));
     expect(error.code).toBe('legacy_jobs_active');
-    expect(error.suggestion).toContain(`gbrain jobs cancel ${busy}`);
+    expect(error.suggestion).toContain(`foresights jobs cancel ${busy}`);
   });
 
   test('CLI: preview, --json and apply through runJobs; jobs cancel <id> is unchanged', async () => {

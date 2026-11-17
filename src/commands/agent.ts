@@ -1,16 +1,16 @@
 /**
- * `gbrain agent` CLI: the user-facing entry point for the v0.15 subagent
+ * `foresights agent` CLI: the user-facing entry point for the v0.15 subagent
  * runtime.
  *
- *   gbrain agent run [flags] <prompt>
- *   gbrain agent logs <job_id> [--follow] [--since <spec>]
+ *   foresights agent run [flags] <prompt>
+ *   foresights agent logs <job_id> [--follow] [--since <spec>]
  *
  * `run` submits a subagent job (or fan-out of N subagents + aggregator)
  * under the trusted-submit flag so the PROTECTED_JOB_NAMES guard doesn't
  * reject. It does NOT execute the loop here — the handler runs in a
- * `gbrain jobs work` process. `--follow` tails status until terminal;
+ * `foresights jobs work` process. `--follow` tails status until terminal;
  * without `--follow` (or with `--detach`) the CLI prints the job id and
- * exits, leaving the user to check back with `gbrain agent logs`.
+ * exits, leaving the user to check back with `foresights agent logs`.
  */
 
 import * as fs from 'node:fs';
@@ -59,12 +59,12 @@ export async function runAgent(engine: BrainEngine | null, args: string[]): Prom
   switch (sub) {
     case 'run':
       if (wantsHelp) { printHelp(); return; }
-      if (!engine) { console.error('gbrain agent run needs a configured brain. Run `gbrain init` first.'); process.exit(1); }
+      if (!engine) { console.error('foresights agent run needs a configured brain. Run `foresights init` first.'); process.exit(1); }
       await runAgentRun(engine, rest);
       return;
     case 'logs':
       if (wantsHelp) { printHelp(); return; }
-      if (!engine) { console.error('gbrain agent logs needs a configured brain. Run `gbrain init` first.'); process.exit(1); }
+      if (!engine) { console.error('foresights agent logs needs a configured brain. Run `foresights init` first.'); process.exit(1); }
       await runAgentLogsCmd(engine, rest);
       return;
     case 'register': {
@@ -74,22 +74,22 @@ export async function runAgent(engine: BrainEngine | null, args: string[]): Prom
       return;
     }
     default:
-      console.error(`gbrain agent: unknown subcommand "${sub}"`);
+      console.error(`foresights agent: unknown subcommand "${sub}"`);
       printHelp();
       process.exit(2);
   }
 }
 
 function printHelp(): void {
-  console.log(`gbrain agent — durable LLM agent runs (v0.15)
+  console.log(`foresights agent — durable LLM agent runs (v0.15)
 
 USAGE
-  gbrain agent run [flags] <prompt>
-  gbrain agent logs <job_id> [--follow] [--since <spec>]
-  gbrain agent register <name> --harness <h> [flags]   (see: gbrain agent register --help)
+  foresights agent run [flags] <prompt>
+  foresights agent logs <job_id> [--follow] [--since <spec>]
+  foresights agent register <name> --harness <h> [flags]   (see: foresights agent register --help)
 
 SUBMITTING
-  gbrain agent run <prompt>
+  foresights agent run <prompt>
     --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
     --model <id>                 Model id as provider:model (default: subagent tier model,
                                   anthropic:claude-sonnet-4-6). Non-Anthropic providers need
@@ -100,21 +100,21 @@ SUBMITTING
     --source <id>                Brain source the subagent's writes are scoped to.
                                   Default: the standard resolution chain (GBRAIN_SOURCE,
                                   .gbrain-source, sources.default, ...) — see
-                                  \`gbrain sources current\`
+                                  \`foresights sources current\`
     --fanout-manifest <path>     JSON array of {prompt, input_vars?} — one child each
     --follow                     Tail status until terminal (default on TTY)
     --detach                     Submit + print job id, exit immediately
 
   Flags before the prompt are parsed normally. The no-value switches
   --detach, --follow and --no-follow are ALSO recognized when they trail
-  the prompt, so \`gbrain agent run "do X" --detach\` detaches. A value
+  the prompt, so \`foresights agent run "do X" --detach\` detaches. A value
   flag above written after the prompt refuses (write it before the prompt);
   any other --word is treated as prompt text (no error). Use \`--\` to end flag
   parsing and pass the rest verbatim:
-    gbrain agent run -- "literally --detach this, with --flags"
+    foresights agent run -- "literally --detach this, with --flags"
 
 VIEWING
-  gbrain agent logs <job_id>
+  foresights agent logs <job_id>
     --follow                     Keep polling until the job reaches terminal
     --since <spec>               ISO-8601 timestamp OR relative ("5m","1h","2d")
 
@@ -129,7 +129,7 @@ NOTES
   To run --model on a non-Anthropic provider, enable the provider-neutral
   gateway loop first, then supply whatever credential that provider needs
   (an API key for most; some recipes use OAuth or a local endpoint):
-    gbrain config set agent.use_gateway_loop true
+    foresights config set agent.use_gateway_loop true
   Accepted values: true / 1 / yes / on.
 
   The gateway loop needs a provider whose recipe supports chat WITH tool
@@ -140,7 +140,7 @@ NOTES
 `);
 }
 
-// ── `gbrain agent run` ────────────────────────────────────
+// ── `foresights agent run` ────────────────────────────────────
 
 interface RunFlags {
   subagentDef?: string;
@@ -170,7 +170,7 @@ function applyBooleanFlag(flags: RunFlags, a: string): void {
 function requireFlagValue(args: string[], i: number, flag: string): string {
   const v = args[i];
   if (v === undefined || v.startsWith('--')) {
-    throw new Error(`gbrain agent run: ${flag} requires a value. Run \`gbrain agent run --help\`.`);
+    throw new Error(`foresights agent run: ${flag} requires a value. Run \`foresights agent run --help\`.`);
   }
   return v;
 }
@@ -178,7 +178,7 @@ function requireFlagValue(args: string[], i: number, flag: string): string {
 function parseIntFlagValue(v: string, flag: string): number {
   const n = parseInt(v, 10);
   if (Number.isNaN(n)) {
-    throw new Error(`gbrain agent run: ${flag} expects a number, got "${v}".`);
+    throw new Error(`foresights agent run: ${flag} expects a number, got "${v}".`);
   }
   return n;
 }
@@ -233,7 +233,7 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
     const end = rest.indexOf('--');
     const stray = (end < 0 ? rest : rest.slice(0, end)).find(a => RUN_VALUE_FLAGS.has(a));
     if (stray) {
-      throw new Error(`gbrain agent run: ${stray} is in the prompt, so it and its value would be prompt text. Write ${stray} <value> before the prompt and ahead of any word agent run does not read (such as --json or --yes), or put -- before the prompt to keep it as text.`);
+      throw new Error(`foresights agent run: ${stray} is in the prompt, so it and its value would be prompt text. Write ${stray} <value> before the prompt and ahead of any word agent run does not read (such as --json or --yes), or put -- before the prompt to keep it as text.`);
     }
   }
   // An explicit `--` terminates flag parsing wherever it appears — leading
@@ -253,9 +253,9 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
  * #2922: resolve the brain source for a subagent submission via the
  * canonical chain (explicit --source → GBRAIN_SOURCE → .gbrain-source →
  * local_path match → sources.default → sole non-default → 'default').
- * Pre-fix, `gbrain agent run` never resolved a source, so every page an
+ * Pre-fix, `foresights agent run` never resolved a source, so every page an
  * agent job wrote landed in the seed 'default' source even on brains with
- * `gbrain sources default <id>` configured.
+ * `foresights sources default <id>` configured.
  *
  * The `__all__` sentinel is rejected here: subagent writes must target
  * exactly one source (and `validateSourceId` at tool-registry build time
@@ -266,7 +266,7 @@ async function resolveAgentSource(engine: BrainEngine, explicit: string | undefi
   // env/dotfile/default tiers (resolveSourceId's `if (explicit)` treats a
   // falsy value as omitted — explicit-but-empty would slip through).
   if (explicit !== undefined && explicit.trim() === '') {
-    console.error('gbrain agent run: --source requires a non-empty value. Run `gbrain agent run --help`.');
+    console.error('foresights agent run: --source requires a non-empty value. Run `foresights agent run --help`.');
     process.exit(2);
   }
   let resolved: string;
@@ -274,14 +274,14 @@ async function resolveAgentSource(engine: BrainEngine, explicit: string | undefi
     resolved = await resolveSourceId(engine, explicit ?? null);
   } catch (e) {
     if (isResolverUserError(e)) {
-      console.error(`gbrain agent run: ${(e as Error).message}`);
+      console.error(`foresights agent run: ${(e as Error).message}`);
       process.exit(1);
     }
     throw e;
   }
   if (resolved === ALL_SOURCES) {
     console.error(
-      `gbrain agent run: --source ${ALL_SOURCES} is not supported — ` +
+      `foresights agent run: --source ${ALL_SOURCES} is not supported — ` +
       `subagent writes must target exactly one source. Pass a concrete --source <id>.`,
     );
     process.exit(2);
@@ -291,8 +291,8 @@ async function resolveAgentSource(engine: BrainEngine, explicit: string | undefi
   const src = await fetchSource(engine, resolved);
   if (src?.archived === true) {
     console.error(
-      `gbrain agent run: source ${resolved} is archived; restore with ` +
-      `\`gbrain sources restore ${resolved}\` before submitting agent jobs`,
+      `foresights agent run: source ${resolved} is archived; restore with ` +
+      `\`foresights sources restore ${resolved}\` before submitting agent jobs`,
     );
     process.exit(1);
   }
@@ -320,7 +320,7 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
 
   const prompt = rest.join(' ').trim();
   if (!prompt) {
-    console.error('gbrain agent run: prompt is required');
+    console.error('foresights agent run: prompt is required');
     process.exit(2);
   }
 
@@ -365,12 +365,12 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
     manifest = parsed as typeof manifest;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`gbrain agent run: invalid --fanout-manifest ${manifestPath}: ${msg}`);
+    console.error(`foresights agent run: invalid --fanout-manifest ${manifestPath}: ${msg}`);
     process.exit(2);
   }
 
   if (manifest.length === 0) {
-    console.error('gbrain agent run: --fanout-manifest is empty; nothing to run');
+    console.error('foresights agent run: --fanout-manifest is empty; nothing to run');
     process.exit(2);
   }
 
@@ -472,7 +472,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
 // ── follow ────────────────────────────────────────────────
 
 async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number, timeoutMs?: number): Promise<void> {
-  process.stderr.write(`[gbrain agent] following job ${jobId} (Ctrl-C to detach)...\n`);
+  process.stderr.write(`[foresights agent] following job ${jobId} (Ctrl-C to detach)...\n`);
   const ac = new AbortController();
   const onSigint = () => ac.abort();
   process.once('SIGINT', onSigint);
@@ -488,12 +488,12 @@ async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number,
       });
       ac.abort();
       await logsP.catch(() => {});
-      process.stderr.write(`[gbrain agent] job ${jobId} terminal: ${job.status}\n`);
+      process.stderr.write(`[foresights agent] job ${jobId} terminal: ${job.status}\n`);
       if (job.result != null) process.stdout.write(JSON.stringify(job.result, null, 2) + '\n');
       if (job.status !== 'completed') process.exit(1);
     } catch (e) {
       if (e instanceof TimeoutError) {
-        process.stderr.write(`[gbrain agent] timeout after ${e.elapsedMs}ms — job is still running. Check with: gbrain jobs get ${jobId}\n`);
+        process.stderr.write(`[foresights agent] timeout after ${e.elapsedMs}ms — job is still running. Check with: foresights jobs get ${jobId}\n`);
         process.exit(TIMEOUT_EXIT_CODE);
       }
       throw e;
@@ -503,17 +503,17 @@ async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number,
   }
 }
 
-// ── `gbrain agent logs` ────────────────────────────────────
+// ── `foresights agent logs` ────────────────────────────────────
 
 async function runAgentLogsCmd(engine: BrainEngine, args: string[]): Promise<void> {
   const jobIdStr = args.find(a => !isKnownFlag(a));
   if (!jobIdStr) {
-    console.error('gbrain agent logs: <job_id> is required');
+    console.error('foresights agent logs: <job_id> is required');
     process.exit(2);
   }
   const jobId = parseInt(jobIdStr, 10);
   if (!Number.isFinite(jobId) || jobId <= 0) {
-    console.error(`gbrain agent logs: "${jobIdStr}" is not a valid job id`);
+    console.error(`foresights agent logs: "${jobIdStr}" is not a valid job id`);
     process.exit(2);
   }
   const follow = hasFlag(args, '--follow');

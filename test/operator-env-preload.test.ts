@@ -4,7 +4,7 @@
  * short-circuits source resolution at tier `env` before the tier under test;
  * a GBRAIN_CYCLE_FRESHNESS_WARN_HOURS moves the very threshold
  * doctor-cycle-freshness asserts; CONDUCTOR_/MCP_/OPENCLAW_ workspace vars
- * are one `gbrain init`-shaped test away from the same class. run-e2e.sh
+ * are one `foresights init`-shaped test away from the same class. run-e2e.sh
  * already scrubs these for the E2E lane; test/helpers/operator-env-preload.ts
  * is the unit-lane equivalent, and the repo's own test machinery (the
  * GBRAIN_TEST_ / GBRAIN_CI_ / GBRAIN_E2E_ / GBRAIN_REAL_ prefixes + the exact

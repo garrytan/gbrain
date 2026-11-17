@@ -874,7 +874,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
       // PGLite has no persistent worker surface: the queue refuses the job up
       // front and names the inline command, which this lane then runs.
       const refused = await runJobs(engine, [{ name: 'embed-backfill', data: { sourceId: state.sourceId } }]).then(() => null, (e: Error) => e.message);
-      expect(refused).toContain(`gbrain embed --stale --source ${state.sourceId}`);
+      expect(refused).toContain(`foresights embed --stale --source ${state.sourceId}`);
       await runEmbed(engine, ['--stale', '--source', state.sourceId]);
     } else {
       requireCompleted(await runJobs(engine, [{ name: 'embed-backfill', data: { sourceId: state.sourceId } }]));
@@ -1028,7 +1028,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     expect(await requestCount(state)).toBe(requests);
   },
 
-  /** `gbrain repair take-supersession` database branch: the stored pointer is reprojected under a receipt. */
+  /** `foresights repair take-supersession` database branch: the stored pointer is reprojected under a receipt. */
   async take_supersession_reproject(state) {
     const { engine } = state.brain;
     await putConversationPage(state, TAKES_SLUG, TAKES_PAGE);

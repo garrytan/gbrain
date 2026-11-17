@@ -3,7 +3,7 @@
  * Operation manifest generator: every operation's data (name, description,
  * params, scope, flags, annotations, cliHints) without its handler.
  *
- * Output: src/core/operation-manifest.generated.ts (committed). `gbrain serve`
+ * Output: src/core/operation-manifest.generated.ts (committed). `foresights serve`
  * builds initialize and tools/list from it and the CLI dispatcher resolves
  * commands from it, so neither loads the ~760-module handler graph behind
  * src/core/operations.ts until a call actually runs. Freshness is pinned by

@@ -2,7 +2,7 @@
  * Bootstrap-run mutex [G9, CX2-16] + the bootstrap family's typed-error
  * machinery.
  *
- * Two concurrent `gbrain bootstrap` runs against the same workspace would
+ * Two concurrent `foresights bootstrap` runs against the same workspace would
  * interleave renders, gh calls, and receipt writes. The mutex is an atomic
  * `mkdir` at `<workspace>/.gbrain-bootstrap.lock` with a `meta.json`
  * ({pid, acquired_at, token}) written tmp+rename so a concurrent reader never

@@ -33,7 +33,7 @@ export interface ResolverResult<O> {
   /**
    * 0.0-1.0. 1.0 = deterministic ground truth (direct API response, brain-local
    * slug lookup). <1.0 = inferred (LLM extraction, fuzzy match, heuristic).
-   * Callers use this to gate auto-writes (e.g., gbrain integrity --auto only
+   * Callers use this to gate auto-writes (e.g., foresights integrity --auto only
    * applies confidence >= threshold).
    */
   confidence: number;
@@ -67,7 +67,7 @@ export interface ResolverContext {
   engine?: BrainEngine;
   /** Optional: resolvers that read/write files need this. */
   storage?: StorageBackend;
-  /** Key-value config passed through gbrain config + env. Resolvers read what they need. */
+  /** Key-value config passed through foresights config + env. Resolvers read what they need. */
   config: Record<string, unknown>;
   logger: ResolverLogger;
   /** Unique id per top-level caller, propagated into raw logs for audit. */
@@ -114,7 +114,7 @@ export interface Resolver<I, O> {
   readonly cost: ResolverCost;
   /** Backend label — "x-api-v2", "perplexity", "brain-local", "head-check", etc. */
   readonly backend: string;
-  /** Optional description for `gbrain resolvers list`. */
+  /** Optional description for `foresights resolvers list`. */
   readonly description?: string;
   /** Optional JSON Schema (loose Record) for input validation. Caller may inspect. */
   readonly inputSchema?: Record<string, unknown>;

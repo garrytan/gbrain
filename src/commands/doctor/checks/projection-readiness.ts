@@ -12,7 +12,7 @@ import type { DoctorContext, DoctorEntry } from '../context.ts';
 
 const DOCS = 'docs/guides/repair.md#projection-drain';
 const UNCHANGED = 'No repair or embedding was started by this check.';
-const CODE_REPAIR = 'For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path.';
+const CODE_REPAIR = 'For code metadata repair, run `foresights reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path.';
 const DRAIN_PREVIEW = ['gbrain', 'projections', 'drain', '--dry-run', '--json'];
 const IMAGES_PREVIEW = ['gbrain', 'embed', '--stale', '--images', '--dry-run', '--json'];
 
@@ -26,10 +26,10 @@ function classDetails(backlog: Required<ProjectionBacklog>) {
 function classSentences(backlog: Required<ProjectionBacklog>, resident: boolean): string[] {
   const sentences: string[] = [];
   if (backlog.sealable) {
-    sentences.push(`${backlog.sealable} image page(s) the importer already attested (${backlog.sealable_with_visual} with a visual vector) are out of search until \`gbrain projections drain\` seals them (keyless: no provider call, no re-embedding; preview with \`gbrain projections drain --dry-run --json\`)${resident ? '; the resident never seals images' : ''}.`);
+    sentences.push(`${backlog.sealable} image page(s) the importer already attested (${backlog.sealable_with_visual} with a visual vector) are out of search until \`foresights projections drain\` seals them (keyless: no provider call, no re-embedding; preview with \`foresights projections drain --dry-run --json\`)${resident ? '; the resident never seals images' : ''}.`);
   }
   if (backlog.reimport) {
-    sentences.push(`${backlog.reimport} image page(s) need their importer (fresh OCR and pixels, paid): preview with \`gbrain embed --stale --images --dry-run\`${backlog.ocr_required
+    sentences.push(`${backlog.reimport} image page(s) need their importer (fresh OCR and pixels, paid): preview with \`foresights embed --stale --images --dry-run\`${backlog.ocr_required
       ? `; ${backlog.ocr_required} of them held protected OCR before an edit and are sealed only after a successful fresh OCR pass, so they need OCR enabled (GBRAIN_EMBEDDING_IMAGE_OCR=true)` : ''}.`);
   }
   if (backlog.protected || backlog.archived) {
@@ -50,7 +50,7 @@ function projectionFix(backlog: Required<ProjectionBacklog>, opts: { remote?: bo
     const limit = projectionDrainLimit(backlog.pending);
     return { fix: { argv: ['gbrain', 'projections', 'drain', '--limit', String(limit)], preview_argv: DRAIN_PREVIEW, consent: [], actor, requires_exclusive: false,
       ...(backlog.sealable ? { ask_user: true as const,
-        user_message: `${backlog.sealable} image page(s) are out of search until they are sealed. \`gbrain projections drain --limit ${limit}\` seals the ones the importer already attested (keyless, no provider call, no re-embedding), at most ${limit} per run; may I run it, repeating until sealable is 0?` } : {}),
+        user_message: `${backlog.sealable} image page(s) are out of search until they are sealed. \`foresights projections drain --limit ${limit}\` seals the ones the importer already attested (keyless, no provider call, no re-embedding), at most ${limit} per run; may I run it, repeating until sealable is 0?` } : {}),
       why: `Rebuilds queued Markdown and code projections and seals importer-attested image pages in place, at most ${limit} pages per run; repeat until the dry run shows sealable 0.`,
       verify: { argv: DRAIN_PREVIEW }, docs: DOCS } };
   }
@@ -84,7 +84,7 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
   const segmented = readiness.status === 'projection_pending' && Object.keys(scope).length === 0 ? Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages
     WHERE deleted_at IS NULL AND body_storage='segmented' AND text_projection_revision IS DISTINCT FROM knowledge_revision`).catch(() => []))[0]?.n ?? 0) : 0;
   const segmentedNote = segmented ? ` ${segmented} page(s) stored in segments are not searchable yet; ${opts.resident
-    ? 'the resident builds them too.' : '`gbrain projections drain` builds them as well.'}` : '';
+    ? 'the resident builds them too.' : '`foresights projections drain` builds them as well.'}` : '';
   // GBRA-130 A-27: pages the v0.60.31 credential re-chunk held; remote callers get the count only.
   const held = await readCredentialResealHolds(engine, scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined)).catch(() => []);
   const details = { readiness: readiness.status, ready: readiness.ready, ...classDetails(backlog), ...(segmented ? { segmented_pending: segmented } : {}),
@@ -103,13 +103,13 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
   const text = backlog.pending || (work === 0 && readiness.status === 'projection_pending')
     ? `Visible pages have missing or stale text projections${backlog.pending ? ` (${backlog.pending} queued Markdown/code page(s)${backlog.failed ? `, ${backlog.failed} last failed` : ''})` : ''}; ${readiness.status === 'projection_pending'
       ? 'search and code results may be incomplete.' : 'search keeps answering from the index these pages had before the upgrade until each is rebuilt.'} ${opts.resident
-      ? 'The resident gbrain process that holds this PGLite brain is rebuilding queued Markdown and code projections (up to 100 pages per pass, fewer while writes wait). On the brain host, `gbrain doctor --only text_projection_readiness --json` shows the counts and how to drain faster.'
-      : 'Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres.'}${segmentedNote} ${CODE_REPAIR}`
+      ? 'The resident foresights process that holds this PGLite brain is rebuilding queued Markdown and code projections (up to 100 pages per pass, fewer while writes wait). On the brain host, `foresights doctor --only text_projection_readiness --json` shows the counts and how to drain faster.'
+      : 'Run `foresights projections drain` to rebuild queued Markdown and code projections now; it is safe while `foresights serve` runs on Postgres.'}${segmentedNote} ${CODE_REPAIR}`
     : '';
   const projection = opts.resident ? {} : projectionFix(backlog, opts);
   const blocked = projection.blocked;
   const fix = projection.fix ?? (held.length && !opts.resident ? { ...held[0]!.fix, actor: opts.remote ? 'host_admin' as const : 'agent' as const } : undefined);
-  const unavailable = blocked ? ` Re-importing images needs multimodal embeddings, which are off (set ${blocked}=true on the brain host, then preview with \`gbrain embed --stale --images --dry-run\`).` : '';
+  const unavailable = blocked ? ` Re-importing images needs multimodal embeddings, which are off (set ${blocked}=true on the brain host, then preview with \`foresights embed --stale --images --dry-run\`).` : '';
   return {
     name: 'text_projection_readiness', status: 'warn',
     message: [text, heldText, ...classSentences(backlog, opts.resident === true)].filter(Boolean).join(' ') + unavailable + ` ${UNCHANGED}`,
@@ -120,11 +120,11 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
 
 /** The doctor text when a PGLite resident holds the datastore, from its projection_status reply (null: it gave none). */
 export function residentProjectionReadiness(pid: number | undefined, status: PersistenceProjectionStatus | null, steps: string, drainFix?: Action): Pick<Check, 'status' | 'message' | 'details' | 'fix' | 'fix_unavailable_reason'> {
-  const owner = `The resident gbrain process${pid ? ` (pid ${pid})` : ''} holds this PGLite brain`;
+  const owner = `The resident foresights process${pid ? ` (pid ${pid})` : ''} holds this PGLite brain`;
   if (!status) {
     return {
       status: 'warn',
-      message: `${owner} and did not report its projection backlog, so it may predate the faster projection drain. Restart it on the upgraded gbrain so it drains up to 100 pages per pass. ${steps}`,
+      message: `${owner} and did not report its projection backlog, so it may predate the faster projection drain. Restart it on the upgraded foresights so it drains up to 100 pages per pass. ${steps}`,
       details: { readiness: 'unknown', ready: false, owner_pid: pid ?? null, docs: DOCS },
       fix_unavailable_reason: 'operator_judgement',
     };
@@ -133,7 +133,7 @@ export function residentProjectionReadiness(pid: number | undefined, status: Per
   if (status.sealable === undefined) {
     return {
       status: 'warn',
-      message: `${owner} and predates this upgrade: it reports only ${status.pending} queued text projection(s) and cannot count image pages. Restart it on the upgraded gbrain, then run \`gbrain doctor --only text_projection_readiness --json\` again. ${steps}`,
+      message: `${owner} and predates this upgrade: it reports only ${status.pending} queued text projection(s) and cannot count image pages. Restart it on the upgraded foresights, then run \`foresights doctor --only text_projection_readiness --json\` again. ${steps}`,
       details: { readiness: 'unknown', ready: false, owner_pid: pid ?? null, ...status, docs: DOCS },
       fix_unavailable_reason: 'operator_judgement',
     };
@@ -150,7 +150,7 @@ export function residentProjectionReadiness(pid: number | undefined, status: Per
   const age = status.oldest_age_seconds === null ? '' : `; the oldest was queued ${status.oldest_age_seconds}s ago`;
   const failed = status.failed ? `; ${status.failed} last failed and are retried after 30 seconds` : '';
   const draining = status.pending
-    ? `${owner} and is draining ${status.pending} queued text projections${age}${failed}. Search and code results may be incomplete until it finishes; it rebuilds up to 100 pages per pass, fewer while writes wait. Re-run \`gbrain doctor\` to watch the count.`
+    ? `${owner} and is draining ${status.pending} queued text projections${age}${failed}. Search and code results may be incomplete until it finishes; it rebuilds up to 100 pages per pass, fewer while writes wait. Re-run \`foresights doctor\` to watch the count.`
     : `${owner}; it has no queued text projections${age}.`;
   return {
     status: 'warn',

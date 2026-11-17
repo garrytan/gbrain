@@ -1,7 +1,7 @@
 /**
  * #4616: the embedding gateway never hands back a vector that an ANN index
  * cannot serve. A zero-norm, NaN or ±Inf vector has no cosine direction, so
- * HNSW silently skips its row: `gbrain get` and keyword search find the chunk
+ * HNSW silently skips its row: `foresights get` and keyword search find the chunk
  * while vector search never returns it. Empty inputs are refused before the
  * provider call.
  *
@@ -45,7 +45,7 @@ export class EmbeddingZeroNormError extends AIConfigError {
     super(
       `${EMBEDDING_ZERO_NORM}: the embedding provider ${model} gave no usable vector for ${failures.length === 1 ? 'one input' : 'some inputs'} (${reasons}); ` +
         `those inputs were not indexed and the rest of the batch was kept.`,
-      'Inspect the affected chunk text (empty, whitespace- or symbol-only chunks are the usual cause) or the provider, then re-embed the page with `gbrain embed <slug>`.',
+      'Inspect the affected chunk text (empty, whitespace- or symbol-only chunks are the usual cause) or the provider, then re-embed the page with `foresights embed <slug>`.',
     );
     this.name = 'EmbeddingZeroNormError';
   }
@@ -54,7 +54,7 @@ export class EmbeddingZeroNormError extends AIConfigError {
   suggestionFor(slug: string, sourceId?: string): string {
     const source = sourceId && sourceId !== 'default' ? ` --source ${sourceId}` : '';
     return `Inspect the chunk text of ${slug} (empty, whitespace- or symbol-only chunks are the usual cause) or the embedding provider, ` +
-      `then run \`gbrain embed ${slug}${source}\`. See ${EMBEDDING_ZERO_NORM_DOCS}.`;
+      `then run \`foresights embed ${slug}${source}\`. See ${EMBEDDING_ZERO_NORM_DOCS}.`;
   }
 }
 

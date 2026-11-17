@@ -9,7 +9,7 @@ non-UUID id maps to a deterministic UUID, receipts echo the original as
 
 **Say to your agent:** *"Update this page without overwriting a newer revision;
 use `get_page` and `put_page`, then check the durable receipt."* Or: *"Inspect my
-writer owners with `gbrain sources writer status --probe --json` before changing
+writer owners with `foresights sources writer status --probe --json` before changing
 the setup."*
 
 ## Read, edit, and retry
@@ -45,7 +45,7 @@ Search reports `projection_pending` while visible canonical revisions still
 need a derived-text rebuild, including when other pages already produce hits
 (a page migration 153 left serving its pre-upgrade index does not count).
 The resident owner rebuilds queued Markdown and code using revision-checked
-snapshots. `gbrain reindex-code --force --no-embed` repairs code metadata through
+snapshots. `foresights reindex-code --force --no-embed` repairs code metadata through
 that owner without changing canonical files or revisions. Exact compatible
 vectors survive; missing vectors remain explicitly stale, not silently ready.
 Rebuilt outgoing code edges are marked for resolution again, while incoming
@@ -86,7 +86,7 @@ canonical repository:
 
 ```bash
 mkdir -p -m 700 ~/.gbrain/repair
-gbrain sources reconcile workspace people/example --brain host \
+foresights sources reconcile workspace people/example --brain host \
   --preview --out ~/.gbrain/repair/example.preview.json --json
 ```
 
@@ -118,7 +118,7 @@ duplicate, overlapping, and protected-field decisions are rejected. Render the
 final policy-checked result before applying:
 
 ```bash
-gbrain sources reconcile workspace people/example --brain host --preview \
+foresights sources reconcile workspace people/example --brain host --preview \
   --from ~/.gbrain/repair/example.preview.json \
   --decisions ~/.gbrain/repair/decisions.json \
   --out ~/.gbrain/repair/example.resolved.json --json
@@ -131,12 +131,12 @@ After reviewing a `ready` preview, generate and retain one UUID:
 
 ```bash
 REQUEST_ID="$(bun -e 'console.log(crypto.randomUUID())')"
-gbrain sources reconcile workspace people/example --brain host \
+foresights sources reconcile workspace people/example --brain host \
   --apply ~/.gbrain/repair/example.resolved.json \
   --request-id "$REQUEST_ID" --json
 ```
 
-If the initial preview was already `ready`, apply that artifact instead. GBrain
+If the initial preview was already `ready`, apply that artifact instead. Foresights
 rechecks the revision, raw bytes, source identity, owner epoch/binding, and safety
 policy before publishing. Changed inputs require a fresh preview, not automatic
 overwrite. Lost response or pending receipt: retry the same artifact and UUID.
@@ -166,7 +166,7 @@ provenance. Repair never silently replays a failed memory intent.
 For bounded, read-only verification after sync:
 
 ```bash
-gbrain sources reconcile workspace --brain host --audit --limit 25 --json
+foresights sources reconcile workspace --brain host --audit --limit 25 --json
 ```
 
 Continue with `--after` and the returned `next_after`. `complete` means the end of
@@ -177,11 +177,11 @@ drift sample and identifies incomplete samples without authorizing repairs.
 
 ### Many drifted pages: classify, then resolve additive drift
 
-When an audit finds many drifted pages, something outside GBrain is usually
+When an audit finds many drifted pages, something outside Foresights is usually
 editing the canonical files. Classify before repairing anything:
 
 ```bash
-gbrain sources reconcile workspace --brain host --audit --classify --limit 25 --json
+foresights sources reconcile workspace --brain host --audit --classify --limit 25 --json
 ```
 
 Each drifted finding gets a `classification` and its `drift_paths` (paths, rule
@@ -198,7 +198,7 @@ outcomes and reasons, never values), and `classified` counts the batch:
 last database write, a hint for finding the process that edits files directly.
 
 ```bash
-gbrain sources reconcile workspace people/example --brain host \
+foresights sources reconcile workspace people/example --brain host \
   --preview --auto-additive --out ~/.gbrain/repair/example.auto.json --json
 ```
 
@@ -242,7 +242,7 @@ active canonical owner on this host, and a trusted local CLI registration.
 **Run:**
 
 ```bash
-gbrain dream --phase lint --source workspace --json \
+foresights dream --phase lint --source workspace --json \
   | jq '.phases[] | select(.phase == "lint") | .details'
 ```
 
@@ -264,17 +264,17 @@ own `fix` and a link to this section:
 | `reason` | Cause | Next step |
 | --- | --- | --- |
 | `file_database_drift` | The file was edited outside a coordinated write, or it is older than the database copy. | Run the `fix` (a reconcile preview), then resolve and apply it as described in [Repair a file/database disagreement](#repair-a-filedatabase-disagreement). A source with `persistence.adopt_local_edits.source.<id>` on adopts a one-sided edit for `remember`, `capture` and `add_timeline_entry` instead ([file_database_drift](write-refusals.md#file_database_drift)). |
-| `held_file` | Sync holds the file because it cannot import it. | Run the hold repair in `fix` (for example `gbrain repair frontmatter --source workspace`), as in [held files](repair.md#held-files). |
+| `held_file` | Sync holds the file because it cannot import it. | Run the hold repair in `fix` (for example `foresights repair frontmatter --source workspace`), as in [held files](repair.md#held-files). |
 | `canonical_file_missing` | The file was removed while lint ran. | Recover the file or import the deletion; reconciliation does not restore missing files. |
 | `revision_changed` | Another write published the page while lint ran. | Nothing; the next cycle lints the current revision. `fix` reads the page as it is now. |
 | `not_indexed` | The file is not an indexed page of the source (a README or a stray file). | Nothing; lint never rewrites unindexed files on a managed brain. |
 
-Never answer a pending repair with `gbrain sync`: when the database copy is the
+Never answer a pending repair with `foresights sync`: when the database copy is the
 newer one, a sync imports the older file over it.
 
 **Failure example:** a source without an active canonical owner on this host
 fails the whole phase before any page is read: `status: "fail"` with
-`error.code: "owner_unavailable"`. `gbrain sources writer status --source
+`error.code: "owner_unavailable"`. `foresights sources writer status --source
 workspace --json` names the owner host; run the cycle there. A pending repair is not a failure: the phase stays at
 `warn` and every other page is still repaired.
 
@@ -283,31 +283,31 @@ is gone from `pending`, `fix_pending` is 0, and the phase reports `ok` once
 every fixable issue is repaired.
 
 **Turn repairs off:** `cycle.lint_fix` (default `true`) controls whether the
-cycle's lint phase repairs anything. `gbrain config set cycle.lint_fix false`
+cycle's lint phase repairs anything. `foresights config set cycle.lint_fix false`
 makes it report-only on any brain (`details.lint_fix: false`, phase `warn`
-while issues remain); `gbrain config set cycle.lint_fix true` turns repairs
-back on. An explicit `gbrain lint <dir> --fix` is not affected.
+while issues remain); `foresights config set cycle.lint_fix true` turns repairs
+back on. An explicit `foresights lint <dir> --fix` is not affected.
 
 **Turn the lint phase off entirely:** `cycle.lint.enabled` (default `true`)
 is the off switch for the cycle's lint phase. A brain whose page contract
-differs from `gbrain lint`'s rules (its own frontmatter checks in write hooks
+differs from `foresights lint`'s rules (its own frontmatter checks in write hooks
 or CI, say) otherwise carries a lint warning on every cycle that nothing can
-clear. `gbrain config set cycle.lint.enabled false` makes the phase report
+clear. `foresights config set cycle.lint.enabled false` makes the phase report
 `skipped` (`details.reason: disabled`, with the enable command in
-`details.enable_hint`) without reading a single file; `gbrain dream --phase
-lint --once` runs it once while it is off; `gbrain config set
-cycle.lint.enabled true` turns it back on. `gbrain lint <dir>` and the
+`details.enable_hint`) without reading a single file; `foresights dream --phase
+lint --once` runs it once while it is off; `foresights config set
+cycle.lint.enabled true` turns it back on. `foresights lint <dir>` and the
 `lint`/`lint-fix` minion jobs are not affected.
 
 **Skip files the cycle should not lint:** `cycle.lint_exclude` (string, default
 unset = exclude nothing) is a comma-separated list of directory or file
 basenames that the cycle's lint phase and the `lint`/`lint-fix` minion jobs
-skip, matched like `gbrain lint --exclude`: whitespace is trimmed, blank entries
+skip, matched like `foresights lint --exclude`: whitespace is trimmed, blank entries
 are dropped, and each entry is the last part of a path (no slash).
 
 ```bash
-gbrain config set cycle.lint_exclude attachments,drafts.md
-gbrain config unset cycle.lint_exclude   # lint everything again
+foresights config set cycle.lint_exclude attachments,drafts.md
+foresights config unset cycle.lint_exclude   # lint everything again
 ```
 
 The phase reports the list in `details.excluded`. `config set` refuses an entry
@@ -337,10 +337,10 @@ and do not disable guards or change ownership as part of rollback.
 
 On Windows, publication flushes each staged file through the handle it was
 written with and skips the directory flush Windows does not provide. A
-restoration that an older gbrain left `recovering` (it flushed through a
+restoration that an older foresights left `recovering` (it flushed through a
 read-only handle, which Windows refuses with `EPERM`) holds every later write
 on that source behind it; the current owner retries it on its own. Confirm with
-`gbrain doctor --json` (`canonical_content_writes` reports `ok` once recovery
+`foresights doctor --json` (`canonical_content_writes` reports `ok` once recovery
 has drained).
 
 Receipts include `request_id`, `state`, and `retry_after_ms`, with optional
@@ -536,7 +536,7 @@ and expires active facts that became matching. A paraphrase with different
 words is a different claim to the ledger: `forget` returns its close
 rewordings as `similar_active` for the agent to confirm with the user, and
 the optional overnight withdrawal review proposes the ones it judges to
-restate the claim for the owner to accept (`gbrain decide proposals list`).
+restate the claim for the owner to accept (`foresights decide proposals list`).
 
 Already queued source-wide effects are converted using the same bounded exact
 discovery and retain their individual progress cursors. An over-capacity or
@@ -550,7 +550,7 @@ owner has checked the canonical content. Then rerun the plain sync with the
 same source and processing options; it retries what the previous run recorded:
 
 ```bash
-gbrain sync --source example-source --no-pull --no-embed --no-extract
+foresights sync --source example-source --no-pull --no-embed --no-extract
 ```
 
 Use `--no-embed` and `--no-extract` here only if they were the original sync
@@ -585,14 +585,14 @@ Extraction reads only `compiled_truth`, so a write that leaves it unchanged on
 a live page that was already eligible records
 `facts_backstop: { skipped: "body_unchanged" }` and queues nothing. Title,
 tag, frontmatter and timeline edits fall in this case, as does
-`gbrain repair timeline` writing back rows the database already holds. If an
+`foresights repair timeline` writing back rows the database already holds. If an
 extraction of that page is still pending (its effect not yet handed off, or
 its job not yet finished), the write queues anyway, because its new revision
 supersedes the pending one. A page that becomes eligible, or a deleted page
 written again, is extracted even with the same body. A body-preserving write
 does not extract an eligible page that was never extracted; its facts are
 extracted when the body next changes. For conversation-shaped pages
-(`conversation`, `meeting`, `slack`, `email`, `imessage`), `gbrain
+(`conversation`, `meeting`, `slack`, `email`, `imessage`), `foresights
 extract-conversation-facts --dry-run` previews a backfill without model calls,
 and `--max-cost-usd` caps its spend.
 Managed jobs retain the committed page request as their authority and publish
@@ -624,7 +624,7 @@ For example, suppose the reviewed existing operation list is exactly
 list on the brain host:
 
 ```bash
-gbrain auth rescope-client client-example \
+foresights auth rescope-client client-example \
   --allowed-operations remember,forget,get_write_request,list_write_requests,cancel_write_request \
   --dry-run --json
 ```
@@ -635,7 +635,7 @@ Then apply the reviewed full list with `--if-version` set to that observed grant
 revision; for example, if it was `7`:
 
 ```bash
-gbrain auth rescope-client client-example \
+foresights auth rescope-client client-example \
   --allowed-operations remember,forget,get_write_request,list_write_requests,cancel_write_request \
   --if-version 7 --json
 ```
@@ -659,7 +659,7 @@ not rewrite an accepted mutation's authority snapshot.
 ## Local registrations and canonical ownership
 
 Routine repair, startup and maintenance must not change writer topology in
-response to an ownership error. Inspect `gbrain sources writer status --json`
+response to an ownership error. Inspect `foresights sources writer status --json`
 first and obtain the operator's decision. See the
 [state-bound administration procedure](../architecture/topologies.md#writer-administration-is-not-routine-repair).
 
@@ -668,9 +668,9 @@ Claim each filesystem source on its canonical host, then inspect writer status
 and existing locks. Activation is explicit:
 
 ```bash
-gbrain sources writer status --probe --json
-gbrain sources writer activate --confirm-quiesced --dry-run --json
-gbrain sources writer activate --confirm-quiesced \
+foresights sources writer status --probe --json
+foresights sources writer activate --confirm-quiesced --dry-run --json
+foresights sources writer activate --confirm-quiesced \
   --admin-intent writer_activate --expected-state <reviewed-admin-state> --json
 ```
 
@@ -698,8 +698,8 @@ as skipped (`durability_not_enabled`) until it is enabled. `sources harden` is
 refused once the brain is managed, so enable it with the recorded setting:
 
 ```bash
-gbrain sources writer git-durability <source> --enable --dry-run --json
-gbrain sources writer git-durability <source> --enable \
+foresights sources writer git-durability <source> --enable --dry-run --json
+foresights sources writer git-durability <source> --enable \
   --admin-intent writer_git_durability --expected-state <reviewed-admin-state> --json
 ```
 
@@ -715,12 +715,12 @@ These commands work through a credential-verified private socket when a local
 PGLite owner is running:
 
 ```bash
-gbrain auth local-writer list --json
-gbrain auth local-writer register stdio --source-ids default \
+foresights auth local-writer list --json
+foresights auth local-writer register stdio --source-ids default \
   --allowed-operations remember,forget --scopes read,write --dry-run --json
-gbrain auth local-writer revoke 11111111-1111-4111-8111-111111111111 --json
-gbrain sources writer status --probe --json
-gbrain sources writer claim default --path /absolute/canonical/source \
+foresights auth local-writer revoke 11111111-1111-4111-8111-111111111111 --json
+foresights sources writer status --probe --json
+foresights sources writer claim default --path /absolute/canonical/source \
   --admin-intent writer_claim --expected-state <reviewed-admin-state> --json
 ```
 
@@ -742,10 +742,10 @@ manifest digest. Copy the complete canonical worktree to the successor, then
 accept there with the exact epoch and digest:
 
 ```bash
-gbrain sources writer transfer prepare default \
+foresights sources writer transfer prepare default \
   --admin-intent writer_transfer_prepare --expected-state <reviewed-admin-state> --json
-gbrain sources writer status --json
-gbrain sources writer transfer accept default --path /absolute/successor/root \
+foresights sources writer status --json
+foresights sources writer transfer accept default --path /absolute/successor/root \
   --expected-epoch 1 --manifest '<prepared-sha256>' \
   --admin-intent writer_transfer_accept --expected-state <reviewed-successor-admin-state> --json
 ```
@@ -769,7 +769,7 @@ The read-only incident recipe is to select the correct brain, retain the origina
 receipts privately, and run:
 
 ```bash
-gbrain sources writer status --brain <brain> --probe --json
+foresights sources writer status --brain <brain> --probe --json
 ```
 
 Correlate request IDs with queued/running heads, retained recovery, pool capacity
@@ -827,7 +827,7 @@ attempt after a terminal failure requires a new explicit UUID. `--dry-run`
 changes neither topology nor storage.
 
 A path rebind requires identical canonical content and deletions in a fresh
-candidate checkout; exclude GBrain ownership metadata when copying a candidate.
+candidate checkout; exclude Foresights ownership metadata when copying a candidate.
 A managed reclone reserves the configured recovery capacity before cloning and
 checks the full staged manifest before replacing the directory. If the old
 checkout is missing, its last verified manifest must still match the logical
@@ -868,7 +868,7 @@ from a pending or uncertain administrative result and repeat the same command,
 arguments, and `--request-id` after recovery.
 
 Default admission limits are enforced atomically. The two cumulative ones,
-lifetime request IDs and terminal receipt bytes, are opt-in: gbrain's own
+lifetime request IDs and terminal receipt bytes, are opt-in: foresights's own
 receipt bookkeeping never refuses, pauses or throttles a write unless the
 operator sets one ([receipt housekeeping](#receipt-housekeeping) keeps the
 storage in check instead).
@@ -888,10 +888,10 @@ compaction has a default eligibility threshold of 30 days and preserves replay I
 outcomes, and frozen memory-verb result fields. Pending/recovering requests are
 not evicted, and receipts with unfinished effects stay retained without
 blocking compaction of later receipts. A caller's refused write that
-`gbrain repair failed-writes` could still replay (a writer-guard or
+`foresights repair failed-writes` could still replay (a writer-guard or
 `source_changed` refusal of a `put_page`, `add_timeline_entry` or
 `remember` that no later request wrote, removed or repeated) keeps its intent
-at any age; `gbrain repair receipt-compaction --include-failures` drops it explicitly. Lifetime IDs and replay protection are
+at any age; `foresights repair receipt-compaction --include-failures` drops it explicitly. Lifetime IDs and replay protection are
 not silently reset.
 
 Each admission reserves at least 16 KiB of receipt bytes. When the request
@@ -906,9 +906,9 @@ refuses at the cap and pauses background producers at 80% of it; the
 are brain-wide database settings:
 
 ```bash
-gbrain config set persistence.limits.principal_lifetime_ids 500000
-gbrain config set persistence.limits.principal_terminal_bytes 3221225472
-gbrain config set persistence.receipt_retention_days 7
+foresights config set persistence.limits.principal_lifetime_ids 500000
+foresights config set persistence.limits.principal_terminal_bytes 3221225472
+foresights config set persistence.receipt_retention_days 7
 ```
 
 **Say to your agent:** *"Is anything in my brain's write bookkeeping limiting my writes?"*
@@ -917,15 +917,15 @@ Keys are `persistence.limits.<limit>` for `principal_outstanding`,
 `brain_outstanding`, `principal_intent_bytes`, `brain_intent_bytes`,
 `principal_lifetime_ids`, `brain_lifetime_ids`, `principal_terminal_bytes`,
 `brain_terminal_bytes`, `brain_recovery_bytes` and `worktree_recovery_bytes`,
-each a nonnegative integer; `gbrain config unset` removes a cumulative cap
-again. With no cumulative cap set, `gbrain doctor` (`persistence_capacity`)
+each a nonnegative integer; `foresights config unset` removes a cumulative cap
+again. With no cumulative cap set, `foresights doctor` (`persistence_capacity`)
 reports receipt storage against the housekeeping target. With one set, it forecasts
 each cumulative cap from the full last-7-day admission aggregate: it warns when
 a principal or the brain uses 80% of its lifetime IDs or receipt bytes or would
 run out within `persistence.capacity.warn_days` (30) days, and fails at 95% or
 within `persistence.capacity.fail_days` (7) days. Receipt bytes are forecast at
 their compacted (net) size once compaction can start; the finding's `basis`
-says which rate it used. It prints the `gbrain config set` command with a value
+says which rate it used. It prints the `foresights config set` command with a value
 that covers about one more year at the window's mean rate (a bulk day in the
 last 24 hours shortens the days left, but is not projected for a year); `persistence_request_growth`
 uses the same threshold and value, and a `write_quota_exhausted` refusal
@@ -969,7 +969,7 @@ current rate, 385 at 5,000 a day.
 far more requests than an interactive one. After its first day of runs:
 
 ```bash
-gbrain doctor --only persistence_capacity,persistence_request_growth --json
+foresights doctor --only persistence_capacity,persistence_request_growth --json
 ```
 
 **Say to your agent:** *"How many days of write capacity does my brain have left?"*
@@ -988,18 +988,18 @@ managed sync, file import, reconcile and file repair page writes). Job
 receipts (`submit_job`), a subagent's own page writes (a deferred synthesis
 postprocess compares them with the page), connector writes and every other refusal keep their
 intent until the retention window (a caller's replayable refusal until a
-later write resolves it): `gbrain repair failed-writes` replays a caller's
+later write resolves it): `foresights repair failed-writes` replays a caller's
 refused write from it, conversation facts resubmit a frozen
 extraction, atom retries and connector held-item retries read it. Receipts
 with unfinished effects, an open sync or a recovery are kept as before. An explicit `persistence.receipt_retention_days`
 is the operator's choice, and housekeeping leaves it alone. Compacted
 receipts never count toward the target: nothing can shrink them further, so a
 large brain whose compacted receipts alone pass 8 GiB is not held above it.
-On a brain that several hosts write to, these defaults hold once every one of them runs this version: an older gbrain still enforces its old caps and its 30-day retention, and the `gbrain config set persistence.limits.*` that its `write_quota_exhausted` refusal suggests would turn a cap on for every host, so upgrade the other hosts instead of raising it.
+On a brain that several hosts write to, these defaults hold once every one of them runs this version: an older foresights still enforces its old caps and its 30-day retention, and the `foresights config set persistence.limits.*` that its `write_quota_exhausted` refusal suggests would turn a cap on for every host, so upgrade the other hosts instead of raising it.
 
 While storage stays above the target, `persistence_capacity` warns the brain
 host's operator (`actor: host_admin`) with the read-only
-`gbrain repair receipt-compaction --json` preview. Writes are not affected.
+`foresights repair receipt-compaction --json` preview. Writes are not affected.
 
 <a id="counter-drift"></a>
 ### Counter drift and compaction health
@@ -1018,13 +1018,13 @@ Two read-only doctor checks watch the receipt-bytes accounting:
   splits the receipt side into `requests` and `topology_changes` (rows and
   bytes), and `details.incident` is `current` because the comparison is
   live. It changes nothing, and there is no reconcile repair yet: report a
-  persistent drift with `gbrain doctor --only persistence_counter_drift --json`.
+  persistent drift with `foresights doctor --only persistence_counter_drift --json`.
 - `persistence_compaction` reads `persistence.maintenance.last_compaction`,
   the record each resident consumer's compaction pass writes (`at`,
   `host_id`, `compacted`, `freed_bytes`, `skipped_by_reason`), and warns when
   a full consumer has run longer than
   `persistence.maintenance.compaction_stale_hours` (default 24) without a
-  pass. Its fix previews `gbrain repair receipt-compaction --json`.
+  pass. Its fix previews `foresights repair receipt-compaction --json`.
 
 <a id="quota-near-exhaustion"></a>
 ### Quota near exhaustion
@@ -1032,23 +1032,23 @@ Two read-only doctor checks watch the receipt-bytes accounting:
 This applies only to a cap the operator set. When `persistence_capacity`
 names one, or a write is refused with `write_quota_exhausted`:
 
-1. Read the finding: `gbrain doctor --only persistence_capacity --json`.
+1. Read the finding: `foresights doctor --only persistence_capacity --json`.
    `details.resources[]` names the scope, resource, days left and `basis`;
    `fix` is the reversible unblock. `details.outstanding[]` lists an
    outstanding-request cap at 90% or more whose oldest request is over ten
    minutes old (a healthy drain near the line stays ok), with the sources holding its slots;
    requests that stopped settling (or wait behind a slow publication) hold them, so when it is the only finding, `fix`
-   is that source's read-only `gbrain sources writer status`, not a raise.
-2. Run the `gbrain config set <key> <value>` it prints on the brain host
-   (undo with `gbrain config unset <key>`). Writes resume at once; retry the
+   is that source's read-only `foresights sources writer status`, not a raise.
+2. Run the `foresights config set <key> <value>` it prints on the brain host
+   (undo with `foresights config unset <key>`). Writes resume at once; retry the
    refused write with the same `request_id`.
-3. Verify: `gbrain doctor --only persistence_capacity --json` reads `ok`.
+3. Verify: `foresights doctor --only persistence_capacity --json` reads `ok`.
 
 Raising a receipt-bytes cap is safe: the counter tracks bytes that are really
 stored, and compaction frees the window's reservations as receipts age out.
 Check `persistence.receipt_retention_days` first: a window raised for a
 recovery holds every receipt's reservation that much longer and multiplies the
-window part of the recommended value, so `gbrain config unset
+window part of the recommended value, so `foresights config unset
 persistence.receipt_retention_days` (back to 30 days) is the smaller step once
 the recovery is done.
 
@@ -1056,11 +1056,11 @@ the recovery is done.
 within `persistence.capacity.warn_days` (default 30), adds the
 `[gbrain notice write_capacity_low]` notice (kind `info`). It rides
 receipts and status output whatever the call did, so it opens with "This
-notice is not a refusal" and its fix is the read-only `gbrain doctor --only persistence_capacity --json`; the
-`gbrain config set` command stays in doctor's finding for the brain host. Write and sync receipts carry it at most once an
+notice is not a refusal" and its fix is the read-only `foresights doctor --only persistence_capacity --json`; the
+`foresights config set` command stays in doctor's finding for the brain host. Write and sync receipts carry it at most once an
 hour per engine per scope (a remote client sees only the brain and its own
-principal); `gbrain sync status`, doctor and autopilot cycle output carry it
-every time. `gbrain notices mute write_capacity_low` mutes it on receipts;
+principal); `foresights sync status`, doctor and autopilot cycle output carry it
+every time. `foresights notices mute write_capacity_low` mutes it on receipts;
 doctor still reports it. When a cap passes
 `persistence.capacity.background_pause_pct` (default 80) background
 producers pause and `[gbrain notice write_capacity_backpressure]` (kind

@@ -1,7 +1,7 @@
 /**
  * GST-1943: the storage shelf on a repo-less brain (PGLite; the database is the record). Protects:
  *   - the first storage_register creates the database-only, non-federated storage source with its role, and the card
- *     round-trips through storage_get with registered_by and origin stamped by gbrain;
+ *     round-trips through storage_get with registered_by and origin stamped by foresights;
  *   - storage_find ranks exact id, then exact alias, then most of the phrase's words; a miss says not_found and lists
  *     the closest cards; storage_list filters by store and status;
  *   - validation refuses a missing field, a command field, a stamped field, a scanner secret (in a value or an object
@@ -235,7 +235,7 @@ describe('storage shelf on a repo-less brain', () => {
       expect(r!.message).not.toContain('example.invalid');
     }
     const refused = await operationsByName.storage_get!.handler(ctx(), { id: 'edited-item' }).then(() => null, (e: { detail?: string; suggestion?: string }) => e);
-    expect(refused?.suggestion).toContain(`gbrain storage-update edited-item --expected-revision ${refused?.detail}`);
+    expect(refused?.suggestion).toContain(`foresights storage-update edited-item --expected-revision ${refused?.detail}`);
     await call('storage_update', { id: 'edited-item', expected_revision: refused!.detail, patch: { restore: { skill: 'restore-data', args: { id: 'edited-item' } } } });
     expect((await call('storage_get', { id: 'edited-item' })).card.restore).toEqual({ skill: 'restore-data', args: { id: 'edited-item' } });
   }, 30_000);

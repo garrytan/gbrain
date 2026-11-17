@@ -129,7 +129,7 @@ describe('#6257 empty-section ignores headings inside code fences', () => {
   });
 
   test('a section whose only body is a code block is not empty', () => {
-    const content = [...FM, '## Example', '', '```bash', 'gbrain doctor', '```', '', '## Notes', '', 'Text.'].join('\n');
+    const content = [...FM, '## Example', '', '```bash', 'foresights doctor', '```', '', '## Notes', '', 'Text.'].join('\n');
     expect(sections(content)).toEqual([]);
   });
 

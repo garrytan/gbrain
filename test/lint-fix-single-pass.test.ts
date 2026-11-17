@@ -1,5 +1,5 @@
 /**
- * W0 fix-wave (Tier-1 #14) — `gbrain lint --fix` scans once and reports the
+ * W0 fix-wave (Tier-1 #14) — `foresights lint --fix` scans once and reports the
  * TRUE fixed count.
  *
  * Pre-fix, runLint ran its own read+lint+fix loop for human detail, then

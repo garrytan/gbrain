@@ -4,7 +4,7 @@
  *
  * Sync's inline hook and the cycle's incremental extract already replaced
  * links and retracted timeline rows the previous version produced. The
- * `extract --stale` sweep, the full-walk `gbrain extract` (file and DB
+ * `extract --stale` sweep, the full-walk `foresights extract` (file and DB
  * source) and pages edited several times between extractions still kept
  * removed rows. A timeline row is retracted when an earlier version of the
  * page produced it and the current text no longer does; rows no version ever
@@ -168,7 +168,7 @@ describe('one-time orphan prune (#4649)', () => {
     await seedLegacyOrphans('pr');
     const check = await timelineOrphansCheck(engine);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain extract timeline --prune-orphans');
+    expect(check.message).toContain('foresights extract timeline --prune-orphans');
     expect(check.message).toContain('pr:people/erin-example');
     expect(categorizeCheck('timeline_orphans')).toBe('brain');
     const preview = await pruneTimelineOrphans(engine, { sourceId: 'pr', dryRun: true });

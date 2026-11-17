@@ -40,7 +40,7 @@ export async function readSyncAnchor(
 }
 
 /**
- * #2964: is `repoPath` gbrain's own default-brain anchor, as opposed to a
+ * #2964: is `repoPath` foresights's own default-brain anchor, as opposed to a
  * path some caller merely happened to pass through unchanged?
  *
  * `!opts.sourceId` alone is NOT sufficient — and neither is rejecting
@@ -49,14 +49,14 @@ export async function readSyncAnchor(
  * `config.sync.repo_path` on every brain that has ever run it (i.e.
  * effectively all of them by now), and `writeSyncAnchor` keeps that row's
  * `local_path` current on every sync thereafter. So on a real installed
- * brain, `resolveSourceForDir` (dream cycle) and the CLI's bare `gbrain
+ * brain, `resolveSourceForDir` (dream cycle) and the CLI's bare `foresights
  * sync` both resolve `sourceId: 'default'`, NOT `undefined` — rejecting
  * all non-empty `sourceId` (an earlier, insufficiently-reviewed version
  * of this check) made self-heal never fire on that real path either,
  * masked in tests only because a freshly-`initSchema()`'d test brain's
  * `'default'` row has a null `local_path` (Codex review round 5).
  *
- * The actual boundary: `'default'` is gbrain's own bootstrap identity,
+ * The actual boundary: `'default'` is foresights's own bootstrap identity,
  * not something a caller names — a DIFFERENT, non-default `sourceId` is
  * what an explicit `sources add <id> --path <dir>` registration (a
  * user's own external directory) looks like, and that's what must keep
@@ -70,7 +70,7 @@ export async function readSyncAnchor(
  * stored anchor must not defeat the match — Codex review round 5, P2).
  * An arbitrary caller-supplied path (e.g. an admin-scope
  * `submit_job({name:'sync', data:{repoPath}})`) only passes this check
- * if it already equals gbrain's own anchor by realpath identity — at
+ * if it already equals foresights's own anchor by realpath identity — at
  * which point self-healing it is exactly the legitimate case, not an
  * escalation.
  *
@@ -266,7 +266,7 @@ export async function writeSyncAnchor(
           serr(configured !== null && !isHostAbsolutePath(configured)
             ? `[sync] sources.last_commit for "${sourceId}" not advanced — its stored path "${configured}" is not an ` +
               `absolute directory on this host, so it cannot prove "${repoDir}" is its tree. Ask the user which directory ` +
-              `holds it, then run: gbrain sources set-path ${sourceId} <absolute-directory>`
+              `holds it, then run: foresights sources set-path ${sourceId} <absolute-directory>`
             : `[sync] sources.last_commit for "${sourceId}" not advanced — syncing repo ` +
               `"${repoDir}" is neither the registered directory ${configured ?? '(unset)'} nor ` +
               `within the same tree. Sync from the registered directory, or re-register the ` +
@@ -327,7 +327,7 @@ export async function writeSyncAnchor(
       serr(
         `[sync] sync.${which} stays at ${configured ?? '(unset)'} — not moving the ` +
         `global anchor for "${anchorDir}". To make that directory the brain repo: ` +
-        `gbrain config set sync.repo_path "${anchorDir}"`,
+        `foresights config set sync.repo_path "${anchorDir}"`,
       );
       return;
     }
@@ -383,7 +383,7 @@ export async function writeChunkerVersion(
 //                   historical #774 behavior, and the only sane shape when
 //                   the user explicitly scoped with --src-subpath)
 //   'source-root' — slugs are local_path-relative (matches what a plain
-//                   `gbrain import <dir>` of the same tree produces)
+//                   `foresights import <dir>` of the same tree produces)
 //
 // The choice used to be IMPLICIT (whatever the first sync inferred), and a
 // later sync from a different spelling silently re-namespaced every slug.
@@ -460,7 +460,7 @@ function escapeLike(s: string): string {
  *   3. auto-pin 'git-root' when existing pages already carry the inferred
  *      git-root prefix (this install has lived with git-root slugs; flipping
  *      would strand every page + its links/takes under the old namespace)
- *   4. else 'source-root' (local_path-relative — what `gbrain import <dir>`
+ *   4. else 'source-root' (local_path-relative — what `foresights import <dir>`
  *      of the same tree produces, and the least surprising default)
  * The decision is persisted before returning so every later sync agrees.
  *

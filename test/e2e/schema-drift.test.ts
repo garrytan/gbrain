@@ -13,7 +13,7 @@
  * Out of scope: detecting "manual ALTER TABLE on production Postgres that
  * never made it into source files" (the actual v0.26.1 trigger). That
  * requires comparing prod's information_schema against source — a separate
- * `gbrain doctor --schema-audit` mechanism deferred to v0.26.4.
+ * `foresights doctor --schema-audit` mechanism deferred to v0.26.4.
  *
  * Skips gracefully when DATABASE_URL is unset (matches the existing E2E
  * pattern in test/e2e/postgres-bootstrap.test.ts and test/e2e/postgres-jsonb.test.ts).
@@ -101,7 +101,7 @@ describe.skipIf(skip)('schema drift: PGLite ↔ Postgres post-initSchema parity 
 
     // Postgres side: ensure the test database is FRESH before initSchema.
     // v0.37.2.0 fix: previously the test trusted the caller to pass a fresh
-    // DATABASE_URL, but `gbrain doctor` (used by the CLAUDE.md E2E bootstrap
+    // DATABASE_URL, but `foresights doctor` (used by the CLAUDE.md E2E bootstrap
     // ritual) populates `content_chunks.model DEFAULT` from the configured
     // gateway model. On a re-run, `CREATE TABLE IF NOT EXISTS` is a no-op so
     // the stale default sticks while PGLite (always fresh-in-memory) gets the

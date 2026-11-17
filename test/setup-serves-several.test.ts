@@ -1,5 +1,5 @@
 /**
- * GST-363 (PR 1): `gbrain setup <harness> --serves several` labels each person, and doctor checks it.
+ * GST-363 (PR 1): `foresights setup <harness> --serves several` labels each person, and doctor checks it.
  *
  * 1. Protects: on a brain that serves several people every person gets a member, a folder rule people/<member>/ only
  *    that member reads, and one key bound to that member in a 0600 file outside any git tree; a read through that
@@ -166,7 +166,7 @@ for (const kind of testBackends()) {
       unlinkSync(path);
       const r = await label(ROSTER);
       expect(r.keys.find(k => k.member === 'bob-example')).toMatchObject({ action: 'blocked' });
-      expect(r.keys.find(k => k.member === 'bob-example')!.detail).toContain('gbrain auth revoke member-bob-example');
+      expect(r.keys.find(k => k.member === 'bob-example')!.detail).toContain('foresights auth revoke member-bob-example');
       expect(existsSync(path)).toBe(false);
     }, 60_000);
   });
@@ -264,7 +264,7 @@ describe('labelling refuses or reports what it cannot make safe (pglite, repo-le
   }, 60_000);
 });
 
-describe('gbrain setup --serves (spawned, PGLite)', () => {
+describe('foresights setup --serves (spawned, PGLite)', () => {
   test('--serves several labels each person, proves it with bound reads, prints key paths never values; a re-run keeps it all', async () => {
     const b = box();
     await brainWithPages(b);
@@ -299,7 +299,7 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
     expect(owner.exitCode).toBe(0);
     expect(owner.doc.serves).toMatchObject({ brain_serves: 'one', stdio: { member: null, action: 'unbound' } });
     expect(owner.doc.serves.stdio.detail).toContain("this harness's stdio sessions read only pages no rule restricts");
-    expect(owner.doc.serves.stdio.detail).toContain('gbrain setup claude-code --stdio-member <member>');
+    expect(owner.doc.serves.stdio.detail).toContain('foresights setup claude-code --stdio-member <member>');
     expect(await stdioKey(b)).toBe('');
     const bound = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--stdio-member', 'alice-example', '--json']);
     expect(bound.exitCode).toBe(0);

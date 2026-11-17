@@ -1,5 +1,5 @@
 /**
- * advisor/types.ts — shared types for `gbrain advisor`.
+ * advisor/types.ts — shared types for `foresights advisor`.
  *
  * The advisor is a read-only, brain-state-aware recommender: it computes a
  * ranked list of high-leverage actions for THIS brain right now, each with a
@@ -24,7 +24,7 @@ export interface AdvisorFix {
    */
   command_argv: string[] | null;
   /**
-   * Allowlisted dispatch key for `gbrain advisor --apply <id>`. Present only on
+   * Allowlisted dispatch key for `foresights advisor --apply <id>`. Present only on
    * findings whose fix is safe to run via the local-only dispatcher.
    */
   dispatch_id?: string;
@@ -54,7 +54,7 @@ export interface AdvisorFinding {
 export interface AdvisorContext {
   engine: BrainEngine;
   config: GBrainConfig;
-  /** Serving gbrain version (src/version.ts VERSION). */
+  /** Serving foresights version (src/version.ts VERSION). */
   version: string;
   /** Agent workspace root (CLI only; null over MCP). */
   workspace: string | null;

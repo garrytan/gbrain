@@ -1,14 +1,14 @@
 /**
  * Detect existing-brain embedding-dimension mismatch (v0.28.5 — A4).
  *
- * `gbrain init --embedding-dimensions N` on an existing brain whose
+ * `foresights init --embedding-dimensions N` on an existing brain whose
  * `content_chunks.embedding` column is a different `vector(M)` would
  * silently create a config/column drift: the config gets templated to N
  * but the column stays at M. The first sync write blows up with
  * "expected M, got N" — the silent-corruption pattern v0.28.5 is shipped
  * to kill.
  *
- * Loud-failure path: `gbrain init` AND `gbrain doctor` both consult this
+ * Loud-failure path: `foresights init` AND `foresights doctor` both consult this
  * helper. On mismatch they emit the same inline ALTER recipe (see
  * `embeddingMismatchMessage`) plus a pointer to `docs/embedding-migrations.md`.
  */
@@ -54,7 +54,7 @@ export const PGVECTOR_COLUMN_MAX_DIMS = 16000;
  * v0.37 (D9): runtime guard for the deferred-setup mode.
  *
  * Init's `--no-embedding` opt-in writes `embedding_disabled: true` to
- * config.json. Every embed callsite (CLI: `gbrain embed`, `gbrain import`;
+ * config.json. Every embed callsite (CLI: `foresights embed`, `foresights import`;
  * library: `runEmbedCore`) consults this guard so the user gets a clear
  * "configure embedding first" message rather than an opaque gateway error
  * at first vector write.
@@ -74,7 +74,7 @@ export class EmbeddingDisabledError extends Error {
 /**
  * Keyless-by-choice guard. The enable step comes from readiness's one
  * `embeddingEnablement` (resolved datastore path, a provider whose key is
- * present, effects credentials + paid), never `gbrain config set
+ * present, effects credentials + paid), never `foresights config set
  * embedding_model`, which the config command refuses.
  */
 /**
@@ -177,12 +177,12 @@ export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promis
  * - **PGLite** has no native pgvector extension (the WASM build can't
  *   `ALTER COLUMN TYPE vector(N)`). The recipe offers, in order: keeping the
  *   existing width when the model supports it (in-place `init --force` on
- *   the active database path), a previewed `gbrain migrate embeddings` that
- *   keeps pages and DB-only facts, and `gbrain reinit-pglite` as the labelled
+ *   the active database path), a previewed `foresights migrate embeddings` that
+ *   keeps pages and DB-only facts, and `foresights reinit-pglite` as the labelled
  *   last resort. It never prints a hand-run wipe.
  * - **Postgres** keeps the existing four-step SQL recipe.
  *
- * The old recipe pointed at `gbrain config set embedding_model X` which
+ * The old recipe pointed at `foresights config set embedding_model X` which
  * is a no-op for the embed pipeline (the embed gateway reads file plane,
  * not DB plane). After Lane C.2 that command refuses; the recipe now
  * points at the actual fix path.
@@ -230,16 +230,16 @@ export function embeddingMismatchMessage(opts: EmbeddingMismatchOpts): string {
       ...(keepWidth ? [
         `Keep this brain's width (no rebuild; pages and facts kept):`,
         ``,
-        `  gbrain init --force${modelArg} --embedding-dimensions ${currentDims} --path ${activePath}`,
+        `  foresights init --force${modelArg} --embedding-dimensions ${currentDims} --path ${activePath}`,
         ``,
       ] : []),
       `Change the width (re-embeds; pages and DB-only facts kept; preview first):`,
       ``,
-      `  gbrain migrate embeddings --to ${requestedModel ?? '<provider:model>'} --dim ${requestedDims} --dry-run`,
+      `  foresights migrate embeddings --to ${requestedModel ?? '<provider:model>'} --dim ${requestedDims} --dry-run`,
       ``,
       `Last resort (moves the datastore aside; DB-only pages and facts are NOT carried over):`,
       ``,
-      `  gbrain reinit-pglite${modelArg} --embedding-dimensions ${requestedDims}`,
+      `  foresights reinit-pglite${modelArg} --embedding-dimensions ${requestedDims}`,
       ``,
       `Full guide: docs/embedding-migrations.md`,
     ];
@@ -274,8 +274,8 @@ export function embeddingMismatchMessage(opts: EmbeddingMismatchOpts): string {
     `  COMMIT;`,
     ``,
     `Then re-init config (file plane is canonical post-v0.37):`,
-    `  gbrain init --supabase${modelArg} --embedding-dimensions ${requestedDims}`,
-    `  gbrain embed --stale`,
+    `  foresights init --supabase${modelArg} --embedding-dimensions ${requestedDims}`,
+    `  foresights embed --stale`,
     ``,
     `Full guide: docs/embedding-migrations.md`,
   ];
@@ -330,7 +330,7 @@ export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): 
         ok: false,
         error:
           `Provider "${recipe.id}" does not offer embedding models. ` +
-          `Pick a recipe with an embedding touchpoint (gbrain providers list).`,
+          `Pick a recipe with an embedding touchpoint (foresights providers list).`,
       };
     }
     return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_dimensions);
@@ -372,7 +372,7 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
         error:
           `Provider "${recipe.id}" does not support multimodal embeddings. ` +
           `Configured recipes that do: voyage (voyage-multimodal-3). ` +
-          `Run \`gbrain providers list\` to see touchpoint coverage.`,
+          `Run \`foresights providers list\` to see touchpoint coverage.`,
       };
     }
     if (tp.multimodal_models && !tp.multimodal_models.includes(parsed.modelId)) {
@@ -524,7 +524,7 @@ function isCustomDimValidForProvider(
 // dies with an opaque pgvector error. Two surfaces close the gap:
 //
 //   1. `readFactsEmbeddingDim(engine)` — column-type probe used by the
-//      `gbrain doctor` `embedding_dim_mismatch` check to surface drift.
+//      `foresights doctor` `embedding_dim_mismatch` check to surface drift.
 //   2. `assertFactsEmbeddingDimMatchesConfig(engine)` — preflight thrown
 //      at the top of every fact-writing path (extract-conversation-facts
 //      startup, the cycle extract_facts phase, facts:absorb op). Result
@@ -749,7 +749,7 @@ export async function assertFactsEmbeddingDimMatchesConfig(engine: BrainEngine):
     ``,
     recipe,
     ``,
-    `Or run \`gbrain doctor --json\` for the full diagnostic + fix surface.`,
+    `Or run \`foresights doctor --json\` for the full diagnostic + fix surface.`,
   ].join('\n');
   const err = new FactsEmbeddingDimMismatchError(
     message,
@@ -791,6 +791,6 @@ export function decorateEmbeddingDimError(err: unknown, slug: string, columnName
   return new OperationError(
     'embedding_plane_split',
     `page '${slug}' was NOT written: the runtime embedder emitted ${m[2]}d vectors but the ${colLabel} is ${m[1]}d (${msg}). Every embedding write fails until the planes agree.`,
-    `Diagnose with \`gbrain migrate embeddings --status\`; fix with \`gbrain migrate embeddings --to <provider:model> --dim ${m[2]}\` (or correct embedding_model/embedding_dimensions to match the column).`,
+    `Diagnose with \`foresights migrate embeddings --status\`; fix with \`foresights migrate embeddings --to <provider:model> --dim ${m[2]}\` (or correct embedding_model/embedding_dimensions to match the column).`,
   );
 }

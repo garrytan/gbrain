@@ -291,7 +291,7 @@ describe('runExtractCore — quiet vs jsonMode on the incremental path', () => {
   test('quiet: true suppresses the human summary line while jsonMode stays false (human stderr channel)', async () => {
     // The cycle used `jsonMode: true` as a stand-in for "quiet": it hid the
     // summary, but it ALSO flipped batch errors to JSON events on stderr in a
-    // plain `gbrain dream`. Embedded callers own the report — they say so.
+    // plain `foresights dream`. Embedded callers own the report — they say so.
     await seedPage('people/alice', 'Alice knows [[companies/acme]].');
     await seedPage('companies/acme', 'Acme.');
     const out = captureStdout();

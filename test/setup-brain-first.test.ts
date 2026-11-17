@@ -8,7 +8,7 @@
  *  - upgrade in place: a stale block is replaced, never duplicated;
  *  - opt-out: --no-instructions (or GBRAIN_AGENT_INSTRUCTIONS=0) removes the
  *    block and is remembered; --instructions opts back in;
- *  - removal: --remove strips the block and deletes only a file gbrain created;
+ *  - removal: --remove strips the block and deletes only a file foresights created;
  *  - dry-run writes nothing.
  * Spawns \`bun src/cli.ts setup\` against a temp HOME / GBRAIN_HOME.
  */
@@ -93,7 +93,7 @@ for (const lane of LANES) {
       const text = read(path);
       expect(text.startsWith(lane.existing)).toBe(true);
       expect(blocks(text)).toBe(1);
-      expect(text).toContain('Before answering any turn, check GBrain first, before files, mail or other sources');
+      expect(text).toContain('Before answering any turn, check Foresights first, before files, mail or other sources');
       expect(text).toContain('apply your own access rules');
       expect(text).toContain('finish the whole task');
       expect(ledger(b)).toEqual([expect.objectContaining({ harness: lane.harness, path, status: 'installed', created_file: false })]);
@@ -140,7 +140,7 @@ for (const lane of LANES) {
       expect(existsSync(lane.file(fresh))).toBe(false);
     });
 
-    test('--remove strips the block, leaves the user text exactly as it was, and deletes only a file gbrain created', async () => {
+    test('--remove strips the block, leaves the user text exactly as it was, and deletes only a file foresights created', async () => {
       const b = box();
       const path = lane.file(b);
       mkdirSync(dirname(path), { recursive: true });
@@ -244,7 +244,7 @@ describe('brain-first block: placement rules', () => {
     expect(first.doc.turn_hook).toMatchObject({ action: 'write', path: join(b.home, '.hermes', 'config.yaml') });
     const hook = (load(config()) as any).hooks.pre_llm_call[0];
     expect(hook.command.startsWith("/bin/echo '")).toBe(true);
-    expect(JSON.parse(hook.command.slice("/bin/echo '".length, -1)).context).toContain('check GBrain first');
+    expect(JSON.parse(hook.command.slice("/bin/echo '".length, -1)).context).toContain('check Foresights first');
     expect(read(join(b.home, '.hermes', 'SOUL.md'))).toContain(BRAIN_FIRST_BEGIN);
     const declined = await setup(b, ['hermes', '--no-instructions']);
     expect(declined.doc.turn_hook.action).toBe('remove');
@@ -309,7 +309,7 @@ describe('brain-first block: placement rules', () => {
     const renamed = await setup(b, ['openclaw', '--workspace', ws, '--name', 'gbrain-a', '--instructions-only'], path);
     expect(renamed.exitCode).toBe(0);
     expect(renamed.doc.turn_hook.action).toBe('print');
-    expect(renamed.doc.turn_hook.commands).toEqual([`gbrain setup openclaw --remove --workspace ${ws}`]);
+    expect(renamed.doc.turn_hook.commands).toEqual([`foresights setup openclaw --remove --workspace ${ws}`]);
     expect(read(join(dir, 'index.js'))).toBe(index);
     const declined = await setup(b, ['openclaw', '--workspace', ws, '--no-instructions'], path);
     expect(declined.exitCode).toBe(0);
@@ -319,7 +319,7 @@ describe('brain-first block: placement rules', () => {
     expect(read(join(b.home, '.openclaw', 'workspace', 'AGENTS.md'))).toContain(BRAIN_FIRST_BEGIN);
   });
 
-  test('openclaw --workspace on a disabled plugin an older gbrain wrote: another server exits 0 with the way out, the same server rewrites and enables it', async () => {
+  test('openclaw --workspace on a disabled plugin an older foresights wrote: another server exits 0 with the way out, the same server rewrites and enables it', async () => {
     const b = box();
     mkdirSync(join(b.home, '.openclaw', 'workspace'), { recursive: true });
     const path = fakeOpenclaw(b);
@@ -457,7 +457,7 @@ describe('brain-first block: text', () => {
 });
 
 describe('brain-first block: full setup and the installer lanes', () => {
-  test('gbrain setup claude-code writes the block by default; --remove takes it out with the MCP entry', async () => {
+  test('foresights setup claude-code writes the block by default; --remove takes it out with the MCP entry', async () => {
     const b = box();
     const first = await runCli(['setup', 'claude-code', '--json', '--gbrain-bin', b.bin], { env: b.env });
     expect(first.exitCode).toBe(0);
@@ -482,7 +482,7 @@ describe('brain-first block: full setup and the installer lanes', () => {
     expect(read(join(c.home, '.codex', 'AGENTS.md'))).toContain('`search` for names and phrases');
   });
 
-  test('gbrain setup codex --no-instructions wires MCP and hooks but no block', async () => {
+  test('foresights setup codex --no-instructions wires MCP and hooks but no block', async () => {
     const b = box();
     const r = await runCli(['setup', 'codex', '--no-instructions', '--json', '--gbrain-bin', b.bin], { env: b.env });
     expect(r.exitCode).toBe(0);
@@ -562,7 +562,7 @@ describe('brain-first block: full setup and the installer lanes', () => {
 });
 
 describe('doctor harness_wiring reports the block', () => {
-  /** A current stdio registration: serve behind gbrain's hook launcher, the shape setup writes (#8426). */
+  /** A current stdio registration: serve behind foresights's hook launcher, the shape setup writes (#8426). */
   function stdioRegistration(b: Box): void {
     const launcher = ensureHookLauncher(hookLauncherPath(join(b.home, '.gbrain')));
     writeFileSync(join(b.home, '.claude.json'), JSON.stringify({ mcpServers: { gbrain: { type: 'stdio', command: launcher, args: [b.bin, 'serve'] } } }));

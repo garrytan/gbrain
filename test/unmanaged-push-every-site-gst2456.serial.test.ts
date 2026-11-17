@@ -1,8 +1,8 @@
 /**
- * GST-2456 (#8902 part 2): every push gbrain makes from an unmanaged checkout range-scans the commits it publishes:
- * `gbrain git commit-push` in commit mode, with --pending and with --untrack, the post-commit hook harden installs, the durability
- * helper's `_run` (and its fallback, which now pushes nothing without gbrain), with tags never riding along. Also
- * `gbrain sources push` against an upstream that is not origin, its --json refusal, and the scan's time budget. Real git
+ * GST-2456 (#8902 part 2): every push foresights makes from an unmanaged checkout range-scans the commits it publishes:
+ * `foresights git commit-push` in commit mode, with --pending and with --untrack, the post-commit hook harden installs, the durability
+ * helper's `_run` (and its fallback, which now pushes nothing without foresights), with tags never riding along. Also
+ * `foresights sources push` against an upstream that is not origin, its --json refusal, and the scan's time budget. Real git
  * against local bare remotes; synthetic credentials only. HOME, GBRAIN_HOME, PATH and the file transport switch are
  * process-wide.
  */
@@ -39,7 +39,7 @@ const cli = (args: string[], env: Record<string, string> = {}) => spawnSync(proc
 const pushLog = () => { const p = join(dir, '.gbrain', 'brain-push.log'); return existsSync(p) ? readFileSync(p, 'utf8') : ''; };
 const envelope = (stdout: string) => JSON.parse(stdout) as { code?: string; error?: string; message?: string };
 const sourcesPush = () => workspacePush({ dir: root, branch: 'main', allowUnverifiedRemote: true });
-/** `gbrain sources push` in-process (it needs no brain with --path): its exit code, stdout and stderr. */
+/** `foresights sources push` in-process (it needs no brain with --path): its exit code, stdout and stderr. */
 async function sourcesPushCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const out: string[] = [], err: string[] = [];
   const restore = { exit: process.exit, log: console.log, error: console.error };
@@ -86,7 +86,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('gbrain git commit-push', () => {
+describe('foresights git commit-push', () => {
   test('commit mode refuses the earlier commits it would push, keeps its own commit and logs the refusal', () => {
     removedSecret();
     writeFileSync(join(root, 'page.md'), 'new page\n');
@@ -133,7 +133,7 @@ describe('gbrain git commit-push', () => {
     expect(remoteTip()).toBe(base);
   }, T);
 
-  test('gbrain git scan previews what the next push would refuse and writes nothing; the fingerprint in .gbrain-scan-allow clears it', () => {
+  test('foresights git scan previews what the next push would refuse and writes nothing; the fingerprint in .gbrain-scan-allow clears it', () => {
     removedSecret();
     const head = git(root, 'rev-parse', 'HEAD');
     const status = git(root, 'status', '--porcelain');
@@ -209,7 +209,7 @@ describe('the post-commit hook and the durability helper', () => {
     expect(remoteTip()).toBe(published);
   }, T);
 
-  test('the helper without gbrain commits locally and pushes nothing, since only gbrain scans before it pushes', () => {
+  test('the helper without foresights commits locally and pushes nothing, since only foresights scans before it pushes', () => {
     rmSync(join(root, '.git', 'hooks', 'post-commit'));
     spawnSync('git', ['-C', root, 'config', '--local', '--unset', 'gbrain.cliPath']);
     writeFileSync(join(root, 'page.md'), 'clean page\n');
@@ -219,11 +219,11 @@ describe('the post-commit hook and the durability helper', () => {
     expect(r.stderr).toContain('NOT PUSHED');
     expect(git(root, 'show', 'HEAD:page.md')).toBe('clean page');
     expect(remoteTip()).toBe(published);
-    expect(pushLog()).toContain('not pushed: gbrain is not installed');
+    expect(pushLog()).toContain('not pushed: foresights is not installed');
   }, T);
 });
 
-describe('gbrain sources push', () => {
+describe('foresights sources push', () => {
   test('--json prints the refusal on stdout and exits 5', async () => {
     removedSecret();
     const r = await sourcesPushCli(['--path', root, '--allow-unverified-remote', '--json']);

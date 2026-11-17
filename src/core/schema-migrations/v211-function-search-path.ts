@@ -4,7 +4,7 @@ import type { Migration } from './types.ts';
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
-// #5190: every gbrain plpgsql function pins `search_path = pg_catalog, public`,
+// #5190: every foresights plpgsql function pins `search_path = pg_catalog, public`,
 // so an unqualified reference in its body never resolves through a caller's
 // search_path. Existing brains are ALTERed by regprocedure (functions with
 // arguments included) wherever no setting is pinned yet; the definition

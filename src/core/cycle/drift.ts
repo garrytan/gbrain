@@ -16,10 +16,10 @@
  * flag state, and a future wave may wire weight adjustment behind it.
  *
  * Default-disabled. Operator opts in:
- *   gbrain config set dream.drift.enabled true
- *   gbrain config set dream.drift.lookback_days 30
- *   gbrain config set dream.drift.max_per_cycle 20
- *   gbrain config set dream.drift.budget 1.0
+ *   foresights config set dream.drift.enabled true
+ *   foresights config set dream.drift.lookback_days 30
+ *   foresights config set dream.drift.max_per_cycle 20
+ *   foresights config set dream.drift.budget 1.0
  */
 
 import type { BrainEngine } from '../engine.ts';

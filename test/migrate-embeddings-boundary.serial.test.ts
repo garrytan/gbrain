@@ -39,7 +39,7 @@ import { MIGRATION_STATE_KEY, MIGRATION_COMPLETED_KEY } from '../src/core/embedd
 const FROM_DIMS = 1024;
 const TO_DIMS = 1536;
 const PAGES = ['b-1', 'b-2', 'b-3'];
-const PROBE_TEXT = 'gbrain embedding migration probe';
+const PROBE_TEXT = 'foresights embedding migration probe';
 
 let engine: PGLiteEngine;
 let tmpHome: string;

@@ -1,7 +1,7 @@
 /**
  * #5137 through the real CLI entrypoint: the key-shadow warning prints once
- * per process from ordinary commands, never from `gbrain hook`, carries no
- * key bytes, and `gbrain config unset <key>` (the documented fix for an
+ * per process from ordinary commands, never from `foresights hook`, carries no
+ * key bytes, and `foresights config unset <key>` (the documented fix for an
  * intended env key) stops it.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -27,14 +27,14 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 test('an ordinary command warns once on stderr and leaks no key bytes; a hook command never warns', async () => {
   const command = await runCli(['engine'], opts);
   expect(command.exitCode).toBe(0);
-  expect(warnings(command.stderr)).toEqual([expect.stringContaining('[gbrain] warning: OPENAI_API_KEY in this process\'s environment differs from openai_api_key')]);
+  expect(warnings(command.stderr)).toEqual([expect.stringContaining('[foresights] warning: OPENAI_API_KEY in this process\'s environment differs from openai_api_key')]);
   expect(leaked(command.stdout + command.stderr)).toEqual([]);
   const hook = await runCli(['hook', '--help'], opts);
   expect(warnings(hook.stderr)).toEqual([]);
   expect(leaked(hook.stdout + hook.stderr)).toEqual([]);
 }, 120_000);
 
-test('`gbrain config unset openai_api_key` keeps the env key in effect and stops the warning', async () => {
+test('`foresights config unset openai_api_key` keeps the env key in effect and stops the warning', async () => {
   const unset = await runCli(['config', 'unset', 'openai_api_key'], opts);
   expect(unset.exitCode).toBe(0);
   expect(leaked(unset.stdout + unset.stderr)).toEqual([]);

@@ -41,9 +41,9 @@ import { pricingSetArgv } from '../../../core/budget/no-pricing.ts';
  *
  *   1. Pages with chunker_version < current — pre-v40 pages that need
  *      to be re-embedded for the wrapper to apply. Paste-ready fix:
- *      `gbrain reindex --markdown`.
+ *      `foresights reindex --markdown`.
  *   2. Pages with contextual_retrieval_mode IS NULL — never evaluated
- *      against the CR ladder. Fix: `gbrain repair contextual-mode` (#5621).
+ *      against the CR ladder. Fix: `foresights repair contextual-mode` (#5621).
  *   3. Synopsis-failure events in the audit JSONL over the last 7 days
  *      — surfaces refusals + page-level fallbacks. >5% refusal rate
  *      warns; otherwise reported as informational.
@@ -121,9 +121,9 @@ export async function checkContextualRetrievalCoverage(
     if (modeNull > 0) {
       parts.push(`${modeNull} page(s) never evaluated against CR ladder`);
     }
-    const fixHint = (unsealed > 0 ? ' Preview the re-seal: gbrain repair safe-chunks — apply: gbrain repair safe-chunks --apply.' : '')
-      + (modeNull > 0 ? ' Preview the mode stamp (#5621): gbrain repair contextual-mode — apply: gbrain repair contextual-mode --apply.' : '')
-      + (chunkerDrift > 0 ? ` Run \`gbrain reindex --markdown\` to align.` : '');
+    const fixHint = (unsealed > 0 ? ' Preview the re-seal: foresights repair safe-chunks — apply: foresights repair safe-chunks --apply.' : '')
+      + (modeNull > 0 ? ' Preview the mode stamp (#5621): foresights repair contextual-mode — apply: foresights repair contextual-mode --apply.' : '')
+      + (chunkerDrift > 0 ? ` Run \`foresights reindex --markdown\` to align.` : '');
     return {
       name: 'contextual_retrieval_coverage',
       status: needsReindex || unsealed > 0 ? 'warn' : 'ok',
@@ -229,7 +229,7 @@ export async function checkHiddenBySearchPolicy(engine: BrainEngine, opts: { sou
  * Walks every page in the brain, scans for bare wikilinks
  * (`[[struktura]]` outside DIR_PATTERN) that would resolve to at least
  * one page under global-basename mode, and surfaces a paste-ready
- * `gbrain config set link_resolution.global_basename true` hint when
+ * `foresights config set link_resolution.global_basename true` hint when
  * the count is meaningful (>=5 would-resolve AND >=20% of bare
  * wikilinks have matches). Skipped silently when the flag is already
  * enabled (no signal to surface) or the brain is empty.
@@ -341,7 +341,7 @@ export async function checkLinkResolutionOpportunity(
         message:
           `${wouldResolveCount} of ${bareCount} bare wikilinks (${pct}%) would resolve to ` +
           `${distinctTargets.size} distinct page(s) under global_basename mode${sampledNote}. ` +
-          `Enable with: gbrain config set link_resolution.global_basename true`,
+          `Enable with: foresights config set link_resolution.global_basename true`,
         ...(sampleDetails ? { details: sampleDetails } : {}),
       });
     }
@@ -368,7 +368,7 @@ export async function checkAbandonedThreads(engine: BrainEngine, opts: { sourceI
       // since_date is TEXT and may be month-precision ('YYYY-MM'); 'YYYY-MM'::date
       // throws "invalid input syntax for type date", so normalize to the 1st
       // before casting — same guarded cast as the detail query in serve-http.ts
-      // (`gbrain calibration` abandoned-threads), which must stay in lockstep so
+      // (`foresights calibration` abandoned-threads), which must stay in lockstep so
       // the doctor count matches the listing it points users at.
       `SELECT COUNT(*)::int AS count FROM takes
          WHERE active = true
@@ -392,7 +392,7 @@ export async function checkAbandonedThreads(engine: BrainEngine, opts: { sourceI
     return {
       name: 'abandoned_threads',
       status: 'ok',
-      message: `${count} high-conviction take(s) older than 12 months and never revisited — see \`gbrain calibration\` for details`,
+      message: `${count} high-conviction take(s) older than 12 months and never revisited — see \`foresights calibration\` for details`,
     };
   } catch (e) {
     return checkError('abandoned_threads', 'check abandoned threads', e);
@@ -431,7 +431,7 @@ export async function checkCalibrationFreshness(engine: BrainEngine, opts: { sou
       return {
         name: 'calibration_freshness',
         status: 'warn',
-        message: `Calibration profile is ${ageDays} days old (stale at >${staleDays}d). Run \`gbrain calibration --regenerate\``,
+        message: `Calibration profile is ${ageDays} days old (stale at >${staleDays}d). Run \`foresights calibration --regenerate\``,
       };
     }
     return {
@@ -530,7 +530,7 @@ export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
       return {
         name: 'subagent_health',
         status: 'fail',
-        message: `${bounces} lease-pressure bounces in last 24h — this is blocking real work. Raise the cap: \`export GBRAIN_ANTHROPIC_MAX_INFLIGHT=64\` (or \`unlimited\` for Azure / Bedrock / self-hosted upstreams with no provider-side rate limit). After raising, restart \`gbrain jobs work\`.`,
+        message: `${bounces} lease-pressure bounces in last 24h — this is blocking real work. Raise the cap: \`export GBRAIN_ANTHROPIC_MAX_INFLIGHT=64\` (or \`unlimited\` for Azure / Bedrock / self-hosted upstreams with no provider-side rate limit). After raising, restart \`foresights jobs work\`.`,
       };
     }
     // 1-999 bounces: cross-check forward progress.
@@ -590,7 +590,7 @@ export async function checkVoiceGateHealth(engine: BrainEngine, opts: { sourceId
       return {
         name: 'voice_gate_health',
         status: 'warn',
-        message: `Voice gate failed ${failures}/${total} (${Math.round(failRate * 100)}%) in last 7 days: the calibration voice gate rejects most generated profiles. That is a gbrain quality issue, not something to change locally; report it with \`gbrain doctor --json\` output.`,
+        message: `Voice gate failed ${failures}/${total} (${Math.round(failRate * 100)}%) in last 7 days: the calibration voice gate rejects most generated profiles. That is a foresights quality issue, not something to change locally; report it with \`foresights doctor --json\` output.`,
         fix_unavailable_reason: 'operator_judgement',
       };
     }
@@ -618,7 +618,7 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
     const rerankerEnabled = knobs.reranker_enabled;
     const model = knobs.reranker_model;
     // Same config plane the CLI hands the gateway (env > file > DB-plane
-    // provider keys + provider_base_urls) — shared with `gbrain search modes`
+    // provider keys + provider_base_urls) — shared with `foresights search modes`
     // through rerankerReadinessForEngine so the two surfaces cannot drift.
     const { readiness } = await rerankerReadinessForEngine(engine, model);
     const ready = readiness.ready;
@@ -657,7 +657,7 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
         status: 'ok',
         message: `Reranker disabled — no failures expected` +
           (readiness.ready && knobs.resolved_mode !== 'conservative'
-            ? ` (${model} is ready: gbrain config set search.reranker.enabled true)`
+            ? ` (${model} is ready: foresights config set search.reranker.enabled true)`
             : ''),
       };
     }
@@ -692,7 +692,7 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
         status: 'warn',
         // #5432: the audit log records failures only and this check runs no
         // live probe, so it reports history, not the key's current state.
-        message: `${authFails.length} reranker auth failure(s) recorded in the last 7 days (key present but rejected at the time). This is audit-log history; no live probe was run, so the key may have recovered since. Fix: verify the reranker provider's API key (e.g. ${readiness.requiredKey ?? 'VOYAGE_API_KEY'}) and run \`gbrain models doctor\`.`,
+        message: `${authFails.length} reranker auth failure(s) recorded in the last 7 days (key present but rejected at the time). This is audit-log history; no live probe was run, so the key may have recovered since. Fix: verify the reranker provider's API key (e.g. ${readiness.requiredKey ?? 'VOYAGE_API_KEY'}) and run \`foresights models doctor\`.`,
         details: { live_probe_performed: false, failures_recorded: authFails.length, window_days: 7 },
       };
     }
@@ -731,7 +731,7 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
       return {
         name: 'reranker_health',
         status: 'warn',
-        message: `${unreachableFails.length} reranker call(s) in the last 7 days could not reach the ${model} endpoint (connection refused, DNS or network error), so those searches kept their fused order. Fix: check the reranker base URL (\`provider_base_urls.${model.split(':')[0]}\` in the gbrain config, or the provider default) and that the brain host can reach it, then run \`gbrain models doctor\`.`,
+        message: `${unreachableFails.length} reranker call(s) in the last 7 days could not reach the ${model} endpoint (connection refused, DNS or network error), so those searches kept their fused order. Fix: check the reranker base URL (\`provider_base_urls.${model.split(':')[0]}\` in the foresights config, or the provider default) and that the brain host can reach it, then run \`foresights models doctor\`.`,
       };
     }
 
@@ -773,7 +773,7 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
           summary.toLowerCase().includes('api key')
         );
       })
-        ? " Fix: verify the reranker provider's API key (e.g. VOYAGE_API_KEY) and run `gbrain models doctor`."
+        ? " Fix: verify the reranker provider's API key (e.g. VOYAGE_API_KEY) and run `foresights models doctor`."
         : '';
       return {
         name: 'reranker_health',

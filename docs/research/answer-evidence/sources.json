@@ -109,7 +109,7 @@
         "locator": "Section 4.1, metric definition"
       },
       {
-        "claim": "The best reported model has 55.3% consistent accuracy on this contextual benchmark, not on the GBrain LongMemEval judge task.",
+        "claim": "The best reported model has 55.3% consistent accuracy on this contextual benchmark, not on the Foresights LongMemEval judge task.",
         "quote": "performing models are o1 (55.3), o3-mini (52.6)",
         "locator": "Section 4.2 and Table 3"
       }

@@ -1,5 +1,5 @@
 /**
- * `gbrain eval longmemeval --decide ...` (System One arms) on the real
+ * `foresights eval longmemeval --decide ...` (System One arms) on the real
  * hybridSearch path with fixture embed and decide transports (no provider is
  * called).
  *

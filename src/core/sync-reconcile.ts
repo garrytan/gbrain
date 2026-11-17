@@ -46,7 +46,7 @@ export function parseSyncDeleteCap(key: typeof SYNC_MAX_DELETES_KEY | typeof SYN
   return value <= 1 ? value : null;
 }
 
-/** `gbrain config set`'s refusal of an invalid #7130 delete-safety value (null: valid). */
+/** `foresights config set`'s refusal of an invalid #7130 delete-safety value (null: valid). */
 export function deleteSafetyConfigRefusal(key: string, value: string): string | null {
   if (key === 'purge.retention_hours') return parsePurgeRetentionHours(value) === null ? `purge.retention_hours must be a whole number of hours, at least ${MIN_PURGE_RETENTION_HOURS}; nothing was written.` : null;
   if (key.startsWith('sync.apply_held_deletions')) return ['true', 'false'].includes(value.trim().toLowerCase()) ? null : `${key} must be true or false; nothing was written.`;
@@ -59,7 +59,7 @@ export function deleteSafetyConfigRefusal(key: string, value: string): string | 
  * #7130: how long a soft-deleted page waits before the autopilot purge phase may purge it (`purge.retention_hours`,
  * default 72). The setting only lengthens the window: every soft delete promises a 72-hour restore (the 'restore_72h'
  * undo of an automatic repair, the recovery window sync deletes document), so no value below 72 is accepted. The manual
- * `gbrain pages purge-deleted` takes its own `--older-than`, under consent.
+ * `foresights pages purge-deleted` takes its own `--older-than`, under consent.
  */
 export const DEFAULT_PURGE_RETENTION_HOURS = 72;
 export const MIN_PURGE_RETENTION_HOURS = 72;
@@ -232,10 +232,10 @@ export function resolveStallAbortSeconds(
 }
 
 /**
- * Resolve the out-of-band hard-deadline for a `gbrain sync` invocation (#1633).
+ * Resolve the out-of-band hard-deadline for a `foresights sync` invocation (#1633).
  * Pure + argv/env-only so it runs BEFORE `connectEngine` (so a connect-phase hang
  * is also bounded — `timeout-layer-vs-connectengine` learning). DB-plane config
- * (`gbrain config set`) is unreadable pre-connect, so the operator knob is the
+ * (`foresights config set`) is unreadable pre-connect, so the operator knob is the
  * `GBRAIN_SYNC_MAX_RUNTIME_SECONDS` env var; bare cron is covered by the non-TTY
  * default. Returns null when no watchdog should arm (TTY interactive with no
  * flag, or an explicit opt-out / 0).
@@ -294,7 +294,7 @@ export function resolveSyncHardDeadline(
 }
 
 /**
- * The `gbrain sync` watchdog installation for a resolved deadline: the
+ * The `foresights sync` watchdog installation for a resolved deadline: the
  * `installProcessWatchdog` options (progress window and stop notice included)
  * and the stderr line announcing it.
  */
@@ -312,7 +312,7 @@ export function syncWatchdogPlan(args: string[], res: HardDeadlineResolution): {
 }
 
 /**
- * #6278: the `gbrain sync` arguments (after `sync`) that resume a managed cursor
+ * #6278: the `foresights sync` arguments (after `sync`) that resume a managed cursor
  * with its stored processing and cursor options, so a follow-up printed by a
  * hold, `sources retry-held` or doctor keeps `--no-embed` and friends instead
  * of starting a second cursor. `syncResumeCommand` quotes them.
@@ -327,7 +327,7 @@ export function managedSyncResumeArgs(input: { sourceId: string; processingOptio
 }
 
 /**
- * #5984: the shell-quoted `gbrain sync` command that resumes this run with the
+ * #5984: the shell-quoted `foresights sync` command that resumes this run with the
  * same brain, source and cursor-defining options (`args` are the sync argv).
  */
 export function syncResumeCommand(args: string[], brain: string | null = null): string {
@@ -352,7 +352,7 @@ export function syncDeadlineStopNotice(args: string[], res: HardDeadlineResoluti
     return JSON.stringify({ status: 'stopped', code: 'sync_deadline_stop', reason: res.reason, deadline_seconds: deadlineSec,
       progress_window_seconds: windowSec, cause, resume_command: resume, fix });
   }
-  return `gbrain sync stopped (code=sync_deadline_stop): ${cause}. ${fix}`;
+  return `foresights sync stopped (code=sync_deadline_stop): ${cause}. ${fix}`;
 }
 
 /**
@@ -376,7 +376,7 @@ export function syncDeadlineStallNotice(args: string[], res: HardDeadlineResolut
     return JSON.stringify({ status: 'stalled', code: 'sync_deadline_stalled', message, why, reason: res.reason, deadline_seconds: deadlineSec, committed: 0,
       resume_command: resume, docs: 'docs/guides/error-codes.md#sync_deadline_stalled', fix });
   }
-  return `gbrain sync stopped (code=sync_deadline_stalled): ${message} ${why} Fix: ${fix.command}`;
+  return `foresights sync stopped (code=sync_deadline_stalled): ${message} ${why} Fix: ${fix.command}`;
 }
 
 /**

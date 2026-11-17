@@ -34,7 +34,7 @@ let engine: PGLiteEngine;
 
 async function seedFourPages(eng: PGLiteEngine): Promise<void> {
   const sql = sqlQueryForEngine(eng);
-  // 6 eligible entity pages (>= the gbrain#4147 small-N floor of 5, so the
+  // 6 eligible entity pages (>= the foresights#4147 small-N floor of 5, so the
   // entity ratio is a real percentage rather than the below-floor null),
   // 2 technical/non-entity pages, and one quarantined entity shell (#4280:
   // NOT served memory, so it must not join any coverage denominator — with

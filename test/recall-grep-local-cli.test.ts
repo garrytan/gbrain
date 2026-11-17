@@ -1,5 +1,5 @@
 /**
- * gbrain#5607 — `gbrain recall --grep` on the local (non-thin-client) path
+ * foresights#5607 — `foresights recall --grep` on the local (non-thin-client) path
  * must filter in SQL, BEFORE the LIMIT.
  *
  * fetchRowsLocal used to fetch `limit` rows and leave grep to a client-side
@@ -65,7 +65,7 @@ beforeEach(() => {
   }) as typeof process.stdout.write;
 });
 
-describe('gbrain#5607 — local recall --grep filters in SQL before LIMIT', () => {
+describe('foresights#5607 — local recall --grep filters in SQL before LIMIT', () => {
   test('rejects malformed --limit values and accepts a positive integer', async () => {
     // Agent contract v1: an invalid_params usage error (exit 2 through renderCliError).
     for (const value of ['3x', 'abc', '0']) {

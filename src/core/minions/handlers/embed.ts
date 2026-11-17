@@ -10,7 +10,7 @@ export function makeEmbedHandler(engine: BrainEngine): MinionHandler {
   return async (job) => {
     const { runEmbedCore } = await import('../../../commands/embed.ts');
     // Primary Minion progress channel is job.updateProgress (DB-backed,
-    // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
+    // readable via `foresights jobs get <id>`). Stderr from the worker daemon
     // only emits coarse job-start / job-done lines; per-page detail lives
     // in the DB. Per Codex review #20.
     const embedResult = await runEmbedCore(engine, {
@@ -54,7 +54,7 @@ export function makeEmbedHandler(engine: BrainEngine): MinionHandler {
     // handler layer converts it to a FAILED JOB (throw) — never process.exit.
     assertEmbedNotStalled(embedResult);
     // Report what happened, not a constant. `embedded: true` claimed a dry run
-    // had embedded, which is the same lie in miniature: `gbrain jobs get`
+    // had embedded, which is the same lie in miniature: `foresights jobs get`
     // showed it. `embedded` stays the key it always was and stays truthy on a
     // real run (it is now the count, 0 on a dry run).
     return {

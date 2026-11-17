@@ -2,7 +2,7 @@
 import type { TrustTier } from '../trust/tier.ts';
 import { trustAttributes } from '../eligibility/labels.ts';
 import { isValidHolder } from '../takes-fence.ts';/**
- * v0.28: prompt-injection defense for take claims fed into `gbrain think`.
+ * v0.28: prompt-injection defense for take claims fed into `foresights think`.
  *
  * The threat: a claim row in the takes table contains attacker-supplied text.
  * Without sanitization, an LLM-bound system prompt that includes those claims
@@ -66,7 +66,7 @@ const REDACTION_MARKER = /\[redacted(?:-attr)?\]/;
 
 /**
  * #7125: the `eval-shell` rule before the fix. Text it rewrote before the fix
- * is restored against this shape (`gbrain repair redacted-facts`).
+ * is restored against this shape (`foresights repair redacted-facts`).
  */
 export const LEGACY_EVAL_SHELL = { name: 'eval-shell-legacy', rx: /\b(?:eval|exec|system|shell)\s*\(/gi, replacement: '[redacted](' };
 

@@ -1,5 +1,5 @@
 /**
- * Health / occupancy probes for `gbrain mcp expose`, peeled from
+ * Health / occupancy probes for `foresights mcp expose`, peeled from
  * `mcp-expose.ts`: one bounded `tryFetch` that never throws, the `/health`
  * bar (`probeHealth`), the "does ANYTHING listen" bar (`probeOccupied`), the
  * wall-clock poller (`pollHealth`) and the name-resolution verdict behind the
@@ -177,5 +177,5 @@ export function unresolvedDetail(dnsName: string): string {
  */
 export function statusOnlyHealthDetail(port: number): string | null {
   const m = liveStatusMarkerFor(port);
-  return m ? `status-only (${m.reason}): the server runs but cannot open its brain; \`gbrain doctor --only harness_wiring\` names the fix` : null;
+  return m ? `status-only (${m.reason}): the server runs but cannot open its brain; \`foresights doctor --only harness_wiring\` names the fix` : null;
 }

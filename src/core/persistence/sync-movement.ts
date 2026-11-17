@@ -1,8 +1,8 @@
 /**
  * #6317 (B4, I2): does managed sync data move? One reader behind
- * `gbrain sources status`, `gbrain sources writer status --json`, the doctor
+ * `foresights sources status`, `foresights sources writer status --json`, the doctor
  * check `managed_sync_not_moving`, the `serve` notice and
- * `gbrain sources writer movement`, so no surface can call a parked sync
+ * `foresights sources writer movement`, so no surface can call a parked sync
  * healthy while another calls it stuck.
  *
  * Per active managed source the snapshot carries the unfinished cursor
@@ -104,7 +104,7 @@ const iso = (value: unknown): string | null => {
 };
 const newest = (...values: Array<string | null | undefined>): string | null => values.reduce<string | null>((best, value) => value && (!best || value > best) ? value : best, null);
 
-export function writerStatusCommand(sourceId: string): string { return `gbrain sources writer status --source ${sourceId} --json`; }
+export function writerStatusCommand(sourceId: string): string { return `foresights sources writer status --source ${sourceId} --json`; }
 
 /** $1 worktree, $2 source incarnation. The kind test matches the `persistence_requests_sync_watermark` predicate text, so the planner can prove the partial index applies. */
 export const MOVEMENT_WATERMARK_SQL = `SELECT
@@ -121,7 +121,7 @@ interface HoldRow { count: number | string | null; stalled: number | string | nu
 /**
  * #6706: the id of the active `sync` Minions job with a live lock that is draining `sourceId`, or null. Never rejects.
  * #6712 PR 1: a job drains under the source's drain lease, so its holder row names the job first; the job-table read
- * stays for a job an older gbrain started (it takes no lease). #7596: a holder that stopped renewing the lease is not live (a
+ * stays for a job an older foresights started (it takes no lease). #7596: a holder that stopped renewing the lease is not live (a
  * killed job's lock row names it until a takeover); `liveHolder` is the live holder a caller already read that way, or null.
  */
 export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHolder?: DrainHolder | null): Promise<number | null> {
@@ -210,16 +210,16 @@ function verdict(m: Omit<SourceMovement, 'movement_state' | 'data_moving' | 'not
 }
 function safeJson(text: string): unknown { try { return JSON.parse(text); } catch { return null; } }
 
-/** One human line per source for `gbrain sources status`; null for a source with nothing pending. */
+/** One human line per source for `foresights sources status`; null for a source with nothing pending. */
 export function formatSourceMovement(m: SourceMovement): string | null {
   if (m.movement_state === 'nothing_pending') return null;
   if (m.movement_state === 'unknown') {
-    return `${m.source_id}: managed sync movement UNKNOWN: the sync backlog could not be read (${m.unknown?.reason ?? 'backlog_read_failed'}: ${m.unknown?.error ?? 'no detail'}); this is not a report that nothing is pending. Recheck: gbrain sources writer movement ${m.source_id}`;
+    return `${m.source_id}: managed sync movement UNKNOWN: the sync backlog could not be read (${m.unknown?.reason ?? 'backlog_read_failed'}: ${m.unknown?.error ?? 'no detail'}); this is not a report that nothing is pending. Recheck: foresights sources writer movement ${m.source_id}`;
   }
   const where = m.head?.step ? ` head at step ${m.head.step}${m.head.waiting_on && m.head.waiting_on !== 'unknown' ? ` (waiting on ${m.head.waiting_on})` : ''}${m.head.owner ? `, ${m.head.owner.kind} pid ${m.head.owner.pid}` : ''};` : '';
   const work = m.cursor ?? m.pass!;
   if (m.pass?.stuck) return `${m.source_id}: managed sync NOT CONVERGING: every pass since ${m.pass.stuck_since} stopped ${m.pass.stuck}${m.pass.stop_reason ? ` (${m.pass.stop_reason})` : ''}, `
-    + `${m.pass.remaining} path(s) unsettled; inspect: gbrain sync status --source ${m.source_id} --json`;
+    + `${m.pass.remaining} path(s) unsettled; inspect: foresights sync status --source ${m.source_id} --json`;
   switch (m.movement_state) {
     case 'not_moving': return `${m.source_id}: managed sync NOT MOVING since ${m.not_moving_since} (no committed page or step advance for longer than ${Math.round(m.ceiling_ms / 1000)}s while a ${m.live.drain ? 'sync' : 'consumer'} is live);${where} inspect: ${m.writer_status_command}`;
     case 'parked': return `${m.source_id}: managed sync parked at ${work.index}/${work.total} (no sync or consumer is live; informational). Resume: ${work.resume_command}`;

@@ -57,7 +57,7 @@ export function physicalRootError(message = 'The physical checkout identity chan
 export function ownershipRecordNotPrivateError(): OperationError {
   const error = physicalRootError('A private ownership record of this checkout is readable by other users, so the checkout identity cannot be verified.');
   error.detail = 'ownership_record_not_private';
-  error.suggestion = 'On the brain host, gbrain doctor --only foreign_ownership_marker names the record and the chmod 600 that makes it private again. Never remove an ownership record to get past this.';
+  error.suggestion = 'On the brain host, foresights doctor --only foreign_ownership_marker names the record and the chmod 600 that makes it private again. Never remove an ownership record to get past this.';
   return error;
 }
 /**
@@ -285,7 +285,7 @@ export const PHYSICAL_ROOT_MOVED_MESSAGE = 'This folder holds the ownership stam
 export function physicalRootMovedError(): OperationError {
   const error = physicalRootError(PHYSICAL_ROOT_MOVED_MESSAGE);
   error.detail = 'physical_root_moved';
-  error.suggestion = 'Nothing changed. On the brain host, run the same gbrain sources add, set-path or writer claim with --dry-run in a terminal: it names the recorded path and the commands that bring the checkout back. Moving folders is the user\'s decision. Never remove the ownership markers.';
+  error.suggestion = 'Nothing changed. On the brain host, run the same foresights sources add, set-path or writer claim with --dry-run in a terminal: it names the recorded path and the commands that bring the checkout back. Moving folders is the user\'s decision. Never remove the ownership markers.';
   error.docs = 'docs/guides/write-refusals.md#moved-root';
   return error;
 }
@@ -308,7 +308,7 @@ export function physicalRootMovedRefusal(moved: MovedPhysicalRoot, exit: { sourc
     const steps = exit.members.map(member => ['gbrain', 'sources', 'set-path', member.sourceId, member.relativePath ? join(root, member.relativePath) : root]);
     error.message = `${where} It holds source${steps.length > 1 ? 's' : ''} ${exit.members.map(member => member.sourceId).join(', ')}.`;
     // The first set-path moves the worktree; each further source of it is pointed at the new path once the symlink is gone.
-    const [first, ...rest] = steps, setPathText = (step: string[]) => `gbrain sources set-path ${step[3]} ${q(step[4])}`;
+    const [first, ...rest] = steps, setPathText = (step: string[]) => `foresights sources set-path ${step[3]} ${q(step[4])}`;
     error.suggestion = `Nothing changed. Ask the user before touching their folders. Then leave a symlink at the old path with ln -s ${q(to)} ${q(from)}, run ${setPathText(first)} `
       + `(it keeps worktree ${worktreeId} and its history and moves the ownership records to the new path), then remove the symlink with rm ${q(from)}`
       + `${rest.length ? `, then run ${rest.map(setPathText).join(', then ')}` : ''}. Never remove the ownership markers.`;
@@ -318,19 +318,19 @@ export function physicalRootMovedRefusal(moved: MovedPhysicalRoot, exit: { sourc
     for (const step of [...rest].reverse()) after = pointAt(step, after);
     const then = pointAt(first, user('Removes the symlink left at the old path; the checkout stays where it is now.', ['rm', from], 'The symlink at the old path is no longer needed. May I remove it?',
       after ? { then: after } : {}));
-    error.fix = user(`Leaves a symlink at the old path so gbrain can verify the moved checkout is the same worktree before it moves its records.`, ['ln', '-s', to, from],
-      `Your brain folder moved from ${from} to ${to}. I can leave a symlink at the old path, update gbrain's record of it, then remove the symlink; your files and Git history stay as they are. Shall I go ahead?`,
+    error.fix = user(`Leaves a symlink at the old path so foresights can verify the moved checkout is the same worktree before it moves its records.`, ['ln', '-s', to, from],
+      `Your brain folder moved from ${from} to ${to}. I can leave a symlink at the old path, update foresights's record of it, then remove the symlink; your files and Git history stay as they are. Shall I go ahead?`,
       { then, verify: { argv: [...steps[0], '--dry-run'] } });
     return error;
   }
-  const label = exit.operation === 'claim' ? 'gbrain sources writer claim' : 'gbrain sources add';
+  const label = exit.operation === 'claim' ? 'foresights sources writer claim' : 'foresights sources add';
   if (!moved.sameDirectory) {
     error.message = `${where} It has no source since its source was removed, and this folder is a copy, not the stamped directory (its device, inode or birth time differs).`;
     error.suggestion = `Nothing changed. Moving this copy back to ${q(recorded)} would not reattach worktree ${worktreeId}. Restore the original folder at ${q(recorded)} from a backup, then rerun ${label} ${exit.sourceId} --path ${q(recorded)}; `
-      + 'or, if it is gone for good, switch the brain to classic mode with gbrain sources writer deactivate --dry-run (then the printed apply_command) and add the folder there. Never remove the ownership markers.';
+      + 'or, if it is gone for good, switch the brain to classic mode with foresights sources writer deactivate --dry-run (then the printed apply_command) and add the folder there. Never remove the ownership markers.';
     error.fix = user('Read-only preview of switching the brain to classic mode, where the copied folder can be added without the old ownership records.',
       ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run'],
-      `Your brain folder was copied to ${root} and the original at ${recorded} is gone. gbrain cannot reattach a copy. Do you want to restore the original from a backup, or switch the brain to classic mode?`);
+      `Your brain folder was copied to ${root} and the original at ${recorded} is gone. foresights cannot reattach a copy. Do you want to restore the original from a backup, or switch the brain to classic mode?`);
     return error;
   }
   const command = exit.operation === 'claim' ? ['gbrain', 'sources', 'writer', 'claim', exit.sourceId, '--path', recorded]
@@ -338,12 +338,12 @@ export function physicalRootMovedRefusal(moved: MovedPhysicalRoot, exit: { sourc
   const readd = exit.operation === 'claim' ? [...command, '--admin-intent', 'writer_claim', '--expected-state', '<admin_state>'] : command;
   error.message = `${where} It has no source since its source was removed; the worktree and its history are kept.`;
   error.suggestion = `Nothing changed. Ask the user before touching their folders. Then move it back with mv ${q(to)} ${q(from)} and run ${label} ${exit.sourceId} --path ${q(recorded)}${exit.operation === 'claim' ? ' (with the admin intent writer status prints)' : ''}, `
-    + `which reattaches worktree ${worktreeId} and its history. To keep the folder at its new place afterwards, move it again and run gbrain sources set-path ${exit.sourceId} --dry-run: it names the symlink steps. Never remove the ownership markers.`;
-  error.fix = user('Moves the folder back to where gbrain recorded it, so the worktree and its history can be reattached.', ['mv', to, from],
-    `Your brain folder moved from ${from} to ${to}, and gbrain only recognizes it at the old path. May I move it back and re-add it there? You can move it again afterwards with gbrain's help.`,
+    + `which reattaches worktree ${worktreeId} and its history. To keep the folder at its new place afterwards, move it again and run foresights sources set-path ${exit.sourceId} --dry-run: it names the symlink steps. Never remove the ownership markers.`;
+  error.fix = user('Moves the folder back to where foresights recorded it, so the worktree and its history can be reattached.', ['mv', to, from],
+    `Your brain folder moved from ${from} to ${to}, and foresights only recognizes it at the old path. May I move it back and re-add it there? You can move it again afterwards with foresights's help.`,
     { verify: { argv: [...command, '--dry-run'] },
       then: user(`Re-registers source ${exit.sourceId} at the recorded path, which reattaches worktree ${worktreeId}.`, readd, `May I register source ${exit.sourceId} at ${recorded}?`,
-        exit.operation === 'claim' ? { inputs: [{ name: 'admin_state', how: 'admin_state from gbrain sources writer status --json on the brain host' }] } : {}) });
+        exit.operation === 'claim' ? { inputs: [{ name: 'admin_state', how: 'admin_state from foresights sources writer status --json on the brain host' }] } : {}) });
   return error;
 }
 const DIRECTORY_CHANGED_MESSAGE = 'The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
@@ -356,7 +356,7 @@ export const isPhysicalRootDirectoryChangedMessage = (message: string | null | u
  */
 export function relocatedRootTransferFix(sourceId: string, binding?: { root: string; epoch: string }): Action {
   const intent = (phase: string) => ['--admin-intent', `writer_transfer_${phase}`, '--expected-state', '<admin_state>'];
-  const adminState = { name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host (read it again before the accept)` };
+  const adminState = { name: 'admin_state', how: `admin_state from foresights sources writer status ${sourceId} --json on the owner host (read it again before the accept)` };
   const prepare = ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--self-transfer', '--confirm-relocated-root'];
   return { argv: [...prepare, ...intent('prepare')], preview_argv: [...prepare, '--dry-run'], inputs: [adminState], consent: [], actor: 'host_admin', requires_exclusive: false,
     docs: 'docs/guides/write-refusals.md#physical_root_directory_changed',
@@ -370,8 +370,8 @@ export function relocatedRootTransferFix(sourceId: string, binding?: { root: str
 export function physicalRootDirectoryChangedError(): OperationError {
   const error = physicalRootError(DIRECTORY_CHANGED_MESSAGE);
   error.detail = 'physical_root_directory_changed';
-  error.suggestion = 'On the brain host, run gbrain sources writer status <source> and note admin_state, then gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root '
-    + '--admin-intent writer_transfer_prepare --expected-state <admin_state>, then gbrain sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <manifest digest printed by prepare> '
+  error.suggestion = 'On the brain host, run foresights sources writer status <source> and note admin_state, then foresights sources writer transfer prepare <source> --self-transfer --confirm-relocated-root '
+    + '--admin-intent writer_transfer_prepare --expected-state <admin_state>, then foresights sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <manifest digest printed by prepare> '
     + '--self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Never remove the ownership markers to claim this path.';
   return error;
 }

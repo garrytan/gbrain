@@ -1,7 +1,7 @@
 /**
  * The markdown tree as extraction reads it (GBRA-133 2b.1): the descent-pruned walk behind `walkMarkdownFiles`, the
  * yielding tree index the sync hooks share per run, and the endpoint page-type lookup they extract links through.
- * Full `gbrain extract` keeps its whole-tree page-type parse in extract.ts.
+ * Full `foresights extract` keeps its whole-tree page-type parse in extract.ts.
  */
 import { readFileSync, readdirSync, lstatSync } from 'fs';
 import { join, relative } from 'path';
@@ -57,12 +57,12 @@ export function indexSlugPath(index: Map<string, string>, slug: string, relPath:
   if (!index.has(slug) || relPath === `${slug}.md`) index.set(slug, relPath);
 }
 
-/** What link extraction reads a page type through: a whole-tree map (full `gbrain extract`) or the sync hook's endpoint lookup. */
+/** What link extraction reads a page type through: a whole-tree map (full `foresights extract`) or the sync hook's endpoint lookup. */
 export type PageTypeLookup = Pick<ReadonlyMap<string, string>, 'get'>;
 
 /**
  * GBRA-133 2b.1: the sync hook's page types, parsed from the files of the link endpoints its pages actually look up
- * instead of from every file in the tree (`loadFsPageTypes`, which full `gbrain extract` keeps). `pass` runs the
+ * instead of from every file in the tree (`loadFsPageTypes`, which full `foresights extract` keeps). `pass` runs the
  * extraction against the lookup; a walked slug it asks for and has no type yet is recorded, its file parsed, and the
  * pass repeated until one asks for nothing new (an answer can make extraction ask for more, e.g. a person target
  * prompts the attendance candidates). Each answer is what `loadFsPageTypes` gives that slug: the parse under the

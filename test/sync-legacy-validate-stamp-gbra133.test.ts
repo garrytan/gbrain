@@ -1,5 +1,5 @@
 /**
- * GBRA-133: a legacy page (imported by an older gbrain, so it has no import record) whose database copy carries the
+ * GBRA-133: a legacy page (imported by an older foresights, so it has no import record) whose database copy carries the
  * v0.13.1 grandfather stamp `validate: false` that its file never had. The stamp is mechanical (grandfather.ts) and a
  * coordinated write keeps it for a file without a `validate:` key (#6429, page-prepare.ts). Before the fix sync's import
  * comparison did not: the legacy sweep could not record the page, and the next commit to its file was held file_drift of
@@ -29,7 +29,7 @@ const setup = ({ root }: { root: string }) => {
   commit(root, 'notes');
 };
 
-/** The synced pages as an older gbrain left them: no import record and no pass row; the grandfather stamp as v0.13.1's UPDATE wrote it. */
+/** The synced pages as an older foresights left them: no import record and no pass row; the grandfather stamp as v0.13.1's UPDATE wrote it. */
 async function legacyPages(engine: BrainEngine, stamped: string[], dbEdited: string[]): Promise<void> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {

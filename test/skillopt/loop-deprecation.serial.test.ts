@@ -50,7 +50,7 @@ import { NOTICE_CODES } from '../../src/core/error-registry.ts';
 import type { Notice } from '../../src/core/agent-output.ts';
 import { SKILLOPT_LOOP_DEPRECATED, SKILLOPT_LOOP_REMOVAL_DATE } from '../../src/core/skillopt/loop-deprecation.ts';
 
-const NOTICE_LINE = /\[gbrain notice skillopt_loop_deprecated\]/g;
+const NOTICE_LINE = /\[(?:foresights|gbrain) notice skillopt_loop_deprecated\]/g;
 const ENV = { GBRAIN_HOME: tmpHome, ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: undefined, GBRAIN_MODEL: undefined, GBRAIN_MODEL_DISCOVERY: 'off' };
 
 let engine: PGLiteEngine;

@@ -39,7 +39,7 @@ export interface PublishRequest<C = unknown> {
   context?: C;
   /** An operator release of this held row (repair generations --mode release-held). */
   release?: { holdId: string; reason: HeldReason };
-  /** A previewed operator retirement (`gbrain repair stale-atoms`): retire exactly these keys, stamped `retiredBy`; `items` is ignored. */
+  /** A previewed operator retirement (`foresights repair stale-atoms`): retire exactly these keys, stamped `retiredBy`; `items` is ignored. */
   approved?: { retire: readonly string[]; retiredBy: DerivedRetiredBy; expect?: Readonly<Record<string, string>> };
   /** Unmanaged only: runs in the activation transaction after the retirements (stale-atoms invalidates the origin's completions there). */
   onRetired?: (tx: BrainEngine, retired: readonly string[]) => Promise<void>;

@@ -1,6 +1,6 @@
 /**
- * #5167: `gbrain takes rebuild <slug>` rebuilds one page's takes index from its
- * canonical fence; `gbrain takes remove <slug> --row N` removes one row from the
+ * #5167: `foresights takes rebuild <slug>` rebuilds one page's takes index from its
+ * canonical fence; `foresights takes remove <slug> --row N` removes one row from the
  * fence and the index together (other row numbers unchanged) and refuses when
  * they disagree. #5214: an accepted proposal records `take_proposals#<id>` as
  * its source, and an edited accept records the overrides with
@@ -31,7 +31,7 @@ async function call(operation: string, params: Record<string, unknown>) {
     () => dispatch(engine, operation, { request_id: randomUUID(), ...params }, { config, remote: false, sourceId: 'default' }));
   return { error: result.isError ?? false, body: JSON.parse(result.content[0].text) };
 }
-/** The trusted local path `gbrain takes remove` takes (takes_remove is local-only, never an MCP tool). */
+/** The trusted local path `foresights takes remove` takes (takes_remove is local-only, never an MCP tool). */
 async function local(operation: string, params: Record<string, unknown>) {
   const op = operations.find(candidate => candidate.name === operation)!;
   try {
@@ -102,7 +102,7 @@ describe('takes remove (#5167)', () => {
     await engine.executeRaw("UPDATE takes SET claim='Not what the fence says' WHERE row_num=3 AND page_id=(SELECT id FROM pages WHERE slug='notes/remove')");
     const refused = await local('takes_remove', { slug: 'notes/remove', row_num: 3 });
     expect(refused.error).toBe(true);
-    expect(JSON.stringify(refused.body)).toContain('gbrain takes rebuild notes/remove');
+    expect(JSON.stringify(refused.body)).toContain('foresights takes rebuild notes/remove');
     expect(fence('notes/remove').map(t => t.rowNum)).toEqual([1, 3]);
   });
 

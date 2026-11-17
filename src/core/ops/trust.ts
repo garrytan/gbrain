@@ -5,7 +5,7 @@
  * connection holding `memory_confirm` (minted by the local CLI), or the local
  * CLI on an interactive terminal where the user types the target's token.
  * Agent tokens get `insufficient_scope` with a `tell_user_to_run` fix naming
- * `gbrain trust confirm <ref>`; a non-TTY local caller gets
+ * `foresights trust confirm <ref>`; a non-TTY local caller gets
  * `confirmation_required`. The other owner actions (review accept/reject,
  * release, drop, revert, allow, disable) are not operations at all: they run
  * only from the local CLI or the resident owner's 0600 IPC administration
@@ -39,7 +39,7 @@ const confirm_memory: Operation = {
     const ref = parseTrustRef(raw);
     if (ref.kind !== 'fact' && ref.kind !== 'take' && !(ref.kind === 'page' && ref.sourceId)) {
       throw opError('invalid_params', 'confirm_memory takes f<id>, t<id> or p:<source>/<slug>.',
-        'Pass the ref of one fact, take or page (pages with their source, e.g. p:default/notes/alice-example). Trust proposals and held writes are decided on the brain host with gbrain trust review.');
+        'Pass the ref of one fact, take or page (pages with their source, e.g. p:default/notes/alice-example). Trust proposals and held writes are decided on the brain host with foresights trust review.');
     }
     const preview = await previewOwnerAction(ctx.engine, { action: 'confirm', ref: raw });
     if (ctx.remote !== false) {

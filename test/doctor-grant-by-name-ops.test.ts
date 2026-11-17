@@ -1,6 +1,6 @@
 /**
  * `grant_new_ops_available` with membership operations missing: the default
- * fix and its preview never add an operation gbrain says the owner approves by
+ * fix and its preview never add an operation foresights says the owner approves by
  * name (join_brain, sync_brain_skills, leave_brain). The check lists those and
  * carries a separate by-name command, never the fix. The count and the commands
  * agree: missing = added by the default command + listed as by-name. Real CLI

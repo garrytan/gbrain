@@ -5,7 +5,7 @@
  * The regression this pins: v0.42 added
  * `autopilot.incremental_extract_include_frontmatter`, but only the autopilot
  * cycle read it. performSync's inline extract, the GitHub/Google source inline
- * extracts, the `extract_stale` minion and `gbrain maintain` extracted body
+ * extracts, the `extract_stale` minion and `foresights maintain` extracted body
  * links only AND then stamped `links_extracted_at`, so with the knob on a page
  * came out of an unattended sync marked fresh without its frontmatter edges,
  * and the cycle's stale drain never revisited it.
@@ -87,7 +87,7 @@ describe('resolveIncludeFrontmatter', () => {
 
   test('a non-boolean file-plane value falls through to the DB plane instead of winning as false (#2120 class)', () => inHome(async () => {
     // A hand-edited config.json with "true" (string) or 1 used to short-circuit
-    // to false AND shadow the DB plane — so `gbrain config set <key> true` was
+    // to false AND shadow the DB plane — so `foresights config set <key> true` was
     // a silent no-op. Only a real boolean is a file-plane answer.
     for (const garbled of ['true', 1, 'yes']) {
       writeConfigFile({ autopilot: { incremental_extract_include_frontmatter: garbled } });

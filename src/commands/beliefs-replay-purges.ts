@@ -1,6 +1,6 @@
 /**
- * `gbrain beliefs replay-purges` (docs/designs/BELIEF_LEDGER.md section 8): a
- * Postgres restore happens outside gbrain, so the purges made after the backup
+ * `foresights beliefs replay-purges` (docs/designs/BELIEF_LEDGER.md section 8): a
+ * Postgres restore happens outside foresights, so the purges made after the backup
  * are replayed into the restored database here, from a purge mirror
  * (`--purge-mirror <absolute path>`) or from the pre-restore database
  * (`--from-url-env <VAR>`, the URL never on argv). A dry run by default: the
@@ -21,8 +21,8 @@ export interface ReplayPurgesReport extends PurgeReplayResult { applied: boolean
 
 export async function replayPurgesCli(engine: BrainEngine, args: string[]): Promise<{ value: ReplayPurgesReport; text: string }> {
   if (engine.kind !== 'postgres') {
-    throw opError('invalid_params', 'gbrain beliefs replay-purges replays purges into a restored Postgres brain; a PGLite restore replays them itself.',
-      'On PGLite, run gbrain backup restore --purge-mirror <absolute path> to name a purge mirror other than the brain home\'s.');
+    throw opError('invalid_params', 'foresights beliefs replay-purges replays purges into a restored Postgres brain; a PGLite restore replays them itself.',
+      'On PGLite, run foresights backup restore --purge-mirror <absolute path> to name a purge mirror other than the brain home\'s.');
   }
   const archivedAt = flag(args, '--archived-at');
   if (!archivedAt || Number.isNaN(Date.parse(archivedAt))) {

@@ -53,15 +53,15 @@ import { withAIInvocationGuard } from '../core/ai/invocation-guard.ts';
 export const GLOBAL_MIGRATION_LOCK_ID = 'gbrain-embedding-migration';
 
 export const EMBEDDING_MIGRATION_RECOVERY = {
-  status_command: 'gbrain migrate embeddings --status --json',
-  docs: 'https://github.com/garrytan/gbrain/blob/master/docs/guides/embedding-migration.md#recovery',
+  status_command: 'foresights migrate embeddings --status --json',
+  docs: 'https://github.com/aimonk2025/gbrain/blob/master/docs/guides/embedding-migration.md#recovery',
   partial_state: 'Previously committed progress and authorization debits may remain.',
   action: 'Inspect the selected brain using the same --brain selection before retrying. Do not blindly retry or reset the migration marker.',
   authorization: 'Increasing --max-cost-usd renews authorization for a larger total cap; it does not reset prior debits.',
 } as const;
 
 function printHelp(): void {
-  process.stdout.write(`Usage: gbrain migrate embeddings --to <provider:model> [flags]
+  process.stdout.write(`Usage: foresights migrate embeddings --to <provider:model> [flags]
 
 Re-embed the whole brain onto a different embedding provider/model. Handles
 dimension changes (schema transition), pages without a recorded embedding
@@ -132,7 +132,7 @@ function renderPlan(ctx: MigrationPlanContext): string {
     if (envMatchesTarget) {
       lines.push('  NOTICE: GBRAIN_EMBEDDING_* env vars pin this target and override the file');
       lines.push('          plane at runtime. The migration also writes the file plane — keep the');
-      lines.push('          env in sync (or unset it) so every gbrain process agrees.');
+      lines.push('          env in sync (or unset it) so every foresights process agrees.');
     } else {
       lines.push('  WARNING: GBRAIN_EMBEDDING_* env vars are set and do not fully pin the target —');
       lines.push('          a live run refuses when they contradict it (see the env-override box).');
@@ -213,8 +213,8 @@ function renderPlan(ctx: MigrationPlanContext): string {
   } else if (rr.action.suggestion !== null) {
     lines.push(`  ACTION: the target provider ships no reranker; the exposed reranker stays on`);
     lines.push(`          ${rr.exposed?.model ?? 'the current model'}. Switch or disable it yourself:`);
-    lines.push(`            gbrain config set search.reranker.model ${rr.action.suggestion}`);
-    lines.push('            gbrain config set search.reranker.enabled false');
+    lines.push(`            foresights config set search.reranker.model ${rr.action.suggestion}`);
+    lines.push('            foresights config set search.reranker.enabled false');
   } else if (plan.reranker_warning) {
     lines.push(`  WARNING: ${plan.reranker_warning}`);
   }
@@ -255,13 +255,13 @@ function renderRerankerOutcome(outcome: RerankerOutcome): string[] {
       return [
         `  [migrate] reranker NOT switched — the live probe failed; the previous config was kept:`,
         `            ${outcome.reason ?? 'unknown reason'}`,
-        `            Fix the key/model and re-run, or: gbrain config set search.reranker.model ${outcome.to}`,
+        `            Fix the key/model and re-run, or: foresights config set search.reranker.model ${outcome.to}`,
       ];
     case 'suggested':
       return [
         '  [migrate] ACTION: the exposed reranker was NOT changed (target ships none). Switch or disable it:',
-        ...(outcome.suggestion ? [`            gbrain config set search.reranker.model ${outcome.suggestion}`] : []),
-        '            gbrain config set search.reranker.enabled false',
+        ...(outcome.suggestion ? [`            foresights config set search.reranker.model ${outcome.suggestion}`] : []),
+        '            foresights config set search.reranker.enabled false',
       ];
     default:
       return [];
@@ -375,7 +375,7 @@ export async function persistEmbeddingFileConfig(
     // default — the #1421 class). envFullyPinsTarget requires the MODEL var.
     const envPinsTarget = envFullyPinsTarget(toModel, toDims);
     if (envPinsTarget) {
-      serr('  [migrate] no ~/.gbrain/config.json — env-canonical mode: GBRAIN_EMBEDDING_* pins the target; keep it set for every gbrain process.');
+      serr('  [migrate] no ~/.gbrain/config.json — env-canonical mode: GBRAIN_EMBEDDING_* pins the target; keep it set for every foresights process.');
       const merged = await effective();
       if (merged) configureGateway(buildGatewayConfig(merged));
       return;
@@ -391,8 +391,8 @@ export async function persistEmbeddingFileConfig(
       'No ~/.gbrain/config.json found — refusing to migrate.\n' +
       '  The embed pipeline reads file/env config, so without a file plane this switch\n' +
       '  would not survive the process and the next run would re-embed into the old space.\n' +
-      '  Fix: run `gbrain init` (or set GBRAIN_EMBEDDING_MODEL + GBRAIN_EMBEDDING_DIMENSIONS\n' +
-      '  in the environment of every gbrain process) and re-run.',
+      '  Fix: run `foresights init` (or set GBRAIN_EMBEDDING_MODEL + GBRAIN_EMBEDDING_DIMENSIONS\n' +
+      '  in the environment of every foresights process) and re-run.',
     );
   }
   fileCfg.embedding_model = toModel;
@@ -631,7 +631,7 @@ export async function executeMigrationFlow(
     if (expectedSources !== undefined) {
       if (tx) await tx.executeRaw('LOCK TABLE sources IN SHARE MODE');
       const sources = await (tx ?? engine).executeRaw('SELECT id,incarnation::text,archived FROM sources ORDER BY id');
-      if (JSON.stringify(sources) !== expectedSources) throw new Error('Source census changed (including archive state); migration paused before further work. Inspect --status; use gbrain sources restore <id> deliberately only if restoring an archived source is intended.');
+      if (JSON.stringify(sources) !== expectedSources) throw new Error('Source census changed (including archive state); migration paused before further work. Inspect --status; use foresights sources restore <id> deliberately only if restoring an archived source is intended.');
     }
   };
   const heartbeat = setInterval(() => {
@@ -667,7 +667,7 @@ export async function executeMigrationFlow(
         return {
           status: 'locked',
           holder: 'embed_backfill',
-          detail: `an embed backfill holds the lock for source "${sid}" (check \`gbrain jobs list\`; a hard-killed run's lock expires within ${EMBED_BACKFILL_LOCK_TTL_MIN} minutes)`,
+          detail: `an embed backfill holds the lock for source "${sid}" (check \`foresights jobs list\`; a hard-killed run's lock expires within ${EMBED_BACKFILL_LOCK_TTL_MIN} minutes)`,
         };
       }
       heldLocks.push(lock);
@@ -711,7 +711,7 @@ export async function executeMigrationFlow(
 
     await assertOwned();
     const readiness = await prepareEmbeddingProjections(engine, { repair: true, assertOwned });
-    if (readiness.blocked) return { status: 'apply_failed', reason: `projection_blocked: ${readiness.blocked} page(s) remain; no migration-wide embedding invalidation performed. Canonical projection recovery may have made durable progress. Inspect blockers before retrying: archived sources require deliberate gbrain sources restore <id>; image pages are counted by class in gbrain doctor --only text_projection_readiness --json (gbrain projections drain seals the sealable ones). See docs/guides/embedding-migration.md#recovery.` };
+    if (readiness.blocked) return { status: 'apply_failed', reason: `projection_blocked: ${readiness.blocked} page(s) remain; no migration-wide embedding invalidation performed. Canonical projection recovery may have made durable progress. Inspect blockers before retrying: archived sources require deliberate foresights sources restore <id>; image pages are counted by class in foresights doctor --only text_projection_readiness --json (foresights projections drain seals the sealable ones). See docs/guides/embedding-migration.md#recovery.` };
 
     const applied = await applyEmbeddingMigration(engine, plan, {
       ignoreEnvOverride: opts.ignoreEnvOverride,
@@ -1052,7 +1052,7 @@ export async function runMigrateEmbeddings(
   }
 
   if (!flags.to) {
-    serr('Missing --to <provider:model>. Example: gbrain migrate embeddings --to openai:text-embedding-3-small');
+    serr('Missing --to <provider:model>. Example: foresights migrate embeddings --to openai:text-embedding-3-small');
     serr('Run with --help for all flags.');
     exit(1);
   }
@@ -1194,7 +1194,7 @@ export async function runMigrateEmbeddings(
     case 'applied_no_embed': {
       serr(renderApplySummary(result, plan));
       for (const line of renderRerankerOutcome(result.reranker)) serr(line);
-      if (!flags.json) console.log('Config + schema migrated. Re-embed deferred — run: gbrain embed --stale --catch-up --include-null-signature');
+      if (!flags.json) console.log('Config + schema migrated. Re-embed deferred — run: foresights embed --stale --catch-up --include-null-signature');
       exit(0);
       break;
     }
@@ -1211,7 +1211,7 @@ export async function runMigrateEmbeddings(
       } else if (result.verify_search.status === 'warn') {
         const bad = result.verify_search.samples.filter((s) => s.status !== 'hit');
         serr(`  [migrate] smoke check: WARN (${result.verify_search.reason_code ?? 'miss'}) — ${bad.map((s) => `page ${s.page_id}: ${s.status}${s.reason_code ? ` (${s.reason_code})` : ''}`).join('; ') || 'no samples'}.`);
-        serr('            Search still completed the migration; investigate with `gbrain search` / doctor if quality looks off.');
+        serr('            Search still completed the migration; investigate with `foresights search` / doctor if quality looks off.');
       } else {
         serr(`  [migrate] smoke check: skipped (${result.verify_search.reason_code ?? 'n/a'}).`);
       }
@@ -1236,7 +1236,7 @@ export async function runMigrateEmbeddings(
         // resume" would be a lie until the lock expires.
         serr(`Migration paused: ${result.remaining} chunk(s) still stale, and the re-embed was SKIPPED because`);
         serr('another embed backfill holds the per-source lock. If that is a live run (check');
-        serr('`gbrain jobs list`), let it finish. If a previous migration was killed hard, its lock');
+        serr('`foresights jobs list`), let it finish. If a previous migration was killed hard, its lock');
         serr(`expires after at most ${EMBED_BACKFILL_LOCK_TTL_MIN} minutes — re-run the same command then.`);
       } else {
         serr(`Migration incomplete: ${result.remaining} chunk(s) still stale (embed failures or an interrupted run).`);

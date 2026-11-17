@@ -1,5 +1,5 @@
 /**
- * Legacy bearer-token grants (`gbrain auth rescope --token`, alias
+ * Legacy bearer-token grants (`foresights auth rescope --token`, alias
  * `auth rescope-token`), the token twin of `auth rescope --client`. Three axes:
  *
  *   - sources       (`--sources a,b|none`): element 0 = write source
@@ -116,7 +116,7 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
     switch (flag) {
       case '--id':
         if (target) throw new GrantError('invalid_grant', 'Pass either a token name or --id, not both');
-        if (!TOKEN_ID_RE.test(value)) throw new GrantError('invalid_grant', '--id must be a token id from `gbrain auth list`');
+        if (!TOKEN_ID_RE.test(value)) throw new GrantError('invalid_grant', '--id must be a token id from `foresights auth list`');
         target = { id: value };
         break;
       case '--sources': out.sources = csvOrNone(value); break;
@@ -129,7 +129,7 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
       case '--private-pages': out.privatePages = parsePrivatePagesFlag(value); break;
       case '--scopes':
         out.scopes = csvOrNone(value.replaceAll(' ', ','));
-        if (out.scopes.length === 0) throw new GrantError('invalid_grant', '--scopes needs at least one scope (to cut a token off, use --sources none or gbrain auth revoke)');
+        if (out.scopes.length === 0) throw new GrantError('invalid_grant', '--scopes needs at least one scope (to cut a token off, use --sources none or foresights auth revoke)');
         assertAllowedScopes(out.scopes);
         break;
       case '--if-version':
@@ -187,10 +187,10 @@ async function assertActiveSources(engine: BrainEngine, ids: string[]): Promise<
     'SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [ids]);
   const active = new Set(rows.map(r => r.id));
   const missing = ids.filter(id => !active.has(id));
-  if (missing.length) throw new GrantError('invalid_grant', `Unknown or archived source: ${missing.join(', ')} (see gbrain sources list)`);
+  if (missing.length) throw new GrantError('invalid_grant', `Unknown or archived source: ${missing.join(', ')} (see foresights sources list)`);
 }
 
-const SCHEMA_HINT = 'this brain predates the unified token grant columns (access_tokens.source_grant); run `gbrain apply-migrations --yes` (no user decision needed), then retry';
+const SCHEMA_HINT = 'this brain predates the unified token grant columns (access_tokens.source_grant); run `foresights apply-migrations --yes` (no user decision needed), then retry';
 
 function schemaError(error: unknown): unknown {
   return ['source_grant', 'grant_revision', 'private_pages', ...TOKEN_GRANT_COLUMNS].some(c => isUndefinedColumnError(error, c)) ? new GrantError('grant_schema_required', SCHEMA_HINT) : error;
@@ -215,8 +215,8 @@ async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, gr
 function driftRefusal(name: string, id: string, axes: readonly LegacyGrantAxis[]): GrantError {
   return new GrantError('invalid_grant',
     `Token "${name}" (${id}) has grant drift on ${axes.join(', ')}: its permissions JSON disagrees with the grant columns `
-    + '(an older gbrain edited the JSON after migration), so those axes deny every request. Ask the user which grant is intended, then run '
-    + `gbrain auth rescope --token ${name} --adopt-permissions (keep the JSON edit) or gbrain auth rescope --token ${name} --adopt-columns `
+    + '(an older foresights edited the JSON after migration), so those axes deny every request. Ask the user which grant is intended, then run '
+    + `foresights auth rescope --token ${name} --adopt-permissions (keep the JSON edit) or foresights auth rescope --token ${name} --adopt-columns `
     + '(restore the columns), and retry.', ['legacy_token_grant_drift']);
 }
 
@@ -233,18 +233,18 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
     ? await tx.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL FOR UPDATE', [args.target.id])
     : await tx.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE', [args.target.name]);
   const label = 'id' in args.target ? `id ${args.target.id}` : `"${args.target.name}"`;
-  if (rows.length === 0) throw new GrantError('invalid_grant', `No active token ${label} (see gbrain auth list)`);
-  if (rows.length > 1) throw new GrantError('invalid_grant', `${rows.length} active tokens are named ${label}; pass --id <uuid> from gbrain auth list`);
+  if (rows.length === 0) throw new GrantError('invalid_grant', `No active token ${label} (see foresights auth list)`);
+  if (rows.length > 1) throw new GrantError('invalid_grant', `${rows.length} active tokens are named ${label}; pass --id <uuid> from foresights auth list`);
   const row = rows[0];
   const id = String(row.id);
   const name = String(row.name);
   const current = grantFromTokenRow(row);
   if (args.expectedRevision !== undefined && current.revision !== args.expectedRevision) {
     throw new GrantError('grant_conflict', `Token "${name}" is at grant revision ${current.revision}, not ${args.expectedRevision}: someone changed it since you read it. `
-      + `Re-read it with gbrain auth rescope --token ${name} --json, then retry with --if-version ${current.revision}.`);
+      + `Re-read it with foresights auth rescope --token ${name} --json, then retry with --if-version ${current.revision}.`);
   }
   if (args.adopt === 'columns' && current.shape !== 'unified') {
-    throw new GrantError('invalid_grant', `Token "${name}" has no grant columns yet, so there is nothing to adopt; its permissions JSON is the grant. Migrate it with gbrain auth rescope --migrate-legacy.`);
+    throw new GrantError('invalid_grant', `Token "${name}" has no grant columns yet, so there is nothing to adopt; its permissions JSON is the grant. Migrate it with foresights auth rescope --migrate-legacy.`);
   }
   let base: TokenGrantAxes = current;
   if (args.adopt === 'permissions') {
@@ -280,7 +280,7 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
     const granted = base.allowedOperations ?? grantable.filter(op => !requiresExplicitApproval(op));
     if (materialized && args.allNew) {
       throw new GrantError('invalid_grant', `Token ${label} has no operation snapshot; --all-new would approve every membership operation at once. `
-        + `Preview with gbrain auth rescope ${'id' in args.target ? `--id ${args.target.id}` : `--token ${args.target.name}`} --refresh-operations, then name each one with --add`);
+        + `Preview with foresights auth rescope ${'id' in args.target ? `--id ${args.target.id}` : `--token ${args.target.name}`} --refresh-operations, then name each one with --add`);
     }
     const available = grantable.filter(op => !granted.includes(op));
     const added = args.allNew ? available : args.add ?? [];
@@ -342,7 +342,7 @@ export async function migrateLegacyTokens(engine: BrainEngine, opts: { dryRun: b
         const entry = { id: String(row.id), name: String(row.name) };
         if (grant.permissionsMalformed) {
           result.skipped.push({ ...entry, reason: 'permissions_malformed',
-            fix: `ask the user which grant this token should hold, then run gbrain auth rescope --id ${entry.id} --reset-default sources,takes-holders,operations (or pass explicit --sources/--takes-holders/--operations)` });
+            fix: `ask the user which grant this token should hold, then run foresights auth rescope --id ${entry.id} --reset-default sources,takes-holders,operations (or pass explicit --sources/--takes-holders/--operations)` });
           continue;
         }
         if (!opts.dryRun) await writeTokenGrant(tx, row, grant);
@@ -416,11 +416,11 @@ export async function resolveRescopeTarget(engine: BrainEngine, name: string): P
     throw new GrantError('invalid_grant', `"${name}" names both a legacy token and an OAuth client; pass --token ${name} or --client ${clients[0].client_id}`, ['rescope_target_ambiguous']);
   }
   if (clients.length > 1) {
-    throw new GrantError('invalid_grant', `"${name}" names ${clients.length} OAuth clients (${clients.map(c => c.client_id).join(', ')}); pass --client <client-id> from gbrain auth clients`, ['rescope_target_ambiguous']);
+    throw new GrantError('invalid_grant', `"${name}" names ${clients.length} OAuth clients (${clients.map(c => c.client_id).join(', ')}); pass --client <client-id> from foresights auth clients`, ['rescope_target_ambiguous']);
   }
   if (clients.length === 1) return { kind: 'client', clientId: clients[0].client_id };
   if (tokens.length) return { kind: 'token' };
-  throw new GrantError('invalid_grant', `No active token or OAuth client named "${name}" (see gbrain auth list and gbrain auth clients)`);
+  throw new GrantError('invalid_grant', `No active token or OAuth client named "${name}" (see foresights auth list and foresights auth clients)`);
 }
 
 export function renderLegacyGrantAxis(value: string[] | 'default' | 'unrestricted'): string {

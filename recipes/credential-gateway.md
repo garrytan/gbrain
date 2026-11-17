@@ -2,7 +2,7 @@
 id: credential-gateway
 name: Credential Gateway
 version: 1.0.0
-description: Secure access to Gmail, Google Calendar, and Google Contacts. Native `gbrain google connect` (recommended) or the ClawVisor hosted gateway.
+description: Secure access to Gmail, Google Calendar, and Google Contacts. Native `foresights google connect` (recommended) or the ClawVisor hosted gateway.
 category: infra
 requires: []
 secrets:
@@ -47,7 +47,7 @@ calendar-to-brain depend on.
 email-to-brain or calendar-to-brain, set up credential-gateway FIRST.
 
 **Two options, both free:**
-- **Option A: Native connector (recommended)** — `gbrain google connect` runs the
+- **Option A: Native connector (recommended)** — `foresights google connect` runs the
   whole OAuth flow itself: BYO Desktop-app client, loopback consent (auto
   paste-back over SSH/headless), token refresh, and custody. Tokens live only in
   the local credential vault (`~/.gbrain/credentials.json`, mode 0600). No
@@ -66,7 +66,7 @@ Ask the user: "How do you want to connect to Google services (Gmail, Calendar,
 Contacts)?
 
 **Option A: Native connector (recommended)**
-gbrain connects directly with your own (free) Google OAuth client. You own the
+foresights connects directly with your own (free) Google OAuth client. You own the
 app, the quota, and the tokens — they never leave your machine. One-time setup
 is ~7 minutes of Google Cloud console clicks, then everything is automatic.
 
@@ -79,7 +79,7 @@ set up, but your tokens are custodied by the gateway service."
 Run:
 
 ```bash
-gbrain google connect --json
+foresights google connect --json
 ```
 
 When no client credentials are on file, the command prints a fenced
@@ -108,7 +108,7 @@ When the user hands back the downloaded `client_secret_*.json`, save it to a
 file (mode 0600) and pass the path — never paste secrets into argv:
 
 ```bash
-gbrain google connect --client-json ~/Downloads/client_secret_*.json
+foresights google connect --client-json ~/Downloads/client_secret_*.json
 ```
 
 Env intake (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) also works. The command
@@ -120,7 +120,7 @@ back). Full flow reference: `docs/guides/google-connect.md`.
 
 Validate:
 ```bash
-gbrain google status --json   # per-account live refresh probe
+foresights google status --json   # per-account live refresh probe
 ```
 
 **STOP until `status` shows the account with `refresh_probe: "ok"`.**
@@ -156,8 +156,8 @@ curl -sf "$CLAWVISOR_URL/health" \
 ### Step 2: Verify
 
 ```bash
-gbrain google status --json      # Option A: accounts, scopes, refresh probes
-gbrain doctor                    # includes the google_oauth vault-health check
+foresights google status --json      # Option A: accounts, scopes, refresh probes
+foresights doctor                    # includes the google_oauth vault-health check
 ```
 
 Tell the user: "Credential gateway is set up. Email-to-brain and calendar-to-brain
@@ -173,7 +173,7 @@ to `~/.gbrain/integrations/google/heartbeat.jsonl` — no manual heartbeat neede
 
 2. **External consent screens MUST be published to Production.** In "Testing"
    mode Google silently revokes refresh tokens every 7 days
-   (`invalid_grant_testing_expiry`). `gbrain doctor`'s `google_oauth` check
+   (`invalid_grant_testing_expiry`). `foresights doctor`'s `google_oauth` check
    warns once an account goes 5+ days without a successful refresh — an
    actively-syncing account gets no pre-warning, so publish rather than
    rely on the warning. Internal (Workspace) consent screens don't have
@@ -181,11 +181,11 @@ to `~/.gbrain/integrations/google/heartbeat.jsonl` — no manual heartbeat neede
 
 3. **Tokens live in the vault, not in env or ad-hoc files.** The native
    connector stores tokens in `~/.gbrain/credentials.json` (0600, atomic
-   writes) and auto-refreshes them. Inspect with `gbrain creds list` (always
-   redacted); move machines with `gbrain creds export` (passphrase-encrypted
+   writes) and auto-refreshes them. Inspect with `foresights creds list` (always
+   redacted); move machines with `foresights creds export` (passphrase-encrypted
    bundle). Never hand-manage token JSON files.
 
-4. **Multiple Google accounts.** Repeat `gbrain google connect --account
+4. **Multiple Google accounts.** Repeat `foresights google connect --account
    work@example.com` per account; each gets its own vault entry and its own
    source. ClawVisor handles multiple accounts on its side.
 
@@ -196,7 +196,7 @@ to `~/.gbrain/integrations/google/heartbeat.jsonl` — no manual heartbeat neede
 
 ## How to Verify
 
-1. **Native connector:** `gbrain google status --json` shows the account with
+1. **Native connector:** `foresights google status --json` shows the account with
    `refresh_probe: "ok"`.
 2. **ClawVisor:** `curl $CLAWVISOR_URL/health` returns OK.
 3. **Gmail access:** run the email-to-brain setup — the first sync should pull
@@ -213,4 +213,4 @@ to `~/.gbrain/integrations/google/heartbeat.jsonl` — no manual heartbeat neede
 
 ---
 
-*Part of the [GBrain Skillpack](../docs/GBRAIN_SKILLPACK.md). See also: [Email-to-Brain](email-to-brain.md), [Calendar-to-Brain](calendar-to-brain.md), [docs/guides/google-connect.md](../docs/guides/google-connect.md)*
+*Part of the [Foresights Skillpack](../docs/GBRAIN_SKILLPACK.md). See also: [Email-to-Brain](email-to-brain.md), [Calendar-to-Brain](calendar-to-brain.md), [docs/guides/google-connect.md](../docs/guides/google-connect.md)*

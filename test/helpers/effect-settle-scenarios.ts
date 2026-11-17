@@ -1,6 +1,6 @@
 /**
  * #7423 / #7378: a parked or failed Git effect whose retry can never succeed is settled by an explicit, preview-first,
- * plan-hash-bound operator step (`gbrain sources writer settle-effects`), only on an exact-target proof: its target now
+ * plan-hash-bound operator step (`foresights sources writer settle-effects`), only on an exact-target proof: its target now
  * resolves db_only under the current gbrain.yml, or it belongs to a former canonical worktree and the already-fetched
  * remote branch holds the current canonical bytes a later committed and pushed Git effect wrote. The original failure,
  * request and target stay as they were; every reader skips the settled row, and `--unsettle` (plan-bound too) restores it.
@@ -91,7 +91,7 @@ export async function dbOnlyTargetSettles(databaseUrl?: string) {
     expect(await effectById(engine, effect!.id)).toMatchObject({ state: 'failed', error_code: 'targets_parked',
       data: { parked: [{ slug: 'aa/page', error_code: 'git_target_unsafe' }] } });
     const before = await history(engine, effect!.id);
-    expect((await checkParkedEffects(engine)).message).toContain('gbrain sources writer settle-effects default --parked-code git_target_unsafe --dry-run');
+    expect((await checkParkedEffects(engine)).message).toContain('foresights sources writer settle-effects default --parked-code git_target_unsafe --dry-run');
 
     const preview = await settleEffects(engine, { sourceId: 'default', parkedCode: 'git_target_unsafe' });
     expect(preview).toMatchObject({ action: 'writer_settle_effects', mode: 'settle', dry_run: true, settleable: 1, refused: 0,

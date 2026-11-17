@@ -3,7 +3,7 @@
  * the source's syncable tree. Classic sync keys pages on `source_path`, so a
  * plain restore of such a page (one that writes no file: `sync.write_through`
  * off, a sandbox, a database-only source) is undone by the next
- * `gbrain sync --full`, which soft-deletes every live page whose recorded file
+ * `foresights sync --full`, which soft-deletes every live page whose recorded file
  * it does not find. `restore_page` therefore refuses it with
  * `canonical_file_absent` and the user's two choices: put the file back and
  * sync, or restore with `detach: true`, which clears the page's `source_path`
@@ -84,8 +84,8 @@ export async function assertRestoreOrigin(engine: BrainEngine, input: { sourceId
   if (!absent) return;
   const command = ['gbrain', 'restore', slug, '--source-id', sourceId, '--detach'];
   throw opError('source_changed', `The page's canonical file ${absent} is no longer in the checkout of source '${sourceId}'.`,
-    `Nothing was restored: a restored page whose recorded file is gone is soft-deleted again by the next gbrain sync --full. Choose one: put ${absent} back in the checkout, `
-      + `commit it and run gbrain sync --source ${sourceId} (sync restores the page from its file); or restore the page database-only with ${command.join(' ')} `
+    `Nothing was restored: a restored page whose recorded file is gone is soft-deleted again by the next foresights sync --full. Choose one: put ${absent} back in the checkout, `
+      + `commit it and run foresights sync --source ${sourceId} (sync restores the page from its file); or restore the page database-only with ${command.join(' ')} `
       + '(restore_page with detach: true), which forgets its recorded file so sync keeps it; a file synced later at its path updates it again.',
     { detail: 'canonical_file_absent', retryable: false, docs: DOCS, fix: {
       argv: command, mcp: { tool: 'restore_page', arguments: { slug, source_id: sourceId, detach: true } },
@@ -128,7 +128,7 @@ function recordedMetafilePage(metafilePages: MetafilePagesMode, root: string, la
 /**
  * #6609: the live pages of a classic source (a `local_path` checkout on this
  * host, managed persistence off) whose recorded file is not in the files
- * `gbrain sync --full` enumerates (`collectSyncableFiles`), so that sync would
+ * `foresights sync --full` enumerates (`collectSyncableFiles`), so that sync would
  * soft-delete them. Null when the source has no such checkout here.
  */
 export async function scanMissingRecordedFiles(engine: BrainEngine, sourceId: string): Promise<MissingRecordedFiles | null> {

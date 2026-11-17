@@ -183,8 +183,8 @@ function insideGitCheckout(root: string): boolean {
  * `repair file-drift`.
  */
 export function missingFileRoute(sourceId: string, slug: string, rel: string, state: ReturnType<typeof canonicalDeletionState>): string {
-  const fileDrift = `gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer database`;
-  const ghosts = `gbrain repair ghost-pages --source ${sourceId}`;
+  const fileDrift = `foresights repair file-drift --source ${sourceId} --slug ${slug} --prefer database`;
+  const ghosts = `foresights repair ghost-pages --source ${sourceId}`;
   if (state === 'in_head') return `${rel} is deleted in the worktree but still committed, so this is not file drift: commit the deletion (sync then imports it), or remove the page with ${ghosts}; to keep the page, restore the file from Git (git checkout -- ${rel}) and sync.`;
   if (state === 'gone') return `${rel} is gone from the last commit. Preview the resolution with ${fileDrift} (recreates the file from the page) or with --prefer file (soft-deletes the page), then apply the printed command after the user decides.`;
   return `Git could not say whether the deletion of ${rel} is committed. If it is (gone from HEAD), preview ${fileDrift} or --prefer file; if it is deleted only in the worktree, commit the deletion or remove the page with ${ghosts}.`;
@@ -240,7 +240,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   // Wave B: a page stored in segments is compared and merged as strings up to 24 MiB; a larger one refuses.
   const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }), 'sources reconcile');
   if (!snapshot || snapshot.page.deleted_at) throw opError('page_not_found', 'Reconciliation requires an existing live page; use the separate restore workflow for deleted pages.',
-    `Page ${slug} in '${sourceId}' is deleted or missing; nothing changed. If it was deleted by mistake, restore it (gbrain restore, within the 72-hour window) and then preview it again.`,
+    `Page ${slug} in '${sourceId}' is deleted or missing; nothing changed. If it was deleted by mistake, restore it (foresights restore, within the 72-hour window) and then preview it again.`,
     { fix: readFix('Shows whether the page exists or is soft-deleted in this source.', { argv: ['gbrain', 'get', '--source', sourceId, '--include-deleted', '--', slug] }) });
   if (binding.source_incarnation !== snapshot.sourceIncarnation) staleReconcile('source binding incarnation');
   const [storedPage] = await engine.executeRaw<Record<string, unknown>>(`SELECT id,source_id,slug,type,title,compiled_truth,timeline,frontmatter,
@@ -257,7 +257,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   const path = recordedPath ?? derived?.path ?? null;
   if (!path || !isWriteTargetContained(path, root)) throw opError('source_changed', 'The page has no unambiguous confined recorded Markdown origin.',
     `Page ${slug} in '${sourceId}' records no Markdown file inside the source checkout, so there is nothing to reconcile it against; nothing changed. ${!recordedPath && !marked && recordsNoFileOrigin(snapshot.page) && opts.adoptSlugPath !== true
-      ? `If the file at its slug path is this page's canonical file, preview again with --adopt-slug-path (gbrain sources reconcile ${sourceId} ${slug} --preview --adopt-slug-path) to adopt it; otherwise check its recorded source path with the command in fix.` : 'Check its recorded source path with the command in fix.'}`,
+      ? `If the file at its slug path is this page's canonical file, preview again with --adopt-slug-path (foresights sources reconcile ${sourceId} ${slug} --preview --adopt-slug-path) to adopt it; otherwise check its recorded source path with the command in fix.` : 'Check its recorded source path with the command in fix.'}`,
     { fix: readFix('Shows the page and its recorded source path.', { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
   let size: number;
   try {
@@ -303,7 +303,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
     // #5966 (W14 P1.7): a well-formed file whose path derives another slug is a legacy render of a slug the
     // path cannot derive, written before renders stamped `slug:`; the frontmatter repair proposes the stamp.
     throw opError('source_changed', 'The canonical file carries no slug stamp, so its path derives a different slug.',
-      `Nothing changed. The file of ${slug} in '${sourceId}' reads as ${parsed.slug} from its path. Preview the stamp with gbrain repair frontmatter --source ${sourceId} --only ${relative(root, path)} (a safe repair), apply it, then preview the page again.`,
+      `Nothing changed. The file of ${slug} in '${sourceId}' reads as ${parsed.slug} from its path. Preview the stamp with foresights repair frontmatter --source ${sourceId} --only ${relative(root, path)} (a safe repair), apply it, then preview the page again.`,
       { detail: 'slug_rule_mismatch' });
   }
   if (errors.length || parsed.errors?.some(e => e.code === 'MISSING_CLOSE') || parsed.slug !== slug) {
@@ -337,7 +337,7 @@ export async function assertReconcileRevision(engine: BrainEngine, snapshot: Pag
   const verify = { argv: ['gbrain', 'doctor', '--only', 'revision_backfill', '--json'] };
   throw opError('revision_backfill_pending', 'Reconciliation requires the page revision, and this page has none yet.',
     `Nothing changed. Page ${slug} in '${sourceId}' was written before page revisions and the revision backfill has not reached it, so no reconcile preview can bind to it. `
-      + (exhausted ? 'The backfill used every attempt on this row (usually a torn page body): preview gbrain repair orphan-children (the command in fix) and recover the page from a backup or a re-sync, then preview it again.'
+      + (exhausted ? 'The backfill used every attempt on this row (usually a torn page body): preview foresights repair orphan-children (the command in fix) and recover the page from a backup or a re-sync, then preview it again.'
         : `Resume the backfill on the brain host with ${REVISION_BACKFILL_RESUME_COMMAND} (the command in fix), then preview the page again.`),
     { fix: exhausted
       ? { ...readFix('Previews orphaned child rows and lists torn page bodies (torn_pages) without changing anything.', { argv: ['gbrain', 'repair', 'orphan-children'] }), verify, docs: 'docs/guides/repair.md#orphan-children' }
@@ -411,7 +411,7 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
  * #6605: the file side of a reconciliation, read the way the importer stored it. A frontmatter-less file under a
  * directory-inference rule was imported with the frontmatter its path infers, so its raw bytes would show every
  * inferred key as a difference. The inferred reading is used when the stored row carries every key it adds (an
- * inferring import wrote the row); a row imported without inference (`gbrain reindex` on an unmanaged brain) is
+ * inferring import wrote the row); a row imported without inference (`foresights reindex` on an unmanaged brain) is
  * compared with the raw bytes. An inferred `type:` is not one the file declared: the caller keeps the stored type.
  */
 /** GBRA-133: a canonical file's text as `readReconcileState` reads it (the reconcile canonical form of the page it imports). */

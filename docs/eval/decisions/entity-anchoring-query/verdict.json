@@ -294,7 +294,7 @@
   "gate_3": {
     "status": "pending",
     "owner": "harness lane",
-    "requires": "retrieve through the query op (or gbrain query) with search.entity_anchoring=true"
+    "requires": "retrieve through the query op (or foresights query) with search.entity_anchoring=true"
   },
   "overall": "off_pending_gate_3",
   "caveats": [

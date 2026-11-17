@@ -14,20 +14,20 @@ today's path, `on` is the slot acting at its calibrated threshold).
   its receipt directory. Runs never mixed commits within a pair.
 - **Provider.** `typesafe:jev-1.13.0`, pinned. Every response reported
   `model: jev-1.13.0`; no run saw a mixed or drifted model.
-- **Frozen splits.** Every dataset is built by `gbrain decide dataset`, which
+- **Frozen splits.** Every dataset is built by `foresights decide dataset`, which
   assigns each *family* (conversation, transcript, question or fact family) to
   the calibrate or eval half by a stable hash of the family id, and records a
   `split_hash`. Calibration reads only the calibrate half. Every reported
   effectiveness number comes from the eval half. Hashes are in
   [datasets/HASHES.md](datasets/HASHES.md).
-- **Thresholds.** From `gbrain decide calibrate` on the calibrate half. For a
+- **Thresholds.** From `foresights decide calibrate` on the calibrate half. For a
   harmful-direction slot the target protects the positive class, because the
   harmful action is the *negative* prediction (prune, reject, quarantine,
   suppress): S7 `--target recall --min 1.0`, S8 `--target recall --min 0.95`,
   S3 `--target recall --min 0.98`. S6 and S9 use F1. S2 has no calibrate
   target that fits its reducer, so its threshold is the calibrate-half
   accuracy maximum (runner `s2-analyze.ts`).
-- **Qualification.** `gbrain decide qualify` on the eval half, family-level
+- **Qualification.** `foresights decide qualify` on the eval half, family-level
   Wilson 95% lower bound after the production reducer, gate 0.90;
   `insufficient_n` below 35 families with a harmful action.
 - **Stability.** `retest_sd` and `repack_sd` come from calibrate (50 families,
@@ -39,8 +39,8 @@ today's path, `on` is the slot acting at its calibrated threshold).
 ## Two ways a pair was run
 
 1. **Production path end to end.** S7 (`runners/s7-triage-pair.ts` calls
-   `runTriagePass`, the function `gbrain dream` uses) and the LongMemEval arms
-   (`runners/lme-arms.sh` calls `gbrain eval longmemeval --decide ...`).
+   `runTriagePass`, the function `foresights dream` uses) and the LongMemEval arms
+   (`runners/lme-arms.sh` calls `foresights eval longmemeval --decide ...`).
 2. **Recorded answers + production reducer.** S2, S6, S8 and S9: the eval half
    is asked once through the slot's dataset adapter (the same request shape
    `calibrate` and production send, `runners/ask-dataset.ts`), then the slot's

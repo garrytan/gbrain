@@ -1,13 +1,13 @@
 /**
- * `gbrain remote` subcommands (multi-topology v1, Tier B).
+ * `foresights remote` subcommands (multi-topology v1, Tier B).
  *
  * Two thin-client convenience commands that round-trip through the host's
  * HTTP MCP endpoint:
  *
- *   - `gbrain remote ping`  : submit_job(autopilot-cycle) → poll get_job →
+ *   - `foresights remote ping`  : submit_job(autopilot-cycle) → poll get_job →
  *                             exit when terminal. The "I just wrote markdown,
  *                             tell the host to re-index" affordance.
- *   - `gbrain remote doctor`: run_doctor MCP op → render the host's
+ *   - `foresights remote doctor`: run_doctor MCP op → render the host's
  *                             DoctorReport → exit 0/1 based on status.
  *
  * Both require a thin-client install (~/.gbrain/config.json with remote_mcp).
@@ -61,8 +61,8 @@ export async function runRemote(args: string[]): Promise<void> {
   const config = loadConfig();
   if (!isThinClient(config)) {
     console.error(
-      '`gbrain remote` requires thin-client mode. This install has no remote_mcp config.\n' +
-      'Run `gbrain init --mcp-only` to set up thin-client mode, or use the local CLI directly.',
+      '`foresights remote` requires thin-client mode. This install has no remote_mcp config.\n' +
+      'Run `foresights init --mcp-only` to set up thin-client mode, or use the local CLI directly.',
     );
     process.exit(1);
   }
@@ -74,13 +74,13 @@ export async function runRemote(args: string[]): Promise<void> {
   if (sub === 'doctor') {
     return runRemoteDoctorCli(config!, subArgs);
   }
-  console.error(`Unknown subcommand: gbrain remote ${sub}\n`);
+  console.error(`Unknown subcommand: foresights remote ${sub}\n`);
   printHelp();
   process.exit(1);
 }
 
 function printHelp(): void {
-  console.log('Usage: gbrain remote <subcommand>');
+  console.log('Usage: foresights remote <subcommand>');
   console.log('');
   console.log('Subcommands:');
   console.log('  ping            Trigger an autopilot cycle on the remote host (sync + extract + embed).');
@@ -182,7 +182,7 @@ async function runRemotePing(config: NonNullable<ReturnType<typeof loadConfig>>,
     }));
   } else {
     console.error(`\nping timed out after ${Math.round(timeoutMs / 1000)}s. Job #${submitted.id} is still ${lastState}.`);
-    console.error(`Run \`gbrain jobs get ${submitted.id}\` on the host to inspect.`);
+    console.error(`Run \`foresights jobs get ${submitted.id}\` on the host to inspect.`);
   }
   process.exit(1);
 }

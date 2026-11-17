@@ -1,6 +1,6 @@
 /**
  * #6543 C1: managed sync never pulls (the managed path read `noPull` only to refuse), so the CLI implies
- * `--no-pull` on a managed brain and prints one stderr line naming `gbrain sources refresh <id>`. Covers the
+ * `--no-pull` on a managed brain and prints one stderr line naming `foresights sources refresh <id>`. Covers the
  * single-source and `--all` CLI paths here; the serve-delegated path is pinned in serve-sync-handoff.serial.test.ts.
  * The library refusal of an explicit pull (`performSync({ noPull: false })`) stays.
  *
@@ -67,18 +67,18 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('single-source `gbrain sync --source <id>` on a managed brain imports without --no-pull and names sources refresh on stderr', async () => withEnv(env, async () => {
+test('single-source `foresights sync --source <id>` on a managed brain imports without --no-pull and names sources refresh on stderr', async () => withEnv(env, async () => {
   const f = await fixture();
   capture();
   try { await runSyncInner(engine, ['--source', f.id, '--no-embed', '--no-extract', '--json']); } finally { release(); }
   const notice = err.find(line => line.includes('--no-pull is implied'));
   expect(notice).toBeDefined();
-  expect(notice).toContain(`gbrain sources refresh ${f.id}`);
+  expect(notice).toContain(`foresights sources refresh ${f.id}`);
   expect(out.join('')).not.toContain('--no-pull is implied');
   expect((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1', [f.id]))[0].n).toBe(1);
 }), 120_000);
 
-test('`gbrain sync --all` on a managed brain implies --no-pull once for every source', async () => withEnv(env, async () => {
+test('`foresights sync --all` on a managed brain implies --no-pull once for every source', async () => withEnv(env, async () => {
   const f = await fixture();
   capture();
   // The --all path ends a failed run with process.exit(1); trap it so a regression fails this test instead of the runner.

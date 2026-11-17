@@ -1,10 +1,10 @@
 /**
- * commit_notifier (GBRA-133 PR 2a): names the resident that syncs each local source on commit (gbrain serve, gbrain jobs
+ * commit_notifier (GBRA-133 PR 2a): names the resident that syncs each local source on commit (foresights serve, foresights jobs
  * work or the autopilot daemon; one owns the notifier per host), or says none is running with the fix. With
  * `sync.on_commit` on, a source no resident watches warns, and a stalled notifier (`notifier_stalled`,
  * `operator_blocked`) warns with the foreground sync that shows the error. With it off, a source with a pending sync
  * request and no resident warns (the request waits for a resident); otherwise the check is informational. Reader:
- * src/core/notifier/status.ts (the same block `gbrain sync status` prints). Database reads only; no git call.
+ * src/core/notifier/status.ts (the same block `foresights sync status` prints). Database reads only; no git call.
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, doctorSourceIds, type DoctorContext, type DoctorEntry } from '../context.ts';

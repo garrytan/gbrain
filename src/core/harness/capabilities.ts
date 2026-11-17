@@ -157,9 +157,9 @@ export function grantAge(snapshotExcluded: readonly string[], hasSnapshot: boole
     state: 'provenance_recorded' as const, excluded_count: n, predates_count: predates, excluded_at_snapshot_count: leftOut,
     snapshot_gbrain_version: provenance.gbrain_version,
     statement: predates
-      ? `This grant predates ${operationsWord(predates)}: they were added after its operation snapshot was written (gbrain ${provenance.gbrain_version}).`
+      ? `This grant predates ${operationsWord(predates)}: they were added after its operation snapshot was written (foresights ${provenance.gbrain_version}).`
         + (leftOut ? ` ${leftOut} more existed then and were left out of the snapshot.` : '')
-      : `This grant's snapshot excludes ${operationsWord(n)}; all existed when the snapshot was written (gbrain ${provenance.gbrain_version}) and were left out of it.`,
+      : `This grant's snapshot excludes ${operationsWord(n)}; all existed when the snapshot was written (foresights ${provenance.gbrain_version}) and were left out of it.`,
   };
 }
 
@@ -231,7 +231,7 @@ export function describeGrantDiagnosis(gaps: GrantGaps, opts: {
       then_argv: argvs.apply,
       ...(argvs.apply.includes('<OPERATIONS>') ? { inputs: [{ name: 'OPERATIONS', how: 'The brain owner chooses: the current operation snapshot plus each operation they approve, comma-separated.' }] } : {}),
       why: 'This grant cannot call operations its scopes allow until the brain owner changes it; nothing widens automatically.',
-      user_message: `This gbrain connection cannot call ${gaps.unreachable.length} operation(s) its scopes allow. Ask the brain owner to preview the change on the brain host with the command shown, then apply it.${prerequisiteNote}`,
+      user_message: `This foresights connection cannot call ${gaps.unreachable.length} operation(s) its scopes allow. Ask the brain owner to preview the change on the brain host with the command shown, then apply it.${prerequisiteNote}`,
       all_operations: { argv: argvs.all_operations, label: ALL_OPERATIONS_CHOICE },
     } : null,
   };
@@ -261,8 +261,8 @@ export function grantRepairAction(d: GrantDiagnosis): Action | null {
   if (!d.blockers.some(b => b.blocker === 'server_ceiling')) return null;
   return {
     argv: GRANT_VERIFY.argv, consent: [], actor: 'user', requires_exclusive: false, docs: GRANT_DOCS, verify: GRANT_VERIFY,
-    why: 'The server tool surface (config mcp_surface, `gbrain serve --surface` or GBRAIN_MCP_FORCE_SURFACE) caps this connection, and no grant change lifts it; this read-only check on the brain host names the setting.',
-    user_message: 'This gbrain connection is capped by the server\'s tool surface setting on the brain host. Running the command shown there names the setting; changing it is the brain owner\'s call.',
+    why: 'The server tool surface (config mcp_surface, `foresights serve --surface` or GBRAIN_MCP_FORCE_SURFACE) caps this connection, and no grant change lifts it; this read-only check on the brain host names the setting.',
+    user_message: 'This foresights connection is capped by the server\'s tool surface setting on the brain host. Running the command shown there names the setting; changing it is the brain owner\'s call.',
   };
 }
 

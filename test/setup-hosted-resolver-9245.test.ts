@@ -29,7 +29,7 @@ describe('#9245: a hosted install asking for the skill resolver is told the setu
     expect(refused.exitCode).toBe(1);
     const doc = JSON.parse(refused.stdout);
     expect(doc.code).toBe('setup_hosted_connection');
-    expect(JSON.stringify(doc)).toContain('gbrain setup claude-code --skills-index-only --skill-loading resolve');
+    expect(JSON.stringify(doc)).toContain('foresights setup claude-code --skills-index-only --skill-loading resolve');
     const named = await setup(['--skills-index-only', '--skill-loading', 'resolve', '--dry-run']);
     expect(named.exitCode).toBe(0);
     expect(JSON.parse(named.stdout).skill_resolver.steps.map((s: { step: string }) => s.step)).toContain('catalog');

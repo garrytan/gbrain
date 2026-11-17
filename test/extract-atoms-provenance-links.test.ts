@@ -2,7 +2,7 @@
  * #3961 — atom provenance edges in the link graph.
  *
  * extract_atoms writes each atom with `source_slug` frontmatter, but nothing
- * ever materialized that lineage as a link row — `gbrain backlinks
+ * ever materialized that lineage as a link row — `foresights backlinks
  * <source-page>` showed no trace of the atoms derived from it. The phase now
  * accumulates (source-page → atom) LinkBatchInput rows during the atom loop
  * (link_source='atom-provenance', both endpoints in the phase's source) and
@@ -157,7 +157,7 @@ describe('atom provenance backlinks (#3961)', () => {
     }
   });
   test('a hook-captured <session_id>.txt corpus file links its conversation page → atom', async () => {
-    // gbrain's own Stop-hook capture writes the session corpus as
+    // foresights's own Stop-hook capture writes the session corpus as
     // `<session_id>.txt` (hook.ts) and the claude-code adapter stamps that
     // same UUID into transcript_import.session_id — the stock capture + ingest
     // flow, so the .txt stem must resolve like the .md/.jsonl ones.

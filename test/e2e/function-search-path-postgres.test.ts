@@ -1,5 +1,5 @@
 /**
- * Every gbrain function that pins a search_path ends it with pg_temp, so a temp table or view named like a purge or
+ * Every foresights function that pins a search_path ends it with pg_temp, so a temp table or view named like a purge or
  * withdrawal ledger no longer hides it from the guard that reads it (#7632, src/core/function-search-path.ts).
  *
  * Before, the guards pinned `pg_catalog, public`, which leaves the caller's temporary schema first in the relation

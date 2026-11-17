@@ -6,7 +6,7 @@
  * Mirrors `audit-slug-fallback.ts` for filename + best-effort write
  * semantics. Honors `GBRAIN_AUDIT_DIR` via the shared `resolveAuditDir`.
  *
- * Read by `gbrain doctor`'s `nightly_quality_probe_health` check to
+ * Read by `foresights doctor`'s `nightly_quality_probe_health` check to
  * surface FAIL / ERROR / BUDGET_EXCEEDED runs from the last 7 days.
  */
 
@@ -168,13 +168,13 @@ export function logQualityProbeEvent(event: Omit<QualityProbeAuditEvent, 'ts'> &
     fs.appendFileSync(file, JSON.stringify(stamped) + '\n', { encoding: 'utf8' });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] quality-probe audit write failed (${msg}); probe continues\n`);
+    process.stderr.write(`[foresights] quality-probe audit write failed (${msg}); probe continues\n`);
   }
 }
 
 /**
  * Read recent quality-probe events from the current + prior ISO week files.
- * Used by `gbrain doctor`'s nightly_quality_probe_health check. Missing
+ * Used by `foresights doctor`'s nightly_quality_probe_health check. Missing
  * files and corrupt rows are skipped silently.
  */
 export function readRecentQualityProbeEvents(

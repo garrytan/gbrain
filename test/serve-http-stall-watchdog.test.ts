@@ -1,5 +1,5 @@
 /**
- * #4281 — loop-stall watchdog wiring in the `gbrain serve --http` branch.
+ * #4281 — loop-stall watchdog wiring in the `foresights serve --http` branch.
  *
  * Pins the arm/dispose ordering around runServeHttp WITHOUT booting the real
  * OAuth server or a real watchdog worker: everything routes through the

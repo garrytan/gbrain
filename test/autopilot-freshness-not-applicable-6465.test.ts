@@ -1,6 +1,6 @@
 /**
  * Fix wave 15 P4.2 (supersedes PR #6465 by @mattverlaque, whose diagnosis and fail-first test this follows): a brain
- * whose source is a gbrain-owned content directory (`gbrain init`, no Git checkout) had autopilot's freshness loop queue
+ * whose source is a gbrain-owned content directory (`foresights init`, no Git checkout) had autopilot's freshness loop queue
  * a `sync` job for it every slot; performSync refused it (`sync_not_applicable`), never stamped `last_sync_at`, the job
  * went dead and the next slot queued it again, forever. One `automaticSyncSkip` predicate now decides automatic sync for
  * the freshness loop, the full-cycle fan-out and `sync --all`; the reason is stated once per source and reason; and a
@@ -74,7 +74,7 @@ describe('automaticSyncSkip (one predicate for automatic sync)', () => {
     await addSource('notes-example', dir);
     const skip = await automaticSyncSkip(engine, { id: 'notes-example', local_path: dir, config: {} });
     expect(skip).toMatchObject({ reason: 'sync_not_applicable' });
-    expect(skip!.message).toContain('gbrain import <dir> --source notes-example');
+    expect(skip!.message).toContain('foresights import <dir> --source notes-example');
     const repo = checkout('repo-example');
     await addSource('repo-example', repo);
     expect(await automaticSyncSkip(engine, { id: 'repo-example', local_path: repo, config: {} })).toBeNull();

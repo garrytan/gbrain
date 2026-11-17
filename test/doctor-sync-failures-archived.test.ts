@@ -8,7 +8,7 @@ import { recordFailures } from '../src/core/sync-failure-ledger.ts';
 import { recordManagedSyncFailure } from '../src/core/persistence/sync-failures.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-// gbrain#5452 — failures on an archived source cannot be cleared (sync
+// foresights#5452 — failures on an archived source cannot be cleared (sync
 // refuses archived sources) and carry no live signal; doctor's
 // sync_failures check must exclude them and say so.
 const home = mkdtempSync(join(tmpdir(), 'gbrain-5452-'));

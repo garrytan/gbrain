@@ -215,12 +215,12 @@ describe('cost matrix: newest models, priced from model-pricing', () => {
 
   test('the menu states the query expansion rule and no cache refill', () => {
     const flat = MODE_PICKER_MENU.replace(/\s+/g, ' ');
-    expect(flat).toContain('`gbrain query` does not expand by default in any mode');
-    expect(flat).toContain('`gbrain search` never expands');
-    expect(flat).toContain('`gbrain config set search.expansion true` turns the default on for the brain');
+    expect(flat).toContain('`foresights query` does not expand by default in any mode');
+    expect(flat).toContain('`foresights search` never expands');
+    expect(flat).toContain('`foresights config set search.expansion true` turns the default on for the brain');
     expect(flat).not.toMatch(/in every mode/);
     expect(MODE_PICKER_MENU).toContain('semantic result caching is temporarily disabled');
-    expect(MODE_PICKER_MENU).toContain('gbrain search tune');
+    expect(MODE_PICKER_MENU).toContain('foresights search tune');
   });
 });
 
@@ -245,11 +245,11 @@ describe('runModePicker: non-TTY and --json', () => {
       expect(await engine.getConfig('search.mode')).toBe('tokenmax');
       expect(await engine.getConfig('search.mode_source')).toBe('auto');
       expect(decision).toEqual({ mode: 'tokenmax', reason: MODE_REASONS.default });
-      expect(out).toContain('[gbrain] search mode tentatively set to: tokenmax');
+      expect(out).toContain('[foresights] search mode tentatively set to: tokenmax');
       expect(out).toContain('nothing waits on an answer');
       expect(out).not.toContain('ask_user');
       expect(out).toContain('INSTALL_FOR_AGENTS.md');
-      expect(out).toContain('gbrain config set search.mode <conservative|balanced|tokenmax>');
+      expect(out).toContain('foresights config set search.mode <conservative|balanced|tokenmax>');
       expect(out).toContain('Opus 5.5');
     });
   });
@@ -320,7 +320,7 @@ describe('init --search-mode: the operator\'s choice', () => {
     await engine.setConfig('search.mode', 'balanced');
     await inHome({}, async () => {
       await expect(runModePicker(engine, { explicit: 'tokenmax', refuse: fail })).rejects.toThrow(
-        /refused: This brain already has search.mode balanced.*gbrain config set search.mode tokenmax.*--force/,
+        /refused: This brain already has search.mode balanced.*(?:foresights|gbrain) config set search.mode tokenmax.*--force/,
       );
       expect(await engine.getConfig('search.mode')).toBe('balanced');
       expect(await engine.getConfig('search.mode_source')).toBeNull();

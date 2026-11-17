@@ -1,5 +1,5 @@
 /**
- * #5401 / DX-O5: `gbrain projections drain` through the real CLI entrypoint.
+ * #5401 / DX-O5: `foresights projections drain` through the real CLI entrypoint.
  * Exit 0 when nothing tried failed, 1 when a page failed, 2 when it did not run
  * (bad usage, or `projection_owner_resident` because a resident holds the
  * PGLite brain — refused before any engine opens, including for a mounted
@@ -50,7 +50,7 @@ beforeAll(async () => {
 }, 240_000);
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-describe('gbrain projections drain', () => {
+describe('foresights projections drain', () => {
   test('help lists the command; bad usage exits 2 without running', async () => {
     expect((await runCli(['--help'], { home: healthyHome })).stdout).toContain('projections drain [--limit n]');
     const help = await runCli(['projections', '--help'], { home: healthyHome });
@@ -61,7 +61,7 @@ describe('gbrain projections drain', () => {
     expect(unknown.stderr).toContain('Error [invalid_params]');
     const limit = await runCli(['projections', 'drain', '--limit', '0', '--json'], { home: healthyHome });
     expect(limit.exitCode).toBe(2);
-    expect(JSON.parse(limit.stdout)).toMatchObject({ error: 'invalid_params', suggestion: expect.stringContaining('gbrain projections drain --limit 1000') });
+    expect(JSON.parse(limit.stdout)).toMatchObject({ error: 'invalid_params', suggestion: expect.stringContaining('foresights projections drain --limit 1000') });
   }, 120_000);
 
   test('exit 0 drains the backlog and says it is empty', async () => {
@@ -97,8 +97,8 @@ describe('gbrain projections drain', () => {
       expect(human.exitCode).toBe(2);
       expect(human.stderr).toContain('Error [projection_owner_resident]');
       expect(human.stderr).toContain(`(pid ${process.pid}), so the drain did not run.`);
-      expect(human.stderr).toContain('watch the pending count with `gbrain doctor` (text_projection_readiness)');
-      expect(human.stderr).toContain('systemctl --user stop gbrain-serve.service && { gbrain projections drain; systemctl --user start gbrain-serve.service; }');
+      expect(human.stderr).toContain('watch the pending count with `foresights doctor` (text_projection_readiness)');
+      expect(human.stderr).toContain('systemctl --user stop gbrain-serve.service && { foresights projections drain; systemctl --user start gbrain-serve.service; }');
       const json = await runCli(['projections', 'drain', '--json'], { home: healthyHome, timeoutMs: 30_000 });
       expect(json.exitCode).toBe(2);
       expect(JSON.parse(json.stdout)).toMatchObject({ error: 'projection_owner_resident', docs: 'docs/guides/repair.md#projection-owner-resident' });
@@ -111,8 +111,8 @@ describe('gbrain projections drain', () => {
       const refused = await runCli(['projections', 'drain', '--brain', 'team-a'], { home: mountedHome, timeoutMs: 30_000 });
       expect(refused.exitCode).toBe(2);
       expect(refused.stderr).toContain(`The PGLite brain at ${join(mountedHome, 'team-a.pglite')} is held by`);
-      expect(refused.stderr).toContain('`gbrain doctor --brain team-a`');
-      expect(refused.stderr).toContain('systemctl --user stop gbrain-serve.service && { gbrain projections drain --brain team-a; systemctl --user start gbrain-serve.service; }');
+      expect(refused.stderr).toContain('`foresights doctor --brain team-a`');
+      expect(refused.stderr).toContain('systemctl --user stop gbrain-serve.service && { foresights projections drain --brain team-a; systemctl --user start gbrain-serve.service; }');
     } finally { await releaseLock(lock); }
   }, 120_000);
 });

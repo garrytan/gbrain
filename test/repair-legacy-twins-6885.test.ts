@@ -1,6 +1,6 @@
 /**
  * #6885: page pairs older syncs forked before #6857. A legacy page (live, no recorded origin, a slug the current fold
- * spells differently) holds the id, links and history; its twin (the folded slug) records the file. `gbrain repair
+ * spells differently) holds the id, links and history; its twin (the folded slug) records the file. `foresights repair
  * legacy-twins` previews every pair and, after consent, merges each onto the legacy page in one coordinated write:
  * the legacy page records the file, the twin's links, timeline rows and aliases move to it, its slug becomes an alias,
  * its sync import record follows, and the twin is soft-deleted as a shared origin (the file stays). Protects: the
@@ -47,14 +47,14 @@ let engine: BrainEngine;
 
 interface Fixture { root: string; home: string; sourceId: string; ids: { legacy: number; twin: number; other: number; second: number } }
 
-/** Raw rows written as an older gbrain left them: managed persistence off around the write, as the #6727 fixture does. */
+/** Raw rows written as an older foresights left them: managed persistence off around the write, as the #6727 fixture does. */
 async function raw<T>(fn: () => Promise<T>): Promise<T> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try { return await fn(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
 }
 
 /**
- * A managed source whose file FILE an older gbrain forked: sync imported it as the twin TWIN (recording the file, with
+ * A managed source whose file FILE an older foresights forked: sync imported it as the twin TWIN (recording the file, with
  * its import record), and a legacy page LEGACY with the same content and no recorded origin holds the inbound link,
  * a timeline row and an old alias. Two more files back notes/other and notes/second, which link to the pair.
  */
@@ -149,7 +149,7 @@ for (const backend of testBackends()) describe(`#6885 repair legacy-twins (${bac
     expect(EXPLICIT_REPAIR_REGISTRY.map(spec => spec.kind)).toContain(KIND);
     const preview = JSON.parse(await capture(() => runRepairCommand(engine, ['legacy-twins', '--source', f.sourceId, '--json']))).results[0];
     expect(preview.listing).toEqual([{ item: `${f.sourceId}:${LEGACY}`, class: 'merge', detail: expect.stringContaining(`takes over ${FILE} from twin ${TWIN}`) }]);
-    expect(preview.apply_command).toBe(`gbrain repair legacy-twins --source ${f.sourceId} --apply --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights repair legacy-twins --source ${f.sourceId} --apply --expect ${preview.preview_hash} --yes`);
 
     const priorExitCode = process.exitCode;
     await withEnv({ GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() =>
@@ -211,7 +211,7 @@ for (const backend of testBackends()) describe(`#6885 repair legacy-twins (${bac
     expect(preview.affected).toBe(0);
     expect(preview.listing).toEqual([{ item: `${f.sourceId}:${TWIN}`, class: 'decision:content_differs', detail: expect.stringContaining(`legacy ${LEGACY}`) }]);
     const decision = (preview.details!.decisions as Array<{ commands: string[] }>)[0]!;
-    expect(decision.commands.join('\n')).toContain(`gbrain get --source ${f.sourceId} -- '${LEGACY}'`);
+    expect(decision.commands.join('\n')).toContain(`foresights get --source ${f.sourceId} -- '${LEGACY}'`);
     const applied = await repair(f.sourceId, { apply: true, expect: preview.preview_hash });
     expect(applied).toMatchObject({ applied: 0, failed: [] });
     expect(await pageRow(f.sourceId, f.ids.twin)).toMatchObject({ deleted: false, source_path: FILE });

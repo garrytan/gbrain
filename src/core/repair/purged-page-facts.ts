@@ -1,5 +1,5 @@
 /**
- * `gbrain repair purged-page-facts` (#8859 follow-up): retire facts left active by purges that ran before the #8859 fix.
+ * `foresights repair purged-page-facts` (#8859 follow-up): retire facts left active by purges that ran before the #8859 fix.
  *
  * A page-extraction fact filed on no page (`source_markdown_slug` NULL, the page slug as the head of `context`,
  * extractedFromPageSql) used to outlive its page: neither a direct purge nor the retention expiry of a soft-deleted page
@@ -121,7 +121,7 @@ const DETAILS: Record<string, string> = {
 
 async function previewCommand(engine: BrainEngine, sourceIds: string[], includeAmbiguous: boolean): Promise<string> {
   const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
-  return `gbrain repair ${COMMAND}${sourceIds.length === 1 && Number(n) > 1 ? ` --source ${sourceIds[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
+  return `foresights repair ${COMMAND}${sourceIds.length === 1 && Number(n) > 1 ? ` --source ${sourceIds[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
 function requestIdFor(hash: string, batch: Approved, attempt: number): string {
@@ -147,7 +147,7 @@ export const purgedPageFactsRepair: RepairHandler = {
       selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous }, facts });
     if (opts?.apply) {
       if (!opts.expect) {
-        throw new OperationError('invalid_params', `gbrain repair ${COMMAND} --apply retires only the set a preview printed.`,
+        throw new OperationError('invalid_params', `foresights repair ${COMMAND} --apply retires only the set a preview printed.`,
           `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, DOCS);
       }
       const approved = await loadApprovedSet<Approved>(engine, { command: COMMAND, hash: opts.expect, previewCommand: command, emptyHash: () => hashOf([]) });

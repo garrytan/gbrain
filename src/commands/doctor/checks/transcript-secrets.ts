@@ -4,7 +4,7 @@
  * password (`password: …`, `login user / pass`); nothing rewrites them on
  * upgrade. The check never scans pages itself: it counts imported
  * conversation pages (one indexed aggregate) and reads the summary the
- * read-only `gbrain transcripts audit-secrets` caches, reporting its age.
+ * read-only `foresights transcripts audit-secrets` caches, reporting its age.
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
@@ -48,7 +48,7 @@ export async function transcriptSecretExposureCheck(ctx: DoctorContext, now = Da
       return {
         name: 'transcript_secret_exposure', status: 'warn', details,
         message: `The transcript secret audit (${age}) found ${audit.hits_total} credential hit(s) on ${audit.pages_affected} conversation page(s). ` +
-          'List them with the audit, then review (`gbrain get <slug>`), edit (`gbrain put <slug>`) or, after asking the user, remove (`gbrain delete <slug>`, purged, as `gbrain transcripts audit-secrets --help` shows) each one, and ask the user to rotate any real credential. Re-run the audit afterwards.',
+          'List them with the audit, then review (`foresights get <slug>`), edit (`foresights put <slug>`) or, after asking the user, remove (`foresights delete <slug>`, purged, as `foresights transcripts audit-secrets --help` shows) each one, and ask the user to rotate any real credential. Re-run the audit afterwards.',
         fix: agentFix(AUDIT_ARGV, 'Lists the affected slugs and line numbers (never values) so each page can be reviewed; read-only.', NAME, { docs: DOCS }),
       };
     }

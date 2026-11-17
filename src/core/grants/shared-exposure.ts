@@ -136,7 +136,7 @@ export type ExposureSubject =
 export function subjectLabel(s: ExposureSubject): string {
   if (s.kind === 'legacy_token') return `The token "${s.name}"`;
   if (s.kind === 'oauth_client') return `The OAuth client ${s.name ? `"${s.name}" (${s.id})` : s.id}`;
-  return `The gbrain access ${s.harness} uses`;
+  return `The foresights access ${s.harness} uses`;
 }
 
 /** Source grants can separate channels only when they sit in different sources. */
@@ -166,8 +166,8 @@ function reach(reasons: readonly ExposureReason[], census: ChatCensus | null | u
 }
 
 /** The per-person setup: a credential per person, or one shared agent reading as each request's audience. */
-const PER_PERSON = 'Per-person access: give each person\'s agent its own credential bound to them (gbrain access member add <id>, then gbrain auth create <name> --member <id>) and put readable_by on pages only some people may read; '
-  + 'one agent in a shared channel instead uses a credential made with gbrain auth create <name> --may-act-for <members>, and its harness names each request\'s audience on every call: a call that names none reads the credential\'s full grant. '
+const PER_PERSON = 'Per-person access: give each person\'s agent its own credential bound to them (foresights access member add <id>, then foresights auth create <name> --member <id>) and put readable_by on pages only some people may read; '
+  + 'one agent in a shared channel instead uses a credential made with foresights auth create <name> --may-act-for <members>, and its harness names each request\'s audience on every call: a call that names none reads the credential\'s full grant. '
   + 'Never bind a shared agent\'s credential to one person: it then reads as that person for everyone who talks to it.';
 
 /**
@@ -178,13 +178,13 @@ const PER_PERSON = 'Per-person access: give each person\'s agent its own credent
 export function remedyText(s: ExposureSubject, census?: ChatCensus | null): string {
   const target = s.kind === 'legacy_token' ? `--token ${s.name}` : s.kind === 'oauth_client' ? `--client ${s.id}` : null;
   const steps: string[] = [target
-    ? `bind the credential to the person who uses this agent (gbrain auth rescope ${target} --member <id>), or, for one agent several people share, to their audience (gbrain auth rescope ${target} --may-act-for <members>; its harness then names each request's audience)`
+    ? `bind the credential to the person who uses this agent (foresights auth rescope ${target} --member <id>), or, for one agent several people share, to their audience (foresights auth rescope ${target} --may-act-for <members>; its harness then names each request's audience)`
     : `label each person and bind this harness's server (${bindArgv(s).join(' ')}; --stdio-member <member> when one person alone uses the harness)`];
   if (splitBySource(census)) {
     steps.push(s.kind === 'stdio'
-      ? 'narrowing only, which leaves the server unbound: pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment and running gbrain sources unfederate <source> (a federated sibling source stays nameable)'
-      : `narrowing only, which leaves the token unbound: ${narrowArgv(s, census)!.join(' ')} (a new harness grant: gbrain mcp grant <name> --source <source> --federated-read <source>)`);
-    steps.push('keep a channel\'s source out of unscoped reads (gbrain sources unfederate <id>)');
+      ? 'narrowing only, which leaves the server unbound: pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment and running foresights sources unfederate <source> (a federated sibling source stays nameable)'
+      : `narrowing only, which leaves the token unbound: ${narrowArgv(s, census)!.join(' ')} (a new harness grant: foresights mcp grant <name> --source <source> --federated-read <source>)`);
+    steps.push('keep a channel\'s source out of unscoped reads (foresights sources unfederate <id>)');
   } else {
     steps.push(`the chat sits in one source (${census!.chat_sources[0]}), so a source grant cannot separate it`);
   }
@@ -197,8 +197,8 @@ export function exposureFix(s: ExposureSubject, census?: ChatCensus | null): Act
   const message = `${subjectLabel(s)} lets the agent read every channel it reaches, so when several people use the agent it may show one person another person's messages. ${remedyText(s, census).replace(/^Fix: (.)/, (_m, c: string) => c.toUpperCase())}`;
   return { ask_user: true, argv: bindArgv(s), consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS, verify,
     inputs: s.kind === 'stdio'
-      ? [{ name: 'id,...', how: 'Ask the user who talks to this agent (gbrain access member list); use --stdio-member <member> instead when one person alone uses it.' }]
-      : [{ name: 'member', how: 'Ask the user which member uses this agent (gbrain access member list); when several people share it, rescope with --may-act-for <members> instead.' }],
+      ? [{ name: 'id,...', how: 'Ask the user who talks to this agent (foresights access member list); use --stdio-member <member> instead when one person alone uses it.' }]
+      : [{ name: 'member', how: 'Ask the user which member uses this agent (foresights access member list); when several people share it, rescope with --may-act-for <members> instead.' }],
     why: 'A bound credential reads only what its member, or each request\'s audience, may read; the secret is unchanged.', user_message: message };
 }
 

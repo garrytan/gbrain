@@ -32,7 +32,7 @@ mutating: false
 
 This skill has two related but distinct modes:
 
-1. **Skill conformance validation** — gbrain's own conformance bar
+1. **Skill conformance validation** — foresights's own conformance bar
    (the original 1.0 scope). Validates every skill has SKILL.md with
    frontmatter, every reference exists, manifest + resolver coverage
    round-trips.
@@ -139,7 +139,7 @@ timeouts, not code bugs).
 #### 3. Run system health checks
 
 - Disk / memory / CPU
-- gbrain: `gbrain doctor --fast --json`
+- gbrain: `foresights doctor --fast --json`
 - Database connection (if applicable)
 - Critical files exist (CLAUDE.md, AGENTS.md, etc.)
 
@@ -157,7 +157,7 @@ For each failing test:
 2. Check if the code it tests was modified recently (possible
    regression).
 3. Check if it's a known flake (API timeout, service down).
-4. Check if a dependency was updated (gbrain, bun, etc.).
+4. Check if a dependency was updated (foresights, bun, etc.).
 
 #### 5. Classify each failure
 
@@ -233,11 +233,11 @@ This enables:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A test fails because of a missing API key or a flaky provider: classify it as an environment failure, not a code failure, and say which key.
 - A security test fails: always escalate to the user; never auto-fix it.
-- `gbrain doctor` cannot reach the brain (`GBRAIN_DB_ACCESS`): route to the db-repair skill before running integration tests.
+- `foresights doctor` cannot reach the brain (`GBRAIN_DB_ACCESS`): route to the db-repair skill before running integration tests.
 
 ## Anti-Patterns
 

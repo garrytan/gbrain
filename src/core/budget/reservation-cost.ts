@@ -18,7 +18,7 @@ export type BudgetKind = 'chat' | 'embed' | 'rerank' | 'decide';
 /**
  * #4312 — normalized operator price overrides: model string (lowercased) →
  * per-1M-token pricing. Declared in the config plane as JSON, e.g.
- *   gbrain config set pricing.overrides '{"litellm:gpt-4o": {"input": 2.5, "output": 10}, "litellm:text-embedding-3-large": 0.13}'
+ *   foresights config set pricing.overrides '{"litellm:gpt-4o": {"input": 2.5, "output": 10}, "litellm:text-embedding-3-large": 0.13}'
  * A bare number means one rate for input AND output tokens (embeddings only
  * ever bill input, so a scalar is the natural spelling there).
  */

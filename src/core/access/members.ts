@@ -18,7 +18,7 @@
  * Audience members (GBRA-108 design 2): a member's kind is `person` (the default) or `audience` (a group chat, a
  * shared assistant). An owner read treats an audience member's own member page, its older versions, its derived pages
  * and its facts as if its readers named the owner (search/private-visibility.ts). Only the trusted local operator
- * sets it (`gbrain access member kind`, `member add --kind`); a remote caller is refused.
+ * sets it (`foresights access member kind`, `member add --kind`); a remote caller is refused.
  */
 import type { BrainEngine } from '../engine.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
@@ -136,7 +136,7 @@ export async function existingMember(engine: BrainEngine, raw: unknown, action: 
   const member = await getMember(engine, id);
   if (member) return member;
   throw memberInvalid(`No member "${id}" exists on this brain.`, 'unknown',
-    `Check the id with gbrain access member list, or add it: gbrain access member add ${id}.`,
+    `Check the id with foresights access member list, or add it: foresights access member add ${id}.`,
     `Only an existing member can be ${action}; an unknown id is refused rather than read as unbound.`);
 }
 
@@ -144,7 +144,7 @@ async function assertEmailFree(engine: BrainEngine, email: string, memberId: str
   const [row] = await engine.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE email = $1', [email]);
   if (!row || row.id === memberId) return;
   throw memberInvalid(`Member "${row.id}" already declares that email.`, 'email_taken',
-    `Check the address, or clear it there first: gbrain access member set ${row.id} --email none.`,
+    `Check the address, or clear it there first: foresights access member set ${row.id} --email none.`,
     'An email finds exactly one member, so it is unique per brain.');
 }
 
@@ -162,11 +162,11 @@ export async function memberByEmail(engine: BrainEngine, raw: unknown): Promise<
   if (rows.length === 1) return toRecord(rows[0]!);
   if (!rows.length) {
     throw opError('not_found', 'No member declares that email.',
-      `List members and their emails with gbrain access member list, then declare it on the right member: gbrain access member set followed by that member's id and --email ${email}.`,
+      `List members and their emails with foresights access member list, then declare it on the right member: foresights access member set followed by that member's id and --email ${email}.`,
       { why: 'An email only finds a member an operator declared it on; it never creates a member or a link.', fix: MEMBER_LIST_FIX });
   }
   throw memberInvalid(`${rows.length} members declare that email.`, 'email_ambiguous',
-    'Link by member id instead (gbrain access member link <id> --qm <canonical id>), and clear the duplicate with gbrain access member set <id> --email none.',
+    'Link by member id instead (foresights access member link <id> --qm <canonical id>), and clear the duplicate with foresights access member set <id> --email none.',
     'A link by email is made only when exactly one member declares it.');
 }
 
@@ -175,7 +175,7 @@ async function requireEnabledMember(engine: BrainEngine, raw: unknown): Promise<
   const member = await existingMember(engine, raw, 'bound or previewed');
   if (member.status === 'enabled') return member;
   throw memberInvalid(`Member "${member.id}" is ${member.status}.`, member.status,
-    member.status === 'disabled' ? `Enable it first (gbrain access member enable ${member.id}), or name another member.` : 'Removed ids are never reused; add a new member id.',
+    member.status === 'disabled' ? `Enable it first (foresights access member enable ${member.id}), or name another member.` : 'Removed ids are never reused; add a new member id.',
     'Only an enabled member can be bound or previewed.');
 }
 
@@ -200,7 +200,7 @@ export async function legacyTokenByName(engine: BrainEngine, name: string): Prom
     'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at', [name]);
   if (rows.length === 1) return { kind: 'token', id: rows[0]!.id, name: rows[0]!.name };
   throw opError('invalid_params', rows.length === 0 ? `No active token named "${name}".` : `${rows.length} active tokens are named "${name}".`,
-    rows.length === 0 ? 'List tokens with gbrain auth list, then bind one by name.' : 'Bind one of them by id: gbrain auth rescope --id <uuid> --member <id> (ids from gbrain auth list).',
+    rows.length === 0 ? 'List tokens with foresights auth list, then bind one by name.' : 'Bind one of them by id: foresights auth rescope --id <uuid> --member <id> (ids from foresights auth list).',
     { why: 'A binding names exactly one credential.' });
 }
 
@@ -219,7 +219,7 @@ export async function addMember(engine: BrainEngine, rawId: unknown, opts: { nam
   }
   if (existing) {
     throw memberInvalid(`Member "${id}" already exists (${existing.status}).`, 'exists',
-      existing.status === 'disabled' ? `Enable it with gbrain access member enable ${id}.` : `Change its groups with gbrain access group add <group> --members ${id}.`,
+      existing.status === 'disabled' ? `Enable it with foresights access member enable ${id}.` : `Change its groups with foresights access group add <group> --members ${id}.`,
       'add creates a member once; it never edits an existing one.');
   }
   if (email !== null) await assertEmailFree(engine, email, id);
@@ -320,7 +320,7 @@ export async function previewRemoveMember(engine: BrainEngine, rawId: unknown): 
   const { pages, truncated } = await pagesNaming(engine, `member:${member.id}`);
   return {
     member, bound_credentials: await boundCredentials(engine, member.id), pages, pages_truncated: truncated,
-    note: `Removing "${member.id}" is permanent: the id can never be reused, its group memberships are dropped, credentials bound to it are refused at verification, and pages naming it become unreadable to it. gbrain access member disable ${member.id} is the reversible option.`,
+    note: `Removing "${member.id}" is permanent: the id can never be reused, its group memberships are dropped, credentials bound to it are refused at verification, and pages naming it become unreadable to it. foresights access member disable ${member.id} is the reversible option.`,
   };
 }
 
@@ -352,7 +352,7 @@ async function existingGroup(engine: BrainEngine, raw: unknown): Promise<GroupRe
   const id = assertAccessId(raw, 'group');
   const [group] = await listGroups(engine, id);
   if (group) return group;
-  throw memberInvalid(`No group "${id}" exists on this brain.`, 'unknown_group', 'List groups with gbrain access group list.', 'Only an existing group can change.');
+  throw memberInvalid(`No group "${id}" exists on this brain.`, 'unknown_group', 'List groups with foresights access group list.', 'Only an existing group can change.');
 }
 
 /** Creates the group when missing and adds `members` (each an existing member that was not removed). */
@@ -441,7 +441,7 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
       `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''}${unscopedPatch ? ', reads_unscoped' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
     if (!before) {
       throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
-        target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
+        target.kind === 'token' ? 'List tokens with foresights auth list.' : 'List clients with foresights auth clients --json.');
     }
     const member = patch.member === undefined ? before.member_id : patch.member;
     const mayActFor = patch.mayActFor === undefined ? before.may_act_for : patch.mayActFor;
@@ -464,7 +464,7 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
       if (member !== null) throw attestRefused(`${what} is bound to member "${member}", so it cannot attest other people.`, 'Use a credential bound to no member (--member none), or a separate client for the trusted system.');
       if (target.kind === 'client' && (!(before.grant_types ?? []).includes('client_credentials') || before.confidential !== true)) {
         throw attestRefused(`${what} is not a confidential client-credentials client, so it cannot attest people.`,
-          'Register one for the trusted system: gbrain auth register-client <name> --grant-types client_credentials, then grant it --attest-actor qm.');
+          'Register one for the trusted system: foresights auth register-client <name> --grant-types client_credentials, then grant it --attest-actor qm.');
       }
     }
     let changed = member !== before.member_id || JSON.stringify(mayActFor ?? null) !== JSON.stringify(before.may_act_for ?? null)
@@ -495,7 +495,7 @@ export class MemberBindingRefused extends Error {
   readonly code = 'access_member_disabled';
   constructor(readonly memberId: string, readonly reason: 'disabled' | 'removed' | 'missing' | 'malformed') {
     super(`access_member_disabled: this credential is bound to member "${memberId}", which is ${reason === 'malformed' ? 'not a valid member id' : reason}. `
-      + 'Ask the brain operator to enable the member (gbrain access member enable <id>) or rebind the credential (gbrain auth rescope ... --member <id>|none).');
+      + 'Ask the brain operator to enable the member (foresights access member enable <id>) or rebind the credential (foresights auth rescope ... --member <id>|none).');
   }
 }
 

@@ -67,7 +67,7 @@ describe('image_embedding_coverage doctor check', () => {
       expect(on.status).toBe('warn');
       expect(on.details).toMatchObject({ image_pages: 2, without_image_vector: 2, null_source_path: 1, unsupported_holds: 1, multimodal: true });
       expect(on.message).toContain('2 of 2 image page(s) have no image vector');
-      expect(on.message).toContain('gbrain embed --stale --images');
+      expect(on.message).toContain('foresights embed --stale --images');
       expect(on.message).toContain('1 held as managed_image_sync_unsupported');
       expect(on.message).toContain('1 with no recorded source_path');
 

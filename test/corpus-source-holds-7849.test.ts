@@ -4,7 +4,7 @@
  * 1. Dream discovery walks the session corpus recursively for .txt and .md
  *    files, and routing holds every one of them that names no source on a
  *    multi-source brain (corpus_legacy_unstamped). The operator mapping
- *    (gbrain sweep --assign-corpus) listed only top-level .txt files, so a
+ *    (foresights sweep --assign-corpus) listed only top-level .txt files, so a
  *    .md note or a file in a nested folder could never be released.
  * 2. Only corpus_legacy_unstamped and corpus_source_unresolved holds are
  *    released by the mapping (it fills only records naming no source); every
@@ -65,7 +65,7 @@ describe('#7849 each hold reason prints its own fix', () => {
     { corpus_source_other: {}, held }, 'source-a').details.source_routing as { fix: string[] };
 
   test('archived and re-created sources never print the mapping, which releases nothing for them', () => {
-    expect(route({ corpus_source_archived: 1 }).fix).toEqual(['gbrain sources archived', 'gbrain sources restore <archived-source>']);
+    expect(route({ corpus_source_archived: 1 }).fix).toEqual(['foresights sources archived', 'foresights sources restore <archived-source>']);
     expect(route({ corpus_source_incarnation_changed: 1 }).fix).toEqual([]);
     expect(route({ corpus_source_archived: 1, corpus_source_incarnation_changed: 2 }).fix.join(' ')).not.toContain('--assign-corpus');
   });
@@ -78,13 +78,13 @@ describe('#7849 each hold reason prints its own fix', () => {
     const refusal = await refuseChangedSessionSource(engine, { corpus_source: { raw_source: file, corpus_dir: corpus, incarnation: 'x' }, source_id: 'source-archived' })
       .then(() => null, (error: Error) => error.message);
     expect(refusal).toContain('session_source_changed: corpus_source_archived');
-    expect(refusal).toContain('It synthesizes after gbrain sources restore <archived-source>.');
+    expect(refusal).toContain('It synthesizes after foresights sources restore <archived-source>.');
     expect(refusal).not.toContain('--assign-corpus');
   });
 
   test('held sessions with no source keep the mapping, once', () => {
     expect(route({ corpus_legacy_unstamped: 1, corpus_source_unresolved: 1, corpus_source_archived: 1 }).fix)
-      .toEqual(['gbrain sweep --assign-corpus <source>', 'gbrain sources archived', 'gbrain sources restore <archived-source>']);
+      .toEqual(['foresights sweep --assign-corpus <source>', 'foresights sources archived', 'foresights sources restore <archived-source>']);
   });
 });
 
@@ -99,7 +99,7 @@ describe('#7849 doctor counts what dream synthesis holds', () => {
       const check = await buildMemoryWritebackCheck(engine);
       expect(check.details?.corpus_source_holds).toEqual({ legacy_unstamped: 1, unresolved: 0, sessions: 1 });
       expect(check.status).toBe('warn');
-      expect(check.message).toContain('gbrain sweep --assign-corpus <source>');
+      expect(check.message).toContain('foresights sweep --assign-corpus <source>');
     });
   });
 });

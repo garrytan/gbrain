@@ -1,5 +1,5 @@
 /**
- * #7246: `gbrain orphans --json` printed every orphan in one document (about
+ * #7246: `foresights orphans --json` printed every orphan in one document (about
  * 27 MB on a brain with hundreds of thousands of pages). It now prints the
  * totals first, then one bounded page of rows with `complete` and a
  * `next_cursor` / `next_command`; `--all` keeps every row, and a listing
@@ -46,7 +46,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
 
-describe('gbrain orphans bounded output (#7246)', () => {
+describe('foresights orphans bounded output (#7246)', () => {
   test('--json prints the totals first and one default page of 100 rows with a next cursor', async () => {
     const out = await orphansJson([]);
     expect(out.total_orphans).toBe(150);
@@ -93,7 +93,7 @@ describe('gbrain orphans bounded output (#7246)', () => {
     const text = await captureStdout(() => runOrphans(engine, ['--limit', '5']));
     expect(text).toContain('150 orphans out of');
     expect(text.split('\n').filter(line => line.startsWith('  ')).length).toBe(5);
-    expect(text).toContain('Showing 5 of 150 orphans. Next page: gbrain orphans --limit 5 --cursor ');
+    expect(text).toContain('Showing 5 of 150 orphans. Next page: foresights orphans --limit 5 --cursor ');
   });
 
   test('find_orphans pages by cursor and reports complete', async () => {

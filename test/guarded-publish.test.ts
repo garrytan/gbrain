@@ -1,6 +1,6 @@
 /**
  * The secret gate on automatic publishes (`commitAndPush({ pushOnly, keepCheckout })`, the publish
- * `gbrain sources refresh` runs in its child): it scans, under the publish lock, what the commits it is about to push add.
+ * `foresights sources refresh` runs in its child): it scans, under the publish lock, what the commits it is about to push add.
  * Protects: a value that looks like a secret is found in an added line even when a later commit removed it, in a
  * commit message, and in a merge commit's conflict resolution, named by path, line, rule and commit but never by
  * value, and nothing is pushed; an added line whose text starts with `++` (printed `+++`, like a file header) is

@@ -77,7 +77,7 @@ const ALL_TABLES = [
   'minion_attachments',
   'minion_inbox',
   'minion_jobs',
-  // A fresh-database `gbrain init` commits a protocol-2 shared-skill request;
+  // A fresh-database `foresights init` commits a protocol-2 shared-skill request;
   // the request guard refuses to delete it (cascading from a source delete)
   // in any later protocol-1 session. TRUNCATE fires no row guard.
   'persistence_requests',
@@ -155,7 +155,7 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
     // A file that activated managed persistence and exited without
     // deactivating leaves the writer guard armed, and its sources trigger
     // rejects the reset below (writer_coordinator_required). A fresh-database
-    // `gbrain init` also raises the writer protocol floor to 2 with shared
+    // `foresights init` also raises the writer protocol floor to 2 with shared
     // skill bundles on, after which every protocol-1 request is refused
     // (writer_upgrade_required). Restore the schema defaults (disabled, floor
     // 1, bundles off) first. The floor trigger forbids lowering it by UPDATE,
@@ -348,7 +348,7 @@ export const FIXTURES_PATH = FIXTURES_DIR;
  * Used by the v15→v23 chain E2E to simulate the field report's starting
  * state (schema at v15, ~100 real rows, kick off full migration). Before
  * this helper, no CLI flag or test hook existed to stop the migration
- * chain at an intermediate version — `gbrain init --migrate-only` always
+ * chain at an intermediate version — `foresights init --migrate-only` always
  * ran to latest.
  *
  * Caveats:

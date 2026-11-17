@@ -49,7 +49,7 @@ export const FRONTMATTER_SECTION = 'Auto-registered (from skill frontmatter)';
 const FRONTMATTER_SKIP_DIRS = new Set<string>(['conventions', 'migrations']);
 
 /** Process-scoped warn-once tracker so a malformed frontmatter doesn't
- *  spam stderr on every `gbrain doctor` invocation across a session.
+ *  spam stderr on every `foresights doctor` invocation across a session.
  *  Test seam: `_resetWarnedSkillsForTests` lets unit suites re-trigger. */
 let _warnedSkills: Set<string> = new Set();
 

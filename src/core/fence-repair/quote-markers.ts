@@ -2,7 +2,7 @@
  * #8059 prose-quoted fence markers: the repair-only `quote_marker` edit.
  *
  * A page that quotes a facts or takes marker in prose (a transcript about
- * gbrain, a note on the format) fails the strict fence gate. This module
+ * foresights, a note on the format) fails the strict fence gate. This module
  * finds such mentions and wraps each in backticks, which every reader already
  * treats as code. It changes no reader's fence rule (#8020): it only edits
  * the page, and only the fences repair kind applies the edit, after the

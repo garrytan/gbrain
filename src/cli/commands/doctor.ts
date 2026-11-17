@@ -1,5 +1,5 @@
 /**
- * `gbrain doctor`: pre-connect dispatch (opens its own engine), run by
+ * `foresights doctor`: pre-connect dispatch (opens its own engine), run by
  * handleCliOnly before the connectEngine() terminator. Moved verbatim from
  * src/cli.ts (refactor wave 1, W4 cli); the record lives in src/cli/command-table.ts.
  */
@@ -106,7 +106,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
       try {
         const d = classifyDbAccessError(e, { url: loadConfig()?.database_url ?? null, brainId: dbMarkerBrainId() });
         if (d.reason !== 'unknown' && shouldEmitDbAccessMarker()) {
-          console.error(`${formatDbMarker(d)}\n${d.remediation} Run: gbrain db-repair`);
+          console.error(`${formatDbMarker(d)}\n${d.remediation} Run: foresights db-repair`);
         }
       } catch { /* marker is best-effort */ }
       await runDoctor(null, args, getDbUrlSource(), e, deadline);
@@ -157,7 +157,7 @@ async function runDoctorWithDeadline(
 }
 
 /**
- * `gbrain doctor --only <check>[,…] [--json]` — the default `fix.verify`:
+ * `foresights doctor --only <check>[,…] [--json]` — the default `fix.verify`:
  * read-only, observational startup (probeOnly: no migrations or maintenance),
  * engine-free when every requested check is a filesystem check. Unknown names
  * exit 2 with the valid list. Returns false when `--only` is absent.

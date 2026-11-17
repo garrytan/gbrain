@@ -1,8 +1,8 @@
 /**
- * #9190 and #9191: gbrain creates its OAuth tables with CREATE TABLE IF NOT EXISTS, so a same-named table another
+ * #9190 and #9191: foresights creates its OAuth tables with CREATE TABLE IF NOT EXISTS, so a same-named table another
  * application created in the brain's schema used to be adopted silently, altered by later migrations, and then break
  * v210 (clamp_oauth_token_ttl) with "operator does not exist: timestamp with time zone > bigint", midway through an
- * upgrade and without naming the table. Rerunning `gbrain apply-migrations --force-schema` then ran the pending
+ * upgrade and without naming the table. Rerunning `foresights apply-migrations --force-schema` then ran the pending
  * migrations without replaying the schema blob, so a blob-owned table that was missing stayed missing.
  * Both engines: PGLite always, Postgres with DATABASE_URL (test/postgres-unit-arms.txt).
  */
@@ -28,7 +28,7 @@ const FOREIGN_TOKENS = `CREATE TABLE oauth_tokens (
 const FOREIGN_ROW = `INSERT INTO oauth_tokens (id, token_hash, token_type, client_id, expires_at)
   VALUES ('00000000-0000-4000-8000-000000000001', 'hash-example', 'Bearer', 'other-app-example', now() + interval '1 hour')`;
 const FORCE_SCHEMA = ['--force-schema', '--yes', '--non-interactive', '--no-autopilot-install'];
-/** The columns gbrain's first OAuth release (v32) gave each table, and those later migrations added after v209. */
+/** The columns foresights's first OAuth release (v32) gave each table, and those later migrations added after v209. */
 const V32_COLUMNS: Record<string, readonly string[]> = {
   oauth_clients: ['client_id', 'client_secret_hash', 'client_name', 'redirect_uris', 'grant_types', 'scope', 'token_endpoint_auth_method',
     'client_id_issued_at', 'client_secret_expires_at', 'created_at'],
@@ -45,7 +45,7 @@ const ADDED_AFTER_V209: Record<string, readonly string[]> = {
 interface Brain { config: Record<string, string>; open: () => Promise<BrainEngine> }
 
 for (const kind of testBackends()) {
-  describe(`a table gbrain did not create in the brain's schema (${kind})`, () => {
+  describe(`a table foresights did not create in the brain's schema (${kind})`, () => {
     const work = mkdtempSync(join(tmpdir(), 'gbrain-foreign-oauth-'));
     const homes: string[] = [];
     const engines: BrainEngine[] = [];
@@ -120,12 +120,12 @@ for (const kind of testBackends()) {
       expect(error?.message).toContain('oauth_tokens.expires_at is timestamp with time zone');
       expect(error?.message).toContain('needs bigint');
       expect(error?.message).toContain('SET SCHEMA');
-      expect(error?.message).toContain('gbrain apply-migrations --force-schema --yes');
+      expect(error?.message).toContain('foresights apply-migrations --force-schema --yes');
       expect(await engine.getConfig('version')).toBe('205');
       expect(await engine.executeRaw('SELECT token_type FROM oauth_tokens')).toEqual([{ token_type: 'Bearer' }]);
     }, 300_000);
 
-    test('#9190: a fresh install refuses a foreign oauth_codes, oauth_clients or oauth_tokens before creating any gbrain table', async () => {
+    test('#9190: a fresh install refuses a foreign oauth_codes, oauth_clients or oauth_tokens before creating any foresights table', async () => {
       for (const [ddl, named] of [
         ['CREATE TABLE oauth_codes (code_hash text PRIMARY KEY, client_id text, expires_at timestamptz)', 'oauth_codes.expires_at is timestamp with time zone'],
         ['CREATE TABLE oauth_clients (client_id uuid PRIMARY KEY, client_name text)', 'oauth_clients.client_id is uuid'],
@@ -154,7 +154,7 @@ for (const kind of testBackends()) {
       expect(await after.getConfig('version')).toBe(String(LATEST_VERSION));
     }, 300_000);
 
-    test('gbrain\'s own OAuth tables in an older release\'s shape pass the check and upgrade to head', async () => {
+    test('foresights\'s own OAuth tables in an older release\'s shape pass the check and upgrade to head', async () => {
       for (const [from, keep] of [[32, V32_COLUMNS], [209, null]] as const) {
         const b = await brain(true);
         const engine = await b.open();

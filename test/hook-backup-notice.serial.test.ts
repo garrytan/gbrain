@@ -1,10 +1,10 @@
 /**
- * `gbrain hook` monthly backup-coverage integration points (hook.ts):
+ * `foresights hook` monthly backup-coverage integration points (hook.ts):
  *   1. session-start digest note (backupSessionStartNote, 'hook-note' channel,
  *      record-after-write + 24h cross-channel dampener);
  *   2. user-prompt banner on the degraded no-serve path (pendingBackupBanner,
  *      'hook-banner' channel), with the push-failure banner outranking it;
- *   3. session-end detached `gbrain backup check --quiet` spawn (stale-or-absent
+ *   3. session-end detached `foresights backup check --quiet` spawn (stale-or-absent
  *      cache only, 24h debounce via last_spawn_at in the nag file, kill switch).
  *
  * hook.ts reads the REAL cache/nag paths under GBRAIN_HOME (status-file.ts
@@ -187,7 +187,7 @@ describe('user-prompt backup banner (hook-banner channel)', () => {
     expect(payload.hookSpecificOutput?.hookEventName).toBe('UserPromptSubmit');
     expect(payload.systemMessage).toContain('NOTICE:');
     expect(payload.systemMessage).toContain("aren't on any git remote");
-    expect(payload.systemMessage).toContain('gbrain backup status');
+    expect(payload.systemMessage).toContain('foresights backup status');
     expect(payload.hookSpecificOutput?.additionalContext).toBe(payload.systemMessage!);
 
     const state = readNagState();

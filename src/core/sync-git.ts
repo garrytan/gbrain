@@ -1,5 +1,5 @@
 /**
- * Git plumbing for `gbrain sync`: invocation building, repo discovery,
+ * Git plumbing for `foresights sync`: invocation building, repo discovery,
  * baseline-commit self-heal, and path-containment guards. Peeled out of
  * src/commands/sync.ts (containment sprint C13-C14) as a pure move.
  */
@@ -76,7 +76,7 @@ function normalizeOriginPath(p: string): string {
 /** One-line operator warning for a refused resolution (#3942). */
 export function refusedRemovedPathMessage(r: RefusedSlugResolution): string {
   if (r.claimants) {
-    return `  [sync] refusing to delete a page for removed path '${r.path}': ${r.claimants.join(', ')} all record it as their origin (preview gbrain repair origin-twins to choose the page that keeps it).`;
+    return `  [sync] refusing to delete a page for removed path '${r.path}': ${r.claimants.join(', ')} all record it as their origin (preview foresights repair origin-twins to choose the page that keeps it).`;
   }
   return (
     `  [sync] refusing to touch '${r.slug}' for removed path '${r.path}': ` +
@@ -269,9 +269,9 @@ export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[]
  * Resolve sync's effective no-embed mode from CLI args + config.
  *
  * The deferred-setup sentinel (`embedding_disabled: true`, written by
- * `gbrain init --no-embedding`) is an implicit `--no-embed`: without this,
+ * `foresights init --no-embedding`) is an implicit `--no-embed`: without this,
  * the embed credential preflight demands provider credentials the user
- * deliberately deferred at init, and every `gbrain sync` on a keyless
+ * deliberately deferred at init, and every `foresights sync` on a keyless
  * brain exits 1. See embed-preflight.ts's skip protocol — the sentinel is
  * meant to be honored before the credential check ever runs.
  *
@@ -410,7 +410,7 @@ export async function discoverGitRootAsync(inputPath: string): Promise<string> {
 
 function notAGitRepository(inputPath: string, error: unknown): Error {
   noteGitFailure(inputPath, error);
-  return new Error(`Not inside a git repository: ${inputPath}. GBrain sync requires a git-initialized repo (or a subdirectory of one).`);
+  return new Error(`Not inside a git repository: ${inputPath}. Foresights sync requires a git-initialized repo (or a subdirectory of one).`);
 }
 
 /**
@@ -485,7 +485,7 @@ export function createSyncBaselineCommit(repoPath: string): void {
   //
   // Known non-incident edge (B2, documented not fixed): an orphan branch
   // (`git switch --orphan`) in a repo with history elsewhere probes as unborn
-  // and would still be baselined. A gbrain brain is never in that state; it is
+  // and would still be baselined. A foresights brain is never in that state; it is
   // not the incident (no stacking on real history, no re-case of other
   // branches), so it is left as a limitation rather than complicating the
   // guard with a `rev-list --all` "commits anywhere" probe.
@@ -565,7 +565,7 @@ export function createSyncBaselineCommit(repoPath: string): void {
   // Clear the index before staging (round 6, P1): the unborn-HEAD
   // recovery site can reach this function with a repo whose index
   // already has entries staged from some OTHER prior operation (a manual
-  // `git add`, an interrupted workflow) before gbrain ever touched it.
+  // `git add`, an interrupted workflow) before foresights ever touched it.
   // `add -A` only adds/updates — it does not drop an already-staged path
   // that our exclusion pathspecs above now want excluded. `read-tree
   // --empty` resets the index without touching the working tree; a

@@ -207,7 +207,7 @@ test('pglite: a genuinely malformed envelope replays its stored entries with zer
       expect(blocked).toMatchObject({ pages_processed: 0, pages_failed: 0, pages_blocked: 1 });
       expect((await requests(engine)).map(r => r.state)).toEqual(Array(MAX_GENERATION_ATTEMPTS).fill('failed'));
       expect(lines.join('')).toContain(`${MAX_GENERATION_ATTEMPTS} batch requests holding it failed at this page version, so no model call runs again until the page changes`);
-      expect(lines.join('')).toContain('gbrain write-request --');
+      expect(lines.join('')).toContain('foresights write-request --');
       // The bound is durable: a fresh run still blocks.
       expect((await extract(engine, calls)).pages_blocked).toBe(1);
     } finally { process.stderr.write = write; }

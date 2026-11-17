@@ -83,7 +83,7 @@ describe('manageGitignore', () => {
     writeStorageConfig();
     manageGitignore(tmp);
     const content = readFileSync(join(tmp, '.gitignore'), 'utf-8');
-    expect(content).toContain('# Auto-managed by gbrain');
+    expect(content).toContain('# Auto-managed by foresights');
     expect(content).toContain('media/x/');
     expect(content).toContain('media/articles/');
   });

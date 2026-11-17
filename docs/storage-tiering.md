@@ -2,7 +2,7 @@
 
 ## Overview
 
-GBrain supports storage tiering to separate version-controlled content from bulk machine-generated data. This prevents git repositories from becoming bloated with large amounts of automatically generated content while still preserving it in the database.
+Foresights supports storage tiering to separate version-controlled content from bulk machine-generated data. This prevents git repositories from becoming bloated with large amounts of automatically generated content while still preserving it in the database.
 
 > Note on naming: the canonical keys are `db_tracked` / `db_only` (engine-agnostic — works on both PGLite and Postgres). The deprecated aliases `git_tracked` / `supabase_only` still load with a once-per-process warning; rename them in your config by hand to silence it.
 
@@ -24,7 +24,7 @@ storage:
 
   # Directories persisted via the brain database only (bulk machine-generated
   # content). Written to disk as a local cache but not committed to git;
-  # `gbrain sync` auto-manages .gitignore for these paths. `gbrain export
+  # `foresights sync` auto-manages .gitignore for these paths. `foresights export
   # --restore-only` repopulates missing files from the database.
   db_only:
     - media/x/
@@ -35,7 +35,7 @@ storage:
 Path requirements:
 
 - Each directory must end with `/` for canonical form. The validator auto-normalizes missing trailing slashes (one-time info note shows what changed).
-- A tier may also be a one-line flow list, `db_only: [media/x/, 'media/articles/']`. A flow list split over several lines, a nested list, an unquoted value holding a space (a missing comma: `[a/ b/]`), or a `db_only` key outside `storage:`, resolves no directory (a refused `db_only` or `supabase_only` line counts even when another key resolves): `gbrain storage status` names it, and until it is fixed a managed sync keeps every live page whose file is gone (held as `file_drift` with reason `storage_invalid`) instead of deleting it, because it cannot tell which pages are database-only (#8007). A tier overlap holds them the same way. A deprecated `supabase_only` list next to canonical keys is ignored (canonical keys win), so the pages under its directories that `db_only` does not also list are held the same way until you move those directories under `db_only`; `gbrain storage status` names them. `gbrain repair file-drift --prefer file` and `sync.apply_held_deletions` skip these pages while the config stays invalid. Fix `gbrain.yml`, commit it and sync again; the holds clear and each page is decided under the fixed config.
+- A tier may also be a one-line flow list, `db_only: [media/x/, 'media/articles/']`. A flow list split over several lines, a nested list, an unquoted value holding a space (a missing comma: `[a/ b/]`), or a `db_only` key outside `storage:`, resolves no directory (a refused `db_only` or `supabase_only` line counts even when another key resolves): `foresights storage status` names it, and until it is fixed a managed sync keeps every live page whose file is gone (held as `file_drift` with reason `storage_invalid`) instead of deleting it, because it cannot tell which pages are database-only (#8007). A tier overlap holds them the same way. A deprecated `supabase_only` list next to canonical keys is ignored (canonical keys win), so the pages under its directories that `db_only` does not also list are held the same way until you move those directories under `db_only`; `foresights storage status` names them. `foresights repair file-drift --prefer file` and `sync.apply_held_deletions` skip these pages while the config stays invalid. Fix `gbrain.yml`, commit it and sync again; the holds clear and each page is decided under the fixed config.
 - A directory cannot appear in both tiers — that's a tier-overlap error and `loadStorageConfig` throws `StorageConfigError`. Edit `gbrain.yml` to remove the overlap and try again.
 - Any other key under `storage:` is ignored with a warning naming it (a typo such as `kep_db` used to be ignored silently).
 
@@ -49,22 +49,22 @@ storage:
 
 ## Behavior Changes
 
-### 1. `gbrain sync` — automatic .gitignore management
+### 1. `foresights sync` — automatic .gitignore management
 
-When storage configuration is present, `gbrain sync` automatically manages `.gitignore` entries on every successful sync:
+When storage configuration is present, `foresights sync` automatically manages `.gitignore` entries on every successful sync:
 
 - Adds missing `db_only` directory patterns to `.gitignore`.
-- A file under a `db_only` directory that git already tracked before the declaration stays tracked and shows as modified once the database updates it; untrack it with `gbrain git commit-push --untrack -m "<msg>" -- <dir>`, which keeps the files on disk ([untrack](guides/shared-checkout-git.md#untrack)). While it stays tracked, a label repair on its page sticks, and a commit to the file never widens the page: a privacy label the row holds and the file does not state is kept (a label the file states applies). A managed sync never soft-deletes a live page under a declared `db_only` directory because its file left Git (untracked, ignored or gone): the database copy is canonical (#7324).
+- A file under a `db_only` directory that git already tracked before the declaration stays tracked and shows as modified once the database updates it; untrack it with `foresights git commit-push --untrack -m "<msg>" -- <dir>`, which keeps the files on disk ([untrack](guides/shared-checkout-git.md#untrack)). While it stays tracked, a label repair on its page sticks, and a commit to the file never widens the page: a privacy label the row holds and the file does not state is kept (a label the file states applies). A managed sync never soft-deletes a live page under a declared `db_only` directory because its file left Git (untracked, ignored or gone): the database copy is canonical (#7324).
 - Idempotent — re-running adds no duplicate entries.
 - Stable comment header so the managed block is grep-able.
 - Skipped on `--dry-run` (don't mutate disk in preview mode).
 - Skipped on `blocked_by_failures` status (sync state is inconsistent).
 - Skipped when the repo is a git submodule (`.git` is a file, not a directory) — submodule .gitignore changes don't survive parent updates. A warning explains.
-- Skipped entirely when `GBRAIN_NO_GITIGNORE=1` is set (escape hatch for shared-repo setups where a maintainer wants gbrain to leave .gitignore alone).
+- Skipped entirely when `GBRAIN_NO_GITIGNORE=1` is set (escape hatch for shared-repo setups where a maintainer wants foresights to leave .gitignore alone).
 - Failures (write permission denied, etc.) are caught and logged, never crash sync.
 - Warns when a configured collector's declared output dir (recipe `output_paths`
   frontmatter) sits inside a `db_only` path: gitignored files never appear in the
-  git-walking sync diff, and `gbrain import` honors `.gitignore` too — the
+  git-walking sync diff, and `foresights import` honors `.gitignore` too — the
   collector would run green while nothing reaches the DB. The
   `db_only_collector_collision` doctor check surfaces the same trap.
 
@@ -78,31 +78,31 @@ connector sources running under managed persistence without a worktree binding
 (`connector_database`) are skipped by that check: their pages live only in the
 database by design, so no `gbrain.yml` is needed in the connector's directory.
 Recover them with a full re-sync from the provider
-(`gbrain sync --source <id> --full`).
+(`foresights sync --source <id> --full`).
 
 Example `.gitignore` addition:
 
 ```gitignore
-# Auto-managed by gbrain (db_only directories)
+# Auto-managed by foresights (db_only directories)
 media/x/
 media/articles/
 meetings/transcripts/
 ```
 
-### 2. `gbrain export --restore-only` — repopulate missing db_only files
+### 2. `foresights export --restore-only` — repopulate missing db_only files
 
 ```bash
 # Restore only missing db_only files from the database.
-gbrain export --restore-only --repo /path/to/brain
+foresights export --restore-only --repo /path/to/brain
 
 # Filter by page type.
-gbrain export --restore-only --type media --repo /path/to/brain
+foresights export --restore-only --type media --repo /path/to/brain
 
 # Filter by slug prefix.
-gbrain export --restore-only --slug-prefix media/x/ --repo /path/to/brain
+foresights export --restore-only --slug-prefix media/x/ --repo /path/to/brain
 
 # Combine filters.
-gbrain export --restore-only --type media --slug-prefix media/x/ --repo /path/to/brain
+foresights export --restore-only --type media --slug-prefix media/x/ --repo /path/to/brain
 ```
 
 The `--restore-only` flag:
@@ -112,14 +112,14 @@ The `--restore-only` flag:
 - Only exports pages that match `db_only` patterns AND are missing from disk.
 - Ideal for container restart recovery and fresh clones.
 
-### 3. `gbrain storage status` — storage-tier health dashboard
+### 3. `foresights storage status` — storage-tier health dashboard
 
 ```bash
 # Human-readable status.
-gbrain storage status --repo /path/to/brain
+foresights storage status --repo /path/to/brain
 
 # JSON output for scripts and orchestrators.
-gbrain storage status --repo /path/to/brain --json
+foresights storage status --repo /path/to/brain --json
 ```
 
 Output includes:
@@ -127,7 +127,7 @@ Output includes:
 - Total page counts by storage tier.
 - Disk usage breakdown by tier.
 - Missing files that need restoration (top 10 shown; full list in `--json`).
-- The `gbrain export --restore-only` command that restores them.
+- The `foresights export --restore-only` command that restores them.
 - Configuration validation warnings.
 - Current tier directory listing.
 
@@ -157,7 +157,7 @@ Missing Files (need restore):
   media/x/tweet-0987654321
   ... and 47 more
 
-Use: gbrain export --restore-only --source default --repo /data/brain
+Use: foresights export --restore-only --source default --repo /data/brain
 
 Configuration:
 --------------
@@ -172,7 +172,7 @@ DB-only directories:
   - meetings/transcripts/
 ```
 
-Status picks the repo and source with the same rule as `gbrain export
+Status picks the repo and source with the same rule as `foresights export
 --restore-only`, counts only that source's pages, and lists a page as missing
 exactly when that export would restore it: the page is under a `db_only`
 directory (even one nested in a `db_tracked` directory) and its recorded source
@@ -195,17 +195,17 @@ every source's pages when no active source owns it.
 On a classic brain (no managed persistence) sync keys a page on the file it
 recorded (`source_path`). When that file leaves the checkout (`git rm
 --cached`, an ignore rule, a deletion), sync soft-deletes the page. Restoring
-it with `gbrain restore <slug> --force` while the restore writes no file
+it with `foresights restore <slug> --force` while the restore writes no file
 (`sync.write_through` off, a sandboxed agent, a database-only source) used to
 bring the page back still recording the missing file, so the next
-`gbrain sync --full` soft-deleted it again.
+`foresights sync --full` soft-deleted it again.
 
 Since #6609 such a restore refuses with `source_changed` / detail
 `canonical_file_absent`, restores nothing, and asks you to choose:
 
 - **Keep it file-backed:** put the file back at its recorded path, commit it
-  and run `gbrain sync --source <id>`. Sync restores the page from its file.
-- **Keep it database-only:** `gbrain restore <slug> --source-id <id> --detach`
+  and run `foresights sync --source <id>`. Sync restores the page from its file.
+- **Keep it database-only:** `foresights restore <slug> --source-id <id> --detach`
   (MCP `restore_page` with `detach: true`). The page is restored without its
   recorded file and stamped `pages.database_only_reason='detached'`, so no
   sync removes it. A file synced later at its path binds the page to it again
@@ -226,7 +226,7 @@ restore of such a page keeps its recorded file and its cache file as before;
 sync no longer deletes it either way.
 
 Doctor `missing_recorded_files` warns about live pages whose recorded file is
-not among the files `gbrain sync --full` enumerates (for example a page
+not among the files `foresights sync --full` enumerates (for example a page
 restored the old way), so that sync would soft-delete them; it inspects at most
 50,000 pages per source and asks you which of the choices above each page
 gets. Managed sources are covered by `ghost_pages` instead.
@@ -257,7 +257,7 @@ Essential for ephemeral container environments:
 
 - Git repo contains only essential files.
 - Container restarts don't lose db_only data.
-- `gbrain export --restore-only` quickly restores bulk files when needed.
+- `foresights export --restore-only` quickly restores bulk files when needed.
 - Local disk acts as a cache layer.
 
 ### Multi-environment consistency
@@ -270,12 +270,12 @@ Enables consistent data access across environments:
 
 ## Migration strategy
 
-1. **Assess current repository**: use `gbrain storage status` to understand current distribution.
+1. **Assess current repository**: use `foresights storage status` to understand current distribution.
 2. **Plan directory structure**: identify which directories should be db_tracked vs db_only.
 3. **Create `gbrain.yml`**: add storage configuration to the repository root.
-4. **Test with dry-run**: `gbrain sync --dry-run` to verify behavior; `.gitignore` is NOT touched on dry-run.
-5. **Run a real sync**: `gbrain sync` updates `.gitignore` automatically on success.
-6. **Verify restore**: test `gbrain export --restore-only --repo .` against a small db_only directory.
+4. **Test with dry-run**: `foresights sync --dry-run` to verify behavior; `.gitignore` is NOT touched on dry-run.
+5. **Run a real sync**: `foresights sync` updates `.gitignore` automatically on success.
+6. **Verify restore**: test `foresights export --restore-only --repo .` against a small db_only directory.
 
 ## Best practices
 
@@ -287,7 +287,7 @@ Enables consistent data access across environments:
 
 ## PGLite engine note
 
-On the PGLite engine (gbrain's local-only embedded Postgres), the "DB" your db_only pages live in IS the local file gbrain uses for everything else. The `.gitignore` housekeeping still helps (keeps bulk content out of git history), but the offload-to-DB promise is technically vacuous. A once-per-process soft-warn explains when the engine is detected. To get full tiering, move the brain to Postgres with `gbrain migrate --to postgres` ([guide](guides/move-to-postgres.md)).
+On the PGLite engine (foresights's local-only embedded Postgres), the "DB" your db_only pages live in IS the local file foresights uses for everything else. The `.gitignore` housekeeping still helps (keeps bulk content out of git history), but the offload-to-DB promise is technically vacuous. A once-per-process soft-warn explains when the engine is detected. To get full tiering, move the brain to Postgres with `foresights migrate --to postgres` ([guide](guides/move-to-postgres.md)).
 
 ## Compatibility
 
@@ -299,14 +299,14 @@ On the PGLite engine (gbrain's local-only embedded Postgres), the "DB" your db_o
 
 ## Safe export
 
-`gbrain export` produces a point-in-time Markdown snapshot, not a full database
+`foresights export` produces a point-in-time Markdown snapshot, not a full database
 backup. It does not replace a verified PGLite/PostgreSQL backup or preserve all
 database state. The existing `<slug>.md` and `.raw/<name>.json` layout is unchanged.
 
 ```sh
-gbrain export --source default --dir './exports/default-new'
-gbrain export --source=default --slug-prefix 'notes/' --dir './exports/notes-new'
-gbrain export --restore-only --source default --repo './brain' --dir './restore-new'
+foresights export --source default --dir './exports/default-new'
+foresights export --source=default --slug-prefix 'notes/' --dir './exports/notes-new'
+foresights export --restore-only --source default --repo './brain' --dir './restore-new'
 ```
 
 Normal export without `--source` includes every source, including archived sources;

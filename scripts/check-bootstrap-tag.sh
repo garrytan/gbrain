@@ -10,14 +10,14 @@
 # rot and never point at an unreviewed branch head. This guard keeps the two
 # public entry documents on that contract:
 #
-#   1. Every raw.githubusercontent.com/garrytan/gbrain/<ref>/<path> reference
+#   1. Every raw.githubusercontent.com/aimonk2025/gbrain/<ref>/<path> reference
 #      in README.md and BOOTSTRAP_FOR_AGENTS.md uses <ref> = stable.
 #      Carve-out: <path> = INSTALL_FOR_AGENTS.md — that is the pre-bootstrap
 #      OpenClaw/Hermes headline install path with its own (master) contract,
 #      outside the bootstrap ref rule.
-#   2. Every explicit `github:garrytan/gbrain#<ref>` install pin in those
+#   2. Every explicit `github:aimonk2025/gbrain#<ref>` install pin in those
 #      files is #stable — no v-prefixed pins, no branch refs
-#      (master/main). The historical un-pinned `github:garrytan/gbrain`
+#      (master/main). The historical un-pinned `github:aimonk2025/gbrain`
 #      quick-start form is tolerated (it predates bootstrap and is owned by
 #      the README task).
 #   3. BOOTSTRAP_FOR_AGENTS.md embeds `<!-- gbrain-runbook-stamp: X.Y.Z.W -->`
@@ -111,9 +111,9 @@ if [ -f "$runbook" ]; then
 fi
 
 # ── Rule 4: plugin marketplace refs pin a sanctioned ref ─────────────────────
-# `codex plugin marketplace add garrytan/gbrain@<ref>` in docs must use the
+# `codex plugin marketplace add aimonk2025/gbrain@<ref>` in docs must use the
 # stable channel (@stable) or the slim dist branch (@codex-plugin).
-# The @-less form (`plugin marketplace add garrytan/gbrain`) is deliberately
+# The @-less form (`plugin marketplace add aimonk2025/gbrain`) is deliberately
 # OUT of scope: Claude Code marketplace adds have no ref pin syntax, so the
 # Claude lane documents the bare form and installs the repo default branch —
 # a recorded decision, not a gate hole. Codex docs headline the pinned form.

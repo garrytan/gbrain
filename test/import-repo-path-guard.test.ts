@@ -1,5 +1,5 @@
 /**
- * #2114 — `gbrain import <dir>` (and the sync layer's legacy anchor path)
+ * #2114 — `foresights import <dir>` (and the sync layer's legacy anchor path)
  * must not silently repoint the global brain repo.
  *
  * Pre-fix, the sync-checkpoint block at the end of `runImport` wrote
@@ -189,7 +189,7 @@ describe('import sync-bookmark guard (#2114)', () => {
 
     // The refusal is loud, and names the intentional-repoint command.
     expect(notices).toContain('NOT repointing');
-    expect(notices).toContain('gbrain config set sync.repo_path');
+    expect(notices).toContain('foresights config set sync.repo_path');
   });
 
   test('re-importing the SAME repo still advances the bookmark', async () => {
@@ -209,7 +209,7 @@ describe('import sync-bookmark guard (#2114)', () => {
   test('non-canonical CONFIGURED spelling still counts as the same repo (realpath compare)', async () => {
     // The import target is canonicalized by resolveImportTargetDir before the
     // guard runs, but the CONFIGURED value can be any spelling the user gave
-    // `gbrain config set sync.repo_path` (macOS: /var/... vs /private/var/...,
+    // `foresights config set sync.repo_path` (macOS: /var/... vs /private/var/...,
     // or a symlink). The guard must canonicalize BOTH sides — a plain
     // string/resolve() compare would false-refuse the user's own brain repo.
     const altA = repoA.startsWith('/private/') ? repoA.slice('/private'.length) : repoA;

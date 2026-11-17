@@ -8,7 +8,7 @@ import { SHARED_SKILLS_OPT_OUT_DOCS, sharedSkillSourcePolicyOrPreserve } from '.
 
 export type SharedSkillsAction = 'on' | 'off' | 'status';
 
-/** What `gbrain sources shared-skills <id> status`, `sources status` and doctor report for one source. */
+/** What `foresights sources shared-skills <id> status`, `sources status` and doctor report for one source. */
 export interface SharedSkillsSourceView {
   source_id: string;
   /** `config.shared_skills` as stored: false (opted out), true, or null (unset, the default: on). */
@@ -54,9 +54,9 @@ export async function readSharedSkillsSourceView(engine: BrainEngine, sourceId: 
   const record = await readRecord(engine, sourceId, source.incarnation);
   const parked = policy.mode !== 'preserve_files' && record?.parked ? { ...record.parked, resume: parkedReason(sourceId, record.parked) } : null;
   const explanation = policy.mode === 'content'
-    ? `Shared skills are on for ${sourceId}: the migration may inventory and adopt its skillpack. Opt out with gbrain sources shared-skills ${sourceId} off.`
+    ? `Shared skills are on for ${sourceId}: the migration may inventory and adopt its skillpack. Opt out with foresights sources shared-skills ${sourceId} off.`
     : configured === false
-      ? `${sourceId} opted out with config.shared_skills=false, so the migration preserves its files. Turn adoption back on with gbrain sources shared-skills ${sourceId} on.`
+      ? `${sourceId} opted out with config.shared_skills=false, so the migration preserves its files. Turn adoption back on with foresights sources shared-skills ${sourceId} on.`
       : `config.shared_skills is ${configured === null ? 'unset (on)' : 'true'}, but ${sourceId} stays ${policy.mode} because of ${reasonCode}; turning shared skills on cannot change that. ${policy.reason}`;
   return { source_id: sourceId, configured, mode: policy.mode, reason_code: reasonCode, reason: policy.mode === 'content' ? null : policy.reason, explanation, parked };
 }

@@ -1,6 +1,6 @@
 /**
  * GBRA-467 on PGLite: every path that runs schema migrations takes one lock, so two runners in one process
- * (initSchema() and a direct runMigrations(), as `gbrain apply-migrations` calls it) run a pending migration
+ * (initSchema() and a direct runMigrations(), as `foresights apply-migrations` calls it) run a pending migration
  * once. PGLite's datastore lock admits a single process, so the lock is in-process here; the Postgres arms,
  * across connections and through a transaction-mode PgBouncer, are test/e2e/schema-migration-lock-postgres.test.ts.
  *

@@ -1,5 +1,5 @@
 /**
- * T0 — `gbrain search diagnose` Phase-0 retrieval diagnostic. Seeds a synthetic
+ * T0 — `foresights search diagnose` Phase-0 retrieval diagnostic. Seeds a synthetic
  * brain, forces the keyword+alias path (embed stubbed to throw → vector skipped),
  * and asserts the per-layer trace + verdict.
  */

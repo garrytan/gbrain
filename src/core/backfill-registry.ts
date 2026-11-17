@@ -19,7 +19,7 @@ import { computeEmotionalWeight } from './cycle/emotional-weight.ts';
 
 export interface RegisteredBackfill {
   spec: BackfillSpec<Record<string, unknown>>;
-  /** One-line description for `gbrain backfill list`. */
+  /** One-line description for `foresights backfill list`. */
   description: string;
   /** Whether this entry is fully implemented in v0.30.1. */
   v030_1_status: 'implemented' | 'declared-only';

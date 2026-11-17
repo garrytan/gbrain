@@ -216,7 +216,7 @@ async function ownerReader(engine: BrainEngine, frontmatter: Record<string, unkn
 }
 
 /**
- * GST-2521: the owner's label door (`gbrain repair visibility`, its `--readers` setter, `gbrain repair private-labels`)
+ * GST-2521: the owner's label door (`foresights repair visibility`, its `--readers` setter, `foresights repair private-labels`)
  * keeps the page's tier, so it raises the page's label guard to operator_curated when it leaves the page private by its
  * labels or naming readers: a later write below that is held from widening them. A door that leaves no such label
  * removes the guard. In the door's own transaction, after its write.

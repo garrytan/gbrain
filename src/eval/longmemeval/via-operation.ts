@@ -1,10 +1,10 @@
 /**
- * `gbrain eval longmemeval --via-operation query|search`: run each question
+ * `foresights eval longmemeval --via-operation query|search`: run each question
  * through the real `query` or `search` operation with the context an agent's
  * stdio MCP call gets (remote, stdio transport, the owner source id), instead
  * of calling hybridSearch from the core library. Each operation runs at its own
  * default limit and resolves the brain's search mode itself, so a receipt
- * reproduces from a tagged gbrain. `--op-expand on|off` passes `expand` to
+ * reproduces from a tagged foresights. `--op-expand on|off` passes `expand` to
  * `query`; without it the mode decides.
  *
  * Every row records the operation context, the `expand` sent, the expansion
@@ -174,7 +174,7 @@ export function rerankCalled(row: ViaOperationRow): boolean {
   return (row.model_calls.rerank ?? 0) > 0;
 }
 
-/** The gbrain checkout this module runs from, not the caller's cwd (a driver may run the harness from another repository). */
+/** The foresights checkout this module runs from, not the caller's cwd (a driver may run the harness from another repository). */
 export function gbrainBuild(): { tree: string; commit: string; dirty: boolean } {
   const git = (argv: string[], fallback: string) => {
     try { return execFileSync('git', argv, { cwd: join(import.meta.dir, '..', '..', '..'), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || fallback; } catch { return fallback; }

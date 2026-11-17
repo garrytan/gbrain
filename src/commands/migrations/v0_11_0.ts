@@ -1,10 +1,10 @@
 /**
- * v0.11.0 migration orchestrator — GBrain Minions adoption.
+ * v0.11.0 migration orchestrator — Foresights Minions adoption.
  *
  * Phases (all idempotent; resumable from a prior status:"partial" run):
- *   A. Schema  — gbrain init --migrate-only (never bare init — that
+ *   A. Schema  — foresights init --migrate-only (never bare init — that
  *                defaults to PGLite and clobbers existing configs).
- *   B. Smoke   — gbrain jobs smoke. Fail loudly on non-zero.
+ *   B. Smoke   — foresights jobs smoke. Fail loudly on non-zero.
  *   C. Mode    — resolve minion_mode (flag / default / TTY prompt).
  *   D. Prefs   — write ~/.gbrain/preferences.json.
  *   E. Host    — detect AGENTS.md + cron manifests. Inject the subagent-
@@ -15,7 +15,7 @@
  *                ~/.gbrain/migrations/pending-host-work.jsonl so the host
  *                agent can walk through its plugin-contract work per
  *                skills/migrations/v0.11.0.md.
- *   F. Install — gbrain autopilot --install (env-aware); skipped with the
+ *   F. Install — foresights autopilot --install (env-aware); skipped with the
  *                exact command when sync.repo_path is unset (v0_11_0-install.ts).
  *   G. Record  — append completed.jsonl (status: complete unless any
  *                pending-host-work items remain).
@@ -40,7 +40,7 @@ const AGENTS_MD_MARKER = '<!-- gbrain:subagent-routing v0.11.0 -->';
 const CRON_MIGRATED_PROPERTY = '_gbrain_migrated_by';
 const MAX_HOST_FILE_BYTES = 1_000_000;
 
-// home() locates host-agent config ($HOME/.claude, $HOME/.openclaw); gbrain's
+// home() locates host-agent config ($HOME/.claude, $HOME/.openclaw); foresights's
 // own state follows GBRAIN_HOME via gbrainPath() (#5549).
 function home(): string { return process.env.HOME || ''; }
 function pendingHostWorkPath(): string { return gbrainPath('migrations', 'pending-host-work.jsonl'); }
@@ -68,7 +68,7 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
     // v0.41.37.0 #1605: bring schema to head IN-PROCESS for every engine. Was an
-    // a `gbrain init --migrate-only` subprocess subprocess for Postgres (died with
+    // a `foresights init --migrate-only` subprocess subprocess for Postgres (died with
     // `getaddrinfo ENOTFOUND` on Windows+bun+Supabase-pooler before it could
     // connect) plus a PGLite-only in-process branch (which separately
     // deadlocked on the file lock, #1100). runMigrateOnlyCore is the single
@@ -89,7 +89,7 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
 function phaseBSmoke(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'smoke', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync(gbrainChildCommand('gbrain jobs smoke'), { stdio: cliChildStdio(), timeout: 30_000, env: process.env });
+    execSync(gbrainChildCommand('foresights jobs smoke'), { stdio: cliChildStdio(), timeout: 30_000, env: process.env });
     return { name: 'smoke', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -117,13 +117,13 @@ async function phaseCMode(opts: OrchestratorOpts): Promise<{
 
   // --yes / non-TTY: explicit pain_triggered default with a visible print.
   if (opts.yes || !process.stdin.isTTY) {
-    console.log('Defaulting minion_mode=pain_triggered (non-interactive). Change with `gbrain apply-migrations --mode <always|off>` (writes ~/.gbrain/preferences.json).');
+    console.log('Defaulting minion_mode=pain_triggered (non-interactive). Change with `foresights apply-migrations --mode <always|off>` (writes ~/.gbrain/preferences.json).');
     return { phase: { name: 'mode', status: 'complete', detail: 'mode=pain_triggered (default)' }, mode: 'pain_triggered' };
   }
 
   // Interactive: numbered menu via the shared promptLine helper.
   console.log('');
-  console.log('How should your agent use GBrain Minions?');
+  console.log('How should your agent use Foresights Minions?');
   console.log('  [1] always          — route every background agent task through Minions (most durable)');
   console.log('  [2] pain_triggered  — default to native subagents, switch to Minions when pain signals fire (recommended)');
   console.log('  [3] off             — disable Minions; keep native subagents');
@@ -199,7 +199,7 @@ function injectAgentsMdMarker(path: string, opts: OrchestratorOpts): { injected:
   const bakPath = `${path}.bak.${stamp}`;
   try {
     writeFileSync(bakPath, content);
-    const snippet = `\n\n${AGENTS_MD_MARKER}\n## Subagent routing (gbrain v0.11.0)\n\nSee \`skills/conventions/subagent-routing.md\` for the runtime routing convention.\n\`~/.gbrain/preferences.json\` controls \`minion_mode\` (always / pain_triggered / off).\n`;
+    const snippet = `\n\n${AGENTS_MD_MARKER}\n## Subagent routing (foresights v0.11.0)\n\nSee \`skills/conventions/subagent-routing.md\` for the runtime routing convention.\n\`~/.gbrain/preferences.json\` controls \`minion_mode\` (always / pain_triggered / off).\n`;
     // Re-check mtime
     const nowMtime = statSync(path).mtimeMs;
     if (nowMtime !== beforeMtime) {
@@ -238,7 +238,7 @@ function findCronManifests(opts: OrchestratorOpts): string[] {
   return found;
 }
 
-/** Host files Phase E would edit (an AGENTS.md marker, cron manifests); `gbrain setup` leaves this migration to the explicit command when any exist. */
+/** Host files Phase E would edit (an AGENTS.md marker, cron manifests); `foresights setup` leaves this migration to the explicit command when any exist. */
 export function hostRewriteTargets(): string[] {
   const opts = {} as OrchestratorOpts;
   return [...findAgentsMdFiles(opts), ...findCronManifests(opts)];
@@ -290,13 +290,13 @@ function rewriteCronManifest(
     if (!handler) continue;
 
     if (BUILTIN_HANDLERS.has(handler)) {
-      // Rewrite to shell + gbrain jobs submit.
+      // Rewrite to shell + foresights jobs submit.
       let cmd: string;
       if (enginePglite) {
-        cmd = `gbrain jobs submit ${handler} --params '{}' --follow`;
+        cmd = `foresights jobs submit ${handler} --params '{}' --follow`;
       } else {
         // slot computed via date(1). Host scheduler evaluates shell.
-        cmd = `gbrain jobs submit ${handler} --params '{"slot":"$(date -u +%Y-%m-%dT%H:%M)"}' --idempotency-key ${handler}:$(date -u +%Y-%m-%dT%H:%M)`;
+        cmd = `foresights jobs submit ${handler} --params '{"slot":"$(date -u +%Y-%m-%dT%H:%M)"}' --idempotency-key ${handler}:$(date -u +%Y-%m-%dT%H:%M)`;
       }
       entry.kind = 'shell';
       entry.cmd = cmd;
@@ -311,7 +311,7 @@ function rewriteCronManifest(
         cron_schedule: schedule,
         manifest_path: path,
         current_cmd: `agentTurn ${handler}`,
-        recommendation: `Add a handler registration for \`${handler}\` in your host worker bootstrap per docs/guides/plugin-handlers.md. Once registered, re-run \`gbrain apply-migrations\` to auto-rewrite this entry.`,
+        recommendation: `Add a handler registration for \`${handler}\` in your host worker bootstrap per docs/guides/plugin-handlers.md. Once registered, re-run \`foresights apply-migrations\` to auto-rewrite this entry.`,
         detected_at: new Date().toISOString(),
         status: 'pending',
       });
@@ -461,8 +461,8 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     console.log(`  ${pendingHostWorkPath()}`);
     console.log(`  skills/migrations/v0.11.0.md`);
     console.log('');
-    console.log('The skill walks the host through each item using GBrain\'s plugin contract.');
-    console.log('After each batch, `gbrain apply-migrations --yes` (this upgrade\'s own command) rewrites newly-');
+    console.log('The skill walks the host through each item using Foresights\'s plugin contract.');
+    console.log('After each batch, `foresights apply-migrations --yes` (this upgrade\'s own command) rewrites newly-');
     console.log('registerable crons and marks items done.');
   }
 
@@ -479,7 +479,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 export const v0_11_0: Migration = {
   version: '0.11.0',
   featurePitch: {
-    headline: 'GBrain Minions — durable background agents',
+    headline: 'Foresights Minions — durable background agents',
     description:
       'Turn any long-running agent task into a durable job that survives gateway ' +
       'restarts, streams progress, and can be paused, resumed, or steered mid-flight. ' +

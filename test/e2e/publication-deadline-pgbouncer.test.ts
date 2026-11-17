@@ -1,5 +1,5 @@
 /**
- * #6288 / #6352 (P2.3) behind transaction-mode PgBouncer, the pooler that drops gbrain's startup
+ * #6288 / #6352 (P2.3) behind transaction-mode PgBouncer, the pooler that drops foresights's startup
  * `idle_in_transaction_session_timeout` (docker-compose.ci.yml IGNORE_STARTUP_PARAMETERS). The publish transaction's own
  * transaction-local bound still applies there: a publisher idle past it is ended by the server, nothing it wrote commits,
  * and because Postgres ends the whole session (the pooler's server connection), the transaction promise rejects even

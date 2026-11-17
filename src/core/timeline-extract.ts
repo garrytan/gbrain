@@ -84,7 +84,7 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
 
   // Format 3: Inline citation — [Source: <source>, YYYY-MM-DD]
   //
-  // This is the citation convention gbrain's own quality rules require on
+  // This is the citation convention foresights's own quality rules require on
   // every brain write (skills/conventions/quality.md), so dated evidence is
   // pervasive in curated pages — but until now the extractor could not see
   // it, and a page whose dates all live in citations scored zero timeline

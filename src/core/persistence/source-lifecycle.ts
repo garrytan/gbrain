@@ -98,7 +98,7 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
   const compatible=bindings.find(binding=>binding.local_path && containsPath(binding.local_path,root.worktree));
   const overlapping=bindings.find(binding=>binding.local_path && containsPath(root.worktree,binding.local_path));
   if(overlapping&&!compatible) throw opError('topology_change_required','The proposed root encloses another registered worktree. Rebind those sources explicitly first.',
-    `The directory for '${sourceId}' contains the checkout of source '${overlapping.source_id}'. Move that source first with gbrain sources set-path ${overlapping.source_id} and its verified new directory (a topology change the user decides), or choose a directory that does not enclose it.`,
+    `The directory for '${sourceId}' contains the checkout of source '${overlapping.source_id}'. Move that source first with foresights sources set-path ${overlapping.source_id} and its verified new directory (a topology change the user decides), or choose a directory that does not enclose it.`,
     {fix:ownerStatusFix(overlapping.source_id)});
   const worktree=compatible?.local_path??root.worktree;
   const physical=await claimPhysicalRoot(tx,worktree,{hostId:hostIdFor(tx),
@@ -121,7 +121,7 @@ function missingCheckoutError(sourceId:string,path:string,state?:{pages:number;m
   return catalogueError('source_checkout_missing',
     `The canonical checkout ${path} of source '${sourceId}' is missing; restore its verified manifest first.`+(state
       ?` Only a source with no pages that is its checkout's sole member can be retired without it (pages: ${state.pages}, other sources on the checkout: ${state.members}).`:''),
-    `Restore the checkout at ${path} and retry, or switch the brain to classic mode with gbrain sources writer deactivate --dry-run (then the printed apply_command) and retire the source there with gbrain sources archive ${sourceId}.`);
+    `Restore the checkout at ${path} and retry, or switch the brain to classic mode with foresights sources writer deactivate --dry-run (then the printed apply_command) and retire the source there with foresights sources archive ${sourceId}.`);
 }
 async function assertRetirableWithoutCheckout(tx:BrainEngine,sourceId:string,path:string):Promise<void>{
   const [state]=await tx.executeRaw<{pages:number;members:number}>(`SELECT (SELECT count(*)::int FROM pages WHERE source_id=$1) AS pages,
@@ -278,7 +278,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(input.operation==='add'&&source&&(!root||source.local_path!==null)) throw opError('source_id_taken','Source ID is already registered.',
       `A source named '${input.sourceId}' already exists; nothing was added. Pick a different ID, or inspect the existing source with the command in fix.`,{fix:sourcesListFix()});
     if(input.operation==='purge'&&!input.expiredOnly&&!source?.archived) throw opError('invalid_params','Only an archived source can be purged.',
-      `Source '${input.sourceId}' is active. Purge only follows an archive: gbrain sources archive ${input.sourceId} first, and confirm the purge with the user because it deletes the source's pages.`,{fix:sourcesListFix()});
+      `Source '${input.sourceId}' is active. Purge only follows an archive: foresights sources archive ${input.sourceId} first, and confirm the purge with the user because it deletes the source's pages.`,{fix:sourcesListFix()});
     if(['remove','purge'].includes(input.operation)&&!input.confirmDestructive) throw opError('invalid_params','Source removal requires explicit destructive confirmation.',
       `Nothing was changed. ${input.operation} deletes the pages of source '${input.sourceId}' from the brain (its files stay on disk); ask the user, and only with their agreement run the command in fix.`,
       {fix:{argv:['gbrain','sources',input.operation,input.sourceId,'--confirm-destructive'],preview_argv:['gbrain','sources',input.operation,input.sourceId,'--dry-run'],
@@ -292,11 +292,11 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       &&nativeFilesystemPath(join(currentBinding.local_path,currentBinding.relative_path))===nativeFilesystemPath(root.source);
     if(input.operation==='claim'&&currentBinding&&!sameBinding)
       throw opError('writer_transfer_required','The source already has a different canonical binding. Use rebind or verified ownership transfer.',
-        `Source '${input.sourceId}' is already bound to another directory or host; nothing was claimed. Inspect the binding with the command in fix. Moving it (gbrain sources set-path on this host, or a writer transfer between hosts) is a topology change for the user to decide.`,
+        `Source '${input.sourceId}' is already bound to another directory or host; nothing was claimed. Inspect the binding with the command in fix. Moving it (foresights sources set-path on this host, or a writer transfer between hosts) is a topology change for the user to decide.`,
         {fix:ownerStatusFix(input.sourceId)});
     if(input.operation==='claim'&&!currentBinding&&source?.local_path&&realpathSync(source.local_path)!==root!.source)
       throw opError('source_changed','The requested claim path differs from the configured source root.',
-        `Claim '${input.sourceId}' at the local_path the command in fix reports, or move it to the new directory with gbrain sources set-path ${input.sourceId}; nothing was claimed.`,{fix:sourcesListFix()});
+        `Claim '${input.sourceId}' at the local_path the command in fix reports, or move it to the new directory with foresights sources set-path ${input.sourceId}; nothing was claimed.`,{fix:sourcesListFix()});
     const expired=input.expiredOnly?await tx.executeRaw(`SELECT id FROM sources WHERE id=$1 AND ${EXPIRED_ARCHIVE_SQL}`,[input.sourceId]):null;
     const noop=expired?.length===0 || input.operation==='archive'&&source?.archived || input.operation==='restore'&&!source?.archived
       || ['claim','rebind'].includes(input.operation)&&sameBinding&&!!source?.local_path&&nativeFilesystemPath(source.local_path)===nativeFilesystemPath(root!.source);
@@ -323,7 +323,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     }
     const ownedSourcePath=currentBinding?.local_path?join(currentBinding.local_path,currentBinding.relative_path):source?.local_path;
     if(input.operation==='restore'&&ownedSourcePath&&!existsSync(ownedSourcePath)) throw opError('recovery_required','Restore requires the verified canonical checkout. Reclone it before restoring the source.',
-      `Nothing was restored. Recreate the checkout of '${input.sourceId}' with gbrain sources reclone ${input.sourceId}, then run gbrain sources restore ${input.sourceId} again.`,
+      `Nothing was restored. Recreate the checkout of '${input.sourceId}' with foresights sources reclone ${input.sourceId}, then run foresights sources restore ${input.sourceId} again.`,
       {fix:ownerStatusFix(input.sourceId)});
     await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
     await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
@@ -407,7 +407,7 @@ function rebindManifestMismatch(sourceId:string,current:string,candidate:string,
   return opError('writer_manifest_mismatch','The new checkout differs from the current canonical manifest, including deletions.',
     scope==='git'
       ?`Nothing was rebound.${named} The comparison covers files Git tracks, so ignored files (such as .env files) never need copying. Make ${candidate} a clean clone of the current checkout `
-        +`(for example move it aside, then git clone ${current} ${candidate}), then rerun gbrain sources set-path ${sourceId} ${candidate}.`
+        +`(for example move it aside, then git clone ${current} ${candidate}), then rerun foresights sources set-path ${sourceId} ${candidate}.`
       :`Nothing was rebound.${named} Make the new directory an exact copy of the current checkout of '${sourceId}' (same files, nothing extra or missing), then rerun set-path.`,
     {fix:ownerStatusFix(sourceId)});
 }

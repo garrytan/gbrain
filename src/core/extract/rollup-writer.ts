@@ -229,7 +229,7 @@ export async function upsertExtractRollup(
     // halt_reasons column. The rollup is a best-effort cache, so the row is
     // lost until the migration runs; say which fix restores it.
     if (isMissingSchemaObject(err, 'column', 'halt_reasons')) {
-      rollupErrorLogOnce(input.kind, day, `${msg} (the schema is behind: doctor reports migrations_pending; run gbrain apply-migrations --yes --no-autopilot-install)`);
+      rollupErrorLogOnce(input.kind, day, `${msg} (the schema is behind: doctor reports migrations_pending; run foresights apply-migrations --yes --no-autopilot-install)`);
       return { ok: false, error: msg };
     }
     // #4482 back-compat: a brain that hasn't applied migration v141 yet has

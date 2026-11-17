@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# provision-scopes.sh — roster-driven gbrain provisioning for a qm deployment
+# provision-scopes.sh — roster-driven foresights provisioning for a qm deployment
 # (or any multi-user agent harness with per-person + per-channel scopes).
 #
 # Reads a roster of channels + employees and converges the brain to it:
 #   - ensures the shared agent-memory source exists (path-less: agents write
-#     pages into it over MCP; `gbrain sync` skips it; if the brain host has
+#     pages into it over MCP; `foresights sync` skips it; if the brain host has
 #     sync.repo_path configured, pages also write through to .sources/<id>/
 #     on disk for git-backed durability)
 #   - registers one OAuth client per employee, write-fenced via
@@ -19,18 +19,18 @@
 #   provision-scopes.sh roster.tsv \
 #     [--memory-source agents] [--read-sources org-wiki,handbook] \
 #     [--budget-usd-per-day 5] [--state-file roster.state.tsv] \
-#     [--secrets-out new-credentials.tsv] [--gbrain gbrain] [--dry-run]
+#     [--secrets-out new-credentials.tsv] [--gbrain foresights] [--dry-run]
 #
 # Roster format (one entry per line; '#' comments and blank lines ignored):
 #   channel <slug>
 #   employee <slug> [comma-separated channel slugs]
 #
 # SECURITY: --secrets-out receives client secrets for NEW registrations,
-# written exactly once (gbrain never re-shows them). Deliver each row to its
+# written exactly once (foresights never re-shows them). Deliver each row to its
 # scope's sandbox (e.g. via the harness keychain or a one-time secret drop),
 # then delete the file.
 #
-# ponytail: sequential CLI loop, one gbrain invocation per roster row — fine
+# ponytail: sequential CLI loop, one foresights invocation per roster row — fine
 # to hundreds of employees; batch via the admin API if that ever hurts.
 
 # -f (noglob) is load-bearing, not stylistic: roster lines are word-split

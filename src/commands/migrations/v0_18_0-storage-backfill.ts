@@ -71,7 +71,7 @@ export async function runStorageBackfill(
   };
 
   // Snapshot all ledger rows. We don't paginate because the ledger
-  // is bounded by current files count — every gbrain install has
+  // is bounded by current files count — every foresights install has
   // at most low-thousands of files.
   const rows = await engine.executeRaw<LedgerRow>(
     `SELECT file_id, storage_path_old, storage_path_new, status

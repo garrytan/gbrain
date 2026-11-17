@@ -85,7 +85,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           const lines = await expectUnitNotAborted(() => b.sync());
           expect({ file: readFileSync(b.file(ALICE), 'utf8'), body: await b.body(ALICE) }).toEqual({ file, body });
           expect(readFileSync(b.file(BOB), 'utf8')).toBe(sibling);
-          expect(lines.some(line => line.includes(ALICE) && line.includes('file_database_drift') && line.includes('gbrain sync --source default'))).toBe(true);
+          expect(lines.some(line => line.includes(ALICE) && line.includes('file_database_drift') && line.includes('foresights sync --source default'))).toBe(true);
           expect(lines.some(line => line.includes('1 re-export failure'))).toBe(true);
         });
       }, 180_000);
@@ -159,7 +159,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const lines = await expectUnitNotAborted(() => b.sync(failing));
         expect({ body: await b.body(ALICE), file: existsSync(b.file(ALICE)) }).toEqual({ body, file: false });
         expect(readFileSync(b.file(BOB), 'utf8')).toBe(sibling);
-        expect(lines.some(line => line.includes(ALICE) && line.includes('internal') && line.includes('gbrain sync --source default'))).toBe(true);
+        expect(lines.some(line => line.includes(ALICE) && line.includes('internal') && line.includes('foresights sync --source default'))).toBe(true);
         expect(lines.some(line => line.includes('1 re-export failure'))).toBe(true);
       });
     }, 180_000);

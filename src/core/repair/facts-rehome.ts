@@ -1,5 +1,5 @@
 /**
- * `gbrain repair facts-rehome` (B-7, #6925): move facts off an entity slug that
+ * `foresights repair facts-rehome` (B-7, #6925): move facts off an entity slug that
  * has no page onto the page that slug names.
  *
  * Before the B-7 resolver fix, an extractor's `companies/acme-example` missed
@@ -79,7 +79,7 @@ interface ApprovedEntity extends PagelessEntity { selection: string[] }
 interface RehomeItem extends RepairItem { entity: PagelessEntity; hash: string; last: boolean }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair facts-rehome${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair facts-rehome${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
@@ -117,7 +117,7 @@ export const factsRehomeRepair: RepairHandler = {
         listing: entities.map(e => ({ item: `${e.source_id}:${e.slug}`, class: e.class, detail: detail(e) })) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair facts-rehome --apply moves only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair facts-rehome --apply moves only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

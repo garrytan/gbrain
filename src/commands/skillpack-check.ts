@@ -1,14 +1,14 @@
 /**
- * `gbrain skillpack-check` — agent-readable health report.
+ * `foresights skillpack-check` — agent-readable health report.
  *
- * Wraps `gbrain doctor --json` + `gbrain apply-migrations --list` into a
+ * Wraps `foresights doctor --json` + `foresights apply-migrations --list` into a
  * single JSON blob a host agent (your OpenClaw's morning-briefing, any
  * OpenClaw cron) can consume without parsing two subcommands.
  *
  * Usage:
- *   gbrain skillpack-check              # pretty-printed JSON + exit code
- *   gbrain skillpack-check --quiet      # only exits with status; no output
- *   gbrain skillpack-check --help
+ *   foresights skillpack-check              # pretty-printed JSON + exit code
+ *   foresights skillpack-check --quiet      # only exits with status; no output
+ *   foresights skillpack-check --help
  *
  * Exit codes:
  *   0 — Healthy. Nothing needs action.
@@ -21,7 +21,7 @@ import { VERSION } from '../version.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 
 /**
- * Resolve the gbrain binary + args for spawning subcommands from
+ * Resolve the foresights binary + args for spawning subcommands from
  * within skillpack-check. Handles three install cases:
  *   - Running the compiled binary: process.execPath IS the real on-disk
  *     binary — re-exec it. Checked before argv[1] (#4094): in a Bun
@@ -31,7 +31,7 @@ import { getCliOptions } from '../core/cli-options.ts';
  *   - argv[1] ends in /gbrain (e.g. a `gbrain` shim script on $PATH,
  *     where execPath points at the bun runtime instead): re-exec argv[1].
  *   - Running via `bun run src/cli.ts` (argv[1] is a .ts file): prefix with `bun run`.
- *   - Anything else: fall back to `which gbrain` on $PATH.
+ *   - Anything else: fall back to `which foresights` on $PATH.
  */
 function gbrainSpawn(): { cmd: string; prefix: string[] } {
   const execPath = process.execPath ?? '';
@@ -115,7 +115,7 @@ function runMigrationsList(): SkillpackReport['migrations'] {
     });
 
     // Count rows by status word. Output shape from apply-migrations:
-    //   Installed gbrain version: 0.11.1
+    //   Installed foresights version: 0.11.1
     //
     //     Status   Version   Headline
     //     -------  --------  ...
@@ -174,7 +174,7 @@ function buildReport(): SkillpackReport {
   if ('applied_count' in migrations) {
     if (migrations.partial_count > 0 || migrations.pending_count > 0) {
       healthy = false;
-      const action = 'gbrain apply-migrations --yes';
+      const action = 'foresights apply-migrations --yes';
       if (!actions.includes(action)) actions.unshift(action);
     }
   } else {
@@ -183,8 +183,8 @@ function buildReport(): SkillpackReport {
   }
 
   const summary = healthy
-    ? 'gbrain skillpack healthy'
-    : `gbrain skillpack needs attention: ${actions.length} action(s) — ${actions[0]}`;
+    ? 'foresights skillpack healthy'
+    : `foresights skillpack needs attention: ${actions.length} action(s) — ${actions[0]}`;
 
   const skillHealth = 'checks' in doctor ? doctor.checks.find(c => c.name === 'skill_health')?.message : undefined;
 
@@ -202,16 +202,16 @@ function buildReport(): SkillpackReport {
 
 export async function runSkillpackCheck(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`gbrain skillpack-check — agent-readable health report.
+    console.log(`foresights skillpack-check — agent-readable health report.
 
 Wraps doctor + apply-migrations --list into one JSON blob.
 
 Usage:
-  gbrain skillpack-check            Pretty JSON to stdout, exit 0/1/2 (legacy).
-  gbrain skillpack check            v0.33 subcommand. Default: informational
+  foresights skillpack-check            Pretty JSON to stdout, exit 0/1/2 (legacy).
+  foresights skillpack check            v0.33 subcommand. Default: informational
                                      (exit 0 even with drift). Pass --strict
                                      to exit non-zero on action-needed.
-  gbrain skillpack-check --quiet    Exit code only, no output.
+  foresights skillpack-check --quiet    Exit code only, no output.
 
 Exit codes:
   0  healthy (no action needed) — or informational mode with drift detected
@@ -237,12 +237,12 @@ Exit codes:
     process.exit(2);
   }
 
-  // v0.33: When invoked as the new `gbrain skillpack check` subcommand,
+  // v0.33: When invoked as the new `foresights skillpack check` subcommand,
   // the dispatcher detects this via process.argv and treats the default
   // as informational (exit 0 even with drift). Pass --strict to opt
   // back into action-needed exit-1 semantics for CI gates.
   //
-  // Top-level `gbrain skillpack-check` (cron compat) keeps exit-1 on
+  // Top-level `foresights skillpack-check` (cron compat) keeps exit-1 on
   // action-needed as the default — see argv detection below.
   const isSubcommandInvocation = isSkillpackCheckSubcommand();
   const informational = isSubcommandInvocation && !strict;
@@ -254,13 +254,13 @@ Exit codes:
 }
 
 /**
- * Detect whether this invocation came via `gbrain skillpack check`
- * (subcommand) vs the top-level `gbrain skillpack-check` (cron compat).
+ * Detect whether this invocation came via `foresights skillpack check`
+ * (subcommand) vs the top-level `foresights skillpack-check` (cron compat).
  * Subcommand → informational default. Top-level → strict default.
  */
 function isSkillpackCheckSubcommand(): boolean {
   const argv = process.argv;
-  // argv shape for `gbrain skillpack check` after the binary name and
+  // argv shape for `foresights skillpack check` after the binary name and
   // any --quiet / --json globals stripped: ['skillpack', 'check', ...].
   // Walk to find the first non-flag arg.
   for (let i = 2; i < argv.length; i++) {

@@ -1,6 +1,6 @@
 /**
- * GBRA-108: the sync `file_drift` hold and `gbrain repair file-drift` read drift the same way for an origin twin with no
- * recorded file (what `gbrain repair origin-twins` detach leaves live). Sync imports the file at the twin's slug path into
+ * GBRA-108: the sync `file_drift` hold and `foresights repair file-drift` read drift the same way for an origin twin with no
+ * recorded file (what `foresights repair origin-twins` detach leaves live). Sync imports the file at the twin's slug path into
  * it and holds the import `file_drift` when the two differ; the preview used to read the page as database-only and
  * answer `no_drift` (affected 0), so the suggested repair could not clear the hold and a script using the preview as
  * its drift check passed falsely. The page here is a legacy row: no import record, no ingest provenance, a body line

@@ -182,7 +182,7 @@ export function __listDrainerNamesForTest(): string[] {
 /**
  * CLI-EXIT-ONLY. `abort()` is a permanent process-level state change on a sink
  * (the facts queue's `shutdown()` sets `shuttingDown=true` for the process
- * lifetime). NEVER call this in a long-lived process (`gbrain serve`). Drains
+ * lifetime). NEVER call this in a long-lived process (`foresights serve`). Drains
  * every registered sink before `engine.disconnect()` so a PGLite `db.close()`
  * can't race in-flight work into the re-pump busy-loop (#1762).
  *
@@ -199,7 +199,7 @@ export async function drainAllBackgroundWorkForCliExit(opts?: { timeoutMs?: numb
  * closes — PGLite's `close()` deadlocks PERMANENTLY (close's promise AND the
  * in-flight query's promise never settle) when a statement is in flight.
  * Unlike the CLI-exit drain this NEVER calls `abort()` (a permanent
- * process-level state change, wrong for a long-lived `gbrain serve` that
+ * process-level state change, wrong for a long-lived `foresights serve` that
  * disconnects one engine) and passes mode 'disconnect' so sinks skip residual
  * buffer flushes (new writes would fail against the already-nulled handle
  * anyway — that failing fast is intended, not a bug).

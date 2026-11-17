@@ -15,26 +15,26 @@ With this: entity detection runs on a cheap fast model, research execution
 runs on a budget model, and only planning/synthesis touch the expensive
 model. Total cost drops 70-80%.
 
-(Illustrative input-token anchors from gbrain's canonical pricing table,
+(Illustrative input-token anchors from foresights's canonical pricing table,
 `src/core/model-pricing.ts`: Opus-class $5/MTok, Sonnet-class $3/MTok,
 Haiku-class $1/MTok. Budget providers run well under $1/MTok. Prices
 drift — the pricing table is the source of truth, not this doc.)
 
 ## Implementation
 
-### GBrain's native mechanism: model tiers
+### Foresights's native mechanism: model tiers
 
-Before hardcoding vendors, use gbrain's tier routing. Every gbrain
+Before hardcoding vendors, use foresights's tier routing. Every foresights
 subagent/LLM call resolves through a named tier
 (`utility` / `reasoning` / `deep` / `subagent`), and you point each tier
 at whatever model you want once:
 
 ```bash
-gbrain config set models.tier.subagent anthropic:claude-haiku-4-5
-gbrain config set models.tier.deep anthropic:claude-opus-4-7
+foresights config set models.tier.subagent anthropic:claude-haiku-4-5
+foresights config set models.tier.deep anthropic:claude-opus-4-7
 ```
 
-Per-call override: `gbrain agent run --model <provider:model>`. The
+Per-call override: `foresights agent run --model <provider:model>`. The
 conventions file `skills/conventions/model-routing.md` is the canonical
 routing policy; this guide is the cost rationale behind it.
 
@@ -153,4 +153,4 @@ fraction of the main session model's cost.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

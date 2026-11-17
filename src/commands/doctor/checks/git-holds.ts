@@ -42,7 +42,7 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
       mismatch: Object.entries(row.value.obligations.mismatch ?? {}).filter(([, entry]) => entry.streak >= SETTLE_MISMATCH_STREAK - 1).map(([path, entry]) => ({ path, streak: entry.streak })).slice(0, SAMPLE_PATHS) }));
     const passLines = passes.map(pass => `${pass.source_id}: every pass since ${pass.since} stopped ${pass.reason}${pass.stop_reason ? ` (${pass.stop_reason})` : ''}`
       + (pass.mismatch.length ? `, settle keeps mismatching on ${pass.mismatch.map(entry => entry.path).join(', ')}` : ''));
-    const passNote = passes.length ? ` Managed sync passes that keep stopping: ${passLines.join('; ')}; inspect with ${passes.map(pass => `gbrain sync status --source ${pass.source_id} --json`).join('; ')}.` : '';
+    const passNote = passes.length ? ` Managed sync passes that keep stopping: ${passLines.join('; ')}; inspect with ${passes.map(pass => `foresights sync status --source ${pass.source_id} --json`).join('; ')}.` : '';
     const [coverage, policy] = await Promise.all([readHeldCoverage(engine, sourceIds ? { sourceIds } : {}), readSyncHoldPolicy(engine)]);
     const listing = new Map((await readGitHoldListing(engine, coverage.map(source => source.source_id), SAMPLE_PATHS)).map(entry => [entry.sourceId, entry.holds]));
     const images = await readGitImageHoldCounts(engine, coverage.map(source => source.source_id));
@@ -55,7 +55,7 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
         ...(route.stalled ? { stalled: route.stalled } : {}), ...(route.dirty ? { dirty: route.dirty } : {}), ...(route.drift ? { drift: route.drift } : {}),
         first: (listing.get(source.source_id) ?? []).map(hold => ({ path: hold.path, code: hold.code, ...(hold.meta.reason ? { reason: hold.meta.reason } : {}), why: gitHoldFix(hold, auto).why })),
         escalated: source.missing + source.stale - (images.get(source.source_id) ?? 0) - (route.drift ?? 0) > policy.escalateCount,
-        status: `gbrain sources status ${source.source_id}`, repair: steps.commands.join('; '),
+        status: `foresights sources status ${source.source_id}`, repair: steps.commands.join('; '),
         argv: steps.argv, next: steps.text };
     });
     const held = sources.reduce((sum, source) => sum + source.held, 0);
@@ -100,9 +100,9 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
         'git_held_files', { docs: fenceOnly ? 'docs/guides/repair.md#fences' : stalledOnly ? 'docs/guides/write-refusals.md#preparation_stalled' : 'docs/guides/repair.md#held-files' })
         : agentFix(fenceOnly ? ['gbrain', 'repair', 'fences'] : stalledOnly ? ['gbrain', 'sources', 'writer', 'status', '--json'] : ['gbrain', 'repair', 'frontmatter'],
           fenceOnly ? `Previews the fence repair of every held file (read-only, no model call) with each one's planned repair or exact edit, and prints the apply command with --expect <hash>. ${fenceAutoSentence(auto)}`
-            : stalledOnly ? 'Shows every source\'s write owner and what it was stuck on (read-only); the held files are fine. Fix what it names or upgrade gbrain, then gbrain sources retry-held <id> and the same sync per source.'
+            : stalledOnly ? 'Shows every source\'s write owner and what it was stuck on (read-only); the held files are fine. Fix what it names or upgrade foresights, then foresights sources retry-held <id> and the same sync per source.'
               : 'Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing. '
-              + `Fence holds are previewed by gbrain repair fences instead${stalled ? ', and preparation-stalled holds need no file repair (see each source\'s next step)' : ''}. ${fenceAutoSentence(auto)}`,
+              + `Fence holds are previewed by foresights repair fences instead${stalled ? ', and preparation-stalled holds need no file repair (see each source\'s next step)' : ''}. ${fenceAutoSentence(auto)}`,
           'git_held_files', { docs: fenceOnly ? 'docs/guides/repair.md#fences' : stalledOnly ? 'docs/guides/write-refusals.md#preparation_stalled' : 'docs/guides/repair.md#held-files' }),
     };
   } catch (error) {
@@ -137,7 +137,7 @@ function fenceAutoSentence(auto: FenceAutoRepair | undefined): string {
 /**
  * Sources stopped on a failed content refusal: a company (or not yet retired) cursor pending on it, or a non-company source whose
  * newest pass ended blocked on it. The next sync fixes either (the file is held and the rest imports).
- * `fence` marks a source whose refusal is a facts or takes fence (#6188); it is held and repaired by `gbrain repair fences`, not by frontmatter repair.
+ * `fence` marks a source whose refusal is a facts or takes fence (#6188); it is held and repaired by `foresights repair fences`, not by frontmatter repair.
  */
 export async function contentBlockedSources(engine: BrainEngine): Promise<Array<{ source_id: string; fence: boolean }>> {
   type Receipt = { source_id: string; error_code: string | null; error_message: string | null; error_detail: unknown };
@@ -164,7 +164,7 @@ export async function contentBlockedSources(engine: BrainEngine): Promise<Array<
 }
 
 /**
- * #5988 `gbrain post-upgrade` line: a source blocked by one file recovers on
+ * #5988 `foresights post-upgrade` line: a source blocked by one file recovers on
  * its next sync (scheduled or manual) without ledger surgery. The line names
  * the command that does it now and the repair preview for the backlog, plus
  * the hook refresh when an older hook is installed (held files already appear
@@ -176,18 +176,18 @@ export async function frontmatterHoldsBannerNote(engine: BrainEngine): Promise<s
   const parts: string[] = [];
   const ids = blocked.filter(source => !source.fence).map(source => source.source_id);
   if (ids.length) {
-    parts.push(`${ids.length} source(s) are blocked by a file gbrain could not import (${ids.join(', ')}). The next scheduled or manual sync recovers a blocked source `
-      + `automatically; to do it now run ${ids.map(id => `gbrain sync --source ${id} --no-pull`).join('; ')}. The file is then held and the rest of the source imports; `
-      + `inspect it with ${ids.map(id => `gbrain sources status ${id}`).join('; ')} and preview the backlog fix with ${ids.map(id => `gbrain repair frontmatter --source ${id}`).join('; ')} (writes nothing; ask the user before applying)`);
+    parts.push(`${ids.length} source(s) are blocked by a file foresights could not import (${ids.join(', ')}). The next scheduled or manual sync recovers a blocked source `
+      + `automatically; to do it now run ${ids.map(id => `foresights sync --source ${id} --no-pull`).join('; ')}. The file is then held and the rest of the source imports; `
+      + `inspect it with ${ids.map(id => `foresights sources status ${id}`).join('; ')} and preview the backlog fix with ${ids.map(id => `foresights repair frontmatter --source ${id}`).join('; ')} (writes nothing; ask the user before applying)`);
   }
   if (hooks.length) parts.push(`an older frontmatter pre-commit hook is installed; refresh it with ${hooks.map(hook => hook.fix.join(' ')).join('; ')}`);
   return parts.length ? `frontmatter_holds: ${parts.join('. ')}. Recipe: docs/guides/repair.md#held-files` : null;
 }
 
 /**
- * #6188 (D7) `gbrain post-upgrade` line, separate from the frontmatter one: a
+ * #6188 (D7) `foresights post-upgrade` line, separate from the frontmatter one: a
  * source blocked by a malformed facts or takes fence (a typed receipt or the
- * message an older gbrain stored) recovers on its next sync with no command
+ * message an older foresights stored) recovers on its next sync with no command
  * (the file is held and the rest of the source imports), the malformed fences
  * the stored census knows and whether the next maintenance run repairs them,
  * the read-only preview and the pause setting. Never an applying command.
@@ -200,8 +200,8 @@ export async function fenceHoldsBannerNote(engine: BrainEngine): Promise<string 
   const malformed = census.reduce((sum, source) => sum + source.total, 0);
   const repair = auto.active ? 'the next maintenance run repairs them automatically (the manual ones are listed with the exact edit)'
     : `nothing repairs them by itself until a maintenance run is active${auto.enabled ? '' : ' and fences.repair.enabled is true again'}, so preview them and apply the plan the preview prints once the user agrees`;
-  return `fence_holds: ${ids.length} source(s) are blocked by a file whose facts or takes fence gbrain could not import (${ids.join(', ')}). The next scheduled or manual sync `
-    + `recovers each with no command; to do it now run ${ids.map(id => `gbrain sync --source ${id} --no-pull`).join('; ')}. The file is then held and the rest of the source imports. `
-    + `${malformed} malformed fence(s) are known so far (gbrain doctor --only fence_integrity counts them by tier); ${repair}. `
-    + 'Preview (read-only, no model call): gbrain repair fences. Pause automatic fence repair first with: gbrain config set fences.repair.enabled false. Recipe: docs/guides/repair.md#fences';
+  return `fence_holds: ${ids.length} source(s) are blocked by a file whose facts or takes fence foresights could not import (${ids.join(', ')}). The next scheduled or manual sync `
+    + `recovers each with no command; to do it now run ${ids.map(id => `foresights sync --source ${id} --no-pull`).join('; ')}. The file is then held and the rest of the source imports. `
+    + `${malformed} malformed fence(s) are known so far (foresights doctor --only fence_integrity counts them by tier); ${repair}. `
+    + 'Preview (read-only, no model call): foresights repair fences. Pause automatic fence repair first with: foresights config set fences.repair.enabled false. Recipe: docs/guides/repair.md#fences';
 }

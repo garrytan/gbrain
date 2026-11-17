@@ -3,11 +3,11 @@
  *
  * Wraps the official @modelcontextprotocol/sdk Client + StreamableHTTPClientTransport
  * with OAuth `client_credentials` minting + token caching + 401 retry. Used by:
- *   - `gbrain remote ping`   — submits autopilot-cycle, polls get_job
- *   - `gbrain remote doctor` — calls run_doctor MCP op
+ *   - `foresights remote ping`   — submits autopilot-cycle, polls get_job
+ *   - `foresights remote doctor` — calls run_doctor MCP op
  *
  * Token caching strategy: an in-process Map in front of a 0600 file under the
- * gbrain home (remote-token-cache.ts), both keyed by a hash of the issuer, MCP
+ * foresights home (remote-token-cache.ts), both keyed by a hash of the issuer, MCP
  * URL, client id and secret. Each CLI command is its own process, so the file
  * is what lets a per-prompt caller reuse one token instead of minting one per
  * command and spending the host's /token budget (#7360).
@@ -163,7 +163,7 @@ export function toRemoteMcpError(e: unknown, mcpUrl: string, signal?: AbortSigna
  * @internal Exported for test access (test/mcp-client-hardening.test.ts).
  */
 export function extractToolErrorCode(message: string): string | undefined {
-  // Try to parse a JSON payload first — gbrain server-side tool errors
+  // Try to parse a JSON payload first — foresights server-side tool errors
   // sometimes come through as `{"error":{"code":"...","message":"..."}}`.
   try {
     const parsed = JSON.parse(message);
@@ -222,7 +222,7 @@ function requireRemoteMcp(config: GBrainConfig | null): NonNullable<GBrainConfig
   if (!config?.remote_mcp) {
     throw new RemoteMcpError(
       'config',
-      'No remote_mcp config. Run `gbrain init --mcp-only` first.',
+      'No remote_mcp config. Run `foresights init --mcp-only` first.',
     );
   }
   return config.remote_mcp;
@@ -233,7 +233,7 @@ function resolveSecret(remote: NonNullable<GBrainConfig['remote_mcp']>): string 
   if (!secret) {
     throw new RemoteMcpError(
       'config',
-      'No client_secret available. Set GBRAIN_REMOTE_CLIENT_SECRET or rerun `gbrain init --mcp-only`.',
+      'No client_secret available. Set GBRAIN_REMOTE_CLIENT_SECRET or rerun `foresights init --mcp-only`.',
     );
   }
   return secret;
@@ -307,7 +307,7 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
     requestInit: {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
-        // Hosts serve full search/query rows to gbrain's own CLI (renderers,
+        // Hosts serve full search/query rows to foresights's own CLI (renderers,
         // --explain). A row-shape hint only, never an authority claim.
         [GBRAIN_CLIENT_HEADER]: `${clientName}/${VERSION}`,
       },
@@ -489,7 +489,7 @@ export async function callRemoteTool(
         if (mintErr instanceof RemoteMcpError && mintErr.reason === 'auth') {
           throw new RemoteMcpError(
             'auth_after_refresh',
-            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`gbrain auth register-client\`.`,
+            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`foresights auth register-client\`.`,
             { mcp_url: remote.mcp_url, ...(mintErr.detail?.status ? { status: mintErr.detail.status } : {}) },
           );
         }
@@ -505,7 +505,7 @@ export async function callRemoteTool(
           dropAccessToken(config);
           throw new RemoteMcpError(
             'auth_after_refresh',
-            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`gbrain auth register-client\`.`,
+            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`foresights auth register-client\`.`,
             { mcp_url: remote.mcp_url, status: 401 },
           );
         }
@@ -672,7 +672,7 @@ export async function forwardRemoteToolCall(
 /**
  * Extract the structured result from a successful tool-call response. The MCP
  * spec says tool results are returned as `content: Array<{type, text|...}>`.
- * gbrain ops set the JSON-encoded result as `text` of the first content item.
+ * foresights ops set the JSON-encoded result as `text` of the first content item.
  * This helper parses + types it for the caller.
  */
 export function unpackToolResult<T = unknown>(res: unknown): T {
@@ -708,9 +708,9 @@ export function extractNotices(res: unknown): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   for (const block of Array.isArray(content) ? content.slice(1) : []) {
     const text = (block as { text?: unknown })?.text;
-    if (typeof text !== 'string' || !text.startsWith('[gbrain notice ')) continue;
+    if (typeof text !== 'string' || !/^\[(?:foresights|gbrain) notice /.test(text)) continue;
     const [head, ...rest] = text.split('\n');
-    const m = /^\[gbrain notice (\S+) kind=(\S+)\]$/.exec(head);
+    const m = /^\[(?:foresights|gbrain) notice (\S+) kind=(\S+)\]$/.exec(head);
     if (!m) continue;
     const notice: Record<string, unknown> = { code: m[1], kind: m[2] };
     for (const line of rest) {
@@ -764,7 +764,7 @@ export function cutUploadPart(text: string, frame: { upload_id: string; part: nu
   }
   if (lo === 0) {
     throw opError('payload_too_large', `An upload part frame of at most ${maxFrameBytes} bytes cannot carry even one character.`,
-      'The brain host advertised a part frame smaller than the request envelope, so nothing was uploaded. Report it with gbrain remote doctor; the host operator raises its request cap.',
+      'The brain host advertised a part frame smaller than the request envelope, so nothing was uploaded. Report it with foresights remote doctor; the host operator raises its request cap.',
       { fix: { argv: ['gbrain', 'remote', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Shows the brain host and its connection limits, read-only.' } });
   }

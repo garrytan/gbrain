@@ -1,8 +1,8 @@
 /**
- * `gbrain repair orphan-children` (#5216, #4738): remove child rows whose
+ * `foresights repair orphan-children` (#5216, #4738): remove child rows whose
  * page no longer exists, and find page rows whose stored body cannot be read
  * (a torn TOAST value). Both show up on brains with storage damage: doctor's
- * `child_table_orphans` used to print cleanup SQL no gbrain command could run,
+ * `child_table_orphans` used to print cleanup SQL no foresights command could run,
  * and a torn body fails every operation that reads it with SQLSTATE XX000.
  *
  * Each item is one (table, column) pair. Applying it deletes the orphans, or

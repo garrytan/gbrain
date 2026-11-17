@@ -1,4 +1,4 @@
-// gbrain#3998 regression (also covers the #4392 ingest-abort shape) — pages
+// foresights#3998 regression (also covers the #4392 ingest-abort shape) — pages
 // body columns (title, compiled_truth, timeline) and content_chunks.chunk_text
 // must survive a raw NUL and a lone UTF-16 surrogate. Pre-fix, putPage and
 // upsertChunks bound the raw strings, so one 0x00 byte aborted the INSERT with

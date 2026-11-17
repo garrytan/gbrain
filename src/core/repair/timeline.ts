@@ -1,5 +1,5 @@
 /**
- * `gbrain repair timeline` (#5567): materialize database-only timeline rows on
+ * `foresights repair timeline` (#5567): materialize database-only timeline rows on
  * pages that are never written again. Each page is re-published with its own
  * current body through a revision-bound `put_page`; preparation writes every
  * round-trippable bullet-less row back into the page as a marked bullet.
@@ -117,7 +117,7 @@ export async function segmentedTimelinePages(engine: BrainEngine, sourceIds: str
 /** The sentence a preview or doctor prints for segmented pages carrying timeline rows. */
 export function segmentedTimelineNote(segmented: { pages: number; rows: number; sample: string[] }): string {
   return `${segmented.rows} timeline row(s) on ${segmented.pages} segmented page(s) (${segmented.sample.join(', ')}${segmented.pages > segmented.sample.length ? ', …' : ''}) `
-    + 'are not checked for a bullet in their page or materialized: gbrain repair timeline re-publishes a whole body as one string, so it does not handle segmented pages, '
+    + 'are not checked for a bullet in their page or materialized: foresights repair timeline re-publishes a whole body as one string, so it does not handle segmented pages, '
     + 'and no command does yet. The rows are kept as-is.';
 }
 
@@ -132,7 +132,7 @@ export const timelineRepair: RepairHandler = {
         AND (t.summary LIKE '%<!--%' OR t.summary LIKE '%-->%' OR t.source LIKE '%<!--%' OR t.source LIKE '%-->%')`, [scope.source_ids]);
     // #6184: such rows are never rendered back (they would duplicate a section END marker); name the cleanup.
     const warnings = markup ? [`timeline_comment_markup: ${markup} timeline row(s) carry HTML comment markup and stay database-side; `
-      + `preview the cleanup with gbrain repair timeline-comments${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}.`] : [];
+      + `preview the cleanup with foresights repair timeline-comments${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}.`] : [];
     const segmented = await segmentedTimelinePages(engine, scope.source_ids);
     if (segmented.pages) warnings.push(`segmented_pages: ${segmentedTimelineNote(segmented)}`);
     return { ...(warnings.length ? { warnings } : {}), items, residuals: {

@@ -264,7 +264,7 @@ describe('runBootstrapFromSkill — stderr guidance', () => {
     const err = await captureStderr(async () => {
       await runBootstrapFromSkill({ skillsDir, skillName: SKILL, optimizerModel: 'test:m', chatFn });
     });
-    expect(err).toContain(`gbrain skillopt ${SKILL} --bootstrap-reviewed --split 1:1:1`);
+    expect(err).toContain(`foresights skillopt ${SKILL} --bootstrap-reviewed --split 1:1:1`);
     expect(err).toContain('STRENGTHEN');
   });
 

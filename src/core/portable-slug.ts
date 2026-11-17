@@ -9,7 +9,7 @@
  * `slugPortabilityProblem` is the rule new page identities are admitted under
  * (put_page, put_pages; persistence/suffixed-slug.ts), entity stubs mint
  * around (enrichment-service.ts slugifyEntity), and export escapes for pages
- * an older gbrain admitted (export-stage.ts exportPagePath). Existing pages
+ * an older foresights admitted (export-stage.ts exportPagePath). Existing pages
  * keep accepting updates; the colon namespace (`ns:foo`) is slug grammar and
  * is not a portability problem here (export escapes it).
  */

@@ -1,14 +1,14 @@
 /**
- * GST-2670 phase 2 (GBRA-502, decision B1): `gbrain repair visibility --propose [--source <id>] [--out <dir>]`, a
+ * GST-2670 phase 2 (GBRA-502, decision B1): `foresights repair visibility --propose [--source <id>] [--out <dir>]`, a
  * preview that proposes readers for open pages (open-pages.ts: no readable_by, no applied or pending rule) on a brain
  * that serves several people. It reads each open page's frontmatter participants, attendees, to, from and cc email
  * lists and matches every address to an enabled member by its declared email (GST-1158), exactly and case-folded,
  * never a search hit. A page whose addresses all match proposes those members plus the owner (first); a page with any
  * address that matches no enabled member is listed under unmatched, never guessed. Pages are grouped by source and
  * reader set, one slugs file per set, each with the existing preview-bound command
- * gbrain repair visibility --source <s> --slugs-file <f> --readers <set> (readers.ts), whose --apply --expect stays the
+ * foresights repair visibility --source <s> --slugs-file <f> --readers <set> (readers.ts), whose --apply --expect stays the
  * only way a label is written. DM, chat and mail pages with no address list are listed by folder with the
- * gbrain access rule add --prefix command instead.
+ * foresights access rule add --prefix command instead.
  *
  * It writes only the slugs files (mode 0600) under <configDir>/visibility-proposals/ or --out, refusing a directory
  * inside a git work tree as member keys do. It never writes a label, a rule, config or a page. A one-person brain, or
@@ -62,7 +62,7 @@ export interface VisibilityProposal {
   cost: string;
 }
 
-const LINEAGE_COST = 'Labelling a page also hides its derived atoms, facts and chronicle events from every remote caller except the owner, unless access.members_read_lineage is on (gbrain access members-read-lineage on lets the members a page lists read them too).';
+const LINEAGE_COST = 'Labelling a page also hides its derived atoms, facts and chronicle events from every remote caller except the owner, unless access.members_read_lineage is on (foresights access members-read-lineage on lets the members a page lists read them too).';
 const UNCARRIED_SLUG = 'the slug starts with # or has surrounding spaces or a line break, so a slugs file cannot carry it; label it with --slug';
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -94,7 +94,7 @@ function assertOutsideGit(dir: string): void {
   const root = gitRootAbove(dir);
   if (!root) return;
   throw opError('repair_propose_dir_in_git', `Proposal files go to ${dir}, which is inside the git work tree at ${root}; a file there could be committed, so nothing was written.`,
-    'Pass --out <dir> outside any git checkout, or leave --out off to use the gbrain config directory (with GBRAIN_HOME outside any checkout).',
+    'Pass --out <dir> outside any git checkout, or leave --out off to use the foresights config directory (with GBRAIN_HOME outside any checkout).',
     { why: 'Proposal files list page slugs and who reads them; a commit could publish them.' });
 }
 
@@ -188,12 +188,12 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
 export function proposalLines(p: VisibilityProposal, limit = 20): string[] {
   if (!p.applicable) return [p.message];
   const lines = [`Proposed readers (preview only; nothing was labelled): ${p.message}`];
-  if (p.owner_inactive) lines.push(`  WARNING: access.owner_member is "${p.owner_inactive}", which names no enabled member, so each command below refuses until the owner is fixed (gbrain access owner set <member>).`);
-  else if (!p.owner) lines.push('  No owner is set (gbrain access owner set <member>), so each reader set names only the matched members.');
+  if (p.owner_inactive) lines.push(`  WARNING: access.owner_member is "${p.owner_inactive}", which names no enabled member, so each command below refuses until the owner is fixed (foresights access owner set <member>).`);
+  else if (!p.owner) lines.push('  No owner is set (foresights access owner set <member>), so each reader set names only the matched members.');
   if (p.sets.length) lines.push('', `Reader sets (slugs files in ${p.dir}). Preview each, then run the --apply --expect <hash> it prints:`);
   for (const s of p.sets) lines.push(`  ${s.source}: ${plural(s.pages, 'page')} -> ${s.readers.join(', ')}`, `    ${s.command}`);
   if (p.unmatched.length) {
-    lines.push('', `Unmatched (${p.unmatched.length}): nothing is proposed for these. Where an address names no enabled member's declared email, declare it on the right member (gbrain access member set <id> --email <address>) and preview again; otherwise label these by hand:`);
+    lines.push('', `Unmatched (${p.unmatched.length}): nothing is proposed for these. Where an address names no enabled member's declared email, declare it on the right member (foresights access member set <id> --email <address>) and preview again; otherwise label these by hand:`);
     for (const u of p.unmatched.slice(0, limit)) lines.push(u.reason ? `  ${u.source}:${JSON.stringify(u.slug)} (${u.reason})` : `  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
     if (p.unmatched.length > limit) lines.push(`  ... and ${p.unmatched.length - limit} more (--json lists every one)`);
   }

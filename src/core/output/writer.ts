@@ -293,7 +293,7 @@ export class BrainWriter {
    * Run `fn` inside an engine transaction. On success, run validators across
    * all touched slugs. If strict mode + any error-severity finding → rollback.
    * Validators never run against pages with `validate: false` frontmatter
-   * (grandfathered pages opt out until `gbrain integrity` repairs them).
+   * (grandfathered pages opt out until `foresights integrity` repairs them).
    */
   async transaction<T>(fn: (tx: WriteTx) => Promise<T>, ctx: ResolverContext): Promise<{ result: T; report: ValidationReport }> {
     const strict = this.strictMode;

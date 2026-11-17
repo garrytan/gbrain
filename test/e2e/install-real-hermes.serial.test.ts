@@ -1,10 +1,10 @@
 /**
  * install-real-hermes door e2e — drives the REAL `hermes` binary (NousResearch
- * hermes-agent) against THIS checkout's gbrain over stdio MCP.
+ * hermes-agent) against THIS checkout's foresights over stdio MCP.
  *
- * WHAT THIS PROVES: gbrain WIRED INTO hermes + recall through MCP, using the
+ * WHAT THIS PROVES: foresights WIRED INTO hermes + recall through MCP, using the
  * dev tree / compiled binary — the same posture as the claude/codex doors.
- * It does NOT prove (a) gbrain's own cold install (bun global install, PATH,
+ * It does NOT prove (a) foresights's own cold install (bun global install, PATH,
  * migrations — that's the networkless-container placeholder in
  * heavy-tests.yml), nor (b) an agent FOLLOWING INSTALL_FOR_AGENTS.md
  * end-to-end (guide-following is the claw-test live lane's job).
@@ -32,7 +32,7 @@
  *     entry EVEN when the handshake failed (the save-anyway prompt), just with
  *     `enabled: false`. So the hard success discriminators are
  *     (1) `mcp_servers.gbrain.enabled === true` in config.yaml (only a
- *     successful handshake enables) and (2) `hermes mcp test gbrain` exits 0.
+ *     successful handshake enables) and (2) `hermes mcp test foresights` exits 0.
  *   - the args flag must be the LAST option (later options are swallowed into
  *     the server argv).
  */
@@ -252,7 +252,7 @@ describe.skipIf(!CAN_RUN)('install real-hermes door (serial e2e)', () => {
     const list = runHermes(home, ['mcp', 'list']);
     expect(list.code).toBe(0);
     if (!list.stdout.includes('gbrain')) {
-      console.warn('[install-real-hermes] mcp list output did not mention gbrain — shape drift? output:', list.stdout.slice(0, 400));
+      console.warn('[install-real-hermes] mcp list output did not mention foresights — shape drift? output:', list.stdout.slice(0, 400));
     }
   }, 300_000);
 
@@ -290,7 +290,7 @@ describe.skipIf(!CAN_RUN)('install real-hermes door (serial e2e)', () => {
     console.warn(`[install-real-hermes] doctor (evidence only): exit ${doctor.code}`);
   }, 300_000);
 
-  test('SMOKE: real hermes -z answers the seeded fact through the gbrain MCP server', async () => {
+  test('SMOKE: real hermes -z answers the seeded fact through the foresights MCP server', async () => {
     const home = trackHome('smoke');
     const seeded = await seedBrainForAgent(home, 'workspace');
     seedHermesHome(home);
@@ -308,9 +308,9 @@ describe.skipIf(!CAN_RUN)('install real-hermes door (serial e2e)', () => {
     // HOME — never the repo checkout, where the committed fact in
     // agent-harness.ts would be greppable without MCP.
     const prompt =
-      'You have an MCP server named gbrain connected to a knowledge brain. ' +
+      'You have an MCP server named foresights connected to a knowledge brain. ' +
       `Using ONLY that brain (no general knowledge, no filesystem search), answer: ${seeded.query} ` +
-      'Report exactly what the brain says. If no gbrain tool is available to you, reply with exactly: NO-GBRAIN-TOOL';
+      'Report exactly what the brain says. If no foresights tool is available to you, reply with exactly: NO-GBRAIN-TOOL';
 
     let finalText = '';
     let lastExit: number | null = null;

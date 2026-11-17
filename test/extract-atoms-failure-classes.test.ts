@@ -1,5 +1,5 @@
 /**
- * gbrain#4148 — extract_atoms failure classes, bounded tombstone, and the
+ * foresights#4148 — extract_atoms failure classes, bounded tombstone, and the
  * partial-persist completion receipt.
  *
  * Pre-fix defects these pin (each red on master at the assertion):
@@ -83,7 +83,7 @@ async function stateOf(slug: string) {
   return row;
 }
 
-describe('parseAtomsOutcome — typed parse (gbrain#4148)', () => {
+describe('parseAtomsOutcome — typed parse (foresights#4148)', () => {
   test('malformed shapes are ok:false, never an empty success', () => {
     expect(parseAtomsOutcome('sorry, I cannot help with that')).toEqual({ ok: false, reason: 'no JSON array in response' });
     expect(parseAtomsOutcome('[ {"title": "broken"')).toEqual({ ok: false, reason: 'unterminated JSON array' });
@@ -98,7 +98,7 @@ describe('parseAtomsOutcome — typed parse (gbrain#4148)', () => {
   });
 });
 
-describe('runPhaseExtractAtoms — failure classes (gbrain#4148)', () => {
+describe('runPhaseExtractAtoms — failure classes (foresights#4148)', () => {
   test('provider content block counts by content and tombstones without stopping other pages', async () => {
     await engine.putPage('meetings/blocked', {
       title: 'blocked meeting', type: 'meeting', compiled_truth: 'blocked prose '.repeat(60),
@@ -414,7 +414,7 @@ describe('runPhaseExtractAtoms — extract_health rollup excludes transient fail
   });
 });
 
-describe('runPhaseExtractAtoms — completion receipt (gbrain#4148)', () => {
+describe('runPhaseExtractAtoms — completion receipt (foresights#4148)', () => {
   test('full success flips atoms to the real source_hash and stamps the page', async () => {
     await seedPage('note/ok1');
     const result = await runPhaseExtractAtoms(engine, {

@@ -1,5 +1,5 @@
 /**
- * `gbrain graph-query --source <id>` on a thin-client install.
+ * `foresights graph-query --source <id>` on a thin-client install.
  *
  * The help text promises "an unknown source is a hard error", and the local
  * branch honors it. The thin-client branch used to call the remote
@@ -128,12 +128,12 @@ describe('graph-query --source on a thin-client install', () => {
 });
 
 describe('graph-query --hop on a thin-client install', () => {
-  test('sends only slug + hops, and refuses a host that ignored hops (older gbrain)', async () => {
+  test('sends only slug + hops, and refuses a host that ignored hops (older foresights)', async () => {
     const r = await run(['people/alice-example', '--hop', 'invested_in:object', '--hop', 'founded:subject']);
     expect(calls[0]).toEqual({ name: 'traverse_graph', params: { slug: 'people/alice-example', hops: [
       { link_type: 'invested_in', toward: 'object' }, { link_type: 'founded', toward: 'subject' }] } });
     expect(r.code).toBe(1);
-    expect(r.err.join('\n')).toContain('older gbrain without typed chains');
+    expect(r.err.join('\n')).toContain('older foresights without typed chains');
   });
 
   test('renders a chain response from a current host', async () => {

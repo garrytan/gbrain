@@ -1,5 +1,5 @@
 /**
- * `gbrain append --file` sizes the file before reading it (spec 6.2): a file
+ * `foresights append --file` sizes the file before reading it (spec 6.2): a file
  * over the page ceiling is refused unread, one over the part cap is never read
  * whole (it streams into an upload session, or its upload-only flags are
  * refused first), and only a file within one call's cap is read as a string.
@@ -15,7 +15,7 @@ import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-f
 import { withEnv } from './helpers/with-env.ts';
 import type { CliDispatchContext } from '../src/cli/command-table.ts';
 
-describe('gbrain append --file reads by size', () => {
+describe('foresights append --file reads by size', () => {
   let dir: string;
   const reads: string[] = [];
   const original = appendFileIo.readFileSync;

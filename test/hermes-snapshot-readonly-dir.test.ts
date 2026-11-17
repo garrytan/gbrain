@@ -1,6 +1,6 @@
 /**
  * The #7067 snapshot opened the Hermes store read-only in place and ran
- * VACUUM INTO. A WAL-mode store in a directory gbrain cannot write (a store
+ * VACUUM INTO. A WAL-mode store in a directory foresights cannot write (a store
  * at rest has no -wal/-shm, and a read-only open has to create them) failed
  * with "attempt to write a readonly database", where the earlier file copy
  * imported it; in a writable directory the open left -wal/-shm sidecars
@@ -48,7 +48,7 @@ async function drain(path: string) {
   }
 }
 
-describe('hermes snapshot of a store gbrain cannot write beside', () => {
+describe('hermes snapshot of a store foresights cannot write beside', () => {
   test('a WAL store at rest in an unwritable directory imports, and no sidecar appears', async () => {
     const dir = join(root, 'ro');
     const path = walStoreAtRest(dir);

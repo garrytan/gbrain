@@ -1,4 +1,4 @@
-/** `gbrain jobs run-child` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs run-child` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, parseFlag, type JobsCommandContext } from './shared.ts';
 import { loadConfig } from '../../core/config.ts';
 import { JOB_CHILD_EXIT_USAGE } from '../../core/minions/worker-exit-codes.ts';

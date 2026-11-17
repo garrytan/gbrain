@@ -1,10 +1,10 @@
 /**
- * Explicit cost cap + a model gbrain has no price for: the run is refused,
+ * Explicit cost cap + a model foresights has no price for: the run is refused,
  * and the refusal tells the agent to look the price up and register it with
- * `gbrain pricing set`, then retry. Default caps still warn and run.
+ * `foresights pricing set`, then retry. Default caps still warn and run.
  *
  * Covers the shared builder (src/core/budget/no-pricing.ts) on every surface
- * that reports `no_pricing`, the merge-safe `gbrain pricing` command, and the
+ * that reports `no_pricing`, the merge-safe `foresights pricing` command, and the
  * trust boundary (registration is trusted-local CLI only).
  *
  * Hermetic: one in-memory PGLite engine and gateway test transports. No
@@ -54,7 +54,7 @@ let engine: PGLiteEngine;
 let chatCalls = 0;
 let auditDir: string;
 
-/** Run `gbrain pricing …` in-process, capturing output and the exit code. */
+/** Run `foresights pricing …` in-process, capturing output and the exit code. */
 async function pricing(...args: string[]): Promise<{ out: string; err: string; code: number }> {
   const out: string[] = [];
   const err: string[] = [];
@@ -164,11 +164,11 @@ describe('explicit cap + unpriced model: refused with lookup-and-register guidan
       kind: 'chat',
       units: ['usd_per_1m_input_tokens', 'usd_per_1m_output_tokens'],
       lookup: "Look up mystery's current price for mystery:unreleased-chat (for example, web-search its pricing page): USD per 1M input tokens and USD per 1M output tokens.",
-      register_command: 'gbrain pricing set mystery:unreleased-chat --input <usd-per-1M-input-tokens> --output <usd-per-1M-output-tokens> --source <pricing-page-url>',
+      register_command: 'foresights pricing set mystery:unreleased-chat --input <usd-per-1M-input-tokens> --output <usd-per-1M-output-tokens> --source <pricing-page-url>',
       register_scope: 'local_cli',
       docs: 'docs/guides/write-refusals.md#no_pricing',
     });
-    expect(err.message).toContain(`gbrain has no pricing for chat model "mystery:unreleased-chat" (provider mystery), so the $5.00 cost cap can't be enforced.`);
+    expect(err.message).toContain(`foresights has no pricing for chat model "mystery:unreleased-chat" (provider mystery), so the $5.00 cost cap can't be enforced.`);
     expect(err.message).toContain(err.pricing!.lookup);
     expect(err.message).toContain(`with: ${err.pricing!.register_command} — then retry.`);
     expect(err.message).toContain("Over MCP or another remote connection you cannot register prices; ask the brain's operator to run that command.");
@@ -181,7 +181,7 @@ describe('explicit cap + unpriced model: refused with lookup-and-register guidan
     expect(err.pricing).toMatchObject({
       kind: 'embed',
       units: ['usd_per_1m_tokens'],
-      register_command: 'gbrain pricing set mystery:some-embed-model --rate <usd-per-1M-tokens> --source <pricing-page-url>',
+      register_command: 'foresights pricing set mystery:some-embed-model --rate <usd-per-1M-tokens> --source <pricing-page-url>',
     });
     expect(err.message).toContain('embedding model "mystery:some-embed-model"');
     expect(err.message).toContain('USD per 1M tokens');
@@ -205,7 +205,7 @@ describe('default cap + unpriced model: warns and runs', () => {
     }
     const warning = writes.join('');
     expect(warning).toContain('BUDGET_TRACKER_NO_PRICING');
-    expect(warning).toContain('gbrain pricing set mystery:unreleased-chat --input');
+    expect(warning).toContain('foresights pricing set mystery:unreleased-chat --input');
   });
 
   test('a default conversation-facts cap is lifted with a warning that names the registration command', async () => {
@@ -217,7 +217,7 @@ describe('default cap + unpriced model: warns and runs', () => {
     } finally {
       console.error = error;
     }
-    expect(errors.join('\n')).toContain(`gbrain pricing set ${MODEL} --input`);
+    expect(errors.join('\n')).toContain(`foresights pricing set ${MODEL} --input`);
   });
 
   test('the core run under a default budget calls the unpriced model', async () => {
@@ -242,7 +242,7 @@ describe('conversation facts surfaces carry the guidance', () => {
     expect(details.no_pricing).toHaveLength(1);
     const [guidance] = details.no_pricing;
     expect(guidance!.model).toBe(MODEL);
-    expect(guidance!.register_command.startsWith(`gbrain pricing set ${MODEL} --input`)).toBe(true);
+    expect(guidance!.register_command.startsWith(`foresights pricing set ${MODEL} --input`)).toBe(true);
     expect(result.summary).toContain(guidance!.register_command);
     expect(chatCalls).toBe(0);
   });
@@ -271,7 +271,7 @@ describe('other surfaces use the same builder', () => {
   });
 });
 
-describe('gbrain pricing set / list / unset', () => {
+describe('foresights pricing set / list / unset', () => {
   test('set merges one entry without clobbering others; the retried run is priced and capped', async () => {
     const refused = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug: SLUG, maxCostUsd: 0.1, sleepMs: 0 });
     expect(refused.budget_reason).toBe('no_pricing');
@@ -396,7 +396,7 @@ describe('trust boundary: a remote caller cannot register a price', () => {
     expect(writers).toEqual([]);
   });
 
-  test('`gbrain pricing` is a trusted-local CLI command that thin clients refuse', () => {
+  test('`foresights pricing` is a trusted-local CLI command that thin clients refuse', () => {
     const record = CLI_COMMANDS.find(c => c.name === 'pricing');
     expect(record).toMatchObject({ phase: 'post-connect', thinClient: 'refuse' });
     expect(THIN_CLIENT_REFUSED_COMMANDS.has('pricing')).toBe(true);

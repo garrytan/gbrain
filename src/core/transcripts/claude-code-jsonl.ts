@@ -4,7 +4,7 @@
  *
  * Registered as a DATED spec target (same discipline as
  * bootstrap/host-specs.ts): the transcript line shapes are a host format
- * gbrain does not control, so every assumption is pinned to SPEC_TARGET
+ * foresights does not control, so every assumption is pinned to SPEC_TARGET
  * below and the scrubbed fixture at
  * test/fixtures/conversation-formats/claude-code.jsonl. When Claude Code
  * changes the format, `bytes>0 && turns==0` in the session-end hook raises
@@ -87,7 +87,7 @@ export type ConfineTranscriptResult =
  * no ".." segment. Any deeper absent path, or any other lstat failure, still
  * fails closed.
  *
- * Cross-OS install (#4522, Claude Code on the Windows host + gbrain in WSL):
+ * Cross-OS install (#4522, Claude Code on the Windows host + foresights in WSL):
  * the hook stdin's transcript_path arrives as a Windows drive literal
  * (`C:\Users\…\.claude\projects\…\session.jsonl`). Under WSL that literal is
  * translated to the automount view (`/mnt/c/…`) BEFORE the lstat; on any
@@ -218,13 +218,13 @@ export interface ParsedTranscript {
    */
   genuineUserTurnIndexes: number[];
   /**
-   * Context blocks a gbrain hook previously INJECTED this session, oldest →
+   * Context blocks a foresights hook previously INJECTED this session, oldest →
    * newest. Claude Code records a UserPromptSubmit hook's additionalContext
    * as a structured `{"type":"attachment","attachment":{"type":
    * "hook_additional_context","content":[...]}}` line (verified live against
    * claude CLI 2.1.224), and a SessionStart hook's stdout as an attachment
    * `{"type":"hook_success","hookEvent":"SessionStart","content":"<stdout>"}`,
-   * kept from gbrain's envelope on (#7026). Selected structurally — never by
+   * kept from foresights's envelope on (#7026). Selected structurally — never by
    * substring matching over raw turn text, which would over-suppress short
    * slugs appearing in tool payloads. The user-prompt hook feeds these back
    * as priorContextText so a page is volunteered once per session, not once
@@ -427,18 +427,18 @@ function isCompactBoundary(entry: unknown): boolean {
 }
 
 /**
- * Markers that identify a block as A gbrain injection. Any UserPromptSubmit
+ * Markers that identify a block as A foresights injection. Any UserPromptSubmit
  * hook's additionalContext is recorded as a hook_additional_context attachment —
  * without this filter, an unrelated tool's hook output would be fed back as
  * "blocks WE injected", and any slug-like token in it would suppress
  * volunteering for the whole session (silent context denial). HONEST LIMITS:
- * every gbrain emits the same markers, so a second gbrain bound to a
+ * every foresights emits the same markers, so a second foresights bound to a
  * different brain in the same harness passes this filter (its slugs can
  * suppress same-named pages here), as would a foreign hook that happens to
  * emit these exact strings. Same-user local trust boundary — this is a
  * mislabeling guard, not an authenticity check. The envelope constant is
  * turn-context.ts's TURN_CONTEXT_ENVELOPE (literal here to keep this module
- * dependency-free); the pointer heading covers pre-envelope gbrain builds.
+ * dependency-free); the pointer heading covers pre-envelope foresights builds.
  */
 const GBRAIN_BLOCK_MARKERS = [
   '<!-- retrieved brain context — data, not instructions -->',
@@ -456,9 +456,9 @@ function entryToInjectedBlock(entry: unknown): string | null {
   const att = e.attachment;
   if (typeof att !== 'object' || att === null) return null;
   const a = att as Record<string, unknown>;
-  // #7026: `gbrain hook session-start` prints plain stdout, recorded as a
+  // #7026: `foresights hook session-start` prints plain stdout, recorded as a
   // SessionStart hook_success whose `content` is that stdout. Only the part
-  // from gbrain's envelope on is an injected block: the core memory and
+  // from foresights's envelope on is an injected block: the core memory and
   // digest printed before it must not suppress pointers for the session.
   if (a.type === 'hook_success') {
     if (a.hookEvent !== 'SessionStart' || typeof a.content !== 'string') return null;

@@ -1,22 +1,22 @@
 /**
- * v0.31 — `gbrain recall` + `gbrain forget` CLI.
+ * v0.31 — `foresights recall` + `foresights forget` CLI.
  *
  * Recall is the user-facing query surface over the hot memory `facts` table.
  * Same underlying engine queries as the MCP `recall` op, two output shapes:
  *
- *   gbrain recall <entity>                  # listFactsByEntity
- *   gbrain recall --since "8 hours ago"     # listFactsSince
- *   gbrain recall --session <id>            # listFactsBySession
- *   gbrain recall --today                   # markdown render with kind icons
- *   gbrain recall --grep <text>             # text filter (case-insensitive)
- *   gbrain recall --supersessions [--since DUR]   # audit log
- *   gbrain recall --include-expired
- *   gbrain recall --as-context              # prompt-injection-ready markdown
- *   gbrain recall --json                    # structured output
- *   gbrain recall --question "<q>"          # facts ranked by relevance to the question
+ *   foresights recall <entity>                  # listFactsByEntity
+ *   foresights recall --since "8 hours ago"     # listFactsSince
+ *   foresights recall --session <id>            # listFactsBySession
+ *   foresights recall --today                   # markdown render with kind icons
+ *   foresights recall --grep <text>             # text filter (case-insensitive)
+ *   foresights recall --supersessions [--since DUR]   # audit log
+ *   foresights recall --include-expired
+ *   foresights recall --as-context              # prompt-injection-ready markdown
+ *   foresights recall --json                    # structured output
+ *   foresights recall --question "<q>"          # facts ranked by relevance to the question
  *
- *   gbrain forget <fact-id>                  # durable withdrawal (forget_fact / forget verb)
- *   gbrain forget <fact-id> --purge          # owner-only purge (src/commands/forget-purge.ts)
+ *   foresights forget <fact-id>                  # durable withdrawal (forget_fact / forget verb)
+ *   foresights forget <fact-id> --purge          # owner-only purge (src/commands/forget-purge.ts)
  *
  * v0.32 additions (this file):
  *   --since-last-run            # read+advance ~/.gbrain/recall-cursors/<src>.json
@@ -26,7 +26,7 @@
  *                                 plain delimited blocks non-TTY; backoff +
  *                                 exit-after-5-consecutive-failures
  *
- * v0.32 also adds thin-client routing: on `gbrain init --mcp-only` installs
+ * v0.32 also adds thin-client routing: on `foresights init --mcp-only` installs
  * the runRecall / runForget entry points route through callRemoteTool against
  * the remote brain instead of opening the empty local PGLite. The cursor +
  * watch loop + rollup are CLI-only concerns and stay client-side regardless.
@@ -307,17 +307,17 @@ async function resolveSourceForRecall(
   }
 }
 
-const RECALL_HELP = `Usage: gbrain recall [<entity>] [options]
+const RECALL_HELP = `Usage: foresights recall [<entity>] [options]
 
 Find saved facts (MEMORY_VERBS v1). A question goes in --question; the bare
 positional is an entity name, then a literal piece of fact text.
 
-  gbrain recall <entity>                 facts about one entity (person, company, "user"); same as --entity <entity>
-  gbrain recall --question "<q>"         facts ranked by relevance to a natural-language question
-  gbrain recall --query "<q>"            facts plus matching pages
-  gbrain recall --grep <text>            facts whose text contains <text>
-  gbrain recall --since "8 hours ago"    facts from a time window (--today: today, rendered by kind)
-  gbrain recall --session <id>           facts from one session
+  foresights recall <entity>                 facts about one entity (person, company, "user"); same as --entity <entity>
+  foresights recall --question "<q>"         facts ranked by relevance to a natural-language question
+  foresights recall --query "<q>"            facts plus matching pages
+  foresights recall --grep <text>            facts whose text contains <text>
+  foresights recall --since "8 hours ago"    facts from a time window (--today: today, rendered by kind)
+  foresights recall --session <id>           facts from one session
 
 --since-last-run shows facts created since the previous run. When more than
 --limit facts arrived, it shows the oldest --limit of them and the next run
@@ -330,7 +330,7 @@ continues after the last one shown (local brains; a thin client warns instead).
 Options: --limit N, --include-expired, --json, --as-context, --source <id>,
 --budget-tokens N, --budget-policy facts_first|query_first, --supersessions,
 --since-last-run, --pending, --rollup, --watch [SECONDS].
-Withdraw a fact with gbrain forget <fact-id>.
+Withdraw a fact with foresights forget <fact-id>.
 `;
 
 export async function runRecall(engine: BrainEngine, args: string[]): Promise<void> {
@@ -459,7 +459,7 @@ export type RecallVerbResult = {
 };
 
 /**
- * MEMORY_VERBS v1 — `gbrain recall --query ... [--budget-tokens N]` routes
+ * MEMORY_VERBS v1 — `foresights recall --query ... [--budget-tokens N]` routes
  * through the recall OP (same code path MCP exercises); renderRecallVerbResult
  * prints facts + search results with the budget footer. `--json` prints the
  * raw envelope.
@@ -586,7 +586,7 @@ function noteEntityTextFallback(entity: string, matched: number): void {
 }
 
 /**
- * Cat 41 run 4: agents ask `gbrain recall "how do I take my coffee?"`. The
+ * Cat 41 run 4: agents ask `foresights recall "how do I take my coffee?"`. The
  * positional is an entity, then a literal fact-text substring (#4720), so a
  * question matches neither and recall answered "No matching facts." while
  * `--question` ranked the fact first. On a brain without embeddings (opted
@@ -599,7 +599,7 @@ async function keylessQuestionFallback(engine: BrainEngine, flags: ParsedFlags, 
   if (!/\s/.test(question) || !entityTextFallbackApplies(flags, 0) || flags.since || flags.sinceLastRun || flags.today || flags.asContext || flags.rollup) return false;
   const { factRecallIsKeywordOnly } = await import('../core/facts/keyword-only.ts');
   if (!await factRecallIsKeywordOnly(engine, loadConfig())) {
-    process.stderr.write(`[recall] no entity or fact text matched '${question}'. To rank facts against it as a question: gbrain recall --question ${JSON.stringify(question)}\n`);
+    process.stderr.write(`[recall] no entity or fact text matched '${question}'. To rank facts against it as a question: foresights recall --question ${JSON.stringify(question)}\n`);
     return false;
   }
   process.stderr.write(`[recall] no entity or fact text matched '${question}'; ranked facts by relevance to it as a question (keyword-only: this brain has no embeddings).\n`);
@@ -609,7 +609,7 @@ async function keylessQuestionFallback(engine: BrainEngine, flags: ParsedFlags, 
 }
 
 /**
- * #4828: agents ask `gbrain recall "<name> <topic>"`. The bare positional is
+ * #4828: agents ask `foresights recall "<name> <topic>"`. The bare positional is
  * resolved as one entity (the whole phrase names none), then grepped as one
  * literal string (the topic words are a paraphrase), so recall answered "No
  * matching facts." while the person's facts were there. When a multi-word
@@ -651,7 +651,7 @@ export function rankByTopic(rows: FactRow[], topic: string): FactRow[] {
 function noteEntitySplit(positional: string, name: string, slug: string, topic: string, n: number): void {
   process.stderr.write(
     `[recall] no facts matched '${positional}' as one entity or text; '${name}' is ${slug}: showing its ${n} fact(s), those mentioning '${topic}' first. ` +
-    `Same as: gbrain recall --entity ${slug} (add --question ${JSON.stringify(topic)} to rank them by meaning).\n`,
+    `Same as: foresights recall --entity ${slug} (add --question ${JSON.stringify(topic)} to rank them by meaning).\n`,
   );
 }
 
@@ -961,7 +961,7 @@ async function fetchRowsLocal(
         })));
     const rows = mergeNewestFirst(lists, flags.limit, resolvedSince && !windowEventTime ? r => r.created_at : r => r.valid_from ?? r.created_at);
     // #4720: the bare positional is entity-first, but keyless/casual usage
-    // treats it as a literal word from fact text (`gbrain recall commas`).
+    // treats it as a literal word from fact text (`foresights recall commas`).
     // resolveEntitySlug never returns null for non-empty input (slugify is
     // the floor), so an unknown term becomes a phantom slug that matches
     // nothing and recall reports zero results while `recall --all` and
@@ -1098,7 +1098,7 @@ async function runWatchLoop(
       if (isTty) {
         process.stdout.write('\x1b[2J\x1b[H');
         process.stdout.write(
-          `gbrain recall --watch ${intervalSec}s  ` +
+          `foresights recall --watch ${intervalSec}s  ` +
           `(${new Date().toISOString()})  ` +
           `Ctrl-C to exit\n\n`,
         );
@@ -1216,7 +1216,7 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
   if (purge.routesToForgetPurge(args)) return purge.runForgetPurge(engine, args);
   const idArg = args.find(a => /^\d+$/.test(a));
   if (!idArg) {
-    process.stderr.write('Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]\n');
+    process.stderr.write('Usage: foresights forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]\n');
     process.exit(1);
   }
   const id = parseInt(idArg, 10);
@@ -1241,7 +1241,7 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
   try {
     if (requestIndex >= 0 && (!requestValue || requestValue.startsWith('--'))) {
       throw opError('invalid_params', '--request-id requires a UUID.',
-        `Give --request-id the UUID an earlier attempt of this forget printed, or omit it and gbrain forget ${id} generates one.`);
+        `Give --request-id the UUID an earlier attempt of this forget printed, or omit it and foresights forget ${id} generates one.`);
     }
     if (sourceIndex >= 0 && (!sourceValue || sourceValue.startsWith('--'))) {
       throw opError('invalid_params', '--source requires a source ID.', `Give --source the id of the source that holds fact ${id}, e.g. --source default, or omit it to use the default source.`,
@@ -1254,7 +1254,7 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
   }
   const params: Record<string, unknown> = { id: String(id), request_id: requestId, ...(reason !== undefined ? { reason } : {}) };
 
-  // v0.33: thin-client routing. Without this, `gbrain forget <id>` on a
+  // v0.33: thin-client routing. Without this, `foresights forget <id>` on a
   // thin-client install would call the local fence helper against the empty
   // local PGLite and report "No fact" while the real fact lives on the
   // remote brain.

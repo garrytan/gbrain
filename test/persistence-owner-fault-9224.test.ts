@@ -73,7 +73,7 @@ describe('an owner fault over the persistence socket (#9224)', () => {
     const requestId = randomUUID();
     const error = await refusal(request('put_page', { slug: 'notes/alpha-example', content: 'Alpha example.', request_id: requestId }));
     expect(error.code).toBe('internal_error');
-    expect(error.suggestion).toContain(`gbrain write-request ${requestId}`);
+    expect(error.suggestion).toContain(`foresights write-request ${requestId}`);
     expect(JSON.stringify(error.toJSON())).not.toContain(CANARY);
   });
 });

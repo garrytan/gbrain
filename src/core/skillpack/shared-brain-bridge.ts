@@ -58,7 +58,7 @@ async function bindBridgeTarget(engine: BrainEngine, brainId: string, adapter: s
     const directories = existsSync(parent) ? readdirSync(parent).filter(name => /^[a-f0-9]{32}$/.test(name)) : [];
     if (directories.length > 4096) {
       throw opError('bridge_ownership_conflict', 'The legacy bridge inventory exceeds the ownership inspection limit.',
-        `${parent} holds more than 4096 legacy bridge directories, beyond what gbrain inspects. Ask the user to archive old copies there before installing again; nothing was changed.`);
+        `${parent} holds more than 4096 legacy bridge directories, beyond what foresights inspects. Ask the user to archive old copies there before installing again; nothing was changed.`);
     }
     const matching: string[] = [];
     for (const directory of directories) {

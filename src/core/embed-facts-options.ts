@@ -14,14 +14,14 @@ export interface EmbedFactsOptions {
 export function validateEmbedFactsOptions(value: unknown): EmbedFactsOptions {
   const invalid = (message: string, suggestion: string): never => { throw opError('invalid_params', message, suggestion); };
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Fact backfill requires typed options',
-    'Run fact repair through gbrain embed --stale --facts, which builds the typed options; an owner-proxy caller sends options as a JSON object.');
+    'Run fact repair through foresights embed --stale --facts, which builds the typed options; an owner-proxy caller sends options as a JSON object.');
   const options = value as Record<string, unknown>;
   const allowed = ['sourceId', 'dryRun', 'yes', 'maxCostUsd', 'maxFacts', 'batchSize', 'budgetMs'];
   const extra = Object.keys(options).filter(key => !allowed.includes(key));
   if (extra.length) return invalid('Unsupported fact backfill options',
-    `Remove ${extra.join(', ')}; fact repair options are ${allowed.join(', ')}. Run one gbrain release on the caller and the brain host.`);
+    `Remove ${extra.join(', ')}; fact repair options are ${allowed.join(', ')}. Run one foresights release on the caller and the brain host.`);
   if (!isValidSourceId(options.sourceId)) return invalid('Fact backfill requires an explicit --source <id>',
-    'Name the source with --source, e.g. gbrain embed --stale --facts --source default --dry-run; gbrain sources list --json lists the source ids.');
+    'Name the source with --source, e.g. foresights embed --stale --facts --source default --dry-run; foresights sources list --json lists the source ids.');
   for (const flag of ['dryRun', 'yes']) {
     if (options[flag] !== undefined && typeof options[flag] !== 'boolean') return invalid(`${flag} must be a boolean`,
       `Send ${flag} as a JSON boolean; on the CLI it is the bare flag ${flag === 'dryRun' ? '--dry-run' : '--yes'}.`);
@@ -37,7 +37,7 @@ export function validateEmbedFactsOptions(value: unknown): EmbedFactsOptions {
   if ((options.maxCostUsd !== undefined || !dryRun) && (typeof options.maxCostUsd !== 'number'
     || !Number.isFinite(options.maxCostUsd) || options.maxCostUsd < 0)) {
     return invalid('Fact backfill execution requires --yes and a finite --max-cost-usd >= 0',
-      `Preview first with gbrain embed --stale --facts --source ${String(options.sourceId)} --dry-run; to apply, pass --yes with --max-cost-usd set to the dollar cap the user approved (e.g. --max-cost-usd 1).`);
+      `Preview first with foresights embed --stale --facts --source ${String(options.sourceId)} --dry-run; to apply, pass --yes with --max-cost-usd set to the dollar cap the user approved (e.g. --max-cost-usd 1).`);
   }
   return { ...options, dryRun } as unknown as EmbedFactsOptions;
 }

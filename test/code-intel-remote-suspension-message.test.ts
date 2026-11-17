@@ -33,7 +33,7 @@ describe('remote code reads stay suspended with a useful refusal', () => {
         const error = thrown as OperationError;
         expect(error.code).toBe('permission_denied');
         expect(error.message).toContain('remote code reads stay suspended');
-        expect(error.message).toContain('garrytan/gbrain#5052');
+        expect(error.message).toContain('aimonk2025/gbrain#5052');
         expect(error.message).toContain('Code search (search, query) still works here.');
         expect(JSON.stringify(error.toJSON())).toContain(`"gbrain","call","${name}"`);
       });
@@ -41,7 +41,7 @@ describe('remote code reads stay suspended with a useful refusal', () => {
     test(`${name} through MCP stdio dispatch`, async () => {
       const result = await dispatchToolCall(engine, name, paramsFor(name), { remote: true, transport: 'stdio', sourceId: 'default' });
       expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain('garrytan/gbrain#5052');
+      expect(result.content[0]!.text).toContain('aimonk2025/gbrain#5052');
     });
     test(`${name} on the trusted local CLI still runs`, async () => {
       await expect(operationsByName[name]!.handler(ctxOf({ remote: false, transport: undefined }), paramsFor(name))).resolves.toBeDefined();

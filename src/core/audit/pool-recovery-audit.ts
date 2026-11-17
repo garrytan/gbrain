@@ -3,7 +3,7 @@
  *
  * The #1678 incident's DB-cascade noise looked like a connection bug. In
  * reality a transaction-mode pooler reaps idle sockets between lock-renewal
- * ticks; gbrain self-heals via `PostgresEngine.reconnect()`. The thing an
+ * ticks; foresights self-heals via `PostgresEngine.reconnect()`. The thing an
  * operator actually needs to know — and that no existing signal expresses — is
  * "the pool was reaped N times in the last hour AND is NOT auto-recovering."
  * `batch_retry_health` surfaces connection retries but can't split
@@ -20,7 +20,7 @@
  *   - `reconnect_succeeded`  the rebuild completed
  *   - `reconnect_failed`     the rebuild threw (NOT auto-recovering)
  *
- * #6543 (A6): a resident `gbrain serve` also records the vendored driver's own
+ * #6543 (A6): a resident `foresights serve` also records the vendored driver's own
  * per-connection incidents here (`setPoolIncidentAudit` in pool-gauge.ts):
  *   - `connection_stuck`            the in-flight watchdog retired a connection
  *   - `connection_desync`           a desynced pipeline retired a connection

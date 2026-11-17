@@ -5,10 +5,10 @@
  * effect pushes. When another machine pushed to the same branch first, the push is rejected as non-fast-forward.
  * The effect then publishes through the shared keep-checkout publish: the remote commits are merged in memory and
  * the merge is pushed, the effect commits, and the checkout (HEAD and files) stays where it was, so
- * `gbrain sources refresh` stays the only importer of remote files. An effect such a rejection parked before this
+ * `foresights sources refresh` stays the only importer of remote files. An effect such a rejection parked before this
  * release goes through `retry-effects <source> --parked-pushes`, which doctor names. When both sides changed the
  * page file, the effect holds with `integrate_conflict`: nothing is pushed, the checkout stays, and doctor and
- * `gbrain sync status` name the user's choice (`--keep-checkout --resolve`); after the choice is pushed the effect
+ * `foresights sync status` name the user's choice (`--keep-checkout --resolve`); after the choice is pushed the effect
  * commits.
  * Seams: a second clone of the bare remote moves the branch; the publish runs as this checkout's own CLI
  * (GBRAIN_JOB_CHILD_CLI points at src/cli.ts).
@@ -146,7 +146,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(doctor.status).toBe('warn');
       expect(doctor.details).toMatchObject({ git_push_holds: [{ source_id: b.sourceId, root: b.root, retrying: 0, parked: 1, codes: ['git_push_unavailable'], conflict: null,
         fix: { actor: 'agent', argv: ['gbrain', 'sources', 'writer', 'retry-effects', b.sourceId, '--parked-pushes'] } }] });
-      expect(doctor.message).toContain(`gbrain sources writer retry-effects ${b.sourceId} --parked-pushes`);
+      expect(doctor.message).toContain(`foresights sources writer retry-effects ${b.sourceId} --parked-pushes`);
       const preview = await runPersistenceAdministration(b.engine, 'writer_retry_effects', { source_id: b.sourceId, parked_pushes: true, dry_run: true });
       expect(preview).toMatchObject({ action: 'writer_retry_parked_pushes', dry_run: true, status: 'ok', requests: 1, queued: 1, refused: [] });
       expect(await effect(b.engine, id)).toMatchObject({ state: 'failed', error_code: 'targets_parked' });

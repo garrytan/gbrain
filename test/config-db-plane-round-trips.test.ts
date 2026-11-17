@@ -1,6 +1,6 @@
 // Regression: loadConfigWithEngine() read every DB-plane key one at a time.
 //
-// SYMPTOM. On a Supabase-hosted brain, `gbrain stats` took 7.7s wall clock.
+// SYMPTOM. On a Supabase-hosted brain, `foresights stats` took 7.7s wall clock.
 // pg_stat_statements showed 54 queries totalling 2.3ms of server time — 44 of
 // them `SELECT value FROM config WHERE key = $1`. The database did no work;
 // the CLI paid one ~70ms round trip per config key. The same command against a

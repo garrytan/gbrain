@@ -1,10 +1,10 @@
-# GBrain for Muse
+# Foresights for Muse
 
 Give Muse explicit, portable memory with provenance. The recommended shape
 runs the brain on **your own computer**, publishes it over MCP with
-`gbrain mcp expose --funnel`, grants Muse a `memory-writer` client, and
-installs the thin GBrain CLI in Muse's durable user-files area as a client.
-If no computer of yours can stay online, install a small local GBrain in that
+`foresights mcp expose --funnel`, grants Muse a `memory-writer` client, and
+installs the thin Foresights CLI in Muse's durable user-files area as a client.
+If no computer of yours can stay online, install a small local Foresights in that
 durable area instead. Either way, establish the durable path first and start
 keyless.
 
@@ -31,7 +31,7 @@ custom skills, and custom connectors. Built-in connector credentials are kept
 outside that cell; Sentinel controls connector actions and network egress.
 These are a good basis for a small CLI integration, but the public document
 does not specify a durable custom-tool directory, a native MCP registration
-interface, or an installation API for GBrain skills.
+interface, or an installation API for Foresights skills.
 [Meta's Muse technical design](https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse)
 (published September 8, 2026; checked September 9, 2026).
 
@@ -44,12 +44,12 @@ replacement of the runtime cell.
 
 | Your situation | Use |
 | --- | --- |
-| You have (or can run) GBrain on your own computer, and a confirmed durable user-files directory in Muse — recommended | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because Muse's runtime is in the vendor's cloud, not on your tailnet), grant Muse a client, then install the thin CLI at the durable root ([hosted harness access](hosted-harness-access.md), adapter `muse`) |
+| You have (or can run) Foresights on your own computer, and a confirmed durable user-files directory in Muse — recommended | [Publish it over MCP](remote-mcp.md) with `foresights mcp expose --funnel` (Funnel, because Muse's runtime is in the vendor's cloud, not on your tailnet), grant Muse a client, then install the thin CLI at the durable root ([hosted harness access](hosted-harness-access.md), adapter `muse`) |
 | Existing hosted brain elsewhere | Same client-side steps: [hosted harness access](hosted-harness-access.md), adapter `muse`, thin CLI |
-| No always-on machine; want a brain that stays online | Hosted GBrain at [gbrain.io](https://gbrain.io/?ref=muse), then connect Muse with the connection details gbrain.io gives you |
+| No always-on machine; want a brain that stays online | Hosted Foresights at [gbrain.io](https://gbrain.io/?ref=muse), then connect Muse with the connection details gbrain.io gives you |
 | No always-on machine; new brain and a confirmed durable directory | [Local setup](#alternative-install-gbrain-inside-muse) below, adapter `muse` |
 | No confirmed persistent custom-files location | Resolve that platform capability before installing either the thin CLI or durable local memory |
-| Want to keep the connection tailnet-only | Joining Muse's runtime to your tailnet (userspace `tailscaled`, ephemeral auth key) is advanced, not automated by gbrain, and unverified; Sentinel's egress policy applies either way |
+| Want to keep the connection tailnet-only | Joining Muse's runtime to your tailnet (userspace `tailscaled`, ephemeral auth key) is advanced, not automated by foresights, and unverified; Sentinel's egress policy applies either way |
 | A native MCP option appears in your account | Treat it as a new capability to verify; this guide does not claim Muse supports native MCP |
 
 ## Recommended: your brain on your computer, reached over MCP
@@ -57,8 +57,8 @@ replacement of the runtime cell.
 On the computer that holds the brain:
 
 ```bash
-gbrain mcp expose --funnel                      # consent prompt, Tailscale install/login if needed, service, URL
-gbrain mcp grant muse-example --harness muse --profile memory-writer --source default \
+foresights mcp expose --funnel                      # consent prompt, Tailscale install/login if needed, service, URL
+foresights mcp grant muse-example --harness muse --profile memory-writer --source default \
   --url https://your-machine.your-tailnet.ts.net/mcp \
   --admin-token-file ~/.gbrain/serve/admin-token \
   --credentials-out /private/muse-example.json
@@ -69,46 +69,46 @@ through the product's supported secure file flow (never paste it into chat),
 then paste this into Muse:
 
 ```text
-Connect this agent to my existing GBrain over MCP. Read:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
+Connect this agent to my existing Foresights over MCP. Read:
+https://raw.githubusercontent.com/aimonk2025/gbrain/master/docs/guides/muse.md
 and its linked hosted-access guide.
 
 First identify the documented or platform-confirmed durable user-files area
-available to your runtime and choose an absolute gbrain root there; tell me the
+available to your runtime and choose an absolute foresights root there; tell me the
 persistence evidence, or report the blocker instead of using a temporary path.
 
 The brain is published at https://your-machine.your-tailnet.ts.net/mcp and my
 private credential file is at <durable-area>/private/muse-example.json.
-Install GBrain at that root (reuse a matching installation; preserve existing
-state), then run gbrain connect with --harness muse, that credentials file,
+Install Foresights at that root (reuse a matching installation; preserve existing
+state), then run foresights connect with --harness muse, that credentials file,
 --install and the absolute --root. Use the generated absolute bin/gbrain
 launcher for every memory command. Keep secrets out of chat and command output.
 Use Muse's normal permission and secure credential flows for any blocked
 download or egress; a denial is a reported boundary, not something to route
 around.
 
-Run gbrain mcp verify and show me the server checks. Attach the generated
+Run foresights mcp verify and show me the server checks. Attach the generated
 GBRAIN-INSTRUCTIONS.md through the native custom-skill mechanism available in
 this account and report its exact location or name; keep your current identity.
 Then remember a harmless randomized test fact with provenance, recall it in a
 fresh conversation, and report each unverified platform step separately.
 ```
 
-Muse's memory now lives on your machine. `gbrain mcp expose --status` on your
+Muse's memory now lives on your machine. `foresights mcp expose --status` on your
 computer re-checks the service and public URL; revoke Muse's client on the
 host when it should stop.
 
-## Alternative: install GBrain inside Muse
+## Alternative: install Foresights inside Muse
 
 Use this when no computer of yours can stay online. Paste this into Muse:
 
 ```text
-Set up GBrain as my durable memory. Read:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
+Set up Foresights as my durable memory. Read:
+https://raw.githubusercontent.com/aimonk2025/gbrain/master/docs/guides/muse.md
 and its linked in-agent setup guide.
 
 First identify the documented or platform-confirmed durable user-files area
-available to your runtime. Inspect it and choose an absolute gbrain root there.
+available to your runtime. Inspect it and choose an absolute foresights root there.
 Tell me the persistence evidence. If you cannot establish persistence, report
 that blocker instead of treating a temporary runtime directory as durable.
 
@@ -122,7 +122,7 @@ generated memory instructions using the native custom-skill mechanism available
 in this account, and report its exact location or name.
 
 Save and recall a harmless randomized test fact, then help me verify a fresh
-conversation actually invokes GBrain. Use Muse's normal permission and secure
+conversation actually invokes Foresights. Use Muse's normal permission and secure
 credential flows for any blocked download or later hosted connection. Report
 each unverified platform step separately from successful local CLI checks.
 ```
@@ -160,27 +160,27 @@ leaves native integration marked unverified.
 - **Existing connected services:** “Use your connected calendar and email to
   prepare this meeting. Save the selected commitments I ask you to retain,
   with source links.” Let Muse use its existing connectors and permissions;
-  store the chosen facts in GBrain without duplicating service credentials.
+  store the chosen facts in Foresights without duplicating service credentials.
 
-Do not request raw connector tokens or change Sentinel policy to make GBrain
+Do not request raw connector tokens or change Sentinel policy to make Foresights
 work. For a hosted brain, the allowed destination and secure credential delivery
 are part of the [hosted setup](hosted-harness-access.md); finish them through the
 actual product's supported flow. A denied request is a reported setup boundary,
 not a reason to try another route around it.
 
-## Have gbrain report back to this chat
+## Have foresights report back to this chat
 
 Unverified in Muse. When the brain owner has turned on
-[reporting back](wakeshift.md) (`gbrain wakeshift enable` on the brain host),
+[reporting back](wakeshift.md) (`foresights wakeshift enable` on the brain host),
 the thin CLI can ask to wake the conversation when a long job finishes:
 `<launcher> wakeshift watch job <id> --harness muse`. Wakeshift doesn't list
 Muse as an agent it can wake, and Sentinel controls Muse's egress, so expect
-the wake at best on Muse's next gbrain call. Without Wakeshift, wait with
+the wake at best on Muse's next foresights call. Without Wakeshift, wait with
 `<launcher> jobs wait <id>`.
 
 ## Local installation maintenance, backup, and recovery
 
-These steps apply when GBrain runs inside Muse. A hosted connection instead
+These steps apply when Foresights runs inside Muse. A hosted connection instead
 uses `<ROOT>/GBRAIN-INSTRUCTIONS.md` and the
 [hosted runtime repair procedure](hosted-harness-access.md#maintenance-removal-and-troubleshooting).
 
@@ -209,14 +209,14 @@ hosted grants separately if you connected to an existing brain.
 
 The local installer, CLI, and recovery path have hermetic repository tests.
 **An actual Muse account has not been used to verify this integration.** The
-Tailscale publish path (`gbrain mcp expose`) has repository tests with a fake
+Tailscale publish path (`foresights mcp expose`) has repository tests with a fake
 Tailscale runner; a real Funnel endpoint reached from Muse and Muse's native
 skill activation are separate observed steps. The
 remaining acceptance checks are concrete:
 
 - Establish and record the durable root and its behavior across runtime replacement.
-- For the published-brain path: `gbrain mcp expose --status` verifies on your
-  computer and `gbrain mcp verify` passes its server checks from inside Muse.
+- For the published-brain path: `foresights mcp expose --status` verifies on your
+  computer and `foresights mcp verify` passes its server checks from inside Muse.
 - Complete allowed package downloads and run the generated launcher.
 - Save, recall, correct, and forget the randomized fact through separate commands.
 - Make a fresh conversation select the native skill and invoke that launcher.

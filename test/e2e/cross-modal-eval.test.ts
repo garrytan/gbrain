@@ -1,5 +1,5 @@
 /**
- * E2E for `gbrain eval cross-modal` runner via mocked gateway chat().
+ * E2E for `foresights eval cross-modal` runner via mocked gateway chat().
  *
  * Lives under test/e2e/ so the test-isolation lint (R2 — mock.module quarantine)
  * does not require a *.serial.test.ts rename: test/e2e/* is exempt from the
@@ -72,7 +72,7 @@ function makeChatStub(scoresBySlot: Record<string, number[]>) {
   });
 }
 
-describe('gbrain eval cross-modal — judge call shape (#4338 data boundary)', () => {
+describe('foresights eval cross-modal — judge call shape (#4338 data boundary)', () => {
   test('callSlot sends EVALUATOR_SYSTEM_PROMPT as `system` and the data-bounded prompt as the user turn', async () => {
     const seen: Array<{ system?: string; messages?: Array<{ role: string; content: string }>; thinking?: string }> = [];
     const chatStub = mock(async (opts: { model?: string; system?: string; messages?: Array<{ role: string; content: string }>; thinking?: string }) => {
@@ -117,7 +117,7 @@ describe('gbrain eval cross-modal — judge call shape (#4338 data boundary)', (
   });
 });
 
-describe('gbrain eval cross-modal — runner verdict contract', () => {
+describe('foresights eval cross-modal — runner verdict contract', () => {
   test('PASS: 3 happy responses, all dims >=7', async () => {
     const chatStub = makeChatStub({
       'openai:gpt-5.2': [9, 8],

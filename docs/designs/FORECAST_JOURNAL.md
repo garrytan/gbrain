@@ -2,7 +2,7 @@
 
 Status: all four slices in #6886. Plan: gbrain-evals `docs/plans/2026-10-07-10x-memory-advantage/PLAN.md`, wave 4, row W7.
 
-W7 makes each prediction in a brain auditable for its owner: what was predicted, when, by when it had to come true, how it was resolved and on what evidence, and how many predictions are still open. It extends `takes_scorecard` and `gbrain takes scorecard` instead of adding a `track_record` op. Everything new is private, which means trusted local only. `takes_scorecard` keeps returning exactly what it returns today to remote callers. Nothing public about real people ships from this wave.
+W7 makes each prediction in a brain auditable for its owner: what was predicted, when, by when it had to come true, how it was resolved and on what evidence, and how many predictions are still open. It extends `takes_scorecard` and `foresights takes scorecard` instead of adding a `track_record` op. Everything new is private, which means trusted local only. `takes_scorecard` keeps returning exactly what it returns today to remote callers. Nothing public about real people ships from this wave.
 
 ## Slice 1 (this change): the horizon
 
@@ -31,8 +31,8 @@ The three bases:
 
 **Nothing is written on upgrade.**
 
-- `gbrain takes horizon scan` lists each take's stated horizon. It writes them only with `--apply`.
-- `gbrain takes horizon set <slug> --row N --date YYYY-MM-DD` and `clear` are the owner's own edits.
+- `foresights takes horizon scan` lists each take's stated horizon. It writes them only with `--apply`.
+- `foresights takes horizon set <slug> --row N --date YYYY-MM-DD` and `clear` are the owner's own edits.
 - None of these has an MCP op. A thin client refuses them as host-bound.
 - The parser returns nothing in three cases: when a claim states no deadline, when it states two different deadlines, or when it states a relative deadline without a usable `since_date`. It does not guess.
 
@@ -50,7 +50,7 @@ The three bases:
 
 A recorded time is certified only where `coverageAt` certifies that instant, which means a managed source. Every other take shows its `since_date`, labelled `uncertified`. Tests on PGLite and Postgres cover four cases: a managed source (certified), an unmanaged one (recorded, uncertified), a take added later, and a coverage stop. A forced probe fails the stop case when the guard is removed.
 
-**The journal.** `gbrain takes journal` (trusted local) shows each prediction with:
+**The journal.** `foresights takes journal` (trusted local) shows each prediction with:
 
 - its time and certification;
 - its claim, holder and weight;
@@ -58,7 +58,7 @@ A recorded time is certified only where `coverageAt` certifies that instant, whi
 - its state: `resolved`, `overdue`, `open` or `undated`;
 - its resolution: quality, `resolved_by` and `resolved_source`.
 
-It filters by `--holder`, `--about <slug-prefix>`, `--state`, `--since`, `--until` and `--source-id`, and `--limit` caps the list. The totals always count every match, so the unresolved denominator survives any filter on state or limit. A thin client refuses it as host-bound. There is no MCP op. Each entry also carries `grade`: the newest verdict `grade_takes` cached for the take (W6, the one `gbrain takes grades` lists), applied or not, with `judge_measured` saying whether the W6 eval measured its judge and prompt.
+It filters by `--holder`, `--about <slug-prefix>`, `--state`, `--since`, `--until` and `--source-id`, and `--limit` caps the list. The totals always count every match, so the unresolved denominator survives any filter on state or limit. A thin client refuses it as host-bound. There is no MCP op. Each entry also carries `grade`: the newest verdict `grade_takes` cached for the take (W6, the one `foresights takes grades` lists), applied or not, with `judge_measured` saying whether the W6 eval measured its judge and prompt.
 
 ## Slice 3: `takes_scorecard {group_by}`
 
@@ -78,7 +78,7 @@ With `group_by` set to `holder` or `source`, a trusted local caller gets the pla
 
 **`journal`** holds the journal totals.
 
-A remote caller that passes `group_by` or `min_n` is refused with `scorecard_group_by_local_only`. Without them, its output is what it was. `gbrain takes scorecard --group-by holder|source [--min-n N]` is the CLI form, and thin clients refuse it.
+A remote caller that passes `group_by` or `min_n` is refused with `scorecard_group_by_local_only`. Without them, its output is what it was. `foresights takes scorecard --group-by holder|source [--min-n N]` is the CLI form, and thin clients refuse it.
 
 ## Slice 4: the $0 gate
 

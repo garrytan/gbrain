@@ -1,6 +1,6 @@
 /**
  * GBRA-467: the one lock every path that runs schema migrations takes: initSchema() on each process start, and
- * `gbrain apply-migrations` (and --force-schema) through runMigrations(), which re-reads the schema version once the
+ * `foresights apply-migrations` (and --force-schema) through runMigrations(), which re-reads the schema version once the
  * lock is held, so a runner that waited finds nothing left to do. Postgres holds it across processes and connections
  * (`BrainEngine.holdSchemaMigrationLock`, key 42 in postgres-engine/init-schema-lock.ts). An engine without that
  * method (PGLite, whose datastore lock admits a single process) is serialized in this process.

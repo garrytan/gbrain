@@ -138,20 +138,20 @@ describe('formatDefaultWriteRefusal', () => {
 
   test('defaults the scope flag to --source (sync)', () => {
     const msg = formatDefaultWriteRefusal('sync', a);
-    expect(msg).toContain('gbrain sync --source <id>');
-    expect(msg).toContain('gbrain sync --source default');
+    expect(msg).toContain('foresights sync --source <id>');
+    expect(msg).toContain('foresights sync --source default');
   });
 
   test('honors a custom scope flag (import uses --source-id)', () => {
     const msg = formatDefaultWriteRefusal('import <dir>', a, '--source-id');
-    expect(msg).toContain('gbrain import <dir> --source-id <id>');
-    expect(msg).toContain('gbrain import <dir> --source-id default');
+    expect(msg).toContain('foresights import <dir> --source-id <id>');
+    expect(msg).toContain('foresights import <dir> --source-id default');
     expect(msg).not.toContain('--source <id>');
   });
 
   test('spells out the env escape hatch', () => {
     const msg = formatDefaultWriteRefusal('sync', a);
-    expect(msg).toContain(`${GBRAIN_ALLOW_DEFAULT_WRITE_ENV}=1 gbrain sync`);
+    expect(msg).toContain(`${GBRAIN_ALLOW_DEFAULT_WRITE_ENV}=1 foresights sync`);
   });
 });
 

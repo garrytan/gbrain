@@ -1,7 +1,7 @@
 /**
  * F4a: one orphan policy, two renderers. `orphanExclusionSql` (the predicate
  * get_health's aggregate statement uses) must agree with
- * `shouldExcludeFromOrphanReporting` (what `gbrain orphans` and the per-slug
+ * `shouldExcludeFromOrphanReporting` (what `foresights orphans` and the per-slug
  * callers use) on every generated slug and page type, with and without
  * per-brain overrides; otherwise doctor reports two contradictory orphan
  * numbers. Covers the regex edges where JS and Postgres differ (Unicode

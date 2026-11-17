@@ -1,4 +1,4 @@
-# `gbrain skillopt` — Self-evolving skills
+# `foresights skillopt` — Self-evolving skills
 
 Treat your `SKILL.md` files as the trainable parameters of an agent that
 itself never changes. Write a benchmark of realistic tasks; SkillOpt watches
@@ -18,7 +18,7 @@ May 2026).
 > [one-shot rewrite](#one-shot-rewrite-the-default), which stays.
 
 > **New to this?** Start with the hands-on tutorial:
-> [Auto-improve a skill with `gbrain skillopt`](../tutorials/improving-skills-with-skillopt.md).
+> [Auto-improve a skill with `foresights skillopt`](../tutorials/improving-skills-with-skillopt.md).
 > It walks you from "I have a skill" to "I accepted a measurably better version"
 > in ~20 minutes, including how to write your first benchmark. This page is the
 > reference — flags, exit codes, cost model, safety guards.
@@ -27,13 +27,13 @@ May 2026).
 
 ```bash
 # 1. Generate a starter benchmark from the skill itself (no routing-eval needed)
-gbrain skillopt my-skill --bootstrap-from-skill
+foresights skillopt my-skill --bootstrap-from-skill
 
 # 2. Review the benchmark — STRENGTHEN the generated judges (they're weak drafts),
 #    then delete the trailing `# BOOTSTRAP_PENDING_REVIEW` line
 
 # 3. Run the optimizer (--split 1:1:1 is required for a ~15-task starter)
-gbrain skillopt my-skill --bootstrap-reviewed --split 1:1:1
+foresights skillopt my-skill --bootstrap-reviewed --split 1:1:1
 ```
 
 That's the entire workflow. (Already have a `routing-eval.jsonl`? Swap step 1 for
@@ -60,7 +60,7 @@ The audit trail lives at `~/.gbrain/audit/skillopt-YYYY-Www.jsonl`
 
 ## One-shot rewrite (the default)
 
-`gbrain skillopt <skill>` runs one gated rewrite:
+`foresights skillopt <skill>` runs one gated rewrite:
 
 1. **Forward pass.** Run the current skill on one batch (`--batch-size`) of
    `D_train` tasks.
@@ -184,7 +184,7 @@ Where the cap comes from, highest precedence first:
 
 1. `--reflect-max-tokens N` (MCP op / job param `reflect_max_tokens`, clamped
    to 256-32000 for remote callers).
-2. `gbrain config set skillopt.reflect_max_tokens N`. It must be a positive
+2. `foresights config set skillopt.reflect_max_tokens N`. It must be a positive
    integer. An invalid value warns once and falls back to the default. A valid
    value is used exactly, even when it is below the default.
 3. The default: 32000 for thinking optimizers (Claude 5 family and other
@@ -249,20 +249,20 @@ The reflect codes are emitted with a mode, as `reflect_failure_<class>` or
 | <a id="reflect_invalid_edits"></a>`reflect_invalid_edits` | Every proposed edit failed validation | Optimizer is not following the edits JSON contract | Try a different `--optimizer-model` |
 | <a id="reflect_context_too_small"></a>`reflect_context_too_small` | Call not made: prompt + output cap exceed the context window | Cap or prompt too large for the optimizer's window | Lower the cap, or use an `--optimizer-model` with a larger window |
 | <a id="reflect_context_overflow"></a>`reflect_context_overflow` | Provider rejected the prompt as too long | Same as above, detected by the provider | Lower the cap, or use a larger-window `--optimizer-model` |
-| <a id="reflect_failed"></a>`reflect_failed` | Reflect provider call failed | Provider/network/auth error | Check `gbrain models doctor`, then resume |
+| <a id="reflect_failed"></a>`reflect_failed` | Reflect provider call failed | Provider/network/auth error | Check `foresights models doctor`, then resume |
 | <a id="one_shot_rewrite_truncated"></a>`one_shot_rewrite_truncated` | One-shot rewrite hit the output cap; nothing promoted | Cap too small for a full rewrite | Raise `--reflect-max-tokens` / `skillopt.reflect_max_tokens` |
 | <a id="one_shot_rewrite_output_cap_too_small"></a>`one_shot_rewrite_output_cap_too_small` | One-shot refused before calling: the body cannot fit the cap | `ceil(body chars / 3) + 1024` exceeds the cap | Raise the cap, or use `--loop` |
 | <a id="one_shot_rewrite_body_truncated"></a>`one_shot_rewrite_body_truncated` | One-shot refused: the body had to be truncated | Skill body larger than the optimizer's context | Lower the reflect cap (it shares the window), use a larger-window `--optimizer-model`, or use `--loop` |
 | <a id="one_shot_rewrite_empty_reply"></a>`one_shot_rewrite_empty_reply` | One-shot reply was empty | Optimizer is not following the rewrite contract | Try a different `--optimizer-model` |
-| <a id="one_shot_rewrite_failed"></a>`one_shot_rewrite_failed` | One-shot provider call failed | Provider/network/auth error | Check `gbrain models doctor`, then resume |
-| <a id="budget_exhausted"></a>`budget_exhausted` | Run aborted at the cost cap | Spend (including each call's full-cap reservation) reached `--max-cost-usd`; or, when the detail says `no_pricing`, gbrain has no price for a model, so the cap cannot be enforced | Raise `--max-cost-usd` (cycle: `cycle.skillopt.per_skill_cap_usd`), or lower the reflect cap. For `no_pricing`: look up the model's price and run the `gbrain pricing set` command the receipt's `no_pricing.register_command` names, then resume ([registering a model price](../operations/spend-controls.md#registering-a-model-price)) |
+| <a id="one_shot_rewrite_failed"></a>`one_shot_rewrite_failed` | One-shot provider call failed | Provider/network/auth error | Check `foresights models doctor`, then resume |
+| <a id="budget_exhausted"></a>`budget_exhausted` | Run aborted at the cost cap | Spend (including each call's full-cap reservation) reached `--max-cost-usd`; or, when the detail says `no_pricing`, foresights has no price for a model, so the cap cannot be enforced | Raise `--max-cost-usd` (cycle: `cycle.skillopt.per_skill_cap_usd`), or lower the reflect cap. For `no_pricing`: look up the model's price and run the `foresights pricing set` command the receipt's `no_pricing.register_command` names, then resume ([registering a model price](../operations/spend-controls.md#registering-a-model-price)) |
 | <a id="runtime_exceeded"></a>`runtime_exceeded` | Run aborted at the wall-clock cap | `--max-runtime-min` reached | Raise `--max-runtime-min`, then resume |
 | <a id="reservation_exceeds_cap"></a>`reservation_exceeds_cap` | No model call made: one call alone reserves more than the cost cap | Reflect cap x optimizer price exceeds `--max-cost-usd` / `cycle.skillopt.per_skill_cap_usd` | Lower the reflect cap, pick a cheaper model, or raise the cost cap |
 
 In the dream cycle, a skill that hits `reservation_exceeds_cap` is recorded as
 `skipped_budget` and makes no calls. It is retried only after
 `skillopt.reflect_max_tokens`, `cycle.skillopt.per_skill_cap_usd`,
-`pricing.overrides`, the skill's benchmark, the gbrain version or one of the
+`pricing.overrides`, the skill's benchmark, the foresights version or one of the
 resolved optimizer, target or judge models changes. An `errored` cycle run does not update
 `cycle.skillopt.last_run.<skill>`. It records
 `cycle.skillopt.last_error.<skill>` instead, and the skill is retried no
@@ -276,10 +276,10 @@ Example `errored` summary (stderr):
 [skillopt] Detail: optimizer_output_unusable: reflect_failure_truncated: 4096 output tokens, max_tokens=4096
 [skillopt] Stopped early: optimizer output was unusable for consecutive steps; remaining budget not spent.
 [skillopt] Warning: 2 optimizer reply error(s) (optimizer output cap 4096); first: reflect_failure_truncated: 4096 output tokens, max_tokens=4096
-[skillopt] Fix (reflect_truncated): The optimizer ran out of output tokens. Raise the cap: --reflect-max-tokens <n> or gbrain config set skillopt.reflect_max_tokens <n>. See docs/guides/skillopt.md#reflect_truncated
+[skillopt] Fix (reflect_truncated): The optimizer ran out of output tokens. Raise the cap: --reflect-max-tokens <n> or foresights config set skillopt.reflect_max_tokens <n>. See docs/guides/skillopt.md#reflect_truncated
 [skillopt] Run id: so-20260928-1a2b3c
 [skillopt] Checkpoint: skills/meeting-prep/skillopt/checkpoint-so-20260928-1a2b3c.json
-[skillopt] Resume: gbrain skillopt meeting-prep --resume so-20260928-1a2b3c --skills-dir skills --benchmark skills/meeting-prep/skillopt-benchmark.jsonl --split 4:1:5 --epochs 4 --batch-size 8 --lr 4 --lr-schedule cosine --optimizer-model openai:gpt-5.2 --target-model anthropic:claude-sonnet-5 --judge-model anthropic:claude-sonnet-5 --reflect-max-tokens 8192 --loop --max-cost-usd 5 --max-runtime-min 30
+[skillopt] Resume: foresights skillopt meeting-prep --resume so-20260928-1a2b3c --skills-dir skills --benchmark skills/meeting-prep/skillopt-benchmark.jsonl --split 4:1:5 --epochs 4 --batch-size 8 --lr 4 --lr-schedule cosine --optimizer-model openai:gpt-5.2 --target-model anthropic:claude-sonnet-5 --judge-model anthropic:claude-sonnet-5 --reflect-max-tokens 8192 --loop --max-cost-usd 5 --max-runtime-min 30
 ```
 
 ## Model provenance
@@ -367,11 +367,11 @@ ledger existed gives `models_used_scope: 'since_resume'`.
     "remediation": [
       { "code": "reflect_truncated", "fix": "The optimizer ran out of output tokens. Raise the cap: ...", "docs": "docs/guides/skillopt.md#reflect_truncated" }
     ],
-    "resume_command": "gbrain skillopt meeting-prep --resume so-20260928-1a2b3c ... --reflect-max-tokens 8192",
+    "resume_command": "foresights skillopt meeting-prep --resume so-20260928-1a2b3c ... --reflect-max-tokens 8192",
     "models_plan": [
       { "touchpoint": "expansion", "model": "anthropic:claude-opus-5", "source": "models_default", "origin": "models.default", "active": true }
     ],
-    "models_strict": { "enabled": false, "ok": false, "violations": [ { "touchpoint": "expansion", "model": "anthropic:claude-opus-5", "source": "models_default", "origin": "models.default", "fix": "gbrain config set models.tier.utility anthropic:claude-opus-5" } ] },
+    "models_strict": { "enabled": false, "ok": false, "violations": [ { "touchpoint": "expansion", "model": "anthropic:claude-opus-5", "source": "models_default", "origin": "models.default", "fix": "foresights config set models.tier.utility anthropic:claude-opus-5" } ] },
     "models_used": [
       { "requested_model": "anthropic:claude-opus-5", "model": "anthropic:claude-opus-5", "touchpoint": "expansion", "purpose": null, "calls": 29, "attempts": 30, "failed_calls": 0, "input_tokens": 8700, "output_tokens": 2900, "cost_usd": 0.116, "cost_basis": "measured" }
     ],
@@ -388,8 +388,8 @@ the same `remediation`, `abort_reason`, `abort_detail` and `run_id`.
 **Say to your agent:** *"Run skillopt only with models I've explicitly configured"*
 
 ```bash
-gbrain skillopt my-skill --models-strict --dry-run   # preview the verdict, zero calls
-gbrain config set skillopt.models_strict true        # enforce for every run
+foresights skillopt my-skill --models-strict --dry-run   # preview the verdict, zero calls
+foresights config set skillopt.models_strict true        # enforce for every run
 ```
 
 Strict mode guarantees that **every active model was chosen by explicit,
@@ -414,7 +414,7 @@ copy-paste fix:
 ```
 models strict check: 1 active model touchpoint(s) were not chosen by touchpoint-specific configuration:
   expansion  anthropic:claude-opus-5  (models.default)
-    gbrain config set models.tier.utility anthropic:claude-opus-5
+    foresights config set models.tier.utility anthropic:claude-opus-5
 ```
 
 For an embedding violation, the fix points to `embedding_model` in
@@ -427,10 +427,10 @@ What strict mode does not cover: the check runs on the plan before spend. A
 rollout that asks a search tool for a specific, non-default embedding column
 is not re-checked at call time.
 
-### Newer models (`gbrain models`)
+### Newer models (`foresights models`)
 
-`gbrain models` adds an advisory `[newer <family> available: <id>]` hint, with
-the `gbrain config set` command, when a configured Anthropic haiku/sonnet/opus
+`foresights models` adds an advisory `[newer <family> available: <id>]` hint, with
+the `foresights config set` command, when a configured Anthropic haiku/sonnet/opus
 model is older than the newest priced model of the same family in the recipe.
 Dated and undated ids of the same version compare equal. The hint is
 informational only. Built-in defaults are unchanged, and a validated
@@ -456,7 +456,7 @@ refuses to start when the estimate exceeds `--max-cost-usd`.
 | Validation gate is mandatory | D12 (paper) | Accepting LLM judge noise as improvement |
 | Frontmatter mutation forbidden | D5 | Routing surface drift (`check-resolvable` regression) |
 | Per-skill DB lock | D14 | Two concurrent runs corrupting history/versions |
-| Bundled-skill gate | D16 | Auto-mutating skills shipped with gbrain (in-place mutation requires `--allow-mutate-bundled` + a `--held-out` set of >=5 benchmark-disjoint tasks; else hard-refuse + proposed.md) |
+| Bundled-skill gate | D16 | Auto-mutating skills shipped with foresights (in-place mutation requires `--allow-mutate-bundled` + a `--held-out` set of >=5 benchmark-disjoint tasks; else hard-refuse + proposed.md) |
 | Held-out gate | F11 | Accepting a candidate that overfits its own benchmark — with `--held-out`, nothing is written until the final champion is checked once against the baseline; a regression leaves the skill unchanged and the optimizer never sees the verdict |
 | Bootstrap review sentinel | D15 | Self-referential benchmark gaming |
 | Read-only tool sandbox in rollouts | D13 | Optimization runs writing junk pages to your brain |
@@ -529,7 +529,7 @@ the rest of the config dir. That contaminates measurements: a skill can
 score well only because YOUR user-level instructions carried it. For hermetic
 runs, set:
 
-    GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG=1 gbrain skillopt run <skill> ...
+    GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG=1 foresights skillopt run <skill> ...
 
 `1`/`true` points the child's `CLAUDE_CONFIG_DIR` at an isolated empty
 per-process directory; any other value is used verbatim as the config-dir
@@ -553,6 +553,6 @@ pre-seed that directory with a logged-in config.
 
 ## Related skills
 
-- `gbrain skillify scaffold <name>` — create a new skill (use BEFORE skillopt)
-- `gbrain skillpack-check <name>` — audit conformance + skillopt status
-- `gbrain check-resolvable` — routing MECE validation (NOT mutated by skillopt)
+- `foresights skillify scaffold <name>` — create a new skill (use BEFORE skillopt)
+- `foresights skillpack-check <name>` — audit conformance + skillopt status
+- `foresights check-resolvable` — routing MECE validation (NOT mutated by skillopt)

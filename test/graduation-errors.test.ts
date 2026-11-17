@@ -3,8 +3,8 @@
  * GRADUATION_ERROR_CODES entry. Each refusal renders `why`, the expected
  * `fix.next`, a real argv (none only for `report`), a read-only
  * `fix.verify`, the registry row and exit code, and a docs anchor that
- * exists. Every emitted gbrain argv names a real command, uses only flags
- * that command accepts, and `gbrain migrate` argvs parse to the intended
+ * exists. Every emitted foresights argv names a real command, uses only flags
+ * that command accepts, and `foresights migrate` argvs parse to the intended
  * graduation mode.
  */
 import { describe, expect, test } from 'bun:test';
@@ -34,7 +34,7 @@ interface Row {
   build: () => OperationError;
   next: RenderedAction['next'];
   exit: number;
-  /** For `gbrain migrate` fix argvs: the mode it must parse to. */
+  /** For `foresights migrate` fix argvs: the mode it must parse to. */
   mode?: GraduationMode;
 }
 
@@ -95,7 +95,7 @@ function anchorsOf(path: string): Set<string> {
   return out;
 }
 
-const READ_ONLY_VERIFY = [/^gbrain migrate --status --json$/, /^gbrain migrate --to (postgres|supabase) --url-env \S+ --plan --json$/, /^gbrain doctor( |$)/, /^gbrain sources status /];
+const READ_ONLY_VERIFY = [/^(?:foresights|gbrain) migrate --status --json$/, /^(?:foresights|gbrain) migrate --to (postgres|supabase) --url-env \S+ --plan --json$/, /^(?:foresights|gbrain) doctor( |$)/, /^(?:foresights|gbrain) sources status /];
 
 function assertArgvRunnable(argv: readonly string[], label: string): void {
   if (argv[0] !== 'gbrain') return;

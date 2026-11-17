@@ -134,7 +134,7 @@ describe('classic sync imports typed nested metafiles', () => {
     commit('metafiles');
     await sync({ full: true });
     expect(await page('projects/acme-example/index')).not.toBeNull();
-    await engine.putPage('notes/readme', { type: 'concept', title: 'Notes', compiled_truth: 'Indexed by an older gbrain.', timeline: '', frontmatter: { type: 'concept' } });
+    await engine.putPage('notes/readme', { type: 'concept', title: 'Notes', compiled_truth: 'Indexed by an older foresights.', timeline: '', frontmatter: { type: 'concept' } });
     unlinkSync(join(repoPath, 'projects/acme-example/index.md'));
     unlinkSync(join(repoPath, 'notes/README.md'));
     commit('remove metafiles');
@@ -149,7 +149,7 @@ describe('classic sync imports typed nested metafiles', () => {
     commit('typed');
     await engine.setConfig(SYNC_METAFILE_PAGES_KEY, 'off');
     await sync({ full: true });
-    await engine.putPage('projects/acme-example/index', { type: 'project', title: 'Acme Example', compiled_truth: 'Stale text an older gbrain indexed.', timeline: '',
+    await engine.putPage('projects/acme-example/index', { type: 'project', title: 'Acme Example', compiled_truth: 'Stale text an older foresights indexed.', timeline: '',
       frontmatter: { type: 'project', title: 'Acme Example' } });
     await engine.executeRaw("UPDATE pages SET source_path='projects/acme-example/index.md' WHERE slug='projects/acme-example/index'");
     await engine.setConfig(SYNC_METAFILE_PAGES_KEY, 'typed');

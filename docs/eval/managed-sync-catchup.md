@@ -12,7 +12,7 @@ call for multi-page (bulk) publication after the round-trip diet;
 pipelined admission alone cannot reach the target.
 
 With the drain loop, the diet and bulk publication (v0.60.48.0), one
-`gbrain sync` catches up at 13 to 16 pages/min at 57 ms (the 10k
+`foresights sync` catches up at 13 to 16 pages/min at 57 ms (the 10k
 backlog in about 11 h instead of 49 h) and 775 pages/min near the
 database, with foreground writes unharmed. See
 [Results on the #5984 branch](#results-on-the-5984-branch-v060480).
@@ -67,8 +67,8 @@ Docker one; it needs `pg_stat_statements` preloaded for the server
 totals), `--pg-port`, `--proxy-port`, `--api-port`, `--keep`.
 
 The command works against any branch: it drives the real CLI
-(`gbrain sync`, `gbrain sources writer claim/activate`,
-`gbrain serve --http`), `performSync` and `submitPageMutation`, and it
+(`foresights sync`, `foresights sources writer claim/activate`,
+`foresights serve --http`), `performSync` and `submitPageMutation`, and it
 reads `persistence_requests` and `op_checkpoints`.
 
 ## Method
@@ -91,19 +91,19 @@ reads `persistence_requests` and `op_checkpoints`.
   (published first) and N imports, as in the issue. Setup talks to
   Postgres directly; only the measured run goes through the proxy.
 - **Drivers.** `cli` re-runs
-  `gbrain sync --source bench --no-pull --no-embed --json` until it
+  `foresights sync --source bench --no-pull --no-embed --json` until it
   reports `synced`, exactly like the reporter's workaround, and keeps
   looping after a failed run. `reentry` keeps one process calling
   `performSync` with a 250 ms pause, like the PGLite delegate.
   `unmanaged` runs one classic sync of the same corpus. `serve` is
-  `cli` with a resident `gbrain serve --http`. `effects` is `cli`
+  `cli` with a resident `foresights serve --http`. `effects` is `cli`
   without `--no-embed`, with a resident serve, against a loopback
   embeddings stub (200 ms per call, 4 concurrent, 429 beyond).
   `foreground` is `cli` with a second process submitting `put_page`
   once a second, after a 60 s idle foreground baseline. `all` runs
-  `gbrain sync --all` over two sources. `newcomer` measures a cold
+  `foresights sync --all` over two sources. `newcomer` measures a cold
   `--progress-json` sync of a 5-page backlog to a search hit.
-- **Trace (ENG-A15, CEO-A19).** Every gbrain process runs with
+- **Trace (ENG-A15, CEO-A19).** Every foresights process runs with
   `GBRAIN_SQL_TRACE=<file>` and a per-process
   `GBRAIN_SQL_TRACE_LABEL`. The hook (`src/core/sql-trace.ts`) wraps
   the postgres.js socket of all four pools, so `executeRaw`,
@@ -195,7 +195,7 @@ reads `persistence_requests` and `op_checkpoints`.
   catch-up rate during the row. The closed-loop `foreground` row is
   unchanged.
 - **Settings (`settings`).** `--pool-size N` sets `GBRAIN_POOL_SIZE`
-  for every gbrain process; unset, the product default of 10 applies.
+  for every foresights process; unset, the product default of 10 applies.
   Each row records the effective pool size and its source,
   `GBRAIN_SYNC_LANES` and `GBRAIN_SYNC_BULK` when set, the pooler, the
   most lanes observed busy, and `default_settings` (true only when
@@ -203,10 +203,10 @@ reads `persistence_requests` and `op_checkpoints`.
 - **Pooler (`--pooler pgbouncer`, report-only).** A transaction-mode
   PgBouncer (`edoburu/pgbouncer`, pinned by digest, PgBouncer 1.26.0,
   `default_pool_size=50`, recreated each run) runs on loopback between toxiproxy and
-  Postgres, so the RTT stays between gbrain and the pooler. gbrain runs
+  Postgres, so the RTT stays between foresights and the pooler. foresights runs
   with `GBRAIN_PREPARE=false`. Stock PgBouncer refuses the
   `statement_timeout` and `idle_in_transaction_session_timeout` startup
-  parameters gbrain sends, so the pooler ignores them (listed in the
+  parameters foresights sends, so the pooler ignores them (listed in the
   row's `settings.pooler_detail.ignore_startup_parameters`): those session timeouts do
   not reach the server. Setup still talks to Postgres directly.
   `--pooler-port` picks the listener (default 55434).
@@ -278,7 +278,7 @@ Readings from the table and the traces:
 - **Network-bound (CEO-A26).** The same code runs 100x faster near
   the database (350 vs 3.4 pages/min). Until the fix ships, the
   workaround is to run the catch-up from a host near the database, or
-  to loop `gbrain sync --source <id> --no-pull` until `synced`.
+  to loop `foresights sync --source <id> --no-pull` until `synced`.
 - **Drain loop (CEO-A2).** Re-entering in one process is 4.2 vs 3.4
   pages/min. That gain is the removed CLI start: 110 round trips and
   6.9 s from first statement to first admission per run, including 8
@@ -511,7 +511,7 @@ the rule to select 2.3. Skip 2.2 unless post-2.1 publication is
 ## Results on the #5984 branch (v0.60.48.0)
 
 Same bench, same 500-file backlog (534 entries), 57 ms rows time-boxed
-at 15 min. "This branch" is one `gbrain sync` run, which now drains the
+at 15 min. "This branch" is one `foresights sync` run, which now drains the
 whole backlog; master is the reporter's CLI loop.
 
 | Row | RTT | Master | This branch | Notes |
@@ -593,7 +593,7 @@ same tables for a kept trace.
 ### Pipelining spike
 
 `scripts/bench/managed-sync-pipeline-spike.ts` (57 ms, toxiproxy)
-issues `tx.executeRaw` calls inside one gbrain `engine.transaction`
+issues `tx.executeRaw` calls inside one foresights `engine.transaction`
 without awaiting between them, on direct Postgres and through
 transaction-mode PgBouncer (`edoburu/pgbouncer`, `MAX_PREPARED_STATEMENTS=0`).
 Wall times include `BEGIN` and `COMMIT`.

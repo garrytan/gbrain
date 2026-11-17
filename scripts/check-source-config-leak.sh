@@ -27,9 +27,9 @@
 #
 # Audited surfaces (source-config security audit):
 #   LEAKED, fixed with redactSourceConfig():
-#     - sources_add op result, printed by `gbrain call sources_add` when a
+#     - sources_add op result, printed by `foresights call sources_add` when a
 #       path is attached to an existing path-less source (src/core/ops/sources.ts)
-#     - managed `gbrain sources add` receipt, its replay, and the retained
+#     - managed `foresights sources add` receipt, its replay, and the retained
 #       persistence_topology_changes outcome (src/core/persistence/source-lifecycle.ts)
 #   Clean (explicit field projections; covered by behavioral tests):
 #     - sources list / list --json / status / status --json / webhook show /
@@ -81,10 +81,10 @@ RAW_PATTERN='\b(\.config\b|config:[[:space:]]*src\.config)\b'
 # Tightened patterns: match serializers that pass a source-row's .config
 # field (source.config, src.config, row.config, s.config, or a property
 # access like `.config` on an object likely sourced from a `sources` row),
-# NOT every variable named "config" (which would catch global gbrain config).
+# NOT every variable named "config" (which would catch global foresights config).
 #
 # The risk pattern is `JSON.stringify(<srcVar>.config)` where srcVar holds
-# a row from the sources table. Variables that hold the GLOBAL gbrain
+# a row from the sources table. Variables that hold the GLOBAL foresights
 # config.json are also commonly named `config` — that's a different shape
 # and a different threat model (already protected at the file-mode 0o600
 # write site in src/core/config.ts).
@@ -110,7 +110,7 @@ else
 fi
 
 # Filter out files we trust (handle sources.config redaction themselves OR
-# handle the gbrain global config, which is a different object).
+# handle the foresights global config, which is a different object).
 FILTERED=$(echo "$CANDIDATES" | \
   grep -v 'src/core/source-config-redact.ts' | \
   grep -v 'src/core/sources-load.ts' | \

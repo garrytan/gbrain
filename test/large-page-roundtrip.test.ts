@@ -4,7 +4,7 @@
  *
  *   - get(auto) of a 2 MB page, then put_page of what came back, is refused
  *     (page_shrink_refused); force cannot stand in for expected_revision.
- *   - the local `gbrain get` prints the page byte-for-byte as it was written.
+ *   - the local `foresights get` prints the page byte-for-byte as it was written.
  *   - the thin client, refused a whole page, pages the round-trip markdown to
  *     its end and checks size + sha256; a page edited mid-read restarts, a
  *     mismatch fails without printing.
@@ -52,7 +52,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  // Wave A inline behaviour: pin segmented storage off (segmented reads of get_page and gbrain get are lane 2a's).
+  // Wave A inline behaviour: pin segmented storage off (segmented reads of get_page and foresights get are lane 2a's).
   await engine.setConfig('pages.segmented_storage', 'off');
   await registerLocalWriter(engine, 'cli');
   await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id)
@@ -63,7 +63,7 @@ beforeAll(async () => {
 
 afterAll(async () => { resetGateway(); await engine.disconnect(); }, 30_000);
 
-describe('local gbrain get', () => {
+describe('local foresights get', () => {
   test('prints the 2 MB page byte-for-byte as its source file (frontmatter adds only the import size stamps)', async () => {
     const out = formatGetPage(await get(localCtx(), { slug: 'logs/big-example' }));
     const split = (md: string) => { const end = md.indexOf('\n---\n', 4) + 5; return { fm: md.slice(0, end), body: md.slice(end) }; };

@@ -1,7 +1,7 @@
 /**
  * D-N5 (fix wave 9) — the v0.28.0 migration queues a re-chunk TODO in
- * pending-host-work.jsonl. Its `command` must be a real gbrain invocation
- * that runs on a brain, not a nonexistent `gbrain extract takes --rebuild`.
+ * pending-host-work.jsonl. Its `command` must be a real foresights invocation
+ * that runs on a brain, not a nonexistent `foresights extract takes --rebuild`.
  *
  * The test runs the queued command (with --dry-run, so nothing is written)
  * against a fresh keyless PGLite brain and requires a clean exit.
@@ -34,7 +34,7 @@ describe('D-N5 — v0.28.0 re-chunk TODO names a command that runs', () => {
         const lines = readFileSync(__testing.pendingHostWorkPath(), 'utf8').trim().split('\n');
         return (JSON.parse(lines[lines.length - 1]) as { command: string }).command;
       });
-      expect(command.startsWith('gbrain ')).toBe(true);
+      expect(command.startsWith('foresights ')).toBe(true);
       expect(command).not.toContain('#');
 
       const init = runCli(home, ['init', '--pglite', '--no-embedding', '--non-interactive']);

@@ -1,5 +1,5 @@
 /**
- * `gbrain sync` cost-gate wiring regressions (PGLite).
+ * `foresights sync` cost-gate wiring regressions (PGLite).
  *
  * Pure shouldBlockSync / willEmbedSynchronously / parseUsdLimit logic is pinned
  * in test/sync-cost-preview.test.ts. THIS file pins the end-to-end wiring in
@@ -305,7 +305,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
         embed_backfill: {
           status: 'manual_drain_required',
           reason: 'auto_submit_disabled',
-          command: 'gbrain embed --stale --source vault',
+          command: 'foresights embed --stale --source vault',
         },
       }),
     ]);
@@ -397,7 +397,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     });
     expect(outcome).toEqual({
       status: 'manual_drain_required',
-      command: 'gbrain embed --stale --source vault',
+      command: 'foresights embed --stale --source vault',
       reason: 'auto_submit_disabled',
     });
     await expectNoEmbedBackfillRow();
@@ -445,8 +445,8 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
 
     expect(exitCode).not.toBe(2);
     expect(stdout).toContain('"gate":"manual_drain_required"');
-    expect(stdout).toContain('gbrain embed --stale --source vault');
-    expect(stdout).toContain('gbrain embed --stale --source vault-two');
+    expect(stdout).toContain('foresights embed --stale --source vault');
+    expect(stdout).toContain('foresights embed --stale --source vault-two');
     expect(stdout).not.toContain('"gate":"confirmation_required"');
     const final = jsonLines(stdout).find((line) => line.schema_version === 1 && Array.isArray(line.sources));
     expect(final).toBeDefined();
@@ -454,11 +454,11 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     expect(finalSources).toHaveLength(2);
     expect(finalSources[0]).toMatchObject({
       source_id: 'vault', sync_status: 'first_sync',
-      embed_backfill: { status: 'manual_drain_required', command: 'gbrain embed --stale --source vault' },
+      embed_backfill: { status: 'manual_drain_required', command: 'foresights embed --stale --source vault' },
     });
     expect(finalSources[1]).toMatchObject({
       source_id: 'vault-two', sync_status: 'first_sync',
-      embed_backfill: { status: 'manual_drain_required', command: 'gbrain embed --stale --source vault-two' },
+      embed_backfill: { status: 'manual_drain_required', command: 'foresights embed --stale --source vault-two' },
     });
     await expectNoEmbedBackfillRow();
   }, 60_000);
@@ -546,7 +546,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     expect(exitCode).not.toBe(2);
     expect(stdout).not.toContain('"gate":'); // no JSON envelope without --json
     expect(stdout.toLowerCase()).toContain('manual drain required');
-    expect(stdout).toContain('gbrain embed --stale --source vault');
+    expect(stdout).toContain('foresights embed --stale --source vault');
     expect(stdout).toContain('spend.posture'); // self-describing hint present
   }, 60_000);
 
@@ -559,13 +559,13 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
 
     expect(exitCode).not.toBe(2);
     expect(stdout).toContain('"gate":"manual_drain_required"');
-    expect(stdout).toContain('gbrain embed --stale --source vault');
+    expect(stdout).toContain('foresights embed --stale --source vault');
     const final = jsonLines(stdout).find((line) => line.schema_version === 1 && line.source_id === 'vault');
     expect(final).toMatchObject({
       sync_status: 'first_sync',
       embed_backfill: {
         status: 'manual_drain_required',
-        command: 'gbrain embed --stale --source vault',
+        command: 'foresights embed --stale --source vault',
       },
     });
     await expectNoEmbedBackfillRow();
@@ -594,7 +594,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
       cost_gate: { gate: 'below_floor', mode: 'inline' },
       embed_backfill: {
         status: 'manual_drain_required',
-        command: 'gbrain embed --stale --source vault',
+        command: 'foresights embed --stale --source vault',
       },
     });
     await expectNoEmbedBackfillRow();
@@ -663,7 +663,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
         embedded: 0,
         embed_backfill: {
           status: 'manual_drain_required',
-          command: 'gbrain embed --stale --source vault',
+          command: 'foresights embed --stale --source vault',
           reason: 'no_worker_surface',
         },
       }),

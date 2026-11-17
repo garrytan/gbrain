@@ -1,10 +1,10 @@
 /**
  * #7381 (GBRA-180): writer safety in a brain checkout several writers share.
  * Real git against local bare remotes. Pins: integrate never re-applies a
- * change the remote already took (and maybe reverted); gbrain never commits
+ * change the remote already took (and maybe reverted); foresights never commits
  * without the lock and never leaves a failed commit's paths staged; commit-push
  * never sweeps another writer's staged files or files outside the source root;
- * the opt-in guard hook refuses branch updates made around gbrain; the helper's
+ * the opt-in guard hook refuses branch updates made around foresights; the helper's
  * no-gbrain fallback releases the commit lock before it pushes.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
@@ -243,7 +243,7 @@ describe('commit scope: staged files and source roots', () => {
     writeFileSync(join(a, 'x.md'), 'outside the brain\n');
     expect(() => commitAndPush({ repo: a, paths: ['x.md'], message: 'm', cwd: a })).toThrow(expect.objectContaining({ code: 'commit_outside_source_root' }));
     expect(status(a)).toBe(' M x.md');
-    // A cron commits the outside file around gbrain; the next publish of a brain page refuses to carry it.
+    // A cron commits the outside file around foresights; the next publish of a brain page refuses to carry it.
     git(a, 'commit', '-q', '-am', 'cron: swept');
     const before = git(bare, 'rev-parse', 'main');
     writeFileSync(join(a, 'brain', 'page.md'), 'brain page\n');
@@ -289,7 +289,7 @@ describe('commit scope: staged files and source roots', () => {
 });
 
 describe('opt-in commit guard', () => {
-  test('refuses commits made around gbrain (--no-verify and -a included); gbrain\'s own commits, pulls and the bypass pass', () => {
+  test('refuses commits made around foresights (--no-verify and -a included); foresights\'s own commits, pulls and the bypass pass', () => {
     const { bare, a, b } = setup();
     expect(cli(a, ['git', 'guard', '--json']).stdout).toContain('"installed":false');
     const install = cli(a, ['git', 'guard', '--install', '--json']);
@@ -299,9 +299,9 @@ describe('opt-in commit guard', () => {
     git(a, 'add', 'x.md');
     const plain = spawnSync('git', ['-C', a, 'commit', '-q', '--no-verify', '-m', 'cron'], { encoding: 'utf8', env: process.env });
     expect(plain.status).not.toBe(0);
-    expect(plain.stderr).toContain('gbrain commit guard: refused');
+    expect(plain.stderr).toContain('foresights commit guard: refused');
     git(a, 'restore', '--staged', 'x.md');
-    expect(cli(a, ['git', 'commit-push', '-m', 'via gbrain', '--', 'x.md']).status).toBe(0);
+    expect(cli(a, ['git', 'commit-push', '-m', 'via foresights', '--', 'x.md']).status).toBe(0);
     expect(git(bare, 'show', 'main:x.md')).toBe('cron edit');
     writeFileSync(join(a, 'y.md'), 'page write\n');
     expect(commitPathsLocked(a, [join(a, 'y.md')], 'gbrain: write-through y', { lockWaitMs: 1000 })).not.toBeNull();

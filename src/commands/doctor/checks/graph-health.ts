@@ -85,7 +85,7 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity types unknown: the active schema pack${where.length ? ` for source${where.length > 1 ? 's' : ''} ${where.map((id) => `'${id}'`).join(', ')}` : ''} did not load, so entity coverage cannot be graded. Run \`gbrain schema active${where.length ? ' --source <id>' : ''}\` to debug.`,
+        message: `Entity types unknown: the active schema pack${where.length ? ` for source${where.length > 1 ? 's' : ''} ${where.map((id) => `'${id}'`).join(', ')}` : ''} did not load, so entity coverage cannot be graded. Run \`foresights schema active${where.length ? ' --source <id>' : ''}\` to debug.`,
         details: { unresolved_sources: where },
       });
     } else if (entityCount === 0) {
@@ -117,7 +117,7 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity connected coverage (in/out) ${linkPct}% (target 70%), entity timeline coverage ${timelinePct}% (${eligibleEntityCount} entity pages). Run: gbrain extract all`,
+        message: `Entity connected coverage (in/out) ${linkPct}% (target 70%), entity timeline coverage ${timelinePct}% (${eligibleEntityCount} entity pages). Run: foresights extract all`,
       });
     }
 
@@ -163,12 +163,12 @@ async function runOrphanRatio(ctx: DoctorContext): Promise<Check[]> {
   //
   // Surfaces the fraction of linkable pages with no links in either direction.
   // Consumes the same canonical getOrphansData() pure fn as
-  // `gbrain orphans --count` (D1), so the two surfaces cannot disagree.
+  // `foresights orphans --count` (D1), so the two surfaces cannot disagree.
   //
   // Skip when entity count < 100 (vacuous — small brains naturally
   // show high orphan ratio; not actionable signal).
   // Warn at >0.5; fail at >0.8. Both states recommend
-  // `gbrain extract links --by-mention` as the fix.
+  // `foresights extract links --by-mention` as the fix.
   // v0.41.29.0: explicit `--source <id>` scopes this check to one source
   // (orphanRatioSourceId, parsed at the top of buildChecks). The entity-count
   // gate + getOrphansData both scope to it; messages name the source. Bare
@@ -211,15 +211,15 @@ async function runOrphanRatio(ctx: DoctorContext): Promise<Check[]> {
       const pct = (ratio * 100).toFixed(0);
       const caveat =
         entityTypes.status === 'pack_unavailable'
-          ? ' — entity count unknown (the active schema pack did not load; run gbrain schema active)'
+          ? ' — entity count unknown (the active schema pack did not load; run foresights schema active)'
           : entityCount < 100
             ? ` — low scale (${entityCount} entity pages <100), interpret with caution`
             : '';
       // #5877: --by-mention only runs against the database (`--source db`);
       // the bare command exits 2 on the default fs source.
       const hint =
-        `Run: gbrain extract links --by-mention --source db${srcId ? ` --source-id ${srcId}` : ''}   (auto-links entity mentions in body text). ` +
-        `Run gbrain orphans${srcId ? ` --source ${srcId}` : ''} for the list.`;
+        `Run: foresights extract links --by-mention --source db${srcId ? ` --source-id ${srcId}` : ''}   (auto-links entity mentions in body text). ` +
+        `Run foresights orphans${srcId ? ` --source ${srcId}` : ''} for the list.`;
       const rendersExcluded = data.connector_renders_excluded ?? 0;
       const renders = rendersExcluded > 0
         ? ` ${rendersExcluded} connector email/meeting renders are reported apart and left out of the ratio.`
@@ -263,7 +263,7 @@ function estimatedOrphanRatioCheck(est: OrphanEstimate, cutoff: number, srcId: s
     + `${est.sample_pages}-page sample of ${est.live_pages} live pages; the full scan runs above ${cutoff} pages only with --tier deep: ${deep.join(' ')}).`;
   if (est.ratio <= 0.5) return { name: 'orphan_ratio', status: 'ok', message, details };
   return { name: 'orphan_ratio', status: est.ratio > 0.8 ? 'fail' : 'warn', details,
-    message: `${message} Run: gbrain extract links --by-mention --source db${srcId ? ` --source-id ${srcId}` : ''}   (auto-links entity mentions in body text).`,
+    message: `${message} Run: foresights extract links --by-mention --source db${srcId ? ` --source-id ${srcId}` : ''}   (auto-links entity mentions in body text).`,
     fix: agentFix(deep, 'Read-only: the exact orphan ratio from the full scan, before acting on an estimate.', 'orphan_ratio') };
 }
 

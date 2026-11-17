@@ -1,5 +1,5 @@
 /**
- * `gbrain hook` fires `gbrain sources push` as a DETACHED child. A child
+ * `foresights hook` fires `foresights sources push` as a DETACHED child. A child
  * spawned WITHOUT an explicit `env` option does not see the parent's cwd-.env
  * quarantine deletions (core/env-trust.ts — verified on Bun 1.3.10), so a
  * hostile repo's GBRAIN_* keys would resurface inside the push process. The

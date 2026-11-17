@@ -4,10 +4,10 @@
  *
  *  - bigintToStringReplacer: cli.ts JSON-normalizes a local op's return value
  *    so a bigint column (e.g. a BIGSERIAL `id`) round-trips to a string instead
- *    of crashing `JSON.stringify`. (garrytan/gbrain#2450)
+ *    of crashing `JSON.stringify`. (aimonk2025/gbrain#2450)
  *  - CLI_ONLY: `calibration` is reachable; it was missing from the set, so the
  *    dispatch fell through to "Unknown command" despite a `case 'calibration'`
- *    handler existing. (garrytan/gbrain#2035)
+ *    handler existing. (aimonk2025/gbrain#2035)
  *  - takeHitRowToHit: searchTakes/searchTakesVector coerce int8 driver rows
  *    (native BigInt) to the numeric TakeHit contract, so MCP `takes_search`
  *    doesn't crash the serializer the moment a query matches. (#2450 comments)
@@ -73,7 +73,7 @@ describe('takeHitRowToHit (#2450 — takes_search MCP path)', () => {
 
 describe('runCall output exit is bigint-safe (#2450)', () => {
   test('prints an op result carrying a bigint instead of crashing', async () => {
-    // `gbrain call` bypasses cli.ts's normalizer, so its own stringify must
+    // `foresights call` bypasses cli.ts's normalizer, so its own stringify must
     // carry the replacer. Stub just the surface runCall touches: --source
     // resolution (assertSourceExists) + the get_stats handler pass-through.
     const stub = {

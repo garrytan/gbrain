@@ -9,8 +9,8 @@
  * delete-reconcile.
  *
  * Fix: `writePageThrough` best-effort commits the artifact (path-limited)
- * when the repo carries the gbrain durability post-commit hook (i.e. the
- * user opted in via `gbrain sources harden`); the hook then background-pushes.
+ * when the repo carries the foresights durability post-commit hook (i.e. the
+ * user opted in via `foresights sources harden`); the hook then background-pushes.
  * Unhardened repos keep the old write-only behavior.
  */
 
@@ -32,7 +32,7 @@ function git(cwd: string, ...args: string[]): string {
   }).trim();
 }
 
-/** Install a hook file carrying the gbrain durability banner (the detection
+/** Install a hook file carrying the foresights durability banner (the detection
  *  key `isDurabilityHardened` looks for) with a no-op body so tests never
  *  attempt a real push. */
 function installFakeDurabilityHook(repoPath: string): void {

@@ -6,7 +6,7 @@
  * First-sync shape: runGoogleSync's backfill walks newest→oldest with a
  * batch-committed floor cursor, so the setup sync runs under a wall-clock
  * budget (default 90s) and whatever landed is the NEWEST mail — exactly
- * what `gbrain waiting` needs. The remainder resumes on every later sync
+ * what `foresights waiting` needs. The remainder resumes on every later sync
  * (autopilot, cron, or a queued background job when a worker is running);
  * nothing is lost by the budget, and setup says so honestly.
  */
@@ -28,9 +28,9 @@ export async function runGoogleSetupTail(input: SetupTailInput): Promise<void> {
   const { loadConfig, toEngineConfig } = await import('../core/config.ts');
   const cfg = loadConfig();
   if (!cfg) {
-    const msg = 'No gbrain brain configured yet. Run `gbrain init` first, then re-run `gbrain google setup`.';
+    const msg = 'No foresights brain configured yet. Run `foresights init` first, then re-run `foresights google setup`.';
     if (input.json) {
-      process.stdout.write(JSON.stringify({ ok: false, status: 'no_brain', next_action: { command: 'gbrain init' } }, null, 2) + '\n');
+      process.stdout.write(JSON.stringify({ ok: false, status: 'no_brain', next_action: { command: 'foresights init' } }, null, 2) + '\n');
     } else {
       process.stderr.write(msg + '\n');
     }
@@ -113,7 +113,7 @@ export async function runGoogleSetupTail(input: SetupTailInput): Promise<void> {
         );
         process.stderr.write('Queued the backfill remainder as a background job.\n');
       } catch {
-        process.stderr.write(`Backfill remainder: run \`gbrain sync --source ${sourceId}\` (or let autopilot pick it up: it keeps the source synced after this first sync).\n`);
+        process.stderr.write(`Backfill remainder: run \`foresights sync --source ${sourceId}\` (or let autopilot pick it up: it keeps the source synced after this first sync).\n`);
       }
     }
 

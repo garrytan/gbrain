@@ -25,7 +25,7 @@ import {
 // v0.34 Cathedral III — code-intelligence ops (MCP-exposed).
 //
 // Pre-v0.34 code-callers / code-callees / code-def / code-refs lived only in
-// the CLI_ONLY set at cli.ts:30 — agents calling gbrain via MCP couldn't reach
+// the CLI_ONLY set at cli.ts:30 — agents calling foresights via MCP couldn't reach
 // them and fell through to text search. These wrappers expose the existing
 // engine + library functions to the MCP surface with resolver-grade
 // descriptions (operations-descriptions.ts) so agents route to them
@@ -311,10 +311,10 @@ const SYMBOL_ARG = /^[A-Za-z_$][\w$.:/-]{0,199}$/;
 
 /**
  * B6: remote code reads are suspended; the same read runs through the
- * trusted local `gbrain call` lane on the brain host. The symbol and source
+ * trusted local `foresights call` lane on the brain host. The symbol and source
  * are interpolated only when they match strict id shapes.
  */
-const CODE_READ_FOLLOW_UP = 'garrytan/gbrain#5052';
+const CODE_READ_FOLLOW_UP = 'aimonk2025/gbrain#5052';
 
 function codeReadRefusal(ctx: OperationContext, op: Operation, params: Record<string, unknown>): OperationError {
   const message = `${op.name} is temporarily unavailable to agent callers: remote code reads stay suspended until they support the remote read policy (follow-up: ${CODE_READ_FOLLOW_UP}). `
@@ -323,7 +323,7 @@ function codeReadRefusal(ctx: OperationContext, op: Operation, params: Record<st
   const symbol = params[key];
   if (typeof symbol !== 'string' || !SYMBOL_ARG.test(symbol)) {
     return opError('permission_denied', message,
-      `Use search or query for code text now, or ask the user to run ${op.name} with the trusted local CLI on the brain host (gbrain call ${op.name} '<params_json>').`);
+      `Use search or query for code text now, or ask the user to run ${op.name} with the trusted local CLI on the brain host (foresights call ${op.name} '<params_json>').`);
   }
   const source = typeof params.source_id === 'string' && isValidSourceId(params.source_id) ? ['--source', params.source_id] : [];
   return hostOnlyError(ctx, 'permission_denied', message,

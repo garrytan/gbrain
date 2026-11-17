@@ -2,7 +2,7 @@
 # CI guard: src/cli.ts must be tracked by git in executable mode (100755).
 #
 # Why: bun-link installs symlink to src/cli.ts directly. If the mode bit
-# regresses to 100644, the very first `gbrain --version` invocation fails
+# regresses to 100644, the very first `foresights --version` invocation fails
 # with `permission denied`. v0.28.5 (cluster C, #683) fixed the original
 # regression; this guard prevents future drift.
 #

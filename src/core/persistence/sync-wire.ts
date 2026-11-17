@@ -14,7 +14,7 @@ export const SYNC_VALUE_FLAGS: Record<string, string> = Object.fromEntries(forwa
 export const SYNC_CLIENT_FLAGS: ReadonlySet<string> = new Set(syncFlagsRouted('owner', 'client'));
 export interface SyncWireParams { options: SyncOpts; cwd: string; timeoutSeconds: number; ignored?: string[] }
 const invalid = () => opError('invalid_params','Invalid or unsupported local sync options.',
-  'Run gbrain sync from the CLI (gbrain sync --help lists its flags); it builds the options this owner lane accepts.');
+  'Run foresights sync from the CLI (foresights sync --help lists its flags); it builds the options this owner lane accepts.');
 export function validateSyncWireParams(value: Record<string,unknown>): SyncWireParams {
   if (Object.keys(value).some(k=>!['options','cwd','timeoutSeconds'].includes(k)) || typeof value.cwd!=='string' ||
       !isAbsolute(value.cwd) || value.cwd.length>32768 || value.cwd.includes('\0') || typeof value.timeoutSeconds!=='number' ||

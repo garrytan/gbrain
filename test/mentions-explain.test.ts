@@ -1,5 +1,5 @@
 /**
- * `gbrain extract mentions --explain <name|slug> [--page <slug>]`.
+ * `foresights extract mentions --explain <name|slug> [--page <slug>]`.
  *
  * Protects: one reason code per rejection class, so an agent debugging
  * "why isn't this page listed?" gets the guard that applied and is never told
@@ -83,7 +83,7 @@ describe('extract mentions --explain reason codes', () => {
     await sweep(engine);
     await page(engine, 'tickets/t1', 'ticket', 'Ticket 1', 'Customer: QUCO');
     const r = await explainMention(engine, 'QUCO', { page: 'tickets/t1' });
-    expect(r).toMatchObject({ reason: 'pending', page: { slug: 'tickets/t1', linked: false }, next: 'gbrain extract --stale' });
+    expect(r).toMatchObject({ reason: 'pending', page: { slug: 'tickets/t1', linked: false }, next: 'foresights extract --stale' });
     expect((await explainMention(engine, 'quco')).next).toBeUndefined();
     await sweep(engine);
     expect(await explainMention(engine, 'QUCO', { page: 'tickets/t1' })).toMatchObject({ reason: null, page: { linked: true } });
@@ -103,7 +103,7 @@ describe('extract mentions --explain reason codes', () => {
     expect((await explainMention(engine, 'Nobody Holdings')).reason).toBe('not_a_known_name');
   });
 
-  test('`gbrain extract --explain <kind>` keeps its own meaning', async () => {
+  test('`foresights extract --explain <kind>` keeps its own meaning', async () => {
     const out: string[] = [];
     const log = console.log;
     console.log = (m?: unknown) => { out.push(String(m)); };

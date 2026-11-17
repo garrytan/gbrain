@@ -164,7 +164,7 @@ test('a brain whose schema is behind v239 keeps extracting: the rollup write ret
     } finally { console.error = error; }
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('migrations_pending');
-    expect(lines[0]).toContain('gbrain apply-migrations --yes --no-autopilot-install');
+    expect(lines[0]).toContain('foresights apply-migrations --yes --no-autopilot-install');
     expect(await engine.executeRaw('SELECT 1 FROM extract_rollup_7d WHERE kind=$1', [kind])).toEqual([]);
     // The doctor read still works without the column: every halt is unknown.
     const seen = freshKind();

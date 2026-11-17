@@ -1,7 +1,7 @@
 /**
- * GBRA-130 A-26: \`gbrain repair safe-chunks\` re-seals pages chunked before the
+ * GBRA-130 A-26: \`foresights repair safe-chunks\` re-seals pages chunked before the
  * safe-chunk fence (src/core/repair/safe-chunks.ts), and a managed
- * \`gbrain reindex\` delegates to it (src/commands/reindex.ts).
+ * \`foresights reindex\` delegates to it (src/commands/reindex.ts).
  *
  * Protects: a page whose re-seal throws (here a projection constraint error
  * from the chunk install) is reported as a held outcome
@@ -78,7 +78,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(result).toMatchObject({ applied: 3, complete: true, failed: [] });
       expect(result.outcomes).toMatchObject({ held: 1 });
       const held = result.outcome_items?.find(o => o.outcome === 'held');
-      expectItemFailure({ key: held?.item, code: held?.reason, fix: (held?.detail as { fix?: unknown } | undefined)?.fix }, { key: SOURCE + ':' + POISON, code: 'projection_unbuildable', fix: /gbrain repair safe-chunks --source default/ });
+      expectItemFailure({ key: held?.item, code: held?.reason, fix: (held?.detail as { fix?: unknown } | undefined)?.fix }, { key: SOURCE + ':' + POISON, code: 'projection_unbuildable', fix: /(?:foresights|gbrain) repair safe-chunks --source default/ });
       expect(held?.detail).toMatchObject({ code: 'invalid_data', message: expect.stringContaining('chunk refused') });
       expectOthersUnchanged(before, await snapshotItems(engine, SOURCE), { expectProgress: SLUGS.filter(s => s !== POISON), progressFields: ['chunks'] });
       const [poison] = await engine.executeRaw<{ chunker_version: number }>('SELECT chunker_version FROM pages WHERE source_id=$1 AND slug=$2', [SOURCE, POISON]);

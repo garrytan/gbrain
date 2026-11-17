@@ -1,5 +1,5 @@
 /**
- * v0.39 behavioral coverage for `gbrain doctor`'s check orchestrator.
+ * v0.39 behavioral coverage for `foresights doctor`'s check orchestrator.
  *
  * Drives the exported `buildChecks(engine, args, dbSource): Promise<Check[]>`
  * seam directly (added in v0.39 — extracted from runDoctor's body so the
@@ -244,7 +244,7 @@ describe('buildChecks — orchestrator against PGLite', () => {
     }
   });
 
-  test('oversized_pages excludes pages that already took the embed_skip remediation (gbrain dogfooding find)', async () => {
+  test('oversized_pages excludes pages that already took the embed_skip remediation (foresights dogfooding find)', async () => {
     // The warn message for this check says "existing oversized pages can be
     // ... accepted as non-embeddable" (i.e. frontmatter.embed_skip set).
     // Before this fix the underlying query never excluded those pages, so a
@@ -303,7 +303,7 @@ describe('buildChecks — orchestrator against PGLite', () => {
 
   test('#6526: oversized_pages honors a DB-plane content_sanity.bytes_block override', async () => {
     // The check read bytes_block from the file and env planes only (loadConfig), so a
-    // `gbrain config set content_sanity.bytes_block N` that the write gate honors never
+    // `foresights config set content_sanity.bytes_block N` that the write gate honors never
     // reached it. It now uses the gate's resolution (import-screen.ts effectiveBytesBlock).
     // The page sits between the operator's 500_000 and the 24 MiB default, with no
     // embed_skip marker, so the DB-plane value alone decides the warn.

@@ -1,11 +1,11 @@
 /**
- * `npm_squat` through the real CLI: `gbrain doctor --only npm_squat --json`
+ * `npm_squat` through the real CLI: `foresights doctor --only npm_squat --json`
  * with an unrelated npm package named "gbrain" on PATH, and with one installed
  * globally (a fake `npm root -g`) whose bin is not on PATH. Both warn with an
  * ask_user fix that removes it with npm. Doctor runs from this checkout, a real
- * gbrain, so no reinstall is chained. A package outside npm's global root gets
+ * foresights, so no reinstall is chained. A package outside npm's global root gets
  * no runnable command. Temp dirs only; the fake npm prints a path, and PATH
- * holds a temp bin with only bun, so a gbrain installed on the machine is never seen.
+ * holds a temp bin with only bun, so a foresights installed on the machine is never seen.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -15,9 +15,9 @@ import { gb, oneDocument } from './helpers/agent-journey.ts';
 
 let home: string;
 let npmRoot: string;
-let pathBin: string; // gbrain → unrelated package
-let npmBin: string; // npm printing npmRoot, no gbrain
-let otherBin: string; // gbrain → unrelated package outside npm's global root
+let pathBin: string; // foresights → unrelated package
+let npmBin: string; // npm printing npmRoot, no foresights
+let otherBin: string; // foresights → unrelated package outside npm's global root
 let bunBin: string; // only bun
 
 function foreignPackage(dir: string): string {

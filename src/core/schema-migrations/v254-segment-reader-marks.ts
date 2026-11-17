@@ -14,7 +14,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // - persistence_requests.admitter_segment_reader / consumer_segment_reader:
 //   managed writes, next to the v178 version stamps (migration-only, like them);
 // - ingest_log.writer_version / writer_host_id / writer_segment_reader: the
-//   row `gbrain import`, sync, connectors and the facts paths log per run
+//   row `foresights import`, sync, connectors and the facts paths log per run
 //   (engine logIngest), which unmanaged writes leave behind; also in
 //   schema.sql's CREATE TABLE, appended, so fresh and upgraded brains share
 //   the column order;

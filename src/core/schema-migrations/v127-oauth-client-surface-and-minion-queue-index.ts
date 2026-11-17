@@ -8,7 +8,7 @@ export const v127: Migration = {
   // 1. oauth_clients.surface + surface_set_by (amendments 17-19): the
   //    per-client MCP tool surface consumed by the D2 ceiling resolution in
   //    serve-http (`min(server --surface ceiling, row surface ?? config
-  //    default)`) and written by `gbrain auth rescope-client --surface`
+  //    default)`) and written by `foresights auth rescope-client --surface`
   //    (surface_set_by='operator', the lock the request_tools persist
   //    branch cannot override) and the `request_tools` meta-op
   //    (surface_set_by='self'). TEXT with an OPEN value space (amendment

@@ -1,5 +1,5 @@
 /**
- * v0.31 E2E — `gbrain forget <id>` end-to-end against real Postgres.
+ * v0.31 E2E — `foresights forget <id>` end-to-end against real Postgres.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';

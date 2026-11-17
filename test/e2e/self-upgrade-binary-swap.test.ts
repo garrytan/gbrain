@@ -35,7 +35,7 @@ import {
 const NEW_BINARY = '#!/bin/sh\necho "gbrain 0.43.0"\n';
 const OLD_BINARY = '#!/bin/sh\necho "gbrain 0.42.0"\n';
 const NON_GBRAIN = '#!/bin/sh\necho "not the tool"\n';
-// A real gbrain binary, but an OLDER version than the release claims — the
+// A real foresights binary, but an OLDER version than the release claims — the
 // downgrade-replay an asset-swap adversary would serve (its old digest still
 // has a valid attestation).
 const OLD_ATTESTED_BINARY = '#!/bin/sh\necho "gbrain 0.41.0"\n';
@@ -100,7 +100,7 @@ describe('binary self-update — real swap E2E', () => {
   test('happy path: downloads, smokes, atomically replaces the running binary', async () => {
     const { dir, target } = makeTargetBinary();
     try {
-      expect(versionOf(target)).toBe('gbrain 0.42.0');
+      expect(versionOf(target)).toBe('foresights 0.42.0');
       const result = await runBinarySelfUpdate(target, {
         fetchRelease: async () => ({ tag: 'v0.43.0', assets: assets(`${base}/good-asset`) }),
         ...attestationFor(NEW_BINARY),
@@ -110,7 +110,7 @@ describe('binary self-update — real swap E2E', () => {
       expect(result.ok).toBe(true);
       expect(result.asset).toBe('gbrain-linux-x64');
       // The running "binary" was atomically replaced; a fresh exec sees the new version.
-      expect(versionOf(target)).toBe('gbrain 0.43.0');
+      expect(versionOf(target)).toBe('foresights 0.43.0');
       expect(tmpLeftovers(dir)).toEqual([]); // staged temp renamed away, none left
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -130,7 +130,7 @@ describe('binary self-update — real swap E2E', () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('smoke_failed');
-      expect(versionOf(target)).toBe('gbrain 0.42.0'); // old binary intact
+      expect(versionOf(target)).toBe('foresights 0.42.0'); // old binary intact
       expect(tmpLeftovers(dir)).toEqual([]); // staged temp cleaned up on failure
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -148,7 +148,7 @@ describe('binary self-update — real swap E2E', () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('integrity_unavailable');
-      expect(versionOf(target)).toBe('gbrain 0.42.0'); // fail-closed, old binary intact
+      expect(versionOf(target)).toBe('foresights 0.42.0'); // fail-closed, old binary intact
       expect(tmpLeftovers(dir)).toEqual([]); // unverified download discarded
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -160,7 +160,7 @@ describe('binary self-update — real swap E2E', () => {
     try {
       const result = await runBinarySelfUpdate(target, {
         // Release tag is v0.43.0, but the served bytes are a real, validly
-        // attested gbrain 0.41.0 (its digest has a genuine attestation).
+        // attested foresights 0.41.0 (its digest has a genuine attestation).
         fetchRelease: async () => ({ tag: 'v0.43.0', assets: assets(`${base}/downgrade-asset`) }),
         ...attestationFor(OLD_ATTESTED_BINARY), // digest+builder verify PASSES
         platform: 'linux',
@@ -168,7 +168,7 @@ describe('binary self-update — real swap E2E', () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('version_mismatch'); // real --version says 0.41.0, tag says 0.43.0
-      expect(versionOf(target)).toBe('gbrain 0.42.0'); // running binary untouched
+      expect(versionOf(target)).toBe('foresights 0.42.0'); // running binary untouched
       expect(tmpLeftovers(dir)).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -187,7 +187,7 @@ describe('binary self-update — real swap E2E', () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('integrity_failed');
-      expect(versionOf(target)).toBe('gbrain 0.42.0');
+      expect(versionOf(target)).toBe('foresights 0.42.0');
       expect(tmpLeftovers(dir)).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -204,7 +204,7 @@ describe('binary self-update — real swap E2E', () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('download_failed');
-      expect(versionOf(target)).toBe('gbrain 0.42.0');
+      expect(versionOf(target)).toBe('foresights 0.42.0');
       expect(existsSync(target)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -221,7 +221,7 @@ describe('binary self-update — real swap E2E', () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('download_failed');
-      expect(versionOf(target)).toBe('gbrain 0.42.0');
+      expect(versionOf(target)).toBe('foresights 0.42.0');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -237,7 +237,7 @@ describe('binary self-update — real swap E2E', () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('no_asset');
-      expect(versionOf(target)).toBe('gbrain 0.42.0');
+      expect(versionOf(target)).toBe('foresights 0.42.0');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -258,7 +258,7 @@ describe('binary self-update — real swap E2E', () => {
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('unsupported_platform');
       expect(fetched).toBe(false); // never hit the network
-      expect(versionOf(target)).toBe('gbrain 0.42.0');
+      expect(versionOf(target)).toBe('foresights 0.42.0');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

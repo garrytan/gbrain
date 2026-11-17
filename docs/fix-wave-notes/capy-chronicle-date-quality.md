@@ -1,6 +1,6 @@
 # auto_chronicle date quality (`capy/chronicle-date-quality`, v0.60.49.0)
 
-The gbrain-evals off-versus-on lift eval (garrytan/gbrain-evals#62, gbrain
+The gbrain-evals off-versus-on lift eval (garrytan/gbrain-evals#62, foresights
 `739e5cc`) failed auto_chronicle's quality gate: 0.96 false + premature events
 per judged labeled page against a gate of 0.20. Two patterns caused it:
 
@@ -75,4 +75,4 @@ Total provider spend: $1.59.
 
 The labeled 31-page fixture from the auto_chronicle fix wave
 (`capy-fix-wave-chronicle.md`) is not committed, so it was not rerun.
-`gbrain eval chronicle` (deterministic): 6/6.
+`foresights eval chronicle` (deterministic): 6/6.

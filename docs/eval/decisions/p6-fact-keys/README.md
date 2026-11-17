@@ -1,6 +1,6 @@
 # Decision: fact keys in chunk embeddings — killed
 
-- **Plan:** P6, mechanism F2 (fact keys from gbrain's facts extractor merged
+- **Plan:** P6, mechanism F2 (fact keys from foresights's facts extractor merged
   into the chunk embedding input).
 - **Decided:** 2026-10-05, on development data, under the preregistered kill
   gate ([`TIME_AWARE_RETRIEVAL_PREREG.md`](../../TIME_AWARE_RETRIEVAL_PREREG.md),

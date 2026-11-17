@@ -1,5 +1,5 @@
 /**
- * `gbrain pages status <slug...> [--source <id>] [--json]` (#7179): read-only,
+ * `foresights pages status <slug...> [--source <id>] [--json]` (#7179): read-only,
  * one answer per page to "is this page searchable, and if not, why?". It joins
  * what an operator otherwise assembles by hand: the page row (live, deleted or
  * missing), its embedding state from the engine classifier
@@ -27,7 +27,7 @@ import { loadSyncEligibility, syncGit } from '../core/persistence/sync-discovery
 import { fenceAutoRepairFor, gitHoldFix, readGitHold } from '../core/persistence/sync-holds.ts';
 import { literalPathspecs } from '../core/git-env.ts';
 
-export const PAGES_STATUS_USAGE = 'Usage: gbrain pages status <slug...> [--source <id>] [--json]';
+export const PAGES_STATUS_USAGE = 'Usage: foresights pages status <slug...> [--source <id>] [--json]';
 /** Slugs one call reads. */
 export const PAGES_STATUS_MAX = 200;
 
@@ -167,7 +167,7 @@ function stateWhy(slug: string, state: PageStatusState, ctx: { row?: EmbeddingSt
     case 'quarantined': return `Page ${slug} is quarantined (${ctx.row?.quarantine_reason ?? 'quarantine'}): the content-quality gate hides it from search.`;
     case 'chunkless': return `Page ${slug} has body text but no chunk rows, so neither keyword nor vector search can read its body.`;
     case 'empty': return `Page ${slug} has no body text, so there is nothing to search.`;
-    case 'page_deleted': return `Page ${slug} is soft-deleted, so search never returns it. If it should come back, restore it with gbrain restore ${slug} --force.`;
+    case 'page_deleted': return `Page ${slug} is soft-deleted, so search never returns it. If it should come back, restore it with foresights restore ${slug} --force.`;
     case 'missing': return `No page with slug ${slug} exists in this source, live or deleted.`;
   }
 }

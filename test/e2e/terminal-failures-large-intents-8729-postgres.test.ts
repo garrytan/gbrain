@@ -1,5 +1,5 @@
 /**
- * #8729: `gbrain sources writer failures` (readTerminalFailures) and the terminal summary on a source whose page has many
+ * #8729: `foresights sources writer failures` (readTerminalFailures) and the terminal summary on a source whose page has many
  * sync writes with large frozen intents.
  *
  * 1. Protects: the drill-down and the summary answer `ok` within their statement bound when a page holds a few hundred

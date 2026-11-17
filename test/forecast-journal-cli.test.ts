@@ -1,5 +1,5 @@
 /**
- * W7: `gbrain takes journal` and `gbrain takes scorecard --group-by`
+ * W7: `foresights takes journal` and `foresights takes scorecard --group-by`
  * (trusted local; thin clients refuse both, see
  * test/thin-client-routing.test.ts). The journal lists every prediction
  * with its state and keeps the unresolved denominator in its totals; the
@@ -54,7 +54,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await engine.disconnect(); });
 
-describe('gbrain takes journal', () => {
+describe('foresights takes journal', () => {
   test('--json lists every prediction with its state; totals keep the unresolved denominator', async () => {
     const j = JSON.parse(await capture(() => runTakes(engine, ['journal', '--json'])));
     expect(j.totals).toEqual({ predictions: 4, resolved: 2, unresolved: 2, open: 1, overdue: 1, undated: 0, certified_prediction_times: 0 });
@@ -84,12 +84,12 @@ describe('gbrain takes journal', () => {
   });
 
   test('refuses an unknown state and a bad limit', async () => {
-    expect(await exitOf(() => runTakes(engine, ['journal', '--state', 'late']))).toMatchObject({ code: 1, stderr: expect.stringContaining('Usage: gbrain takes journal') });
+    expect(await exitOf(() => runTakes(engine, ['journal', '--state', 'late']))).toMatchObject({ code: 1, stderr: expect.stringContaining('Usage: foresights takes journal') });
     expect(await exitOf(() => runTakes(engine, ['journal', '--limit', '0']))).toMatchObject({ code: 1, stderr: expect.stringContaining('--limit') });
   });
 });
 
-describe('gbrain takes scorecard --group-by', () => {
+describe('foresights takes scorecard --group-by', () => {
   test('--json keeps the plain card and adds groups and journal totals', async () => {
     const plain = JSON.parse(await capture(() => runTakes(engine, ['scorecard', '--json'])));
     const grouped = JSON.parse(await capture(() => runTakes(engine, ['scorecard', '--group-by', 'holder', '--min-n', '1', '--json'])));

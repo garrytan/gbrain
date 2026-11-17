@@ -1,7 +1,7 @@
 /**
  * #6712 PR 4b (GBRA-130 A-20, not reproducible): frontmatter validation does not depend on the active schema pack. The pack
  * reaches `parseMarkdown` only through type and subtype inference, and the screen only through the fence context
- * (`takes_kinds`), so a pack switch cannot turn bytes a validating gbrain imported into an `invalid_frontmatter` refusal
+ * (`takes_kinds`), so a pack switch cannot turn bytes a validating foresights imported into an `invalid_frontmatter` refusal
  * and stop the source as `sync_parser_regression` (sync-screen.ts provenance branch). If this guard ever fails, A-20 is
  * real: the provenance check would read a pack change as a parser regression.
  *

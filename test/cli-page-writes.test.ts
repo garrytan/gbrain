@@ -1,9 +1,9 @@
 /**
  * Wave B write operations from the local CLI (spec 3.1, 6.1, 6.2, 6.5):
- * `gbrain put <slug> --file` and `gbrain capture --file` read the page from a
+ * `foresights put <slug> --file` and `foresights capture --file` read the page from a
  * file (no stdin); over the page ceiling the trusted local CLI streams it
  * through the import's two-pass reader, with no upload session.
- * `gbrain append` adds text with append_page, idempotent by --request-id,
+ * `foresights append` adds text with append_page, idempotent by --request-id,
  * through an upload session when the text is over one request. Runs the real
  * CLI on PGLite and on Postgres.
  */
@@ -25,7 +25,7 @@ const CLI = join(import.meta.dir, '../src/cli.ts');
 /** Quotes, backslashes, tabs and other control characters, multi-byte and astral text. */
 const ESCAPE_HEAVY = 'said "hi" \\ path\\to\\x \t tab \u0007 bell é 中文 😀 🧠';
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-/** The body `gbrain get` prints after the page's frontmatter block. */
+/** The body `foresights get` prints after the page's frontmatter block. */
 const printedBody = (stdout: string) => stdout.slice(stdout.indexOf('\n---\n\n') + 6);
 /** A page just over the single-string ceiling. */
 const hugeBody = (title: string) => {

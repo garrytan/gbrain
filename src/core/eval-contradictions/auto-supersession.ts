@@ -93,7 +93,7 @@ export function classifyResolution(
   if (judgeHint === 'dream_synthesize') {
     return judgeHint;
   }
-  // gbrain#4169: `takes mark-debate` is documented but NOT implemented (the
+  // foresights#4169: `takes mark-debate` is documented but NOT implemented (the
   // CLI dispatch falls through to the list path and treats "mark-debate" as
   // a slug — tracked with #4102). Minting the kind would lie to JSON
   // consumers about an available action; route to manual_review until the
@@ -112,7 +112,7 @@ export function classifyResolution(
 
 /**
  * POSIX single-quote escaping for untrusted text (claim text AND slugs)
- * rendered into a paste-ready command (gbrain#4169): wrap in single quotes;
+ * rendered into a paste-ready command (foresights#4169): wrap in single quotes;
  * embedded single quotes become the `'\''` splice. Newlines collapse to
  * spaces — a resolution command is one line by contract. Slugs are quoted
  * too: validateSlug leaves shell metacharacters unblocked and remote MCP
@@ -132,7 +132,7 @@ export function renderResolutionCommand(
 ): string {
   switch (kind) {
     case 'takes_supersede': {
-      // gbrain#4169: --row takes the PER-PAGE row_num (take_id is the global
+      // foresights#4169: --row takes the PER-PAGE row_num (take_id is the global
       // PK and never resolves), and `takes supersede` REQUIRES --claim — the
       // replacement text. classifyResolution picks an ACTION, not a winner:
       // in a chunk-vs-take pair the chunk side is arbitrary prose, so
@@ -141,21 +141,21 @@ export function renderResolutionCommand(
       // operator fills in.
       const takeSide = pair.b.take_id !== null ? pair.b : (pair.a.take_id !== null ? pair.a : pair.a);
       const rowNum = takeSide.take_row_num ?? '<row>';
-      return `gbrain takes supersede ${shellQuote(takeSide.slug)} --row ${rowNum} --claim '<replacement claim — see contradiction report>'`;
+      return `foresights takes supersede ${shellQuote(takeSide.slug)} --row ${rowNum} --claim '<replacement claim — see contradiction report>'`;
     }
     case 'dream_synthesize': {
       const curatedSide = isCuratedEntitySlug(pair.a.slug)
         ? pair.a
         : (isCuratedEntitySlug(pair.b.slug) ? pair.b : pair.a);
-      // `gbrain dream` has no per-slug flag (the synthesize phase scopes by
+      // `foresights dream` has no per-slug flag (the synthesize phase scopes by
       // transcript/queue, not by page). The flag registry gate
       // (test/remediation-command-resolution.test.ts) rejects `--slug` here,
       // so render the real command and carry the slug as a shell comment —
       // paste-ready and truthful, same shape as the takes_mark_debate hint.
-      return `gbrain dream --phase synthesize  # re-synthesize; contradiction on ${shellQuote(curatedSide.slug)}`;
+      return `foresights dream --phase synthesize  # re-synthesize; contradiction on ${shellQuote(curatedSide.slug)}`;
     }
     case 'takes_mark_debate': {
-      // gbrain#4169: this subcommand does not exist (tracked with #4102) —
+      // foresights#4169: this subcommand does not exist (tracked with #4102) —
       // new classifications route to manual_review; this branch only renders
       // for LEGACY stored rows, and must not emit a command that fails.
       const takeSide = pair.b.take_id !== null ? pair.b : (pair.a.take_id !== null ? pair.a : pair.a);
@@ -178,7 +178,7 @@ export function renderResolutionCommand(
         const newerSide = aMs < bMs ? pair.b : pair.a;
         const newerDate = aMs < bMs ? bDate : aDate;
         if (olderSide.take_id !== null && olderSide.take_row_num !== null) {
-          // gbrain#4169: temporal supersession has a REAL winner (the
+          // foresights#4169: temporal supersession has a REAL winner (the
           // newer-dated side). When that side is itself a take, its claim is
           // the unambiguous replacement — paste-ready, shell-escaped. When
           // the newer side is a chunk, its text is arbitrary prose:
@@ -186,7 +186,7 @@ export function renderResolutionCommand(
           const claim = newerSide.take_id !== null
             ? shellQuote(newerSide.text)
             : `'<replacement claim — see contradiction report>'`;
-          return `gbrain takes supersede ${shellQuote(olderSide.slug)} --row ${olderSide.take_row_num} --claim ${claim} --since ${newerDate}`;
+          return `foresights takes supersede ${shellQuote(olderSide.slug)} --row ${olderSide.take_row_num} --claim ${claim} --since ${newerDate}`;
         }
         return `# temporal_supersession: ${olderSide.slug} (${aMs < bMs ? aDate : bDate}) superseded by ${newerDate}`;
       }
@@ -198,7 +198,7 @@ export function renderResolutionCommand(
       // operator can paste a follow-up note manually for now.
       const aDate = pair.a.effective_date ?? '<date-a>';
       const bDate = pair.b.effective_date ?? '<date-b>';
-      return `# temporal_evolution: ${pair.a.slug} (${aDate}) → ${pair.b.slug} (${bDate}); record in timeline when the gbrain timeline writer lands`;
+      return `# temporal_evolution: ${pair.a.slug} (${aDate}) → ${pair.b.slug} (${bDate}); record in timeline when the foresights timeline writer lands`;
     }
     case 'flag_for_review': {
       // v0.34 / Lane A2: informational; covers temporal_regression and

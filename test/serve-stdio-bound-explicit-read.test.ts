@@ -1,11 +1,11 @@
 /**
- * #5081 over the real stdio transport: `gbrain serve` started with
+ * #5081 over the real stdio transport: `foresights serve` started with
  * GBRAIN_SOURCE=work (the harness `.mcp.json` shape from the report) may name
  * a federated source in an explicit `source_id` read, gets only that source's
  * rows back, is refused a source that is not federated with the
  * bound-connection hint, and keeps unqualified reads on the bound source.
  *
- * PGLite, hermetic temp HOME; the MCP SDK spawns `gbrain serve` and performs
+ * PGLite, hermetic temp HOME; the MCP SDK spawns `foresights serve` and performs
  * the same initialize handshake Claude Code does. The in-process matrix over
  * every affected read lives in test/explicit-read-admission-5081.test.ts.
  *
@@ -100,7 +100,7 @@ describe('#5081 — GBRAIN_SOURCE-bound stdio serve, explicit source_id reads', 
     const body = JSON.parse(textOf(res));
     expect(body.error).toBe('permission_denied');
     expect(body.suggestion).toStartWith('This connection is bound to source work (GBRAIN_SOURCE). private ');
-    expect(body.suggestion).toContain('`gbrain sources federate private --brain host` on the brain host, or start this connection without GBRAIN_SOURCE.');
+    expect(body.suggestion).toContain('`foresights sources federate private --brain host` on the brain host, or start this connection without GBRAIN_SOURCE.');
   }, 60_000);
 
   test('unqualified reads stay on the bound source', async () => {

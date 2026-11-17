@@ -1,7 +1,7 @@
 /**
  * Agent contract v1 D5: the CLI contract over src/cli/command-table.ts.
  *
- * Part 1 (help): `gbrain <command> --help` for every CLI-only command, with
+ * Part 1 (help): `foresights <command> --help` for every CLI-only command, with
  * no brain configured, must exit 0, print real (non-stub) help, list only
  * curated flags when the command has a curated help module, and mention
  * `--yes` when the command parses it. Commands that do not meet the contract
@@ -29,7 +29,7 @@ import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { runCli, runCliBatch, type CliResult } from './helpers/cli-spawn.ts';
 
 const BASELINE = join(import.meta.dir, 'fixtures', 'cli-contract', 'help-baseline.json');
-const STUB = 'run gbrain --help for the full command list';
+const STUB = 'run foresights --help for the full command list';
 
 const emptyHome = mkdtempSync(join(tmpdir(), 'gbrain-cli-contract-empty-'));
 const brainHome = mkdtempSync(join(tmpdir(), 'gbrain-cli-contract-brain-'));

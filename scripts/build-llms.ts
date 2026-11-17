@@ -77,7 +77,7 @@ function renderLlmsFullTxt(): { content: string; sizes: Array<{ path: string; by
   lines.push(`> ${PROJECT.summary}`);
   lines.push("");
   lines.push(
-    `This file concatenates core GBrain documentation for single-fetch ingestion.`,
+    `This file concatenates core Foresights documentation for single-fetch ingestion.`,
   );
   lines.push(
     `For the link-only index, see \`llms.txt\`. Source of truth: ${PROJECT.repoUrl}.`,

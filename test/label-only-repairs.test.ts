@@ -1,16 +1,16 @@
 /**
  * GST-2468: an operator repair that only changes privacy labels is not an agent content write.
  *
- * 1. Protects: gbrain repair visibility (its alias class and the slug-bound --slug form an operator uses for one page) and
- *    gbrain repair private-labels (clear and restore) keep the page's trust tier, file no lower_page proposal and change
+ * 1. Protects: foresights repair visibility (its alias class and the slug-bound --slug form an operator uses for one page) and
+ *    foresights repair private-labels (clear and restore) keep the page's trust tier, file no lower_page proposal and change
  *    only the label lines of the page's file, on a file whose frontmatter has a slug key, a source_kind the row's
  *    provenance column does not hold, and keys in a non-canonical order. A plain local put_page that adds the same label
- *    still lowers the page and files its proposal, as an agent edit does (trust/channel.ts). gbrain trust backfill
+ *    still lowers the page and files its proposal, as an agent edit does (trust/channel.ts). foresights trust backfill
  *    --label-lowerings lists each lower_page proposal as label-only or content, by proposer, and changes nothing.
  * 2. Fails when: a label repair lowers the tier, files a proposal, re-renders the file (a key dropped, a value or the key
  *    order changed, a provenance stamp or trust marker added), or a plain put_page stops lowering.
  * 3. Real seams: the managed-brain harness (claimed Git worktree, managed sync, the maintenance door, the Git effect),
- *    remote:false, the gbrain repair command entry; a repo-less brain with no managed persistence. PGLite, and Postgres
+ *    remote:false, the foresights repair command entry; a repo-less brain with no managed persistence. PGLite, and Postgres
  *    with DATABASE_URL.
  */
 import { describe, expect, test } from 'bun:test';

@@ -86,8 +86,8 @@ function fail(code: RegistryCode, message: string, suggestion: string, opts: OpE
 const RESUME_DOCS = 'docs/guides/company-brain-ingestion.md#resume-and-verify';
 const statusFix = (sourceId: string) => readFix(`Shows source ${sourceId}'s ingestion receipt and its outstanding phase, read-only.`, { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] });
 const ownerFix = (sourceId: string) => readFix(`Shows which host owns source ${sourceId}'s worktree and its topology, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'] });
-const resume = (sourceId: string) => `gbrain sync --source ${sourceId} --no-embed --no-pull`;
-const internal = 'This is a gbrain bug in the ingestion caller, not a problem with the source; nothing was written. Report it with gbrain --version and the source status.';
+const resume = (sourceId: string) => `foresights sync --source ${sourceId} --no-embed --no-pull`;
+const internal = 'This is a foresights bug in the ingestion caller, not a problem with the source; nothing was written. Report it with foresights --version and the source status.';
 function iso(value: string | Date): string { return new Date(value).toISOString(); }
 function receipt(row: ReceiptRow): SourceIngestionReceipt {
   return { ...row, counts: { ...emptyCounts, ...row.counts }, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),

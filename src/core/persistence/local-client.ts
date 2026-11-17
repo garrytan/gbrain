@@ -23,9 +23,9 @@ import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
 
 function noDiscoveryPath(message: string, holder: LockHolderInfo, brainId?: string): OperationError {
-  const who = holder.pid ? `process ${holder.pid}${holder.subcommand ? ` (gbrain ${holder.subcommand})` : ''}` : 'another process';
+  const who = holder.pid ? `process ${holder.pid}${holder.subcommand ? ` (foresights ${holder.subcommand})` : ''}` : 'another process';
   return opError('owner_unavailable', message,
-    `${who} holds ${brainId ? `brain ${brainId}'s` : 'this brain\'s'} PGLite lock but publishes no persistence socket, usually an older gbrain serve. Ask the user to stop or upgrade that process, then run the command again; nothing was sent to it.`,
+    `${who} holds ${brainId ? `brain ${brainId}'s` : 'this brain\'s'} PGLite lock but publishes no persistence socket, usually an older foresights serve. Ask the user to stop or upgrade that process, then run the command again; nothing was sent to it.`,
     { fix: readFix('Shows the brain\'s lock holder and persistence state, read-only.', { argv: ['gbrain', 'doctor', ...(brainId ? ['--brain', brainId] : []), '--json'] }) });
 }
 
@@ -39,7 +39,7 @@ export function persistenceConfigForBrain(
   const mount = mounts.find(candidate => candidate.id === brainId || candidate.alias === brainId);
   if (!mount || mount.enabled === false) {
     throw opError('invalid_params', `Brain '${brainId}' is not an enabled mount.`,
-      'Pass --brain host or the id or alias of an enabled mount (`gbrain mounts list --json` shows them); re-enabling a disabled mount is the user\'s call.',
+      'Pass --brain host or the id or alias of an enabled mount (`foresights mounts list --json` shows them); re-enabling a disabled mount is the user\'s call.',
       { fix: readFix('Lists mounted brains with their ids, aliases and enabled state.', { argv: ['gbrain', 'mounts', 'list', '--json'] }) });
   }
   return { engine: mount.engine, database_path: mount.database_path, database_url: mount.database_url } as GBrainConfig;
@@ -91,7 +91,7 @@ function delegatedResult(result: unknown, roomSent: boolean): LocalDelegationRes
 export const OWNER_STARTUP_WAIT_MS = 3_000;
 
 /**
- * The resident owner's capabilities. A `gbrain serve` takes the datastore lock before it binds its persistence
+ * The resident owner's capabilities. A `foresights serve` takes the datastore lock before it binds its persistence
  * socket (the MCP handshake sits in between), so a call that lands in that window finds a serve holder and no
  * socket. That is an owner starting, not an owner gone: the probe is repeated for a bounded wait while the same
  * serve still holds the lock; a holder that is not a serve, a released lock or any answer other than "no socket"

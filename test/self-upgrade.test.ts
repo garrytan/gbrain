@@ -133,9 +133,9 @@ describe('decideSelfUpgrade — pure branches', () => {
         { target: floor('1.4.0'), host: bun('1.4.0'), action: 'apply' },
         { target: floor('1.4.0'), host: bun('1.4.0+5a1b2c3'), action: 'apply' },
         { target: floor('1.4.0'), host: bun('1.5.0-canary.2'), action: 'apply' },
-        { target: floor('1.4.0'), host: bun('1.4.0-canary.9'), action: 'unsupported_runtime', reason: ['gbrain 0.43.0 requires Bun >=1.4.0', 'bun on PATH is 1.4.0-canary.9'] },
-        { target: floor('1.4.0'), host: bun('1.3.14'), action: 'unsupported_runtime', reason: ['gbrain 0.43.0 requires Bun >=1.4.0', 'bun on PATH is 1.3.14', 'Fix: bun upgrade, then gbrain upgrade'] },
-        { target: { ok: false, failedRead: '`git fetch` in the source clone failed' }, host: bun('1.4.2'), action: 'unsupported_runtime', reason: ['Could not read the Bun floor of gbrain 0.43.0', 'The next quiet-hours tick retries'] },
+        { target: floor('1.4.0'), host: bun('1.4.0-canary.9'), action: 'unsupported_runtime', reason: ['foresights 0.43.0 requires Bun >=1.4.0', 'bun on PATH is 1.4.0-canary.9'] },
+        { target: floor('1.4.0'), host: bun('1.3.14'), action: 'unsupported_runtime', reason: ['foresights 0.43.0 requires Bun >=1.4.0', 'bun on PATH is 1.3.14', 'Fix: bun upgrade, then foresights upgrade'] },
+        { target: { ok: false, failedRead: '`git fetch` in the source clone failed' }, host: bun('1.4.2'), action: 'unsupported_runtime', reason: ['Could not read the Bun floor of foresights 0.43.0', 'The next quiet-hours tick retries'] },
         { target: floor('1.4.0'), host: null, action: 'unsupported_runtime', reason: ['could not run `bun --version` on PATH'] },
       ];
       for (const c of cases) {

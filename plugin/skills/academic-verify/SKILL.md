@@ -65,7 +65,7 @@ same claim can re-use the verified analysis.
 - Not adversarial / oppo work. The point is rigor, not takedown.
 - Not generic web research — use `perplexity-research` directly for
   open-ended topic exploration.
-- Not a brain-only lookup — that's `gbrain query`.
+- Not a brain-only lookup — that's `foresights query`.
 
 ## How it works (D7/α: pure routing through perplexity-research)
 
@@ -84,7 +84,7 @@ Step 1: Scope the claim
     • Period: over what time range?
 
 Step 2: Brain-first lookup
-  gbrain query "<paper title> OR <author name> OR <claim keywords>"
+  foresights query "<paper title> OR <author name> OR <claim keywords>"
   If the brain has prior verification of this claim, reuse it.
 
 Step 3: Invoke perplexity-research with citation-mode prompt
@@ -191,11 +191,11 @@ doesn't, the trace speaks for itself.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- The brain pass (`gbrain query`) comes back empty with a degraded notice (keyword-only, embeddings off): paraphrased study titles miss on keywords, so retry with the author, journal or year before saying the brain has no prior notes on the claim.
+- The brain pass (`foresights query`) comes back empty with a degraded notice (keyword-only, embeddings off): paraphrased study titles miss on keywords, so retry with the author, journal or year before saying the brain has no prior notes on the claim.
 - The web pass through perplexity-research fails (no `PERPLEXITY_API_KEY`, `rate_limited`): mark the claim UNVERIFIED, never "false", and tell the user which step could not run; on `rate_limited` retry once after the stated delay.
-- Saving the verdict returns `write_pending` (exit 10): the write is accepted; poll `gbrain write-request <request_id>` instead of writing a second verdict page.
+- Saving the verdict returns `write_pending` (exit 10): the write is accepted; poll `foresights write-request <request_id>` instead of writing a second verdict page.
 
 ## Anti-Patterns
 

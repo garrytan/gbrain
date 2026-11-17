@@ -4,7 +4,7 @@ Measures how well a chat model repairs the facts and takes fences that the free 
 
 ## Current result
 
-Round 2, measured 2026-10-06 at gbrain `7d75e08c` (prompt version 2: a model may answer HOLD; a corrective re-ask only after gate (a) or (e); Tier 1 `stray_empty_cell`; extra text cells and split claims held before the model). Three runs per model. Gate-pass and false-accept count the fences that reach the model: 33 of the 40 held-out repairable fences (99 attempts per model) and 55 of the 66 round 1 repairable fences (165). The preregistered bar is gate-pass at least 80% and false-accept at most 1%, and a model qualifies only if it meets it on both sets; the held-out set, written before the round 2 code, decides.
+Round 2, measured 2026-10-06 at foresights `7d75e08c` (prompt version 2: a model may answer HOLD; a corrective re-ask only after gate (a) or (e); Tier 1 `stray_empty_cell`; extra text cells and split claims held before the model). Three runs per model. Gate-pass and false-accept count the fences that reach the model: 33 of the 40 held-out repairable fences (99 attempts per model) and 55 of the 66 round 1 repairable fences (165). The preregistered bar is gate-pass at least 80% and false-accept at most 1%, and a model qualifies only if it meets it on both sets; the held-out set, written before the round 2 code, decides.
 
 | Model | Held-out gate-pass | Held-out false-accept | Round 1 gate-pass | Round 1 false-accept | USD per repair | Latency p50 / p95 | Qualifies |
 |---|---|---|---|---|---|---|---|
@@ -47,7 +47,7 @@ bun evals/fence-repair-tier3/harness.ts --model default --run 1 --out results/de
 bun evals/fence-repair-tier3/harness.ts --score results/heldout-*.jsonl --json summary-heldout.json
 ```
 
-A live run sets `models.fence_repair` on its brain (unset for `default`, which resolves to the first measured model with a provider key and refuses to run when there is none), registers list prices gbrain's table lacks in `pricing.overrides` (as `gbrain pricing set` would; none today), and sets `fences.repair.max_usd_per_day` to `--max-usd`, which the daily ledger enforces as a hard ceiling. The per-page cap stays at the production default, so a call the cap cannot cover is refused exactly as in production. A provider error is retried twice after a pause, as the next maintenance run would retry it. Each result row records the tier and outcome (repaired, or held with its gate or failure class), the match against the ground truth, per-call tokens, ledger-priced USD, latency and the model's answer text.
+A live run sets `models.fence_repair` on its brain (unset for `default`, which resolves to the first measured model with a provider key and refuses to run when there is none), registers list prices foresights's table lacks in `pricing.overrides` (as `foresights pricing set` would; none today), and sets `fences.repair.max_usd_per_day` to `--max-usd`, which the daily ledger enforces as a hard ceiling. The per-page cap stays at the production default, so a call the cap cannot cover is refused exactly as in production. A provider error is retried twice after a pause, as the next maintenance run would retry it. Each result row records the tier and outcome (repaired, or held with its gate or failure class), the match against the ground truth, per-call tokens, ledger-priced USD, latency and the model's answer text.
 
 Exit codes: 0 done, 1 oracle violation, 2 infrastructure (no key or no measured model, cap reached, a fixture that already compiles).
 

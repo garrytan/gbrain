@@ -45,7 +45,7 @@ export interface SlackAccount { teamId: string; enterpriseId: string | null; tea
 
 export interface SlackChannelInfo { id: string; name: string; isPrivate: boolean; isArchived: boolean }
 
-/** A Slack message as conversations.history / conversations.replies return it (the fields gbrain reads). */
+/** A Slack message as conversations.history / conversations.replies return it (the fields foresights reads). */
 export interface SlackMessage {
   ts: string;
   type?: string;

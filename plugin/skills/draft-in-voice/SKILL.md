@@ -59,20 +59,20 @@ is worse than asking.
 
 ## Source of truth (read these FIRST, every time)
 
-1. **The validated voice profile** — `gbrain get people/<slug>-voice`. The
+1. **The validated voice profile** — `foresights get people/<slug>-voice`. The
    fingerprint, quantitative stats (median length, diction, rhythm), and the
    "how to write as this person" directive block. **This is binding.** If the
    page is missing, or its `status` is anything other than `validated` (a
    `status: stub` page, such as the empty me/voice form setup writes, is missing), STOP
    drafting and go to the builder appendix.
-2. **First-party context** — the subject's main page (`gbrain get
-   people/<slug>`) plus timeline and backlinks (`gbrain timeline <slug>`,
-   `gbrain backlinks people/<slug>`): how they actually frame their work,
+2. **First-party context** — the subject's main page (`foresights get
+   people/<slug>`) plus timeline and backlinks (`foresights timeline <slug>`,
+   `foresights backlinks people/<slug>`): how they actually frame their work,
    their origin arc, their texture. Use for *substance* so the content is
    true to how they think, not just how they sound.
 3. **(optional) Topic-specific pages** — if the draft is about a specific
-   idea or company, pull the relevant page (`gbrain search "<topic>"`, then
-   `gbrain get <slug>`) so every claim is accurate, not invented.
+   idea or company, pull the relevant page (`foresights search "<topic>"`, then
+   `foresights get <slug>`) so every claim is accurate, not invented.
 
 ## The hard rules (read them OFF the profile)
 
@@ -165,7 +165,7 @@ stops the same way drafting stops without a profile.
   samples must be short posts; launch copy needs at least a few statement-
   register samples.
 - Check what the brain already holds before asking for uploads:
-  `gbrain search "<person name>"`, `gbrain backlinks people/<slug>`, and any
+  `foresights search "<person name>"`, `foresights backlinks people/<slug>`, and any
   `media/` archives. Ingest new samples through the normal ingest skills
   first so the profile's provenance can point at real pages.
 
@@ -186,7 +186,7 @@ of the profile page:
 ### Step 3 — Write the profile page
 
 File at `people/<slug>-voice` (person-subject page per
-`_brain-filing-rules.md`), via `gbrain put people/<slug>-voice` with the page
+`_brain-filing-rules.md`), via `foresights put people/<slug>-voice` with the page
 content on stdin. Required top-of-page metadata block:
 
 ````markdown
@@ -195,7 +195,7 @@ content on stdin. Required top-of-page metadata block:
 ```yaml
 subject: people/alice-example
 status: draft            # draft | validated | stale — only `validated` unlocks drafting
-profile_version: 1       # bump on every rebuild; prior versions via `gbrain history`
+profile_version: 1       # bump on every rebuild; prior versions via `foresights history`
 built_at: 2026-08-11
 validated_at: null
 validated_by: null
@@ -223,7 +223,7 @@ provenance:
 (the binding directive block the drafting half reads)
 ````
 
-Back-link the profile from the subject's main page (`gbrain link
+Back-link the profile from the subject's main page (`foresights link
 people/alice-example people/alice-example-voice --link-type has-voice-profile`
 or the equivalent `add_link` op in your surface).
 
@@ -245,7 +245,7 @@ A profile only earns `status: validated` after it survives a blind test:
   person's public voice visibly shifted, mark `status: stale` and refresh —
   a stale profile blocks drafting the same as a missing one.
 - **Versioning:** every rebuild bumps `profile_version` and re-runs the blind
-  check. `gbrain history people/<slug>-voice` is the audit trail.
+  check. `foresights history people/<slug>-voice` is the audit trail.
 
 ## Contract
 
@@ -285,7 +285,7 @@ one-line report of corpus size, span, and validation status.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - No consent recorded on the voice profile, or `status: draft`: the skill refuses to draft by design. Ask the user to confirm who authorized the ghostwriting and for what scope.
 - The profile page returns `page_not_found` or the corpus search is empty with a degraded notice: do not draft from general knowledge; tell the user the voice memory is missing or the search was keyword-only.

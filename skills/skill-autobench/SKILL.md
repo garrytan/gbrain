@@ -42,8 +42,8 @@ upstream: skill-autobench@fc834ee + panel-integrity@fc834ee + fail-improve-loop@
 > judging pass is an explicit opt-in (see Contract).
 
 The self-improving loop has three legs: an **eval**, a **variant generator**
-(SkillOpt), and a **replay + judge harness** (`gbrain eval cross-modal`). The
-generator and the judge ship with gbrain. The persistently missing leg is the
+(SkillOpt), and a **replay + judge harness** (`foresights eval cross-modal`). The
+generator and the judge ship with foresights. The persistently missing leg is the
 **eval author** — someone has to WRITE the eval, and a spec-derived benchmark
 only tests what the skill promised, not what users actually asked for or what
 actually went wrong. This skill writes the eval from reality instead of
@@ -61,12 +61,12 @@ Substrates, in priority order:
    skill's name, trigger phrases, and output shapes:
 
    ```bash
-   gbrain search "<skill-name>"
-   gbrain query "when did I use <skill-name> and what did I ask for"
+   foresights search "<skill-name>"
+   foresights query "when did I use <skill-name> and what did I ask for"
    ```
 
 2. **Per-harness session transcripts, as available** — use what the harness
-   exposes; do not assume a layout. `gbrain transcripts recent --full` reads
+   exposes; do not assume a layout. `foresights transcripts recent --full` reads
    the configured local transcript corpus (local-only by design). Claude Code
    keeps per-project session JSONL under `~/.claude/projects/`; other
    harnesses have their own session stores. Absent stores are simply skipped.
@@ -81,7 +81,7 @@ gold signal**: it is a real, observed failure mode, and it becomes a
 target skill, emit an honest no-history report (substrates checked, queries
 run, windows scanned, zero matches) and stop. Do NOT invent "typical"
 invocations. For a skill with no history, the right tool is
-`gbrain skillopt <name> --bootstrap-from-skill` (spec-derived, and honest
+`foresights skillopt <name> --bootstrap-from-skill` (spec-derived, and honest
 about it) — see Dedup.
 
 ### 2. SYNTH — turn windows into a proposed eval
@@ -125,12 +125,12 @@ workflow contract the agent must honor, not a mechanically-enforced gate.)
 1. Human reviews, edits, and approves the staged eval; the approved
    eval_contract is merged into the skill's frontmatter explicitly.
 2. Convert approved cases into `skills/<name>/skillopt-benchmark.jsonl` lines
-   and run `gbrain skillopt <name>` — this is the SkillOpt surface extension:
+   and run `foresights skillopt <name>` — this is the SkillOpt surface extension:
    a history-grounded benchmark replacing the spec-derived bootstrap.
 3. Judge outputs through the native gate:
 
    ```bash
-   gbrain eval cross-modal --task "<what the output was meant to achieve>" --output <path>
+   foresights eval cross-modal --task "<what the output was meant to achieve>" --output <path>
    ```
 
 4. Re-run autobench after more usage accumulates; diff against the prior
@@ -152,7 +152,7 @@ assert over the result object:
    differently-named models return the same bytes, they are the same model.
    This catches a collapse even when provider metadata is missing or faked.
 
-`gbrain eval cross-modal` already exits 2 (INCONCLUSIVE) when fewer than 2/3
+`foresights eval cross-modal` already exits 2 (INCONCLUSIVE) when fewer than 2/3
 models return parseable scores; the byte-identical duplicate check and the
 distinct-endpoint check are the independent backstops this skill layers on
 top. Run them over the receipt JSON (written to the receipt dir) before
@@ -167,7 +167,7 @@ Classify each mined correction/failure case by its cheapest durable fix:
 | Class | Signal in history | Durable fix |
 |---|---|---|
 | DETERMINISTIC-CODIFIABLE | An LLM fallback repeatedly handles the same input shape (regex, parsing, slugs, dates) | Convert to deterministic code + a permanent test case. The LLM is not the solution; it is the training-data generator for the code that replaces it. |
-| PROMPT-FIXABLE | The correction targets tone, format, or an omission the SKILL.md could specify | An eval case + a `gbrain skillopt` run |
+| PROMPT-FIXABLE | The correction targets tone, format, or an omission the SKILL.md could specify | An eval case + a `foresights skillopt` run |
 | SPEC-GAP | Users consistently ask for something the spec never promised | A spec-vs-usage gap observation for the human |
 | ROUTING-MISS | The skill fired on the wrong ask, or failed to fire | A `routing-eval.jsonl` case, not a benchmark case |
 
@@ -179,7 +179,7 @@ never silently drop a mined failure.
 
 - **Input:** a skill name that exists under `skills/`.
 - **Substrates:** `conversations/` archive pages (brain-first), then
-  per-harness session transcripts as available (`gbrain transcripts recent`
+  per-harness session transcripts as available (`foresights transcripts recent`
   is local-only by design). No usable substrate → honest no-history report,
   never fabricated evidence.
 - **Output:** one staged file at `skills/<name>/eval/autobench-<date>.md`,
@@ -187,7 +187,7 @@ never silently drop a mined failure.
   to SKILL.md, triggers, or any routing surface.
 - **Cost posture:** cheap-model default for mining and synthesis. The full
   multi-model judging pass (3 provider slots per cycle) is an explicit
-  opt-in, and judging goes through native `gbrain eval cross-modal` — no
+  opt-in, and judging goes through native `foresights eval cross-modal` — no
   bespoke judging harness.
 - **Honesty:** every dimension and case carries a SPEC-DERIVED or
   HISTORY-IMPLIED label; thin history is flagged, not papered over.
@@ -227,10 +227,10 @@ failure_mode_to_catch: ...
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - No substrate yields a real invocation of the skill: FAIL-CLOSED. Report it and write no eval; never synthesize cases from imagination.
-- `gbrain eval cross-modal` or the judge run lacks a key or hits `no_pricing`: say the eval was not judged; leave the draft as PENDING-HUMAN-APPROVAL.
+- `foresights eval cross-modal` or the judge run lacks a key or hits `no_pricing`: say the eval was not judged; leave the draft as PENDING-HUMAN-APPROVAL.
 
 ## Anti-Patterns
 
@@ -244,7 +244,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   actually returned distinct, non-identical responses.
 - ❌ Calling a model inside the panel-integrity check — it is pure assertion
   logic over a result object.
-- ❌ Building a bespoke judging harness when `gbrain eval cross-modal` is the
+- ❌ Building a bespoke judging harness when `foresights eval cross-modal` is the
   native gate.
 - ❌ Staging mined cases with real people/companies in them. Placeholders
   only.
@@ -258,11 +258,11 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   surface, never duplicates it. Read the skill-optimizer SKILL.md (on the
   host, where its engine lives) before the handoff. No history at all → use
   `--bootstrap-from-skill`, not this.
-- **BrainBench (`gbrain eval` suites)** — evals the ENGINE (retrieval,
+- **BrainBench (`foresights eval` suites)** — evals the ENGINE (retrieval,
   memory conformance, calibration). This evals SKILLS over their history.
 - **`skills/skillify/SKILL.md` / `skills/skill-creator/SKILL.md`** — create
   skills from descriptions; they don't mine lived usage.
-- **`skills/cross-modal-review/SKILL.md` / `gbrain eval cross-modal`** — RUN
+- **`skills/cross-modal-review/SKILL.md` / `foresights eval cross-modal`** — RUN
   judging panels; they don't author evals. The panel-integrity assertions
   here verify their panels were real.
 - **`skills/skillpack-check/SKILL.md`** — audits skill structure/conformance,

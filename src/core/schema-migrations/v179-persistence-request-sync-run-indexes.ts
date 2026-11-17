@@ -5,7 +5,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 /**
  * #5762: index the managed sync checkpoint validation. Postgres builds each
  * index CONCURRENTLY, one at a time, after dropping an INVALID leftover (the
- * blob omits them); PGLite builds them inline. `gbrain repair request-indexes`
+ * blob omits them); PGLite builds them inline. `foresights repair request-indexes`
  * runs the same helper on a brain whose schema is already current.
  */
 export const v179: Migration = {

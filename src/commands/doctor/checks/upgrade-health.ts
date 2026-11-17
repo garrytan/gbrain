@@ -75,11 +75,11 @@ function heldAutoUpgrade(recent: SelfUpgradeAuditEvent[], runningVersion: string
  * runs on thin clients. Warn on a held auto-upgrade or recent failures,
  * otherwise ok.
  *
- * #8776: `restart` is the plan the next `gbrain upgrade` makes before it installs
+ * #8776: `restart` is the plan the next `foresights upgrade` makes before it installs
  * (commands/upgrade-restart.ts upgradeRestartReadiness), passed by the local
  * doctor only, so a remote report never carries host processes. A manual step in
  * it means that upgrade refuses: warn, naming each blocker (an autopilot started
- * outside gbrain's service, a process from another install). A hand-off to an
+ * outside foresights's service, a process from another install). A hand-off to an
  * autopilot launcher and a second Bun global install the upgrade replaces are
  * named in the message.
  */
@@ -98,7 +98,7 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
       return {
         name: 'self_upgrade_health',
         status: 'ok',
-        message: 'Self-upgrade disabled (mode=off). Enable: gbrain config set self_upgrade.mode notify',
+        message: 'Self-upgrade disabled (mode=off). Enable: foresights config set self_upgrade.mode notify',
       };
     }
 
@@ -110,7 +110,7 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
         name: 'self_upgrade_health',
         status: 'warn',
         message: `${invalidChannelMessage(resolution)} Update checks are off until it is fixed (mode=${mode}).`,
-        fix: agentFix(['gbrain', 'config', 'get', 'self_upgrade.channel'], 'Read-only: shows the configured channel; set stable or alpha with gbrain config set self_upgrade.channel <name>.', 'self_upgrade_health'),
+        fix: agentFix(['gbrain', 'config', 'get', 'self_upgrade.channel'], 'Read-only: shows the configured channel; set stable or alpha with foresights config set self_upgrade.channel <name>.', 'self_upgrade_health'),
       };
     }
     const parts: string[] = [`mode=${mode}`];
@@ -133,7 +133,7 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
       };
     }
     if (pendingLatest) {
-      parts.push(`update available: ${GBRAIN_BINARY_VERSION} -> ${pendingLatest} (run: gbrain self-upgrade)`);
+      parts.push(`update available: ${GBRAIN_BINARY_VERSION} -> ${pendingLatest} (run: foresights self-upgrade)`);
     }
     const failedVersions: string[] = cfg?.self_upgrade?.failed_versions ?? [];
     if (failedVersions.length > 0) {
@@ -156,7 +156,7 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
             'self_upgrade_health', {
               docs: 'docs/guides/upgrades-auto-update.md#known-bad-never-installed',
               then: agentFix([...CLEAR_NEVER_INSTALLED_APPLY],
-                'Removes exactly the entries the preview proved were never installed; gbrain config set self_upgrade.failed_versions puts one back.',
+                'Removes exactly the entries the preview proved were never installed; foresights config set self_upgrade.failed_versions puts one back.',
                 'self_upgrade_health'),
             }),
         };
@@ -183,7 +183,7 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
         message:
           `${failures.length} self-upgrade failure(s) in 7d (${parts.join('; ')}). ` +
           `Last: ${last.latest ?? '?'}${last.error ? ` — ${last.error}` : ''}. ` +
-          `Check ~/.gbrain/upgrade-errors.jsonl; apply manually with gbrain self-upgrade.`,
+          `Check ~/.gbrain/upgrade-errors.jsonl; apply manually with foresights self-upgrade.`,
       };
     }
 
@@ -193,13 +193,13 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
       return {
         name: 'self_upgrade_health',
         status: 'warn',
-        message: `gbrain upgrade refuses on this host: ${blockers.map((m) => m.instruction).join(' ')} (${parts.join('; ')}).`,
+        message: `foresights upgrade refuses on this host: ${blockers.map((m) => m.instruction).join(' ')} (${parts.join('; ')}).`,
         fix: autopilot
-          ? agentFix(['gbrain', 'autopilot', '--install'], 'Runs autopilot under launchd, systemd or a gbrain cron line, which every upgrade restarts; the launcher that starts it now has to be retired first.', 'self_upgrade_health', {
+          ? agentFix(['gbrain', 'autopilot', '--install'], 'Runs autopilot under launchd, systemd or a foresights cron line, which every upgrade restarts; the launcher that starts it now has to be retired first.', 'self_upgrade_health', {
             ask_user: true, docs: 'docs/guides/upgrades-auto-update.md#restart',
-            user_message: `autopilot pid ${autopilot.pid} was started outside gbrain's autopilot service, so gbrain upgrade refuses on this host. May I run gbrain autopilot --install, which runs autopilot under launchd, systemd or a gbrain cron line so upgrades restart it, after you retire whatever starts it now? If that launcher starts autopilot again within 5 minutes of it exiting, gbrain config set self_upgrade.autopilot_launcher external keeps it and lets upgrades hand autopilot to it instead.`,
+            user_message: `autopilot pid ${autopilot.pid} was started outside foresights's autopilot service, so foresights upgrade refuses on this host. May I run foresights autopilot --install, which runs autopilot under launchd, systemd or a foresights cron line so upgrades restart it, after you retire whatever starts it now? If that launcher starts autopilot again within 5 minutes of it exiting, foresights config set self_upgrade.autopilot_launcher external keeps it and lets upgrades hand autopilot to it instead.`,
           })
-          : agentFix(['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'], 'Read-only: lists every gbrain process on this host with the restart each one needs and the steps the upgrade cannot take.', 'self_upgrade_health', { docs: 'docs/guides/upgrades-auto-update.md#restart' }),
+          : agentFix(['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'], 'Read-only: lists every foresights process on this host with the restart each one needs and the steps the upgrade cannot take.', 'self_upgrade_health', { docs: 'docs/guides/upgrades-auto-update.md#restart' }),
       };
     }
     return { name: 'self_upgrade_health', status: 'ok', message: parts.join('; ') };
@@ -213,8 +213,8 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
 }
 
 /**
- * Upgrade-error trail (v0.13+). `gbrain upgrade` silently swallows
- * best-effort failures in `gbrain post-upgrade`; the failure record is
+ * Upgrade-error trail (v0.13+). `foresights upgrade` silently swallows
+ * best-effort failures in `foresights post-upgrade`; the failure record is
  * appended to `~/.gbrain/upgrade-errors.jsonl` so we can surface it here
  * with a paste-ready recovery hint. Without this, users end up with
  * half-upgraded brains and no signal.
@@ -276,7 +276,7 @@ export async function checkUpgradeErrors(
  * command for any caller that reaches doctor on an older runtime. A supported
  * runtime below SECURE_BUN_VERSION warns (#7373; none today, as the floor is
  * not below it, until a later Bun fix raises SECURE_BUN_VERSION): a standalone binary embeds
- * the Bun it was built with, so its fix is a new gbrain binary, while a bun
+ * the Bun it was built with, so its fix is a new foresights binary, while a bun
  * install runs on the user's Bun and `bun upgrade` fixes it.
  */
 export function checkBunRuntime(version = typeof Bun === 'undefined' ? '' : Bun.version, executable = process.execPath): Check {
@@ -289,13 +289,13 @@ export function checkBunRuntime(version = typeof Bun === 'undefined' ? '' : Bun.
     status: 'warn',
     message: `Bun ${version} carries the Brotli decoder flaw CVE-2026-111497, fixed in Bun ${SECURE_BUN_VERSION} (reachable through fetch() with Content-Encoding: br and the decompression APIs). `
       + (standalone
-        ? 'This gbrain binary embeds that Bun: install the latest gbrain binary (`gbrain upgrade`), then restart GBrain services. Upgrading a separately installed bun does not change it.'
-        : 'Run `bun upgrade`, then restart GBrain services.'),
+        ? 'This foresights binary embeds that Bun: install the latest foresights binary (`foresights upgrade`), then restart Foresights services. Upgrading a separately installed bun does not change it.'
+        : 'Run `bun upgrade`, then restart Foresights services.'),
     fix: {
       argv: standalone ? ['gbrain', 'upgrade'] : ['bun', 'upgrade'],
       consent: [],
       actor: 'user',
-      why: `Bun ${SECURE_BUN_VERSION} carries the Brotli fix for CVE-2026-111497; GBrain services pick it up on restart.`,
+      why: `Bun ${SECURE_BUN_VERSION} carries the Brotli fix for CVE-2026-111497; Foresights services pick it up on restart.`,
       verify: doctorVerify('bun_runtime'),
       requires_exclusive: false,
     },

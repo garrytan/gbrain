@@ -1,7 +1,7 @@
 /**
- * gbrain-client.mjs — minimal stdio MCP client for gbrain.
+ * gbrain-client.mjs — minimal stdio MCP client for foresights.
  *
- * Spawns `gbrain serve` as a long-lived child process and communicates via
+ * Spawns `foresights serve` as a long-lived child process and communicates via
  * JSON-RPC over stdio. The client is intentionally minimal: open the
  * connection once, send `initialize`, then forward tool calls. No retries,
  * no batching, no streaming results (most voice tools return small
@@ -19,7 +19,7 @@
  *
  * Configuration: `$GBRAIN_BIN` (default: `gbrain` on PATH) is the binary to
  * spawn. `$GBRAIN_BRAIN_ID` and `$GBRAIN_SOURCE` route to a specific brain
- * + source if set (see the gbrain docs/architecture/brains-and-sources.md).
+ * + source if set (see the foresights docs/architecture/brains-and-sources.md).
  */
 
 import { spawn } from 'node:child_process';
@@ -59,14 +59,14 @@ function ensureChild() {
           const { resolve, reject } = _pending.get(msg.id);
           _pending.delete(msg.id);
           if (msg.error) {
-            reject(new Error(msg.error.message || 'gbrain MCP error'));
+            reject(new Error(msg.error.message || 'foresights MCP error'));
           } else {
             resolve(msg.result);
           }
         }
         // notifications/log etc. — ignore for the v0 voice use case.
       } catch (err) {
-        // Malformed line; ignore. gbrain prints structured JSON-RPC only,
+        // Malformed line; ignore. foresights prints structured JSON-RPC only,
         // but a renegade stderr-bleed could surface here.
       }
     }
@@ -74,14 +74,14 @@ function ensureChild() {
 
   _child.stderr.setEncoding('utf8');
   _child.stderr.on('data', (chunk) => {
-    // Surface gbrain stderr to our stderr for debugging. Don't crash on it.
-    process.stderr.write(`[gbrain] ${chunk}`);
+    // Surface foresights stderr to our stderr for debugging. Don't crash on it.
+    process.stderr.write(`[foresights] ${chunk}`);
   });
 
   _child.on('exit', (code, signal) => {
     const reason = signal ? `signal ${signal}` : `code ${code}`;
     for (const [, p] of _pending) {
-      p.reject(new Error(`gbrain child exited (${reason}) with ${_pending.size} pending`));
+      p.reject(new Error(`foresights child exited (${reason}) with ${_pending.size} pending`));
     }
     _pending.clear();
     _initialized = false;
@@ -117,17 +117,17 @@ async function initIfNeeded() {
 }
 
 /**
- * Call a single gbrain operation by name with params. Returns the operation
- * result (whatever shape gbrain returns; usually a JSON-serializable object).
+ * Call a single foresights operation by name with params. Returns the operation
+ * result (whatever shape foresights returns; usually a JSON-serializable object).
  *
  * @throws {Error} on transport failure or operation error.
  */
 export async function callGbrainOp(opName, params) {
   await initIfNeeded();
-  // gbrain exposes operations as MCP "tools." The standard call is
+  // foresights exposes operations as MCP "tools." The standard call is
   // tools/call with {name, arguments}.
   const result = await rpc('tools/call', { name: opName, arguments: params || {} });
-  // gbrain returns {content: [{type:'text', text:'...JSON...'}]}; parse if needed.
+  // foresights returns {content: [{type:'text', text:'...JSON...'}]}; parse if needed.
   if (result?.content?.[0]?.type === 'text') {
     const text = result.content[0].text;
     try {
@@ -141,7 +141,7 @@ export async function callGbrainOp(opName, params) {
 
 /**
  * Test hook: stub the underlying RPC. Tests use this instead of spawning a
- * real gbrain child. Pass `null` to restore the real spawn-and-rpc path.
+ * real foresights child. Pass `null` to restore the real spawn-and-rpc path.
  */
 export function __setRpcForTests(fn) {
   if (fn === null) {

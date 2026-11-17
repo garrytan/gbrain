@@ -1,16 +1,16 @@
 /**
- * `gbrain migrate --to` refusals carry the agent contract (Foundations 2,
+ * `foresights migrate --to` refusals carry the agent contract (Foundations 2,
  * "Lane B: refusal now", refusal envelopes and refusal branches).
  *
  * Protects: the envelope an agent reads when the legacy engine copier refuses
  * a brain. The history refusal and the managed-brain refusal are `opError`s
  * with `why` and a filled `fix` that names the refusing side: a PGLite brain
  * gets the user's choice (turn graduation back on and preview the move with
- * its read-only plan, or stay on PGLite and share it with `gbrain mcp
+ * its read-only plan, or stay on PGLite and share it with `foresights mcp
  * expose`), a Postgres
  * brain moving down keeps its datastore, and a target that already holds
  * history needs an empty database. Every branch verifies read-only with
- * `gbrain doctor --no-migrate --json`. The unknown-engine error is an
+ * `foresights doctor --no-migrate --json`. The unknown-engine error is an
  * `invalid_params` opError, and the usage text names every accepted engine.
  * Fails when: a refusal goes back to a prose-only OperationError (no `fix`),
  * a branch loses its side, or the usage text drops `postgres`.
@@ -57,7 +57,7 @@ describe('history refusal names the refusing side', () => {
     expect(env.fix?.then?.argv?.slice(0, 8)).toEqual(['gbrain', 'migrate', '--to', 'postgres', '--url-env', 'GBRAIN_TARGET_URL', '--plan', '--json']);
     expect(env.fix?.then?.consent).toEqual([]);
     expect(env.fix?.user_message).toContain('preview the move to Postgres (nothing changes yet)');
-    expect(env.fix?.user_message).toContain('gbrain mcp expose');
+    expect(env.fix?.user_message).toContain('foresights mcp expose');
     expect(env.fix?.why).toContain('graduation copies it intact');
     expect(JSON.stringify(env)).not.toContain('not available yet');
     // Over MCP the CLI command is the user's to run; the choice they are asked about is unchanged.
@@ -141,7 +141,7 @@ describe('managed-brain refusal', () => {
   });
 });
 
-describe('gbrain migrate argument errors', () => {
+describe('foresights migrate argument errors', () => {
   test('an unknown engine is an invalid_params opError whose fix names the accepted engines', async () => {
     const e = await refusal(() => runMigrateEngine(engine, ['--to', 'duckdb']));
     expect(e.code).toBe('invalid_params');

@@ -11,7 +11,7 @@ export const v068: Migration = {
   //     so we can never leak a profile across the v0.34.1 source-isolation
   //     boundary. FK to sources(id) with CASCADE so source deletion cleans
   //     up the per-source profile.
-  //   - wave_version stamps every row so `gbrain calibration --undo-wave
+  //   - wave_version stamps every row so `foresights calibration --undo-wave
   //     v0.36.1.0` can reverse just this wave's writes.
   //   - published BOOL gates E8 team-brain mount sharing (D15 asymmetric
   //     opt-in). Default false: nothing leaks until owner explicitly publishes.

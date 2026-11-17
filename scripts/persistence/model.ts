@@ -29,7 +29,7 @@ import { CONNECTOR_SLUG, contextFor, retryingRead, type OpDescriptor, type OpKin
  * links is queued only for remote (untrusted) page writes; its seam is
  * exercised whenever the generator's put_page runs as a remote caller.
  * withdrawal-mirror is queued only by a pre-G4 database-first withdrawal an
- * older gbrain wrote; this binary's forget publishes through the git effect.
+ * older foresights wrote; this binary's forget publishes through the git effect.
  */
 export const EFFECT_SEAMS = {
   git: { op: 'put_page', point: EFFECT_FAULT_POINTS.git },

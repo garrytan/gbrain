@@ -440,7 +440,7 @@ if (import.meta.main) {
   const runId = Number(flag('--run-id'));
   const replayRaw = flag('--replay-issue');
   const replayIssue = replayRaw ? Number(replayRaw) : undefined;
-  const repo = flag('--repo') ?? process.env.GITHUB_REPOSITORY ?? 'garrytan/gbrain';
+  const repo = flag('--repo') ?? process.env.GITHUB_REPOSITORY ?? 'aimonk2025/gbrain';
   const dryRun = process.argv.includes('--dry-run');
   if (!Number.isInteger(runId) || runId <= 0 || (replayIssue !== undefined && (!Number.isInteger(replayIssue) || replayIssue <= 0))) {
     console.log('Usage: bun scripts/nightly-issue.ts --run-id <id> [--replay-issue <n>] [--repo owner/name] [--dry-run] [--resolve]');

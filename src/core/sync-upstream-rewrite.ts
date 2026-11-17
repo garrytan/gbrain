@@ -19,10 +19,10 @@
  * Codes: `upstream_rewritten` (the baseline is not an ancestor of the new
  * upstream: a force-push removed commits) and `upstream_unknown` (no usable
  * baseline, so a force-push cannot be told from local commits) are fixed by
- * `gbrain sources reset-upstream` after the user agrees (a merge would bring
+ * `foresights sources reset-upstream` after the user agrees (a merge would bring
  * back the commits a force-push removed); `upstream_diverged` (local commits
  * beside an upstream that moved forward normally) is fixed by
- * `gbrain git commit-push --pull`. Nothing is classified while a rebase,
+ * `foresights git commit-push --pull`. Nothing is classified while a rebase,
  * merge, cherry-pick or revert is in progress in the checkout.
  */
 import { existsSync } from 'node:fs';
@@ -200,7 +200,7 @@ export function divergenceReport(o: UpstreamDivergence): UpstreamDivergenceRepor
   const message = o.code === 'upstream_rewritten'
     ? `${where}: the upstream was rewritten (force-pushed): ${short(o.previous_upstream)}, the upstream commit this checkout last contained, is not in the new upstream ${short(o.upstream)}, so the pull cannot fast-forward. ${keeps}`
     : o.code === 'upstream_unknown'
-      ? `${where}: local HEAD ${short(o.local)} and upstream ${short(o.upstream)} have diverged and gbrain has no record of the upstream before this fetch, so it cannot tell a force-push from local commits. ${keeps}`
+      ? `${where}: local HEAD ${short(o.local)} and upstream ${short(o.upstream)} have diverged and foresights has no record of the upstream before this fetch, so it cannot tell a force-push from local commits. ${keeps}`
       : `${where}: this checkout has commits that are not on the upstream, and the upstream moved forward to ${short(o.upstream)}, so the pull cannot fast-forward. ${keeps}`;
   return { ...o, message, fix: upstreamFix(o) };
 }
@@ -224,10 +224,10 @@ export function upstreamFix(o: UpstreamDivergence): Action {
     ask_user: true, argv: reset, preview_argv: [...reset, '--dry-run'], consent: ['destructive'], actor: 'agent', requires_exclusive: true, verify: doctorVerify, docs: UPSTREAM_DOCS,
     why: o.code === 'upstream_rewritten'
       ? 'A merge would bring back the commits the force-push removed, so the checkout is reset to the new upstream instead; the reset keeps the old history under a backup ref and refuses local commits that were never on the upstream.'
-      : 'Without a record of the old upstream gbrain cannot tell whether the local-only commits were removed by a force-push or never pushed; the reset preview names any commit that was never on the upstream before anything moves.',
+      : 'Without a record of the old upstream foresights cannot tell whether the local-only commits were removed by a force-push or never pushed; the reset preview names any commit that was never on the upstream before anything moves.',
     user_message: o.code === 'upstream_rewritten'
       ? `The upstream of source ${o.source_id} was force-pushed. Reset the local checkout to the new upstream ${short(o.upstream)}? The current history (${short(o.local)}) is kept under a backup ref.`
-      : `Source ${o.source_id}'s checkout and its upstream have diverged and gbrain cannot tell why. Preview resetting it to the upstream ${short(o.upstream)}? The current history is kept under a backup ref.`,
+      : `Source ${o.source_id}'s checkout and its upstream have diverged and foresights cannot tell why. Preview resetting it to the upstream ${short(o.upstream)}? The current history is kept under a backup ref.`,
     then: followUpSync(o),
   };
 }

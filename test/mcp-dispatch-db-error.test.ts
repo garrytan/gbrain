@@ -54,7 +54,7 @@ describe('MCP dispatch DB-error envelopes', () => {
     const b = body(r);
     expect(b.error).toBe('database_error');
     expect(String(b.suggestion)).toContain('GBRAIN_DB_ACCESS conn_refused');
-    expect(String(b.suggestion)).toContain('gbrain db-repair');
+    expect(String(b.suggestion)).toContain('foresights db-repair');
     const flat = JSON.stringify(b);
     expect(flat).not.toContain('hunter2secret');
     expect(flat).not.toContain('1.2.3.4');

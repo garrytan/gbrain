@@ -41,7 +41,7 @@ test('installed hosted launcher executes the real CLI without a local brain over
   });
   const output = await new Response(child.stdout).text();
   expect(await child.exited).toBe(0);
-  expect(output).toMatch(/^gbrain \d/);
+  expect(output).toMatch(/^(?:foresights|gbrain) \d/);
   const script = readFileSync(launcher, 'utf8');
   expect(script).not.toContain('export GBRAIN_SOURCE=');
   expect(script).not.toContain('--brain host');
@@ -57,7 +57,7 @@ test.each(['postgres', 'pglite'])('call refuses on a %s thin client before conne
   }));
   const result = await runCli(['call', 'list_skills', '{}'], { home, env: { GBRAIN_REMOTE_CLIENT_SECRET: undefined } });
   expect(result.exitCode).toBe(1);
-  expect(result.stderr).toContain('`gbrain call` is not routable');
+  expect(result.stderr).toContain('`foresights call` is not routable');
   expect(result.stderr).toContain('host');
   expect(result.stderr).not.toContain('No database URL');
   expect(existsSync(databasePath)).toBe(false);

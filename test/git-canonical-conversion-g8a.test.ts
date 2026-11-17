@@ -1,5 +1,5 @@
 /**
- * G8a of git-canonical memory (docs/designs/GIT_CANONICAL_MEMORY.md#conversion): `gbrain sources canonical <id> --to git|mixed`.
+ * G8a of git-canonical memory (docs/designs/GIT_CANONICAL_MEMORY.md#conversion): `foresights sources canonical <id> --to git|mixed`.
  * A mixed source with every category present converts with the right action for each: database_ahead and undeclared
  * pages are written from the database and committed through the door (one commit per group), declared pages stay
  * database-only, a page Git moved is indexed, a held deletion and an unknown-side drift take Git's side, a parked effect
@@ -69,7 +69,7 @@ async function cli(engine: BrainEngine, args: string[]): Promise<Record<string, 
   return JSON.parse(lines.at(-1)!);
 }
 
-/** A Git effect parked on an ignored target, as an older gbrain left one (the census test's fixture, test/git-gap-census.test.ts). */
+/** A Git effect parked on an ignored target, as an older foresights left one (the census test's fixture, test/git-gap-census.test.ts). */
 async function parkIgnoredEffect(engine: BrainEngine, slug: string, code = 'git_target_ignored'): Promise<void> {
   const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
   await engine.transaction(async tx => {
@@ -806,7 +806,7 @@ for (const backend of testBackends()) describe(`[${backend}] G8a: sources canoni
     const applied = await text(['default', '--to', 'git', '--apply', '--expect', preview.preview_hash, '--no-embed', '--no-extract']);
     expect(applied).toContain('Source default is git-canonical: 0 page(s) committed in 0 door commit(s), 1 private page(s) withheld (1 removal commit(s))');
     expect(applied).toContain("Push pending (git_push_unavailable): The conversion's door commits are committed locally");
-    expect(applied).toContain(`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${brain.root}`);
+    expect(applied).toContain(`foresights git commit-push --push-only --keep-checkout --scan-secrets --path ${brain.root}`);
   }, { databaseUrl, setup: closedRemoteSetup }), 180_000);
 
   test('work that lands after the strict-equivalent pass leaves the source strict and reports incomplete', () => managedBrain(async brain => {

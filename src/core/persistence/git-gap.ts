@@ -1,6 +1,6 @@
 /**
  * Git-canonical memory, wave G1 (docs/designs/GIT_CANONICAL_MEMORY.md): the read-only pieces the git-gap census
- * (`gbrain sources git-gap`, commands/sources-git-gap.ts) and doctor `db_ahead_of_git` share. The one predicate for which
+ * (`foresights sources git-gap`, commands/sources-git-gap.ts) and doctor `db_ahead_of_git` share. The one predicate for which
  * pages may have a tracked file (`declaredDatabaseOnly`), the equality contract between a page's export view
  * (readExportPage, so fact withdrawals are overlaid) and a committed blob, and filter-free reads of HEAD and the working
  * tree. Git runs only as hardened plumbing (`ls-tree`, `cat-file --batch`, `check-ignore`, `rev-parse`), which never runs
@@ -39,7 +39,7 @@ export type DeclaredClass = typeof DECLARED_CLASSES[number];
 export interface GitHomePolicy { mirror: boolean; databaseOnlySource?: boolean; dbOnly: (slug: string) => boolean; ignored: ReadonlySet<string> }
 
 /**
- * Why a page may not have a tracked file, or null when it may. gbrain never writes a read-only mirror's checkout (#5409);
+ * Why a page may not have a tracked file, or null when it may. foresights never writes a read-only mirror's checkout (#5409);
  * private and alias-private pages never reach a remote; a page the database keeps on purpose (`database_only_reason`) or
  * under a `storage.db_only` prefix stays there; a derive-phase page that never recorded a file (page-prepare.ts
  * `isNeverFiledDerivedPage`, DERIVE_PHASE_DB_ONLY_DEFAULTS) publishes database-only; a path the checkout's Git ignores

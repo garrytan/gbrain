@@ -1,5 +1,5 @@
 /**
- * bootstrap-harness.serial.test.ts — `gbrain bootstrap harness` (#4043)
+ * bootstrap-harness.serial.test.ts — `foresights bootstrap harness` (#4043)
  * orchestration contracts, against applyHarness/removeHarness/statusHarness
  * with fully injected deps (no engine, no network, no real CLIs):
  *
@@ -334,7 +334,7 @@ describe('full apply', () => {
     const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
     expect(cmd).toContain('GBRAIN_HOOK_LANE=harness');
     expect(cmd).toContain('GBRAIN_SOURCE=default');
-    // #8428: the harness lane's hooks start gbrain through the launcher in its own directory, never the session's.
+    // #8428: the harness lane's hooks start foresights through the launcher in its own directory, never the session's.
     expect(cmd).toContain(`${hookLauncherPath(f.home)} /opt/fake/gbrain hook`);
     expect(hooksJson).toContain(hookLauncherPath(f.home));
 
@@ -457,7 +457,7 @@ describe('full apply', () => {
     const f = makeFake();
     const code = await applyHarness(flags(['--url', 'http://192.168.1.50:3131/mcp']), f.deps);
     expect(code).toBe(2);
-    expect(f.err.join('\n')).toMatch(/gbrain connect/);
+    expect(f.err.join('\n')).toMatch(/(?:foresights|gbrain) connect/);
     const f2 = makeFake();
     const code2 = await applyHarness(
       flags(['--url', 'http://192.168.1.50:3131/mcp', '--token', TOKEN_A, '--harness', 'codex']),
@@ -513,7 +513,7 @@ describe('full apply', () => {
     const f = makeFake({ health: { ok: false } });
     const code = await applyHarness(flags(), f.deps);
     expect(code).toBe(1);
-    expect(f.err.join('\n')).toMatch(/no healthy gbrain serve/);
+    expect(f.err.join('\n')).toMatch(/no healthy (?:foresights|gbrain) serve/);
     expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
   });
 
@@ -663,7 +663,7 @@ describe('--status', () => {
     const code = await statusHarness(parseHarnessArgs(['--status']), f.deps);
     expect(code).toBe(0);
     expect(f.out.join('\n')).toMatch(/token: OK .*codex config block/);
-    expect(f.out.join('\n')).toMatch(/needs a running gbrain serve on Postgres/);
+    expect(f.out.join('\n')).toMatch(/needs a running (?:foresights|gbrain) serve on Postgres/);
   });
 
   test('revoked-under-a-green-receipt: token verify fails → exit 1', async () => {
@@ -762,7 +762,7 @@ describe('outside-voice hardening (X-batch)', () => {
   // a failed lookup is never papered over with 'default'.
   test("a typo'd --source fails loudly before any mint or receipt (wave review)", async () => {
     const f = makeFake({
-      hookSourceError: new SourceTargetError('Source "wikk" not found or is archived. Available active sources: run `gbrain sources list`.'),
+      hookSourceError: new SourceTargetError('Source "wikk" not found or is archived. Available active sources: run `foresights sources list`.'),
     });
     await expect(applyHarness(flags(['--harness', 'codex', '--source', 'wikk']), f.deps)).rejects.toThrow(/wikk/);
     expect(f.mintCalls).toHaveLength(0);
@@ -790,7 +790,7 @@ describe('outside-voice hardening (X-batch)', () => {
   test('live PGLite serve + no token + no --source: the LIVE_SERVE refusal with both escape hatches, before any mint', async () => {
     const f = makeFake({
       pgliteLive: true,
-      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+      hookSourceError: new Error("Foresights's local database is already open through `foresights serve` (MCP, PID 4242)."),
     });
     await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.toThrow(/pre-mint.*--token|stop the serve/);
     await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.not.toThrow(/pass --source/);
@@ -802,7 +802,7 @@ describe('outside-voice hardening (X-batch)', () => {
   test('LIVE_SERVE refusal prints the stop/mint/rescope/start/--token sequence with the full harness grant', async () => {
     const f = makeFake({
       pgliteLive: true,
-      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+      hookSourceError: new Error("Foresights's local database is already open through `foresights serve` (MCP, PID 4242)."),
     });
     const err = await applyHarness(flags(['--harness', 'codex']), f.deps).then(() => null, (e: unknown) => e as { code: string; message: string; details: { steps: string[]; scopes: string[]; operations: string[] } });
     expect(err?.code).toBe('LIVE_SERVE');
@@ -814,10 +814,10 @@ describe('outside-voice hardening (X-batch)', () => {
     expect(operations.filter(name => byName.get(name)?.localOnly || !['read', 'write'].includes(byName.get(name)?.scope ?? ''))).toEqual([]);
     expect(steps).toEqual([
       'stop the serve that holds this brain',
-      'gbrain auth create bootstrap-harness --scopes read,write,skills_member_self',
-      `gbrain auth rescope --token bootstrap-harness --operations ${operations.join(',')}`,
-      'start `gbrain serve --http` again',
-      're-run this `gbrain bootstrap harness` command with --token <the token step 2 printed>',
+      'foresights auth create bootstrap-harness --scopes read,write,skills_member_self',
+      `foresights auth rescope --token bootstrap-harness --operations ${operations.join(',')}`,
+      'start `foresights serve --http` again',
+      're-run this `foresights bootstrap harness` command with --token <the token step 2 printed>',
     ]);
     for (const step of steps) expect(err!.message).toContain(step);
     expect(f.mintCalls).toHaveLength(0);
@@ -828,15 +828,15 @@ describe('outside-voice hardening (X-batch)', () => {
     const err = await applyHarness(flags(['--harness', 'codex', '--skills', 'memory-only', '--source', 'wiki', '--token-name', 'hx']), f.deps)
       .then(() => null, (e: unknown) => e as { code: string; details: { steps: string[]; operations: string[] } });
     expect(err?.code).toBe('LIVE_SERVE');
-    expect(err!.details.steps[1]).toBe('gbrain auth create hx --scopes read,write');
-    expect(err!.details.steps[2]).toMatch(/^gbrain auth rescope --token hx --operations \S+ --sources wiki$/);
+    expect(err!.details.steps[1]).toBe('foresights auth create hx --scopes read,write');
+    expect(err!.details.steps[2]).toMatch(/^(?:foresights|gbrain) auth rescope --token hx --operations \S+ --sources wiki$/);
     expect(err!.details.operations).not.toContain('join_brain');
   });
 
   test('live PGLite serve + --token + no --source: wires unpinned with a warning (the documented PGLite lane)', async () => {
     const f = makeFake({
       pgliteLive: true,
-      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+      hookSourceError: new Error("Foresights's local database is already open through `foresights serve` (MCP, PID 4242)."),
     });
     expect(await applyHarness(flags(['--harness', 'claude-code', '--token', TOKEN_A]), f.deps)).toBe(0);
     expect(f.mintCalls).toHaveLength(0);
@@ -1180,7 +1180,7 @@ describe('outside-voice hardening (X-batch)', () => {
       opencodeConfig: '/u/opencode.jsonc',
     });
     expect(block).toMatch(/EVERY opencode session/);
-    expect(block).toMatch(/mcp\.gbrain remote entry with the bearer token INLINE/);
+    expect(block).toMatch(/mcp\.(?:foresights|gbrain) remote entry with the bearer token INLINE/);
     expect(block).toMatch(/\{env:…\} interpolation would resolve empty/);
     expect(block).toMatch(/edit the opencode config/);
     expect(block).not.toMatch(/Claude Code session/);
@@ -1279,7 +1279,7 @@ describe('parse helpers', () => {
   });
 
   test('parseCodexBlockBearer legacy fallback: pre-#4574 bearer_token blocks still recover', () => {
-    // Machines wired by older gbrain carry `bearer_token = "<t>"` — status
+    // Machines wired by older foresights carry `bearer_token = "<t>"` — status
     // and rotation must still read the token so the next apply can fix them.
     const legacy = [
       CODEX_TOML_BLOCK_BEGIN,
@@ -1339,9 +1339,9 @@ describe('parse helpers', () => {
 });
 
 describe('plugin-lane collision WARN on the codex wire (never a refusal)', () => {
-  test('pre-existing enabled gbrain plugin → loud WARNING, managed block still written', async () => {
+  test('pre-existing enabled foresights plugin → loud WARNING, managed block still written', async () => {
     const f = makeFake();
-    // Seed the codex config with an ENABLED gbrain plugin BEFORE the wire —
+    // Seed the codex config with an ENABLED foresights plugin BEFORE the wire —
     // the harness lane (HTTP, framework-spawned sessions) may legitimately
     // coexist with the plugin's stdio serve, so the wire proceeds.
     writeFileSync(f.codexConfig, '[plugins."gbrain@gbrain"]\nenabled = true\n');
@@ -1350,7 +1350,7 @@ describe('plugin-lane collision WARN on the codex wire (never a refusal)', () =>
     const warn = f.err.find((l) => l.includes('codex plugin also provides an MCP server'));
     expect(warn).toBeDefined();
     expect(warn).toContain("'gbrain@gbrain'");
-    expect(warn).toContain('codex plugin remove gbrain');
+    expect(warn).toContain('codex plugin remove foresights');
     // Write proceeded: the managed block landed next to the plugin entry.
     const toml = readFileSync(f.codexConfig, 'utf8');
     expect(toml).toContain(CODEX_TOML_BLOCK_BEGIN);
@@ -1383,7 +1383,7 @@ describe('opencode harness target (managed JSONC entry)', () => {
     expect(t?.mechanism).toBe('jsonc-entry');
     // No opencode CLI is ever execed — the writer IS the mechanism.
     expect(f.calls.some((argv) => argv[0] === 'opencode')).toBe(false);
-    expect(f.out.join('\n')).toMatch(/opencode wired: mcp\.gbrain remote entry/);
+    expect(f.out.join('\n')).toMatch(/opencode wired: mcp\.(?:foresights|gbrain) remote entry/);
     expect(f.out.join('\n')).toMatch(/Restart opencode/);
   });
 
@@ -1608,7 +1608,7 @@ describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () =>
     expect(readFileSync(agentsPath(f), 'utf8')).toBe(`# agents\n${renderBrainFirstSnippet('codex', { kind: 'mcp', server: 'gbrain' })}`);
     expect(instrTargets(f.home)).toEqual([]);
     expect(f.out.join('\n')).toMatch(
-      /ambient writeback off — enable with `gbrain config set memory\.auto_writeback salient` and re-run\./,
+      /ambient writeback off — enable with `(?:foresights|gbrain) config set memory\.auto_writeback salient` and re-run\./,
     );
   });
 
@@ -1658,7 +1658,7 @@ describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () =>
     const err = f.err.join('\n');
     expect(err).toMatch(PRIVATE_WARN);
     expect(err).toContain('cannot recall');
-    expect(err).toContain('gbrain config set facts.default_visibility world');
+    expect(err).toContain('foresights config set facts.default_visibility world');
     // The installed block states the same consequence to the agent.
     expect(readFileSync(memoryPath(f), 'utf8')).toContain('cannot recall or forget a fact you save as private');
   });
@@ -1895,7 +1895,7 @@ describe('harness hooks without their marker (#6092, #6171)', () => {
     stripMarkers(f.userSettings);
     f.out.length = 0;
     await statusHarness(parseHarnessArgs(['--status']), f.deps);
-    expect(f.out.join('\n')).toContain(`hook entries in ${f.userSettings}: 5 gbrain (5 without the _gbrain marker)`);
+    expect(f.out.join('\n')).toContain(`hook entries in ${f.userSettings}: 5 foresights (5 without the _gbrain marker)`);
   });
 });
 
@@ -1947,7 +1947,7 @@ describe('--token on PGLite with no serve answering: pending_verify (#6661)', ()
     const f = makeFake({ health: { ok: false }, pgliteLive: true });
     f.deps.loadFileConfig = pglite;
     expect(await applyHarness(flags(['--harness', 'codex', '--port', '9999', '--token', TOKEN_A]), f.deps)).toBe(1);
-    expect(f.err.join('\n')).toMatch(/no healthy gbrain serve/);
+    expect(f.err.join('\n')).toMatch(/no healthy (?:foresights|gbrain) serve/);
     expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
   });
 
@@ -1963,7 +1963,7 @@ describe('--token on PGLite with no serve answering: pending_verify (#6661)', ()
     answered.deps.fetchFn = (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
     expect(await applyHarness(flags(['--harness', 'codex', '--token', TOKEN_A]), answered.deps)).toBe(1);
     for (const f of [noToken, postgres, answered]) {
-      expect(f.err.join('\n')).toMatch(/no healthy gbrain serve/);
+      expect(f.err.join('\n')).toMatch(/no healthy (?:foresights|gbrain) serve/);
       expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
     }
   });

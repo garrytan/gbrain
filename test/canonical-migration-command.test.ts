@@ -34,15 +34,15 @@ const SRC = join(import.meta.dir, '..', 'src');
 describe('canonical migration command (single home: ai/defaults.ts)', () => {
   test('renderer contract', () => {
     const bare = renderCanonicalMigrationCommands();
-    expect(bare.recommended).toBe('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024');
-    expect(bare.recommendedDryRun).toBe('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run');
+    expect(bare.recommended).toBe('foresights migrate embeddings --to voyage:voyage-4 --dim 1024');
+    expect(bare.recommendedDryRun).toBe('foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run');
     expect(bare.openaiAlternative).toBeNull();
     expect(bare.note).toBeNull();
 
     const legacy = renderCanonicalMigrationCommands({ colDims: 1280 });
     expect(legacy.recommendedDryRun).toContain('--dim 1024');
     expect(legacy.note).toContain('256/512/1024/2048');
-    expect(legacy.openaiAlternative).toBe('gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1280 --dry-run');
+    expect(legacy.openaiAlternative).toBe('foresights migrate embeddings --to openai:text-embedding-3-small --dim 1280 --dry-run');
 
     const already = renderCanonicalMigrationCommands({ colDims: 1024 });
     expect(already.note).toBeNull();

@@ -1,5 +1,5 @@
 /**
- * #7073: `gbrain google status` and `gbrain google setup` probe Gmail,
+ * #7073: `foresights google status` and `foresights google setup` probe Gmail,
  * Calendar and People together and name every disabled API (project, API,
  * the console link from Google's error body) and missing scope in one report
  * with an agent-protocol fix. Setup stops before registering a source.
@@ -78,7 +78,7 @@ async function run(fn: () => Promise<void>): Promise<{ out: string; err: string;
 
 const env = (dir: string) => ({ GBRAIN_HOME: dir, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined });
 
-describe('#7073 gbrain google status probes every service at once', () => {
+describe('#7073 foresights google status probes every service at once', () => {
   test('Gmail and People disabled: one account report lists both with project and link, ok:false, exit 1', async () => {
     disabledApis = new Set(['gmail', 'people']);
     const dir = home();
@@ -114,7 +114,7 @@ describe('#7073 gbrain google status probes every service at once', () => {
   });
 });
 
-describe('#7073 gbrain google setup probes before registering anything', () => {
+describe('#7073 foresights google setup probes before registering anything', () => {
   test('two disabled APIs and an ungranted scope stop setup with one report and exit 2', async () => {
     disabledApis = new Set(['gmail', 'people']);
     const dir = home(SCOPES.filter(s => !s.includes('calendar')));
@@ -132,7 +132,7 @@ describe('#7073 gbrain google setup probes before registering anything', () => {
     expect(r.err).toContain('[SHOW USER]');
     expect(r.err).toContain('next: ask_user');
     expect(r.err).toContain(`People API (people.googleapis.com) is disabled for Google Cloud project ${PROJECT}. Enable it: ${enableUrl('people.googleapis.com')}`);
-    expect(r.err).toContain(`gbrain google setup --account ${ACCOUNT} --services gmail,calendar`);
+    expect(r.err).toContain(`foresights google setup --account ${ACCOUNT} --services gmail,calendar`);
     expect(r.err).not.toContain('Registered source');
     expect(r.verdict).toBe(2);
   });

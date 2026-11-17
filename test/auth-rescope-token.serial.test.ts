@@ -1,5 +1,5 @@
 /**
- * #5231 / #5893 (O-DX-4, O-ENG-7): `gbrain auth rescope-token` run as a real
+ * #5231 / #5893 (O-DX-4, O-ENG-7): `foresights auth rescope-token` run as a real
  * CLI subprocess against a sandboxed PGLite brain, then enforced in process.
  *
  * Protects: `none` stores an explicit empty list that both HTTP auth paths

@@ -467,7 +467,7 @@ describe('runFactsBackstop — sync.write_through opt-out', () => {
 // reader of that value — it must honor every value the ctx union permits, not
 // collapse everything but 'high-only' to 'all'. Drive the registered handler
 // directly with a queued 'medium-and-up' payload (reachable at stock master via
-// `gbrain jobs submit facts-absorb --params ...`).
+// `foresights jobs submit facts-absorb --params ...`).
 describe('facts-absorb minion handler honors the queued notabilityFilter (#4870)', () => {
   test("a queued 'medium-and-up' payload persists high+medium and drops low", async () => {
     const worker = new MinionWorker(engine, { queue: 'test' });

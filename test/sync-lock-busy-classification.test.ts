@@ -217,7 +217,7 @@ describe('formatLockBusyMessage', () => {
       const msg = await formatLockBusyMessage(engine, lockKey);
       expect(msg).toContain(`lock ${lockKey} held by pid ${process.pid} on ${hostname()}`);
       expect(msg).toContain('--break-lock');
-      expect(msg).toContain(`gbrain sync --break-lock --source msgsrc`);
+      expect(msg).toContain(`foresights sync --break-lock --source msgsrc`);
     } finally {
       await held!.release();
     }
@@ -238,7 +238,7 @@ describe('formatLockBusyMessage', () => {
     const msg = await formatLockBusyMessage(poisoned, lockKey);
     expect(msg).toBe(
       `Another sync is in progress (lock ${lockKey} held). ` +
-        `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`,
+        `Wait for it to finish, or run 'foresights doctor' if it has been more than 30 minutes.`,
     );
     // Control: the degraded message carries no holder detail / remediation.
     expect(msg).not.toContain('--break-lock');

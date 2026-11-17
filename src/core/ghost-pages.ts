@@ -35,7 +35,7 @@
  * whose recorded non-Markdown path cannot be placed inside the source (absolute, `..`, NUL) is never a ghost: it is
  * reported apart (`unresolvable`, code `recorded_path_unresolvable`) and never removed.
  *
- * Readers: doctor `ghost_pages`, `gbrain pages ghosts` and `gbrain repair
+ * Readers: doctor `ghost_pages`, `foresights pages ghosts` and `foresights repair
  * ghost-pages` (`scanGhostSource`, `ghostPageNow`), and the read-scope MCP
  * health op (`readGhostPages`, counts only for remote callers).
  */

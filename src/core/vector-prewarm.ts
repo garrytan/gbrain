@@ -4,7 +4,7 @@
  * A search whose embedding has not been seen walks HNSW pages nobody has read
  * since the last restart or eviction: on a brain whose index exceeds the cache
  * that is 2-4.5k uncached index pages and 1.2-2.7 s of first-touch vector time.
- * `gbrain embeddings prewarm` (and `serve.vector_prewarm` at serve start) loads
+ * `foresights embeddings prewarm` (and `serve.vector_prewarm` at serve start) loads
  * every HNSW index of the brain's schema into shared_buffers with
  * pg_prewarm(..., 'buffer') once, so later searches find those pages cached.
  *
@@ -161,13 +161,13 @@ export async function runVectorPrewarm(engine: BrainEngine, opts: { dryRun?: boo
 
 /** serve.vector_prewarm: one prewarm after the serve boots, logged; a refusal or failure is logged and never stops the serve. */
 export async function prewarmAtServeStart(engine: BrainEngine, log: (line: string) => void): Promise<void> {
-  if (engine.kind !== 'postgres') { log('[gbrain serve] vector prewarm: skipped (Postgres only; this brain is PGLite)'); return; }
+  if (engine.kind !== 'postgres') { log('[foresights serve] vector prewarm: skipped (Postgres only; this brain is PGLite)'); return; }
   try {
     const r = await runVectorPrewarm(engine);
     const blocks = r.loaded.reduce((sum, l) => sum + l.blocks, 0);
-    log(`[gbrain serve] vector prewarm: loaded ${r.loaded.length} index(es), ${mb(blocks * 8192)}, into shared_buffers in ${(r.elapsed_ms / 1000).toFixed(1)} s`);
+    log(`[foresights serve] vector prewarm: loaded ${r.loaded.length} index(es), ${mb(blocks * 8192)}, into shared_buffers in ${(r.elapsed_ms / 1000).toFixed(1)} s`);
   } catch (error) {
     const e = error as { code?: string; message?: string };
-    log(`[gbrain serve] vector prewarm: skipped (${e.code ?? 'error'}): ${e.message ?? String(error)}`);
+    log(`[foresights serve] vector prewarm: skipped (${e.code ?? 'error'}): ${e.message ?? String(error)}`);
   }
 }

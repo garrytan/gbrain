@@ -1,5 +1,5 @@
 /**
- * #6727: an older gbrain imported a file under its raw path as the slug and recorded no origin (`source_path` NULL). The
+ * #6727: an older foresights imported a file under its raw path as the slug and recorded no origin (`source_path` NULL). The
  * current fold gives the same file another slug; with no page there, managed sync used to insert a second live page for
  * the same file. Now the one legacy page that folds to the file's slug is taken over (same id, slug and links) and records
  * the file; several such pages, or one whose slug the importer would lowercase, hold the file `legacy_slug_conflict`.
@@ -45,7 +45,7 @@ const each = (fn: (engine: BrainEngine) => Promise<void>) => withEnv(env, async 
 });
 
 /**
- * A managed source whose files an older gbrain imported under raw-path slugs: the files are imported, then each page's
+ * A managed source whose files an older foresights imported under raw-path slugs: the files are imported, then each page's
  * slug is set back to its file's path without the extension, lowercased as the importer always wrote it (`rawCase` keeps
  * the path's case, a slug no importer writes), its origin and import record are dropped, and the source's checkpoint is
  * cleared so the next sync walks the whole tree, as a catch-up after an upgrade does. `extra` adds legacy rows no file
@@ -167,7 +167,7 @@ test('#6729 x #6727 a legacy page whose explicit frontmatter id differs from the
   expect(fix.docs).toBe('docs/guides/write-refusals.md#legacy_slug_conflict-explicit_id_conflict');
   expect(readFileSync(join(import.meta.dir, '..', 'docs/guides/write-refusals.md'), 'utf8')).toContain('<a id="legacy_slug_conflict-explicit_id_conflict"></a>');
   expect(fix.user_message).toContain("give the file the page's id");
-  expect(fix.user_message).toContain(`gbrain delete --source ${s.id} -- 'notes/foo bar'`);
+  expect(fix.user_message).toContain(`foresights delete --source ${s.id} -- 'notes/foo bar'`);
   expect(fix.then?.argv).toEqual(['gbrain', 'sync', '--source', s.id, '--no-pull']);
   writeFileSync(join(s.root, 'notes/Foo Bar.md'), '---\ntitle: Foo Bar\nid: doc-b\n---\nA synthetic observation.\n');
   git(s.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'same id');

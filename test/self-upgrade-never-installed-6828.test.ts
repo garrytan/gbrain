@@ -8,7 +8,7 @@
  * Protects: `neverInstalledFailedVersions` clears only entries the audit
  * proves were never installed (the swap row and the relaunch's
  * crash-on-launch row ran the same version; the version never ran; the last
- * recorded upgrade did not install it); `gbrain self-upgrade
+ * recorded upgrade did not install it); `foresights self-upgrade
  * --clear-never-installed` previews by default and `--apply` removes exactly
  * those entries; doctor's self_upgrade_health names the preview as its fix
  * with the apply as the next step. The audit rows below are the strings the
@@ -77,7 +77,7 @@ describe('neverInstalledFailedVersions (pure)', () => {
     const rollback = rows.map((e, i) => (i === 2 ? { ...e, current: '0.60.256.0' } : e));
     expect(neverInstalledFailedVersions([B], rollback, rec)).toEqual([]);
     // A swap that failed outright (the install step exited non-zero) proves nothing about the disk.
-    const swapFailed = [rows[0], { ...rows[1], outcome: 'failed', reason: undefined, error: 'Command failed: gbrain upgrade --swap-only' }];
+    const swapFailed = [rows[0], { ...rows[1], outcome: 'failed', reason: undefined, error: 'Command failed: foresights upgrade --swap-only' }];
     expect(neverInstalledFailedVersions([B], swapFailed, rec)).toEqual([]);
     // A second failure for the same version: keep it.
     expect(neverInstalledFailedVersions([B], [...rows, ...swapFailed.map((e) => ({ ...e, ts: e.ts.replace('T05', 'T07') }))], rec)).toEqual([]);
@@ -98,7 +98,7 @@ async function withRecoveryHome(fn: (ctx: { failedVersions: () => string[]; run:
       // The no-op swap overwrote last_upgrade with A -> A.
       writeFileSync(join(dir, '.gbrain', 'upgrade-state.json'), JSON.stringify({ last_upgrade: { from: A, to: A, ts: '2026-10-16T05:01:30.000Z' } }));
       for (const row of noOpSwapRows(A, B, 5)) logSelfUpgrade(row as Parameters<typeof logSelfUpgrade>[0]);
-      logSelfUpgrade({ ts: '2026-10-01T01:00:00.000Z', channel: 'autopilot', action: 'apply', current: '0.59.0.0', latest: UNPROVEN, outcome: 'failed', error: 'Command failed: gbrain upgrade --swap-only' });
+      logSelfUpgrade({ ts: '2026-10-01T01:00:00.000Z', channel: 'autopilot', action: 'apply', current: '0.59.0.0', latest: UNPROVEN, outcome: 'failed', error: 'Command failed: foresights upgrade --swap-only' });
       await fn({
         failedVersions: () => JSON.parse(readFileSync(join(dir, '.gbrain', 'config.json'), 'utf8')).self_upgrade.failed_versions,
         run: async (args) => {
@@ -114,7 +114,7 @@ async function withRecoveryHome(fn: (ctx: { failedVersions: () => string[]; run:
   }
 }
 
-describe('gbrain self-upgrade --clear-never-installed and doctor', () => {
+describe('foresights self-upgrade --clear-never-installed and doctor', () => {
   test('doctor names the preview as the fix and the apply as the next step', async () => {
     await withRecoveryHome(async () => {
       const c = checkSelfUpgradeHealth();
@@ -139,7 +139,7 @@ describe('gbrain self-upgrade --clear-never-installed and doctor', () => {
 
       const human = await run(['--clear-never-installed']);
       expect(human).toContain(`${B}: the swap at 2026-10-16T05:02:00.000Z left ${A} running`);
-      expect(human).toContain('Clear them: gbrain self-upgrade --clear-never-installed --apply');
+      expect(human).toContain('Clear them: foresights self-upgrade --clear-never-installed --apply');
       expect(failedVersions()).toEqual([B, UNPROVEN]);
 
       expect(await run(['--clear-never-installed', '--apply'])).toContain('Cleared known-bad versions that were never installed:');

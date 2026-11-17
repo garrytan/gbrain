@@ -102,8 +102,8 @@ describe('#5877 connector renders', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('have no links in either direction');
     expect(check.message).not.toContain('no inbound links');
-    expect(check.message).toContain('Run: gbrain extract links --by-mention --source db --source-id notes-example');
-    expect(check.message).toContain('Run gbrain orphans --source notes-example for the list.');
+    expect(check.message).toContain('Run: foresights extract links --by-mention --source db --source-id notes-example');
+    expect(check.message).toContain('Run foresights orphans --source notes-example for the list.');
     expect(check.details).toEqual({ connector_renders_excluded: 0 });
   }, 60_000);
 });

@@ -8,7 +8,7 @@ import { MIGRATION_STATE_KEY, readMigrationState, type EmbeddingMigrationPlan, t
 import type { DbLockHandle } from './db-lock.ts';
 
 export const EMBEDDING_BUDGET_BELOW_WORST_CASE = 'embedding_budget_below_worst_case';
-export const EMBEDDING_BUDGET_REFUSAL_DOCS = 'https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#embedding_budget_below_worst_case';
+export const EMBEDDING_BUDGET_REFUSAL_DOCS = 'https://github.com/aimonk2025/gbrain/blob/master/docs/guides/write-refusals.md#embedding_budget_below_worst_case';
 const USD_EPSILON = 1e-9;
 
 /** Σ maximum input over the planned requests, from the same batcher the run dispatches through. `usd` is null only when the embedding model is unpriced. */
@@ -34,7 +34,7 @@ export class MigrationBudgetRefusal extends Error {
   readonly details: MigrationBudgetRefusalDetails;
   constructor(plan: EmbeddingMigrationPlan, cap: number, worst: number, debited: number) {
     const required = ceilCents(worst + debited);
-    const suggestion = `gbrain migrate embeddings --to ${plan.to_model} --dim ${plan.to_dims} --max-cost-usd ${required.toFixed(2)} --yes`;
+    const suggestion = `foresights migrate embeddings --to ${plan.to_model} --dim ${plan.to_dims} --max-cost-usd ${required.toFixed(2)} --yes`;
     const message = `Migration refused before any change (${EMBEDDING_BUDGET_BELOW_WORST_CASE}): the cap is $${cap} (--max-cost-usd), `
       + `but the worst-case authorization is $${ceilCents(worst).toFixed(2)}${debited > 0 ? ` on top of $${debited.toFixed(4)} already debited` : ''}. `
       + `No provider request was sent and no vector was dropped. Raise the cap to at least $${required.toFixed(2)}: ${suggestion}`;
@@ -194,7 +194,7 @@ export async function authorizeMigrationBudget(engine: BrainEngine, plan: Embedd
       const budget = current.budget;
       if (!budgetIsValid(budget)) throw new Error('Migration authorization is corrupt; no request dispatched');
       if (budget.halted) {
-        throw new Error(`Migration dispatch stopped: provider usage exceeded its reservation by $${(budget.overshoot_usd ?? 0).toFixed(6)} (recorded as overshoot). No request dispatched. Inspect gbrain migrate embeddings --status, then re-run with --max-cost-usd to renew dispatch.`);
+        throw new Error(`Migration dispatch stopped: provider usage exceeded its reservation by $${(budget.overshoot_usd ?? 0).toFixed(6)} (recorded as overshoot). No request dispatched. Inspect foresights migrate embeddings --status, then re-run with --max-cost-usd to renew dispatch.`);
       }
       if (budget.debited_usd + reserved > budget.max_cost_usd + USD_EPSILON) {
         throw new Error(`Migration authorization exhausted: this request needs up to $${reserved.toFixed(6)} at its maximum input size, but $${budget.debited_usd.toFixed(6)} of the $${budget.max_cost_usd} cap (--max-cost-usd) is already debited. No request dispatched. Raise --max-cost-usd to renew; prior debits remain.`);

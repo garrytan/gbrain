@@ -1,5 +1,5 @@
 /**
- * v0.41.39 (issue #1700) — pure helpers for `gbrain enrich --thin`.
+ * v0.41.39 (issue #1700) — pure helpers for `foresights enrich --thin`.
  *
  * No I/O. The brain-internal grounded-synthesis engine lives in
  * `src/commands/enrich.ts`; this module holds the deterministic pieces it
@@ -7,7 +7,7 @@
  * prompt builder (with prompt-injection sanitization of retrieved context),
  * and the synthesis-output parser (SKIP sentinel detection + body extraction).
  *
- * Why "grounded synthesis" and not external research: gbrain's own LLM tooling
+ * Why "grounded synthesis" and not external research: foresights's own LLM tooling
  * can only see brain-internal context (search / get_page / facts / backlinks).
  * It cannot call the web. So enrich consolidates what the brain ALREADY knows
  * about an entity (scattered across meeting notes, other people's pages, deal

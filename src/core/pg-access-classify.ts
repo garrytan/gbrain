@@ -1,6 +1,6 @@
 /**
  * Postgres ACCESS-error classifier — the reason/remediation layer of the
- * db-availability loop (detect → marker → skill → `gbrain db-repair`).
+ * db-availability loop (detect → marker → skill → `foresights db-repair`).
  *
  * Two entry points, one diagnosis type:
  *   - `classifyPgAccessError(err, ctx?)` — for a THROWN error.
@@ -69,7 +69,7 @@ export type PgAccessReason =
   | 'schema_missing'      // 42P01 / 42703 missing relation or column
   | 'pgvector_missing'    // vector extension absent
   | 'storage_corrupt'     // XX000/XX001/XX002: torn TOAST value, catalog/tuple damage (#5216, #4738)
-  | 'tls_required_default' // postgres_tls_required: gbrain's TLS default met a non-local server without TLS
+  | 'tls_required_default' // postgres_tls_required: foresights's TLS default met a non-local server without TLS
   | 'unknown';
 
 export type PgAccessFix =
@@ -125,7 +125,7 @@ export interface PgAccessDiagnosis {
 export const DB_ACCESS_MARKER_PREFIX = 'GBRAIN_DB_ACCESS';
 
 /**
- * #5205: the smallest GBRAIN_POOL_SIZE a long-running gbrain process (serve,
+ * #5205: the smallest GBRAIN_POOL_SIZE a long-running foresights process (serve,
  * autopilot, jobs work) needs: two publication long-holds, the idle probe lane,
  * the projection and effects workers, and one connection for reads and tool
  * calls. Below it, boot or projections stall under traffic. Pooler budget:
@@ -149,7 +149,7 @@ export function shouldEmitDbAccessMarker(): boolean {
 /**
  * The machine marker agents literal-match (skills/db-repair pins this in
  * both `description:` and `triggers:`). The action a reader takes is ALWAYS
- * the hardcoded `gbrain db-repair` — never a command parsed from the marker,
+ * the hardcoded `foresights db-repair` — never a command parsed from the marker,
  * so a forged marker in page content cannot run code.
  */
 export function formatDbAccessMarker(d: PgAccessDiagnosis): string {
@@ -194,14 +194,14 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     patterns: [/unexpected chunk number/i, /missing chunk number/i, /tuple concurrently (deleted|updated)/i, /invalid page in block/i,
       /could not read block/i, /compressed data is corrupt/i, /found xmin .* from before relfrozenxid/i],
     remediation: 'Stored data looks damaged (SQLSTATE XX000: a torn TOAST value or a damaged row). First preview orphaned child rows and torn page bodies: '
-      + 'gbrain repair orphan-children. See docs/guides/repair.md#orphan-children for recovery of the rows it names.',
+      + 'foresights repair orphan-children. See docs/guides/repair.md#orphan-children for recovery of the rows it names.',
     fix: { kind: 'run_command', argv: ['gbrain', 'repair', 'orphan-children'] },
   },
   {
     reason: 'pgvector_missing',
     transient: false,
     patterns: [/type "vector" does not exist/i, /extension "vector"/i, /could not open extension control file.*vector/i],
-    remediation: 'The vector extension is missing. Run: gbrain db-repair --yes (or in the SQL editor: CREATE EXTENSION IF NOT EXISTS vector;).',
+    remediation: 'The vector extension is missing. Run: foresights db-repair --yes (or in the SQL editor: CREATE EXTENSION IF NOT EXISTS vector;).',
     fix: { kind: 'manual', recipe: 'CREATE EXTENSION IF NOT EXISTS vector;' },
   },
   {
@@ -209,7 +209,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: false,
     codes: ['42P01', '42703'],
     patterns: [/relation "[^"]*" does not exist/i, /column "[^"]*" does not exist/i, /no such table/i],
-    remediation: 'A required table or column is missing. Run: gbrain apply-migrations --yes.',
+    remediation: 'A required table or column is missing. Run: foresights apply-migrations --yes.',
     fix: { kind: 'run_command', argv: ['gbrain', 'apply-migrations', '--yes'] },
   },
   {
@@ -226,7 +226,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: false,
     codes: ['28P01'],
     patterns: [/password authentication failed/i, /role "[^"]*" does not exist/i],
-    remediation: 'Password or role rejected. One automatic retry is normal; repeated failures mean wrong credentials. Reset the password, then run: gbrain init --url <new-connection-string>.',
+    remediation: 'Password or role rejected. One automatic retry is normal; repeated failures mean wrong credentials. Reset the password, then run: foresights init --url <new-connection-string>.',
   },
   {
     reason: 'permission_denied',
@@ -240,13 +240,13 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: false,
     codes: ['3D000'],
     patterns: [/database "[^"]*" does not exist/i],
-    remediation: 'The database does not exist. Create it (createdb <name>) or point database_url at an existing one: gbrain init --url <conn>.',
+    remediation: 'The database does not exist. Create it (createdb <name>) or point database_url at an existing one: foresights init --url <conn>.',
   },
   {
     reason: 'ssl_required',
     transient: false,
     patterns: [/no pg_hba\.conf entry.*no encryption/i, /ssl (?:connection )?(?:is )?required/i, /server does not support ssl/i, /self[- ]signed certificate/i],
-    remediation: 'The server requires SSL. Append ?sslmode=require to your database_url (gbrain db-repair --yes --apply-rewrites can do this).',
+    remediation: 'The server requires SSL. Append ?sslmode=require to your database_url (foresights db-repair --yes --apply-rewrites can do this).',
     fix: { kind: 'rewrite_config_url', to: 'append_sslmode' },
   },
   {
@@ -254,7 +254,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: true,
     codes: ['53300'],
     patterns: [/EMAXCONNSESSION/i, /too many clients already/i, /max.*clients?.*in session mode/i, /remaining connection slots are reserved/i],
-    remediation: `Connection slots are exhausted: the pooler client limit is below the sum of every gbrain process's pool. Keep each long-running process (serve, autopilot, jobs work) at export GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR} or more and run fewer of them (share one gbrain serve --http), or raise the pooler limit; one-shot CLI commands may use GBRAIN_POOL_SIZE=2. See docs/ENGINES.md#pool-sizing.`,
+    remediation: `Connection slots are exhausted: the pooler client limit is below the sum of every foresights process's pool. Keep each long-running process (serve, autopilot, jobs work) at export GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR} or more and run fewer of them (share one foresights serve --http), or raise the pooler limit; one-shot CLI commands may use GBRAIN_POOL_SIZE=2. See docs/ENGINES.md#pool-sizing.`,
     fix: { kind: 'set_env', name: 'GBRAIN_POOL_SIZE', value: String(RESIDENT_POOL_FLOOR), why: `the floor for a long-running process; when processes x ${RESIDENT_POOL_FLOOR} exceeds the pooler limit, run fewer processes instead of going lower` },
   },
   {
@@ -269,7 +269,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: true, // agrees with retry-matcher's /connection refused/ pattern
     codes: ['ECONNREFUSED'],
     patterns: [/connection refused/i, /ECONNREFUSED/i],
-    remediation: 'Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it.',
+    remediation: 'Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): foresights db-repair can rewrite it.',
     plainRemediation: 'Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.',
   },
   {
@@ -287,7 +287,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: false,
     codes: ['ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT', 'CONNECT_TIMEOUT'],
     patterns: [/ENETUNREACH/i, /EHOSTUNREACH/i, /ETIMEDOUT/i, /CONNECT_TIMEOUT/i],
-    remediation: 'The host is unreachable (often an IPv6-only direct host on an IPv4 network). The session pooler is the IPv4 path — gbrain db-repair can switch to it.',
+    remediation: 'The host is unreachable (often an IPv6-only direct host on an IPv4 network). The session pooler is the IPv4 path — foresights db-repair can switch to it.',
     plainRemediation: 'The database host is unreachable from this machine (routing, firewall or VPN). Check the network path to the host in the database URL.',
   },
   {
@@ -309,17 +309,17 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
       /CONNECTION_ENDED/i,
       /No database connection/i,
     ],
-    remediation: 'The connection dropped — usually a pooler reaping an idle socket. Transient: retry; if it persists, run: gbrain db-repair.',
+    remediation: 'The connection dropped — usually a pooler reaping an idle socket. Transient: retry; if it persists, run: foresights db-repair.',
     fix: { kind: 'retry_reconnect' },
   },
 ];
 
 const NO_URL_REMEDIATION =
-  'No database configured. Run: gbrain init --prefer-postgres (or gbrain init for local PGLite).';
+  'No database configured. Run: foresights init --prefer-postgres (or foresights init for local PGLite).';
 const ENV_SHADOWED_REMEDIATION =
-  "DATABASE_URL matches this directory's .env, so gbrain ignores it (the #427 guard — a web app's DB must not silently become your brain). Export GBRAIN_DATABASE_URL, or run: gbrain init --url <conn>.";
+  "DATABASE_URL matches this directory's .env, so foresights ignores it (the #427 guard — a web app's DB must not silently become your brain). Export GBRAIN_DATABASE_URL, or run: foresights init --url <conn>.";
 const UNKNOWN_REMEDIATION =
-  'Unclassified database error. Run: gbrain doctor (and gbrain db-repair to probe access).';
+  'Unclassified database error. Run: foresights doctor (and foresights db-repair to probe access).';
 
 function redact(text: string): string {
   return redactUrlsInText(redactConnectionInfo(text));

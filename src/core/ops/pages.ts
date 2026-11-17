@@ -54,7 +54,7 @@ import {
   validatePageSlug, pageNotFoundError,
 } from './context.ts';
 
-/** The write path (journal, persistence service, sync), loaded by the mutating handlers only: a cold `gbrain get` never needs it (#7147). */
+/** The write path (journal, persistence service, sync), loaded by the mutating handlers only: a cold `foresights get` never needs it (#7147). */
 const pageMutations = () => import('../persistence/page-mutations.ts');
 
 // --- Page CRUD ---
@@ -345,7 +345,7 @@ const put_page: Operation = {
   name: 'put_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps later, `gbrain serve --http` does not self-sweep). Edits: edit_page; appends: append_page; >3 pages: put_pages.',
+  description: 'Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `foresights serve` sweeps later, `foresights serve --http` does not self-sweep). Edits: edit_page; appends: append_page; >3 pages: put_pages.',
   params: {
     ...AGENT_CONTENT_PARAMS,
     slug: { type: 'string', description: 'Page slug.', required: true },
@@ -432,7 +432,7 @@ const delete_page: Operation = {
   name: 'delete_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names gbrain repair file-drift --prefer file, which imports the file\'s current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials. Before the row is removed, pages that are private only through this page get their own visibility: private; a purge that cannot label them soft-deletes the page instead and returns purge_held (doctor derived_origin_parked).',
+  description: 'Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names foresights repair file-drift --prefer file, which imports the file\'s current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials. Before the row is removed, pages that are private only through this page get their own visibility: private; a purge that cannot label them soft-deletes the page instead and returns purge_held (doctor derived_origin_parked).',
   params: {
     ...PAGE_MUTATION_PARAMS, expected_revision: { type: 'string', description: 'Revision read; required unless force.' },
     slug: { type: 'string', required: true, description: "Slug of the page to soft-delete, e.g. 'people/alice-example'." },
@@ -491,7 +491,7 @@ const purge_deleted_pages: Operation = {
   name: 'purge_deleted_pages',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72), in every source. Cascades through content_chunks, page_links, chunk_relations. Trusted local CLI only; the command is `gbrain pages purge-deleted`, which asks first (yes: true is the consent). Manual escape hatch alongside the autopilot purge phase.',
+  description: 'Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72), in every source. Cascades through content_chunks, page_links, chunk_relations. Trusted local CLI only; the command is `foresights pages purge-deleted`, which asks first (yes: true is the consent). Manual escape hatch alongside the autopilot purge phase.',
   params: {
     older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
     yes: { type: 'boolean', description: 'Consent to the irreversible brain-wide purge. Ask the user first.' },
@@ -605,7 +605,7 @@ const list_pages: Operation = {
       // Loud clamp, parity with the three search paths ("search limit clamped
       // from N to 100"). logger.warn goes to stderr — `list` stdout is
       // tab-separated and consumed by scripts, so it must stay clean.
-      ctx.logger.warn(`[gbrain] Warning: list limit clamped from ${requestedLimit} to ${limit}; use offset to paginate`);
+      ctx.logger.warn(`[foresights] Warning: list limit clamped from ${requestedLimit} to ${limit}; use offset to paginate`);
     }
     // Thread offset through — PageFilters has supported it all along; the op
     // layer just never passed it, so `--offset` was accepted and ignored.

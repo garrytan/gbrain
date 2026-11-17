@@ -42,7 +42,7 @@ const CANONICAL_STORAGE_KEYS = ['db_tracked', 'db_only', 'keep_db'];
  * `loadStorageConfig` warns about once per key and process.
  *
  * Intentionally narrow. Does NOT handle the full YAML spec — only the file
- * shape gbrain controls. Trades expressiveness for zero-dep parsing and
+ * shape foresights controls. Trades expressiveness for zero-dep parsing and
  * predictable behavior. Returns null if the file has no `storage:` section
  * (so callers can distinguish "no config" from "empty config").
  *
@@ -506,7 +506,7 @@ export function effectiveDbOnlyDirs(declared: string[]): string[] {
  * Collector-output vs db_only collision detection (issue #2788, reported by
  * @alexputici). A collector output path collides when it equals a db_only
  * dir or sits anywhere inside one — such dirs are auto-gitignored by sync,
- * so both the git-walking sync AND `gbrain import` (which honors .gitignore)
+ * so both the git-walking sync AND `foresights import` (which honors .gitignore)
  * silently skip every file the collector writes.
  */
 export function findDbOnlyCollisions(

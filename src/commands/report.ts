@@ -1,13 +1,13 @@
 /**
- * gbrain report — Save a structured report to brain/reports/.
+ * foresights report — Save a structured report to brain/reports/.
  *
  * Deterministic: zero LLM calls. Creates timestamped report pages
  * for audit trails of enrichment sweeps, maintenance runs, syncs, etc.
  *
  * Usage:
- *   gbrain report --type enrichment-sweep --title "Enrichment Sweep" --content "..."
- *   echo "report body" | gbrain report --type meeting-sync --title "Meeting Sync"
- *   gbrain report --type enrichment-sweep --dir /path/to/brain
+ *   foresights report --type enrichment-sweep --title "Enrichment Sweep" --content "..."
+ *   echo "report body" | foresights report --type meeting-sync --title "Meeting Sync"
+ *   foresights report --type enrichment-sweep --dir /path/to/brain
  */
 
 import { writeFileSync, mkdirSync } from 'fs';
@@ -30,9 +30,9 @@ export async function runReport(args: string[]) {
   }
 
   if (!reportType) {
-    console.error('Usage: gbrain report --type <name> --title "..." --content "..." [--dir <brain>]');
+    console.error('Usage: foresights report --type <name> --title "..." --content "..." [--dir <brain>]');
     console.error('  Or pipe content via stdin:');
-    console.error('    echo "report body" | gbrain report --type meeting-sync --title "Daily Sync"');
+    console.error('    echo "report body" | foresights report --type meeting-sync --title "Daily Sync"');
     console.error('');
     console.error('  Common types: enrichment-sweep, meeting-sync, maintenance, backlink-check, lint');
     console.error('  Creates: brain/reports/{type}/{YYYY-MM-DD-HHMM}.md');
@@ -43,9 +43,9 @@ export async function runReport(args: string[]) {
   let content = contentIdx >= 0 ? args[contentIdx + 1] : null;
   if (!content && !process.stdin.isTTY) {
     // Async, bounded read: SIGTERM still works and an open-but-silent pipe times out (C5).
-    const read = await readStdinPayload('echo "report body" | gbrain report --type <name>');
+    const read = await readStdinPayload('echo "report body" | foresights report --type <name>');
     if (!read.ok) {
-      console.error(`gbrain report: ${read.message}`);
+      console.error(`foresights report: ${read.message}`);
       process.exit(1);
     }
     content = read.text;

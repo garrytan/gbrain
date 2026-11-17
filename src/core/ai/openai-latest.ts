@@ -252,7 +252,7 @@ let _warnedUnpriced: string | null = null;
 // every engine connect and every gateway-refresh job. One attempt per
 // backoff window, success or fail. The attempt stamp is BOTH module state
 // (fast path) and persisted in the cache file (short-lived CLI processes —
-// each `gbrain <cmd>` is a fresh process, so module state alone would re-pay
+// each `foresights <cmd>` is a fresh process, so module state alone would re-pay
 // the timeout per invocation on an offline shell).
 const FAILURE_BACKOFF_MS = 10 * 60 * 1000;
 let _lastAttemptAt = 0;
@@ -324,7 +324,7 @@ export interface RefreshOpts {
  * Refresh the discovery cache from `GET /v1/models`, at most once per TTL.
  * Best-effort by contract: never throws, never blocks longer than
  * FETCH_TIMEOUT_MS, no-ops without a key, with GBRAIN_MODEL_DISCOVERY=off, or
- * when a `gbrain setup` receipt recorded provider use as declined.
+ * when a `foresights setup` receipt recorded provider use as declined.
  * Call site: the gateway's discoverBeforeOpenAICall, once per reconfigure,
  * when an OpenAI-routed call is about to go out (#6607: never on engine
  * connect, so a brain that never calls OpenAI sends nothing).
@@ -349,7 +349,7 @@ export async function refreshLatestOpenAIModels(opts: RefreshOpts = {}): Promise
     ? Date.parse(cacheFile?.last_attempt_at ?? '') || 0 : 0;
   const moduleAttempt = _lastAttemptFp === fp ? _lastAttemptAt : 0;
   if (!opts.force && Date.now() - Math.max(moduleAttempt, persistedAttempt) < FAILURE_BACKOFF_MS) return;
-  // A key in the environment is not consent: `gbrain setup` recorded provider
+  // A key in the environment is not consent: `foresights setup` recorded provider
   // use as declined for this install, so discovery never contacts the account.
   // An unreadable record fails closed (no request).
   try { if (providerDeclineRecord()) return; } catch { return; }

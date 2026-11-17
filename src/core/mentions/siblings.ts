@@ -1,7 +1,7 @@
 /**
  * Identity siblings: pages in one source whose titles name the same subject
  * under different prefixes ("Account sheet: Widget Co" and "CRM record:
- * Widget Co"). gbrain never treats them as one identity on the title alone
+ * Widget Co"). foresights never treats them as one identity on the title alone
  * (no `entity_identities` row, no union of aliases or references). It shows
  * them side by side instead: the entity card lists them with their own aliases
  * and identity lines, search's alias fan-out also searches their names (each

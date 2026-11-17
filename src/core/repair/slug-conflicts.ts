@@ -1,8 +1,8 @@
 /**
- * `gbrain repair slug-conflicts` (#6377, Lane B): clears
+ * `foresights repair slug-conflicts` (#6377, Lane B): clears
  * `frontmatter_slug_conflict` sync holds (a file whose frontmatter `slug:`
  * names a page other than the one its path names) without a person, or
- * says exactly why a person is needed. `gbrain repair content` runs it after
+ * says exactly why a person is needed. `foresights repair content` runs it after
  * `fences` for the same selection; the maintenance cycle and
  * `sync unblock --apply` run it with a bare `--apply`.
  *
@@ -257,7 +257,7 @@ async function settings(engine: BrainEngine, opts: Pick<RepairPlanOptions, 'noLl
 /** Held because no measured model has a key: the exact choice the user makes. */
 function noMeasuredModel(path: string): string {
   return `No model measured for the slug-conflict judgment has a provider key here (${CONTENT_REPAIR_MEASURED_MODELS.join(', ')}) and ${CONTENT_REPAIR_MODEL_KEY} is unset, so ${path} stays held. `
-    + `Decide the slug by hand, or ask the user which model to trust, then: gbrain config set ${CONTENT_REPAIR_MODEL_KEY} <provider:model>.`;
+    + `Decide the slug by hand, or ask the user which model to trust, then: foresights config set ${CONTENT_REPAIR_MODEL_KEY} <provider:model>.`;
 }
 
 /** One candidate's current state, read from the checkout and the page store. */
@@ -290,7 +290,7 @@ async function syncScreen(engine: BrainEngine, src: FenceSource): Promise<SyncSc
 /** Sync files the candidate as page `cand.slug` but still holds it for its slug: both slugs, and the exact hand edit (`other` is recorded on the hold). */
 function slugPageMismatch(cand: Candidate, other: string, why: string): Analysis {
   return { status: 'held', reason: 'slug_page_mismatch', named: other, message: `Sync files ${cand.path} as page ${cand.slug}, ${why}, so sync still holds it. `
-    + `By hand: make the slug: line name ${cand.slug} exactly or move the file to the path that derives ${cand.slug}, commit, and run gbrain sync --source ${cand.src.id} --no-pull.` };
+    + `By hand: make the slug: line name ${cand.slug} exactly or move the file to the path that derives ${cand.slug}, commit, and run foresights sync --source ${cand.src.id} --no-pull.` };
 }
 
 async function readCandidate(engine: BrainEngine, src: FenceSource, path: string): Promise<{ ok: true; cand: Candidate } | { ok: false; reason: 'gone' | 'unsafe_path' | 'not_utf8' | 'no_checkout' } | { ok: false; reason: 'origin_conflict'; message: string }> {
@@ -331,23 +331,23 @@ async function analyze(cand: Candidate, slugsInCheckout: () => Set<string>, scre
   const own = !clean && cand.named && ((cand.hold?.page_id !== null && cand.hold?.page_id !== undefined && cand.named.page.id === cand.hold.page_id)
     || (cand.named.page.source_path != null && cand.named.page.source_path === cand.sourcePath) || (cand.snapshot !== null && cand.named.page.id === cand.snapshot.page.id));
   if (clean || own) {
-    const skip: Analysis = clean ? { status: 'skip', reason: 'already_clean', message: `${cand.path} no longer declares a conflicting slug; the next gbrain sync --source ${cand.src.id} --no-pull clears its hold.` }
+    const skip: Analysis = clean ? { status: 'skip', reason: 'already_clean', message: `${cand.path} no longer declares a conflicting slug; the next foresights sync --source ${cand.src.id} --no-pull clears its hold.` }
       : { status: 'skip', reason: 'already_exempt', message: `The slug: line of ${cand.path} resolves to the file's own page (${cand.named!.page.slug}); nothing to repair.` };
     if (!screen || !cand.hold) return skip;
     const now = await screen(cand, cand.content);
     if (now.status !== 'refused') return { status: 'import', reason: skip.reason as ImportReason };
     if (now.refusal.code === 'frontmatter_slug_conflict') return slugPageMismatch(cand, clean ? expected : cand.named!.page.slug, clean ? `but its path derives ${expected}`
       : `and its slug: line resolves to page ${cand.named!.page.slug} only through an alias or another spelling, while sync compares the line as written with the path-derived slug ${expected}`);
-    return { status: 'held', reason: now.refusal.code, message: `Sync now holds ${cand.path} for ${now.refusal.code}, not for its slug: line; the next gbrain sync --source ${cand.src.id} --no-pull records that hold.` };
+    return { status: 'held', reason: now.refusal.code, message: `Sync now holds ${cand.path} for ${now.refusal.code}, not for its slug: line; the next foresights sync --source ${cand.src.id} --no-pull records that hold.` };
   }
   const edit = async (rule: DeterministicRule): Promise<Analysis> => {
     const removal = removeSlugLine(cand.content, cand.sourcePath, cand.src.activePack);
     const after = removal.after;
-    if (after === null) return { status: 'held', reason: 'still_invalid', ...otherCodes(removal), message: `Removing the slug: line of ${cand.path} alone does not make it importable (${otherChanges(removal)}); preview gbrain repair frontmatter --source ${cand.src.id} --only ${cand.path} --include-ambiguous.` };
+    if (after === null) return { status: 'held', reason: 'still_invalid', ...otherCodes(removal), message: `Removing the slug: line of ${cand.path} alone does not make it importable (${otherChanges(removal)}); preview foresights repair frontmatter --source ${cand.src.id} --only ${cand.path} --include-ambiguous.` };
     const screened = screen ? await screen(cand, after) : null;
     if (screened?.status !== 'refused') return { status: 'deterministic', rule, after, style_only: removal.style_only };
     if (screened.refusal.code === 'frontmatter_slug_conflict') return slugPageMismatch(cand, expected, `but its path derives ${expected}`);
-    return { status: 'held', reason: 'still_invalid', message: `Removing the slug: line of ${cand.path} would leave it held for ${screened.refusal.code}; preview gbrain repair frontmatter --source ${cand.src.id} --only ${cand.path} --include-ambiguous.` };
+    return { status: 'held', reason: 'still_invalid', message: `Removing the slug: line of ${cand.path} would leave it held for ${screened.refusal.code}; preview foresights repair frontmatter --source ${cand.src.id} --only ${cand.path} --include-ambiguous.` };
   };
   if (!cand.named) {
     if (!lookupSlugs(cand.declared).some(slug => slugsInCheckout().has(slug))) return edit('absent_page');
@@ -357,7 +357,7 @@ async function analyze(cand: Candidate, slugsInCheckout: () => Set<string>, scre
     if (parsed.type !== cand.named.page.type && !shared) return edit('different_type');
   }
   const removal = removeSlugLine(cand.content, cand.sourcePath, cand.src.activePack);
-  if (removal.after === null) return { status: 'held', reason: 'still_invalid', ...otherCodes(removal), message: `Removing the slug: line of ${cand.path} alone would not make it importable (${otherChanges(removal)}), so no model is asked; preview gbrain repair frontmatter --source ${cand.src.id} --only ${cand.path} --include-ambiguous.` };
+  if (removal.after === null) return { status: 'held', reason: 'still_invalid', ...otherCodes(removal), message: `Removing the slug: line of ${cand.path} alone would not make it importable (${otherChanges(removal)}), so no model is asked; preview foresights repair frontmatter --source ${cand.src.id} --only ${cand.path} --include-ambiguous.` };
   const held = judgmentParticipant({ path: cand.path, slug: cand.slug, content: cand.content, otherSlug: cand.namedSlug });
   const named = cand.named ? judgmentParticipant({ path: cand.named.page.source_path ?? null, slug: cand.named.page.slug, content: pageContent(cand.named), otherSlug: cand.slug, type: cand.named.page.type }) : null;
   return { status: 'llm', input: { held, named, reason: 'frontmatter_slug_conflict' } };
@@ -447,13 +447,13 @@ export const slugConflictsRepair: RepairHandler = {
         };
         const skip = (reason: string) => { skipped.push({ item: name, reason }); residuals[reason] = (residuals[reason] ?? 0) + 1; };
         if (src.owner) { await keep({ reason: src.owner.reason, tier: 'manual', resolution: `${src.owner.message} ${src.owner.why}` }); continue; }
-        if (src.mirror) { await keep({ reason: 'mirror_read_only', tier: 'manual', resolution: `${path} belongs to a read-only mirror, so gbrain does not edit its file; remove the slug: line where the source is written.` }); continue; }
+        if (src.mirror) { await keep({ reason: 'mirror_read_only', tier: 'manual', resolution: `${path} belongs to a read-only mirror, so foresights does not edit its file; remove the slug: line where the source is written.` }); continue; }
         if (repairBusy(src.busy, { path })) { await keep({ reason: 'sync_in_progress', tier: 'manual', resolution: repairBusyMessage(src.busy, src.id, path) }); continue; }
         const read = await readCandidate(engine, src, path);
         if (!read.ok) {
           if (read.reason === 'gone' || read.reason === 'no_checkout') { skip(read.reason === 'gone' ? 'gone' : 'local_path_missing'); continue; }
           await keep({ reason: read.reason, tier: 'manual', resolution: read.reason === 'origin_conflict' ? read.message : read.reason === 'unsafe_path'
-            ? `${path} is a symlink, sits under one, or resolves outside the source root; gbrain never writes through one. Replace it with the real file.`
+            ? `${path} is a symlink, sits under one, or resolves outside the source root; foresights never writes through one. Replace it with the real file.`
             : `${path} is not valid UTF-8; re-save it as UTF-8 and preview again.` });
           continue;
         }
@@ -481,23 +481,23 @@ export const slugConflictsRepair: RepairHandler = {
           ...(s.model ? { model: s.model } : {}), next_attempt_after: next });
         if (!s.llmEnabled) {
           await pending('llm_disabled', `Model repair is off (${selection.no_llm ? '--no-llm' : 'fences.repair.llm false'}), so ${path} stays held: whether it and ${cand.namedSlug ?? 'the page its slug: line names'} are the same page needs a judgment. `
-            + 'Decide by hand, or ask the user before turning model repair on: gbrain config set fences.repair.llm true.');
+            + 'Decide by hand, or ask the user before turning model repair on: foresights config set fences.repair.llm true.');
           continue;
         }
         if (!s.model) { await pending('no_measured_model', noMeasuredModel(path)); continue; }
         const estimate = judgmentEstimate(analysis.input, { model: s.model, overrides: s.overrides, capSource: s.capSource });
-        if (!estimate.ok) { await pending('no_pricing', `A spend cap is set but gbrain has no price for ${s.model}. ${estimate.guidance.lookup} Register it with: ${estimate.guidance.register_command}`); continue; }
+        if (!estimate.ok) { await pending('no_pricing', `A spend cap is set but foresights has no price for ${s.model}. ${estimate.guidance.lookup} Register it with: ${estimate.guidance.register_command}`); continue; }
         if (estimate.estimated && !unpricedWarned) {
           unpricedWarned = true;
-          warnings.push(`gbrain has no price for the content-repair model ${s.model}; the judgment runs under the default caps and is metered at an estimated ceiling (the highest chat rate gbrain knows). Make it exact with: ${pricingSetCommand(s.model, 'chat')}`);
+          warnings.push(`foresights has no price for the content-repair model ${s.model}; the judgment runs under the default caps and is metered at an estimated ceiling (the highest chat rate foresights knows). Make it exact with: ${pricingSetCommand(s.model, 'chat')}`);
         }
         if (s.perPageUsd === 0 || s.perDayUsd === 0) {
           const key = s.perPageUsd === 0 ? 'page' : 'day';
-          await pending('budget_exhausted', `Model repair spend is set to 0 (fences.repair.max_usd_per_${key}), so ${path} stays held. Raising it is the user's call: gbrain config set fences.repair.max_usd_per_${key} <usd>.`, nextUtcMidnight(new Date()));
+          await pending('budget_exhausted', `Model repair spend is set to 0 (fences.repair.max_usd_per_${key}), so ${path} stays held. Raising it is the user's call: foresights config set fences.repair.max_usd_per_${key} <usd>.`, nextUtcMidnight(new Date()));
           continue;
         }
         if (estimate.usd > s.perPageUsd + 1e-9) {
-          await pending('budget_exhausted', `The estimated judgment cost ($${estimate.usd.toFixed(4)}) exceeds fences.repair.max_usd_per_page ($${s.perPageUsd.toFixed(2)}). Raising it is the user's call: gbrain config set fences.repair.max_usd_per_page <usd>.`);
+          await pending('budget_exhausted', `The estimated judgment cost ($${estimate.usd.toFixed(4)}) exceeds fences.repair.max_usd_per_page ($${s.perPageUsd.toFixed(2)}). Raising it is the user's call: foresights config set fences.repair.max_usd_per_page <usd>.`);
           continue;
         }
         approved.push({ ...base, tier: 'llm', rule: null, after: null, estimate_usd: estimate.usd, llm_waiting: 0 });
@@ -530,7 +530,7 @@ export const slugConflictsRepair: RepairHandler = {
       ...(warnings.length ? { warnings } : {}), details: details as unknown as Record<string, unknown>, llm: { usd: llmUsd, cap_remaining_usd: s.llmEnabled ? s.dayRemaining : 0 } };
   },
   async apply(ctx, raw, opts): Promise<RepairItemOutcome> {
-    if (ctx.remote !== false) throw trustedCliRequired('gbrain repair slug-conflicts writes files and may call a paid model, so it runs only from the trusted local CLI or the maintenance job on the brain host.');
+    if (ctx.remote !== false) throw trustedCliRequired('foresights repair slug-conflicts writes files and may call a paid model, so it runs only from the trusted local CLI or the maintenance job on the brain host.');
     const { entry, hash, last } = raw as ConflictItem;
     try {
       return await retireAfterLastItem(ctx.engine, 'slug-conflicts', hash, last, () => applyConflict(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true }));
@@ -587,7 +587,7 @@ async function applyConflict(ctx: OperationContext, entry: ApprovedConflict, opt
     const out = skipped(src.owner.reason, src.owner.message);
     return { ...out, detail: { ...out.detail, why: src.owner.why, fix: src.owner.fix.argv, retryable: src.owner.retryable } };
   }
-  if (src.mirror) return held('mirror_read_only', `${entry.path} belongs to a read-only mirror, so gbrain does not edit its file.`, null);
+  if (src.mirror) return held('mirror_read_only', `${entry.path} belongs to a read-only mirror, so foresights does not edit its file.`, null);
   // Re-checked here and again at the write's admission (file-repair.ts): a sync may have frozen this candidate since the plan.
   if (repairBusy(src.busy, { path: entry.path, slug: entry.slug })) {
     await recordState(engine, { src, path: entry.path, hold }, { action: 'pending', reason: 'sync_in_progress', next_attempt_after: nextAttempt('sync_in_progress') });
@@ -636,7 +636,7 @@ async function write(ctx: OperationContext, src: FenceSource, cand: Candidate, a
   const what = parts.action === 'import' ? `${cand.path} as it is` : `the repaired ${cand.path}`;
   const refused = (code: string, how: string, reason = code) => code === 'frontmatter_slug_conflict'
     ? held('slug_page_mismatch', `Importing ${what} would still be held: sync files it as page ${cand.slug}, but its path derives ${resolveSlugForPath(cand.sourcePath)}, ${how}. `
-      + `By hand: make the slug: line name ${cand.slug} exactly or move the file to the path that derives ${cand.slug}, commit, and run gbrain sync --source ${src.id} --no-pull.`,
+      + `By hand: make the slug: line name ${cand.slug} exactly or move the file to the path that derives ${cand.slug}, commit, and run foresights sync --source ${src.id} --no-pull.`,
       { action: 'remove_slug', reason: 'slug_page_mismatch', named: resolveSlugForPath(cand.sourcePath), next_attempt_after: null }, spend)
     : held(reason, `Importing ${what} would be refused (${code}), ${how}.`, { action: 'remove_slug', reason: 'still_invalid', next_attempt_after: null }, spend);
   const kept = async (cleared: boolean) => {
@@ -649,7 +649,7 @@ async function write(ctx: OperationContext, src: FenceSource, cand: Candidate, a
       snapshot: cand.snapshot, base: cand.snapshot, ...config });
     if (publication.status === 'refused') return refused(publication.refusal.code, 'so nothing was written');
     if (publication.status === 'overlay') return held('canonical_overlay', `Importing ${what} would keep page data the file does not carry (tags added outside the file, a withdrawal or sanitized text), so nothing was written. `
-      + `Edit the file by hand to carry them (gbrain get --source ${src.id} -- ${cand.slug} shows the page), remove the slug: line, and commit.`, { action: 'remove_slug', reason: 'canonical_overlay', next_attempt_after: null }, spend);
+      + `Edit the file by hand to carry them (foresights get --source ${src.id} -- ${cand.slug} shows the page), remove the slug: line, and commit.`, { action: 'remove_slug', reason: 'canonical_overlay', next_attempt_after: null }, spend);
     try {
       const outcome = await submitManagedFileRepair(local, { sourceId: src.id, requestId: await repairRequestId(local, 'slug-conflicts', { source_id: src.id, slug: cand.slug }, `${receipt.before_sha256}:${receipt.after_sha256}${observedAt ? `:${observedAt}` : ''}`),
         slug: cand.slug, path: cand.path, sourcePath: cand.sourcePath, content: after, beforeHash: cand.before, resultDigest: publication.digest,
@@ -671,7 +671,7 @@ async function write(ctx: OperationContext, src: FenceSource, cand: Candidate, a
   const root = src.root!;
   let abs: string;
   try { abs = confinedRepairTarget(root, cand.path, src.id, 'content'); } catch (error) {
-    if (error instanceof OperationError) return held('unsafe_path', `${cand.path} is a symlink, sits under one, or resolves outside the source root; gbrain never writes through one.`, null, spend);
+    if (error instanceof OperationError) return held('unsafe_path', `${cand.path} is a symlink, sits under one, or resolves outside the source root; foresights never writes through one.`, null, spend);
     throw error;
   }
   if (sha256(readFileSync(abs)) !== cand.before) return { applied: false, outcome: 'skipped', reason: 'changed_since_read', detail: { ...detail, message: `${cand.path} changed after the repair read it, so nothing was written.` }, ...spend };
@@ -726,7 +726,7 @@ async function judge(ctx: OperationContext, src: FenceSource, cand: Candidate, i
     const message = opts.allowanceUsd !== undefined && !result.resetsAt
       ? `Stopped: ${result.message} ${entry.llm_waiting} file(s) wait for the model. Rerun with a larger --max-usd, or leave them to the maintenance run.`
       : `Stopped: the daily content-repair budget is spent ($${(day?.committedUsd ?? 0).toFixed(4)} of $${s.perDayUsd.toFixed(2)} today). It resets at ${resets}; `
-        + `${entry.llm_waiting} file(s) wait for the model and the next run after that judges them. Raising the cap is the user's call: gbrain config set fences.repair.max_usd_per_day <usd>.`;
+        + `${entry.llm_waiting} file(s) wait for the model and the next run after that judges them. Raising the cap is the user's call: foresights config set fences.repair.max_usd_per_day <usd>.`;
     return { ...out, ...spend, stop: { reason: 'budget_exhausted', message, fix: { argv: ['gbrain', 'config', 'set', 'fences.repair.max_usd_per_day', '<usd>'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
       why: `The content-repair lane stopped at the daily cap it shares with fence repair; ${entry.llm_waiting} file(s) wait until ${resets} unless the cap is raised.`,
       user_message: `The daily model budget for content repair ($${s.perDayUsd.toFixed(2)}) is spent and ${entry.llm_waiting} file(s) still wait. Raise it for today, or let them repair after ${resets}?`,
@@ -751,7 +751,7 @@ async function judge(ctx: OperationContext, src: FenceSource, cand: Candidate, i
   const type = verdict.action === 'merge_into' ? cand.named?.page.type ?? parseMarkdown(cand.content, cand.path).type : undefined;
   const state: Omit<ContentHoldRepairState, 'at'> = { action: verdict.action, reason, ...(verdict.action === 'merge_into' ? { canonical: verdict.canonical } : {}), ...named, ...(type ? { type } : {}), model, next_attempt_after: null };
   const message = verdict.action === 'merge_into'
-    ? `The model judged ${cand.path} and page ${cand.namedSlug ?? verdict.canonical} to be the same page; ${verdict.canonical} keeps the slug. gbrain does not merge pages by itself yet, so nothing was written; a person merges them (gbrain sources status ${src.id} shows the paragraph).`
+    ? `The model judged ${cand.path} and page ${cand.namedSlug ?? verdict.canonical} to be the same page; ${verdict.canonical} keeps the slug. foresights does not merge pages by itself yet, so nothing was written; a person merges them (foresights sources status ${src.id} shows the paragraph).`
     : `The model could not decide whether ${cand.path} and ${cand.namedSlug ?? 'the page its slug: line names'} are the same page, so nothing was written; a person decides which keeps the slug.`;
   return { ...await held(reason, message, state, { action: verdict.action, ...(verdict.action === 'merge_into' ? { canonical: verdict.canonical } : {}), ...why, tier: 'llm' }), ...spend };
 }

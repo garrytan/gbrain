@@ -4,7 +4,7 @@
  *
  *   - graduation_interrupted (fail): a manifest or intent marker is in a
  *     non-terminal state and no live run owns it (or a stray brain sits at
- *     the graduated path). Fix: `gbrain migrate --resume`, rollback named.
+ *     the graduated path). Fix: `foresights migrate --resume`, rollback named.
  *     The run named by GBRAIN_GRADUATION_RUN (the verify step's own doctor
  *     child) is exempt.
  *   - A live run reports `ok` with its PID; a brain that never graduated

@@ -514,7 +514,7 @@ for (const backend of testBackends()) {
         extractor: async () => { calls.n++; return []; } }).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
       expect(error?.code).toBe('write_capacity_backpressure');
       expect(error?.message).toContain('3 planned');
-      expect(error?.suggestion).toContain(`gbrain extract-conversation-facts --source-id default --limit ${room}`);
+      expect(error?.suggestion).toContain(`foresights extract-conversation-facts --source-id default --limit ${room}`);
       expect(calls.n).toBe(0);
     }, { databaseUrl });
   }, 120_000);

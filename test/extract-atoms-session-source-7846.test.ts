@@ -9,7 +9,7 @@
  * by its record, to another source is skipped and extracts only when the phase
  * runs for that source; an unresolved session and legacy unstamped files (one
  * the sweep already ingested) are held with the resolver's reason, and
- * `gbrain sweep --assign-corpus <source> --apply` releases every one of them.
+ * `foresights sweep --assign-corpus <source> --apply` releases every one of them.
  * Meeting transcripts stay default's. Before the fix every corpus transcript
  * was extracted into default and no other source discovered any. Runs on PGLite
  * and, with DATABASE_URL, Postgres.
@@ -129,7 +129,7 @@ describe('extract_atoms honors the session\'s frozen source (#7846)', () => {
             source_id: 'default',
             corpus_source_other: { [b]: 2 },
             held: { corpus_legacy_unstamped: 2, corpus_source_unresolved: 1 },
-            fix: [`gbrain dream --source ${b} --phase extract_atoms`, 'gbrain sweep --assign-corpus <source>'],
+            fix: [`foresights dream --source ${b} --phase extract_atoms`, 'foresights sweep --assign-corpus <source>'],
           });
           expect(first.result.summary).toContain(`2 corpus file(s) belong to other sources (${b}: 2)`);
           expect(first.result.summary).toContain('3 held with no frozen session source');
@@ -140,7 +140,7 @@ describe('extract_atoms honors the session\'s frozen source (#7846)', () => {
             source_id: b,
             corpus_source_other: { default: 1 },
             held: { corpus_legacy_unstamped: 2, corpus_source_unresolved: 1 },
-            fix: ['gbrain dream --source default --phase extract_atoms', 'gbrain sweep --assign-corpus <source>'],
+            fix: ['foresights dream --source default --phase extract_atoms', 'foresights sweep --assign-corpus <source>'],
           });
 
           const log = spyOn(console, 'log').mockImplementation(() => {});
@@ -154,7 +154,7 @@ describe('extract_atoms honors the session\'s frozen source (#7846)', () => {
           expect(third.read).toEqual(['sess-ingested.txt', 'sess-legacy.txt', unresolved].sort());
           expect(third.result.details.source_routing).toEqual({
             source_id: a, corpus_source_other: { default: 1, [b]: 2 }, held: {},
-            fix: ['gbrain dream --source default --phase extract_atoms', `gbrain dream --source ${b} --phase extract_atoms`],
+            fix: ['foresights dream --source default --phase extract_atoms', `foresights dream --source ${b} --phase extract_atoms`],
           });
 
           expect(await atomSources()).toEqual({

@@ -282,7 +282,7 @@ describe('an unprovable continuation is a length outcome with no text and no too
       expect(notices).toHaveLength(1);
       expect(notices[0]).toContain('events_missing');
       expect(notices[0]).toContain('Remedy: upgrade the claude CLI');
-      expect(notices[0]).toContain('gbrain errors continuation_unproven');
+      expect(notices[0]).toContain('foresights errors continuation_unproven');
     });
   }, 30_000);
 
@@ -304,7 +304,7 @@ describe('an unprovable continuation is a length outcome with no text and no too
       expect(notices).toHaveLength(1);
       expect(notices[0]).toContain('segments_unmatched');
       expect(notices[0]).toContain('Remedy: raise that caller\'s output cap');
-      expect(notices[0]).toContain('gbrain errors continuation_unproven');
+      expect(notices[0]).toContain('foresights errors continuation_unproven');
     });
   }, 30_000);
 });

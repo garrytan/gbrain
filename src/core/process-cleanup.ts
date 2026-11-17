@@ -4,8 +4,8 @@
  * v0.41.6.0 D5 — registry + signal handlers so abnormal termination
  * (SIGTERM/SIGHUP/SIGPIPE, EPIPE on stdout, uncaughtException) releases
  * locks instead of leaking them for up to 30 minutes until the TTL
- * expires. Pre-v0.41.6.0, a full `gbrain sync` piped into `head` would
- * SIGPIPE gbrain, finally blocks wouldn't run, and the next sync would report
+ * expires. Pre-v0.41.6.0, a full `foresights sync` piped into `head` would
+ * SIGPIPE foresights, finally blocks wouldn't run, and the next sync would report
  * "Another sync is in progress" because the lock row was orphaned.
  *
  * (The flag name is spelled out rather than written literally: the CLI
@@ -16,7 +16,7 @@
  * Design (per eng-review D7 + outside-voice F9-F11, 2026-05-24):
  *
  *  - Signal scope: SIGTERM, SIGHUP, SIGPIPE, uncaughtException,
- *    unhandledRejection. **NOT SIGINT** — gbrain has an existing
+ *    unhandledRejection. **NOT SIGINT** — foresights has an existing
  *    SIGINT-via-AbortController path in cli.ts that propagates
  *    abort to in-flight operations (clean cancel). Installing cleanup
  *    on SIGINT here would preempt that flow. Lock release on user
@@ -93,7 +93,7 @@ export function registerCleanup(name: string, fn: () => Promise<void>): () => vo
 /**
  * An AbortSignal that aborts when the cleanup pass runs (an unowned
  * SIGTERM/SIGHUP, a crash, a broken stdout pipe), for in-flight work that
- * must not outlive the process, such as a child process gbrain started.
+ * must not outlive the process, such as a child process foresights started.
  * Call `release` when that work settles; a released signal never aborts.
  */
 export function abortOnCleanupPass(name: string): { signal: AbortSignal; release: () => void } {
@@ -245,7 +245,7 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
     void runCleanupPass().finally(() => process.exit(1));
   });
 
-  // EPIPE on stdout — the canonical `gbrain sync | head -N` case. Route
+  // EPIPE on stdout — the canonical `foresights sync | head -N` case. Route
   // through the cleanup pass so locks release BEFORE we exit.
   attach(process.stdout, 'error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EPIPE' && !keepServing) {

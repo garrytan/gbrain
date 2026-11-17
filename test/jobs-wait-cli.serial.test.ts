@@ -1,5 +1,5 @@
 /**
- * #7242 `gbrain jobs wait` exit codes (0 completed, 1 failed/dead/cancelled, 124 still running, 2 usage) and the
+ * #7242 `foresights jobs wait` exit codes (0 completed, 1 failed/dead/cancelled, 124 still running, 2 usage) and the
  * #7241 fields in `jobs get --json` / `jobs list --json` / `jobs list --finished-since`.
  *
  * Serial: patches console and process.exit around runJobs and sets GBRAIN_HOME via withEnv
@@ -83,7 +83,7 @@ describe('jobs wait', () => {
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(JSON.parse(r.out)).toMatchObject({ id, status: 'waiting' });
     expect(r.err).toContain('still waiting');
-    expect(r.err).toContain(`gbrain jobs wait ${id}`);
+    expect(r.err).toContain(`foresights jobs wait ${id}`);
     const [row] = await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [id]);
     expect(row.status).toBe('waiting');
   });

@@ -1,7 +1,7 @@
 /**
  * v0.32.3 — Single source of truth for evaluation-metric plain-English
- * glosses. Drives `gbrain search stats` JSON output (`_meta.metric_glossary`
- * block), `gbrain eval compare` reports, and the auto-generated
+ * glosses. Drives `foresights search stats` JSON output (`_meta.metric_glossary`
+ * block), `foresights eval compare` reports, and the auto-generated
  * `docs/eval/METRIC_GLOSSARY.md` file.
  *
  * Per [CDX-25]: glosses live in one `_meta.metric_glossary` block per
@@ -68,7 +68,7 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
   }),
   'avg_rank1_score': Object.freeze({
     industry_term: 'Average rank-1 match score',
-    eli10: 'The mean base (pre-boost) retrieval score of the TOP result across recent searches, from `gbrain search stats`. It is NOT a labeled accuracy number — it is a drift signal: if this trends DOWN over time, retrieval quality is regressing (the early warning that would have caught the duplicate-page incident before a human did).',
+    eli10: 'The mean base (pre-boost) retrieval score of the TOP result across recent searches, from `foresights search stats`. It is NOT a labeled accuracy number — it is a drift signal: if this trends DOWN over time, retrieval quality is regressing (the early warning that would have caught the duplicate-page incident before a human did).',
     range: '0..1. Watch the trend, not the absolute value; pair with the <0.6 / 0.6-0.85 / >=0.85 bucket counts for shape.',
   }),
   'create_safety': Object.freeze({
@@ -150,7 +150,7 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
 
   // ────────────────────────────────────────────────────────────────────────
   // BrainBench — cross-harness memory conformance suite
-  // (`gbrain eval brainbench`; docs/eval/BRAINBENCH.md)
+  // (`foresights eval brainbench`; docs/eval/BRAINBENCH.md)
   // ────────────────────────────────────────────────────────────────────────
   'know_to_ask_failure_rate': Object.freeze({
     industry_term: 'Know-to-ask failure rate (BrainBench)',
@@ -189,7 +189,7 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
   }),
   'source_isolation_violations': Object.freeze({
     industry_term: 'Source-isolation violations (BrainBench)',
-    eli10: 'Count of injected pointers that belong to a source other than the active one. Cross-source leakage is gbrain\'s must-never-violate invariant (a missed source filter is a data leak), so this gates at ZERO — any baseline, any run.',
+    eli10: 'Count of injected pointers that belong to a source other than the active one. Cross-source leakage is foresights\'s must-never-violate invariant (a missed source filter is a data leak), so this gates at ZERO — any baseline, any run.',
     range: '0..n, count. MUST be 0; any value above 0 fails the gate.',
   }),
   'avg_injected_tokens': Object.freeze({
@@ -311,7 +311,7 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
 
   // ────────────────────────────────────────────────────────────────────────
   // LongMemEval — long-term conversational memory benchmark
-  // (`gbrain eval longmemeval`; docs/eval-bench.md)
+  // (`foresights eval longmemeval`; docs/eval-bench.md)
   // ────────────────────────────────────────────────────────────────────────
   'recall_all@k': Object.freeze({
     industry_term: 'Strict session recall at k (recall_all@k, LongMemEval)',
@@ -359,7 +359,7 @@ export function getMetricGloss(metric: string): MetricGlossEntry | null {
 
 /**
  * Convenience: return ONLY the plain-English gloss for a metric. Used in
- * `gbrain search stats` JSON output's _meta.metric_glossary block and in
+ * `foresights search stats` JSON output's _meta.metric_glossary block and in
  * the eval-compare report's per-metric "Plain English:" lines.
  */
 export function eli10For(metric: string): string | null {
@@ -406,7 +406,7 @@ export function renderMetricGlossaryMarkdown(): string {
   lines.push('');
   lines.push('**Auto-generated from `src/core/eval/metric-glossary.ts`. Do not edit by hand.** Run `bun run scripts/generate-metric-glossary.ts` to regenerate.');
   lines.push('');
-  lines.push('Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-English explanation here. Industry terms are preserved verbatim so users searching the literature find what we report.');
+  lines.push('Every metric `foresights eval *` and `foresights search stats` reports has a plain-English explanation here. Industry terms are preserved verbatim so users searching the literature find what we report.');
   lines.push('');
 
   const groups: Array<[string, string[]]> = [
@@ -452,7 +452,7 @@ export function renderMetricGlossaryMarkdown(): string {
   lines.push('');
   lines.push('## Coverage');
   lines.push('');
-  lines.push(`Every metric printed by any \`gbrain eval *\` or \`gbrain search stats\` command resolves through \`getMetricGloss()\` in \`src/core/eval/metric-glossary.ts\`. Adding a new metric to the glossary REQUIRES updating this doc; the CI guard catches drift.`);
+  lines.push(`Every metric printed by any \`foresights eval *\` or \`foresights search stats\` command resolves through \`getMetricGloss()\` in \`src/core/eval/metric-glossary.ts\`. Adding a new metric to the glossary REQUIRES updating this doc; the CI guard catches drift.`);
   lines.push('');
 
   return lines.join('\n') + '\n';

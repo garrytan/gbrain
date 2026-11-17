@@ -419,7 +419,7 @@
     {
       "id": "resume-marks-unmerged-recovery",
       "kind": "guard",
-      "title": "recovery marks an orphaned fenced refresh recovery_required when a commit gbrain did not make moved HEAD past old_head before any merge",
+      "title": "recovery marks an orphaned fenced refresh recovery_required when a commit foresights did not make moved HEAD past old_head before any merge",
       "expect": "RecoveryOnlyByPolicy",
       "spec": {
         "file": "RefreshBarrier.tla",
@@ -437,7 +437,7 @@
         "tests": [
           {
             "test": "test/refresh-write-barrier.test.ts",
-            "filter": "a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge aborts on the owner scan"
+            "filter": "a refresh killed at fenced after a commit foresights did not make moved HEAD before the merge aborts on the owner scan"
           }
         ]
       }

@@ -1,7 +1,7 @@
 /**
  * #3885 — the inline import path (capture / put_page / reindex --markdown)
  * must load the REAL source row when resolving the contextual-retrieval
- * mode, so a stored `gbrain sources set-cr-mode <id> <mode>` applies.
+ * mode, so a stored `foresights sources set-cr-mode <id> <mode>` applies.
  *
  * Pre-fix: import-file.ts hardcoded a source stub with
  * `contextual_retrieval_mode: null / trust_frontmatter_overrides: false`,

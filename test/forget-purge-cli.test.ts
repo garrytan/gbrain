@@ -1,5 +1,5 @@
 /**
- * `gbrain forget <id> --purge` (#5575 DX-11, DX-12): on a terminal the CLI
+ * `foresights forget <id> --purge` (#5575 DX-11, DX-12): on a terminal the CLI
  * prints the dry-run receipt (residuals first) and purges only after the user
  * types the fact's token; without a terminal it needs --yes and --request-id;
  * --match lists candidates and never purges; --status reports completion.
@@ -50,7 +50,7 @@ beforeEach(async () => {
   factId = Number(factId);
 });
 
-describe('gbrain forget --purge', () => {
+describe('foresights forget --purge', () => {
   test('terminal: prints residuals first, a wrong token cancels with exit 3, the right token purges', async () => {
     const cancelled = await capture(() => runForgetPurge(engine, [String(factId), '--purge'], { interactive: () => true, readToken: async () => 'nope' }));
     expect(cancelled.code).toBe(3);

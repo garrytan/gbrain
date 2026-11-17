@@ -1,5 +1,5 @@
 /**
- * #5629 residual + #5734: `gbrain repair embedding-effects` settles stale
+ * #5629 residual + #5734: `foresights repair embedding-effects` settles stale
  * queued and failed embedding effects of committed writes, which block
  * receipt compaction and activation. Each effect ends reconciled (current
  * vectors pass the effect projection verifier), superseded (page deleted, or
@@ -112,7 +112,7 @@ for (const kind of testBackends()) {
       const f = await fixture('stale');
       await embedVectors(f.sourceId);
       expect((await staleEmbeddingEffectsCheck(engine, [f.sourceId])).details).toMatchObject({ stale_effects: 1, resolution: 'repairable',
-        command: `gbrain repair embedding-effects --source ${f.sourceId}` });
+        command: `foresights repair embedding-effects --source ${f.sourceId}` });
       expect((await listBlockingEffects(engine, { sourceId: f.sourceId })).map(e => e.effect_id)).toEqual([f.effectId]);
       await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '30 days' WHERE id=$1::uuid", [f.row.id]);
       const compactedBefore = await compactWriteReceipts(engine, 0);
@@ -249,7 +249,7 @@ for (const kind of testBackends()) {
       const f = await fixture('exhausted');
       const refused = await runPersistenceAdministration(engine, 'writer_retry_effects', { source_id: f.sourceId, request_id: f.row.request_id });
       expect(refused).toMatchObject({ action: 'blocked', reason: 'embedding_retry_exhausted' });
-      expect(refused.next_action).toContain(`gbrain repair embedding-effects --source ${f.sourceId}`);
+      expect(refused.next_action).toContain(`foresights repair embedding-effects --source ${f.sourceId}`);
       const preview = await repair(f.sourceId, false);
       expect(preview.cost.embedding_pages).toBe(1);
       const applied = await repair(f.sourceId, true);

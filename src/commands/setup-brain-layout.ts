@@ -1,9 +1,9 @@
 /**
- * GBRA-529 (GST-2731): `gbrain setup <harness> --shape personal|company|both [--notes <dir>] [--docs <dir>] [--team]`.
+ * GBRA-529 (GST-2731): `foresights setup <harness> --shape personal|company|both [--notes <dir>] [--docs <dir>] [--team]`.
  *
  * The branching install. After setup has wired the harness, it gives the brain a shape:
  *
- *   - starter pages, written create-only through `gbrain put` (the one writer door: on a source with a working
+ *   - starter pages, written create-only through `foresights put` (the one writer door: on a source with a working
  *     tree the file is written and queued for commit before the database sees it; on a repo-less brain the
  *     database is the record). Each is an empty form marked `status: stub`; nothing about the person or the
  *     company is invented. Personal pages go to the run's source, company pages to the `company` source;
@@ -13,8 +13,8 @@
  *   - a one-shot import of the notes folder (personal) and the docs folder (company), read only, never written.
  *     Over IMPORT_INLINE_MAX markdown files setup hands the agent the import command instead;
  *   - with --transcripts, a one-shot import of exported call transcripts (.txt, .md) as company/calls/<date>-<title>
- *     pages in the company source (gbrain import --calls: credentials redacted, keyword-only, each file once), and a
- *     line naming who can read them, read from gbrain access who-can-read; the pages carry no readers of their own;
+ *     pages in the company source (foresights import --calls: credentials redacted, keyword-only, each file once), and a
+ *     line naming who can read them, read from foresights access who-can-read; the pages carry no readers of their own;
  *   - me/facts and company/facts carry type: facts, and the block tells the agent to quote only their dated lines;
  *   - one line saying what the conversation archive is doing on this brain (on, off or offered), read from doctor;
  *   - a managed layout block beside the brain-first block, telling the agent which pages to read and to quote
@@ -153,11 +153,11 @@ const blockShape = (shape: BrainShape, team: boolean): BrainShape =>
 
 export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', source: string | null = null, shape: BrainShape = 'personal'): string {
   const lines = [
-    `<!-- gbrain brain-layout v${LAYOUT_VERSION}: managed by gbrain setup and replaced on upgrade; edit outside these markers. Remove: ${[...setupArgv(harness, scope, source), '--shape', 'none'].join(' ')} -->`,
-    '## My brain layout (gbrain)',
+    `<!-- gbrain brain-layout v${LAYOUT_VERSION}: managed by foresights setup and replaced on upgrade; edit outside these markers. Remove: ${[...setupArgv(harness, scope, source), '--shape', 'none'].join(' ')} -->`,
+    '## My brain layout (foresights)',
   ];
   if (hasPersonal(shape)) {
-    lines.push('- Before a task that needs my context, read the gbrain pages me/facts, me/voice and me/how-i-decide.',
+    lines.push('- Before a task that needs my context, read the foresights pages me/facts, me/voice and me/how-i-decide.',
       '- State facts about me only from me/facts, and say they came from there.');
   }
   if (hasCompany(shape)) {
@@ -239,7 +239,7 @@ export function parseLayoutFlags(value: (flag: string) => string | undefined, ha
   if ((has('--team') || has('--solo')) && !hasCompany(brain)) return '--team and --solo need --shape company or both';
   if (has('--team')) {
     for (const flag of ['docs', 'transcripts'] as const) {
-      if (out[flag]) return `--${flag} imports into this machine's company source, and with --team the company part lives on a shared brain; drop --${flag} or use --solo (gbrain setup ${harness ?? '<harness>'} --shape ${brain} --solo)`;
+      if (out[flag]) return `--${flag} imports into this machine's company source, and with --team the company part lives on a shared brain; drop --${flag} or use --solo (foresights setup ${harness ?? '<harness>'} --shape ${brain} --solo)`;
     }
     out.team = true;
   }
@@ -248,7 +248,7 @@ export function parseLayoutFlags(value: (flag: string) => string | undefined, ha
 
 export interface ImportOutcome { dir: string; files: number; action: 'imported' | 'deferred' | 'failed'; argv: string[]; detail?: string }
 
-/** The call-transcript import: counts from gbrain import --calls, and who can read the pages (gbrain access who-can-read). */
+/** The call-transcript import: counts from foresights import --calls, and who can read the pages (foresights access who-can-read). */
 export interface TranscriptsOutcome extends ImportOutcome {
   imported?: number;
   unchanged?: number;
@@ -273,7 +273,7 @@ export interface LayoutOutcome {
   archive: { state: 'on' | 'off' | 'offered' | 'unknown'; detail: string } | null;
 }
 
-/** A gbrain child; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
+/** A foresights child; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
 type Run = (argv: string[], stdin?: string, source?: string | null) => { code: number; stdout: string; stderr: string };
 const run: Run = (argv, stdin, source) => {
   const env = source ? { ...process.env, GBRAIN_SOURCE: source } : process.env;
@@ -322,9 +322,9 @@ function importFolder(exec: Run, launcher: string, dir: string, source: string |
   return { outcome: { dir, files: count, action: 'imported', argv }, title: first ? noteTitle(first) : null };
 }
 
-/** Who can read the call pages, from gbrain access who-can-read on one of them and gbrain access serves; read only. */
+/** Who can read the call pages, from foresights access who-can-read on one of them and foresights access serves; read only. */
 function readersOf(exec: Run, launcher: string, slug: string): NonNullable<TranscriptsOutcome['readers']> {
-  const unknown = { members: null, serves: null, detail: `unknown; run gbrain access who-can-read ${slug} --source ${COMPANY_SOURCE}` };
+  const unknown = { members: null, serves: null, detail: `unknown; run foresights access who-can-read ${slug} --source ${COMPANY_SOURCE}` };
   let page: { readers: string[] | null; members: 'every_source_reader' | string[] } | undefined;
   let serves: { serves?: 'one' | 'several'; enabled_members?: string[] } = {};
   try { page = (JSON.parse(exec([launcher, 'access', 'who-can-read', slug, '--source', COMPANY_SOURCE, '--json'], undefined, null).stdout) as { pages?: Array<NonNullable<typeof page>> }).pages?.[0]; } catch { return unknown; }
@@ -361,7 +361,7 @@ type DoctorChecks = Array<{ name: string; details?: Record<string, unknown> }>;
 /** Whether scheduled extraction can send imported call text to a chat provider; embedding stays held either way. */
 export function callEgress(checks: DoctorChecks): NonNullable<TranscriptsOutcome['egress']> {
   if (!['auto_chronicle', 'extract_atoms_backlog'].every(name => checks.some(c => c.name === name))) {
-    return { leaves: null, detail: 'could not be checked; gbrain doctor --only auto_chronicle,extract_atoms_backlog shows it' };
+    return { leaves: null, detail: 'could not be checked; foresights doctor --only auto_chronicle,extract_atoms_backlog shows it' };
   }
   const details = (name: string) => checks.find(c => c.name === name)?.details;
   const chronicle = details('auto_chronicle');
@@ -383,10 +383,10 @@ function archiveState(exec: Run, launcher: string, calls: TranscriptsOutcome | n
   try { checks = (JSON.parse(out.stdout) as { checks?: DoctorChecks }).checks ?? []; } catch { /* unknown below */ }
   if (calls) calls.egress = callEgress(checks);
   const details = checks.find(c => c.name === 'transcript_archive_freshness')?.details as { enabled?: boolean; offered?: boolean } | undefined;
-  if (!details) return { state: 'unknown', detail: 'could not be read; gbrain transcripts archive status shows it' };
-  if (details.enabled) return { state: 'on', detail: 'on: your agent conversations are kept, redacted, under conversations/; call transcripts are separate (gbrain transcripts archive off turns it off)' };
-  if (details.offered) return { state: 'offered', detail: 'offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)' };
-  return { state: 'off', detail: 'off (gbrain transcripts archive on turns it on)' };
+  if (!details) return { state: 'unknown', detail: 'could not be read; foresights transcripts archive status shows it' };
+  if (details.enabled) return { state: 'on', detail: 'on: your agent conversations are kept, redacted, under conversations/; call transcripts are separate (foresights transcripts archive off turns it off)' };
+  if (details.offered) return { state: 'offered', detail: 'offered, not on: this brain may serve more than one person (foresights transcripts archive on turns it on)' };
+  return { state: 'off', detail: 'off (foresights transcripts archive on turns it on)' };
 }
 
 /** Whether keyless search (scoped to `source`, or default search for null) puts `title` in its top 5. */
@@ -407,7 +407,7 @@ function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonN
   const root = defaultRoot ? join(dirname(defaultRoot), COMPANY_SOURCE) : gbrainPath('content', COMPANY_SOURCE);
   if (dryRun) return { source: COMPANY_SOURCE, action: 'created', federated: null, root, detail: 'would add' };
   const st = lstatSync(root, { throwIfNoEntry: false });
-  if (st && (!st.isDirectory() || readdirSync(root).length > 0)) return failed(`${root} already exists and is not an empty folder; move it or add a folder yourself with gbrain sources add ${COMPANY_SOURCE} --path <folder>`);
+  if (st && (!st.isDirectory() || readdirSync(root).length > 0)) return failed(`${root} already exists and is not an empty folder; move it or add a folder yourself with foresights sources add ${COMPANY_SOURCE} --path <folder>`);
   mkdirSync(root, { recursive: true });
   const add = exec([launcher, 'sources', 'add', COMPANY_SOURCE, '--path', root, '--json'], undefined, null);
   if (add.code !== 0) return failed(lastLine(add.stderr || add.stdout));
@@ -446,7 +446,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
         const found = searchFinds(exec, launcher, title, source);
         outcome.check = found
           ? { ok: true, query: title, detail: `keyless search found "${title}" from your notes` }
-          : { ok: false, query: title, detail: `keyless search did not find "${title}" in its top 5; run gbrain search "${title}" to see what it returns` };
+          : { ok: false, query: title, detail: `keyless search did not find "${title}" in its top 5; run foresights search "${title}" to see what it returns` };
         if (found) outcome.next_question = `In a new session, ask: "what do my notes say about ${title}?"`;
       }
     }
@@ -469,13 +469,13 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
             const where = inDefault ? 'default search' : `search of the ${COMPANY_SOURCE} source`;
             outcome.check = found
               ? { ok: outcome.check.ok, query: title, detail: `keyless ${where} found "${title}" from your company docs` }
-              : { ok: false, query: title, detail: `keyless ${where} did not find "${title}" in its top 5; run gbrain search "${title}"${inDefault ? '' : ` --source ${COMPANY_SOURCE}`} to see what it returns` };
+              : { ok: false, query: title, detail: `keyless ${where} did not find "${title}" in its top 5; run foresights search "${title}"${inDefault ? '' : ` --source ${COMPANY_SOURCE}`} to see what it returns` };
             if (found) outcome.next_question = `In a new session, ask: "what did we decide about ${title}, and why?"`;
           }
         }
         if (flags.transcripts) outcome.transcripts = importCalls(exec, launcher, flags.transcripts, flags.dryRun);
         if (!outcome.next_question && !flags.dryRun && !hasPersonal(flags.brain)) {
-          outcome.next_question = 'Run gbrain sources demo company-brain to see how a company brain answers, then add one dated line to company/decisions and ask about it in a new session.';
+          outcome.next_question = 'Run foresights sources demo company-brain to see how a company brain answers, then add one dated line to company/decisions and ask about it in a new session.';
         }
       }
     }
@@ -491,7 +491,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
   return outcome;
 }
 
-/** The `code` of a gbrain --json error document, or null when stdout is not one. */
+/** The `code` of a foresights --json error document, or null when stdout is not one. */
 function errorCode(stdout: string): string | null {
   try { const doc = JSON.parse(stdout) as { code?: unknown }; return typeof doc.code === 'string' ? doc.code : null; } catch { return null; }
 }
@@ -563,14 +563,14 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: L
       why: `The ${COMPANY_SOURCE} source is not in default search: this brain does not read as serving one person, so searches that name no source skip the company pages until the user federates it.`,
       fix: { ask_user: true, argv: ['gbrain', 'sources', 'federate', COMPANY_SOURCE], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Puts the company pages in default search; on a brain more than one person reads, that is the user\'s call.',
-        user_message: `Your company pages are kept out of default search because this brain may serve more than one person. Should searches include them? (gbrain sources federate ${COMPANY_SOURCE})` },
+        user_message: `Your company pages are kept out of default search because this brain may serve more than one person. Should searches include them? (foresights sources federate ${COMPANY_SOURCE})` },
     });
   }
   if (o.company?.action === 'team') {
     out.push({
       code: 'brain_layout_team_next', kind: 'coaching',
       why: 'A company brain a team shares lives on its own brain, so teammates never reach this machine\'s personal pages. Setup created nothing for the company part.',
-      user_message: 'For a team company brain: create a hosted workspace at https://gbrain.io (gbrainio workspace new), or self-host on Postgres and run gbrain access serves several. Then connect this harness to it too. Guide: docs/guides/brain-layout.md#a-team-company-brain.',
+      user_message: 'For a team company brain: create a hosted workspace at https://gbrain.io (gbrainio workspace new), or self-host on Postgres and run foresights access serves several. Then connect this harness to it too. Guide: docs/guides/brain-layout.md#a-team-company-brain.',
     });
   }
   return out;
@@ -612,7 +612,7 @@ export async function askBrainShape(folders: string[] = candidateNoteFolders(), 
     if (!picked) return null;
     const abs = resolve(picked.startsWith('~/') ? join(homedir(), picked.slice(2)) : picked);
     try { if (statSync(abs).isDirectory()) return abs; } catch { /* below */ }
-    process.stderr.write(`${picked} is not a folder; skipping that import (run gbrain import <dir> --no-embed later)\n`);
+    process.stderr.write(`${picked} is not a folder; skipping that import (run foresights import <dir> --no-embed later)\n`);
     return null;
   };
   const out: { brain: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } = { brain };
@@ -633,7 +633,7 @@ export function withBrainShape(notices: Notice[], decision: Decision): Notice[] 
   const line = ' Want a personal or company brain? I can add starter pages (facts, voice and decisions) and import a notes or docs folder you pick.';
   if (i < 0) {
     return [{ code: 'first_run_decisions', kind: 'ask', why: 'Setup is complete and memory works now. One optional choice remains; nothing is written until the user answers.',
-      user_message: `gbrain is set up, so memory works now.${line}`, decisions: [decision] }, ...notices];
+      user_message: `foresights is set up, so memory works now.${line}`, decisions: [decision] }, ...notices];
   }
   const n = notices[i]!;
   const next = [...notices];

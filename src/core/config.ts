@@ -14,7 +14,7 @@ export { MERGED_CONFIG_BY_ENGINE } from './published-config.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
- * attempt. Used by `gbrain doctor --fast` so the user gets a precise message
+ * attempt. Used by `foresights doctor --fast` so the user gets a precise message
  * instead of the misleading "No database configured" when GBRAIN_DATABASE_URL
  * (or DATABASE_URL) is actually set.
  *
@@ -37,12 +37,12 @@ function getConfigPath() { return configPath(); }
 export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   /** File-plane hook-lane keys (read by engine-free hook/push children).
-   * `gbrain config set` routes these two dotted keys here, not to the DB. */
+   * `foresights config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
   hooks?: { stop_push_debounce_min?: number | string };
-  /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `gbrain jobs work`. */
+  /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `foresights jobs work`. */
   minions?: { terminal_hook?: string[] | { argv: string[]; timeout_ms?: number } };
-  /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `gbrain
+  /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `foresights
    * config set memory.*` dual-writes both planes so the engine-free Stop-hook
    * child and the stdio boot resolve see the same truth the serve does. The
    * DB plane stays authoritative (the serve-side harvest gate re-checks it).
@@ -50,7 +50,7 @@ export interface GBrainConfig {
   /** Declared brain audience MIRROR (WP8; DB plane authoritative like
    * `memory.*`): the engine-free bootstrap-harness lane gates its
    * ambient-writeback enable-nudge on it — a shared-declared brain is never
-   * nudged. Written by `gbrain config set brain.audience personal|shared`. */
+   * nudged. Written by `foresights config set brain.audience personal|shared`. */
   brain?: { audience?: string };
   memory?: {
     auto_writeback?: string;
@@ -68,7 +68,7 @@ export interface GBrainConfig {
    * anything other than literal `true` means OFF (fail-closed). The boolean
    * alone is NOT sufficient: the gate also requires the gbrain-authored
    * consent stamp (`~/.gbrain/integrations/hooks/memorable-consent.json`,
-   * written only by `gbrain config set`'s disclosure flow — deliberately
+   * written only by `foresights config set`'s disclosure flow — deliberately
    * outside this file, which the external CLI rewrites). See
    * memorableGateAllowed in core/context/hook-heartbeat.ts.
    */
@@ -86,7 +86,7 @@ export interface GBrainConfig {
   openai_api_key?: string;
   anthropic_api_key?: string;
   /**
-   * OpenRouter API key. File-plane slot so `gbrain config set
+   * OpenRouter API key. File-plane slot so `foresights config set
    * openrouter_api_key X` (or config.json) reaches the openrouter recipe:
    * file plane → loadConfig env merge → buildGatewayConfig env dict → recipe
    * reads OPENROUTER_API_KEY.
@@ -144,8 +144,8 @@ export interface GBrainConfig {
   embedding_dimensions?: number;
   /**
    * v0.37 (D9): user opted into deferred-setup mode at init time via
-   * `gbrain init --no-embedding`. When true, embed callsites and `gbrain
-   * import` refuse with a `gbrain config set embedding_model <id>` hint
+   * `foresights init --no-embedding`. When true, embed callsites and `foresights
+   * import` refuse with a `foresights config set embedding_model <id>` hint
    * rather than proceeding with a default that may not match a real key.
    * Mutually exclusive with `embedding_model` being set — init writes one
    * or the other, never both.
@@ -170,7 +170,7 @@ export interface GBrainConfig {
   /** Optional chat request providerOptions overrides keyed by recipe id or "recipe:modelId". */
   provider_chat_options?: Record<string, Record<string, unknown>>;
   /**
-   * MEMORY_VERBS v1 (Cathedral 1): default MCP tool surface for `gbrain serve`.
+   * MEMORY_VERBS v1 (Cathedral 1): default MCP tool surface for `foresights serve`.
    * 'verbs' = exactly the 7 protocol verbs (the quickstart surface);
    * 'starter' (WP4) = the ~20-op daily-driver set (STARTER_OPS in
    * src/mcp/surface.ts); 'full' (default) = every operation. The `--surface`
@@ -180,8 +180,8 @@ export interface GBrainConfig {
    */
   mcp_surface?: 'verbs' | 'starter' | 'full';
   /**
-   * MEMORY_VERBS v1 [D6C]: ISO timestamp stamped by `gbrain init` so
-   * `gbrain protocol stats` can derive real TTHW (install → first verb call).
+   * MEMORY_VERBS v1 [D6C]: ISO timestamp stamped by `foresights init` so
+   * `foresights protocol stats` can derive real TTHW (install → first verb call).
    */
   protocol_installed_at?: string;
   /**
@@ -193,7 +193,7 @@ export interface GBrainConfig {
   storage?: unknown;
   /**
    * v0.25.0 — session capture settings. Read via file-plane `loadConfig()`
-   * at process boot (NOT `gbrain config set` which writes the DB plane —
+   * at process boot (NOT `foresights config set` which writes the DB plane —
    * those are different stores). Edit `~/.gbrain/config.json` directly.
    * All fields default to ON — capture and scrubbing both opt-out.
    */
@@ -227,7 +227,7 @@ export interface GBrainConfig {
      * v0.42.x (#1685 GAP D) — extract_atoms backlog auto-drain. Default ON so a
      * pack-gated silent backlog never piles up unseen; daily-spend-capped so the
      * Haiku spend stays bounded. Read via the DB plane (`engine.getConfig`) at
-     * each autopilot tick. Disable with `gbrain config set autopilot.auto_drain.enabled false`.
+     * each autopilot tick. Disable with `foresights config set autopilot.auto_drain.enabled false`.
      */
     auto_drain?: {
       /** Master switch. Default true. */
@@ -243,11 +243,11 @@ export interface GBrainConfig {
      * v0.42 — extract frontmatter (`sources:`/`related:` etc.) link edges too, not
      * just body links, on every extraction path: the incremental cycle, sync's
      * inline extract, the GitHub/Google source inline extracts, the extract_stale
-     * minion, `gbrain maintain`, and a flagless stale extract sweep
+     * minion, `foresights maintain`, and a flagless stale extract sweep
      * (src/core/extract-frontmatter.ts resolves it once for all of them).
      * Keeps externally-edited YAML edges fresh without a full rescan. Default
      * false (body links only). Read via the file/DB plane, file wins. Enable with
-     * `gbrain config set autopilot.incremental_extract_include_frontmatter <bool>`.
+     * `foresights config set autopilot.incremental_extract_include_frontmatter <bool>`.
      */
     incremental_extract_include_frontmatter?: boolean;
   };
@@ -297,7 +297,7 @@ export interface GBrainConfig {
     /** Epoch ms of the last auto-channel check (24h throttle). */
     last_check_ts?: number;
     last_applied_version?: string;
-    /** #8776: a launcher outside gbrain's service starts autopilot again when it exits (`gbrain upgrade` hands it over). */
+    /** #8776: a launcher outside foresights's service starts autopilot again when it exits (`foresights upgrade` hands it over). */
     autopilot_launcher?: 'external';
   };
 
@@ -306,7 +306,7 @@ export interface GBrainConfig {
    *
    * Unlike `embedding_model` / `embedding_dimensions` (which size the
    * schema and must be set before initSchema), these flags only affect
-   * runtime behavior. They live in the DB plane primarily — `gbrain config
+   * runtime behavior. They live in the DB plane primarily — `foresights config
    * set embedding_multimodal true` flips the gate without touching the file.
    * loadConfigWithEngine() merges DB config on top of file/env. Env vars
    * still win as the operator escape hatch.
@@ -325,7 +325,7 @@ export interface GBrainConfig {
    *
    * IMPORTANT: this is a FILE-PLANE / env gate only. The context engine reads
    * it via the synchronous `loadConfig()` during `assemble()`, which never
-   * touches the DB. So `gbrain config set retrieval_reflex false` (DB plane)
+   * touches the DB. So `foresights config set retrieval_reflex false` (DB plane)
    * does NOT disable the reflex — set it in `~/.gbrain/config.json` or via
    * `GBRAIN_RETRIEVAL_REFLEX=false`.
    */
@@ -363,7 +363,7 @@ export interface GBrainConfig {
   /**
    * v0.36 — embedding-column registry (D7). Maps a content_chunks column
    * name to its provider + dimensions + pgvector type. Both keys live in
-   * the DB plane (`gbrain config set ...`) so users can flip without
+   * the DB plane (`foresights config set ...`) so users can flip without
    * editing files. Resolver merges this with `BUILTIN_EMBEDDING_COLUMNS`
    * (which derive their provider from `embedding_model` /
    * `embedding_multimodal_model`).
@@ -387,7 +387,7 @@ export interface GBrainConfig {
    * env > file > DB > defaults from `src/core/content-sanity.ts`.
    *
    * Both lint AND ingest go through the same effective resolution so a
-   * `gbrain config set content_sanity.bytes_block N` flips both surfaces
+   * `foresights config set content_sanity.bytes_block N` flips both surfaces
    * uniformly. CI without `~/.gbrain/` falls through to env/defaults.
    */
   content_sanity?: {
@@ -408,7 +408,7 @@ export interface GBrainConfig {
      *  coarser knob, which drops EVERY pattern) and than the `disabled`
      *  kill-switch (which also drops the load-bearing size gates). Unknown
      *  names are ignored. DB plane accepts a JSON array or a comma-
-     *  separated list: `gbrain config set content_sanity.disabled_patterns
+     *  separated list: `foresights config set content_sanity.disabled_patterns
      *  access_denied,error_title`. */
     disabled_patterns?: string[];
     /** Master kill-switch for all sanity checks. When true, ingest emits
@@ -472,7 +472,7 @@ export interface GBrainConfig {
 
   /**
    * Thin-client mode (multi-topology v1). When set, this install does NOT
-   * have a local DB; it talks to a remote `gbrain serve --http` over MCP.
+   * have a local DB; it talks to a remote `foresights serve --http` over MCP.
    * The CLI dispatch guard in `src/cli.ts` checks for this field BEFORE
    * `connectEngine` and refuses any DB-bound subcommand. The `engine` field
    * above is still populated (default-inferred) but never used.
@@ -508,7 +508,7 @@ export interface GBrainConfig {
    *   6. THIS field (~/.gbrain/config.json)
    *   7. Default 'gbrain-base'
    *
-   * `gbrain config set schema_pack <name>` writes the DB plane (tier 4);
+   * `foresights config set schema_pack <name>` writes the DB plane (tier 4);
    * editing this file directly writes tier 6. Env var (tier 2) is the
    * operator escape hatch.
    */
@@ -517,7 +517,7 @@ export interface GBrainConfig {
   /**
    * PR1 — MCP skill-catalog publishing. Lets a thin MCP client (Codex desktop,
    * Claude Code, Perplexity) discover and follow this agent repo's skills over
-   * `gbrain serve`. See `src/core/skill-catalog.ts` for the trust-boundary memo.
+   * `foresights serve`. See `src/core/skill-catalog.ts` for the trust-boundary memo.
    */
   mcp?: {
     /**
@@ -531,7 +531,7 @@ export interface GBrainConfig {
     /**
      * Gate for `list_skills` / `get_skill` over a REMOTE transport. Runtime
      * default is OFF (absent key → OFF) so an upgrade never silently grants
-     * existing read tokens host-skill read. `gbrain init` writes `true` for new
+     * existing read tokens host-skill read. `foresights init` writes `true` for new
      * installs; the upgrade migration prompts existing owners to enable it.
      * Local CLI callers (`ctx.remote === false`) bypass the gate entirely.
      */
@@ -547,7 +547,7 @@ export interface GBrainConfig {
      * Explicit skills-dir override. Wins over autodetect — makes which skills
      * get published deterministic across laptop / daemon / container launches.
      * When unset, the ops autodetect (remote callers exclude the install-path
-     * tier so a hosted gbrain never serves its own bundled dev skills).
+     * tier so a hosted foresights never serves its own bundled dev skills).
      */
     skills_dir?: string;
     /**
@@ -558,7 +558,7 @@ export interface GBrainConfig {
      *   'reject': unknown params return `invalid_params` (with a
      *     did-you-mean suggestion), and tool schemas are emitted with
      *     `additionalProperties: false`.
-     * Dual-plane: DB plane (`gbrain config set mcp.strict_params ...`) wins
+     * Dual-plane: DB plane (`foresights config set mcp.strict_params ...`) wins
      * over this file slot. See src/mcp/validate-params.ts.
      */
     strict_params?: 'warn' | 'reject';
@@ -567,10 +567,10 @@ export interface GBrainConfig {
      * `oauth_clients.surface` row value is NULL. oauth_clients carries no
      * DCR-origin marker, so this applies to ALL null-surface clients (not
      * just dynamically-registered ones); operators pre-seed important
-     * clients with `gbrain auth rescope-client <id> --surface full`.
+     * clients with `foresights auth rescope-client <id> --surface full`.
      * Unset (default) = null-surface clients get the server ceiling —
      * pre-WP4 behavior, existing clients untouched. Dual-plane: the DB
-     * plane (`gbrain config set mcp.default_surface_dcr starter`) wins
+     * plane (`foresights config set mcp.default_surface_dcr starter`) wins
      * over this file slot. Always bounded by the server ceiling (D2).
      */
     default_surface_dcr?: 'verbs' | 'starter' | 'full';
@@ -585,7 +585,7 @@ export interface GBrainConfig {
 
 /**
  * True when this install is configured as a thin client of a remote
- * `gbrain serve --http`. Single source of truth for the "is this a
+ * `foresights serve --http`. Single source of truth for the "is this a
  * thin-client install?" check used by the CLI dispatch guard, doctor
  * branch, and remote subcommands.
  */
@@ -636,7 +636,7 @@ function migrateLegacyEmbeddingConfig(raw: Record<string, unknown>): Record<stri
  * legacy embedding-config migration shim. Does NOT merge env vars, does
  * NOT infer engine kind from DATABASE_URL.
  *
- * Used by `gbrain init`'s config-merge path (B.4) where loading
+ * Used by `foresights init`'s config-merge path (B.4) where loading
  * `loadConfig()` would poison the saved file with transient env state
  * (e.g. a CI run with DATABASE_URL set writes a Postgres config.json
  * for a PGLite brain). Read-path callers should keep using `loadConfig()`
@@ -658,10 +658,10 @@ export function loadConfigFileOnly(): GBrainConfig | null {
  * #427 guard — DATABASE_URL hijack via Bun's cwd .env auto-load.
  *
  * Bun merges `.env` files from the process cwd into process.env before any
- * user code runs, so running gbrain inside any checkout whose `.env` defines
+ * user code runs, so running foresights inside any checkout whose `.env` defines
  * DATABASE_URL (Next.js, Hono, Supabase, most web apps) would silently
  * retarget the brain at that app's database — `apply-migrations` could write
- * gbrain's schema into a production app database (the v0.42.8 report on #427).
+ * foresights's schema into a production app database (the v0.42.8 report on #427).
  * The cwd-.env parser (`CWD_DOTENV_FILES`, `dotenvValuesForKey`) lives in
  * env-trust.ts beside the key-presence security quarantine; both symbols are
  * re-exported here so import sites never chase the move. This guard keeps
@@ -674,9 +674,9 @@ export { CWD_DOTENV_FILES, dotenvValuesForKey } from './env-trust.ts';
 let warnedCwdEnvDbUrlIgnored = false;
 
 /**
- * The env-provided DB URL gbrain should honor, with the #427 guard applied:
+ * The env-provided DB URL foresights should honor, with the #427 guard applied:
  * a DATABASE_URL whose value matches an assignment in a cwd .env file is
- * treated as belonging to the project in cwd, not to gbrain, and ignored
+ * treated as belonging to the project in cwd, not to foresights, and ignored
  * with a one-time stderr notice. GBRAIN_DATABASE_URL is always honored.
  * `dir` is injectable for tests; callers use the default.
  */
@@ -689,8 +689,8 @@ export function effectiveEnvDatabaseUrl(dir: string = process.cwd()): string | u
       warnedCwdEnvDbUrlIgnored = true;
       console.warn(
         '[config] Ignoring DATABASE_URL auto-loaded by Bun from a .env file in the current ' +
-        'directory — it belongs to the project here, not to gbrain. Using the engine from ' +
-        '~/.gbrain/config.json instead. To point gbrain at that database deliberately, set ' +
+        'directory — it belongs to the project here, not to foresights. Using the engine from ' +
+        '~/.gbrain/config.json instead. To point foresights at that database deliberately, set ' +
         'GBRAIN_DATABASE_URL.',
       );
     }
@@ -863,7 +863,7 @@ async function mergeSearchScanKnobs(
 /**
  * v0.27.1 — async config loader that overlays DB-plane config on top of the
  * file/env config. Used by `gbrain` CLI's connectEngine() AFTER engine.connect()
- * so flags written via `gbrain config set` actually take effect. Unlike the
+ * so flags written via `foresights config set` actually take effect. Unlike the
  * sync loadConfig(), this needs an engine handle to read the config table.
  *
  * Precedence: env > file > DB > defaults. Env stays the operator escape hatch;
@@ -887,7 +887,7 @@ export async function loadConfigWithEngine(
   // loadConfig() returns null and the DB merge would be skipped — env-only
   // installs (engine wired via direct SDK pass) wouldn't see DB-plane
   // overrides like `embedding_columns` / `search_embedding_column` set via
-  // `gbrain config set`. Since we have a live engine here, synthesize a
+  // `foresights config set`. Since we have a live engine here, synthesize a
   // minimal base config so the DB-plane merge still runs. The synthesized
   // config has no auth or model fields; DB-plane keys overlay correctly
   // and downstream callers either find them or fall through to defaults.
@@ -995,10 +995,10 @@ export async function loadConfigWithEngine(
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         merged.embedding_columns = parsed as Record<string, EmbeddingColumnConfig>;
       } else {
-        console.warn('[gbrain] config: embedding_columns DB value is not a JSON object; ignoring');
+        console.warn('[foresights] config: embedding_columns DB value is not a JSON object; ignoring');
       }
     } catch (err) {
-      console.warn(`[gbrain] config: embedding_columns DB value is not valid JSON; ignoring (${(err as Error).message})`);
+      console.warn(`[foresights] config: embedding_columns DB value is not valid JSON; ignoring (${(err as Error).message})`);
     }
   }
   if (merged.search_embedding_column === undefined && dbSearchEmbeddingColumn !== undefined) {
@@ -1087,7 +1087,7 @@ export async function loadConfigWithEngine(
   // per key (NO env layer; see GBrainConfig.dream JSDoc). Without this,
   // `extract-atoms.ts` and any other consumer that reads the merged config
   // (vs calling `engine.getConfig()` directly) silently misses dream.*
-  // config set via `gbrain config set`.
+  // config set via `foresights config set`.
   const dbSessionCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
   const dbMeetingTranscriptsDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
   const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
@@ -1143,8 +1143,8 @@ export async function loadConfigWithEngine(
   }
 
   // #1475 — eval.* DB-plane merge. Both keys are in KNOWN_CONFIG_KEYS, so
-  // `gbrain config set eval.capture true` is accepted and stored, and
-  // `gbrain config get` reads it back (it queries engine.getConfig directly
+  // `foresights config set eval.capture true` is accepted and stored, and
+  // `foresights config get` reads it back (it queries engine.getConfig directly
   // and prints `source: db plane`). But the runtime gates read the MERGED
   // config — isEvalCaptureEnabled/isEvalScrubEnabled take `ctx.config` — so
   // without a merge branch here the write was accepted, echoed back, and had
@@ -1157,7 +1157,7 @@ export async function loadConfigWithEngine(
   // distinguishes them ('' / null / undefined → undefined).
   // Strict, not `dbBool`. `dbBool` maps every non-empty value other than the
   // exact string 'true' to FALSE, and `config set` stores whatever it is given
-  // — so `gbrain config set eval.scrub_pii TRUE` (or `1`, or a typo like
+  // — so `foresights config set eval.scrub_pii TRUE` (or `1`, or a typo like
   // `tru`) would arrive here as `false` and silently DISABLE PII scrubbing.
   // Measured: 'true'→true, 'false'→false, and 'tru' / 'TRUE' / '1' / 'yes' all
   // →false under dbBool. Before this merge existed those values were inert, so
@@ -1238,7 +1238,7 @@ export async function loadConfigWithEngine(
 }
 
 /**
- * v0.37 (D6): canonical list of known config keys for `gbrain config set`
+ * v0.37 (D6): canonical list of known config keys for `foresights config set`
  * validation. Includes both the static GBrainConfig fields (file plane)
  * and well-known DB-plane keys.
  *
@@ -1249,7 +1249,7 @@ export async function loadConfigWithEngine(
  * When adding a new persistent config key:
  *   1. Add it to the GBrainConfig interface (if file-plane) OR document it
  *      below (if DB-plane).
- *   2. Add the canonical name to this list so `gbrain config set` accepts it
+ *   2. Add the canonical name to this list so `foresights config set` accepts it
  *      without `--force`.
  */
 export const KNOWN_CONFIG_KEYS: readonly string[] = [
@@ -1387,7 +1387,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // search/mode.ts loadSearchModeConfig.
   'search.alias_token_hop',
   // 2026-08 fix wave (E5a): the adaptive-return / autocut / CRAG knobs were
-  // read by the search path but never registered — `gbrain config set`
+  // read by the search path but never registered — `foresights config set`
   // rejected them, making the documented config plane a no-op. Read sites:
   // return-policy.ts (adaptive_return*), mode.ts (autocut*), ops/search.ts
   // (crag_*). NOTE: `search.crag_think` (default off) runs `think` — an LLM
@@ -1497,12 +1497,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // src/core/facts/extract.ts:isFactsExtractionEnabled and honored by
   // sweep.ts, operations.ts and transcripts/ingest-facts.ts. That function's
   // own docstring tells operators to flip it with
-  // `gbrain config set facts.extraction_enabled false` — which was rejected
+  // `foresights config set facts.extraction_enabled false` — which was rejected
   // as an unknown key until this registration.
   'facts.extraction_enabled',
   // Open-loop engine kill switch: LLM commitment/decision extraction over
   // google-source email pages (default ON for google sources; deterministic
-  // thread detection is unaffected). `gbrain config set loops.extraction_enabled false`.
+  // thread detection is unaffected). `foresights config set loops.extraction_enabled false`.
   'loops.extraction_enabled',
   // #5445: brain-wide Gmail labels (names or ids, comma/JSON list) whose threads
   // never enter paid loop extraction; a source's g_loops_exclude_labels wins.
@@ -1539,7 +1539,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.supersession_thresholds', // JSON {"provider:model@dims": number | "off"} (facts/supersession-threshold.ts)
   'facts.page_write_notability_filter', // #6231: tiers page-write extraction keeps (facts/notability-filter.ts)
   // Ambient memory writeback (opt-in, default OFF): 'off' | 'salient' | 'all'.
-  // DUAL-PLANE: `gbrain config set` writes the DB plane (authoritative — the
+  // DUAL-PLANE: `foresights config set` writes the DB plane (authoritative — the
   // serve-side harvest gate re-checks it) AND mirrors into the file plane's
   // `memory` slot (read by the engine-free Stop-hook child and the stdio
   // serve's boot resolve). Resolved by src/core/facts/writeback-config.ts.
@@ -1616,7 +1616,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.patterns.min_interval_hours', 'dream.patterns.child_read_budget_kb', // #6297: hours (default 6) / KB (default 200), 0 = off; cycle/phase-config-values.ts
   'dream.claim_conflicts.mode', 'dream.claim_conflicts.max_pairs', // GBRA-216: propose | off (default off) / pairs per source per run (default 500); facts/claim-conflicts.ts
   // Paid-loop breaker: dead submissions of one dream key within 24h before
-  // it is refused (default 3; 0 disables). `gbrain dream reset-key` clears one.
+  // it is refused (default 3; 0 disables). `foresights dream reset-key` clears one.
   'dream.breaker.max_dead_submissions',
   'dream.write_deferral.enabled', 'embed.restamp.enabled', // GBRA-224 W3 self-heal switches, default on (heal-audit.ts healEnabled)
   // Emotional weight (v0.29)
@@ -1701,11 +1701,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'spend.posture',
   'pricing.overrides',
   // Life Chronicle (#2390, #5876): automatic event extraction, on by default
-  // (unset = on). The documented opt-out is `gbrain config set auto_chronicle
+  // (unset = on). The documented opt-out is `foresights config set auto_chronicle
   // false`; read by core/chronicle/config.ts.
   'auto_chronicle',
   // Auto-link toggle read by the put_page post-hook (link-extraction.ts),
-  // reconcile-links, and sweep. The documented off-switch is `gbrain config
+  // reconcile-links, and sweep. The documented off-switch is `foresights config
   // set auto_link false` — same unregistered-key class as auto_chronicle.
   'auto_link',
   // Entity mention index (core/mentions/policy.ts): off switch, +type/-type linkable types, names never linked, pages never linked (#5829),
@@ -1713,12 +1713,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore', 'mentions.exclude_slugs', 'mentions.alias_deny', 'mentions.multiword_aliases',
   'mentions.sibling_merge', 'search.alias_fanout_max', 'search.demote_generated',
   // #4987: the write-path timeline extractor's off switch (read by
-  // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
+  // isAutoTimelineEnabled); registered so `foresights config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.
   'auto_timeline',
   // Wanted pages: record unresolved authored links and wake their origins
   // when the target appears (src/core/wanted-links.ts). On by default; the
-  // off switch is `gbrain config set wanted_pages.enabled false`.
+  // off switch is `foresights config set wanted_pages.enabled false`.
   'wanted_pages.enabled',
   // Remote writes (the persistence `links` effect) record missing mention targets too. On by default (held-out verdict H8).
   'wanted_pages.remote',
@@ -1745,7 +1745,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chronicle.max_events_per_page', // #5329: events published per page extraction (default 25); the surplus is counted over_cap
   // Takes bootstrap (v0.41.18.0, A12). The onboard remediation's two-gate
   // consent reads this key, and enabling it is the documented path to
-  // `gbrain takes extract --from-pages` — same unregistered-key class.
+  // `foresights takes extract --from-pages` — same unregistered-key class.
   'takes.bootstrap_enabled',
   // #5885: `embed --stale` (cycle embed phase, migration drain) also embeds
   // stale takes; `false` turns that off (GBRAIN_EMBED_TAKES=0 overrides).
@@ -1778,7 +1778,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // normalizes to a '/**' subtree glob). Read best-effort at the top of
   // performSyncInner and UNIONED with any per-call --exclude so internal
   // callers (autopilot, minion sync jobs, dream cycle) honor the same scope.
-  // Registering it here is what makes `gbrain config set sync.exclude ...`
+  // Registering it here is what makes `foresights config set sync.exclude ...`
   // work — the operator path to the feature (unregistered-key class).
   'sync.exclude',
   // #4901: the dot-directory WAIVER's persisted twin (unioned with the per-call
@@ -1795,7 +1795,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // GBRA-161: the generation primitive's restore window, shrink floor, item cap and retirement valve (generations/config.ts); PR 4 (#7065): synthesis retire_previous, default on
   'generations.restore_days', 'generations.shrink_floor', 'generations.max_items', 'generations.valve.max_per_run', 'generations.valve.max_ratio', 'generations.synthesis.retire_previous',
   // #2179: clamp window for DCR-requested per-client token TTLs. Read by
-  // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
+  // `foresights serve --http` at startup; unset min defaults to 300s, unset max
   // defaults fail-closed to max(--token-ttl, min).
   'oauth.dcr_ttl_min_seconds',
   'oauth.dcr_ttl_max_seconds',
@@ -1806,8 +1806,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'maintenance.auto', 'maintenance.embed_daily_usd',
   // Brain-level default source. Read by source-resolver.ts tier 5
   // (`engine.getConfig('sources.default')`) and written by
-  // `gbrain sources default <id>`. Listed here so `gbrain config set`
-  // stops claiming "Nothing in gbrain reads this" for a key the resolver
+  // `foresights sources default <id>`. Listed here so `foresights config set`
+  // stops claiming "Nothing in foresights reads this" for a key the resolver
   // reads on every unqualified call.
   'sources.default',
   // Alias/undeclared explicit-type warnings at sync/import (default on).
@@ -1846,7 +1846,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
 /**
  * v0.37 (D6): well-known prefix patterns for DB-plane keys that have
  * unbounded sub-keys. Used as a softer gate before falling back to
- * Levenshtein suggestion in `gbrain config set`.
+ * Levenshtein suggestion in `foresights config set`.
  */
 export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'search.',           // search.* (mode, cache.*, etc.); config set refuses unregistered leaves (commands/config/enumerated-keys.ts)
@@ -1878,11 +1878,11 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
 /**
  * Canonical truthiness for DB-plane boolean config values (#2753).
  *
- * Config values arrive as opaque strings from `gbrain config set`, so every
+ * Config values arrive as opaque strings from `foresights config set`, so every
  * reader has to decide what counts as "on". Left to each call site those sets
  * drift, and the drift is silent in the worst possible way: the doctor accepted
  * `yes`/`on` while the subagent worker accepted only `true`/`1`, so
- * `gbrain config set agent.use_gateway_loop yes` produced a healthy doctor
+ * `foresights config set agent.use_gateway_loop yes` produced a healthy doctor
  * report AND a runtime refusal of the very job the setting was supposed to
  * enable. One parser, used by every reader, is what keeps a green health check
  * honest.
@@ -1927,7 +1927,7 @@ export function saveConfig(config: GBrainConfig): void {
  *
  * Called from:
  *   - `saveConfig()` so any config-writing path lays it down.
- *   - `gbrain post-upgrade` so existing users get it on next upgrade.
+ *   - `foresights post-upgrade` so existing users get it on next upgrade.
  *
  * What this DOES cover: a casual `git add ~/.gbrain` from inside an enclosing
  * worktree — the directory-local `.gitignore` blocks everything below it.
@@ -1962,7 +1962,7 @@ export function ensureGitignore(): void {
   } catch (e) {
     // Best-effort: log to stderr, never block the caller.
     const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[gbrain] ensureGitignore failed (${msg}); continuing\n`);
+    process.stderr.write(`[foresights] ensureGitignore failed (${msg}); continuing\n`);
   }
 }
 
@@ -1999,7 +1999,7 @@ export function configPath(): string {
 }
 
 /**
- * Sugar for joining paths under the active gbrain home. Use this anywhere you
+ * Sugar for joining paths under the active foresights home. Use this anywhere you
  * would otherwise write `join(homedir(), '.gbrain', ...rest)`. Honors
  * GBRAIN_HOME, validates input, and centralizes the convention so future
  * audits stay simple.

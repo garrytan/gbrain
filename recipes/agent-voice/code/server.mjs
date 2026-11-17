@@ -53,7 +53,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
 
 const PORT = parseInt(process.env.PORT || '8765', 10);
-// Loopback by default (mirrors `gbrain serve --http --bind 127.0.0.1`).
+// Loopback by default (mirrors `foresights serve --http --bind 127.0.0.1`).
 // Tunnels (ngrok / Caddy / Cloudflare) target localhost, so the documented
 // flows keep working; container/LAN deployments set HOST=0.0.0.0.
 const HOST = process.env.HOST || '127.0.0.1';
@@ -62,7 +62,7 @@ const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realt
 const OPENAI_REALTIME_URL = 'https://api.openai.com/v1/realtime/calls';
 
 // ── CORS + origin gate (default-deny) ─────────────────────────────────
-// Mirrors the GBRAIN_HTTP_CORS_ORIGIN pattern in gbrain's own HTTP
+// Mirrors the GBRAIN_HTTP_CORS_ORIGIN pattern in foresights's own HTTP
 // transport: exact-origin allowlist, no header emitted otherwise, and
 // Access-Control-Allow-Credentials is never set.
 function parseCorsAllowlist() {
@@ -216,7 +216,7 @@ async function handleSession(req, res) {
     tools: getEffectiveAllowlist().map((name) => ({
       type: 'function',
       name,
-      description: `gbrain operation: ${name}`,
+      description: `foresights operation: ${name}`,
       parameters: { type: 'object', properties: {}, additionalProperties: true },
     })),
   };

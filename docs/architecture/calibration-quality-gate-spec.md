@@ -14,7 +14,7 @@
 
 ## Problem
 
-gbrain ships `propose_takes`, `grade_takes`, and `calibration_profile` as a
+foresights ships `propose_takes`, `grade_takes`, and `calibration_profile` as a
 connected pipeline: extract claims → grade them against outcomes → build a
 calibration profile showing systematic biases.
 

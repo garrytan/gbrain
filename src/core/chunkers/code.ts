@@ -114,7 +114,7 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 
 // Bumped whenever chunker output shape changes (new tokenizer, merge-threshold,
 // language set, etc.) so importCodeFile's content_hash re-chunks existing pages
-// after a gbrain upgrade. See A2 / C2 in the v0.19.0 plan.
+// after a foresights upgrade. See A2 / C2 in the v0.19.0 plan.
 //
 // v3: Chonkie parity (Layer 5) — 36 languages + tiktoken cl100k_base tokenizer
 // + small-sibling merging. Every v0.18.0 brain with code pages re-chunks on
@@ -346,7 +346,7 @@ function warnParseFailure(language: SupportedCodeLanguage, filePath: string, err
   warnedLanguages.add(language);
   const msg = err instanceof Error ? err.message : String(err);
   console.warn(
-    `[gbrain chunker] ${language}: semantic parsing unavailable (${msg}); ` +
+    `[foresights chunker] ${language}: semantic parsing unavailable (${msg}); ` +
     `falling back to text chunks for every .${language} file — code-def/code-callers ` +
     `will return 0 for this language. First seen: ${filePath}`,
   );
@@ -354,7 +354,7 @@ function warnParseFailure(language: SupportedCodeLanguage, filePath: string, err
 
 // Dart splits a top-level function into TWO sibling nodes — the
 // `*_signature` and the `function_body` that follows it — where every other
-// grammar gbrain ships nests the body inside the declaration. Chunks are built
+// grammar foresights ships nests the body inside the declaration. Chunks are built
 // solely from `semanticNodes`, and source not covered by one is never emitted,
 // so without this the chunk for `int f(int a) => a + 1;` would hold exactly
 // `int f(int a)` and the body would vanish from the index. Returns the node
@@ -806,7 +806,7 @@ async function chunkParsedLanguage(
     } catch (e: unknown) {
       if (e instanceof ChunkerTimeoutError) {
         console.warn(
-          `[gbrain chunker] timeout parsing ${filePath} after ${timeoutMs}ms; ` +
+          `[foresights chunker] timeout parsing ${filePath} after ${timeoutMs}ms; ` +
           `falling back to recursive chunks`,
         );
         return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
@@ -1463,7 +1463,7 @@ function extractSymbolName(node: any): string | null {
   // child whose type is the actual statement kind. Dive in to find the target
   // identifier. DML statements (select/insert/update/delete) deliberately
   // return null so their chunks emit unnamed — code-def is a DDL signal.
-  // The `statement` wrapper is unique to SQL among gbrain's 37 grammars
+  // The `statement` wrapper is unique to SQL among foresights's 37 grammars
   // (Step 0 inspection 2026-05-24); checking by node.type is safe.
   if (node.type === 'statement' && node.namedChildCount === 1) {
     const sqlName = extractSqlSymbolName(node.namedChild(0));
@@ -1527,7 +1527,7 @@ const NAME_WRAPPER_TYPES = new Set([
 // DerekStride/tree-sitter-sql exposes the target identifier via the `name`
 // field on most create_* nodes; `alter_table` puts it in a separate field.
 // DML kinds (select/insert/update/delete) deliberately return null —
-// gbrain's code-def is a DDL retrieval signal, not a DML one.
+// foresights's code-def is a DDL retrieval signal, not a DML one.
 function extractSqlSymbolName(inner: any): string | null | undefined {
   const t = inner.type;
   // DDL: extract identifier name. Tried `name` field first (most common shape),

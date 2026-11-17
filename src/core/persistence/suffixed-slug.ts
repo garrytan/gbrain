@@ -46,7 +46,7 @@ export function bareSlugOf(slug: string): string | null {
 function refusal(ctx: OperationContext, bare: string): OperationError {
   const cli = opTransport(ctx) === 'cli';
   return opError('invalid_params', 'put_page slugs must not end in .md or .mdx.',
-    cli ? `Write the page as ${bare}: gbrain put ${bare} (the .md file name is added for you).`
+    cli ? `Write the page as ${bare}: foresights put ${bare} (the .md file name is added for you).`
       : `Call put_page again with slug "${bare}" and the same content (the .md file name is added for you).`, {
       why: 'A page is stored at <slug>.md, so a slug ending in .md would create a second extension on disk (<slug>.md.md) that the intended file never sees.',
       fix: {
@@ -62,7 +62,7 @@ function portabilityRefusal(ctx: OperationContext, slug: string, problem: SlugPo
   const what = problem.reason === 'reserved_name' ? `"${problem.segment}" is a name Windows reserves for a device`
     : `"${problem.segment.slice(0, 24)}…" is longer than the 240-byte file-name budget`;
   return opError('invalid_params', `New page slugs must be portable file names: ${what}.`,
-    cli ? `Write the page as ${problem.suggestion}: gbrain put ${problem.suggestion}`
+    cli ? `Write the page as ${problem.suggestion}: foresights put ${problem.suggestion}`
       : `Call put_page again with slug "${problem.suggestion}" and the same content.`, {
       detail: 'slug_not_portable',
       why: 'Each slug segment becomes a file or directory name on disk and in exports, and that name cannot be stored on every supported platform.',
@@ -77,7 +77,7 @@ function portabilityRefusal(ctx: OperationContext, slug: string, problem: SlugPo
 function hyphenRunRefusal(ctx: OperationContext, operation: SlugAdmissionOperation, folded: string): OperationError {
   const cli = opTransport(ctx) === 'cli';
   return opError('invalid_params', 'New page slugs must not contain a hyphen run or end a segment in a hyphen.',
-    cli ? `Write the page as ${folded}: ${operation === 'capture' ? `gbrain capture --slug ${folded}` : `gbrain put ${folded}`}`
+    cli ? `Write the page as ${folded}: ${operation === 'capture' ? `foresights capture --slug ${folded}` : `foresights put ${folded}`}`
       : `Call ${operation} again with slug "${folded}" and the same content.`, {
       detail: 'slug_hyphen_run',
       why: `A page is stored at <slug>.md, and import and sync derive a file's slug with every hyphen run folded to one hyphen, so this file would import as ${folded}. `

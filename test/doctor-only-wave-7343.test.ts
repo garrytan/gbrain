@@ -1,5 +1,5 @@
 /**
- * #7343: `gbrain doctor --only <wave check>` ran every wave check, and the
+ * #7343: `foresights doctor --only <wave check>` ran every wave check, and the
  * self-session classifier made one existence check per scratch project per
  * item.
  *

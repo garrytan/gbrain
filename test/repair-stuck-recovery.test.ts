@@ -1,5 +1,5 @@
 /**
- * #6650 §1.10: `gbrain repair stuck-recovery` resolves a page publication recovery the owner refuses with
+ * #6650 §1.10: `foresights repair stuck-recovery` resolves a page publication recovery the owner refuses with
  * unexpected_file_bytes. Every fixture builds the real blocked state (a claimed write with a recovery record, a
  * human edit of its file, one owner recovery pass that parks it) and resolves it through the registered repair kind.
  */
@@ -73,7 +73,7 @@ async function recoveryAccounting(id: string) {
   return { reserved: Number(counts.reserved), counter: Number(counts.counter) };
 }
 
-describe('gbrain repair stuck-recovery', () => {
+describe('foresights repair stuck-recovery', () => {
   test('is an explicit-only, preview-bound, destructive-consent repair kind that no unnamed runner can start', () => run(async () => {
     expect(REPAIR_KINDS).toContain('stuck-recovery');
     expect(EXPLICIT_REPAIR_REGISTRY.map(spec => spec.kind)).toContain('stuck-recovery');
@@ -108,8 +108,8 @@ describe('gbrain repair stuck-recovery', () => {
     const hash = /--expect ([0-9a-f]{64})/.exec(out)![1]!;
     expect(out).toContain(`--keep prior: discard the edit: write the recorded prior bytes back`);
     expect(out).toContain("no recorded failure: --keep prior requeues the write, --keep disk abandons it");
-    expect(out).toContain(`gbrain repair stuck-recovery --source ${s.sourceId} --keep prior --apply --expect ${hash} --yes`);
-    expect(out).toContain(`gbrain repair stuck-recovery --source ${s.sourceId} --keep disk --apply --expect ${hash} --yes`);
+    expect(out).toContain(`foresights repair stuck-recovery --source ${s.sourceId} --keep prior --apply --expect ${hash} --yes`);
+    expect(out).toContain(`foresights repair stuck-recovery --source ${s.sourceId} --keep disk --apply --expect ${hash} --yes`);
     expect(readFileSync(s.path, 'utf8')).toBe(EDITED);
     expect(await getWriteRequestById(engine, s.id)).toMatchObject({ state: 'recovering', blocked_reason: 'unexpected_file_bytes' });
   }));
@@ -143,12 +143,12 @@ describe('gbrain repair stuck-recovery', () => {
     expect(readFileSync(s.path, 'utf8')).toBe(EDITED);
     expect(await getWriteRequestById(engine, s.id)).toMatchObject({ state: 'conflict', error_code: 'source_changed', recovery: null });
     const next = String(result.outcome_items![0]!.detail!.next);
-    expect(next).toContain(`gbrain sources reconcile ${s.sourceId} page --brain host --preview`);
+    expect(next).toContain(`foresights sources reconcile ${s.sourceId} page --brain host --preview`);
     expect(next).not.toContain('file-drift');
     expect(next).toContain('does not mark the page repaired');
     // #6858: both follow-ups, in order: the additive-aware reconcile preview, then the sync that resumes the source.
     expect(next).toContain(`--preview --auto-additive`);
-    expect(next.indexOf('--auto-additive')).toBeLessThan(next.indexOf(`gbrain sync --source ${s.sourceId} --no-pull`));
+    expect(next.indexOf('--auto-additive')).toBeLessThan(next.indexOf(`foresights sync --source ${s.sourceId} --no-pull`));
     expect(readFileSync(join(String(result.outcome_items![0]!.detail!.backup_dir), '0.prior'), 'utf8')).toBe(PRIOR);
   }));
 
@@ -160,8 +160,8 @@ describe('gbrain repair stuck-recovery', () => {
     expect(result.outcomes).toEqual({ resolved: 1 });
     const next = String(result.outcome_items![0]!.detail!.next);
     expect(next).not.toContain("sync import's publication");
-    expect(next).toContain(`gbrain sources reconcile ${s.sourceId} page --brain host --preview --auto-additive`);
-    expect(next.indexOf('--auto-additive')).toBeLessThan(next.indexOf(`gbrain sync --source ${s.sourceId} --no-pull`));
+    expect(next).toContain(`foresights sources reconcile ${s.sourceId} page --brain host --preview --auto-additive`);
+    expect(next.indexOf('--auto-additive')).toBeLessThan(next.indexOf(`foresights sync --source ${s.sourceId} --no-pull`));
   }));
 
   for (const strict of [true, false]) {
@@ -177,16 +177,16 @@ describe('gbrain repair stuck-recovery', () => {
       const detail = result.outcome_items![0]!.detail!;
       const next = String(detail.next);
       if (!strict) {
-        expect(next).toContain(`gbrain sources reconcile ${s.sourceId} page --brain host --preview --auto-additive`);
+        expect(next).toContain(`foresights sources reconcile ${s.sourceId} page --brain host --preview --auto-additive`);
         expect(detail.fix).toBeUndefined();
         return;
       }
       expect(next).not.toContain('sources reconcile');
       expect(next).toContain('the kept bytes are an uncommitted edit at page.md');
-      expect(next).toContain(`gbrain git commit-push --path ${checkout} -m "<message>" -- page.md, then gbrain sync --source ${s.sourceId} --no-pull`);
-      expect(next).toContain(`git -C ${checkout} restore -- page.md, then gbrain sync --source ${s.sourceId} --no-pull`);
+      expect(next).toContain(`foresights git commit-push --path ${checkout} -m "<message>" -- page.md, then foresights sync --source ${s.sourceId} --no-pull`);
+      expect(next).toContain(`git -C ${checkout} restore -- page.md, then foresights sync --source ${s.sourceId} --no-pull`);
       expect(next).toContain(`git -C ${checkout} status --porcelain -- page.md`);
-      expect(next.indexOf('status --porcelain')).toBeLessThan(next.indexOf(`gbrain sync status --source ${s.sourceId} --json`));
+      expect(next.indexOf('status --porcelain')).toBeLessThan(next.indexOf(`foresights sync status --source ${s.sourceId} --json`));
       expect(detail.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--path', checkout, '-m', '<MESSAGE>', '--', 'page.md'],
         inputs: [{ name: 'MESSAGE' }], verify: { argv: ['git', '-C', checkout, 'status', '--porcelain', '--', 'page.md'] },
         then: { argv: ['gbrain', 'sync', '--source', s.sourceId, '--no-pull'], verify: { argv: ['gbrain', 'sync', 'status', '--source', s.sourceId, '--json'] } } });

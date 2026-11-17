@@ -92,8 +92,8 @@ export function meetingsAuthRequired(sourceId: string, cfg: Pick<MeetingsSourceC
   const where = cfg.tokenEnv ? `the environment variable ${cfg.tokenEnv} (the source's --token-env)` : `${'GBRAIN_CONNECTOR_' + cfg.provider.toUpperCase() + '_TOKEN'} or ~/.gbrain/connectors/${cfg.provider}.json`;
   const error = new OperationError('connector_auth_required',
     `Meetings source ${sourceId} has no working ${cfg.provider} API key${detail ? ` (${detail})` : ''}. Nothing was imported.`,
-    cfg.tokenEnv ? `Set ${cfg.tokenEnv} to a valid ${cfg.provider} API key in the environment that runs the sync, then run: gbrain sync --source ${sourceId}`
-      : `Ask the user for their ${cfg.provider} API key and save it on stdin: gbrain connectors auth ${cfg.provider} --token - ; then run: gbrain sync --source ${sourceId}. The key was read from ${where}.`,
+    cfg.tokenEnv ? `Set ${cfg.tokenEnv} to a valid ${cfg.provider} API key in the environment that runs the sync, then run: foresights sync --source ${sourceId}`
+      : `Ask the user for their ${cfg.provider} API key and save it on stdin: foresights connectors auth ${cfg.provider} --token - ; then run: foresights sync --source ${sourceId}. The key was read from ${where}.`,
     'docs/guides/meeting-and-slack-sources.md#connector_auth_required');
   return error;
 }
@@ -102,13 +102,13 @@ function translate(sourceId: string, cfg: MeetingsSourceConfig, error: unknown):
   if (error instanceof ConnectorAuthError) return meetingsAuthRequired(sourceId, cfg, 'the provider rejected it');
   if (error instanceof ConnectorAccessDeniedError) {
     return new OperationError('connector_access_denied', `The ${cfg.provider} key for ${sourceId} may not read meetings: ${error.message}. Nothing more was imported.`,
-      `Use a key whose account can read the team's meetings (an admin key reads every member's), save it with gbrain connectors auth ${cfg.provider} --token -, then run gbrain sync --source ${sourceId}.`,
+      `Use a key whose account can read the team's meetings (an admin key reads every member's), save it with foresights connectors auth ${cfg.provider} --token -, then run foresights sync --source ${sourceId}.`,
       'docs/guides/meeting-and-slack-sources.md#connector_access_denied');
   }
   if (error instanceof ConnectorRateLimitedError) {
     const at = error.retryAt ? new Date(error.retryAt).toISOString() : null;
     return new OperationError('rate_limited', `${cfg.provider} rate-limited ${sourceId}${at ? ` until ${at}` : ''}; progress so far was saved.`,
-      `Wait${at ? ` until ${at}` : ''}; autopilot resumes it by itself, or run gbrain sync --source ${sourceId} after that.`,
+      `Wait${at ? ` until ${at}` : ''}; autopilot resumes it by itself, or run foresights sync --source ${sourceId} after that.`,
       'docs/guides/meeting-and-slack-sources.md#rate_limited');
   }
   return error;
@@ -128,7 +128,7 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   if (!provider) {
     const key = resolveApiToken(cfg.provider, cfg.tokenEnv);
     if (!key) throw meetingsAuthRequired(sourceId, cfg);
-    provider = meetingProvider(cfg.provider, { token: key.token, userAgent: `gbrain/${VERSION} (+https://github.com/garrytan/gbrain)`, now });
+    provider = meetingProvider(cfg.provider, { token: key.token, userAgent: `gbrain/${VERSION} (+https://github.com/aimonk2025/gbrain)`, now });
   }
   const signal = opts.signal;
   let account: MeetingAccount;

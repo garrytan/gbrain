@@ -19,7 +19,7 @@ disfluent (Table 1; §4.2).
 
 These are learned, end-task-trained compressors and selective-augmentation policies—not
 a lexical round selector. QA compressors are dataset-specific; experiments use older
-LMs, and summaries can omit or alter details. For GBrain, evidence favors measuring
+LMs, and summaries can omit or alter details. For Foresights, evidence favors measuring
 concise, coherent selections and allowing “no useful evidence” as an outcome, while
 preserving the full source trail for audit. It does not establish that a simple lexical
 strategy will improve conversational answers.

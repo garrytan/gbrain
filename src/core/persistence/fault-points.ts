@@ -87,7 +87,7 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   // GBRA-108: before each slice of a legacy sweep is screened (sync-pass-apply.ts); a hook that throws stops the pass mid-sweep,
   // as a kill or the drain's governor does.
   | 'sync:legacy_slice'
-  // #6650: `gbrain repair stuck-recovery` (recovery-resolve.ts): after the backup is durable (before its journal step), after the prior
+  // #6650: `foresights repair stuck-recovery` (recovery-resolve.ts): after the backup is durable (before its journal step), after the prior
   // bytes are written (before their journal step), after a --keep disk write is abandoned (its journal step written), and after recoverPublication returns.
   | 'stuck_recovery:backed_up' | 'stuck_recovery:written' | 'stuck_recovery:abandoned' | 'stuck_recovery:recovered'
   // Wave B segmented writes (spec 3.4 crash windows): after the texts, the staged manifest rows and the staged chunks of a

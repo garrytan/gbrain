@@ -1,7 +1,7 @@
 /**
  * #2900 — `reconcile-links` CLI reachability.
  *
- * `reconcile-links` is advertised in `gbrain --help` and fully implemented
+ * `reconcile-links` is advertised in `foresights --help` and fully implemented
  * with a `case 'reconcile-links'` block in cli.ts's handleCliOnly switch, but
  * it was missing from the CLI_ONLY Set. Dispatch only reaches handleCliOnly
  * when the command is in CLI_ONLY, so every invocation fell through to the
@@ -28,7 +28,7 @@ describe('CLI_ONLY command reachability (#3224)', () => {
     expect(CLI_ONLY.has('backfill')).toBe(true);
   });
 
-  test('`gbrain backfill --help` is dispatched, not rejected as unknown', () => {
+  test('`foresights backfill --help` is dispatched, not rejected as unknown', () => {
     const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
     const result = spawnSync('bun', ['run', 'src/cli.ts', 'backfill', '--help'], {
       cwd: process.cwd(),

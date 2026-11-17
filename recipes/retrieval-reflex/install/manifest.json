@@ -3,7 +3,7 @@
   "recipe": "retrieval-reflex",
   "version": "0.1.0",
   "install_kind": "copy-into-host-repo",
-  "description": "src → target mapping consumed by `gbrain integrations install retrieval-reflex`. Policy-only recipe: ships one SKILL.md into the host resolver and appends a resolver row. The deterministic pointer layer lives in the gbrain context engine and needs no install.",
+  "description": "src → target mapping consumed by `foresights integrations install retrieval-reflex`. Policy-only recipe: ships one SKILL.md into the host resolver and appends a resolver row. The deterministic pointer layer lives in the foresights context engine and needs no install.",
   "target_root_relative_to_host_repo": "skills/retrieval-reflex",
   "skills_target_root_relative_to_host_repo": "skills",
   "files": [],

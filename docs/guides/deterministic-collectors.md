@@ -44,7 +44,7 @@ llm_analyze():
   digest = read("data/digests/today.md")  // links already baked in
   classify_urgency(digest)                 // judgment call
   add_commentary(digest)                   // contextual analysis
-  run_brain_enrichment(notable_entities)   // gbrain search + update
+  run_brain_enrichment(notable_entities)   // foresights search + update
   draft_replies(urgent_items)              // creative work
   surface_to_user(final_output)            // delivery
 
@@ -143,7 +143,7 @@ the same pass.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). The
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). The
 [email-to-brain recipe](../../recipes/email-to-brain.md) implements this
 collector pattern end-to-end; [cron-schedule.md](cron-schedule.md) covers
 scheduling it.*

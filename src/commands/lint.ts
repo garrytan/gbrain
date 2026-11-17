@@ -1,6 +1,6 @@
 import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
 /**
- * gbrain lint — Deterministic brain page quality checker.
+ * foresights lint — Deterministic brain page quality checker.
  *
  * Zero LLM calls. Catches common quality issues:
  * - LLM preamble artifacts ("Of course! Here is...")
@@ -14,13 +14,13 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
  *   targets, CLI default; core/lint/link-check.ts)
  *
  * Usage:
- *   gbrain lint <dir>              # report issues
- *   gbrain lint <dir> --fix        # auto-fix what's fixable
- *   gbrain lint <dir> --fix --dry-run  # preview fixes
- *   gbrain lint <dir> --json       # machine-readable report on stdout
- *   gbrain lint <dir> --strict     # exit 1 when any issue is left
- *   gbrain lint <dir> --no-links   # skip the link checks
- *   gbrain lint <file.md>          # lint single file
+ *   foresights lint <dir>              # report issues
+ *   foresights lint <dir> --fix        # auto-fix what's fixable
+ *   foresights lint <dir> --fix --dry-run  # preview fixes
+ *   foresights lint <dir> --json       # machine-readable report on stdout
+ *   foresights lint <dir> --strict     # exit 1 when any issue is left
+ *   foresights lint <dir> --no-links   # skip the link checks
+ *   foresights lint <file.md>          # lint single file
  */
 
 import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
@@ -84,7 +84,7 @@ const FRONTMATTER_RULE_NAMES: Record<ParseValidationCode, string> = {
   EMPTY_FRONTMATTER: 'frontmatter-empty',
 };
 
-/** Codes whose lint findings are fixable by `gbrain frontmatter validate --fix`. */
+/** Codes whose lint findings are fixable by `foresights frontmatter validate --fix`. */
 const FRONTMATTER_FIXABLE: ReadonlySet<ParseValidationCode> = new Set<ParseValidationCode>([
   'MISSING_CLOSE',
   'NULL_BYTES',
@@ -193,11 +193,11 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   // Rule: line-grammar near-misses (a relation or fact line that will not be
   // read as written). Read-only; the fix is in each message. Syntax-only: a
   // file check reads no brain settings or schema pack, so it never implies an
-  // edge will be stored; `gbrain get <slug> --grammar-diagnostics` is the
+  // edge will be stored; `foresights get <slug> --grammar-diagnostics` is the
   // effective check against the brain.
   for (const d of parseLineGrammar(content).diagnostics) {
     issues.push({ file: filePath, line: d.line, rule: 'line-grammar',
-      message: `${d.message} (${d.reason}; syntax-only check: run \`gbrain get <slug> --grammar-diagnostics\` for what the brain reads)`, fixable: false });
+      message: `${d.message} (${d.reason}; syntax-only check: run \`foresights get <slug> --grammar-diagnostics\` for what the brain reads)`, fixable: false });
   }
 
   // Rule: LLM preamble artifacts (only a leading run; see findLeadingPreamble)
@@ -269,7 +269,7 @@ export function lintContent(content: string, filePath: string, opts: LintContent
           line: content.slice(0, 3 + fm.search(/^type:/m)).split('\n').length,
           rule: 'type-undeclared',
           message: `Page type '${t}' is not declared in active schema pack '${opts.typePack.name}' (not a page type or alias). ` +
-            `Use a declared type, or declare it: gbrain schema add-type ${safeCliToken(parsed.type) ?? '<type>'} (with its primitive and prefix)`,
+            `Use a declared type, or declare it: foresights schema add-type ${safeCliToken(parsed.type) ?? '<type>'} (with its primitive and prefix)`,
           fixable: false,
         });
       }
@@ -490,7 +490,7 @@ async function resolveLintContentSanity(
     }
     await packFromEngine(sharedEngine);
   } else {
-    // Standalone path (CLI `gbrain lint`, which is CLI_ONLY and shares no
+    // Standalone path (CLI `foresights lint`, which is CLI_ONLY and shares no
     // engine): only attempt when the file/env config suggests an engine is
     // configured. Avoids spinning up a fresh PGLite just to read 4 config
     // keys in a CI lint run that has no brain at all. Safe to create +
@@ -715,10 +715,10 @@ function writeLintFixOrRefusal(page: string, relPath: string, fixed: string): Li
     const errno = (e as NodeJS.ErrnoException | null)?.code;
     if (typeof errno !== 'string' || !UNWRITABLE_CODES.has(errno)) throw e;
     const envelope = toAgentError(opError('fix_not_writable', `fix not applied: ${relPath} is not writable (${errno}); the file was left unchanged.`,
-      'Make the file writable by the user running gbrain, or pass its directory or file name to `gbrain lint --exclude` (for the cycle, add it to `cycle.lint_exclude` with `gbrain config set`), then lint again.', {
+      'Make the file writable by the user running foresights, or pass its directory or file name to `foresights lint --exclude` (for the cycle, add it to `cycle.lint_exclude` with `foresights config set`), then lint again.', {
         why: 'Lint repairs files in place, and this file refused the write (its permissions or a read-only mount).',
         fix: { consent: [], actor: 'user', requires_exclusive: false, why: 'Only the file owner can change its permissions or mount.',
-          user_message: `Make ${relPath} writable for gbrain, or exclude it from lint.` },
+          user_message: `Make ${relPath} writable for foresights, or exclude it from lint.` },
       }), { transport: 'cli', command: 'lint', render: cliRenderContext() });
     return { file: relPath, line: 1, rule: 'fix-not-writable', fixable: false, code: 'fix_not_writable', reason: errno.toLowerCase(),
       message: envelope.message, ...(envelope.fix ? { fix: envelope.fix } : {}), docs: docsUrl(ERROR_CATALOGUE.fix_not_writable.docs) };
@@ -831,7 +831,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     typePack: opts.typePack !== undefined ? opts.typePack : runtime?.typePack ?? null,
   };
 
-  // Durability-hardened brains (`gbrain sources harden`) promise every write
+  // Durability-hardened brains (`foresights sources harden`) promise every write
   // is committed AND pushed. An uncommitted lint repair would otherwise sit
   // as drift the cycle's sync phase flags and the post-commit hook never
   // pushes. Same gate + path-limited helper as put_page write-through
@@ -979,7 +979,7 @@ export async function runLint(args: string[]) {
   const links = !args.includes('--no-links');
 
   if (!target) {
-    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run] [--exclude a,b] [--json] [--strict] [--no-links]');
+    console.error('Usage: foresights lint <dir|file.md> [--fix] [--dry-run] [--exclude a,b] [--json] [--strict] [--no-links]');
     console.error('  --fix       Auto-fix fixable issues (LLM preambles, code fences)');
     console.error('  --dry-run   Preview fixes without writing');
     console.error('  --exclude   Comma-separated dir/file basenames to skip (in addition to node_modules)');

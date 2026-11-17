@@ -1,8 +1,8 @@
 # Enforced member mode
 
-Set `GBRAIN_ENFORCED_MEMBER=<member>` in the environment of a gbrain process and
+Set `GBRAIN_ENFORCED_MEMBER=<member>` in the environment of a foresights process and
 the CLI acts as that one member instead of as the brain owner. A group-chat turn
-that runs `gbrain search` sees only what that member may read, its writes can't
+that runs `foresights search` sees only what that member may read, its writes can't
 touch a page the member can't read, and anything the mode doesn't know is refused.
 
 It is meant for a launcher (a harness's wrapper or the cron wrapper in
@@ -40,7 +40,7 @@ command, and no command's handler runs for a help request.
 
 Writes: `put`, `link`, `unlink`, `tag`, `untag`, `timeline-add`, `remember`
 and `git commit-push` with named paths (`edit_page` and `append_page` are
-classified writes with no CLI name). `timeline-add` refuses a gbrain fence
+classified writes with no CLI name). `timeline-add` refuses a foresights fence
 marker (`<!--- gbrain:...`) in its summary, detail or source. `remember`
 saves one fact only with `--entity` naming the exact slug of a page the member
 reads; nothing is inferred, and `--replaces` is refused. Without it, the refusal's first line says so and
@@ -48,10 +48,10 @@ that nothing was saved, and its next line is the retry shape:
 
 ```
 gbrain: refused under GBRAIN_ENFORCED_MEMBER=alice-example: remember saves a fact only with --entity <slug of a page you can read>; nothing was saved [GBRAIN_ENFORCED_REFUSED]
-Retry: gbrain remember "<one fact>" --entity <exact slug of a page you can read, from gbrain find or gbrain search> --provenance "<where you learned it>"
+Retry: foresights remember "<one fact>" --entity <exact slug of a page you can read, from foresights find or foresights search> --provenance "<where you learned it>"
 ```
 
-`gbrain write-request <id>` reads the receipt of a write this mode accepted
+`foresights write-request <id>` reads the receipt of a write this mode accepted
 for the member (it records those request ids in `~/.gbrain/enforced-member/`
 on the machine that ran the write). Any other id answers exactly as an unknown
 one. `git commit-push` refuses a named
@@ -65,7 +65,7 @@ A brain owner who wants member CLIs to read and not write sets one key in the
 brain's config, from a direct session (one without `GBRAIN_ENFORCED_MEMBER`):
 
 ```
-gbrain config set access.enforced_member_writes refuse
+foresights config set access.enforced_member_writes refuse
 ```
 
 | Value | Page writes | `git commit-push` with named paths |
@@ -97,7 +97,7 @@ refuse_pages.`
   under the mode, so a member can't change it.
 - Any value other than `checked` and `refuse_pages`, or a config read that
   fails, counts as `refuse` (fail closed).
-  `gbrain config set access.enforced_member_writes checked` turns writes back on.
+  `foresights config set access.enforced_member_writes checked` turns writes back on.
 - Reads are never affected, and neither is a CLI without
   `GBRAIN_ENFORCED_MEMBER`.
 - Under every value, `git commit-push --pull`, `git commit-push --dry-run`,
@@ -120,15 +120,15 @@ Docs: docs/guides/enforced-member.md#refused
 With `--json`, stdout carries the `enforced_member_refused` envelope. An agent
 should stop and tell the user, not retry: the same call refuses every time. The
 variable set but empty, naming no enabled member, or naming the brain owner
-(`gbrain access owner set`) refuses every command except `errors`,
+(`foresights access owner set`) refuses every command except `errors`,
 `protocol` and the static help of a command the mode allows. It never falls back to the owner.
 
 ## Limits
 
-- **PGLite with a running `gbrain serve`.** The mode never hands a call to a
+- **PGLite with a running `foresights serve`.** The mode never hands a call to a
   live serve (the serve answers as the owner), so it opens the brain itself. A
   PGLite brain allows one process at a time, so on a PGLite brain with a running
-  `gbrain serve`, every enforced-mode read (and write) fails closed with the
+  `foresights serve`, every enforced-mode read (and write) fails closed with the
   lock error. Postgres brains are not affected.
 - **A thin client** (a remote MCP config) reads as its own credential, so it
   refuses every command under the mode.

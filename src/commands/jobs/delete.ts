@@ -1,4 +1,4 @@
-/** `gbrain jobs delete` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs delete` (dispatched by runJobs in src/commands/jobs.ts). */
 import type { JobsCommandContext } from './shared.ts';
 
 export async function runJobsDelete({ args, queue }: JobsCommandContext): Promise<void> {

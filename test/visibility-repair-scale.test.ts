@@ -1,5 +1,5 @@
 /**
- * GBRA-159: gbrain repair visibility on a large brain. The preview plans one
+ * GBRA-159: foresights repair visibility on a large brain. The preview plans one
  * class at a time, remotely readable facts first; facts, chronicle events and
  * alias-only pages never read concept-provenance links; it lists one bounded
  * window whose --apply --expect <hash> applies exactly that window (resumable);
@@ -122,7 +122,7 @@ describe('GBRA-159 visibility repair plans by class, facts first, without links 
       expect(window.affected).toBe(5);
       expect(window.listing!.every(entry => entry.class === 'facts' && entry.detail!.endsWith('(remotely readable now)'))).toBe(true);
       expect(window.details).toMatchObject({ window: { size: 5, listed: 5, not_read: ['events', 'aliases', 'lineage'] } });
-      expect(window.warnings!.join(' ')).toContain('Apply this window (or decide not to), then preview again for the next one: gbrain repair visibility');
+      expect(window.warnings!.join(' ')).toContain('Apply this window (or decide not to), then preview again for the next one: foresights repair visibility');
       const lineage = await preview(engine, { driftClass: 'lineage' });
       expect(lineage.listing!.every(entry => entry.class === 'lineage')).toBe(true);
       expect(lineage.affected).toBeGreaterThan(0);

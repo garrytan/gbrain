@@ -119,7 +119,7 @@ function grantFix(
 function sourceGrantFix(auth: Pick<AuthInfo, 'clientId' | 'principal'> | undefined): Action {
   return grantFix(auth, { token: ['--sources', '<sources>'], client: ['--federated-read', '<sources>'] },
     'Grants this connection the sources it may read; only the brain host operator can change grants.',
-    [{ name: 'sources', how: 'Ask the user which source ids this connection should read (comma-separated; `gbrain sources list` on the brain host shows them).' }]);
+    [{ name: 'sources', how: 'Ask the user which source ids this connection should read (comma-separated; `foresights sources list` on the brain host shows them).' }]);
 }
 
 /** Pending schema migrations on the brain host restore a degraded grant/fence projection. */
@@ -154,7 +154,7 @@ export function validateUploadPath(filePath: string, root: string, strict = true
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('ENOENT')) {
       throw opError('invalid_params', `File not found: ${filePath}`,
-        'Pass the path of an existing file; a relative path resolves against the working directory of the process running gbrain.');
+        'Pass the path of an existing file; a relative path resolves against the working directory of the process running foresights.');
     }
     throw opError('invalid_params', `Cannot resolve path: ${filePath}`,
       'Pass a readable regular file: the path or one of its parent directories could not be resolved (permissions or a broken link).');
@@ -214,7 +214,7 @@ export function validatePageSlug(slug: string): void {
 export { isOpPageSlug };
 
 /**
- * #6212: a slug an older gbrain stored that today's grammar refuses (a space,
+ * #6212: a slug an older foresights stored that today's grammar refuses (a space,
  * as in `people/jane doe`). Admitted only to delete or restore that exact
  * existing row, and only if it still passes the storage guard (validateSlug:
  * no traversal, leading `/`, backslash, control or bidi characters, or encoded
@@ -271,7 +271,7 @@ export function enforceSubagentSlugFence(ctx: OperationContext, slug: string, op
   if (ctx.viaSubagent !== true) return;
   if ((typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) && !replayedAllowList(ctx)) {
     throw opError('permission_denied', `${opName} via subagent requires ctx.subagentId`,
-      'This is a gbrain dispatch fault, not a caller mistake: report it to the user instead of resubmitting the write.');
+      'This is a foresights dispatch fault, not a caller mistake: report it to the user instead of resubmitting the write.');
   }
   if (slugUnderSubagentFence(ctx, slug)) return;
   const allowList = ctx.allowedSlugPrefixes;
@@ -516,7 +516,7 @@ export function opAllowedForBoundClient(
 
 /**
  * The explicit no-source grant (`permissions.source_id: []`, written by
- * `gbrain auth rescope-token <name> --sources none`) refuses every operation:
+ * `foresights auth rescope-token <name> --sources none`) refuses every operation:
  * it never falls back to the `default` floor for reads or writes.
  */
 export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'clientId' | 'principal'>): OperationError {
@@ -539,12 +539,12 @@ export function sharedWriteSourceMemberError(operation: string, auth: Pick<AuthI
   const fix = grantFix(auth, { token: ['--sources', '<sources>'], client: ['--source', '<source>'] },
     'Gives this connection a write source of its own that is not federated; only the brain host operator can change grants.');
   const input = fix.argv?.includes('<sources>')
-    ? { name: 'sources', how: 'Ask the user for a source that is not federated, written first, then default (e.g. <private-source>,default; `gbrain sources list` on the brain host shows them).' }
-    : fix.argv?.includes('<source>') ? { name: 'source', how: 'Ask the user for a source that is not federated (`gbrain sources list` on the brain host shows them).' } : null;
+    ? { name: 'sources', how: 'Ask the user for a source that is not federated, written first, then default (e.g. <private-source>,default; `foresights sources list` on the brain host shows them).' }
+    : fix.argv?.includes('<source>') ? { name: 'source', how: 'Ask the user for a source that is not federated (`foresights sources list` on the brain host shows them).' } : null;
   return opError('permission_denied',
     `${operation} is unavailable to a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads: its pages would land where other members ` +
       'and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
-      'or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).',
+      'or ask the brain operator to grant this credential its own write source that is not federated (foresights auth rescope --sources <private-source>,default).',
     "Write through the MCP put_page op, or ask the brain host's operator to give this credential a write source that is not federated (command in fix).",
     { docs: 'docs/guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them', fix: input ? { ...fix, inputs: [input] } : fix });
 }
@@ -591,7 +591,7 @@ export function enforceBoundClientOpAllowList(
   const err = opError(
     'permission_denied',
     `${op.name} is not available to slug-bound clients: it can write outside client ${auth?.clientId ?? '(unknown)'}'s bound_slug_prefixes (${(auth?.boundSlugPrefixes ?? []).join(', ')}).`,
-    `Use put_page / add_timeline_entry / add_link under your own prefixes, or ask the brain host's operator to clear the binding${clientId ? ` (gbrain auth rescope-client ${clientId} --bound-slug-prefixes none)` : ''}.`,
+    `Use put_page / add_timeline_entry / add_link under your own prefixes, or ask the brain host's operator to clear the binding${clientId ? ` (foresights auth rescope-client ${clientId} --bound-slug-prefixes none)` : ''}.`,
   );
   // Amendment 33 / D10: op-level, not argument-level — see above. The
   // slug-prefix ARGUMENT denials (enforceClientSlugFence) deliberately do
@@ -853,12 +853,12 @@ function explicitReadDeniedHint(ctx: OperationContext, id: string): string {
     const granted = auth.allowedSources ?? (auth.sourceId !== undefined ? [auth.sourceId] : []);
     return auth.principal?.kind === 'oauth_client'
       ? `Your token is not granted ${id}; ask the brain owner to grant it ` +
-        `(gbrain auth rescope-client ${auth.principal.id} --federated-read ${[...granted, id].join(',')}).`
+        `(foresights auth rescope-client ${auth.principal.id} --federated-read ${[...granted, id].join(',')}).`
       : `Your token is not granted ${id}; ask the brain owner to grant it.`;
   }
   const binding = ctx.explicitReadBinding;
   if (binding === undefined) {
-    return `${id} is not federated; the brain owner can run \`gbrain sources federate ${id}\` on the brain host, ` +
+    return `${id} is not federated; the brain owner can run \`foresights sources federate ${id}\` on the brain host, ` +
       'or omit source_id to read within this connection\'s sources.';
   }
   const bound = `This connection is bound to source ${binding.sourceId} (${binding.via}).`;
@@ -867,10 +867,10 @@ function explicitReadDeniedHint(ctx: OperationContext, id: string): string {
     : 'start this connection outside the directory pinned by .gbrain-source';
   if (binding.optedOut.includes(binding.sourceId)) {
     return `${bound} ${binding.sourceId} opted out of federation (federated: false), so it reads no other source; ` +
-      `the brain owner can run \`gbrain sources federate ${binding.sourceId}\` on the brain host, or ${unbind}.`;
+      `the brain owner can run \`foresights sources federate ${binding.sourceId}\` on the brain host, or ${unbind}.`;
   }
   const reason = binding.optedOut.includes(id) ? 'opted out of federation (federated: false)' : 'is not federated';
-  return `${bound} ${id} ${reason}; the brain owner can run \`gbrain sources federate ${id}\` on the brain host, or ${unbind}.`;
+  return `${bound} ${id} ${reason}; the brain owner can run \`foresights sources federate ${id}\` on the brain host, or ${unbind}.`;
 }
 
 /**
@@ -1020,7 +1020,7 @@ export async function assertExplicitSourceLive(
     `source '${sourceIdParam}' does not exist (removed or archived)`,
     'Omit source_id to read within your grant, or pick an id from sources_list. ' +
       'If a .gbrain-source dotfile or a federated_read grant still names it, update them ' +
-      `(the brain host operator rescopes ${clientId ? `client ${clientId}'s` : 'the'} federated_read grant; gbrain doctor lists dangling grants).`,
+      `(the brain host operator rescopes ${clientId ? `client ${clientId}'s` : 'the'} federated_read grant; foresights doctor lists dangling grants).`,
     { fix: sourcesListFix('Lists the live sources this caller can read.') },
   );
 }

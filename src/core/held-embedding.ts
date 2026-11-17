@@ -8,13 +8,13 @@
  * them, with no row cap, against the active vector column and the embed
  * path's stale-input rules (a chunk without a vector or `embedded_at`, or a
  * page whose vectors came from another embedding signature): only pages with
- * such chunks count. `gbrain embed --stale` (`noteBudgetLimited`), the
+ * such chunks count. `foresights embed --stale` (`noteBudgetLimited`), the
  * embed-backfill job (`budgetLimitedField`) and doctor `partial_embedding`
  * (`budgetLimitedFinding`) report it through one phrase and one approve
  * Action per source (held-embedding-action.ts). It is never a failure and
  * never enters the embed-backfill stall fingerprint.
  *
- * `gbrain embed --held` (`heldEmbedArgv`): `--dry-run` lists every source
+ * `foresights embed --held` (`heldEmbedArgv`): `--dry-run` lists every source
  * (exit 0) with per-page and per-source totals and one approve command per
  * source; an approval covers one source, so `--max-usd` with held pages in
  * several sources and no `--source` refuses with `invalid_params`.
@@ -82,7 +82,7 @@ export async function readBudgetLimited(engine: BrainEngine, opts: { sourceId?: 
 export interface BudgetLimitedReportSource extends BudgetLimitedSource { est_usd: number; max_usd: number; fix: RenderedAction }
 export interface BudgetLimitedReport extends BudgetLimitedCounts {
   pending_chunks: number;
-  /** `gbrain embed --held --dry-run` for every source (the rendered listing command). */
+  /** `foresights embed --held --dry-run` for every source (the rendered listing command). */
   preview_command: string;
   by_source: BudgetLimitedReportSource[];
 }
@@ -116,7 +116,7 @@ export async function budgetLimitedReport(engine: BrainEngine, opts: { sourceId?
   return { report, line: `${budgetLimitedPhrase(b)} ${nextSteps(actions, ctx, basis.free)}`, fix: actions[0]!.action };
 }
 
-/** `gbrain embed --stale`: attach `budget_limited` to the result and print the line (stderr under --json, nothing when quiet). */
+/** `foresights embed --stale`: attach `budget_limited` to the result and print the line (stderr under --json, nothing when quiet). */
 export async function noteBudgetLimited(engine: BrainEngine, args: readonly string[], result: object, quiet: boolean): Promise<void> {
   const at = args.indexOf('--source');
   const { currentEmbeddingSignature } = await import('./embedding.ts');
@@ -163,7 +163,7 @@ const emptyListing = (dryRun: boolean): HeldListing => ({ embedded: 0, skipped: 
   ...(dryRun ? { held: 0, capped: 0, pages: [], sources: [] } : {}) });
 
 /**
- * #7211: stale facts over the embedding input limit, which `gbrain embed --facts` skips. No
+ * #7211: stale facts over the embedding input limit, which `foresights embed --facts` skips. No
  * approval releases them (only an edit that makes the text fit does), so --held lists them and moves on.
  */
 async function oversizedFacts(engine: BrainEngine, sourceId: string | undefined, say: (line: string) => void): Promise<OversizedFact[]> {
@@ -173,15 +173,15 @@ async function oversizedFacts(engine: BrainEngine, sourceId: string | undefined,
   const maxTokens = resolveMaxChunkTokens();
   const rows = await readOversizedStaleFacts(engine, { ...(sourceId ? { sourceId } : {}), model, dims, maxTokens });
   if (!rows.length) return rows;
-  say(`[embed] ${rows.length} fact(s) are longer than the embedding input limit and are skipped by gbrain embed --facts:`);
+  say(`[embed] ${rows.length} fact(s) are longer than the embedding input limit and are skipped by foresights embed --facts:`);
   for (const row of rows.slice(0, 20)) say(`[embed]   ${oversizedFactLine(row, maxTokens)}`);
-  if (rows.length > 20) say(`[embed]   … and ${rows.length - 20} more (gbrain embed --held --dry-run --json lists every one)`);
+  if (rows.length > 20) say(`[embed]   … and ${rows.length - 20} more (foresights embed --held --dry-run --json lists every one)`);
   say(`[embed] ${OVERSIZED_FACT_FIX}`);
   return rows;
 }
 
 /**
- * `gbrain embed --held`: list the held and capped large pages with what each
+ * `foresights embed --held`: list the held and capped large pages with what each
  * would cost to finish. A dry run returns the listing (every source unless
  * `--source`); otherwise the `--source S --slugs ...` argv that embeds them
  * under the user's `--max-usd`, one source per approval.
@@ -247,6 +247,6 @@ export async function heldApprovalUsd(engine: BrainEngine, args: readonly string
   }
   if (!(await embeddingsDisabled(engine)) && isAvailable('embedding') && await embeddingProviderIsFree()) return maxUsd;
   throw opError('embedding_unavailable', `[embed] Embeddings are unavailable on this brain (disabled, or the provider has no credentials), so --max-usd ${maxUsd} approves nothing; ${unchanged}.`,
-    'Check the provider with gbrain doctor --only embedding_provider --json, fix it, then re-run the approval.',
+    'Check the provider with foresights doctor --only embedding_provider --json, fix it, then re-run the approval.',
     { why: 'Releasing a hold without a run that can embed would save the approval with nothing embedded.' });
 }

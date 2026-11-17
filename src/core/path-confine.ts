@@ -51,7 +51,7 @@ export function isPathContained(child: string, parent: string): boolean {
  * every real backslash subdirectory fail the prefix test). Exported so the
  * win32 shapes (drive-letter roots, backslash subtrees, UNC shares) are
  * testable on POSIX CI, where realpathSync can never produce them
- * (gbrain#4103 review requirement — no Windows runner exists).
+ * (foresights#4103 review requirement — no Windows runner exists).
  */
 export function resolvedPrefixContained(
   resolvedChild: string,
@@ -114,7 +114,7 @@ export function realpathOrResolve(p: string): string {
 
 /**
  * Convert a Git Bash / MSYS / Cygwin drive path to native Windows form
- * (gbrain#2955): `/c/Users/x` and `/cygdrive/c/Users/x` → `C:\Users\x`.
+ * (foresights#2955): `/c/Users/x` and `/cygdrive/c/Users/x` → `C:\Users\x`.
  *
  * On Windows, a `sources add --path` run from Git Bash records an msys-style
  * `local_path`. Every later `path.win32.resolve(cwd, '/c/Users/x')` joins it
@@ -147,7 +147,7 @@ const PATH_PLATFORM: NodeJS.Platform = sep === '\\' ? 'win32' : 'linux';
  * #7646: is a stored root (`sources.local_path`, `sync.repo_path`) absolute on THIS host? The one predicate sync,
  * `config set`, write-through, `sources set-path --clear` and doctor share. On win32 only a drive path (`C:\\x`, or a
  * Git Bash `/c/x`, healed by `msysToNativePath`) or a UNC share counts: `path.win32.isAbsolute` also accepts the
- * root-relative `\\brain` and `/brain`, which resolve against whatever drive gbrain runs from. On POSIX it is
+ * root-relative `\\brain` and `/brain`, which resolve against whatever drive foresights runs from. On POSIX it is
  * `path.posix.isAbsolute`, so a Windows drive path another host stored is not absolute here.
  */
 export function isHostAbsolutePath(p: string, platform: NodeJS.Platform = PATH_PLATFORM): boolean {

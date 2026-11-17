@@ -1,5 +1,5 @@
 /**
- * GST-2731 (GBRA-529 PR 3): `gbrain import <dir> --calls [--prefix <slug prefix>] [--source <id>] [--json]`.
+ * GST-2731 (GBRA-529 PR 3): `foresights import <dir> --calls [--prefix <slug prefix>] [--source <id>] [--json]`.
  *
  * An opt-in text mode of the importer for exported call and meeting transcripts (saved as .txt or .md). Each file
  * becomes one page, <prefix>/<date>-<title slug> (prefix `calls` unless given):
@@ -8,7 +8,7 @@
  *     modified day; the title is the rest of a dated file name, else the first line, else the file name;
  *   - the words are kept: the text is stored as written, after the same credential redaction the conversation
  *     archive uses (redactSession over the file as one message, with the user's redaction patterns), and a line that
- *     would read as page structure (a timeline split, a gbrain marker) gets a leading backslash (neutralizeOutsideText);
+ *     would read as page structure (a timeline split, a foresights marker) gets a leading backslash (neutralizeOutsideText);
  *   - the page is written through put_page, the one writer door (a working tree gets the file and a queued commit,
  *     a repo-less brain gets the database row), with no readable_by of its own, so it has exactly the readers of
  *     the source it lands in. It is keyword-only (no embedding at write time) and opts out of the facts backstop

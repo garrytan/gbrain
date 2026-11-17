@@ -1,5 +1,5 @@
 /**
- * `gbrain db-repair` — ENGINE-FREE Postgres-access repair, the fix half of
+ * `foresights db-repair` — ENGINE-FREE Postgres-access repair, the fix half of
  * the db-availability loop (marker → skills/db-repair → this command).
  *
  * Sibling of `pglite-repair` (that command owns the PGLite lane; this one
@@ -9,7 +9,7 @@
  * Consent is tiered and flag-gated, never TTY-dependent:
  *   auto tier    (--yes):                  retries, pending migrations,
  *                                          CREATE EXTENSION vector,
- *                                          `docker start` of gbrain's own container
+ *                                          `docker start` of foresights's own container
  *   rewrite tier (--yes --apply-rewrites): config-file database_url rewrites
  *                                          (printed first, receipted with undo)
  *   manual tier  (never applied):          credentials, env recipes, paused
@@ -106,20 +106,20 @@ function parseArgs(args: string[]): DbRepairOpts {
 }
 
 function printHelp(): void {
-  console.log(`gbrain db-repair — diagnose and fix Postgres access, engine-free
+  console.log(`foresights db-repair — diagnose and fix Postgres access, engine-free
 
 Usage:
-  gbrain db-repair                      diagnose only (mutates nothing)
-  gbrain db-repair --yes                apply the auto tier (retries, migrations,
+  foresights db-repair                      diagnose only (mutates nothing)
+  foresights db-repair --yes                apply the auto tier (retries, migrations,
                                         CREATE EXTENSION vector, docker start)
-  gbrain db-repair --yes --apply-rewrites
+  foresights db-repair --yes --apply-rewrites
                                         also apply config-file database_url rewrites
                                         (printed first; undo with --undo-last-rewrite)
-  gbrain db-repair --yes --undo-last-rewrite
+  foresights db-repair --yes --undo-last-rewrite
                                         restore the URL from before the last rewrite
   Flags: --json --force (bypass the rewrite cooldown) --dry-run (alias of default)
 
-PGLite brains: use gbrain pglite-repair. Data-quality healing: gbrain doctor --remediate.`);
+PGLite brains: use foresights pglite-repair. Data-quality healing: foresights doctor --remediate.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ export interface DbRepairDeps {
     available(): boolean;
     state(): 'absent' | 'running' | 'stopped';
     start(): boolean;
-    /** Host port recovered from `docker inspect` of gbrain's container, or
+    /** Host port recovered from `docker inspect` of foresights's container, or
      *  null. Lets the conn_refused arm match a reused container whose real
      *  port drifted from the default. */
     hostPort?(): number | null;
@@ -308,15 +308,15 @@ function emit(json: boolean, report: JsonReport, humanLines: string[], ranAutoTi
   const fix: Action | undefined = applied || report.tier === 'manual' || report.tier === undefined ? undefined
     : report.tier === 'auto' && ranAutoTier
       ? { consent: [], actor: 'user', requires_exclusive: false,
-        why: 'gbrain db-repair --yes already ran its bounded retries in this call and the database is still unreachable; running it again repeats them.',
-        user_message: `gbrain could not reach the database after its repair attempts (${d?.reason ?? report.reason}). ${d?.remediation ?? ''} Check the database server's status and its startup log; once it accepts connections, re-check with: gbrain db-repair`,
+        why: 'foresights db-repair --yes already ran its bounded retries in this call and the database is still unreachable; running it again repeats them.',
+        user_message: `foresights could not reach the database after its repair attempts (${d?.reason ?? report.reason}). ${d?.remediation ?? ''} Check the database server's status and its startup log; once it accepts connections, re-check with: foresights db-repair`,
         verify: { argv: ['gbrain', 'doctor', '--json'] } }
     : report.tier === 'auto'
       ? { argv: ['gbrain', 'db-repair', '--yes'], consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain\'s own docker container).' }
+        why: 'Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting foresights\'s own docker container).' }
       : { argv: ['gbrain', 'db-repair', '--yes', '--apply-rewrites'], consent: ['credentials'], actor: 'agent', requires_exclusive: false,
-        why: 'Rewrites database_url in ~/.gbrain/config.json as the plan says (undo: gbrain db-repair --yes --undo-last-rewrite).',
-        user_message: 'gbrain wants to rewrite the database connection URL in its config to reach your database. Allow it? (It can be undone.)' };
+        why: 'Rewrites database_url in ~/.gbrain/config.json as the plan says (undo: foresights db-repair --yes --undo-last-rewrite).',
+        user_message: 'foresights wants to rewrite the database connection URL in its config to reach your database. Allow it? (It can be undone.)' };
   const e = opError('database_error', d?.message ?? 'The database is still not reachable.',
     fix?.argv ? `Apply the plan: ${fix.argv.join(' ')}` : (fix?.user_message ?? d?.remediation ?? 'Follow the remediation in the report.'),
     { ...(report.reason ? { reason: report.reason } : {}), ...(fix ? { fix } : {}), ...(d?.remediation ? { why: d.remediation } : {}) });
@@ -373,7 +373,7 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
     opts = parseArgs(args);
   } catch (e) {
     return refuse(args.includes('--json'), 2, e instanceof Error ? e.message : String(e), 'unknown_flag',
-      'Run `gbrain db-repair --help` for the accepted flags.', helpFix('Lists the flags db-repair accepts.'));
+      'Run `foresights db-repair --help` for the accepted flags.', helpFix('Lists the flags db-repair accepts.'));
   }
   if (opts.help) {
     printHelp();
@@ -381,10 +381,10 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
   }
   if (opts.applyRewrites && !opts.yes) {
     return refuse(opts.json, 2, '--apply-rewrites requires --yes (rewrites are the higher consent tier, not a lower one).', 'invalid_params',
-      'Example: gbrain db-repair --yes --apply-rewrites');
+      'Example: foresights db-repair --yes --apply-rewrites');
   }
   if (opts.undoLastRewrite && !opts.yes) {
-    return refuse(opts.json, 2, '--undo-last-rewrite requires --yes.', 'invalid_params', 'Example: gbrain db-repair --yes --undo-last-rewrite');
+    return refuse(opts.json, 2, '--undo-last-rewrite requires --yes.', 'invalid_params', 'Example: foresights db-repair --yes --undo-last-rewrite');
   }
 
   const brainId = resolveBrainId(getCliOptions().brain);
@@ -405,7 +405,7 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
     return refuse(opts.json, 1,
       'This machine is a thin client — there is no local database to repair. ' +
       'The brain lives on the remote MCP server; run db-repair on that host.',
-      'requires_local_engine', 'Ask the brain host\'s operator to run `gbrain db-repair` there.');
+      'requires_local_engine', 'Ask the brain host\'s operator to run `foresights db-repair` there.');
   }
 
   if (!cfg) {
@@ -422,19 +422,19 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
       return 1;
     }
     if (opts.json) writeCliError(opError('no_brain', 'No brain is configured, so there is no database to repair.',
-      'Create a brain first: `gbrain init` (`gbrain init --help` lists the keyless local and Postgres options).'), 'db-repair', { json: true, stderr: false });
+      'Create a brain first: `foresights init` (`foresights init --help` lists the keyless local and Postgres options).'), 'db-repair', { json: true, stderr: false });
     return 1;
   }
 
   if (cfg.engine === 'pglite') {
-    return refuse(opts.json, 1, 'This brain runs PGLite — its repair lane is: gbrain pglite-repair (WAL/data-dir recovery).', 'config_error',
-      'Run `gbrain pglite-repair` for PGLite brains.',
+    return refuse(opts.json, 1, 'This brain runs PGLite — its repair lane is: foresights pglite-repair (WAL/data-dir recovery).', 'config_error',
+      'Run `foresights pglite-repair` for PGLite brains.',
       { argv: ['gbrain', 'pglite-repair', '--help'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the PGLite WAL/data-dir recovery options.' });
   }
 
   if (!acquireRepairLock()) {
     return refuse(opts.json, 1, 'repair in progress — another db-repair holds the advisory lock. Wait for it (do not retry in a loop).', 'lock_busy',
-      'Wait for the running db-repair to finish, then run `gbrain db-repair` once to read its result.');
+      'Wait for the running db-repair to finish, then run `foresights db-repair` once to read its result.');
   }
 
   try {
@@ -452,7 +452,7 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
 async function runUndo(opts: DbRepairOpts, brainId: string, deps: DbRepairDeps): Promise<number> {
   const rec = readUndoRecord();
   if (!rec) {
-    return refuse(opts.json, 1, 'No rewrite to undo (no undo record on file).', 'not_found', 'Nothing to undo; run `gbrain db-repair` to diagnose the current URL.');
+    return refuse(opts.json, 1, 'No rewrite to undo (no undo record on file).', 'not_found', 'Nothing to undo; run `foresights db-repair` to diagnose the current URL.');
   }
   // The undo file is 0600 and same trust class as config.json, but validate
   // the scheme anyway before writing it INTO config — a corrupted/edited
@@ -515,8 +515,8 @@ async function repairHost(opts: DbRepairOpts, cfg: GBrainConfig, brainId: string
       });
       if (staleKeys.length > 0) {
         healthyLines.push(
-          `note: stale DB-plane config row(s) found (${staleKeys.join(', ')}) — these are IGNORED by gbrain ` +
-            `(connection settings live in ~/.gbrain/config.json). Clear with: gbrain config unset <key>`,
+          `note: stale DB-plane config row(s) found (${staleKeys.join(', ')}) — these are IGNORED by foresights ` +
+            `(connection settings live in ~/.gbrain/config.json). Clear with: foresights config unset <key>`,
         );
       }
     } catch { /* report-only: a bonus check never fails a healthy exit */ }
@@ -543,7 +543,7 @@ async function repairHost(opts: DbRepairOpts, cfg: GBrainConfig, brainId: string
       `reason: ${diagnosis.reason} (${tier} tier)  ${diagnosis.message}`,
       ...planLines.map((p) => `plan: ${p}`),
       diagnosis.remediation,
-      tier === 'auto' ? 'Apply: gbrain db-repair --yes' : tier === 'rewrite' ? 'Apply: gbrain db-repair --yes --apply-rewrites' : 'Manual fix required (see above).',
+      tier === 'auto' ? 'Apply: foresights db-repair --yes' : tier === 'rewrite' ? 'Apply: foresights db-repair --yes --apply-rewrites' : 'Manual fix required (see above).',
     ]);
     return 1;
   }
@@ -563,7 +563,7 @@ function buildPlan(d: PgAccessDiagnosis, tier: 'auto' | 'rewrite' | 'manual', ur
     case 'conn_refused': {
       const lines = [];
       if (url && isGbrainDockerUrl(url)) {
-        lines.push(`docker start ${GBRAIN_PG_CONTAINER} (gbrain's own container), then re-probe`);
+        lines.push(`docker start ${GBRAIN_PG_CONTAINER} (foresights's own container), then re-probe`);
       }
       if (d.fix?.kind === 'rewrite_config_url') lines.push('rewrite database_url to the transaction pooler (rewrite tier)');
       if (lines.length === 0) lines.push('bounded reconnect; if the server is down, start it and re-run');
@@ -638,7 +638,7 @@ async function applyLadder(
       refused(action, 'rewrite tier requires --yes --apply-rewrites');
       report.remaining = d;
       human.push(`Intended change: database_url -> ${redactPgUrl(newUrl)}`);
-      human.push('Apply: gbrain db-repair --yes --apply-rewrites');
+      human.push('Apply: foresights db-repair --yes --apply-rewrites');
       return { code: 1, humanLines: human };
     }
     if (!opts.force && rewriteCooldownBlocked(d.reason, action, now)) {
@@ -651,7 +651,7 @@ async function applyLadder(
       refused(action, `candidate URL failed its probe (${candidateProbe.reason}) — not persisting`);
       return manualStop();
     }
-    human.push(`rewriting database_url -> ${redactPgUrl(newUrl)} (undo: gbrain db-repair --yes --undo-last-rewrite)`);
+    human.push(`rewriting database_url -> ${redactPgUrl(newUrl)} (undo: foresights db-repair --yes --undo-last-rewrite)`);
     if (url) writeUndoRecord({ prior_url: url, ts: deps.now(), reason: d.reason });
     const fileCfg = loadConfigFileOnly();
     saveConfig({ ...(fileCfg ?? {}), engine: 'postgres', database_url: newUrl, database_path: undefined } as GBrainConfig);
@@ -663,7 +663,7 @@ async function applyLadder(
     human.push(remaining === null ? 're-probe: healthy — fixed.' : `re-probe: still failing (${remaining.reason})`);
     if (remaining === null) {
       // Honest scope: config rewrites reach NEW processes only.
-      human.push('note: long-lived gbrain processes (serve, jobs workers) keep their old pool — restart them to pick up the new URL.');
+      human.push('note: long-lived foresights processes (serve, jobs workers) keep their old pool — restart them to pick up the new URL.');
     }
     return { code: remaining === null ? 0 : 1, humanLines: human };
   };
@@ -698,7 +698,7 @@ async function applyLadder(
     }
 
     case 'conn_refused': {
-      // gbrain's own docker container first (auto tier, idempotent, cheap).
+      // foresights's own docker container first (auto tier, idempotent, cheap).
       // Match on the default port OR the surviving container's REAL port —
       // init's reuse path writes the inspected port into the URL, which can
       // drift from the default; the repair arm must follow it.
@@ -735,7 +735,7 @@ async function applyLadder(
         // form is derivable; otherwise print the recipe.
         const candidate = deriveSessionPoolerUrl(url);
         if (candidate) return (await applyRewrite(candidate, 'rewrite_to_pooler')) ?? manualStop();
-        human.push('This is a Supabase DIRECT url; get the Transaction pooler string from the dashboard (Connect > Connection String > Transaction pooler), then: gbrain init --url <pooler-conn>');
+        human.push('This is a Supabase DIRECT url; get the Transaction pooler string from the dashboard (Connect > Connection String > Transaction pooler), then: foresights init --url <pooler-conn>');
         report.remaining = d;
         return { code: 1, humanLines: human };
       }
@@ -761,7 +761,7 @@ async function applyLadder(
       }
       report.remaining = retry;
       if (d.supabase?.pausedSuspect) {
-        human.push('The hostname does not resolve and this looks like a Supabase project — free-tier projects pause after inactivity. Restore it from the dashboard, then re-run: gbrain db-repair --yes');
+        human.push('The hostname does not resolve and this looks like a Supabase project — free-tier projects pause after inactivity. Restore it from the dashboard, then re-run: foresights db-repair --yes');
       } else {
         human.push(d.remediation);
       }
@@ -789,7 +789,7 @@ async function applyLadder(
         applied('run_pending_migrations');
       } catch (e) {
         refused('run_pending_migrations', `migrations failed: ${classifyPgAccessError(e, { url, source, brainId }).message}`);
-        human.push('Fallback: gbrain apply-migrations --yes (connect directly to Postgres, not the pooler, if it persists).');
+        human.push('Fallback: foresights apply-migrations --yes (connect directly to Postgres, not the pooler, if it persists).');
         report.remaining = d;
         return { code: 1, humanLines: human };
       }

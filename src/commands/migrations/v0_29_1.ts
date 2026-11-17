@@ -9,7 +9,7 @@
  * walks them.
  *
  * Phases (all idempotent, resumable):
- *   A. Schema  — `gbrain init --migrate-only` ensures v38 ran.
+ *   A. Schema  — `foresights init --migrate-only` ensures v38 ran.
  *   B. Backfill — keyset-paginated UPDATE via `backfillEffectiveDate`.
  *                 Resumable via the `backfill.effective_date.last_id`
  *                 checkpoint key in the config table. Statement timeout
@@ -44,7 +44,7 @@ async function phaseBBackfill(opts: OrchestratorOpts): Promise<OrchestratorPhase
     const { loadConfig, toEngineConfig } = await import('../../core/config.ts');
     const { backfillEffectiveDate } = await import('../../core/backfill-effective-date.ts');
     const cfg = loadConfig();
-    if (!cfg) throw new Error('No gbrain config; run `gbrain init` first.');
+    if (!cfg) throw new Error('No foresights config; run `foresights init` first.');
     const engineConfig = toEngineConfig(cfg);
     engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
@@ -85,7 +85,7 @@ async function phaseCVerify(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
     const { createEngine } = await import('../../core/engine-factory.ts');
     const { loadConfig, toEngineConfig } = await import('../../core/config.ts');
     const cfg = loadConfig();
-    if (!cfg) throw new Error('No gbrain config; run `gbrain init` first.');
+    if (!cfg) throw new Error('No foresights config; run `foresights init` first.');
     const engineConfig = toEngineConfig(cfg);
     engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
@@ -151,7 +151,7 @@ export const v0_29_1: Migration = {
   featurePitch: {
     headline: 'Recency + salience as two opt-in axes — agent in charge of when to use each',
     description:
-      'gbrain v0.29.1 adds two new optional ranking axes to the query op: salience ' +
+      'foresights v0.29.1 adds two new optional ranking axes to the query op: salience ' +
       '(emotional_weight + take_count, the "this matters" signal) and recency (per-prefix ' +
       'age decay, the "this is recent" signal). Truly orthogonal — use either, both, or ' +
       "neither. The query op's tool description teaches your agent when each makes sense " +
@@ -159,7 +159,7 @@ export const v0_29_1: Migration = {
       'A new pages.effective_date column is computed at import from frontmatter precedence ' +
       '(event_date / date / published / filename) and is immune to auto-link updated_at ' +
       'churn. Existing callers (no new params) get UNCHANGED behavior. Run ' +
-      "`gbrain dream --phase recompute_emotional_weight` once after upgrading.",
+      "`foresights dream --phase recompute_emotional_weight` once after upgrading.",
   },
   orchestrator,
 };

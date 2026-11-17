@@ -1,12 +1,12 @@
 /**
- * `gbrain setup`: finish the setup migrations `gbrain init` leaves pending on
+ * `foresights setup`: finish the setup migrations `foresights init` leaves pending on
  * the brain setup just created in this run (#6606 follow-up, Cat 41 run 4).
  * Every agent used to read init's "Finish setup" line and spend a turn
  * running that command. Setup runs the same command itself (FINISH_SETUP_ARGV
  * in fresh-install.ts), non-interactive, as a child process (its stdout stays
  * out of setup's own output and JSON document, and the PGLite lock is
  * released when it exits), without installing any service. It works offline: the migrations are local ledger, schema and
- * file work under GBRAIN_HOME plus a local `gbrain jobs smoke` child.
+ * file work under GBRAIN_HOME plus a local `foresights jobs smoke` child.
  * The one exception is v0.11.0's host phase, which appends a marker to an
  * existing ~/.claude/AGENTS.md or ~/.openclaw/AGENTS.md and rewrites
  * existing OpenClaw cron manifests: files setup does not own, so when any

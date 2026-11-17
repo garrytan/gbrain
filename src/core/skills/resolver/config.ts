@@ -80,7 +80,7 @@ export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = proc
 export interface LaneTurnSettings { top_k?: number; min_match_strength?: MatchStrength; top_gate?: number; exclude?: string[] }
 
 function configInvalid(key: string, rule: string): ResolverError {
-  return new ResolverError('skill_resolver_config_invalid', `${key} ${rule}.`, { suggestion: `Fix or unset ${key}: gbrain config unset ${key}` });
+  return new ResolverError('skill_resolver_config_invalid', `${key} ${rule}.`, { suggestion: `Fix or unset ${key}: foresights config unset ${key}` });
 }
 
 export function validateTopK(v: unknown, key: string): number {

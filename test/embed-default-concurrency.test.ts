@@ -1,5 +1,5 @@
 /**
- * `gbrain embed` runs 20 page workers when GBRAIN_EMBED_CONCURRENCY is unset,
+ * `foresights embed` runs 20 page workers when GBRAIN_EMBED_CONCURRENCY is unset,
  * on both the --all path (embedAll) and the --stale path (embedAllStale).
  * Drives the real embed -> embedBatch -> gateway path with a barrier embed
  * transport that holds every request until arrivals go quiet, so the peak

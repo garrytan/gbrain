@@ -2,7 +2,7 @@
 
 People in a group chat with your agent sometimes say things worth keeping ("the
 offsite moved to Friday"). Those people are outside guests: they aren't you, and
-their words shouldn't read as yours. A **guest source** is where gbrain keeps
+their words shouldn't read as yours. A **guest source** is where foresights keeps
 their notes, apart from your own pages, with a record of who said what.
 
 This page covers what a guest source is, how to set one up, how a listed writer
@@ -12,14 +12,14 @@ check the whole setup.
 
 ## What a guest source is
 
-A guest source is a normal gbrain source with four rules the database itself
+A guest source is a normal foresights source with four rules the database itself
 enforces, whatever program writes to it:
 
 - **Only listed writers.** Creating a page there, or changing its text, title,
   frontmatter, slug or source, needs a writer on the source's writer list. A
-  writer is named the way gbrain records who made a write: `oauth_client:<client
+  writer is named the way foresights records who made a write: `oauth_client:<client
   id>` for an OAuth client, `legacy_token:<token id>` for a legacy token. Your own
-  CLI is not on the list, so `gbrain put --source guests`, `gbrain import`,
+  CLI is not on the list, so `foresights put --source guests`, `foresights import`,
   `remember` and `add_link` there are refused with `source_writer_restricted`.
   Deleting and restoring a guest page from your own CLI still work, and so do
   purge and maintenance that touches no page text.
@@ -32,7 +32,7 @@ enforces, whatever program writes to it:
   people in your brain.
 - **Database-only.** A guest source has no local folder or git repository: the
   database is the record, as on any repo-less brain. Attaching a path
-  (`gbrain sources set-path`, `gbrain sources add <id> --path`) is refused, and a
+  (`foresights sources set-path`, `foresights sources add <id> --path`) is refused, and a
   source that already has a path can't become a guest source.
 
 A guest source is also federated, so your own CLI and stdio searches include it.
@@ -49,15 +49,15 @@ writer list. Every `init` previews first and writes nothing without `--yes`.
 1. Create the guest source with no writer yet:
 
    ```bash
-   gbrain guests init
-   gbrain guests init --yes
+   foresights guests init
+   foresights guests init --yes
    ```
 
    ```text
-   Preview: gbrain guests init (nothing written; run again with --yes to apply)
+   Preview: foresights guests init (nothing written; run again with --yes to apply)
      Source "guests": will be created, database-only (no local path) and federated.
      Trust ceiling: external_untrusted (no page there is ever stored above it).
-     Writers: none yet: nobody can save notes there until you add one (gbrain sources writers guests --add <oauth_client|legacy_token|local_cli|local_stdio|application>:<id>)
+     Writers: none yet: nobody can save notes there until you add one (foresights sources writers guests --add <oauth_client|legacy_token|local_cli|local_stdio|application>:<id>)
    ```
 
 2. Register the broker's client on that source. The client secret is printed
@@ -65,7 +65,7 @@ writer list. Every `init` previews first and writes nothing without `--yes`.
    speak for:
 
    ```bash
-   gbrain auth register-client guest-broker --grant-types client_credentials --scopes read,write \
+   foresights auth register-client guest-broker --grant-types client_credentials --scopes read,write \
      --source guests --federated-read guests --bound-slug-prefixes guests/ \
      --may-act-for bob-example,group:team-a
    ```
@@ -75,19 +75,19 @@ writer list. Every `init` previews first and writes nothing without `--yes`.
    run it without):
 
    ```bash
-   gbrain auth rescope --client <client id> --operations put_page,get_page,delete_page,get_write_request,get_brain_identity --dry-run
+   foresights auth rescope --client <client id> --operations put_page,get_page,delete_page,get_write_request,get_brain_identity --dry-run
    ```
 
 4. Put the client on the writer list:
 
    ```bash
-   gbrain guests init --writer oauth_client:<client id>
-   gbrain guests init --writer oauth_client:<client id> --yes
+   foresights guests init --writer oauth_client:<client id>
+   foresights guests init --writer oauth_client:<client id> --yes
    ```
 
-Plain `gbrain auth rescope --client <client id>` prints the client's operations
-and slug prefixes but not who it may act for. `gbrain auth rescope --client
-<client id> --json` prints the whole grant, and `gbrain access check --client
+Plain `foresights auth rescope --client <client id>` prints the client's operations
+and slug prefixes but not who it may act for. `foresights auth rescope --client
+<client id> --json` prints the whole grant, and `foresights access check --client
 <client id>` prints "May act for" and the member it is bound to.
 
 The source is called `guests` unless you pass `--source <id>`. Running init
@@ -96,7 +96,7 @@ source exists already, it must have no local path and hold no pages; init then
 marks it as a guest source. A source that already holds pages is refused, because
 every page in a guest source would then read as a guest's words. Deleted pages
 that haven't been purged yet count too, because restoring one would bring it back
-into the guest source. The one exception is the repair `gbrain doctor` names: a
+into the guest source. The one exception is the repair `foresights doctor` names: a
 source whose config already says `guest: true` but has no guest source record
 is fixed whatever it holds, because its pages already read as guest notes.
 
@@ -108,15 +108,15 @@ is refused with `writer_coordinator_required` instead of being let through.
 ## Change who may write
 
 ```bash
-gbrain sources writers guests                                   # list
-gbrain sources writers guests --add oauth_client:client-b       # add
-gbrain sources writers guests --remove oauth_client:client-a    # remove
-gbrain sources writers guests --clear                           # nobody
-gbrain sources writers guests --json
+foresights sources writers guests                                   # list
+foresights sources writers guests --add oauth_client:client-b       # add
+foresights sources writers guests --remove oauth_client:client-a    # remove
+foresights sources writers guests --clear                           # nobody
+foresights sources writers guests --json
 ```
 
 A source that isn't a guest source has no writer list, so the command refuses
-it. Changing the list is your decision on the brain host; nothing in gbrain
+it. Changing the list is your decision on the brain host; nothing in foresights
 widens it on its own.
 
 ## Save a guest note (for the writer)
@@ -165,10 +165,10 @@ refused `revision_required`, and `force`, `expected_revision`, `edit_page`,
 it saved, and deleting another writer's note is refused `permission_denied`.
 A delete needs the note's revision: the broker passes `expected_revision` (from
 `get_page`) to `delete_page`, and without it the delete is refused
-`revision_required`. The same holds for your own `gbrain delete --source guests
--- <slug>`: pass `--expected-revision <revision>` (from `gbrain get --source guests
+`revision_required`. The same holds for your own `foresights delete --source guests
+-- <slug>`: pass `--expected-revision <revision>` (from `foresights get --source guests
 --json -- <slug>`) or `--force`.
-gbrain checks the writer list again when the note publishes, so a writer you
+foresights checks the writer list again when the note publishes, so a writer you
 remove in between is refused `source_writer_restricted`. Every refusal is in
 [write refusals](write-refusals.md#guest-source-refusals).
 
@@ -202,7 +202,7 @@ note, then wrap it in `<external-data trust="external_untrusted" origin="guest">
 
 A guest note whose mark cannot be read still gets the warning, as
 `[outside guest · unattributed · not the owner's words, not verified]`; it is
-never shown as yours. When `think` builds an answer from guest notes, gbrain
+never shown as yours. When `think` builds an answer from guest notes, foresights
 appends `Uses outside-guest notes: <slugs> (not the owner's words, not verified).`
 itself; the model never writes that line. Text inside the note cannot change
 the mark: it comes from `guest_marks`, not from the page. Servers that do this
@@ -225,7 +225,7 @@ A guest note stays a guest's words until you say otherwise. To keep one as your
 own page:
 
 ```bash
-gbrain guests promote guests/offsite-note --to notes/offsite --source default
+foresights guests promote guests/offsite-note --to notes/offsite --source default
 ```
 
 ```text
@@ -239,7 +239,7 @@ the slug, and `--json` for the full result.
 
 The new page is a normal page of yours, written through your own write path: into
 the source's git repository first where it has one, database-only where it has
-none, exactly like `gbrain put`. It keeps the note's type, title, text and
+none, exactly like `foresights put`. It keeps the note's type, title, text and
 readers (you and the group it came from; widen them on the new page if you want),
 drops the guest keys, and adds `promoted_from: guests:guests/offsite-note` so a
 person reading it knows where it came from. Its trust tier is the tier your own
@@ -267,23 +267,23 @@ asks for it.
 ## Let your own clients read guest notes
 
 Your CLI and stdio reads already include the guest source. A token or OAuth
-client bound to you (`gbrain auth rescope --member <you>`) reads only the sources
-its grant names, so add the guest source to each one's read list. gbrain never
+client bound to you (`foresights auth rescope --member <you>`) reads only the sources
+its grant names, so add the guest source to each one's read list. foresights never
 does this on its own, on upgrade or on `guests init`. Preview first:
 
 ```bash
-gbrain guests grant-owner-clients
+foresights guests grant-owner-clients
 ```
 
 ```text
-Preview: gbrain guests grant-owner-clients (nothing written; run again with --yes to apply)
+Preview: foresights guests grant-owner-clients (nothing written; run again with --yes to apply)
   client owner-bot-example (client-a): default, source-a -> default, source-a, guests
 ```
 
 Then apply it:
 
 ```bash
-gbrain guests grant-owner-clients --yes
+foresights guests grant-owner-clients --yes
 ```
 
 Each grant is changed only if it is still the one the preview read (a grant
@@ -291,29 +291,29 @@ someone changed since is left alone and reported; run the command again), and
 every source it already read stays on its list. `--source <id>` names a guest
 source other than `guests`. A credential with a `min_trust` floor above
 `external_untrusted` still sees no guest note; lower it with
-`gbrain auth set-min-trust <id> external_untrusted` if it should.
+`foresights auth set-min-trust <id> external_untrusted` if it should.
 
 ## Check the setup
 
 ```bash
-gbrain doctor --only guest_source --json
+foresights doctor --only guest_source --json
 ```
 
 The `guest_source` check reads, and changes nothing. A source is a guest source
 when its config says `guest: true` or it has a guest source record, so its
 notes keep their warning if one of the two is lost. The check fails when the
 two disagree (one is there without the other) and names the repair,
-`gbrain guests init --source <id> --yes`, which restores both and keeps the
+`foresights guests init --source <id> --yes`, which restores both and keeps the
 writer list. It also fails when a guest source is missing its `federated` or
 `trust_ceiling` flags or has a local path, and when a
 writer names a removed credential or one whose grant reaches beyond the guest
 source. It warns when the writer list is empty, no owner is set, a credential bound
 to you can't read the guest source (it prints the exact
-`gbrain auth rescope ... --if-version <n>` command for each, and
-`gbrain guests grant-owner-clients --yes` for all), or a credential's
+`foresights auth rescope ... --if-version <n>` command for each, and
+`foresights guests grant-owner-clients --yes` for all), or a credential's
 `min_trust` floor hides guest notes. On a brain with no guest source it reports
 not applicable.
 
-`gbrain export` writes guest notes as plain pages without their mark, so an
+`foresights export` writes guest notes as plain pages without their mark, so an
 export imported into another brain reads them as that brain's own; keep guest
 sources out of exports you hand to someone else (`--source`).

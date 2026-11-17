@@ -1,5 +1,5 @@
 /**
- * #7984: `gbrain git commit-push -- <path>` publishes a tracked file's deletion under a wildcard-ignored directory.
+ * #7984: `foresights git commit-push -- <path>` publishes a tracked file's deletion under a wildcard-ignored directory.
  *
  * Protects: a named tracked path is staged as a tracked path (`git add -u`), so its deletion commits and pushes whether
  * or not it was already staged, with the ignore policy left as it is; visible untracked files still go through

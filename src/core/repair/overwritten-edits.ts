@@ -1,5 +1,5 @@
 /**
- * `gbrain repair overwritten-edits [--source <id>] [--slug <slug>...]` (#6712 follow-up): restore database edits an
+ * `foresights repair overwritten-edits [--source <id>] [--slug <slug>...]` (#6712 follow-up): restore database edits an
  * incremental managed sync published a committed file edit over, with no `file_drift` hold (the bug #6887 fixes, or any
  * other unguarded import). Detection is `persistence/overwritten-edits.ts`; only its `high` findings are restorable,
  * and `unknown` ones are listed with their reason.
@@ -10,7 +10,7 @@
  * version (the normal coordinated write), bound to the page revision the preview saw (`expected_revision`), so a page
  * that moved since is `changed_since_preview`. The restore publishes to the database only (`databaseOnly:
  * 'overwrite_restore'`), so it never rewrites the committed file. When the committed file then differs from the restored
- * page, the file is held `file_drift` (sync never publishes it over the restored edit; `gbrain repair file-drift` is how a
+ * page, the file is held `file_drift` (sync never publishes it over the restored edit; `foresights repair file-drift` is how a
  * person picks the winner).
  */
 import { join, relative, sep } from 'node:path';
@@ -33,7 +33,7 @@ import { fileDriftHold } from '../persistence/sync-page-fault.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#overwritten-edits';
-const COMMAND = 'gbrain repair overwritten-edits';
+const COMMAND = 'foresights repair overwritten-edits';
 /** Diff lines kept per page in the preview details. */
 const DIFF_LINES = 200;
 
@@ -105,7 +105,7 @@ export const overwrittenEditsRepair: RepairHandler = {
         listing: [...previews.map(edit => ({ item: `${edit.source_id}:${edit.slug}`, class: 'restore_database_edit',
           detail: `version ${edit.version_id} (${edit.db_operation} request ${edit.db_request_id}) was replaced by sync import ${edit.import_request_id}${edit.imported_at ? ` at ${edit.imported_at}` : ''}; restoring it changes +${edit.added}/-${edit.removed} line(s)${edit.earlier ? `; ${edit.earlier} earlier overwrite(s) of this page are not restored` : ''}` })),
         ...unknown.map(edit => ({ item: `${edit.source_id}:${edit.slug}`, class: 'unknown', detail: `${edit.reason}: version ${edit.version_id}, replaced by sync import ${edit.import_request_id}; not restored automatically` }))],
-        ...(approved.length ? { warnings: ['Each restore writes the database edit as a new page revision without touching the committed file. Only the host that owns the source\'s checkout compares the file and holds it file_drift when it differs; pick a side later with gbrain repair file-drift. On any other host the restore still applies but the file is left unheld (outcome restored_file_unheld), so a later sync that imports a change to that file can publish it over the edit again; run the apply on the owner host, or afterwards run gbrain repair file-drift --source <id> --slug <slug> --prefer database there. No command writes only the hold.'] } : {}),
+        ...(approved.length ? { warnings: ['Each restore writes the database edit as a new page revision without touching the committed file. Only the host that owns the source\'s checkout compares the file and holds it file_drift when it differs; pick a side later with foresights repair file-drift. On any other host the restore still applies but the file is left unheld (outcome restored_file_unheld), so a later sync that imports a change to that file can publish it over the edit again; run the apply on the owner host, or afterwards run foresights repair file-drift --source <id> --slug <slug> --prefer database there. No command writes only the hold.'] } : {}),
         details: { docs: DOCS, edits: previews, unknown: unknown.map(edit => ({ source_id: edit.source_id, slug: edit.slug, version_id: edit.version_id, reason: edit.reason })) } };
     }
     if (!opts.expect) {
@@ -129,14 +129,14 @@ export const overwrittenEditsRepair: RepairHandler = {
     const lines: string[] = [];
     for (const edit of (details.edits ?? []) as PreviewEdit[]) lines.push(`  ${edit.source_id}:${edit.slug}: live page (-) against the database edit it restores (+):`, ...edit.diff.split('\n').map(line => `    ${line}`));
     for (const edit of (details.unknown ?? []) as Array<{ source_id: string; slug: string; version_id: number; reason: string }>) {
-      lines.push(`  unknown ${edit.source_id}:${edit.slug} (version ${edit.version_id}): ${edit.reason}; compare it with gbrain history ${edit.slug} --source-id ${edit.source_id} before restoring it by hand`);
+      lines.push(`  unknown ${edit.source_id}:${edit.slug} (version ${edit.version_id}): ${edit.reason}; compare it with foresights history ${edit.slug} --source-id ${edit.source_id} before restoring it by hand`);
     }
     lines.push(`  guide: ${details.docs}`);
     return lines;
   },
 };
 
-const ownerHostCommand = (edit: Pick<ApprovedEdit, 'source_id' | 'slug'>) => `gbrain repair file-drift --source ${edit.source_id} --slug ${edit.slug} --prefer database`;
+const ownerHostCommand = (edit: Pick<ApprovedEdit, 'source_id' | 'slug'>) => `foresights repair file-drift --source ${edit.source_id} --slug ${edit.slug} --prefer database`;
 
 const changed = (reason: string, detail: Record<string, unknown> = {}): RepairItemOutcome =>
   ({ applied: false, outcome: 'changed_since_preview', reason, detail: { ...detail, next: `run ${COMMAND} again for a new preview` } });

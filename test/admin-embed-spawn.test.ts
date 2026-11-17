@@ -1,5 +1,5 @@
 /**
- * v0.36.1.x #1090: admin embed E2E — spawns `gbrain serve --http` from a
+ * v0.36.1.x #1090: admin embed E2E — spawns `foresights serve --http` from a
  * fresh tmpdir (so `process.cwd()/admin/dist` doesn't exist), then issues
  * a real HTTP GET to /admin and asserts the React SPA shell HTML comes
  * back from the embedded manifest path — NOT a 404, NOT an Express
@@ -8,7 +8,7 @@
  * Pre-fix, the server resolved `adminDistPath = path.join(process.cwd(),
  * 'admin', 'dist')` and skipped /admin route mounting when that path did
  * not exist. Every globally-installed binary (`bun install -g
- * github:garrytan/gbrain`) hit 404 on /admin because the user never
+ * github:aimonk2025/gbrain`) hit 404 on /admin because the user never
  * cd's into the source repo. The fix:
  *   1. `scripts/build-admin-embedded.ts` walks admin/dist and emits
  *      `src/admin-embedded.ts` with `with { type: 'file' }` imports.
@@ -156,10 +156,10 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
     });
     expect(res.status).toBe(200);
     const html = await res.text();
-    // The actual admin/dist/index.html declares <title>GBrain Admin</title>
+    // The actual admin/dist/index.html declares <title>Foresights Admin</title>
     // and mounts the SPA on <div id="root">. Both must be present, otherwise
     // we're not serving the embedded asset.
-    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('Foresights Admin');
     expect(html).toContain('<div id="root">');
     // Content-Type is text/html, not application/octet-stream (which would
     // mean the mime lookup in ADMIN_ASSETS regressed).
@@ -183,7 +183,7 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
     });
     expect(followed.status).toBe(200);
     const html = await followed.text();
-    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('Foresights Admin');
     expect(html).toContain('<div id="root">');
   }, 90_000);
 
@@ -193,7 +193,7 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
     });
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('Foresights Admin');
   }, 90_000);
 
   test('GET /admin/agents (SPA-routed deep link) falls back to index.html', async () => {
@@ -204,7 +204,7 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
     const html = await res.text();
     // SPA fallback: any unmatched /admin/* path serves index.html so
     // client-side routing takes over.
-    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('Foresights Admin');
     expect(html).toContain('<div id="root">');
   }, 90_000);
 

@@ -1,5 +1,5 @@
 /**
- * #7183: gbrain writes through server connections whose transactions default to read-only.
+ * #7183: foresights writes through server connections whose transactions default to read-only.
  *
  * A client that runs a session-level `SET default_transaction_read_only = on` through a transaction-mode pooler can
  * leave that default on a server connection other clients then borrow; a role or database default does the same for

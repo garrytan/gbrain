@@ -1,9 +1,9 @@
 /**
  * #8815: schema_pack_consistency counted every stored type the active pack
  * lacks as user schema drift, so a custom pack copied from gbrain-base-v2
- * before it declared gbrain's own page types (`extract_receipt`, `code`,
- * #6818) warned `page_type_undeclared` about pages gbrain itself writes.
- * Pages gbrain wrote are exempt, judged by how they were written (a code
+ * before it declared foresights's own page types (`extract_receipt`, `code`,
+ * #6818) warned `page_type_undeclared` about pages foresights itself writes.
+ * Pages foresights wrote are exempt, judged by how they were written (a code
  * importer page, a dream_generated receipt under extracts/), not by type
  * name: a user's Markdown page typed `code` or `extract_receipt` still warns.
  */
@@ -21,7 +21,7 @@ import { emptyHome, withEnv } from './helpers/with-env.ts';
 const PACK = `api_version: gbrain-schema-pack-v1
 name: copied-pack
 version: 1.0.0
-description: custom pack copied before gbrain declared its own page types
+description: custom pack copied before foresights declared its own page types
 gbrain_min_version: 0.42.0
 extends: null
 borrow_from: []
@@ -69,7 +69,7 @@ test('gbrain-owned page types are not undeclared drift on a pack that predates t
   expect(user.message).not.toContain('extract_receipt');
 });
 
-test('a user Markdown page typed like a gbrain page is still undeclared drift', async () => {
+test('a user Markdown page typed like a foresights page is still undeclared drift', async () => {
   await engine.executeRaw('DELETE FROM pages');
   await writeReceipt(engine, { kind: 'links', source_id: 'default', run_id: 'b1c2d3e4f5a6789abcdef', round: 'full', extracted_at: '2026-05-27T14:30:00.000Z', total_rows: 3, cost_usd: 0 });
   await importCodeFile(engine, 'src/example.ts', 'export const x = 1;\n', { noEmbed: true });

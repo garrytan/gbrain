@@ -3,7 +3,7 @@
  * Conversation pages imported before the `labeled_credential` detector
  * shipped keep any prose credential they carried: re-ingest skips them
  * (content hash and `--since last`), and nothing rewrites a page on its own.
- * `gbrain transcripts audit-secrets` scans those pages with the same
+ * `foresights transcripts audit-secrets` scans those pages with the same
  * transcript-lane detectors the importer uses now and lists the affected
  * page slugs with hit counts per pattern. It never prints, returns or stores
  * a matched value or a preview, and it changes no page. Its summary is

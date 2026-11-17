@@ -1,7 +1,7 @@
 /**
  * Automatic facts drain (Foundations 2, Lane D; src/core/facts/drain.ts).
  * Protects: queued facts-absorb jobs on PGLite get extracted with no
- * `gbrain jobs work`, within the per-run, daily and job-count caps, and every
+ * `foresights jobs work`, within the per-run, daily and job-count caps, and every
  * stop other than "queue empty" leaves the jobs queued with no attempt counted
  * (budget, oversized job, no key, shutdown, unpriced model under a user cap).
  * Stubs only the gateway chat transport (`__setChatTransportForTests`).
@@ -106,7 +106,7 @@ describe('runFactsDrain', () => {
     __setChatTransportForTests(async () => factsReply('x'));
     const logs: string[] = [];
     await run(logs);
-    expect(logs[0]).toMatch(/^\[gbrain notice facts_drain\] Automatic fact extraction is on: 2 queued page\(s\), about \$0\.0\d\d with anthropic:claude-sonnet-4-6, at most \$1\.00 per run and \$5\.00 per day\. To opt out: gbrain config set facts\.extraction_enabled false$/);
+    expect(logs[0]).toMatch(/^\[(?:foresights|gbrain) notice facts_drain\] Automatic fact extraction is on: 2 queued page\(s\), about \$0\.0\d\d with anthropic:claude-sonnet-4-6, at most \$1\.00 per run and \$5\.00 per day\. To opt out: (?:foresights|gbrain) config set facts\.extraction_enabled false$/);
     expect(takeFactsDrainNotice()).toMatchObject({ code: 'facts_drain_first_run', kind: 'info', fix: { argv: ['gbrain', 'config', 'set', 'facts.extraction_enabled', 'false'] } });
     await seed(1);
     const again: string[] = [];

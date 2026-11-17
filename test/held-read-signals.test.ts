@@ -147,7 +147,7 @@ test('get_page carries file_held with the path for local callers and without it 
   expect(remote.file_held).toMatchObject({ code: 'invalid_frontmatter', reason: 'needs_interpretation', since: local.file_held.since,
     fix: { actor: 'host_admin', argv: ['gbrain', 'repair', 'frontmatter', '--source', s.id] } });
   expect(remote.file_held.path).toBeUndefined();
-  expect(remote.file_held.fix.user_message).toContain(`'gbrain repair frontmatter --source ${s.id}' on the brain host`);
+  expect(remote.file_held.fix.user_message).toContain(`'foresights repair frontmatter --source ${s.id}' on the brain host`);
   expect(JSON.stringify(remote.file_held)).not.toContain('notes/a.md');
   expect(JSON.stringify(remote.file_held)).not.toContain('alice-example');
 
@@ -187,7 +187,7 @@ test('a remote search payload carries counts and flags, never paths, and names t
   expect(results.find(row => row.slug === 'notes/a')?.stale).toMatchObject({ held_since: expect.any(String) });
   const notice = c.notices.find(n => n.code === 'held_files')!;
   expect(notice.fix).toMatchObject({ actor: 'host_admin', argv: ['gbrain', 'repair', 'frontmatter', '--source', s.id] });
-  expect(notice.fix!.user_message).toContain(`'gbrain repair frontmatter --source ${s.id}' on the brain host`);
+  expect(notice.fix!.user_message).toContain(`'foresights repair frontmatter --source ${s.id}' on the brain host`);
   expect(notice.why).toContain('Only the brain host operator can inspect and repair held files.');
   const payload = JSON.stringify({ results, meta: c.meta, notices: c.notices });
   for (const path of ['notes/a.md', 'notes/new.md', 'notes/ok.md']) expect(payload).not.toContain(path);

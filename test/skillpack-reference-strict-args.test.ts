@@ -1,5 +1,5 @@
 /**
- * `gbrain skillpack reference` argument safety (#5491, wave 14 P1.11).
+ * `foresights skillpack reference` argument safety (#5491, wave 14 P1.11).
  *
  * Protects: a no-write boundary the user asked for. `--apply-clean-hunks`
  * overwrites local skill edits; `--dry-run` is the only thing between the
@@ -27,7 +27,7 @@ afterEach(() => {
   while (created.length) rmSync(created.pop()!, { recursive: true, force: true });
 });
 
-/** A workspace whose copy of the bundled skill carries a local edit the apply would align to gbrain. */
+/** A workspace whose copy of the bundled skill carries a local edit the apply would align to foresights. */
 function driftedWorkspace(): { ws: string; file: string; before: string } {
   const ws = mkdtempSync(join(tmpdir(), 'sp-strict-ws-'));
   created.push(ws);
@@ -124,16 +124,16 @@ describe('CLI child process', () => {
     const { ws } = driftedWorkspace();
     const r = runCli(['--all', '--apply-clean-hunks', '--workspace', ws]);
     expect(r.exit).toBe(2);
-    expect(r.stderr).toContain('gbrain skillpack reference --all');
-    expect(r.stderr).toContain('gbrain skillpack reference <name>');
-    expect(r.stderr).toContain('gbrain skillpack reference <name> --apply-clean-hunks');
+    expect(r.stderr).toContain('foresights skillpack reference --all');
+    expect(r.stderr).toContain('foresights skillpack reference <name>');
+    expect(r.stderr).toContain('foresights skillpack reference <name> --apply-clean-hunks');
   }, 90_000);
 
   test('help shows the per-skill and --all forms as separate grammars', () => {
     const r = runCli(['--help']);
     expect(r.exit).toBe(0);
-    expect(r.stdout).toContain('gbrain skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]');
-    expect(r.stdout).toContain('gbrain skillpack reference --all [--workspace PATH] [--since <version>] [--json]');
+    expect(r.stdout).toContain('foresights skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]');
+    expect(r.stdout).toContain('foresights skillpack reference --all [--workspace PATH] [--since <version>] [--json]');
     expect(r.stdout).not.toContain('<name> | --all');
   }, 90_000);
 });

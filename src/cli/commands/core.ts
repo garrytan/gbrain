@@ -1,5 +1,5 @@
 /**
- * `gbrain core`: post-connect dispatch for always-loaded core memory; the
+ * `foresights core`: post-connect dispatch for always-loaded core memory; the
  * record lives in src/cli/command-table.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';

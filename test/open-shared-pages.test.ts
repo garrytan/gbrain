@@ -2,7 +2,7 @@
  * GST-2670 (GBRA-502): pages every member's key can read on a brain that serves several people.
  *
  * 1. Protects: a brain that serves several people says how many pages no rule or readable_by restricts, per folder,
- *    in the access serves several preview and receipt, gbrain access serves, doctor (open_shared_pages) and
+ *    in the access serves several preview and receipt, foresights access serves, doctor (open_shared_pages) and
  *    post-upgrade, with the labelling commands (owner first in every reader list) and an opt-in --labelled-only flag.
  *    A one-person brain, and one pinned to access.serves one, runs no query and prints nothing new. The count writes
  *    nothing, never depends on who asks, and a failed count never stops setup.
@@ -200,7 +200,7 @@ for (const kind of testBackends()) {
 
     test('the printed --labelled-only command leaves out the owner, so running it is not BLOCKED', async () => {
       const text = receiptLines(await label(ROSTER, false)).join('\n');
-      const command = text.match(/gbrain access serves several --members (\S+) --labelled-only --yes/);
+      const command = text.match(/(?:foresights|gbrain) access serves several --members (\S+) --labelled-only --yes/);
       expect(command?.[1]).toBe('bob-example');
       const rerun = await label(command![1]!.split(','), false, { labelledOnly: true });
       expect(rerun.members.every(m => m.action !== 'blocked')).toBe(true);
@@ -219,7 +219,7 @@ for (const kind of testBackends()) {
       } finally { await setMemberLabelledOnly(engine, 'bob-example', false, { remote: false }); }
     }, 60_000);
 
-    test('gbrain access serves counts on a several-person brain unless --no-open-pages (the setup child) skips it', async () => {
+    test('foresights access serves counts on a several-person brain unless --no-open-pages (the setup child) skips it', async () => {
       const spy = spyPages(engine);
       try {
         expect((await servesStatus(engine, { openPages: false })).open_pages).toBeUndefined();

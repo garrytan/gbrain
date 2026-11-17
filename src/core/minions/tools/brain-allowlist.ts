@@ -55,7 +55,7 @@ export { BRAIN_TOOL_ALLOWLIST };
  *
  * Field-report driver: the renderer in `src/core/minions/system-prompt.ts`
  * surfaces these so a model with `shell` + brain tools in its registry
- * knows brain tools write to the gbrain DB (NOT local files) and to reach
+ * knows brain tools write to the foresights DB (NOT local files) and to reach
  * for shell when the task asks for filesystem work.
  *
  * Keyed by OP name (pre-`brain_` prefix). Optional — tools without an entry
@@ -71,7 +71,7 @@ export const BRAIN_TOOL_USAGE_HINTS: Readonly<Record<string, string>> = {
   list_link_sources: 'List the distinct link provenances in the brain with edge counts (e.g. `citation-graph`, `manual`). Use to discover which edge-writers have populated the graph.',
   resolve_slugs: 'Resolve free-form entity names to canonical slugs (e.g. "Alice" → `people/alice-example`). Use before any tool that takes a slug if the user gave a name not a slug.',
   get_ingest_log: 'Read the brain ingestion log for diagnostic / verification queries.',
-  put_page: 'Write a markdown page to the gbrain DATABASE (NOT the local filesystem). Page becomes searchable + linkable. Slug must match the agent\'s allowed namespace.',
+  put_page: 'Write a markdown page to the foresights DATABASE (NOT the local filesystem). Page becomes searchable + linkable. Slug must match the agent\'s allowed namespace.',
   add_timeline_entry: 'Append a dated timeline entry to an existing page (the canonical timeline write). Use over rewriting the page body when recording a dated event. Slug must match the agent\'s allowed namespace.',
   get_recent_salience: 'Read pages ranked by emotional + activity salience over a recency window. Use for "what\'s been on my mind lately".',
   find_anomalies: 'Read cohort-level activity outliers (e.g. tag-cohort or type-cohort with unusual recent volume). Use for "what\'s unusual lately".',

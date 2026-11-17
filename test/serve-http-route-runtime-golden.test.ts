@@ -2,7 +2,7 @@
  * serve-http route golden by runtime introspection (refactor wave 1: TE1, S-2).
  *
  * Protects: the full ordered Express 5 router stack that `buildServeHttpApp`
- * builds for `gbrain serve --http`: every global `app.use` layer (cookie
+ * builds for `foresights serve --http`: every global `app.use` layer (cookie
  * parser, the admin no-store header middleware, the metrics tracker, the
  * CORS / OAuth preflight gates, body parsers, the SDK auth router with its own
  * nested routes), every route's method, path and ordered handler chain, and

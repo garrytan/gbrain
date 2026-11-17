@@ -3,7 +3,7 @@
  * success.
  *
  * Before this, `updateSourceConfig` throwing was a `console.warn` and nothing
- * else. `gbrain dream --json` reported `status: 'ok'`, doctor separately
+ * else. `foresights dream --json` reported `status: 'ok'`, doctor separately
  * reported `cycle_freshness` stale, and no signal connected them — so the fix
  * doctor recommends (re-run the cycle) could never work, because the cycle was
  * already succeeding. That is the loop #2251 sat in while every stamp write

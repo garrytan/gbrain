@@ -122,7 +122,7 @@ describe('parseGlobalFlags', () => {
   });
 
   test('wave-g: call claims --explain — never handed into op positional args', () => {
-    // `gbrain call <op>` maps leftover argv into op params; a handed-back
+    // `foresights call <op>` maps leftover argv into op params; a handed-back
     // --explain would surface as an unknown-parameter error instead of
     // being ignored (the pre-#4541 global behavior).
     const r = parseGlobalFlags(['call', 'query', '--explain']);
@@ -132,7 +132,7 @@ describe('parseGlobalFlags', () => {
 
   // #4557 — #4541 only fixed the case where --explain follows the command
   // (`extract --explain timeline`). It missed the documented global-flag-
-  // FIRST invocation style (`gbrain --progress-json doctor` per this file's
+  // FIRST invocation style (`foresights --progress-json doctor` per this file's
   // own header comment): a handed-back --explain landed at its ORIGINAL
   // position, which for `--explain extract timeline` is rest[0] — and
   // cli.ts dispatches on `args[0]` as the command, so the literal string
@@ -214,22 +214,22 @@ describe('getCliOptions / setCliOptions singleton', () => {
 describe('cli.ts global-flag stripping (integration)', () => {
   const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 
-  test('gbrain --progress-json --version works (global flag stripped before dispatch)', () => {
+  test('foresights --progress-json --version works (global flag stripped before dispatch)', () => {
     const res = spawnSync('bun', [CLI, '--progress-json', '--version'], {
       encoding: 'utf-8',
       env: { ...process.env, NO_COLOR: '1' },
     });
     expect(res.status).toBe(0);
-    expect(res.stdout).toContain('gbrain ');
+    expect(res.stdout).toContain('foresights ');
   });
 
-  test('gbrain --quiet --progress-interval=500 version works (flags interleaved, all stripped)', () => {
+  test('foresights --quiet --progress-interval=500 version works (flags interleaved, all stripped)', () => {
     const res = spawnSync('bun', [CLI, '--quiet', '--progress-interval=500', 'version'], {
       encoding: 'utf-8',
       env: { ...process.env, NO_COLOR: '1' },
     });
     expect(res.status).toBe(0);
-    expect(res.stdout).toContain('gbrain ');
+    expect(res.stdout).toContain('foresights ');
   });
 
   // #4557 — end-to-end proof that the parseGlobalFlags fix actually reaches
@@ -239,7 +239,7 @@ describe('cli.ts global-flag stripping (integration)', () => {
   // connect, so this differentiates "the real command was dispatched on"
   // from "the literal '--explain' string was dispatched on" — the exact
   // failure this fix corrects.
-  test('#4557: gbrain --explain <command> dispatches on the command, not on --explain', () => {
+  test('#4557: foresights --explain <command> dispatches on the command, not on --explain', () => {
     const res = spawnSync('bun', [CLI, '--explain', 'not-a-real-command-4557'], {
       encoding: 'utf-8',
       env: { ...process.env, NO_COLOR: '1' },
@@ -253,7 +253,7 @@ describe('cli.ts global-flag stripping (integration)', () => {
 describe('CLI integration: progress streams to the right channel', () => {
   const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 
-  test('gbrain --progress-json --version emits only the version on stdout', () => {
+  test('foresights --progress-json --version emits only the version on stdout', () => {
     // `version` is a single-shot command that goes through the main()
     // dispatch path. We want to confirm --progress-json doesn't force
     // stray progress onto stdout for commands that don't use a reporter.
@@ -262,12 +262,12 @@ describe('CLI integration: progress streams to the right channel', () => {
       env: { ...process.env, NO_COLOR: '1' },
     });
     expect(res.status).toBe(0);
-    expect(res.stdout.trim()).toMatch(/^gbrain /);
+    expect(res.stdout.trim()).toMatch(/^(?:foresights|gbrain) /);
     // No JSON progress object should end up on stdout.
     expect(res.stdout).not.toContain('"event":"start"');
   });
 
-  test('gbrain --quiet skillpack-check returns exit code with no stdout', () => {
+  test('foresights --quiet skillpack-check returns exit code with no stdout', () => {
     // Regression guard for the flag-collision that skillpack-check hit
     // when --quiet briefly passed through argv. Now it reads the singleton.
     const res = spawnSync('bun', [CLI, '--quiet', 'skillpack-check'], {
@@ -437,7 +437,7 @@ describe('--wait flag (#5232 write wait; #6625 movement owns its own)', () => {
 });
 
 describe('childGlobalFlags propagates --brain', () => {
-  test('explicit brain rides into child gbrain subprocess commands', async () => {
+  test('explicit brain rides into child foresights subprocess commands', async () => {
     const { childGlobalFlags } = await import('../src/core/cli-options.ts');
     expect(childGlobalFlags({ ...DEFAULT_CLI_OPTIONS, brain: 'media-team' }))
       .toContain('--brain=media-team');

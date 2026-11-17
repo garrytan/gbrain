@@ -1,5 +1,5 @@
 /**
- * Tests for src/commands/advisor.ts — the `gbrain advisor` CLI surface (plan E1).
+ * Tests for src/commands/advisor.ts — the `foresights advisor` CLI surface (plan E1).
  *
  * Covers the seams the command actually exposes:
  *   - runAdvisorCli(engine, args): the only public entry. The exit-verdict
@@ -278,12 +278,12 @@ describe('runAdvisorCli --apply', () => {
       await withEnv({ ...hermeticEnv(), GBRAIN_NON_INTERACTIVE: '1' }, async () => {
         // pending_migration is the runnable finding (dispatch_id apply_migrations).
         const run = await runCaptured(fakeEngine({ schemaVersion: '1' }), ['--apply', 'apply_migrations', '--json']);
-        expect(run.stderrLines).toContain('About to run: gbrain apply-migrations --yes');
+        expect(run.stderrLines).toContain('About to run: foresights apply-migrations --yes');
         expect(run.exitCode).toBe(3);
         const payload = JSON.parse(run.stdout);
         expect(payload).toMatchObject({ code: 'confirmation_required', effects: ['persistent_install'] });
         expect(payload.fix.argv).toEqual(['gbrain', 'advisor', '--apply', 'apply_migrations', '--json', '--yes']);
-        expect(payload.user_message).toContain('gbrain apply-migrations --yes');
+        expect(payload.user_message).toContain('foresights apply-migrations --yes');
         expect(payload.risk).toContain('Cost: no model spend');
         expect(spawned.filter((c) => c[0] === 'gbrain')).toEqual([]);
       });

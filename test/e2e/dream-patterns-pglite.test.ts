@@ -101,7 +101,7 @@ describe('E2E patterns — disabled', () => {
     }
   }, 30_000);
 
-  // issue #2860 — `gbrain dream --phase patterns --once` must bypass the
+  // issue #2860 — `foresights dream --phase patterns --once` must bypass the
   // enabled gate WITHOUT touching config (the whole point: the old
   // toggle-on/run/toggle-off workaround left `enabled` stuck true forever
   // if the process died between steps, running patterns hourly and

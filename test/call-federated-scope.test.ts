@@ -1,9 +1,9 @@
 /**
- * #3874 — `gbrain call` must compute the SAME federated read scope as the
+ * #3874 — `foresights call` must compute the SAME federated read scope as the
  * direct CLI path. Pre-fix, call.ts resolved via bare resolveSourceId and
  * never computed localFederatedSourceIds, so an unqualified
- * `gbrain call resolve_slugs ...` on a federated multi-source brain silently
- * saw only the scalar source while `gbrain query` spanned the federated set.
+ * `foresights call resolve_slugs ...` on a federated multi-source brain silently
+ * saw only the scalar source while `foresights query` spanned the federated set.
  */
 import { describe, test, expect } from 'bun:test';
 import { runCall } from '../src/commands/call.ts';
@@ -49,7 +49,7 @@ function makeEngine(capture: { resolveSlugsOpts: unknown[] }): BrainEngine {
   } as unknown as BrainEngine;
 }
 
-describe('#3874 gbrain call federated scope parity', () => {
+describe('#3874 foresights call federated scope parity', () => {
   test('direct call errors retain the typed receipt in delivered JSON and set a failing exit verdict', async () => {
     await withEnv({ GBRAIN_SOURCE: undefined }, async () => {
       const receipt = { request_id: '10000000-0000-4000-8000-000000000001', state: 'conflict' as const, retry_after_ms: null };

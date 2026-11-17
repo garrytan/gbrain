@@ -6,10 +6,10 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-// The same parser gbrain uses to ingest frontmatter (src/core/markdown.ts), so
+// The same parser foresights uses to ingest frontmatter (src/core/markdown.ts), so
 // the injection test asserts against the real consumer rather than a substring.
 import { load as yamlLoad } from 'js-yaml';
-// F5 asserts against gbrain's REAL consumers, not against a copy of their
+// F5 asserts against foresights's REAL consumers, not against a copy of their
 // regexes: `parseConversation` is what decides whether an imported page yields
 // any conversation-facts at all, and `parseMarkdown`/`serializeMarkdown` are
 // what every sync and rewrite of the page runs through.
@@ -91,7 +91,7 @@ function bodyOf(page: string): string {
 /**
  * F5's one way to get it wrong. An UNQUOTED RFC 3339 scalar is read by js-yaml
  * as a JS `Date`: microseconds truncate, a `+05:30` offset is normalised away,
- * the lexical form changes — and gbrain's own `coerceFrontmatterString`
+ * the lexical form changes — and foresights's own `coerceFrontmatterString`
  * (src/core/markdown.ts) slices a Date to its first 10 chars, so the entire
  * time of day is gone. It is also sticky: a Date re-serializes unquoted, so
  * every later round trip keeps it a Date.
@@ -119,7 +119,7 @@ function assertEveryTimestampQuoted(page: string): void {
   }
 }
 
-/** Round-trip a page through the two functions every gbrain rewrite uses. */
+/** Round-trip a page through the two functions every foresights rewrite uses. */
 function roundTrip(page: string): { first: string; second: string; parsed: ReturnType<typeof parseMarkdown> } {
   const p1 = parseMarkdown(page, 'brain/conversations/page.md');
   const first = serializeMarkdown(p1.frontmatter, p1.compiled_truth, p1.timeline, {
@@ -768,12 +768,12 @@ describe('envelope-to-gbrain importer — cross-run overwrite (F2)', () => {
     expect(page).toContain('SECOND_TURN');
   });
 
-  test('a page gbrain has re-serialized is still recognized as ours', async () => {
-    // gbrain rewrites pages it holds - `export --dir`, the DB-only restore
+  test('a page foresights has re-serialized is still recognized as ours', async () => {
+    // foresights rewrites pages it holds - `export --dir`, the DB-only restore
     // path, and put_page write-through all re-emit frontmatter through
     // gray-matter, which writes plain or single-quoted scalars where this
     // importer wrote JSON. A refresh after any of those must still be a
-    // refresh, not a refusal telling the user to delete gbrain's own work.
+    // refresh, not a refusal telling the user to delete foresights's own work.
     const outDir = tempDir();
     const uuid = '68a1e7f4-9c2b-4d3e-8f01-2a3b4c5d6e7f';
     const before = writeEnvelope({
@@ -783,7 +783,7 @@ describe('envelope-to-gbrain importer — cross-run overwrite (F2)', () => {
     expect((await runImporter(before, outDir)).exitCode).toBe(0);
 
     // Simulate the gray-matter round trip: a UUID comes back as a plain
-    // unquoted scalar. (Verified against gbrain's own serializeMarkdown.)
+    // unquoted scalar. (Verified against foresights's own serializeMarkdown.)
     const file = join(outDir, markdownFiles(outDir)[0]);
     const rewritten = readFileSync(file, 'utf8').replace(
       `memvelope_conversation_id: ${JSON.stringify(uuid)}`,
@@ -949,7 +949,7 @@ describe('envelope-to-gbrain importer — cross-run overwrite (F2)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// F5 — the pages this importer writes must be readable by gbrain's OWN
+// F5 — the pages this importer writes must be readable by foresights's OWN
 // conversation parser.
 //
 // Before F5 every page set `type: conversation` (which opens the gate to
@@ -1082,7 +1082,7 @@ describe('envelope-to-gbrain importer — F5 parser-legible format', () => {
 
   // SENTINEL for the guard above. A guard that has never been shown to fire is
   // not a guard. This is the exact page the importer would write if the quoting
-  // were dropped, and gbrain's own parser is what proves the damage.
+  // were dropped, and foresights's own parser is what proves the damage.
   test('SENTINEL: the unquoted-timestamp guard fires, and names the damage', () => {
     const unquoted = [
       '---',
@@ -1226,7 +1226,7 @@ describe('envelope-to-gbrain importer — F5 parser-legible format', () => {
 
     expect(result.exitCode).toBe(0);
     // 1970-01-01 is what deriveDateContext() picks when a page has no date at
-    // all, so the header introduces no value gbrain would not have chosen.
+    // all, so the header introduces no value foresights would not have chosen.
     expect(bodyOf(page)).toContain('**Me** (1970-01-01 00:00):');
     expect(frontmatterOf(page).date).toBeNull();
     const parsed = parsePage(page);
@@ -1547,7 +1547,7 @@ describe('envelope-to-gbrain importer — F5 non-conforming scalars', () => {
     expect(tsLines[1].trim()).toBe('ts: {"evil":"\\n---\\ntype: injected\\n---\\n"}');
   });
 
-  test('a gbrain rewrite keeps the values and changes only the quoting style', async () => {
+  test('a foresights rewrite keeps the values and changes only the quoting style', async () => {
     const envelopePath = writeEnvelope(
       envelopeWith([{ id: 'm1', role: 'user', ts: '2025-11-02T14:22:51.000Z', text: 'a' }]),
     );

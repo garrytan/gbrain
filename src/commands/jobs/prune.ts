@@ -1,4 +1,4 @@
-/** `gbrain jobs prune` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs prune` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, parseFlag, type JobsCommandContext } from './shared.ts';
 
 export async function runJobsPrune({ args, queue }: JobsCommandContext): Promise<void> {

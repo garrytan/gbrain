@@ -3,7 +3,7 @@
  *
  * ## Why this exists
  *
- * GBrain's sync and import pipelines work fine without frontmatter — gray-matter
+ * Foresights's sync and import pipelines work fine without frontmatter — gray-matter
  * returns the full content as body, and `inferType`/`inferTitle` in markdown.ts
  * provide fallbacks. But the inferred metadata is minimal:
  *
@@ -16,9 +16,9 @@
  * heading extraction from content, and source/folder tagging. It produces a
  * complete frontmatter block that can be:
  *
- *   1. Written back to the file on disk (via `gbrain frontmatter generate --fix`)
+ *   1. Written back to the file on disk (via `foresights frontmatter generate --fix`)
  *   2. Used at import time without modifying the file (DB-only inference)
- *   3. Shown as a dry-run preview (via `gbrain frontmatter generate --dry-run`)
+ *   3. Shown as a dry-run preview (via `foresights frontmatter generate --dry-run`)
  *
  * ## Design principles
  *
@@ -344,7 +344,7 @@ export function inferFrontmatter(relativePath: string, content: string): Inferre
  * a page at import time:
  *   - a leading backtick or `@` (YAML c-reserved) threw a parse error — the
  *     failure that blocked `docs/guides/skillopt.md` and two siblings, since
- *     gbrain doc H1s are routinely `` `gbrain <cmd>` ``;
+ *     foresights doc H1s are routinely `` `foresights <cmd>` ``;
  *   - a leading `%` (directive indicator) threw the same way;
  *   - a leading `- ` parsed as a sequence entry, so `title` came back
  *     `undefined` — silent, and worse than the throw;

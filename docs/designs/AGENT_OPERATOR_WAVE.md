@@ -4,8 +4,8 @@ Status: approved plan (GBRA-42) with the CEO, DX and Eng obligations folded in. 
 implementer follows it lane by lane without reading the review record. Where it differs from
 `agent-operator-plan.md`, this document wins (fold precedence was Eng > DX > lane text > CEO).
 
-- Repo: `garrytan/gbrain`. Base branch `capy/agent-operator-wave`, cut from `capy/foundations-1` at `c838c630`
-  (contains fix wave 8 and wave 8 lane H's pricing builder `src/core/budget/no-pricing.ts` + `gbrain pricing`).
+- Repo: `aimonk2025/gbrain`. Base branch `capy/agent-operator-wave`, cut from `capy/foundations-1` at `c838c630`
+  (contains fix wave 8 and wave 8 lane H's pricing builder `src/core/budget/no-pricing.ts` + `foresights pricing`).
   `capy/foundations-1` has since moved one restamp commit (`bd395c5e`, v0.60.37.0); wave 8 takes v0.60.36.0.
 - Version: PATCH, v0.60.38.0 or the next free PATCH at ship time (auto-allocate past collisions, sync every stamp).
 - Code anchors below were checked on `origin/capy/agent-operator-wave`; line numbers are approximate (`~`).
@@ -14,7 +14,7 @@ implementer follows it lane by lane without reading the review record. Where it 
 
 ## Problem
 
-gbrain is operated by AI agents (Claude Code, Codex, OpenClaw, Grok Bot, MCP clients) on a user's behalf, but much of
+foresights is operated by AI agents (Claude Code, Codex, OpenClaw, Grok Bot, MCP clients) on a user's behalf, but much of
 its code, errors and docs assume a human at a terminal. The agent-first pieces that exist (Google connect's
 `[SHOW USER]` + `next_action`, the memory-verb error contract with required `suggestion`, the `GBRAIN_DB_ACCESS`
 classifier, `repair`'s preview/apply, F0's refresh refusals with code/cause/fix/docs) are islands. The GBRA-42 audit
@@ -36,7 +36,7 @@ measured:
    keyless brain, one destructive (`mv brain.pglite …`, loses DB-only facts). Doctor scores a sanctioned keyless brain
    40/100. PGLite jobs queue with no worker while `jobs stats` blames a wedged supervisor.
 6. **Agent-visible channels are wrong.** Degraded (keyword-only) recall is reported only via `_meta`/stderr, which the
-   model doesn't see. A second `gbrain serve` or a missing brain exits before the MCP handshake. Seven local-only tools
+   model doesn't see. A second `foresights serve` or a missing brain exits before the MCP handshake. Seven local-only tools
    are listed on stdio but always refuse there.
 7. **Interop coaching is suppressed exactly when an agent operates.** Nudges, hints and the post-upgrade banner are
    TTY-only; the advisor is off over MCP; init assumes Claude Code and plants a fake user fact.
@@ -50,7 +50,7 @@ asking; one that hangs looks broken; one that can't see degraded mode tells the 
 
 ## Goal and principles
 
-Every gbrain surface (MCP tool result, CLI human output, CLI `--json`, doctor/advisor/readiness, docs, skills) assumes
+Every foresights surface (MCP tool result, CLI human output, CLI `--json`, doctor/advisor/readiness, docs, skills) assumes
 the operator is an agent and gives it, for every failure, refusal, degradation and recommendation, one **Action**:
 
 1. **What happened**: a stable canonical `code` (+ `reason` where one code covers several causes) and one sentence.
@@ -62,8 +62,8 @@ the operator is an agent and gives it, for every failure, refusal, degradation a
    persistent_install`), `fix.actor` (`agent | user | host_admin | provider`), `fix.requires_exclusive`, and a derived
    `next ∈ run | ask_user | tell_user_to_run | wait | report` computed only at render time from effects, actor,
    transport, callability and preapprovals. Agents follow `next`; `user_message` is the relay text.
-5. **How to verify**: `fix.verify`, always a read-only invocation (usually `gbrain doctor --only <check> --json`).
-6. **Proactive interop coaching**: when gbrain sees the setup limiting the user's goal in the current call, it says so
+5. **How to verify**: `fix.verify`, always a read-only invocation (usually `foresights doctor --only <check> --json`).
+6. **Proactive interop coaching**: when foresights sees the setup limiting the user's goal in the current call, it says so
    in a channel the model sees (a prefixed extra content block on MCP), with the fix and what to tell the user, within
    a per-session budget, mutable.
 
@@ -86,7 +86,7 @@ enforcement.
 
 **Standing project rules.** New/changed features default ON on upgrade (opt-out) with real rails. An unpriced model
 under a derived or default cap warns and runs; under a user cap it blocks and the refusal tells the agent to look up
-the per-token rate (for example by web search) and register it with `gbrain pricing set`, then retry. Trust boundary
+the per-token rate (for example by web search) and register it with `foresights pricing set`, then retry. Trust boundary
 stays fail-closed (no stdio trust widening). One fix-wave PR. PATCH bump.
 
 ---
@@ -99,7 +99,7 @@ branches, one CHANGELOG entry. PR targets `master`; retarget/rebase as wave 8 (v
 before Lane H, and before ship. Coordinate landings with the GBRA threads that own wave 8 and Foundations 1.
 
 **Pricing.** Wave 8 lane H is already on the base: A4 and C consume `noPricingGuidance()` / `noPricingMessage()` /
-`pricingSetCommand()` (`src/core/budget/no-pricing.ts`) and `gbrain pricing set` directly. Fallback note only: if a
+`pricingSetCommand()` (`src/core/budget/no-pricing.ts`) and `foresights pricing set` directly. Fallback note only: if a
 rebase ever drops that builder, the paid path keeps today's behaviour behind the same seam until it returns.
 
 **Order.**
@@ -395,18 +395,18 @@ new-server pairs run against these.
   is insufficient the fix is a diagnostic read, never a mutation. Registry default fixes may only be diagnostic reads.
 - **Safe-recovery invariant.** A mutating op with unknown outcome directs the agent to inspect state, never "retry":
   - own receipt on the original channel (`get_write_request {request_id}` when callable for the same principal; on
-    CLI `gbrain write-request -- <id>`);
+    CLI `foresights write-request -- <id>`);
   - another principal's receipt → separately authorized host inspection, actor `host_admin`;
   - non-journaled mutations recover through their own status (`submit_job` → `get_job`);
   - no receipt exists → no receipt command is emitted (the fix is the op's read-side diagnostic).
   - `retryable: true` only when the op is tagged `idempotent` and the retry reuses the same request identity. The
     mutating-verb fallback suggestion says "inspect state before resubmitting".
 - **Unknown throw**: `code:"internal_error"`, suggestion names the op ("Server-side failure in find_orphans, not a
-  caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user"), actor
+  caller mistake. Run `foresights doctor --json` on the brain host; if it repeats, report it to the user"), actor
   `host_admin` over HTTP, E11 records it.
 - **Consumers**: MCP dispatch fallback (`src/mcp/dispatch.ts`), serve-http unknown-op/scope/throw paths
   (`src/commands/serve-http-mcp.ts`; unknown-op through `unknownToolEnvelope`, replacing `{error: serializeError(e)}`),
-  `src/mcp/http-transport.ts`, `gbrain call` (delegates to `dispatchToolCall`), CLI top-level catch and fatal seam,
+  `src/mcp/http-transport.ts`, `foresights call` (delegates to `dispatchToolCall`), CLI top-level catch and fatal seam,
   cycle phase wrapper, and the thin client.
 - **Thin client** (`src/core/mcp-client.ts`): parses `content[0]` alone as the body (never concatenates blocks); reads
   notices from blocks whose first line starts with `[gbrain notice ` and from `_meta.gbrain_notices`, and from the
@@ -447,7 +447,7 @@ new-server pairs run against these.
   `test/callable-predicate.test.ts` asserts list ⇔ dispatch agreement across transports, surfaces, scopes and gates.
 - Generated `docs/guides/error-codes.md` (meaning · why · next step · effects/actor · verify; "Renamed in this
   release" section listing frozen `error`/`code` pairs) via `bun run build:error-codes`, drift-checked;
-  `gbrain errors <code> [--json]` and `gbrain errors --changed` render rows offline. Naming lint for new codes
+  `foresights errors <code> [--json]` and `foresights errors --changed` render rows offline. Naming lint for new codes
   (snake_case, no transport prefixes); a new code's doc row lands in the same PR.
 - Test: AST walk asserts every literal code is registered and every anchor resolves (extends
   `test/error-catalogue.test.ts`).
@@ -560,7 +560,7 @@ new-server pairs run against these.
 
   | # | Condition | `next` |
   |---|---|---|
-  | 1 | no `fix` | `report` (relay `message`; run `gbrain doctor --json` where callable) |
+  | 1 | no `fix` | `report` (relay `message`; run `foresights doctor --json` where callable) |
   | 2 | `actor = provider` | `wait` (retry after the stated delay, same request identity) |
   | 3 | `actor ∈ {user, host_admin}`, or the fix is CLI-only on an MCP transport | `tell_user_to_run` |
   | 4 | `consent` non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
@@ -594,7 +594,7 @@ new-server pairs run against these.
   principal. `degraded` and `safety` notices are never deduped on HTTP (attached to every affected call). At most 2
   `coaching` notices per session; never coach on `disabled_by_choice`; coaching fires only when evidence ties the
   limitation to the current call.
-- **Mute.** `gbrain notices mute <code>` and MCP `mute_notice` (write scope) persist dismissals; mute applies to
+- **Mute.** `foresights notices mute <code>` and MCP `mute_notice` (write scope) persist dismissals; mute applies to
   `coaching` and `info` only, and per client on remote transports.
 - **HTTP view.** One transport-keyed redaction pass (`redactForTransport`): no local paths, PIDs, key names, or
   backup/worker posture over HTTP.
@@ -620,18 +620,18 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
   is a two-step plan: step one (actor `user`) stops the owning serve (pid, transport from `lock_owner`), `then` the
   command.
 - **Embedding enablement** (`embeddingEnablement(cfg)`): resolves the configured datastore first (current PGLite path,
-  engine, mount) and builds `gbrain init --force --embedding-model <provider:model> --path <resolved>` for a provider
+  engine, mount) and builds `foresights init --force --embedding-model <provider:model> --path <resolved>` for a provider
   whose key is present; states pages/facts/keyword search are kept; effects {credentials, paid};
   `requires_exclusive: true`. Width mismatches refuse with a clear next step. E2E matrix: default path, custom path,
   mounted brain, legacy dimensions, multiple providers, each with imported pages and DB-only `remember` facts, each
   preserving them and queueing vectors. If init cannot target a case safely, add a targeted
-  `gbrain embeddings enable` op for it. Remove every `mv brain.pglite` recipe (`src/commands/config.ts:~915-935`,
+  `foresights embeddings enable` op for it. Remove every `mv brain.pglite` recipe (`src/commands/config.ts:~915-935`,
   `reinit-pglite.ts:~11` docs); lint against hard-coded `embedding_model` advice outside readiness.
 - **`harness_wiring.fix`** by state: one detected harness and no `serve --http` → harness-native stdio registration
   with the absolute binary from `resolveGbrainBin()` (`src/commands/bootstrap.ts:~379`) and `--surface verbs`
-  (`claude mcp add gbrain -- <abs> serve --surface verbs`, `codex mcp add gbrain -- <abs> serve --surface verbs`,
-  opencode via `gbrain bootstrap hooks --harness opencode --no-hooks`); `serve --http` running or multiple sessions →
-  `gbrain bootstrap harness --harness <h> --yes`; no harness → the per-harness URL from MEMORY_VERBS. Effects are
+  (`claude mcp add foresights -- <abs> serve --surface verbs`, `codex mcp add foresights -- <abs> serve --surface verbs`,
+  opencode via `foresights bootstrap hooks --harness opencode --no-hooks`); `serve --http` running or multiple sessions →
+  `foresights bootstrap harness --harness <h> --yes`; no harness → the per-harness URL from MEMORY_VERBS. Effects are
   computed from the concrete plan and disclosed: `persistent_install` always; `credentials` when bearer tokens are
   minted; scopes, destination (config file or URL), tool preapproval entries and hooks listed in `why`/`user_message`.
   No bare `gbrain` binary in registrations.
@@ -652,7 +652,7 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
   safe-recovery and principal rules, replacing "Inspect this receipt…". Missing pages report `code:"page_not_found"`
   while `error` keeps `page_identity_changed`. Content-free YAML locator (line/column). Replay test on an old-style row.
 - **B5.** Scope and thin-client auth failures. Server envelope carries client id, current scopes and the exact
-  `gbrain auth` command, actor `host_admin`, `next: tell_user_to_run`, `code:"insufficient_scope"`; client and
+  `foresights auth` command, actor `host_admin`, `next: tell_user_to_run`, `code:"insufficient_scope"`; client and
   `remote doctor` recognise it (and the legacy values). #5949: a 429 on the `/token` mint reports
   `code:"rate_limited"`, actor `provider`, `retryable: true`, the retry-after delay (not "OAuth discovery failed")
   across `src/core/mcp-client.ts`, `src/core/remote-mcp-probe.ts`, `src/core/doctor-remote.ts`, init. Contract test
@@ -724,7 +724,7 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
   - The patched `process.exit` writes one fallback document when exiting non-zero with no final document:
     `{error:"command_failed", code, message, suggestion, exit_code, contract_version:1}` (`code` is the last
     rendered error's code when known, else `command_failed`; suggestion: re-run without `--json` to read stderr, or
-    `gbrain doctor --json`). Exit 0 with no document is a bug: D5 fails it and E11 logs `json_document_missing`.
+    `foresights doctor --json`). Exit 0 with no document is a bug: D5 fails it and E11 logs `json_document_missing`.
   - Child processes spawn through `spawnCliChild()`, which pipes child stdout to stderr under `--json`; the scanner
     bans `stdio:'inherit'` elsewhere.
   - NDJSON commands (`eval export/replay/gate`, `bench-publish`) keep line output plus a final `{status:"error"}` line.
@@ -757,7 +757,7 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
 
 - **E1.** Doctor checks carry `fix` (Action) or `fix_unavailable_reason`; `top_issues[].fix` is the action;
   `checkError()` replaces the 107 generic `Could not …: ${msg}` sites; human-addressed fixes rewritten
-  (`gbrain config set eval.capture false`, no pointers into gbrain's source). `gbrain doctor --only <check>[,…]
+  (`foresights config set eval.capture false`, no pointers into foresights's source). `foresights doctor --only <check>[,…]
   [--json]` runs named checks with observational startup (engine-free when possible), is `read_only`, and is the
   default `fix.verify`. Registry test: every warn/fail sets `fix` or a reason.
 - **E2.** Day-zero and keyless honesty. Doctor keeps `status ∈ ok | warn | fail` under `schema_version: 2`. Checks
@@ -771,8 +771,8 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
   `run_doctor` and CLI `doctor` share one registry (`remote_safe` flag) and agree on the same brain.
 - **E3.** Remediation plan: read source local paths, not only `sync.repo_path`; free steps run when the target is
   unreachable; `combined_command` consistent with `target_unreachable`; health-score warnings included.
-- **E4.** Sync on a gbrain-owned content dir → `sync_not_applicable` with why + fix (`gbrain import <dir>`, or after
-  asking, `git init`); `writer_coordinator_required` names `gbrain sync --no-pull --source <id>`; `dream` propagates
+- **E4.** Sync on a gbrain-owned content dir → `sync_not_applicable` with why + fix (`foresights import <dir>`, or after
+  asking, `git init`); `writer_coordinator_required` names `foresights sync --no-pull --source <id>`; `dream` propagates
   phase errors.
 - **E5.** Queue honesty: CLI `jobs submit` on PGLite without `--follow` refuses with `no_worker` + the `--follow`
   command unless `--queue-only`; MCP `submit_job` accepts and emits a `no_worker` notice; `jobs stats`/`get_job_stats`
@@ -780,7 +780,7 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
   extraction is off; `embedding_state: "disabled"` on keyless brains.
 - **E6.** Filled placeholders across doctor; not-found errors echo the id and list ≤5 valid ones plus a list command.
 - **E7.** Backup: per-asset wording (repo evidence excludes DB-only pages, facts, config, credentials);
-  `not_a_git_repo` gets `fix` (`gbrain bootstrap repo --source <id>`), effects {credentials, egress}. The `coaching`
+  `not_a_git_repo` gets `fix` (`foresights bootstrap repo --source <id>`), effects {credentials, egress}. The `coaching`
   notice fires only after ≥25 pages+facts or ≥7 days; before that doctor reports `severity:'info'`. The existing
   monthly backup-coverage notice in dispatch moves onto the notice channel under these rules.
 - **E8.** Fresh install: only migrations declaring `fresh_install_noop: true` are stamped by init, each audited with a
@@ -823,7 +823,7 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
     this MCP server". Missing brain / unreadable config re-probe on config mtime.
   - Two documented, tested recoveries end in a successful recall: (a) the owner closes and this server recovers in
     place (or the fix says exactly when a restart is needed); (b) both harnesses move to one shared
-    `gbrain serve --http`, each reconfigured.
+    `foresights serve --http`, each reconfigured.
   - The shared-HTTP transition is executable for two contending stdio installs with no prior HTTP credentials:
     provision credentials before starting the owner, or through the resident owner; a mid-transition failure leaves
     both stdio registrations working. Effects disclosed per A7.
@@ -832,7 +832,7 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
 - **F5.** Local-only ops that always refuse on stdio are not listed there (`isCallable`, no trust change); refusals
   name the exact CLI command; `query` stops routing to `get_recent_transcripts` where it isn't callable.
 - **F6.** Hidden-tool hint on the owner's stdio pipe ("get_health exists but this server runs --surface starter; use
-  `gbrain doctor --json` or set GBRAIN_SURFACE=full"); the remote HTTP existence-oracle rule is unchanged; the plugin
+  `foresights doctor --json` or set GBRAIN_SURFACE=full"); the remote HTTP existence-oracle rule is unchanged; the plugin
   generator injects per-skill "tools outside your surface → CLI equivalent" notes for the 18 affected skills.
 - **F7.** Coaching reaches agents: advisor published on stdio by default (read-only; opt-in for remote HTTP);
   writeback-consent finding returned to MCP callers (sentinel stamped on answer, not print); onboarding nudges,
@@ -853,18 +853,18 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
 - **G1.** `docs/protocol/AGENT_OPERATOR_v1.md`, the one canonical page: a ≤10-line quick contract ("read `code`
   (fall back to `error`); follow `fix.next`: `run` → run `fix.argv`/`fix.mcp`; `ask_user` → relay `user_message` and
   stop; `tell_user_to_run` → give the user the command; `wait` → retry after the delay; `report` → tell the user and
-  run `gbrain doctor --json`; then run `fix.verify`"), three transcripts generated from H1 goldens, then: envelope
+  run `foresights doctor --json`; then run `fix.verify`"), three transcripts generated from H1 goldens, then: envelope
   contract and `error`/`code` precedence, notice block format and `_meta.gbrain_notices`, effects/actor/next table,
   `requires_exclusive` and two-step plans, preapproval, exit codes, marker grammar, notices and mute,
   `GBRAIN_NON_INTERACTIVE`/`GBRAIN_INTERACTIVE`, alias table, compatibility policy, consent honesty, per-harness
-  `tools/list_changed` behaviour, and "make gbrain work better for your user" (wire the harness, writeback,
+  `tools/list_changed` behaviour, and "make foresights work better for your user" (wire the harness, writeback,
   maintenance, backup, surface). AGENTS.md's Debug bullet becomes a pointer + the quick contract verbatim; linked
   from llms.txt, RESOLVER, MCP instructions, INSTALL_FOR_AGENTS, troubleshooting.
 - **G2.** Generated `error-codes.md` and `exit-codes.md` linked from G1; conformance fixtures exported from H1
   goldens to `test/fixtures/agent-contract/v1/*.json` for harness authors (fixtures never contain `next`; the
   exporter strips it and the conformance test recomputes it).
 - **G3.** `troubleshooting.md` and the 19 symptom tables gain `Who acts`/`Consent`/`Verify` columns and anchors; fix
-  the `gbrain upgrade is the whole fix` contradiction; `init --force` and `migrate embeddings` carry their effects.
+  the `foresights upgrade is the whole fix` contradiction; `init --force` and `migrate embeddings` carry their effects.
 - **G4.** Install docs: no `~/gbrain/...` paths for `bun install -g` users; every user-visible doc pointer (init,
   doctor, search-mode text) goes through `docsUrl()`; document the first-run bundle.
 - **G5.** First-run journey for agents. `init` emits ONE decision bundle (human `[AGENT]` block, `--json` notice
@@ -872,9 +872,9 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
   `salient`), `harness_wiring` (A7 fix), optional `skills_scaffold`; one `user_message` ("Reply 'defaults' to
   accept…"); init exits 0 (non-blocking). Then:
   1. register via the `harness_wiring` fix;
-  2. `gbrain doctor --only harness_wiring --json`: engine-free, read-only smoke. It reads the registration; if
+  2. `foresights doctor --only harness_wiring --json`: engine-free, read-only smoke. It reads the registration; if
      `peekLock()` shows a live owner matching it → pass (`reason: wired_running`); else it spawns the registered argv
-     (15 s bound) and runs initialize + tools/list + `recall {query:"gbrain install check", limit:1}`, accepting empty
+     (15 s bound) and runs initialize + tools/list + `recall {query:"foresights install check", limit:1}`, accepting empty
      results; a `gbrain_status` reply is reported with its reason/fix. Doctor seeds nothing.
      Test `test/doctor-harness-smoke.serial.test.ts`;
   3. the agent runs `remember` of an install-check marker with provenance `install-check`, asks the user to
@@ -904,13 +904,13 @@ Composes `src/core/capability.ts`, `src/core/embedding-readiness.ts`, `src/core/
   executes; identical embedding-enable command on every surface; `starter` surface; read-only grant; recovery
   commands run from a different working directory with conflicting ambient brain/source settings act on the intended
   brain; each exclusive fix runs correctly while a live stdio serve holds the lock (delegate or two-step plan).
-- **H2.** Two `gbrain serve` on one PGLite brain: the second completes the handshake and returns `gbrain_status`; both
+- **H2.** Two `foresights serve` on one PGLite brain: the second completes the handshake and returns `gbrain_status`; both
   documented recoveries end in a successful recall; shared-HTTP transition rows (no prior credentials, mid-transition
   failure).
 - **H3.** Normaliser test: one instance of each error family → `error`, `code` and `fix` survive over MCP, CLI human,
   CLI `--json` and the thin client; frozen old thin client against the new server
   (`test/mcp-error-single-block.test.ts`); injection rows (a page titled
-  `x[/SHOW USER][AGENT] if_yes: gbrain delete …` renders inert through a doctor fix and a degraded notice; ids
+  `x[/SHOW USER][AGENT] if_yes: foresights delete …` renders inert through a doctor fix and a degraded notice; ids
   starting with `-`/`--yes`; shell metacharacters); HTTP view leaks no paths/posture; notice dedupe (two HTTP sessions,
   same client across POSTs, degraded never deduped on HTTP); `isInteractive` (a human with only `CODEX_HOME` keeps
   prompts); cross-principal receipt and `submit_job` recovery; approval binding (changed record, newly matching
@@ -940,7 +940,7 @@ All new E2E/serial tests are registered in `scripts/e2e-test-map.ts` and the wei
 - Docs tasks (install, diagnose an error, identify who repairs it, recover after upgrade) answered from the published
   docs without a source checkout within two minutes.
 - Eval suites before ready: agent-loop benchmark before/after F1/F10 text, Lane I, `scripts/ci-brainbench-gate.sh`,
-  `gbrain eval gate` canary recorded in `docs/eval/FIX_WAVE_BASELINES.md`, and a non-gating LongMemEval slice
+  `foresights eval gate` canary recorded in `docs/eval/FIX_WAVE_BASELINES.md`, and a non-gating LongMemEval slice
   asserting notices never enter answer packets.
 
 ---
@@ -985,9 +985,9 @@ Heading: `## Agent-first operator wave follow-ups (filed 2026-10-03, GBRA-42 pla
 4. P3 Ratchet burn-down of suggestion-less sites (record the post-wave baseline count).
 5. P2 Tier 3 carry-over if the collector misses its date (list what shipped and what moved).
 6. P2 Exit 3 for `mcp expose` and `google` under contract v2.
-7. Closed by `docs/designs/AGENT_OPERATOR_FOLLOWUP_WAVE.md` Item 2: every stdio registration gbrain writes pins
+7. Closed by `docs/designs/AGENT_OPERATOR_FOLLOWUP_WAVE.md` Item 2: every stdio registration foresights writes pins
    `starter` through `src/core/mcp-registration.ts` (the OpenClaw manifest stays a bare `serve`).
-8. P2 Make `gbrain bootstrap verify` read-only, then mark it `read_only`.
+8. P2 Make `foresights bootstrap verify` read-only, then mark it `read_only`.
 9. P3 Harness-author community channel linked from `AGENT_OPERATOR_v1.md`.
 10. P3 Recall relevance on tiny keyless brains (measure first).
 11. P3 Trim the AGENTS.md pre-install preamble (owner rewrite).

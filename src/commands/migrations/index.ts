@@ -1,5 +1,5 @@
 /**
- * TS migration registry. Compiled into the gbrain binary so migration
+ * TS migration registry. Compiled into the foresights binary so migration
  * discovery works on both source installs and `bun build --compile`
  * distributions without reading `skills/migrations/*.md` from disk.
  *
@@ -9,7 +9,7 @@
  * `skills/migrations/vX.Y.Z.md` remains as the host-agent instruction
  * manual (read on demand when pending-host-work.jsonl is non-empty).
  *
- * These are version-upgrade orchestrators (`gbrain apply-migrations`), not
+ * These are version-upgrade orchestrators (`foresights apply-migrations`), not
  * database schema migrations. Schema DDL migrations live one per file in
  * src/core/schema-migrations/ with the generated registry
  * src/core/schema-migrations/registry.generated.ts (run by src/core/migrate.ts).

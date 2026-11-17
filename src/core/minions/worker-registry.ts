@@ -1,7 +1,7 @@
 /**
  * Live worker registry for niceness observability (issue #1815, Q1-C).
  *
- * Each running `gbrain jobs work` process self-registers a small JSON file
+ * Each running `foresights jobs work` process self-registers a small JSON file
  * recording its pid, queue, brain identity, start time, and the niceness it
  * requested + the niceness actually in effect. The read surfaces (jobs stats,
  * doctor, supervisor status) enumerate these to report the EFFECTIVE niceness of
@@ -45,7 +45,7 @@ export interface WorkerRegistryEntry {
   nice_requested: number | null;
   /** Niceness actually in effect when the worker registered. */
   nice_effective: number | null;
-  /** #7245: the gbrain version the worker runs (in memory); absent on an entry an older worker wrote. */
+  /** #7245: the foresights version the worker runs (in memory); absent on an entry an older worker wrote. */
   version?: string;
   /** #7245: the package root the worker loaded its code from (local path, never in remote output); null in a compiled binary. */
   install_root?: string | null;

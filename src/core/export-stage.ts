@@ -55,7 +55,7 @@ export interface ExportPagePath {
 
 /**
  * Where export writes a page: `<slug>.md` when every part is a portable file
- * name. A part an older gbrain admitted that is not (GBRA-130 B-5) is escaped
+ * name. A part an older foresights admitted that is not (GBRA-130 B-5) is escaped
  * so the importer still derives the stored slug from the path (import-file.ts
  * accepts a stamped slug whose slugified form is the path's): a `:` or any
  * other character no file name may hold becomes `~`, and a reserved device

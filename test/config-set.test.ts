@@ -1,5 +1,5 @@
 /**
- * T8 — `gbrain config set` strict unknown-key rejection + --force + Levenshtein.
+ * T8 — `foresights config set` strict unknown-key rejection + --force + Levenshtein.
  *
  * These tests probe the pure helpers (KNOWN_CONFIG_KEYS list, prefix list,
  * Levenshtein suggestion against the list). The full `runConfig` CLI
@@ -35,9 +35,9 @@ describe('KNOWN_CONFIG_KEYS', () => {
   });
 
   // Regression: `sources.default` is read by source-resolver.ts tier 5 on
-  // every unqualified call and written by `gbrain sources default <id>`, yet
-  // it was absent from this list — so `gbrain config set sources.default`
-  // warned "Nothing in gbrain reads this", which is false and misdirects an
+  // every unqualified call and written by `foresights sources default <id>`, yet
+  // it was absent from this list — so `foresights config set sources.default`
+  // warned "Nothing in foresights reads this", which is false and misdirects an
   // operator away from the one knob that pins brain-level source routing.
   test('contains sources.default (read by the resolver, written by `sources default`)', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('sources.default');
@@ -80,7 +80,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
 
   test('includes the gateway-loop toggle and provider API keys the wave wires', () => {
     // The subagent handler's error message tells users to run
-    // `gbrain config set agent.use_gateway_loop true`; it must be a known key
+    // `foresights config set agent.use_gateway_loop true`; it must be a known key
     // or `config set` rejects the wave's own enable command without --force.
     expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
     expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
@@ -89,7 +89,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
 
   test('contains the working-tree sync toggle (untracked-gap fix)', () => {
     // The drift NOTE + stderr warning both tell users to run
-    // `gbrain config set sync.include_working_tree true`; the key must be
+    // `foresights config set sync.include_working_tree true`; the key must be
     // known or the remedy itself is rejected without --force.
     expect(KNOWN_CONFIG_KEYS).toContain('sync.include_working_tree');
   });
@@ -215,7 +215,7 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
 });
 
 describe('#2753 — the doctor-proposed gateway-loop command is accepted by `config set`', () => {
-  // Pre-fix: `gbrain doctor --full` told users to run `gbrain config set
+  // Pre-fix: `foresights doctor --full` told users to run `foresights config set
   // agent.use_gateway_loop true`, but the key wasn't in KNOWN_CONFIG_KEYS,
   // so the exact command doctor recommended failed with "Unknown config
   // key" (or silently no-opped under --force with a false "nothing reads
@@ -275,7 +275,7 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
   // `sources.default` is the one config key whose value the resolver
   // dereferences on every unqualified call (tier 5 → assertSourceExists).
   // Registering it in KNOWN_CONFIG_KEYS without a set-time check would make
-  // `config set` a way around the validation `gbrain sources default <id>`
+  // `config set` a way around the validation `foresights sources default <id>`
   // already performs, and a typo would surface later as a throw on unrelated
   // commands. These pin that `config set` refuses the same inputs.
   function sourcesEngine(registered: string[]): { engine: BrainEngine; setCalls: Array<[string, string]> } {
@@ -311,8 +311,8 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
     const { engine, setCalls } = sourcesEngine(['wiki']);
     const { errs, exit } = await runConfigCapture(engine, ['set', 'sources.default', 'wiki']);
     expect(exit).toBeNull();
-    // The false "Nothing in gbrain reads this" line is the bug this fixes.
-    expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
+    // The false "Nothing in foresights reads this" line is the bug this fixes.
+    expect(errs.join('\n')).not.toContain('Nothing in foresights reads this');
     expect(setCalls).toEqual([['sources.default', 'wiki']]);
   });
 
@@ -334,7 +334,7 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
       const { errs, exit } = await runConfigCapture(engine, ['set', key, '268435456']);
       expect(exit).toBeNull();
       expect(errs.join('\n')).not.toContain('Unknown config key');
-      expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
+      expect(errs.join('\n')).not.toContain('Nothing in foresights reads this');
       expect(setCalls).toEqual([[key, '268435456']]);
     }
   });
@@ -388,7 +388,7 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
 
     // Pull the exact backtick-quoted command out of the doctor message
     // instead of hardcoding it, so the two call sites can't silently drift.
-    const match = check.message.match(/`(gbrain config set [^`]+)`/);
+    const match = check.message.match(/`((?:foresights|gbrain) config set [^`]+)`/);
     expect(match).not.toBeNull();
 
     // Tokenize the WHOLE command and feed every argument through, rather than
@@ -405,7 +405,7 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
     const { logs, errs, exit } = await runConfigCapture(engine, args.slice(1));
     expect(exit).toBeNull();
     expect(errs.join('\n')).not.toContain('Unknown config key');
-    expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
+    expect(errs.join('\n')).not.toContain('Nothing in foresights reads this');
     expect(setCalls).toEqual([['agent.use_gateway_loop', 'true']]);
     expect(logs.join('\n')).toContain('Set agent.use_gateway_loop = true');
   });
@@ -466,7 +466,7 @@ describe('#3748 — budget.* rejection routes to the live spend controls', () =>
     const { errs, exit } = await runConfigCapture(engine, ['set', 'budget.daily_cap_usd', '10', '--force']);
     expect(exit).toBeNull();
     const err = errs.join('\n');
-    expect(err).toContain('Nothing in gbrain reads this');
+    expect(err).toContain('Nothing in foresights reads this');
     expect(err).toContain('NOT a spend cap');
     expect(err).toContain('spend.posture');
     expect(setCalls).toEqual([['budget.daily_cap_usd', '10']]);
@@ -480,7 +480,7 @@ describe('#3748 — budget.* rejection routes to the live spend controls', () =>
 
 describe('#2753 — doctor and the subagent worker share one truthiness set', () => {
   // The doctor accepted true/1/yes/on; the worker accepted only true/1. So
-  // `gbrain config set agent.use_gateway_loop yes` produced a HEALTHY doctor
+  // `foresights config set agent.use_gateway_loop yes` produced a HEALTHY doctor
   // report and a runtime refusal of the exact job the setting enables. Both
   // now route through isConfigTruthy, so this asserts the shared contract.
   test('accepts the documented on-values, case- and whitespace-insensitively', () => {

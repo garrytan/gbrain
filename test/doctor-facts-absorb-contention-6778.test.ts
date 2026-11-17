@@ -6,7 +6,7 @@
  * same page completed after, older than an hour, or more than 10 of them in 24 h.
  *
  * 1. Protects: deferrals that a completed job followed are information; a
- *    persistent one warns with a read-only `gbrain sources writer status` fix
+ *    persistent one warns with a read-only `foresights sources writer status` fix
  *    (`run` on the CLI, relayed to the user over MCP) whose verify clears once
  *    the job completes; accepted rows never warn.
  * 2. Fails if the info reasons count toward the threshold again, or if

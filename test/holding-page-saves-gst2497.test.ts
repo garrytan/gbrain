@@ -217,7 +217,7 @@ for (const backend of testBackends()) describe(`[${backend}] saves to a holding 
   }), 300_000);
 });
 
-for (const backend of testBackends()) describe(`[${backend}] gbrain repair unwithdrawn-facts on a pruned holding page (GST-2497)`, () => {
+for (const backend of testBackends()) describe(`[${backend}] foresights repair unwithdrawn-facts on a pruned holding page (GST-2497)`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   test('a row wrongly retired on a holding page whose versions were pruned is ambiguous, and --include-ambiguous with that preview\'s hash restores it', () => managedBrain(async ({ engine, ctx }) => {
     await engine.executeRaw(`UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id='default'`);

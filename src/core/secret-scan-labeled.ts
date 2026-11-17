@@ -6,7 +6,7 @@
  * searchable conversation page verbatim.
  *
  * OPT-IN (`ScanOpts.labeledCredentials`): only the transcript page lane and
- * the read-only `gbrain transcripts audit-secrets` audit turn it on. The push
+ * the read-only `foresights transcripts audit-secrets` audit turn it on. The push
  * gate and every other surface keep it off, because a label is a much weaker
  * signal than a credential's wire shape.
  *
@@ -171,7 +171,7 @@ const FILE_NAME_RE = /^[\w.-]{1,128}(?:\/[\w.-]{1,128}){0,16}\.[A-Za-z][A-Za-z0-
 const KEY_VERSION_RE = /^v?\d{1,6}(?:\.\d{1,6}){1,3}(?:[-+][\w.-]{0,64})?$/;
 
 /**
- * The transcript lane's scan options (redactSession, `gbrain transcripts
+ * The transcript lane's scan options (redactSession, `foresights transcripts
  * audit-secrets`, the session-corpus reader): the opt-in high-entropy and
  * labeled-credential detectors plus the transcript-only rules
  * (`ScanOpts.transcriptRules`). Every other surface keeps the shared defaults.

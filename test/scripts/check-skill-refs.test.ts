@@ -236,7 +236,7 @@ describe('check-skill-refs', () => {
     expect(pass.out).toContain('OK');
   });
 
-  test('cli-refs lane: an unknown gbrain command in a fenced block fails the build (#6197)', () => {
+  test('cli-refs lane: an unknown foresights command in a fenced block fails the build (#6197)', () => {
     // The script derives the known-command set from src/cli.ts +
     // src/core/operations.ts of the CWD repo, so this one runs from the real
     // repo root against a temp skills dir.
@@ -270,14 +270,14 @@ describe('check-skill-refs', () => {
       mkdirSync(join(skills, 'alpha'));
       writeFileSync(join(skills, 'alpha', 'SKILL.md'), 'Rebuild code chunks:\n\n```bash\ngbrain reindex-code --yes\n```\n');
       mkdirSync(join(skills, 'migrations'));
-      writeFileSync(join(skills, 'migrations', 'v9.9.9.md'), 'Run `gbrain embed --stale --yes --max-usd 2` now.\n');
+      writeFileSync(join(skills, 'migrations', 'v9.9.9.md'), 'Run `foresights embed --stale --yes --max-usd 2` now.\n');
     });
     expect(bad.code).toBe(1);
     expect(bad.out).toContain('[paid-consent] skills/alpha/SKILL.md:4');
     expect(bad.out).toContain('[paid-consent] skills/migrations/v9.9.9.md:1');
     const good = runOn((skills) => {
       mkdirSync(join(skills, 'alpha'));
-      writeFileSync(join(skills, 'alpha', 'SKILL.md'), 'Preview first: `gbrain reindex-code --dry-run`.\n\n```bash\n# only after the user agrees:\ngbrain reindex-code --yes\n```\n\nFree runs need nothing: `gbrain reindex --markdown --dry-run`, `gbrain apply-migrations --yes`, `gbrain reindex-frontmatter --yes`.\n');
+      writeFileSync(join(skills, 'alpha', 'SKILL.md'), 'Preview first: `foresights reindex-code --dry-run`.\n\n```bash\n# only after the user agrees:\ngbrain reindex-code --yes\n```\n\nFree runs need nothing: `foresights reindex --markdown --dry-run`, `foresights apply-migrations --yes`, `foresights reindex-frontmatter --yes`.\n');
     });
     expect(good.out).not.toContain('paid-consent');
     expect(good.code).toBe(0);

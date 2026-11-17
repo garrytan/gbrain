@@ -1,5 +1,5 @@
 /**
- * `gbrain bootstrap uninstall` — receipt-keyed removal of bootstrap-created
+ * `foresights bootstrap uninstall` — receipt-keyed removal of bootstrap-created
  * state [G2, S3#5, A2, CX2-12].
  *
  * Ownership model: uninstall is keyed to the MACHINE-LOCAL install receipt,
@@ -9,13 +9,13 @@
  *
  * Confinement invariants:
  *  - Removes EXACTLY `receipt.created_paths`, each validated with
- *    `isPathContained` under the gbrain home or the workspace. Anything that
+ *    `isPathContained` under the foresights home or the workspace. Anything that
  *    fails containment (including a symlink resolving outside) is SKIPPED with
  *    a reason, never followed.
  *  - Host registrations are returned as structured removal REQUESTS — the
  *    marker-keyed settings/TOML writers live in another module; this one never
  *    edits host config files.
- *  - NEVER wholesale-deletes the gbrain home: brain deletion removes only the
+ *  - NEVER wholesale-deletes the foresights home: brain deletion removes only the
  *    PGLite data dir + the `bootstrap/` subdir + the receipt. Global
  *    config.json, clones/, and other sources SURVIVE [CX2-12].
  *  - Brain deletion runs ONLY when `deleteBrain` is requested AND the receipt
@@ -59,7 +59,7 @@ const MODULE_LOAD_PROCESS_START_ESTIMATE = Date.now() - process.uptime() * 1000;
 
 export interface LiveHolder {
   pid: number;
-  /** True when the lock file says the holder is `gbrain serve`. */
+  /** True when the lock file says the holder is `foresights serve`. */
   serve: boolean;
   /**
    * True when `pid` matches THIS process AND the lock's namespace evidence
@@ -200,7 +200,7 @@ export function probeLivePgliteHolder(
   return { pid, serve, isSelf };
 }
 
-/** The PGLite data dir for a gbrain home: config.json's database_path when it
+/** The PGLite data dir for a foresights home: config.json's database_path when it
  * is set and stays inside the home (fail-closed on escapes), else the default
  * `<home>/brain.pglite`. Read directly — never through an engine. */
 export function resolveBrainDataDir(gbrainHomeDir: string): string {
@@ -241,7 +241,7 @@ export interface UninstallOptions {
   /** Exec seam (reserved for the dispatcher's facts-export wiring; uninstall
    * itself runs no subprocesses). */
   runner?: ExecRunner;
-  /** The gbrain home holding the receipt (default: configDir()). */
+  /** The foresights home holding the receipt (default: configDir()). */
   gbrainHomeDir?: string;
   /** The dispatcher sets this when the user passed an explicit --home;
    * required whenever the GBRAIN_HOME env var is set [S3#5]. */
@@ -272,12 +272,12 @@ export async function uninstallWorkspace(workspaceDir: string, opts: UninstallOp
   try {
     homeLstat = lstatSync(gbrainHomeDir);
   } catch {
-    throw new BootstrapError('NO_RECEIPT', `nothing bootstrap-created on this machine (no gbrain home at ${gbrainHomeDir})`);
+    throw new BootstrapError('NO_RECEIPT', `nothing bootstrap-created on this machine (no foresights home at ${gbrainHomeDir})`);
   }
   if (homeLstat.isSymbolicLink()) {
     throw new BootstrapError(
       'HOME_GUARD',
-      `refusing to uninstall through a symlinked gbrain home (${gbrainHomeDir}) — point at the real directory`,
+      `refusing to uninstall through a symlinked foresights home (${gbrainHomeDir}) — point at the real directory`,
     );
   }
   if (process.env.GBRAIN_HOME?.trim()) {
@@ -297,7 +297,7 @@ export async function uninstallWorkspace(workspaceDir: string, opts: UninstallOp
     if (!hasSignature) {
       throw new BootstrapError(
         'HOME_GUARD',
-        `${gbrainHomeDir} does not look like a gbrain home (missing config.json and/or brain.pglite) — refusing to remove anything under it.`,
+        `${gbrainHomeDir} does not look like a foresights home (missing config.json and/or brain.pglite) — refusing to remove anything under it.`,
       );
     }
   }
@@ -335,8 +335,8 @@ export async function uninstallWorkspace(workspaceDir: string, opts: UninstallOp
     throw new BootstrapError(
       'LIVE_SERVE',
       holder.serve
-        ? `a live \`gbrain serve\` (pid ${holder.pid}) has the brain open — close your agent sessions first, then re-run uninstall.`
-        : `a live gbrain process (pid ${holder.pid}) has the brain open — close your agent sessions first, then re-run uninstall.`,
+        ? `a live \`foresights serve\` (pid ${holder.pid}) has the brain open — close your agent sessions first, then re-run uninstall.`
+        : `a live foresights process (pid ${holder.pid}) has the brain open — close your agent sessions first, then re-run uninstall.`,
       { details: { pid: holder.pid, serve: holder.serve } },
     );
   }
@@ -352,7 +352,7 @@ export async function uninstallWorkspace(workspaceDir: string, opts: UninstallOp
     // Facts export offered FIRST — facts are user knowledge, not derived state.
     steps.push({
       kind: 'facts_export_offer',
-      description: 'export facts before deletion (gbrain facts export) — the brain DB is about to be removed and facts are not derived state',
+      description: 'export facts before deletion (foresights facts export) — the brain DB is about to be removed and facts are not derived state',
     });
     const stats = opts.brainStats ? await opts.brainStats() : null;
     const inventory =
@@ -371,7 +371,7 @@ export async function uninstallWorkspace(workspaceDir: string, opts: UninstallOp
         brainDeletionFailed = true;
         skipped.push({
           path: dataDir,
-          reason: 'brain deletion skipped: data dir is outside the gbrain home (or symlinks out) — refusing; remove it yourself if you really mean to',
+          reason: 'brain deletion skipped: data dir is outside the foresights home (or symlinks out) — refusing; remove it yourself if you really mean to',
         });
       } else {
         let rmError: Error | null = null;
@@ -407,7 +407,7 @@ export async function uninstallWorkspace(workspaceDir: string, opts: UninstallOp
     // isPathContained realpaths both sides — a created_path symlinked outside
     // the allowed roots resolves outside and is skipped, never followed.
     if (!isPathContained(p, gbrainHomeDir) && !isPathContained(p, resolvedWs)) {
-      skipped.push({ path: p, reason: 'outside the gbrain home and workspace (or symlinks out) — refusing' });
+      skipped.push({ path: p, reason: 'outside the foresights home and workspace (or symlinks out) — refusing' });
       continue;
     }
     try {

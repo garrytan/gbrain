@@ -1,5 +1,5 @@
 /**
- * Agent contract v1 (D3): `gbrain <cmd> --help` from a command's curated help
+ * Agent contract v1 (D3): `foresights <cmd> --help` from a command's curated help
  * module (`src/cli/help/<command>.ts`, loaded lazily through the record's
  * `help`). Engine-free: reads the spec and prints; never opens a brain.
  * Human text on stdout; `--help --json` prints the spec as one JSON document.
@@ -18,7 +18,7 @@ const VALUE_PLACEHOLDER: Record<CliHelpFlag['type'], string> = { boolean: '', st
 
 export function renderCuratedHelp(command: string, spec: CliHelpSpec): string {
   const [first, ...rest] = spec.usage.split('\n');
-  const lines = [`gbrain ${command}: ${spec.summary}`, '', `Usage: ${first}`, ...rest.map(l => `       ${l}`)];
+  const lines = [`foresights ${command}: ${spec.summary}`, '', `Usage: ${first}`, ...rest.map(l => `       ${l}`)];
   if (spec.flags.length > 0) {
     const labels = spec.flags.map(f => `${f.name}${VALUE_PLACEHOLDER[f.type]}`);
     const width = Math.max(...labels.map(l => l.length));
@@ -32,7 +32,7 @@ export function renderCuratedHelp(command: string, spec: CliHelpSpec): string {
   lines.push('', 'Examples:', ...spec.examples.map(e => `  ${e}`));
   if (spec.end_of_options) lines.push('', 'A bare `--` ends options; every later argument is a positional.');
   if (spec.flags.some(f => f.consent?.length)) lines.push('', 'A flag marked [consent: …] authorizes that effect: get the user\'s agreement before passing it.');
-  if (spec.flags.some(f => f.name === '--json')) lines.push('', `Machine-readable: gbrain ${command} --help --json`);
+  if (spec.flags.some(f => f.name === '--json')) lines.push('', `Machine-readable: foresights ${command} --help --json`);
   return `${lines.join('\n')}\n`;
 }
 

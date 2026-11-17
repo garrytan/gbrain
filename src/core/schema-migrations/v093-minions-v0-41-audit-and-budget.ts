@@ -17,7 +17,7 @@ export const v093: Migration = {
   //     disambiguate "never had a budget" from "owner deleted, halt cleanly").
   //
   // Audit table FKs are ON DELETE SET NULL (codex pass-2 #5) so audit rows
-  // survive `gbrain jobs prune`. Each audit table denormalizes context
+  // survive `foresights jobs prune`. Each audit table denormalizes context
   // (queue_name, model, owner_id, event_type, etc.) at write time so
   // post-NULL rows still carry forensic value — without denormalization
   // they'd be timestamp-only residue (codex pass-3 #7).

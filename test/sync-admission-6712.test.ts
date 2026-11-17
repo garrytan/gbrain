@@ -196,7 +196,7 @@ for (const backend of testBackends()) describe(backend, () => {
           fix: { argv: ['gbrain', 'config', 'set', 'sync.admission', 'normal'], actor: 'user' } });
         expect(check!.message).toContain(`sync.admission is ${value}, set `);
         expect(check!.message).toContain(' ago (');
-        expect(check!.message).toContain('gbrain config set sync.admission normal');
+        expect(check!.message).toContain('foresights config set sync.admission normal');
         expect(renderAction(check!.fix as Action, cliRenderContext()).next).toBe('tell_user_to_run');
       }
       expect((await config(['set', SYNC_ADMISSION_KEY, 'normal'])).exit).toBeNull();

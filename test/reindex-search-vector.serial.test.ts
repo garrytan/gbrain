@@ -288,7 +288,7 @@ describe('runReindexSearchVector', () => {
       expect(state.config!.get(MARKER)).toBe('pt_br');
     });
 
-    test('the marker key is registered so `gbrain config` treats the escape hatch as a known key', () => {
+    test('the marker key is registered so `foresights config` treats the escape hatch as a known key', () => {
       expect(KNOWN_CONFIG_KEYS).toContain(MARKER);
     });
 

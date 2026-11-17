@@ -194,7 +194,7 @@ describe('#7619 split rules', () => {
     const r = await directEntryArgs('auth', ['create', 'agent-a', '--bogus', 'x']);
     expect('refusal' in r && r.refusal.code).toBe('unknown_flag');
     expect('refusal' in r && r.refusal.fix?.argv).toEqual(['gbrain', 'auth', '--help']);
-    expect('refusal' in r && r.legacy).toEqual({ status: 'error', reason: 'invalid_flag', message: "unknown flag --bogus for 'gbrain auth'" });
+    expect('refusal' in r && r.legacy).toEqual({ status: 'error', reason: 'invalid_flag', message: "unknown flag --bogus for 'foresights auth'" });
     expect('refusal' in await directEntryArgs('auth', ['create', 'agent-a', '--Scopes', 'read'])).toBe(true);
     expect(await directEntryArgs('auth', ['create', 'agent-a', '--scopes', 'read'])).toEqual({ args: ['create', 'agent-a', '--scopes', 'read'] });
   });
@@ -400,7 +400,7 @@ describe('#7619 split rules', () => {
       'src/core/persistence/index-lock-reclaim.ts': 'parses a lock entry (key=value)',
       'src/core/minions/legacy-selection.ts': '--select value grammar (status=a|b), not a flag',
       'src/core/bootstrap/hooks.ts': 'shell words of hook commands',
-      'src/core/cli-preflight.ts': 'Bun runtime execArgv (--preload=...), not gbrain argv',
+      'src/core/cli-preflight.ts': 'Bun runtime execArgv (--preload=...), not foresights argv',
 
       // child-process argv builders (git/tar/tailscale flags)
       'src/commands/doctor/checks/git-convergence.ts': 'git child argv',
@@ -445,7 +445,7 @@ describe('#7619 split rules', () => {
       'src/core/access/policy-git.ts': 'git child argv',
       'src/commands/memory-proposals.ts': ['memory-proposals list', 'memory-proposals deny'],
       'src/commands/access-rules.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form on access rule; flag() also reads it for a direct caller',
-      'src/core/context/session-speaker.ts': 'reads another process\'s argv (claude --print=), not a gbrain flag',
+      'src/core/context/session-speaker.ts': 'reads another process\'s argv (claude --print=), not a foresights flag',
       'src/eval/longmemeval/via-operation.ts': 'git child argv',
       'src/core/git/commit-guard.ts': 'git child argv',
       'src/commands/doctor/checks/foreign-writers.ts': 'git child argv',
@@ -621,7 +621,7 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
       for (const flag of ['--limit', '--source']) {
         const r = await cliOnlyFlagArgs('edge-proposals', [sub, `${flag}=5`, '12']);
         expect('refusal' in r && r.refusal.code).toBe('invalid_params');
-        expect('refusal' in r && r.refusal.message).toContain(`gbrain edge-proposals ${sub} does not read ${flag}`);
+        expect('refusal' in r && r.refusal.message).toContain(`foresights edge-proposals ${sub} does not read ${flag}`);
         expect('refusal' in r && r.refusal.suggestion).toContain(`Leave ${flag} out`);
         expect('refusal' in r && r.refusal.suggestion).not.toContain(`Write ${flag} <value>`);
       }
@@ -636,7 +636,7 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
       const r = await cliOnlyFlagArgs('search', [...args]);
       expect('refusal' in r && r.refusal.message).toContain(`${flag}=…`);
       expect('refusal' in r && r.refusal.message).toContain('reads no = form');
-      expect('refusal' in r && r.refusal.suggestion).toContain(`gbrain search ${args[0]} --help`);
+      expect('refusal' in r && r.refusal.suggestion).toContain(`foresights search ${args[0]} --help`);
     }
   });
 

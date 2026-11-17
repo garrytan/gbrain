@@ -1,5 +1,5 @@
 /**
- * GBRA-156: a one-shot CLI write (`gbrain put`) on a brain with no resident process runs the consumer's housekeeping after
+ * GBRA-156: a one-shot CLI write (`foresights put`) on a brain with no resident process runs the consumer's housekeeping after
  * its reply: the compaction pass records its run and compacts the receipts past retention. Runs the real CLI as
  * subprocesses on PGLite and on Postgres.
  */

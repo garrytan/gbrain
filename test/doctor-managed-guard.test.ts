@@ -68,6 +68,6 @@ describe('managed guard doctor checks', () => {
     } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
     const check = await checkPublicationRefusals(engine);
     expect(check).toMatchObject({ status: 'warn', details: { guard_refusals: 1, trigger_refusals: 0, unclassified_p0001: 0 } });
-    expect(check.message).toContain('gbrain sources writer status --probe --json');
+    expect(check.message).toContain('foresights sources writer status --probe --json');
   });
 });

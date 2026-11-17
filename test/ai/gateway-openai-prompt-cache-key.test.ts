@@ -30,7 +30,7 @@ describe('openAIPromptCacheKey — derivation', () => {
     const a = openAIPromptCacheKey({ system: 'SYS', toolNames: ['search', 'put_page'] });
     const b = openAIPromptCacheKey({ system: 'SYS', toolNames: ['put_page', 'search'] });
     expect(a).toBe(b as string); // tool ORDER must not change the key
-    expect(a).toMatch(/^gbrain:[0-9a-f]{32}$/);
+    expect(a).toMatch(/^(?:foresights|gbrain):[0-9a-f]{32}$/);
   });
 
   test('different system → different key', () => {
@@ -88,7 +88,7 @@ describe('chat() wiring — prompt_cache_key per provider', () => {
       { chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'fake' } },
       { system: 'SYS' },
     );
-    expect(providerOptions?.openai?.promptCacheKey).toMatch(/^gbrain:[0-9a-f]{32}$/);
+    expect(providerOptions?.openai?.promptCacheKey).toMatch(/^(?:foresights|gbrain):[0-9a-f]{32}$/);
   });
 
   test('native-openai without a system prompt → no providerOptions at all', async () => {

@@ -8,7 +8,7 @@ export const v067: Migration = {
   // Adds four optional columns to `facts` so metric assertions like
   // "$50K MRR" can be stored as (claim_metric=mrr, claim_value=50000,
   // claim_unit=USD, claim_period=monthly) and queried chronologically
-  // by `gbrain eval trajectory` + the `find_trajectory` MCP op.
+  // by `foresights eval trajectory` + the `find_trajectory` MCP op.
   //
   // All columns nullable: existing fence rows persist identically.
   // The partial index covers only metric-bearing rows and stays

@@ -1,14 +1,14 @@
 /**
- * commands/connectors/index.ts — thin dispatcher for `gbrain connectors <sub>`.
+ * commands/connectors/index.ts — thin dispatcher for `foresights connectors <sub>`.
  *
  * Peeled-façade dir (ER-2): each subcommand is its own module so no handler
  * balloons past the module-size ratchet. This file only routes + prints help.
  *
- *   gbrain connectors auth <provider> [--cookie V|--token V] [--no-browser] [--try-oauth] [--force]
- *   gbrain connectors status [provider] [--json]
- *   gbrain connectors sync <provider>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--max-requests N] [--deadline D] [--source id] [--embed] [--background]
- *   gbrain connectors logout <provider>
- *   gbrain connectors providers
+ *   foresights connectors auth <provider> [--cookie V|--token V] [--no-browser] [--try-oauth] [--force]
+ *   foresights connectors status [provider] [--json]
+ *   foresights connectors sync <provider>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--max-requests N] [--deadline D] [--source id] [--embed] [--background]
+ *   foresights connectors logout <provider>
+ *   foresights connectors providers
  */
 
 import type { BrainEngine } from '../../core/engine.ts';
@@ -18,11 +18,11 @@ import { connectorProviders } from '../../core/connectors/registry.ts';
 function printHelp(): void {
   console.log(
     [
-      'gbrain connectors — sync your own AI-assistant chat history into the brain',
+      'foresights connectors — sync your own AI-assistant chat history into the brain',
       '',
       'Live sync of ChatGPT + Claude conversation history using your own session',
       'credential. Cookie paste-in is the primary lane. (For the manual export-file',
-      'lane, see the conversation-archive skill / `gbrain transcripts ingest`.)',
+      'lane, see the conversation-archive skill / `foresights transcripts ingest`.)',
       '',
       'Subcommands:',
       '  auth <provider>       Store a session credential and verify it.',
@@ -41,7 +41,7 @@ function printHelp(): void {
       '  providers             List available connector providers.',
       '',
       'Runs on the host machine only; credentials live at ~/.gbrain/connectors/*.json (0600).',
-      'Distinct from `gbrain connect` (which onboards THIS agent to a remote brain).',
+      'Distinct from `foresights connect` (which onboards THIS agent to a remote brain).',
     ].join('\n'),
   );
 }

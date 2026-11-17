@@ -1,7 +1,7 @@
 /**
  * Printed fence settings commands are real (#6188 D29).
  *
- * Protects: every `gbrain config set fences.* <value>` command that the fence
+ * Protects: every `foresights config set fences.* <value>` command that the fence
  * docs, the v0.60.102.0 migration note, the behavior-change rows and the fence
  * reason fixes print names a registered key with a value `config set`
  * accepts, and the three opt-outs (`fences.normalize`, `fences.repair.enabled`,
@@ -27,9 +27,9 @@ const DOCS = [
   'AGENTS.md', MIGRATION_NOTE, 'docs/guides/fence-format.md', 'docs/guides/write-refusals.md', 'docs/guides/live-sync.md',
   'docs/guides/troubleshooting.md', 'docs/guides/repair.md', 'docs/operations/spend-controls.md',
 ];
-const OPT_OUTS = ['gbrain config set fences.normalize false', 'gbrain config set fences.repair.enabled false', 'gbrain config set fences.repair.llm false'];
+const OPT_OUTS = ['foresights config set fences.normalize false', 'foresights config set fences.repair.enabled false', 'foresights config set fences.repair.llm false'];
 /** The value ends before closing quotes, brackets or the sentence punctuation of the prose (or CLI output line) that prints it. */
-const COMMAND = /gbrain config set (fences\.[A-Za-z_.]*[A-Za-z_])\s+([^\s`'")]+?)(?=[.,;:]?(?:\s|$|[`'")]))/g;
+const COMMAND = /(?:foresights|gbrain) config set (fences\.[A-Za-z_.]*[A-Za-z_])\s+([^\s`'")]+?)(?=[.,;:]?(?:\s|$|[`'")]))/g;
 /** A placeholder value (`<usd>`, `<n>`) stands for a number the user picks. */
 const sample = (value: string) => (/^<[a-z_]+>$/.test(value) ? '2' : value);
 
@@ -48,7 +48,7 @@ describe('printed fence config commands', () => {
     expect(printed.length).toBeGreaterThan(10);
     const refused = printed.flatMap(({ key, value }) => {
       const error = !KNOWN_CONFIG_KEYS.includes(key) ? 'not in KNOWN_CONFIG_KEYS' : validateFenceConfigValue(key, sample(value));
-      return error ? [`gbrain config set ${key} ${value}: ${error}`] : [];
+      return error ? [`foresights config set ${key} ${value}: ${error}`] : [];
     });
     expect(refused).toEqual([]);
     expect([...new Set(printed.map(c => c.key))].filter(key => !FENCE_CONFIG_KEYS.includes(key))).toEqual([]);

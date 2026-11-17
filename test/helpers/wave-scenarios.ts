@@ -43,7 +43,7 @@ export async function remoteLinesForWaveFindings(databaseUrl?: string) {
     for (const id of ['timeline_history', 'derived_visibility', 'persistence_capacity', 'parked_effects']) {
       const line = report.checks.filter(c => c.name === id);
       expect(line).toHaveLength(1);
-      expect(line[0]).toMatchObject({ status: 'warn', details: { host_action: { check_id: id, state: 'action_required', preview_command: 'gbrain doctor --remediation-plan' } } });
+      expect(line[0]).toMatchObject({ status: 'warn', details: { host_action: { check_id: id, state: 'action_required', preview_command: 'foresights doctor --remediation-plan' } } });
       expect(line[0]!.message).toContain(REMOTE_HOST_ACTION);
       const text = JSON.stringify(line[0]);
       for (const secret of [root, corpus, 'notes/history', 'atoms/unstamped', 'notes/base', 'principal:', 'SELECT', 'persistence_counters', 'persistence_effects', '1000', '850', 'git_target_unsafe']) expect(text).not.toContain(secret);
@@ -76,15 +76,15 @@ export async function planListsRepairStepsIndependentOfTarget(databaseUrl?: stri
     const { body } = await json(engine, ['--remediation-plan', '--json', '--target-score', '100'], runRemediationPlan);
     expect(body.repair_steps.map((s: { kind: string }) => s.kind)).toEqual(['timeline', 'visibility', 'safe-chunks']);
     for (const step of body.repair_steps) {
-      expect(step).toMatchObject({ requires_user_agreement: true, protected: true, command: `gbrain repair ${step.kind} --apply` });
+      expect(step).toMatchObject({ requires_user_agreement: true, protected: true, command: `foresights repair ${step.kind} --apply` });
       expect(step.affected).toBeGreaterThan(0);
     }
-    expect(body.combined_command).toStartWith('gbrain doctor --remediate --yes --include-repairs --max-usd ');
-    for (const step of body.plan) expect(step.command).toStartWith(`gbrain jobs submit ${step.job}`);
+    expect(body.combined_command).toStartWith('foresights doctor --remediate --yes --include-repairs --max-usd ');
+    for (const step of body.plan) expect(step.command).toStartWith(`foresights jobs submit ${step.job}`);
     const human = await capture(() => runRemediationPlan(engine, ['--remediation-plan']));
     expect(human.out).toContain('requires user agreement');
-    expect(human.out).toContain('apply: gbrain repair timeline --apply');
-    expect(human.out).toContain('gbrain doctor --remediate --yes --include-repairs --max-usd');
+    expect(human.out).toContain('apply: foresights repair timeline --apply');
+    expect(human.out).toContain('foresights doctor --remediate --yes --include-repairs --max-usd');
     expect(human.out).not.toContain('Brain is at target');
   }, { databaseUrl, kinds: ['timeline', 'visibility', 'safe_index'] });
 }
@@ -101,7 +101,7 @@ export async function remediateWithoutConsentSkipsRepairs(databaseUrl?: string) 
     expect(await engine.executeRaw("SELECT timeline FROM pages WHERE slug='notes/history'")).toEqual(timelineBefore);
     const human = await capture(() => runRemediate(engine, ['--remediate', '--yes']));
     expect(human.out).toContain('3 repair steps skipped (user agreement required): re-run with --include-repairs');
-    expect(human.out).toContain('gbrain repair safe-chunks --apply');
+    expect(human.out).toContain('foresights repair safe-chunks --apply');
   }, { databaseUrl, kinds: ['timeline', 'visibility', 'safe_index'] });
 }
 
@@ -112,10 +112,10 @@ export async function scriptedRecoveryRun(databaseUrl?: string): Promise<{ wall_
     const started = Date.now();
     const commands: string[] = [];
     const plan = await json(engine, ['--remediation-plan', '--json'], runRemediationPlan);
-    commands.push('gbrain doctor --remediation-plan');
+    commands.push('foresights doctor --remediation-plan');
     expect(plan.body.repair_steps.length).toBe(3);
     const run = await json(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '1', '--json']);
-    commands.push('gbrain doctor --remediate --yes --include-repairs --no-embed --max-usd 1');
+    commands.push('foresights doctor --remediate --yes --include-repairs --no-embed --max-usd 1');
     const byId = Object.fromEntries(run.body.findings.map((f: { check_id: string }) => [f.check_id, f]));
     for (const id of ['timeline_history', 'derived_visibility', 'safe_index_pending']) expect(byId[id]).toMatchObject({ class: 'cleared' });
     expect(byId.persistence_capacity).toMatchObject({ class: 'operator_required' });
@@ -123,17 +123,17 @@ export async function scriptedRecoveryRun(databaseUrl?: string): Promise<{ wall_
     expect(byId.self_capture).toMatchObject({ class: 'operator_required' });
     expect(byId.self_capture.instruction).toContain('Quarantine');
     expect(byId.writer_version).toMatchObject({ class: 'operator_required' });
-    expect(byId.writer_version.instruction).toContain('gbrain upgrade');
+    expect(byId.writer_version.instruction).toContain('foresights upgrade');
     expect(byId.writer_version.message).toContain('0.60.4.0');
     // #5629: repairable now; with no embedding model configured the repair can only report it blocked, so the operator acts first.
     expect(byId.stale_embedding_effects).toMatchObject({ class: 'operator_required', repair_kind: 'embedding-effects' });
-    expect(byId.stale_embedding_effects.instruction).toContain('gbrain repair embedding-effects');
+    expect(byId.stale_embedding_effects.instruction).toContain('foresights repair embedding-effects');
     expect(run.body.repairs_completed).toBe(3);
     expect(run.body.healthy).toBe(false);
     expect(run.body.exit_status).toBe(0);
     expect(run.exit).toBe(0);
     const verify = await json(engine, ['--remediation-plan', '--json'], runRemediationPlan);
-    commands.push('gbrain doctor --remediation-plan');
+    commands.push('foresights doctor --remediation-plan');
     expect(verify.body.repair_steps).toEqual([]);
     measured = { wall_ms: Date.now() - started, operator_commands: commands.length };
     expect(measured.operator_commands).toBeLessThanOrEqual(3);
@@ -165,7 +165,7 @@ export async function budgetAndResumeContract(databaseUrl?: string) {
       expect(byKind['safe-chunks']).toMatchObject({ status: 'completed', applied: 1 });
       expect(first.body.budget_exhausted).toMatchObject({ cap: 0, reason: 'max_usd' });
       expect(first.exit).toBe(1);
-      expect(first.err).toContain(`gbrain doctor --remediate --yes --include-repairs --max-usd 0 --resume ${first.body.budget_exhausted.plan_hash}`);
+      expect(first.err).toContain(`foresights doctor --remediate --yes --include-repairs --max-usd 0 --resume ${first.body.budget_exhausted.plan_hash}`);
       const history = await engine.executeRaw<{ timeline: string }>("SELECT timeline FROM pages WHERE slug='notes/history'");
       expect(history[0]!.timeline).not.toContain('gbrain:materialized');
 
@@ -224,7 +224,7 @@ export async function swallowedExhaustionIsReported(databaseUrl?: string) {
       // An in-process paid step runs under its own tracker capped at what reservations left.
       expect(budgeted).toBe(1);
       expect(result).toMatchObject({ kind: 'safe-chunks', status: 'budget_exhausted' });
-      expect(result!.message).toContain('gbrain embed --stale');
+      expect(result!.message).toContain('foresights embed --stale');
       expect(later).toMatchObject({ status: 'budget_refused' });
     }, { databaseUrl, kinds: ['safe_index'] });
   } finally { resetGateway(); }
@@ -266,7 +266,7 @@ export async function pendingEmbeddingsResume(databaseUrl?: string) {
       // With a raised cap the pass runs; with no provider key nothing is embedded, so it reports the gap instead of completing.
       const ran = await runRemediation(engine, { resume: true, resumePlanHash: 'pendingembeds001', maxUsd: 5, repairs: { include: false, remote: false } });
       expect(ran.repairs).toEqual([expect.objectContaining({ id: 'repair:safe-chunks:embeddings', status: 'stopped' })]);
-      expect(ran.repairs![0]!.message).toContain('gbrain embed --stale');
+      expect(ran.repairs![0]!.message).toContain('foresights embed --stale');
       expect(remediationExitStatus(ran, [])).toBe(1);
       // The unfinished embeddings stay resumable, with the settled spend.
       expect(loadRemediationCheckpoint('pendingembeds001')).toMatchObject({ pending_embed_sources: ['default'], max_usd: 5 });

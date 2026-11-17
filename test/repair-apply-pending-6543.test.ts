@@ -1,5 +1,5 @@
 /**
- * #6543 (D1): `gbrain repair <kind> --apply` stopped at the first accepted-but-pending write, so an approved set of N
+ * #6543 (D1): `foresights repair <kind> --apply` stopped at the first accepted-but-pending write, so an approved set of N
  * slow items needed up to N+1 reruns. Now a pending item is kept (its receipt, the cursor before it) and the run goes on:
  * later items are admitted without a publication wait, at most a window of receipts stays unresolved, and they settle
  * against one shared wait budget. Every early stop settles first; a crash leaves the cursor before the first unresolved

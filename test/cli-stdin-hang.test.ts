@@ -81,7 +81,7 @@ describe('#3513 — stdin-capable op with a non-TTY, never-written stdin', () =>
     const run = await runCliWithStdin(['put', 'stdin-hang-test-slug'], 'hold-open', 20_000);
     expect(run.exited).toBe(true); // pre-#3513 this is false: the read never returns
     expect(run.exitCode).toBe(2);
-    expect(run.stderr).toContain('Usage: gbrain put');
+    expect(run.stderr).toContain('Usage: foresights put');
   }, 30_000);
 
   test('a genuine pipe with data is still consumed (no hang, no crash)', async () => {
@@ -90,7 +90,7 @@ describe('#3513 — stdin-capable op with a non-TTY, never-written stdin', () =>
     const run = await runCliWithStdin(['put'], { data: '# hello\n' }, 20_000);
     expect(run.exited).toBe(true);
     expect(run.exitCode).toBe(2);
-    expect(run.stderr).toContain('Usage: gbrain put');
+    expect(run.stderr).toContain('Usage: foresights put');
   }, 30_000);
 
   test('empty-but-real input (`< /dev/null`) does not hang', async () => {

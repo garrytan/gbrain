@@ -1,9 +1,9 @@
 /**
  * Cat 41 first push (wave 2): in a fresh Claude Code session the harness
- * spawns the stdio `gbrain serve` alongside SessionStart, and the serve binds
+ * spawns the stdio `foresights serve` alongside SessionStart, and the serve binds
  * its IPC socket about 2s later. Before this fix the hook found no socket,
  * skipped the context pack, and printed nothing (3/3 runs). Now, for a fresh
- * process (source startup/resume) whose install has a `gbrain setup
+ * process (source startup/resume) whose install has a `foresights setup
  * claude-code` receipt, SessionStart waits for that serve within
  * SESSION_START_SERVE_WAIT_DEADLINE_MS.
  *
@@ -95,7 +95,7 @@ function pgliteConfig(): IpcPathConfig {
   return { engine: 'pglite', database_path: dataDir };
 }
 
-/** What `gbrain setup claude-code` leaves beside ~/.claude.json. */
+/** What `foresights setup claude-code` leaves beside ~/.claude.json. */
 function writeSetupReceipt(overrides: Record<string, unknown> = {}): void {
   writeFileSync(join(tmp, 'claude', '.gbrain-connection-claude-code-gbrain.json'), JSON.stringify({
     harness: 'claude-code',

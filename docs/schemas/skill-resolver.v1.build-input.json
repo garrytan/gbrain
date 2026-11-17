@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "skill-resolver.v1.build-input.json",
-  "title": "gbrain skill resolver: catalog snapshot for `skills index build --from-json` (schema_version 1)",
+  "title": "foresights skill resolver: catalog snapshot for `skills index build --from-json` (schema_version 1)",
   "description": "An adapter's skill list: an array of skills, {\"skills\": [...]}, or OpenClaw's `skills list --json` document as is (its entries have no id: the name is the id, and an entry that is not eligible, is disabled, blocked by the allowlist or the agent filter, or not model-visible is skipped as ineligible). At most 10,000 entries and 64 MB; bodies are trimmed to the 4 KB the ranker reads, and a snapshot over 8 MB is kept trimmed. A stdin snapshot is kept as source.json beside the index and is never rebuilt automatically.",
   "$defs": {
     "skill": {

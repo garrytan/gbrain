@@ -6,17 +6,17 @@
  * Selectable: `--skill-loading spring` (or GBRAIN_SKILL_LOADING=spring) writes
  * it; `off`, the default, writes nothing and strips a block an earlier run
  * wrote. `--no-instructions` strips it with the brain-first block. The block
- * is a compact index of gbrain's bundled skills plus one sentence on loading a
+ * is a compact index of foresights's bundled skills plus one sentence on loading a
  * skill on demand with `<launcher> bundled-skill <name>` (spring-index.ts);
  * the skill bodies stay out of the context until a task matches. The launcher
- * is the same absolute gbrain the install registered, so the index and the
+ * is the same absolute foresights the install registered, so the index and the
  * text it loads come from one binary, whatever MCP server or brain the
  * harness is connected to.
  *
- * Ownership is by markers (managed-block.ts): the interior is gbrain's, text
+ * Ownership is by markers (managed-block.ts): the interior is foresights's, text
  * outside the markers is never touched. Decisions live in their own ledger,
  * <configDir>/skill-loading.json, keyed on (harness, path), so brain-first's
- * ledger stays as it is. created_file is true when gbrain created the file,
+ * ledger stays as it is. created_file is true when foresights created the file,
  * through either block, so whichever block is removed last deletes a file
  * nothing else was written into.
  */
@@ -40,7 +40,7 @@ export { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END };
 export const SKILL_LOADING_ENV = 'GBRAIN_SKILL_LOADING';
 export const SKILL_LOADING_MODES = ['off', 'spring'] as const;
 export type SkillLoading = (typeof SKILL_LOADING_MODES)[number];
-const MARKERS: BlockMarkers = { begin: SKILLS_BLOCK_BEGIN, end: SKILLS_BLOCK_END, label: 'skills', rerun: 'gbrain setup <harness> --skills-index-only' };
+const MARKERS: BlockMarkers = { begin: SKILLS_BLOCK_BEGIN, end: SKILLS_BLOCK_END, label: 'skills', rerun: 'foresights setup <harness> --skills-index-only' };
 const LEDGER_FILE = 'skill-loading.json';
 
 export function isSkillLoading(v: unknown): v is SkillLoading {
@@ -53,10 +53,10 @@ export function isSkillLoading(v: unknown): v is SkillLoading {
  * recorded launcher and audience, and never touches brain-first.
  */
 export function skillsRefreshCommand(harness: string): string {
-  return `gbrain setup ${harness} --skills-index-only`;
+  return `foresights setup ${harness} --skills-index-only`;
 }
 
-/** The absolute gbrain an index should name when no --gbrain-bin is given: this compiled binary, else the one on PATH. */
+/** The absolute foresights an index should name when no --gbrain-bin is given: this compiled binary, else the one on PATH. */
 export function indexLauncher(): string | null {
   if (basename(process.execPath).startsWith('gbrain')) return process.execPath;
   return resolveGbrainBin();
@@ -64,7 +64,7 @@ export function indexLauncher(): string | null {
 
 /**
  * The catalog identity the launcher actually serves (`<launcher> bundled-skill
- * --json`), so an index is never written naming a gbrain whose skills differ
+ * --json`), so an index is never written naming a foresights whose skills differ
  * from the ones indexed (another install earlier on PATH, a stale
  * --gbrain-bin). Engine-free and read-only on the launcher's side.
  */
@@ -84,7 +84,7 @@ function askLauncher(launcher: string): { catalog: string; names: string[] } | {
   if (r.status !== 0) return { error: `${launcher} bundled-skill --json failed: ${(r.error?.message ?? r.stderr ?? '').trim().split('\n')[0] || `exit ${r.status}`}` };
   try {
     const { catalog, skills } = JSON.parse(r.stdout ?? '') as { catalog?: unknown; skills?: unknown };
-    if (typeof catalog !== 'string') return { error: `${launcher} reported no skill catalog (a gbrain without bundled-skill)` };
+    if (typeof catalog !== 'string') return { error: `${launcher} reported no skill catalog (a foresights without bundled-skill)` };
     return { catalog, names: Array.isArray(skills) ? skills.map((s) => (s as { name?: unknown })?.name).filter((n): n is string => typeof n === 'string') : [] };
   } catch {
     return { error: `${launcher} bundled-skill --json printed no JSON` };
@@ -94,14 +94,14 @@ function askLauncher(launcher: string): { catalog: string; names: string[] } | {
 /**
  * The block interior for a harness. `owner` (an install on the brain host)
  * indexes every bundled skill; `downstream` (a thin client) leaves out the
- * host-only ones, as `gbrain bundled-skill` does there. Throws
+ * host-only ones, as `foresights bundled-skill` does there. Throws
  * SkillIndexTooLarge rather than return a block over budget.
  */
 export function renderSkillsBlock(harness: string, launcher: string, audience: SkillAudience = 'owner', how?: { refresh: string; optOut: string }): string {
   return renderSkillIndexBlock(bundledSkills(audience), launcher, how ?? { refresh: skillsRefreshCommand(harness), optOut: `${skillsRefreshCommand(harness)} --skill-loading off` });
 }
 
-/** The block with its markers, for a file gbrain writes whole (the thin-client GBRAIN-INSTRUCTIONS.md). */
+/** The block with its markers, for a file foresights writes whole (the thin-client GBRAIN-INSTRUCTIONS.md). */
 export function renderSkillsSnippet(harness: string, launcher: string, audience: SkillAudience, how: { refresh: string; optOut: string }): string {
   return `${SKILLS_BLOCK_BEGIN}\n${renderSkillsBlock(harness, launcher, audience, how)}\n${SKILLS_BLOCK_END}\n`;
 }
@@ -117,11 +117,11 @@ export interface SkillLoadingLedgerEntry {
   catalog?: string;
   launcher?: string;
   audience?: SkillAudience;
-  /** Claude Code: the permissions.allow rule that lets sessions run the loader, the settings file it is in, and whether gbrain added it. */
+  /** Claude Code: the permissions.allow rule that lets sessions run the loader, the settings file it is in, and whether foresights added it. */
   allow_rule?: string;
   allow_settings?: string;
   allow_owned?: boolean;
-  /** The user removed the rule gbrain added; it is not added again until an explicit --skill-loading spring. */
+  /** The user removed the rule foresights added; it is not added again until an explicit --skill-loading spring. */
   allow_declined?: boolean;
   writer: string;
   created_file: boolean;
@@ -130,14 +130,14 @@ export interface SkillLoadingLedgerEntry {
 
 export function skillLoadingLedgerPath(): string { return join(configDir(), LEDGER_FILE); }
 
-/** A ledger gbrain cannot read: ownership is unknown, so nothing that depends on it is changed. */
+/** A ledger foresights cannot read: ownership is unknown, so nothing that depends on it is changed. */
 export class SkillLedgerUnreadable extends Error {
   constructor(readonly path: string, why: string, raw = '') {
     const newer = /"version"\s*:\s*(\d+)/.exec(raw);
     const rules = [...new Set([...raw.matchAll(/"allow_rule"\s*:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!.replace(/\\(.)/g, '$1')))];
     const rulesNote = rules.length ? ` and the Claude Code permission rule${rules.length > 1 ? 's' : ''} it names (${rules.join(', ')}, normally in ${claudeUserSettingsPath()})` : '';
     super(newer && Number(newer[1]) > 1
-      ? `${path} was written by a newer gbrain (ledger version ${newer[1]}); upgrade gbrain, then re-run`
+      ? `${path} was written by a newer foresights (ledger version ${newer[1]}); upgrade foresights, then re-run`
       : `${path} is unreadable (${why}); ownership is unknown, so no skills index or permission rule was changed. Restore a valid copy or fix that entry, then re-run once. Starting over without it would leave whatever it recorded behind: if you must, first remove the gbrain:skills blocks${rulesNote} by hand`);
   }
 }
@@ -208,8 +208,8 @@ export function priorSkillLoading(harness: string, path: string): SkillLoadingLe
  * runs deny it, so a spring index on Claude Code comes with one narrow rule
  * in the user settings: the recorded launcher's `bundled-skill` subcommand
  * only, written exactly as the index writes the command. Ownership lives in
- * the ledger (allow_owned): every index that uses a rule gbrain added shares
- * that ownership, and gbrain removes the rule only when the last of them goes.
+ * the ledger (allow_owned): every index that uses a rule foresights added shares
+ * that ownership, and foresights removes the rule only when the last of them goes.
  */
 export function loaderAllowRule(launcher: string): string {
   return `Bash(${shellQuote(launcher)} bundled-skill:*)`;
@@ -241,7 +241,7 @@ function userRemovedRule(prior: SkillLoadingLedgerEntry | undefined, rule: strin
 /**
  * Add the rule after the block is in place; returns the ownership to record,
  * whether this call added it, and whether it stayed out because the user
- * removed the rule gbrain added (only an explicit --skill-loading spring adds
+ * removed the rule foresights added (only an explicit --skill-loading spring adds
  * it back). Throws when settings cannot be updated.
  */
 function grantLoader(harness: string, launcher: string, settings: string, prior: SkillLoadingLedgerEntry | undefined, regrant: boolean): { grant: Grant; added: boolean; declined: boolean } {
@@ -270,7 +270,7 @@ function plannedPermission(change: 'would_add' | 'would_remove', target: { rule:
 }
 
 /**
- * Remove a rule gbrain owns once no other recorded index uses it. Never
+ * Remove a rule foresights owns once no other recorded index uses it. Never
  * throws: `problem` says why the rule is still there, `removed` names the
  * rule when this call took it out of the settings.
  */
@@ -278,7 +278,7 @@ function revokeLoader(entry: SkillLoadingLedgerEntry | undefined, keep?: { rule?
   if (!entry?.allow_rule || entry.allow_owned !== true) return {};
   const rule = entry.allow_rule;
   const settings = ruleSettings(entry);
-  const stuck = (why: string) => ({ problem: `the Claude Code permission rule ${rule} that gbrain added is still in ${settings}: ${why}` });
+  const stuck = (why: string) => ({ problem: `the Claude Code permission rule ${rule} that foresights added is still in ${settings}: ${why}` });
   try {
     if (!revocableRule(entry, keep)) return {};
     const r = removePermissionsAllowEntry(settings, rule);
@@ -320,7 +320,7 @@ export type SkillsBlockState = 'no_file' | 'absent' | 'current' | 'stale' | 'dam
 /**
  * The block's state. With `expected` (the interior this run would write),
  * current means identical; without it, current means the block indexes this
- * gbrain's catalog (same index version and catalog identity).
+ * foresights's catalog (same index version and catalog identity).
  */
 export function inspectSkillsBlock(path: string, expected?: string): { state: SkillsBlockState; version?: number; catalog?: string } {
   if (!existsSync(path)) return { state: 'no_file' };
@@ -333,7 +333,7 @@ export function inspectSkillsBlock(path: string, expected?: string): { state: Sk
   const probe = probeBlock(MARKERS, text);
   if (probe.state !== 'present') return { state: probe.state };
   const interior = probe.interior ?? '';
-  const version = Number(/gbrain skills v(\d+)/.exec(interior)?.[1] ?? 0);
+  const version = Number(/(?:foresights|gbrain) skills v(\d+)/.exec(interior)?.[1] ?? 0);
   const catalog = skillIndexCatalog(interior);
   const current = expected !== undefined ? interior === expected : version === SKILL_INDEX_VERSION && catalog === bundledCatalogId();
   return { state: current ? 'current' : 'stale', version, ...(catalog ? { catalog } : {}) };
@@ -428,7 +428,7 @@ function recordedSkillLoading(target: BrainFirstTarget, decision: SkillLoadingDe
  * #8485: Codex loads its global AGENTS.override.md when it is non-empty, else
  * AGENTS.md, so the file setup resolves moves when the override appears or
  * empties. An opt-out (flag, env, or brain-first instructions declined now
- * or on record) in one of the two also reaches a spring index gbrain recorded in the other one in the
+ * or on record) in one of the two also reaches a spring index foresights recorded in the other one in the
  * same CODEX_HOME, so the index cannot come back when the override goes.
  * No other file is touched.
  */
@@ -477,14 +477,14 @@ function syncSkillsBlockLocked(opts: { target: BrainFirstTarget; launcher: strin
   }
   if (decision.value === 'off') {
     if (decision.source === 'default' && !prior && (before.state === 'current' || before.state === 'stale')) {
-      return out('skip', `the skills index in ${target.path} is not in this gbrain's record (${skillLoadingLedgerPath()}); another gbrain home or install probably wrote it, so it is left as it is. Pass --skill-loading off to remove it from here`);
+      return out('skip', `the skills index in ${target.path} is not in this foresights's record (${skillLoadingLedgerPath()}); another foresights home or install probably wrote it, so it is left as it is. Pass --skill-loading off to remove it from here`);
     }
     const revocation = opts.dryRun ? {} : revokeLoader(prior);
     if (revocation.problem) return out('preserve', `${revocation.problem}; fix that, then re-run. ${target.path} was left as it was`, { reason: 'permission_update_failed' });
     const revoked: Partial<SkillsBlockOutcome> = revocation.removed ? { permission: { ...revocation.removed, change: 'removed' } }
       : opts.dryRun ? plannedPermission('would_remove', revocableRule(prior)) : {};
     // The ledger still records the rule until the opt-out is recorded, so a failure puts it back and a re-run finishes cleanly.
-    const putBack = () => (revocation.removed && undoUnrecorded({ path: target.path, settings, restore: revocation.removed }).length ? `; gbrain also could not put back ${revocation.removed.rule} in ${revocation.removed.settings}, so add it back by hand before re-running` : '');
+    const putBack = () => (revocation.removed && undoUnrecorded({ path: target.path, settings, restore: revocation.removed }).length ? `; foresights also could not put back ${revocation.removed.rule} in ${revocation.removed.settings}, so add it back by hand before re-running` : '');
     if (before.state === 'no_file' || before.state === 'absent') {
       try { record('off', false); } catch (e) { return out('preserve', `recording the opt-out failed: ${message(e)}${putBack()}`, { reason: 'write_failed' }); }
       return out('skip', `skill loading off: no skills index in ${target.path}`, revoked);
@@ -507,13 +507,13 @@ function syncSkillsBlockLocked(opts: { target: BrainFirstTarget; launcher: strin
 
   if (body === undefined) return out('preserve', `${tooLarge!.message}; ${target.path} was left as it was`, { reason: 'index_too_large' });
   const served = launcherCatalog(launcher);
-  if ('error' in served) return out('preserve', `${served.error}; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of this gbrain>`, { reason: 'launcher_unusable' });
+  if ('error' in served) return out('preserve', `${served.error}; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of this foresights>`, { reason: 'launcher_unusable' });
   if (served.catalog !== bundledCatalogId()) {
-    return out('preserve', `${launcher} serves skill catalog ${served.catalog}, not this gbrain's ${bundledCatalogId()}, so the index would load other text than it lists; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of this gbrain>, or upgrade that install`, { reason: 'launcher_catalog_mismatch' });
+    return out('preserve', `${launcher} serves skill catalog ${served.catalog}, not this foresights's ${bundledCatalogId()}, so the index would load other text than it lists; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of this foresights>, or upgrade that install`, { reason: 'launcher_catalog_mismatch' });
   }
   const unserved = bundledSkills(audience).filter((s) => !served.names.includes(s.name)).map((s) => s.name);
   if (unserved.length) {
-    return out('preserve', `${launcher} does not serve ${unserved.length} skill(s) the index would list (${unserved.slice(0, 5).join(', ')}${unserved.length > 5 ? ', …' : ''}), probably because it runs as a thin client; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of the gbrain this agent uses>`, { reason: 'launcher_catalog_mismatch' });
+    return out('preserve', `${launcher} does not serve ${unserved.length} skill(s) the index would list (${unserved.slice(0, 5).join(', ')}${unserved.length > 5 ? ', …' : ''}), probably because it runs as a thin client; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of the foresights this agent uses>`, { reason: 'launcher_catalog_mismatch' });
   }
   if (target.harness === 'hermes' && (before.state === 'no_file' || (() => { try { return readFileSync(target.path, 'utf8').trim() === ''; } catch { return true; } })())) {
     return out('skip', `${target.path} is missing or empty, and Hermes uses a non-empty SOUL.md instead of its default identity; start Hermes once (it seeds SOUL.md) or write your identity there, then re-run`, { reason: 'hermes_soul_missing' });
@@ -568,7 +568,7 @@ function syncSkillsBlockLocked(opts: { target: BrainFirstTarget; launcher: strin
   } catch (e) {
     const left = undoUnrecorded({ path: target.path, written, rule: added ? grant.allow_rule : undefined, settings, restore: replaced.removed });
     if (left.length === 0) return out('preserve', `recording the skills index in ${skillLoadingLedgerPath()} failed (${message(e)}), so this run's changes were undone and nothing changed; fix that, then re-run`, { reason: 'write_failed' });
-    return out('preserve', `recording the skills index in ${skillLoadingLedgerPath()} failed (${message(e)}), and gbrain could not undo ${left.join(' and ')}; remove ${left.length > 1 ? 'them' : 'it'} by hand before re-running, because a re-run would take ${left.length > 1 ? 'them' : 'it'} for yours`, { reason: 'recorded_partially' });
+    return out('preserve', `recording the skills index in ${skillLoadingLedgerPath()} failed (${message(e)}), and foresights could not undo ${left.join(' and ')}; remove ${left.length > 1 ? 'them' : 'it'} by hand before re-running, because a re-run would take ${left.length > 1 ? 'them' : 'it'} for yours`, { reason: 'recorded_partially' });
   }
   if (replaced.removed) done.replaced_permission = { ...replaced.removed, change: 'removed' };
   if (permissionProblem) return { ...done, action: 'preserve', detail: `${done.detail} (the index is in place; the permission step did not finish): ${permissionProblem}`, reason: 'permission_update_failed' };
@@ -578,7 +578,7 @@ function syncSkillsBlockLocked(opts: { target: BrainFirstTarget; launcher: strin
 
 /**
  * A run whose ledger write failed takes back what it changed, so no rule or
- * file is left that the ledger does not know gbrain wrote. Returns what could
+ * file is left that the ledger does not know foresights wrote. Returns what could
  * not be undone.
  */
 function undoUnrecorded(opts: { path: string; written?: { before: string | null; after: string }; rule?: string; settings: string; restore?: { rule: string; settings: string } }): string[] {
@@ -612,7 +612,7 @@ function undoUnrecorded(opts: { path: string; written?: { before: string | null;
   return left;
 }
 
-/** The uninstall path: strip the block, delete the file only when gbrain created it and nothing else is left, forget the record. */
+/** The uninstall path: strip the block, delete the file only when foresights created it and nothing else is left, forget the record. */
 export function removeSkillsBlock(opts: { harness: string; path: string; dryRun: boolean }): SkillsBlockOutcome {
   return underInstructionLedgerLock(opts.dryRun, () => removeSkillsBlockLocked(opts), (why) => ({
     harness: opts.harness, path: opts.path, decision: { value: 'off', source: 'flag' }, action: 'preserve',
@@ -649,7 +649,7 @@ function removeSkillsBlockLocked(opts: { harness: string; path: string; dryRun: 
       else writeUnlessChanged(opts.path, existing, false, stripped);
     } catch (e) {
       const left = revocation.removed ? undoUnrecorded({ path: opts.path, settings: revocation.removed.settings, restore: revocation.removed }) : [];
-      return out('preserve', `${opts.path} could not be updated (${message(e)}); the skills index is still there${left.length ? `, and gbrain could not put back ${revocation.removed!.rule} in ${revocation.removed!.settings}; add it back by hand` : ''}`, { reason: 'write_failed' });
+      return out('preserve', `${opts.path} could not be updated (${message(e)}); the skills index is still there${left.length ? `, and foresights could not put back ${revocation.removed!.rule} in ${revocation.removed!.settings}; add it back by hand` : ''}`, { reason: 'write_failed' });
     }
   }
   try { dropLedger(opts.harness, opts.path); } catch (e) {
@@ -657,7 +657,7 @@ function removeSkillsBlockLocked(opts: { harness: string; path: string; dryRun: 
   }
   return before.state === 'no_file' || before.state === 'absent'
     ? out('skip', `no skills index in ${opts.path}`, permission)
-    : out('remove', `skills index from ${opts.path}${deleteFile ? ' (file removed: gbrain created it and nothing else was in it)' : ''}`, permission);
+    : out('remove', `skills index from ${opts.path}${deleteFile ? ' (file removed: foresights created it and nothing else was in it)' : ''}`, permission);
 }
 
 export function skillsOutcomeShown(o: SkillsBlockOutcome): boolean {
@@ -675,8 +675,8 @@ export function describeSkillsBlockOutcome(o: SkillsBlockOutcome, dryRun: boolea
 }
 
 /**
- * The installer lanes (`gbrain connect --install`, `gbrain connect --harness`,
- * `gbrain bootstrap harness`): the same decision as setup (flag, then
+ * The installer lanes (`foresights connect --install`, `foresights connect --harness`,
+ * `foresights bootstrap harness`): the same decision as setup (flag, then
  * GBRAIN_SKILL_LOADING, then the recorded choice, then off), with the
  * brain-first outcome deciding `--no-instructions`. Never throws.
  */
@@ -715,7 +715,7 @@ export function removeSkillsBlocksBy(writer: string, opts: { dryRun?: boolean; k
   return readSkillLoadingLedger().filter((e) => e.writer === writer && e.mode === 'spring' && !opts.keep?.(e)).map((e) => removeSkillsBlock({ harness: e.harness, path: e.path, dryRun }));
 }
 
-/** launcher_missing: the block is in place but the gbrain it names is gone, so every load fails. ledger_unreadable: gbrain cannot tell which indexes it wrote. */
+/** launcher_missing: the block is in place but the foresights it names is gone, so every load fails. ledger_unreadable: foresights cannot tell which indexes it wrote. */
 export type SkillsIndexState = SkillsBlockState | 'launcher_missing' | 'ledger_unreadable';
 export interface SkillsIndexView { harness: string; path: string; state: SkillsIndexState; refresh: string }
 
@@ -740,14 +740,14 @@ export function skillsIndexViews(): SkillsIndexView[] {
   return [...readSkillLoadingLedger().filter((e) => e.mode === 'spring').map((e): SkillsIndexView => {
     const state = inspectSkillsBlock(e.path).state;
     if ((state === 'current' || state === 'stale') && e.launcher && isAbsolute(e.launcher) && !launcherRuns(e.launcher)) {
-      return { harness: e.harness, path: e.path, state: 'launcher_missing', refresh: `${skillsRefreshCommand(e.harness)} --gbrain-bin <absolute path of gbrain>` };
+      return { harness: e.harness, path: e.path, state: 'launcher_missing', refresh: `${skillsRefreshCommand(e.harness)} --gbrain-bin <absolute path of foresights>` };
     }
     return { harness: e.harness, path: e.path, state, refresh: skillsRefreshCommand(e.harness) };
   }), ...thinClientIndexView()];
 }
 
 /**
- * A thin-client install (`gbrain connect --harness … --root`) writes its index
+ * A thin-client install (`foresights connect --harness … --root`) writes its index
  * into GBRAIN-INSTRUCTIONS.md, a file the connection owns whole, so it is
  * recorded in the connection receipt rather than the ledger, and refreshed by
  * re-running that install.
@@ -764,13 +764,13 @@ function thinClientIndexView(): SkillsIndexView[] {
   if (receipt.status !== 'installed' || receipt.skill_loading !== 'spring' || typeof receipt.root !== 'string') return [];
   const harness = typeof receipt.harness === 'string' ? receipt.harness : 'generic';
   const path = join(receipt.root, 'GBRAIN-INSTRUCTIONS.md');
-  const rerun = `gbrain connect ${shellQuote(String(receipt.mcp_url ?? '<mcp-url>'))} --harness ${shellQuote(harness)} --credentials-file <private-handoff-file> --root ${shellQuote(receipt.root)} --install`;
+  const rerun = `foresights connect ${shellQuote(String(receipt.mcp_url ?? '<mcp-url>'))} --harness ${shellQuote(harness)} --credentials-file <private-handoff-file> --root ${shellQuote(receipt.root)} --install`;
   return [{ harness, path, state: inspectSkillsBlock(path).state, refresh: rerun }];
 }
 
 
 /**
- * `gbrain setup <harness> --skills-index-only` (the refresh the block header
+ * `foresights setup <harness> --skills-index-only` (the refresh the block header
  * and doctor name): re-render every index the ledger records for the
  * harness, in its recorded file, with its recorded launcher (or
  * --gbrain-bin), audience and writer. Brain-first and every other file are

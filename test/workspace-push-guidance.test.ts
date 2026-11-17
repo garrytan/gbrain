@@ -47,7 +47,7 @@ function build(findings: SecretFinding[], allowlist: string[] = []): PushSecretF
     findings,
     allowlist,
     allowlistPath: '/ws/.gbrain-scan-allow',
-    retryCommand: 'gbrain sources push --path /ws',
+    retryCommand: 'foresights sources push --path /ws',
   });
 }
 
@@ -63,12 +63,12 @@ describe('blockedSecretsReason (ENG-11: reason survives sanitizePushReason)', ()
     expect(reason).toStartWith('2 secret finding(s), first ...');
     expect(reason).toContain('/meeting-notes.md:1234 [high_entropy_assignment]');
     expect(reason).toContain('nothing committed');
-    expect(reason).toContain('gbrain sources push');
+    expect(reason).toContain('foresights sources push');
   });
 
   test('a short location is shown whole', () => {
     const reason = blockedSecretsReason(build([finding({ pattern: 'openai', line: 3 })]));
-    expect(reason).toBe('1 secret finding(s), first notes/key.md:3 [openai]; nothing committed. Run gbrain sources push for fix steps');
+    expect(reason).toBe('1 secret finding(s), first notes/key.md:3 [openai]; nothing committed. Run foresights sources push for fix steps');
     expect(sanitizePushReason(reason)).toBe(reason);
   });
 });
@@ -80,7 +80,7 @@ describe('buildPushFindings (DX-3: per-finding guidance)', () => {
     expect(f!.fingerprint).toBe('sha256:aaaabbbbccccdddd');
     expect(f!.allowlistPath).toBe('/ws/.gbrain-scan-allow');
     expect(f!.allowCommand).toBe("printf '\\n%s\\n' sha256:aaaabbbbccccdddd >> /ws/.gbrain-scan-allow");
-    expect(f!.retryCommand).toBe('gbrain sources push --path /ws');
+    expect(f!.retryCommand).toBe('foresights sources push --path /ws');
     expect(f!.docs).toBe(SECRET_SCAN_REFUSAL_DOCS);
     expect(f!.docs).toEndWith('write-refusals.md#secret-scan-refusals-and-redaction');
     expect(f!.since).toBeUndefined();
@@ -154,7 +154,7 @@ describe('formatBlockedSecrets (CLI rendering of the structured findings)', () =
   function one(over: Partial<SecretFinding & { since: string }>, allowlist: string[] = []): PushSecretFinding[] {
     return buildPushFindings({
       file: 'k.md', findings: [finding(over)], allowlist, allowlistPath,
-      retryCommand: "gbrain sources push --path '/home/u/my brain'",
+      retryCommand: "foresights sources push --path '/home/u/my brain'",
     });
   }
 
@@ -167,15 +167,15 @@ describe('formatBlockedSecrets (CLI rendering of the structured findings)', () =
       "    allow this finding: printf '\\n%s\\n' sha256:aaaabbbbccccdddd >> '/home/u/my brain/.gbrain-scan-allow'",
       'Remove a real credential from the file (and rotate it) first. Allowlist only a reviewed false positive',
       "with the \"allow this finding\" command above (it appends to '/home/u/my brain/.gbrain-scan-allow'), then retry:",
-      "  gbrain sources push --path '/home/u/my brain'",
+      "  foresights sources push --path '/home/u/my brain'",
       `Docs: ${SECRET_SCAN_REFUSAL_DOCS}`,
     ]);
   });
 
-  test("CEO-21: a finding's since version names the gbrain version that made the shape blocking", () => {
+  test("CEO-21: a finding's since version names the foresights version that made the shape blocking", () => {
     for (const [pattern, since] of [['url_credentials', '0.60.31.0'], ['basic_auth', 'v0.60.31.0'], ['digitalocean', '0.60.31.0']]) {
       const out = formatBlockedSecrets(one({ pattern, since } as Partial<SecretFinding>)).join('\n');
-      expect(out).toContain(`    rule [${pattern}] blocks pushes since gbrain v0.60.31.0`);
+      expect(out).toContain(`    rule [${pattern}] blocks pushes since foresights v0.60.31.0`);
     }
   });
 
@@ -186,7 +186,7 @@ describe('formatBlockedSecrets (CLI rendering of the structured findings)', () =
       [headerOnly],
     )).join('\n');
     expect(out).toContain(
-      `    stale allowlist entry: ${headerOnly} matched only this key's BEGIN header before gbrain v0.60.31.0; the fingerprint now covers the key body.`,
+      `    stale allowlist entry: ${headerOnly} matched only this key's BEGIN header before foresights v0.60.31.0; the fingerprint now covers the key body.`,
     );
     expect(out).toContain(
       "    if the key is a reviewed false positive, replace that line in '/home/u/my brain/.gbrain-scan-allow' with: sha256:fedcba9876543210",

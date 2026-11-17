@@ -20,11 +20,11 @@
       "note": "same brain, same query op call, key off"
     }
   ],
-  "preregistration": "README.md in garrytan/gbrain@9a8cfb9f7, before any gated run",
+  "preregistration": "README.md in aimonk2025/gbrain@9a8cfb9f7, before any gated run",
   "models": {
     "reader": "anthropic:claude-sonnet-5-5",
     "embedding": "voyage:voyage-4 (1024d)",
-    "selection": "B-suite fixed reader; gbrain default embedding"
+    "selection": "B-suite fixed reader; foresights default embedding"
   },
   "gates": {
     "1": "seeded appended-corrections workload, seeds 42/7/1234, query op expansion off, reader at 200 tokens (sensitivity: 16 rows); pass if in every seed key-on accuracy is higher or freshness lag lower, and accuracy lower in no seed",

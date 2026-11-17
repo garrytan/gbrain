@@ -1,13 +1,13 @@
 # Hosted OAuth Relay — Design for the gbrain.io Team
 
-**Status:** Approved direction (D2-B, 2026-08-25). CLI-side seams ship in the gbrain
+**Status:** Approved direction (D2-B, 2026-08-25). CLI-side seams ship in the foresights
 `gmail-open-loop-engine` wave; the server side specified here is gbrain.io's build.
-**Companion:** the Gmail open-loop engine plan in the gbrain repo (Phase 1 credential
+**Companion:** the Gmail open-loop engine plan in the foresights repo (Phase 1 credential
 vault, Phase 1.5 relay client stub).
 
 ## 1. Context and goal
 
-gbrain is shipping native Gmail/Calendar/Contacts ingestion with a BYO Google OAuth
+foresights is shipping native Gmail/Calendar/Contacts ingestion with a BYO Google OAuth
 flow: the user creates their own Google Cloud OAuth client, and tokens live in a local
 credential vault (`~/.gbrain/credentials.json`, 0600). BYO is the default because the
 user owns the app, the quota, and the tokens.
@@ -15,14 +15,14 @@ user owns the app, the quota, and the tokens.
 The BYO path has an irreducible ~6–8 minutes of Google Cloud console work (create
 project, enable APIs, consent screen, client, download JSON). Hosted OAuth brokers
 (Composio, Arcade, Pipedream Connect) get "connect Gmail" to ~30 seconds, but they
-custody user tokens server-side. The relay described here gets gbrain to the ~30-second
+custody user tokens server-side. The relay described here gets foresights to the ~30-second
 setup **without becoming a token custodian**: gbrain.io operates one verified Google
 OAuth client and relays consent; tokens are claimed once by the user's local CLI and
 stored only in their local vault.
 
 The same infrastructure serves three needs:
 
-1. **Fast-path setup** for CLI/self-host users (`gbrain google connect --via gbrain.io`).
+1. **Fast-path setup** for CLI/self-host users (`foresights google connect --via gbrain.io`).
 2. **The hosted product's own Google connections** (hosted gbrain.io runs the identical
    `src/core/creds` + `src/core/google` code with a DB-backed vault).
 3. **Credential transfer on upgrade** (a user moving from local to hosted opts in to
@@ -34,7 +34,7 @@ The same infrastructure serves three needs:
 - gbrain.io never persists user refresh tokens for CLI users beyond a short claim window.
 - The CLI works fully without gbrain.io (BYO remains first-class; the relay is additive).
 - Code reuse: the relay client, vault, and Google provider are shared between CLI and
-  hosted (already structured that way in the gbrain repo: `src/core/creds/` has no CLI
+  hosted (already structured that way in the foresights repo: `src/core/creds/` has no CLI
   imports).
 - Generalizes beyond Google: the same session/claim pattern should work for Dropbox
   OAuth and any future provider the vault registry grows.
@@ -44,7 +44,7 @@ The same infrastructure serves three needs:
 Google offers two viable shapes for "gbrain.io's OAuth client." We evaluated both:
 
 **Option A — embedded Desktop (public) client.** Ship gbrain.io's Desktop-app client ID
-+ secret inside the gbrain binary (Google treats installed-app secrets as
++ secret inside the foresights binary (Google treats installed-app secrets as
 non-confidential per RFC 8252). No server needed at all: the CLI runs the normal
 loopback flow against the shared client.
 
@@ -134,7 +134,7 @@ CLI                                relay (gbrain.io)                     Google
 ## 5. Refresh routing for relay-minted tokens
 
 Refresh tokens minted under the confidential client cannot be refreshed locally
-(requires the client secret). The gbrain vault marks provenance with `client_ref`:
+(requires the client secret). The foresights vault marks provenance with `client_ref`:
 
 - `client_ref: "byo"` → the google provider refreshes directly against
   `oauth2.googleapis.com/token` with the user's own client credentials (all local).
@@ -146,7 +146,7 @@ Refresh tokens minted under the confidential client cannot be refreshed locally
 
 Availability note for the CLI UX: a relay outage degrades only relay-connected
 accounts, only at access-token expiry (~1 h granularity), and the error message names
-the fallback (`gbrain google connect` BYO). This is documented in the CLI's error
+the fallback (`foresights google connect` BYO). This is documented in the CLI's error
 catalog as `relay_unreachable`.
 
 ## 6. Credential transfer on hosted upgrade (approved D3-A)
@@ -156,7 +156,7 @@ connections instead of re-consenting:
 
 - `POST https://gbrain.io/api/creds/import` over the authenticated upgrade channel
   (the user's hosted account auth), body = per-credential consented export from
-  `gbrain creds export` (scrypt + AES-GCM bundle; also usable offline/manually).
+  `foresights creds export` (scrypt + AES-GCM bundle; also usable offline/manually).
 - Per-credential confirmation in the CLI; local copies retained unless `--move`.
 - BYO credentials transfer client_id + client_secret + refresh_token together (refresh
   tokens are client-bound). The import endpoint warns/refuses when the source consent
@@ -173,7 +173,7 @@ Hosted gbrain.io runs the same `src/core/creds` + `src/core/google` code:
 
 - `EngineVaultBackend` implements the `CredentialVault` interface against a DB table
   (per-user rows, encryption-at-rest hook for KMS). The interface is frozen in the
-  gbrain repo this wave; the backend is hosted-side work.
+  foresights repo this wave; the backend is hosted-side work.
 - `RedirectStrategy: 'hosted-callback'` — the hosted web app's connect button uses the
   same provider code with the relay's callback, skipping sessions/claims (tokens land
   directly in the user's server-side vault; hosted IS the custodian for hosted users,
@@ -183,7 +183,7 @@ Hosted gbrain.io runs the same `src/core/creds` + `src/core/google` code:
   the authenticated owner from day one; verbatim email quotes stay local-only until a
   finer-grained remote-auth predicate exists.
 
-## 8. Shared-code contract (what the gbrain repo freezes this wave)
+## 8. Shared-code contract (what the foresights repo freezes this wave)
 
 | Seam | Shape | Where |
 |---|---|---|

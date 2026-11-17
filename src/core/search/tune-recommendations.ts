@@ -2,7 +2,7 @@
  * Search-tune recommendation builder — moved from src/commands/search.ts in
  * the CLI→MCP gap-closure wave so the `search_tune` op and the CLI derive the
  * same recommendations. STRICTLY READ-ONLY: applying a recommendation
- * (`gbrain search tune` with the apply flag) is CLI-only by design [CDX-21]
+ * (`foresights search tune` with the apply flag) is CLI-only by design [CDX-21]
  * and stays in the command file.
  */
 
@@ -61,7 +61,7 @@ export async function buildTuneRecommendations(engine: BrainEngine): Promise<Tun
         current: 'conservative',
         suggested: 'balanced',
         reason: `Avg ${dropPctPerCall.toFixed(1)} results dropped per search by the 4K budget. Consider balanced (12K budget) or raise search.tokenBudget.`,
-        apply_command: 'gbrain config set search.mode balanced',
+        apply_command: 'foresights config set search.mode balanced',
       });
     }
   }
@@ -73,7 +73,7 @@ export async function buildTuneRecommendations(engine: BrainEngine): Promise<Tun
       current: resolved.cache_similarity_threshold,
       suggested: 0.94,
       reason: `Cache hit rate is ${(stats.cache_hit_rate * 100).toFixed(1)}%. You can raise similarity threshold to 0.94 for tighter freshness at small recall cost.`,
-      apply_command: 'gbrain config set search.cache.similarity_threshold 0.94',
+      apply_command: 'foresights config set search.cache.similarity_threshold 0.94',
     });
   }
 
@@ -85,7 +85,7 @@ export async function buildTuneRecommendations(engine: BrainEngine): Promise<Tun
       current: 'tokenmax',
       suggested: 'balanced',
       reason: 'Subagent tier is Haiku but mode is tokenmax. Balanced caps the result payload at 12K tokens by default, reducing downstream input volume. Semantic result caching is temporarily disabled.',
-      apply_command: 'gbrain config set search.mode balanced',
+      apply_command: 'foresights config set search.mode balanced',
     });
   }
 
@@ -96,7 +96,7 @@ export async function buildTuneRecommendations(engine: BrainEngine): Promise<Tun
       current: false,
       suggested: true,
       reason: 'Cache is disabled but mode bundles enable it by default. Cache is a free win (zero LLM cost, big latency drop on repeat queries).',
-      apply_command: 'gbrain config unset search.cache.enabled',
+      apply_command: 'foresights config unset search.cache.enabled',
     });
   }
 

@@ -14,7 +14,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..');
 
-describe('gbrain schema configured PGLite routing', () => {
+describe('foresights schema configured PGLite routing', () => {
   test('schema stats reads database_path from config', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-schema-db-path-'));
     const gbrainDir = join(home, '.gbrain');

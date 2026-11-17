@@ -38,7 +38,7 @@ embeddings the same way the `anthropic` recipe's docs recommend.
 2. Point a model tier (or any per-call model string) at `claude-cli:`:
 
    ```bash
-   gbrain config set models.tier.subagent claude-cli:claude-sonnet-5
+   foresights config set models.tier.subagent claude-cli:claude-sonnet-5
    ```
 
    Any of the models the recipe declares work the same way:
@@ -49,7 +49,7 @@ embeddings the same way the `anthropic` recipe's docs recommend.
 The recipe declares `auth_env: { required: [] }`, and neither the recipe
 nor the adapter code reads or passes any API-key-shaped config value to the
 subprocess — whatever the `claude` binary does for its own auth (see below)
-is between it and its own login state, not something gbrain's config layer
+is between it and its own login state, not something foresights's config layer
 participates in. There is also no `provider_base_urls` entry for this
 recipe — it has no base URL, only a subprocess binary path
 (`GBRAIN_CLAUDE_CLI_BIN`).
@@ -80,10 +80,10 @@ stdin:
   subprocess must behave like a raw LLM, not a full agent.
 - `--strict-mcp-config` skips loading the user's MCP servers. Without it,
   every call would boot the user's configured MCP servers — including
-  gbrain's own MCP, which would recurse and contend for the PGLite
+  foresights's own MCP, which would recurse and contend for the PGLite
   single-writer lock.
 - `--settings '{"disableAllHooks":true}'` stops the child from running your
-  Claude Code hooks (user and project settings). Without it, gbrain's own
+  Claude Code hooks (user and project settings). Without it, foresights's own
   Stop hook would bank every claude-cli call's prompt as one of your
   conversations, and extracting facts from it would spawn another call.
   Your login is unaffected: credentials are not settings. Hooks from a
@@ -91,7 +91,7 @@ stdin:
   are a different case. Claude Code 2.1.287 still runs them, because policy
   wins over `--settings`; 2.0.60 suppressed them too (probed with a managed
   SessionStart and Stop hook on Linux). A managed policy that installs
-  gbrain's own hooks therefore still fires inside claude-cli calls; gbrain's
+  foresights's own hooks therefore still fires inside claude-cli calls; foresights's
   Stop hook, the serve-side harvest and the sweep all skip those
   self-captures, so nothing is extracted from them.
 - A call with an output cap carries it as `CLAUDE_CODE_MAX_OUTPUT_TOKENS` in
@@ -102,7 +102,7 @@ stdin:
   `MAX_THINKING_TOKENS=0` in both places and reports
   `providerMetadata['claude-cli'].thinking = 'disabled_below_floor'`. A larger
   cap leaves thinking to the CLI.
-- The subprocess env is a copy of gbrain's own process env with the
+- The subprocess env is a copy of foresights's own process env with the
   cloud-auth routing variables scrubbed before spawn: the three direct-API
   keys (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`)
   plus every `CLAUDE_CODE_USE_*` backend-switch flag (a prefix wipe, not a
@@ -110,7 +110,7 @@ stdin:
   by one of these, take priority over subscription OAuth when set, and route
   billing through a cloud account; clearing the switch is sufficient because
   the provider-specific credentials are inert without it). Everything else in
-  gbrain's environment is inherited as-is. Subscription-only is the recipe's
+  foresights's environment is inherited as-is. Subscription-only is the recipe's
   contract: children always authenticate with the CLI's own login state. If
   you intentionally route a workload through a cloud backend, use the
   `anthropic` recipe with cloud credentials instead — the scrub means
@@ -128,17 +128,17 @@ entirely) is not among the flags passed, because it also forces
 `ANTHROPIC_API_KEY` auth (per the recipe's source comment). On Claude Code
 2.1.314 or newer the child gets `--setting-sources ""` instead, so your
 user-level `~/.claude/CLAUDE.md`, memory and `settings.json` stay out of
-every call and the login is kept (gbrain reads `claude --version` once per
+every call and the login is kept (foresights reads `claude --version` once per
 binary per process). An older CLI still loads them on every call.
 
 Trade-off: `--setting-sources ""` loads no settings source at all, so the
 `env` block, `apiKeyHelper` and permission rules in your `settings.json` don't
 reach the child either. The subscription (OAuth) login is kept, but a claude
-login or proxy that depends on `settings.json` doesn't apply to gbrain's
+login or proxy that depends on `settings.json` doesn't apply to foresights's
 claude-cli calls on these versions. To load them again, set
-`GBRAIN_CLAUDE_CLI_USER_SETTINGS=1` in the environment gbrain runs in (your
+`GBRAIN_CLAUDE_CLI_USER_SETTINGS=1` in the environment foresights runs in (your
 shell or `~/.gbrain/.env`; a project `.env` can't set it): the child then gets
-no `--setting-sources` flag and gbrain skips the version probe.
+no `--setting-sources` flag and foresights skips the version probe.
 
 The adapter does not use `claude`'s own agentic tool-calling — it injects a
 fenced instruction block into the system prompt teaching the model a
@@ -163,14 +163,14 @@ above.
 | Streaming | Not implemented. `doStream()` throws. `gateway.toolLoop()` (the main caller) is non-streaming already, so this is not a practical limitation for subagent dispatch, but any caller that expects a streaming chat surface cannot use `claude-cli`. |
 | Tool use | JSON emission via a system-prompt-injected protocol, not the CLI's native tool-call mechanism. Parallel tool calls in one turn round-trip correctly. |
 | Multimodal | Not supported over the subprocess path. File/image message parts are rendered as a `[file <mediaType>]` text stub, not sent as actual content. |
-| Prompt caching | The recipe declares `supports_prompt_cache: true`: Claude Code caches prompt prefixes itself on every `--print` run (Anthropic's Claude Code docs put `-p` runs in the main-conversation TTL bucket — one hour on a subscription, five minutes on an API key). gbrain cannot place `cache_control` breakpoints on this path — the adapter renders messages to stdin text and ignores `providerOptions` — so caching is automatic rather than gateway-driven, and `doctor`'s `subagent_capability` does not grade a claude-cli subagent tier `degraded:no_caching`. `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens` (next row). |
-| Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); gbrain does not independently count tokens for this path. The envelope's `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens`, so cache reads are counted in gbrain's usage accounting; `cache_creation_input_tokens` is not surfaced (the AI SDK's usage shape has no corresponding field). |
-| Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. The `--max-usd` / `--max-cost` budget gate does not read them either: it prices `claude-cli:<model>` at the nominal Anthropic rate for that model, and a short alias (`claude-cli:haiku`) prices identically to the dated id it resolves to; `pricing.overrides` forces $0 or a real rate for any `claude-cli:*` string, and on a subscription one line prices every claude-cli model: `gbrain pricing set 'claude-cli:*' --rate 0` (an exact model entry still wins; at $0 no cap limits claude-cli calls). |
+| Prompt caching | The recipe declares `supports_prompt_cache: true`: Claude Code caches prompt prefixes itself on every `--print` run (Anthropic's Claude Code docs put `-p` runs in the main-conversation TTL bucket — one hour on a subscription, five minutes on an API key). foresights cannot place `cache_control` breakpoints on this path — the adapter renders messages to stdin text and ignores `providerOptions` — so caching is automatic rather than gateway-driven, and `doctor`'s `subagent_capability` does not grade a claude-cli subagent tier `degraded:no_caching`. `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens` (next row). |
+| Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); foresights does not independently count tokens for this path. The envelope's `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens`, so cache reads are counted in foresights's usage accounting; `cache_creation_input_tokens` is not surfaced (the AI SDK's usage shape has no corresponding field). |
+| Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so foresights's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. The `--max-usd` / `--max-cost` budget gate does not read them either: it prices `claude-cli:<model>` at the nominal Anthropic rate for that model, and a short alias (`claude-cli:haiku`) prices identically to the dated id it resolves to; `pricing.overrides` forces $0 or a real rate for any `claude-cli:*` string, and on a subscription one line prices every claude-cli model: `foresights pricing set 'claude-cli:*' --rate 0` (an exact model entry still wins; at $0 no cap limits claude-cli calls). |
 | User-level CLAUDE.md | Kept out on Claude Code 2.1.314 or newer (`--setting-sources ""`); an older CLI loads `~/.claude/CLAUDE.md` on every call (see above). Otherwise only the working directory changes (see "What actually happens on a call" for exactly what that directory is and isn't). |
 
 ## Doctor probe timeout: per-recipe, 30s for claude-cli
 
-`gbrain models doctor`'s chat reachability probe (`probeModel` in
+`foresights models doctor`'s chat reachability probe (`probeModel` in
 `src/commands/models.ts`) resolves its timeout per model: the recipe
 touchpoint's declared `default_timeout_ms` when present, else a flat 5000ms
 default (the right number for a plain HTTP round-trip). The `claude-cli`
@@ -186,7 +186,7 @@ dead or unauthenticated CLI for long. A probe that still outruns 30s kills
 the subprocess (`child.kill('SIGTERM')`) and reports `status: unknown` —
 the adapter's abort message doesn't match `classifyError`'s network
 patterns, so it lands in the catch-all. A persistent `unknown` is worth
-investigating directly (run the same model via `gbrain models doctor
+investigating directly (run the same model via `foresights models doctor
 --json` or call `claude` by hand) rather than assuming cold-start.
 
 ## Falling back to an API model at the subscription limit
@@ -197,8 +197,8 @@ When the Claude subscription's usage window is used up, the CLI reports
 instead of failing it:
 
 ```bash
-gbrain config set chat_fallback_chain "anthropic:claude-sonnet-4-6"
-gbrain doctor --only chat_fallback_chain --json
+foresights config set chat_fallback_chain "anthropic:claude-sonnet-4-6"
+foresights doctor --only chat_fallback_chain --json
 ```
 
 **Say to your agent:** *"When my Claude subscription runs out, fall back to an API model instead of failing."*
@@ -220,13 +220,13 @@ check, removal and hosted brains. Two points are specific to `claude-cli`:
 
 | Symptom | Where it comes from | Try | Who acts | Consent | Verify |
 |---|---|---|---|---|---|
-| `claude-cli spawn failed: ...` / stdin write failure | `spawn()`'s `error` event or a failed `stdin.write` — commonly means the `claude` binary was not found on `PATH` | Install Claude Code, or set `GBRAIN_CLAUDE_CLI_BIN` to the binary's path | user | `persistent_install` (installs Claude Code) | `gbrain models doctor --json` (one tiny call per model) |
-| `claude-cli API error <status>: <message>` | The CLI reported an API failure in its result envelope (`is_error: true` with `api_error_status`, e.g. 429 on a spend/rate limit) — surfaced whether the subprocess exited non-zero or zero. The error is a `ClaudeCliProcessError` carrying `apiErrorStatus` + `exitCode` for programmatic handling | Read the message — it's the CLI's own human-readable explanation (e.g. a spend-limit notice with the fix URL) | user (a spend or rate limit is theirs to lift) | none | `gbrain models doctor --json` (one tiny call per model) |
-| `claude-cli reported error: <message>` | Same envelope-reported failure (`is_error: true`) but without an `api_error_status` field | As above — the message is the CLI's own explanation | user | none | `gbrain models doctor --json` (one tiny call per model) |
+| `claude-cli spawn failed: ...` / stdin write failure | `spawn()`'s `error` event or a failed `stdin.write` — commonly means the `claude` binary was not found on `PATH` | Install Claude Code, or set `GBRAIN_CLAUDE_CLI_BIN` to the binary's path | user | `persistent_install` (installs Claude Code) | `foresights models doctor --json` (one tiny call per model) |
+| `claude-cli API error <status>: <message>` | The CLI reported an API failure in its result envelope (`is_error: true` with `api_error_status`, e.g. 429 on a spend/rate limit) — surfaced whether the subprocess exited non-zero or zero. The error is a `ClaudeCliProcessError` carrying `apiErrorStatus` + `exitCode` for programmatic handling | Read the message — it's the CLI's own human-readable explanation (e.g. a spend-limit notice with the fix URL) | user (a spend or rate limit is theirs to lift) | none | `foresights models doctor --json` (one tiny call per model) |
+| `claude-cli reported error: <message>` | Same envelope-reported failure (`is_error: true`) but without an `api_error_status` field | As above — the message is the CLI's own explanation | user | none | `foresights models doctor --json` (one tiny call per model) |
 | `claude CLI 2.0.60 or newer required (found <version>); upgrade Claude Code` | The installed CLI's argument parser rejected one of the provider's flags (`error: unknown option …` after the `--- raw ---` marker); 2.0.59 and older reject `--disable-slash-commands` | Upgrade Claude Code (`claude update`, or reinstall), then rerun | user | `persistent_install` | `claude --version` |
-| `claude-cli exited <code>` + `--- raw ---` blob | Non-zero exit from the `claude` subprocess where stdout carried no parseable result envelope; the CLI's stderr/stdout follows the `--- raw ---` marker (kept behind the marker so error classifiers never phrase-match model-derived text) | Run `claude` interactively with the same model to see the underlying CLI error directly (e.g. not logged in, model unavailable) | user (log in, pick an available model) | `credentials` when logging in | `gbrain models doctor --json` (one tiny call per model) |
+| `claude-cli exited <code>` + `--- raw ---` blob | Non-zero exit from the `claude` subprocess where stdout carried no parseable result envelope; the CLI's stderr/stdout follows the `--- raw ---` marker (kept behind the marker so error classifiers never phrase-match model-derived text) | Run `claude` interactively with the same model to see the underlying CLI error directly (e.g. not logged in, model unavailable) | user (log in, pick an available model) | `credentials` when logging in | `foresights models doctor --json` (one tiny call per model) |
 | `claude-cli output not JSON: ...` | `JSON.parse(stdout)` threw (stdout wasn't valid JSON at all) | Confirm the installed `claude` CLI version still supports `--print --output-format json`; this adapter's JSON handling was verified against CLI 2.1.145 | agent | none | `claude --version` |
-| `claude-cli JSON event array had no "result" event` | stdout parsed as the `--verbose` event array but none of the events had `type: "result"` (the run ended before reporting) | Run `claude --print --output-format json --verbose` by hand with the same model to see where it stops | agent | none | `gbrain models doctor --json` (one tiny call per model) |
+| `claude-cli JSON event array had no "result" event` | stdout parsed as the `--verbose` event array but none of the events had `type: "result"` (the run ended before reporting) | Run `claude --print --output-format json --verbose` by hand with the same model to see where it stops | agent | none | `foresights models doctor --json` (one tiny call per model) |
 | `[claude-cli] continuation_unproven (<reason>)` on stderr (once per reason per process); the call finishes `length` with no text | The answer hit its output cap and Claude Code continued it, and stdout could not prove the full text: the bare envelope without the event array (`events_missing`), an event array with no assistant message (`no_assistant_events`), or assistant segments that do not provably make up this answer (`segments_unmatched`) | Callers treat it as a capped answer and retry or escalate. `events_missing` and `no_assistant_events`: upgrade the claude CLI so `--output-format json --verbose` prints the session's assistant events. `segments_unmatched`: raise the caller's output cap (the setting its truncation warning names) | agent | none | rerun the call; a raised cap or an upgraded CLI finishes `stop` |
-| `gbrain models doctor` reports `chat` as `status: unknown` for a `claude-cli:` model | The probe allows 30s for the subprocess (see "Doctor probe timeout" above); a persistent `unknown` means the call genuinely failed or outran even that window — `classifyError` falls through to `unknown` for the adapter's abort message | Investigate directly: run the same model via `gbrain models doctor --json` or call `claude` by hand (e.g. not logged in, model unavailable) | agent | none | `gbrain models doctor --json` (one tiny call per model) |
-| A call bills through the Anthropic API or a cloud backend instead of the local session | The adapter deletes `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` and every `CLAUDE_CODE_USE_*` backend-switch flag from the subprocess env — this covers gbrain's own env leaking into the call. It does not inspect billing switches the installed `claude` CLI carries in its own config files | If billing looks wrong, check the `claude` CLI's own auth/billing configuration on this machine, not just gbrain's env. For intentional cloud routing, use the `anthropic` recipe instead | user | none | the `claude` CLI's own auth status on this machine |
+| `foresights models doctor` reports `chat` as `status: unknown` for a `claude-cli:` model | The probe allows 30s for the subprocess (see "Doctor probe timeout" above); a persistent `unknown` means the call genuinely failed or outran even that window — `classifyError` falls through to `unknown` for the adapter's abort message | Investigate directly: run the same model via `foresights models doctor --json` or call `claude` by hand (e.g. not logged in, model unavailable) | agent | none | `foresights models doctor --json` (one tiny call per model) |
+| A call bills through the Anthropic API or a cloud backend instead of the local session | The adapter deletes `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` and every `CLAUDE_CODE_USE_*` backend-switch flag from the subprocess env — this covers foresights's own env leaking into the call. It does not inspect billing switches the installed `claude` CLI carries in its own config files | If billing looks wrong, check the `claude` CLI's own auth/billing configuration on this machine, not just foresights's env. For intentional cloud routing, use the `anthropic` recipe instead | user | none | the `claude` CLI's own auth status on this machine |

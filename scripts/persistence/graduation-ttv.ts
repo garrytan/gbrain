@@ -1,7 +1,7 @@
 /**
  * Time-to-value for engine graduation (PGLite -> Postgres): every command an
- * agent runs from the first `gbrain migrate --to postgres` (which prints the
- * plan and exits 3) to a green `gbrain doctor --no-migrate --json`, with wall
+ * agent runs from the first `foresights migrate --to postgres` (which prints the
+ * plan and exits 3) to a green `foresights doctor --no-migrate --json`, with wall
  * time, the run's per-phase timings and query latency on both engines.
  *
  *   DATABASE_URL=postgresql://...:5432/gbrain_test \
@@ -11,7 +11,7 @@
  *
  * The fixture comes from graduation-fixture.ts (cached; provisioning is
  * excluded from the clock, as is creating the target database). With
- * `--live-serve` a resident `gbrain serve` (stdio) owns the source when the
+ * `--live-serve` a resident `foresights serve` (stdio) owns the source when the
  * flow starts; the report records whether the run's marker hand-off sufficed
  * or a manual stop was needed (target: none).
  *

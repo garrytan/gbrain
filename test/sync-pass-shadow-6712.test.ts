@@ -1,7 +1,7 @@
 /**
  * #6712 PR 4a: the read-only convergence shadow on a real managed brain (PGLite plus a Git checkout).
  *
- * Authoring gate: (1) protects \`gbrain sync --dry-run --json\`'s new \`convergence\` receipt and \`--redact-paths\`, and
+ * Authoring gate: (1) protects \`foresights sync --dry-run --json\`'s new \`convergence\` receipt and \`--redact-paths\`, and
  * the PR 4a promise that the shadow writes and admits nothing; (2) a shadow that writes a row, misreads a level (a
  * staged file, an uncommitted edit, a parser bump, a database-only edit), or leaks a path under redaction fails here;
  * (3) the pure classifier test cannot see the reads; (4) no seam: the CLI entry point and the library reads run as

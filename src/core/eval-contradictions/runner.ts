@@ -1,7 +1,7 @@
 /**
  * eval-contradictions/runner — the orchestrator.
  *
- * One run of `gbrain eval suspected-contradictions`:
+ * One run of `foresights eval suspected-contradictions`:
  *   1. Load queries from one of three sources (file, single, capture).
  *      --from-capture detects an empty eval_candidates table and exits 2.
  *   2. For each query, run hybridSearch (engine-side, embedding cost
@@ -145,7 +145,7 @@ function takeToMember(
     slug: take.page_slug,
     chunk_id: null,
     take_id: take.id,
-    // gbrain#4169: the per-page row number is what `takes supersede --row`
+    // foresights#4169: the per-page row number is what `takes supersede --row`
     // addresses. listActiveTakesForPages already SELECTs t.* so it rides
     // along for free; takeToMember just stopped dropping it.
     take_row_num: take.row_num,

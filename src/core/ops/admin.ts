@@ -141,7 +141,7 @@ const get_brain_identity: Operation = {
     // aggregate leak (the issue named only stats/health). Same ladder.
     const stats = await ctx.engine.getStats(diagnosticScope(ctx));
     // v0.42 self-upgrade: surface a pending update on the thin-client banner
-    // (bonus channel; the CLI stderr marker + `gbrain self-upgrade` are the
+    // (bonus channel; the CLI stderr marker + `foresights self-upgrade` are the
     // load-bearing surface). Cache-read-only, no network, fail-open.
     let update_available = false;
     let latest_version: string | null = null;
@@ -178,7 +178,7 @@ const get_brain_identity: Operation = {
  * First read-only diagnostic op exposed over HTTP MCP. Wraps the focused
  * thin-client check set in `src/commands/doctor.ts:doctorReportRemote()` and
  * returns the structured `DoctorReport` JSON verbatim. The matching client-
- * side renderer lives in `src/commands/remote.ts` (used by `gbrain remote
+ * side renderer lives in `src/commands/remote.ts` (used by `foresights remote
  * doctor`). Local doctor is unchanged — operators on the host still get the
  * full check set.
  *

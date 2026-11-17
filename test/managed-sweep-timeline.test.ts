@@ -9,7 +9,7 @@
  * 2. Fails when: the sweep writes `timeline_entries` with a raw batch insert,
  *    which the armed managed writer guard refuses
  *    (`writer_coordinator_required`) and which stopped the whole pass.
- * 3. extract-timeline-db covers `gbrain extract timeline --source db`; this
+ * 3. extract-timeline-db covers `foresights extract timeline --source db`; this
  *    covers the sweep that remote writes rely on.
  * 4. No production seam.
  *

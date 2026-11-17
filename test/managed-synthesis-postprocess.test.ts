@@ -817,13 +817,13 @@ test('#6757: three deferred passes in a row put a line on doctor persistence_req
     expect(valid.message).toContain(`3 passes in a row on source ${sourceId}`);
     expect(valid.message).toContain('the committed-outputs read');
     expect(valid.message).toContain('1 output(s) pending');
-    expect(valid.message).not.toContain('gbrain repair request-indexes');
+    expect(valid.message).not.toContain('foresights repair request-indexes');
     expect(valid.details).toMatchObject({ count: 0, postprocess_deferred: [expect.objectContaining({ source_id: sourceId, consecutive_passes: 3, read: 'committed_outputs', pending_outputs: 1 })] });
     await engine.executeRaw(`DROP INDEX ${PERSISTENCE_REQUEST_ID_INDEX.name}`);
     try {
       const missing = await requestIndexesCheck(engine);
       expect(missing.message).toContain(`${PERSISTENCE_REQUEST_ID_INDEX.name} is missing`);
-      expect(missing.message).toContain('gbrain repair request-indexes');
+      expect(missing.message).toContain('foresights repair request-indexes');
       expect(missing.message).toContain(`3 passes in a row on source ${sourceId}`);
     } finally { await buildIndexOnline(engine, 0, PERSISTENCE_REQUEST_ID_INDEX); }
     const next = await runPhaseSynthesize(engine, opts);
@@ -988,7 +988,7 @@ test('synthesis preserves non-outstanding publication refusals', async () => {
 
 /**
  * #8110: a postprocess that committed under an earlier local CLI writer registration settles after
- * `gbrain auth local-writer register cli --replace` revokes that registration, instead of re-deriving the page and
+ * `foresights auth local-writer register cli --replace` revokes that registration, instead of re-deriving the page and
  * failing revision_conflict on every pass; another (remote) principal still cannot read that receipt.
  */
 test('#8110: a committed postprocess settles after the local CLI writer is replaced; a remote principal still cannot read its receipt', async () => {

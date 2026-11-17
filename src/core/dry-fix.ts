@@ -1,7 +1,7 @@
 /**
  * dry-fix.ts — Auto-repair DRY violations surfaced by checkResolvable().
  *
- * Called by `gbrain doctor --fix`. Scans every skill in the manifest, locates
+ * Called by `foresights doctor --fix`. Scans every skill in the manifest, locates
  * matches of CROSS_CUTTING_PATTERNS, expands each match to its block
  * boundary, and replaces the block with a `> **Convention:** ...` reference
  * line. Writes are guarded:

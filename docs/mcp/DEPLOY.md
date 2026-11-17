@@ -1,25 +1,25 @@
-# Deploy GBrain Remote MCP Server
+# Deploy Foresights Remote MCP Server
 
-> `gbrain serve --http` ships full OAuth 2.1 (client credentials, auth code +
+> `foresights serve --http` ships full OAuth 2.1 (client credentials, auth code +
 > PKCE, refresh rotation, optional DCR), an embedded React admin dashboard at
 > `/admin`, scoped operations, and a live SSE activity feed. Legacy bearer
 > tokens also work: `verifyAccessToken` falls back to the `access_tokens`
 > table; tokens with no `scopes` grant carry `read+write+admin`,
-> while tokens minted with `gbrain auth create --scopes …` (or by
-> `gbrain bootstrap harness`) are honored at exactly their granted scopes.
+> while tokens minted with `foresights auth create --scopes …` (or by
+> `foresights bootstrap harness`) are honored at exactly their granted scopes.
 > Both the legacy fallback and the OAuth tables work on PGLite and Postgres
 > (both engine schemas carry `access_tokens`). See [SECURITY.md](../../SECURITY.md) for env vars and
 > tunable defaults.
 
-Access your brain from any device, any AI client. GBrain ships two transports:
-`gbrain serve` (stdio) for local agents, and `gbrain serve --http` for remote
+Access your brain from any device, any AI client. Foresights ships two transports:
+`foresights serve` (stdio) for local agents, and `foresights serve --http` for remote
 clients over OAuth 2.1. The recommended way to publish `serve --http` from your
-own computer is `gbrain mcp expose`, which puts it on your Tailscale tailnet
+own computer is `foresights mcp expose`, which puts it on your Tailscale tailnet
 with HTTPS and keeps it running as a user service — see
 [Use your brain from anywhere over MCP](../guides/remote-mcp.md).
 
 **Say to your agent:** *"use my brain over mcp"* — *"put my brain on
-tailscale"* — the `remote-mcp` skill runs `gbrain mcp expose` for you after
+tailscale"* — the `remote-mcp` skill runs `foresights mcp expose` for you after
 you confirm the printed plan.
 
 For **owner login, client registration, setup instructions, permission edits,
@@ -59,22 +59,22 @@ the OAuth request when issuing my owner login link."*
 ### Local stdio (zero setup)
 
 ```bash
-gbrain serve --surface starter --advertise verbs   # what new registrations pin; a bare serve defaults to the full catalog
+foresights serve --surface starter --advertise verbs   # what new registrations pin; a bare serve defaults to the full catalog
 ```
 
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
-On Claude Code, `gbrain setup claude-code` writes and verifies this registration
+On Claude Code, `foresights setup claude-code` writes and verifies this registration
 for you ([setup guide](../guides/setup.md)). No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
 `--surface full` serves every operation; `--advertise verbs` lists only the seven
 memory verbs and `request_tools` in tools/list, and `request_tools` returns any
-other tool's schema. A bare `gbrain serve` lists everything. For a client that cannot hold the full
+other tool's schema. A bare `foresights serve` lists everything. For a client that cannot hold the full
 catalog, `--surface verbs` exposes exactly the seven-verb memory protocol
 (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`,
 `delta` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) and `--surface
 starter` sits between (40 ops: the verbs plus the daily-driver set).
 
-On a Postgres brain, `gbrain serve --cli-socket` (off by default; or
-`gbrain config set serve.cli_socket true`) also lets this serve answer the
+On a Postgres brain, `foresights serve --cli-socket` (off by default; or
+`foresights config set serve.cli_socket true`) also lets this serve answer the
 same user's CLI `search`, `query`, `get` and op-backed `recall` over a
 private Unix socket, so agents that shell out to the CLI skip a cold database
 connection per call ([warm CLI socket](../guides/cli-socket.md)).
@@ -83,7 +83,7 @@ connection per call ([warm CLI socket](../guides/cli-socket.md)).
 listing fewer tools to the agent, set `mcp.advertised_surface`:
 
 ```bash
-gbrain config set mcp.advertised_surface verbs   # list the 7 verbs; everything else stays callable
+foresights config set mcp.advertised_surface verbs   # list the 7 verbs; everything else stays callable
 ```
 
 Unset is the recommended default. In a held-out agent benchmark, listing only
@@ -97,10 +97,10 @@ instructions tell the agent how many more tools are callable. On stdio,
 `request_tools` with `tools: [names]` returns their schemas and adds them to
 that session's list (the server sends `tools/list_changed`). On the OAuth HTTP
 server, a client that set its own surface (`request_tools` with `surface`, or
-`gbrain auth rescope-client`) has that surface listed in full, and a client an
-install default set up (`gbrain auth clients` shows `full (set by install)`)
+`foresights auth rescope-client`) has that surface listed in full, and a client an
+install default set up (`foresights auth clients` shows `full (set by install)`)
 lists the memory verbs and `request_tools` whatever the server's `--advertise`
-or `mcp.advertised_surface` says; `gbrain auth rescope-client <client_id>
+or `mcp.advertised_surface` says; `foresights auth rescope-client <client_id>
 --surface full` lists everything for it. Unset advertises the whole callable
 set.
 
@@ -114,7 +114,7 @@ the MCP handshake; it does not inspect or reveal private pages.
 
 In the MCP host's server environment, set `GBRAIN_SOURCE` to the intended
 registered source id, or remove it to use normal source resolution and its
-configured federation rules. Inspect registered ids with `gbrain sources list`
+configured federation rules. Inspect registered ids with `foresights sources list`
 on the brain host, then restart the MCP server and check a known world-visible
 page in the intended source. Removing the variable is not unrestricted access:
 dotfiles and other source-resolution settings still apply. No memory writes or
@@ -127,16 +127,16 @@ source binding that still misses a known visible page, retain the version,
 engine, schema pack, effective source/grants, and retrieval metadata for a
 sanitized reproduction rather than broadening permissions.
 
-### Tailscale (recommended): `gbrain mcp expose`
+### Tailscale (recommended): `foresights mcp expose`
 
 ```bash
-gbrain mcp expose            # tailnet-only HTTPS: your own devices
-gbrain mcp expose --funnel   # public HTTPS on the same name: cloud agents (Grok Bot, Muse, ChatGPT, …)
-gbrain mcp expose --status   # re-probe the receipt, service and health
+foresights mcp expose            # tailnet-only HTTPS: your own devices
+foresights mcp expose --funnel   # public HTTPS on the same name: cloud agents (Grok Bot, Muse, ChatGPT, …)
+foresights mcp expose --status   # re-probe the receipt, service and health
 ```
 
 One command on the brain host: installs Tailscale if needed (after a consent
-prompt), signs in, publishes `gbrain serve --http` on your MagicDNS name with
+prompt), signs in, publishes `foresights serve --http` on your MagicDNS name with
 Tailscale-terminated TLS, provisions the admin bootstrap token in a private
 file, installs a launchd / systemd user service so the server survives
 reboots, and prints the MCP URL
@@ -148,7 +148,7 @@ and the troubleshooting table: [remote MCP guide](../guides/remote-mcp.md).
 ```
 Your AI client
   → https://your-machine.your-tailnet.ts.net/mcp   (Tailscale terminates TLS)
-  → gbrain serve --http on 127.0.0.1:3131           (user service)
+  → foresights serve --http on 127.0.0.1:3131           (user service)
   → Postgres or PGLite
 ```
 
@@ -158,7 +158,7 @@ handoff, provision through the running server (the only way on PGLite while
 `serve` is live):
 
 ```bash
-gbrain mcp grant agent-example --harness codex --profile memory-writer --source default \
+foresights mcp grant agent-example --harness codex --profile memory-writer --source default \
   --url https://your-machine.your-tailnet.ts.net/mcp \
   --admin-token-file ~/.gbrain/serve/admin-token --credentials-out /private/agent-example.json
 ```
@@ -167,7 +167,7 @@ gbrain mcp grant agent-example --harness codex --profile memory-writer --source 
 
 Any HTTPS front works: ngrok, Cloudflare Tunnel, or a cloud host (Fly.io,
 Railway) for a brain that must answer while your laptop is closed —
-[ALTERNATIVES.md](ALTERNATIVES.md) compares them. You run `gbrain serve --http`
+[ALTERNATIVES.md](ALTERNATIVES.md) compares them. You run `foresights serve --http`
 yourself and pass `--public-url` whenever the server is reachable at anything
 other than `http://localhost:<port>` so the OAuth issuer in discovery metadata
 matches what clients hit (RFC 8414 §3.3).
@@ -181,7 +181,7 @@ ngrok http 3131 --url your-brain.ngrok.app
 Keep the tunnel running in its own terminal, then start the brain server once:
 
 ```bash
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
+foresights serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ```
 
 Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
@@ -202,25 +202,25 @@ See the [OAuth 2.1 setup](#oauth-21-setup) section below.
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
   → HTTPS front (Tailscale name, ngrok domain, or cloud host)
-  → gbrain serve --http  (MCP bearer access; separate owner administration)
+  → foresights serve --http  (MCP bearer access; separate owner administration)
   → Postgres or PGLite
 ```
 
 This requires:
-1. A machine running `gbrain serve --http` (works on both PGLite and Postgres
+1. A machine running `foresights serve --http` (works on both PGLite and Postgres
    brains)
-2. An HTTPS front (Tailscale via `gbrain mcp expose`, ngrok, or a cloud host)
-3. A bearer token created via `gbrain auth create <name>`
+2. An HTTPS front (Tailscale via `foresights mcp expose`, ngrok, or a cloud host)
+3. A bearer token created via `foresights auth create <name>`
 
 Bearer tokens created without a `scopes` grant carry `read+write+admin` on
-the HTTP server; `gbrain auth create --scopes read,write` mints narrowed
+the HTTP server; `foresights auth create --scopes read,write` mints narrowed
 tokens.
 
 ## OAuth 2.1 Setup
 
 ### 1. Start the HTTP server
 
-If `gbrain mcp expose` already started the service, keep using it and its
+If `foresights mcp expose` already started the service, keep using it and its
 configured MCP URL. Continue to owner login or client registration; do not
 start another server or repeat the publishing step.
 
@@ -229,7 +229,7 @@ For a manually managed server, choose the HTTPS front and `--public-url` from
 starts one foreground process:
 
 ```bash
-gbrain serve --http --port 3131
+foresights serve --http --port 3131
 ```
 
 On first start in an interactive terminal, the server prints an **admin
@@ -258,18 +258,18 @@ and per-client config export.
 > Declared param keys are kept (intersected against the operation's spec); unknown
 > keys are counted but never named, and byte sizes round up to 1KB so size-probe
 > attacks can't binary-search secret content. Operators on a personal laptop who
-> want raw payloads back can pass `gbrain serve --http --log-full-params` (loud
+> want raw payloads back can pass `foresights serve --http --log-full-params` (loud
 > stderr warning fires at startup). Multi-tenant deployments should leave it on
 > the redacted default.
 
 ### Owner login links for AI agents
 
 **Say to the server-hosting or authorized administrator harness:** *"Give me
-the GBrain admin login link"*. The recommended command wraps the existing HTTP
+the Foresights admin login link"*. The recommended command wraps the existing HTTP
 mint endpoint:
 
 ```bash
-gbrain mcp admin login-link --url https://brain.example.com/mcp \
+foresights mcp admin login-link --url https://brain.example.com/mcp \
   --admin-token-file /absolute/private/admin-token --json
 ```
 
@@ -279,7 +279,7 @@ fresh tab or browser. Expired/restarted requests require a new connection from
 the native client; its PKCE verifier stays in that client. Full commands and
 recovery instructions: [MCP administration](ADMIN.md).
 
-When an authenticated owner asks **"Give me the GBrain admin login link"**,
+When an authenticated owner asks **"Give me the Foresights admin login link"**,
 use the existing single-use login flow. A static `/admin/` URL opens the login
 page; it does not authenticate the owner.
 
@@ -327,17 +327,17 @@ the live secret still matches.
 For a running server, use the owner HTTP CLI:
 
 ```bash
-gbrain mcp admin register agent-example \
+foresights mcp admin register agent-example \
   --redirect-uri https://client.example.com/oauth/callback \
   --token-endpoint-auth-method none --scopes read,write --source default \
   --url https://brain.example.com/mcp \
   --admin-token-file /absolute/private/admin-token --dry-run --json
 ```
 
-Review and repeat without `--dry-run`. Machine credentials use `gbrain mcp
+Review and repeat without `--dry-run`. Machine credentials use `foresights mcp
 grant … --credentials-out PRIVATE_FILE` instead. See [registration and
 setup](ADMIN.md#register-and-connect-a-client) for both flows. The legacy
-`gbrain auth register-client` command remains a local database-maintenance path;
+`foresights auth register-client` command remains a local database-maintenance path;
 do not open an already running PGLite brain through it.
 
 **Source-scoped clients.** Multi-source brains can scope a client's write
@@ -345,7 +345,7 @@ authority to one source and its read scope to a curated set with the
 `--source` and `--federated-read` flags:
 
 ```bash
-gbrain mcp grant dept-x-agent --harness generic --profile memory-writer \
+foresights mcp grant dept-x-agent --harness generic --profile memory-writer \
   --source dept-x --federated-read dept-x,shared,parent-canon \
   --url https://brain.example.com/mcp \
   --admin-token-file /absolute/private/admin-token \
@@ -357,10 +357,10 @@ land in `dept-x`. `--federated-read` controls the read axis independently;
 queries return rows from any of the listed sources. New registrations that omit
 both flags use source `default`; omission does not create an unscoped
 super-client. A client with no recorded source is backfilled to
-`source_id='default'` on `gbrain upgrade`. Within a source,
+`source_id='default'` on `foresights upgrade`. Within a source,
 slug-level write fencing is also available: `--bound-slug-prefixes p1/,p2/`
 rejects slug-mutating writes outside the listed prefixes (update later with
-`gbrain auth rescope-client <id> --bound-slug-prefixes <p1,p2|none>`).
+`foresights auth rescope-client <id> --bound-slug-prefixes <p1,p2|none>`).
 
 Host-repo wrappers can register programmatically:
 
@@ -379,7 +379,7 @@ For self-service client registration (Dynamic Client Registration, RFC 7591),
 start the server with `--enable-dcr`. DCR is off by default.
 
 **Say to your agent:** *"Start my brain's MCP server with self-service client
-registration — your agent runs `gbrain serve --http --enable-dcr`, and you
+registration — your agent runs `foresights serve --http --enable-dcr`, and you
 approve each new connection in the admin UI."*
 
 A self-registered client goes through three gates:
@@ -413,10 +413,10 @@ A self-registered client goes through three gates:
 To give a self-registered client more than `read write`, use the
 [owner permission-edit path](ADMIN.md#inspect-clients-and-edit-access)
 (or the admin dashboard's Agents page), then reconnect for fresh authorization.
-Alternatively, pre-register through `gbrain mcp admin register` with the intended
-scopes. The legacy `gbrain auth rescope-client` / `register-client` commands are
+Alternatively, pre-register through `foresights mcp admin register` with the intended
+scopes. The legacy `foresights auth rescope-client` / `register-client` commands are
 local database-maintenance paths; do not open a live PGLite database through them.
-`gbrain doctor` warns about active clients that hold a privileged scope but
+`foresights doctor` warns about active clients that hold a privileged scope but
 look self-registered.
 
 Native MCP clients register cleanly: `redirect_uris` may use an app custom
@@ -437,13 +437,13 @@ cannot request a longer-lived token than the server default unless you
 explicitly widen the window:
 
 ```bash
-gbrain config set oauth.dcr_ttl_min_seconds 600
-gbrain config set oauth.dcr_ttl_max_seconds 86400
+foresights config set oauth.dcr_ttl_min_seconds 600
+foresights config set oauth.dcr_ttl_max_seconds 86400
 ```
 
 ### 3. Expose the server
 
-**Tailscale (recommended).** `gbrain mcp expose` does this whole section for
+**Tailscale (recommended).** `foresights mcp expose` does this whole section for
 you — Tailscale install/login, `tailscale serve` (or `funnel`), the admin
 token file, a user service, and the health checks — and keeps the server on
 its default loopback bind, because Tailscale terminates TLS on the tailnet
@@ -460,16 +460,16 @@ configured owner credential; an expose-created file does not change it.
 machine, so the default bind is right there too:
 
 ```bash
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
+foresights serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ```
 
-**Bind explicitly only when the front is on another host.** `gbrain serve
+**Bind explicitly only when the front is on another host.** `foresights serve
 --http` defaults to `127.0.0.1`. To accept connections from a reverse proxy
 or tunnel agent running on a different machine (or a container), restart with
 `--bind`:
 
 ```bash
-gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://brain.example.com
+foresights serve --http --port 3131 --bind 0.0.0.0 --public-url https://brain.example.com
 ```
 
 When `--public-url` is set without `--bind`, a stderr WARN fires at
@@ -482,7 +482,7 @@ until you set the allowlist (see [SECURITY.md — CORS](../../SECURITY.md#cors))
 `--source-guard` is a stdio-lane flag: with `--http` it prints a warning and
 is ignored. HTTP writes are fenced by each token's scopes instead, so
 operators migrating from stdio mint narrowed tokens
-(`gbrain auth create <name> --scopes read`) rather than relying on the guard.
+(`foresights auth create <name> --scopes read`) rather than relying on the guard.
 
 For the ngrok alternative, start the tunnel after the server:
 
@@ -506,43 +506,43 @@ resource_metadata="<that URL>"`, so an MCP client pointed at
 fresh connection without any pasted URLs.
 
 **Dual-mode auth on `/mcp`.** The same route verifies OAuth 2.1 access
-tokens and `gbrain auth create` bearers (OAuth first, then the
+tokens and `foresights auth create` bearers (OAuth first, then the
 `access_tokens` fallback). The 401 + `resource_metadata` challenge is emitted
 by the MCP SDK middleware for ANY request lacking an `Authorization` header
 (RFC 9728 / MCP auth spec §5.1 discovery) and says nothing about whether a
 configured token works. A client status probe that omits the header will
 therefore report `needsAuth` / `authentication_required` even while the
 configured bearer succeeds. Judge auth from `whoami`
-(`transport: legacy|oauth`) or `gbrain auth test <url> --token <t>`; treat a
+(`transport: legacy|oauth`) or `foresights auth test <url> --token <t>`; treat a
 client's needsAuth flag as advisory unless the authenticated call itself
 returns 401 / `invalid_token`.
 
 #### Tailnet / LAN-only (no public tunnel)
 
 Two shapes work without exposing anything to the internet. In both, clients
-authenticate with `gbrain auth create` bearer tokens.
+authenticate with `foresights auth create` bearer tokens.
 
-**Tailscale Serve (HTTPS, tailnet-only).** This is what `gbrain mcp expose`
+**Tailscale Serve (HTTPS, tailnet-only).** This is what `foresights mcp expose`
 automates (plus the admin token file, the user service and the health
 checks). By hand: keep the default `127.0.0.1` bind, let Tailscale terminate
 TLS on the tailnet, and point `--public-url` at your MagicDNS name:
 
 ```bash
-gbrain serve --http --port 3131 --public-url https://your-machine.your-tailnet.ts.net
+foresights serve --http --port 3131 --public-url https://your-machine.your-tailnet.ts.net
 tailscale serve --bg 3131
 ```
 
 Clients on the tailnet use `https://your-machine.your-tailnet.ts.net/mcp`.
 The "--public-url is set but --bind is not" WARN is expected in this shape —
 Tailscale Serve forwards to loopback. `tailscale serve` stays inside your
-tailnet; `tailscale funnel` (or `gbrain mcp expose --funnel`) is public
+tailnet; `tailscale funnel` (or `foresights mcp expose --funnel`) is public
 exposure for cloud agents (see [ALTERNATIVES.md](ALTERNATIVES.md)).
 
 **Plain HTTP, bearer-only.** Bind the tailnet/LAN interface and omit
 `--public-url` entirely:
 
 ```bash
-gbrain serve --http --port 3131 --bind 100.x.y.z   # or --bind 0.0.0.0
+foresights serve --http --port 3131 --bind 100.x.y.z   # or --bind 0.0.0.0
 ```
 
 The OAuth issuer defaults to `http://localhost:3131`, which the MCP SDK
@@ -577,12 +577,12 @@ HTTP server; pass `--scopes read,write` at creation to narrow one.
 
 ### 1. Publish the server
 
-Tailscale (recommended): `gbrain mcp expose` (add `--funnel` for cloud
+Tailscale (recommended): `foresights mcp expose` (add `--funnel` for cloud
 clients) — [remote MCP guide](../guides/remote-mcp.md). ngrok alternative,
 see the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md); quick version:
 
 ```bash
-gbrain serve --http --port 8787
+foresights serve --http --port 8787
 brew install ngrok
 ngrok config add-authtoken YOUR_TOKEN
 ngrok http 8787 --url your-brain.ngrok.app  # Hobby tier for fixed domain
@@ -597,24 +597,24 @@ do not remove its lock. Postgres supports concurrent local maintenance.
 
 ```bash
 # Create a token for each client
-gbrain auth create "claude-desktop"
+foresights auth create "claude-desktop"
 
 # List all tokens
-gbrain auth list
+foresights auth list
 
 # Revoke a token
-gbrain auth revoke "claude-desktop"
+foresights auth revoke "claude-desktop"
 ```
 
 Tokens are per-client. Create one for each device/app. Names are not
-unique: `gbrain auth revoke "<name>"` revokes EVERY active token carrying
-that name — use `gbrain auth list` (shows each token's id and scopes) and
-`gbrain auth revoke --id <uuid>` to revoke exactly one. Tokens are stored
+unique: `foresights auth revoke "<name>"` revokes EVERY active token carrying
+that name — use `foresights auth list` (shows each token's id and scopes) and
+`foresights auth revoke --id <uuid>` to revoke exactly one. Tokens are stored
 SHA-256 hashed in your database.
 
 ### 3. Connect your AI client
 
-- **ChatGPT:** [setup guide](CHATGPT.md) (OAuth 2.1 + PKCE, requires `gbrain serve --http`)
+- **ChatGPT:** [setup guide](CHATGPT.md) (OAuth 2.1 + PKCE, requires `foresights serve --http`)
 - **Claude Code:** [setup guide](CLAUDE_CODE.md)
 - **Claude Desktop:** [setup guide](CLAUDE_DESKTOP.md) (must use GUI, not JSON config)
 - **Claude Cowork:** [setup guide](CLAUDE_COWORK.md)
@@ -623,7 +623,7 @@ SHA-256 hashed in your database.
 ### 4. Verify
 
 ```bash
-gbrain auth test \
+foresights auth test \
   https://your-machine.your-tailnet.ts.net/mcp \
   --token YOUR_TOKEN
 ```
@@ -632,7 +632,7 @@ gbrain auth test \
 
 ## Operations
 
-GBrain's operation catalog (100+ operations in `src/core/operations.ts`) is
+Foresights's operation catalog (100+ operations in `src/core/operations.ts`) is
 available subject to the selected surface, scope and operation-specific limits.
 Operations flagged `localOnly: true` are rejected over HTTP regardless of scope
 (see [Scopes and localOnly](#4-scopes-and-localonly) above). Code-inspection
@@ -643,28 +643,28 @@ indexes from a local installation on the brain host; a thin client cannot
 rebuild the host's indexes.
 
 **Several brains behind one tool catalog?** Give each server an identity so a
-connected agent can tell them apart: `gbrain config set mcp.instructions
+connected agent can tell them apart: `foresights config set mcp.instructions
 "<identity>"` rides the initialize response of every transport (stdio, OAuth
 HTTP, legacy bearer) under a `Deployment identity:` banner, appended below the
 canonical agent contract — no transport can weaken the contract. Restart
-`gbrain serve` after setting it (the response is built once per process);
+`foresights serve` after setting it (the response is built once per process);
 `GBRAIN_MCP_INSTRUCTIONS` in the serve process's environment overrides the
 configured value for that process, and a blank variable falls back to it.
 **Say to your agent:** *"Tell connected agents which brain this is"* — your
-agent runs `gbrain config set mcp.instructions "<identity>"`.
+agent runs `foresights config set mcp.instructions "<identity>"`.
 
 **Security note on file access:** the `file_*` operations being localOnly is
 the first line of defense; as defense-in-depth, `file_upload` also confines
 any caller that isn't verifiably the trusted local CLI to the working
-directory where `gbrain serve` was launched. Symlinks, `..` traversal, and
+directory where `foresights serve` was launched. Symlinks, `..` traversal, and
 absolute paths outside cwd are rejected, and page slugs and filenames are
 allowlist-validated (alphanumeric + hyphens; no control chars, RTL overrides,
-or backslashes). Local CLI callers (`gbrain files upload ...`) keep
+or backslashes). Local CLI callers (`foresights files upload ...`) keep
 unrestricted filesystem access since the user owns the machine.
 
 ## Status-only mode
 
-A `gbrain serve --http` that cannot open its brain (another serve holds the
+A `foresights serve --http` that cannot open its brain (another serve holds the
 PGLite lock, no brain is configured yet, the brain is missing or damaged, or
 the config is unreadable) keeps its port and answers in status-only mode
 instead of exiting, so a supervisor does not crash-loop it and every client
@@ -676,7 +676,7 @@ HTTP/1.1 503 Service Unavailable
 Content-Type: application/json
 Retry-After: 5
 
-{"status":"unavailable","reason":"unavailable","why":"This gbrain server cannot open its brain; its host operator can see why with `gbrain doctor`.","fix":{"argv":["gbrain","doctor","--json"],"command":"gbrain doctor --json","consent":[],"actor":"host_admin","next":"tell_user_to_run",...},"user_message":"The gbrain memory server is running but cannot open its brain, so memory is offline. ...","retry_after_s":5,"contract_version":1,"instance":"<nonce>"}
+{"status":"unavailable","reason":"unavailable","why":"This foresights server cannot open its brain; its host operator can see why with `foresights doctor`.","fix":{"argv":["gbrain","doctor","--json"],"command":"foresights doctor --json","consent":[],"actor":"host_admin","next":"tell_user_to_run",...},"user_message":"The foresights memory server is running but cannot open its brain, so memory is offline. ...","retry_after_s":5,"contract_version":1,"instance":"<nonce>"}
 ```
 
 - `/mcp` offers only `gbrain_status`; OAuth and admin routes answer `503` with
@@ -686,8 +686,8 @@ Retry-After: 5
 - On the host, stderr prints the reason and its fix ("Re-checking every 5 s;
   Ctrl-C to stop; `--fail-fast` to exit instead"), the marker
   `GBRAIN_HOME/serve-http-status-<port>.json` records it, and
-  `gbrain doctor --only harness_wiring` reports `serve_status_only` with the
-  fix. `gbrain mcp expose` reports `verify.local` as status-only with the
+  `foresights doctor --only harness_wiring` reports `serve_status_only` with the
+  fix. `foresights mcp expose` reports `verify.local` as status-only with the
   reason.
 - The server re-checks every 5 s and, once the brain opens, serves the full app
   on the same port. Clients reconnect: a client that connected during status
@@ -710,24 +710,24 @@ Retry-After: 5
   ([serve deep health](../ENGINES.md#serve-deep-health)).
 - To have serve restart itself when it stays unhealthy, set
   `GBRAIN_SERVE_RESTART_REQUIRED_EXIT_SECONDS=<n>` (at least `120`; in `~/.gbrain/env`
-  for the service `gbrain mcp expose` installs). After `n` continuous seconds
+  for the service `foresights mcp expose` installs). After `n` continuous seconds
   of `persistence_restart_required` it exits `69` (`serve_unhealthy_exit`,
   cleanup bounded at 5 s; at most 3 self-exits per hour) and the supervisor starts a fresh one
   ([unhealthy exit](../ENGINES.md#serve-unhealthy-exit)).
-- A second `gbrain serve --http` on a port another server already holds exits
+- A second `foresights serve --http` on a port another server already holds exits
   with `serve_port_in_use`. A Postgres connect failure keeps the degraded-engine
-  path (`GBRAIN_DB_ACCESS` marker, `gbrain db-repair`).
+  path (`GBRAIN_DB_ACCESS` marker, `foresights db-repair`).
 
 ## Deployment Options
 
-Tailscale via `gbrain mcp expose` is the recommended shape for a brain on your
+Tailscale via `foresights mcp expose` is the recommended shape for a brain on your
 own computer ([remote MCP guide](../guides/remote-mcp.md)). See
 [ALTERNATIVES.md](ALTERNATIVES.md) for how Tailscale Serve / Funnel compare
 with ngrok and always-on cloud hosts (Fly.io, Railway).
 
 ### Co-located Docker workloads (self-hosted Postgres)
 
-OAuth scopes and source scoping guard the `gbrain serve --http` path. They do
+OAuth scopes and source scoping guard the `foresights serve --http` path. They do
 NOT guard raw Postgres. If the brain's Postgres runs as a container on the same
 Docker host as other workloads (agent runtimes, n8n, staging fixtures), any
 container sharing Docker's default `bridge` network can open a direct DB
@@ -739,7 +739,7 @@ Network-zone the host so untrusted containers can never reach Postgres:
 
 ```
 Docker host
-├── gbrain-net          ← ONLY the brain's Postgres (+ gbrain serve, if containerized)
+├── gbrain-net          ← ONLY the brain's Postgres (+ foresights serve, if containerized)
 ├── agent-<id>-net      ← each untrusted agent runtime, isolated
 └── default bridge      ← no secret-bearing databases
 ```
@@ -772,13 +772,13 @@ directory that holds it together with the checkout and its parent: mount
 `GBRAIN_HOME`, or, when `GBRAIN_HOME` is inside the checkout, set
 `GBRAIN_COORDINATION_HOME` to a mounted absolute path outside the checkout in the
 container's environment (a `.env` file in the working directory cannot set it).
-`gbrain sources writer status --json` shows the resolved path and the rule that
+`foresights sources writer status --json` shows the resolved path and the rule that
 chose it under `onboarding.sources[].coordination_lock`; the full rule is in
 [topologies](../architecture/topologies.md#coordination-lock).
 
-### Run gbrain under a real init (tini / `--init`)
+### Run foresights under a real init (tini / `--init`)
 
-If `gbrain serve` is your container's entrypoint, it runs as PID 1 and
+If `foresights serve` is your container's entrypoint, it runs as PID 1 and
 inherits every orphaned process in the container. Prefer a real init so
 orphan exits are reaped by something built for the job:
 
@@ -790,10 +790,10 @@ ENTRYPOINT ["/usr/bin/tini", "--", "gbrain", "serve", "--http"]
 or at run time:
 
 ```bash
-docker run --init ... gbrain serve --http
+docker run --init ... foresights serve --http
 ```
 
-Without an init, gbrain installs its own PID-1 orphan reaper (Linux only):
+Without an init, foresights installs its own PID-1 orphan reaper (Linux only):
 a low-frequency `/proc` scan that `waitpid()`s zombies re-parented to it,
 so long-lived containers don't accumulate defunct entries in the PID table.
 It is fail-open and can be disabled with `GBRAIN_PID1_REAP=0` — but tini /
@@ -805,13 +805,13 @@ It is fail-open and can be disabled with `GBRAIN_PID1_REAP=0` — but tini /
 Include the Authorization header: `Authorization: Bearer YOUR_TOKEN`
 
 **"invalid_token" error**
-Run `gbrain auth list` to see active tokens.
+Run `foresights auth list` to see active tokens.
 
 **Client status shows needsAuth / authentication_required but tool calls succeed**
 The client probed `/mcp` without an `Authorization` header and read the
 spec-mandated discovery 401 as a failed login. Both OAuth tokens and legacy
 bearers are accepted on `/mcp`; confirm with `whoami` (`transport: legacy`)
-or `gbrain auth test <url> --token <t>` and only re-authenticate if THAT
+or `foresights auth test <url> --token <t>` and only re-authenticate if THAT
 call returns 401. See
 [Dual-mode auth on /mcp](#3-expose-the-server).
 
@@ -853,7 +853,7 @@ Turn on the loop-stall watchdog so a wedged process exits instead of
 spinning until the host runs out of memory:
 `export GBRAIN_SERVE_STALL_WATCHDOG_MS=60000` in the serve process's
 environment (systemd `Environment=`, launchd `EnvironmentVariables`), then
-restart `gbrain serve --http`. A watchdog thread checks the main event loop;
+restart `foresights serve --http`. A watchdog thread checks the main event loop;
 when the loop has not answered for that many milliseconds, it logs and sends
 SIGTERM, and 30 seconds later, if the loop is still stuck, SIGKILL, so a
 supervisor restarts the server. It is off by default (unset or `0`); values
@@ -870,7 +870,7 @@ logged.
 Remote servers must be added via Settings > Integrations, NOT
 `claude_desktop_config.json`. See [CLAUDE_DESKTOP.md](CLAUDE_DESKTOP.md).
 
-**`gbrain mcp expose` stops on a Tailscale error or `verify.tailnet: pending`**
+**`foresights mcp expose` stops on a Tailscale error or `verify.tailnet: pending`**
 The pre-checks (`tailscale_https_not_enabled`, `tailscale_funnel_not_enabled`
 — exit 2 with the admin-console URL, nothing published), the classified
 errors (`https_not_enabled`, `funnel_not_enabled`, `needs_operator`,
@@ -889,7 +889,7 @@ service/`--status` checks are tabled in the
 | put_page | 100-500ms | Write + trigger search_vector update |
 | get_stats | < 100ms | Aggregate query |
 
-**Note:** `gbrain serve --http` has OAuth 2.1 + the admin dashboard baked
+**Note:** `foresights serve --http` has OAuth 2.1 + the admin dashboard baked
 into the binary. The custom HTTP wrapper pattern (see
 [voice recipe](../../recipes/twilio-voice-brain.md)) is supported for
 teams that need bespoke middleware, but for most remote deployments the

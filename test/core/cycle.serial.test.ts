@@ -190,7 +190,7 @@ describe('runCycle — dryRun propagates to every phase', () => {
     // Maintenance should audit backlink gaps but not run the legacy fixer that
     // appends "Referenced in" timeline entries into entity pages. The graph
     // extractor/auto-link path is the canonical link store; filesystem backlink
-    // fixes are still available through `gbrain check-backlinks fix` when a
+    // fixes are still available through `foresights check-backlinks fix` when a
     // human explicitly asks for them.
     expect(backlinksCalls.at(-1)?.action).toBe('check');
     expect(backlinksCalls.at(-1)?.dryRun).toBe(false);

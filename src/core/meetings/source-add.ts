@@ -34,7 +34,7 @@ export function chooseMeetingsRecord(sourceId: string, requested: 'auto' | Meeti
   if (requested === 'auto') return { record: 'database', dir: null };
   throw new OperationError('invalid_params',
     dir ? `--record git needs --dir inside a Git checkout; ${dir} is not in one.` : '--record git needs --dir: the Git checkout directory the pages are committed to.',
-    `Create or choose a directory inside a Git checkout that no other source uses (for example: git init ~/brain-meetings), then run gbrain sources add ${sourceId} --kind ${kind} --record git --dir <that directory>. Or leave out --record to keep the record in the database.`);
+    `Create or choose a directory inside a Git checkout that no other source uses (for example: git init ~/brain-meetings), then run foresights sources add ${sourceId} --kind ${kind} --record git --dir <that directory>. Or leave out --record to keep the record in the database.`);
 }
 
 /** The `sources.config` a new meetings source is registered with. Only non-default tuning keys are written. */

@@ -1755,5 +1755,5 @@ export function deliveryVersionSkewWarning(
     ? typeof result === 'object' && result !== null && 'delivery' in result
     : !!retrievalMeta && 'delivery' in retrievalMeta;
   if (present) return null;
-  return `warning: the server ignored return_unit (evidence delivery needs gbrain server v${EVIDENCE_DELIVERY_MIN_SERVER_VERSION} or newer); results are plain chunks.`;
+  return `warning: the server ignored return_unit (evidence delivery needs foresights server v${EVIDENCE_DELIVERY_MIN_SERVER_VERSION} or newer); results are plain chunks.`;
 }

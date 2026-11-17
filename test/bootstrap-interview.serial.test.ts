@@ -480,10 +480,10 @@ describe('routeProviderKeyToConfig (0600 config sink)', () => {
     expect(r.message).not.toContain('xoxb');
   });
 
-  test('missing config → agent-readable "run gbrain init first" error', () => {
+  test('missing config → agent-readable "run foresights init first" error', () => {
     const r = routeProviderKeyToConfig('sk-ant-abc123');
     expectErr(r, 'config_missing');
-    expect(r.message).toContain('gbrain init');
+    expect(r.message).toContain('foresights init');
     expect(existsSync(configPath())).toBe(false);
   });
 });

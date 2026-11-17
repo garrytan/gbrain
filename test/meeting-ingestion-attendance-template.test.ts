@@ -48,7 +48,7 @@ test('a meeting page written from the skill template yields canonical attendance
   const parsed = parseMarkdown(page, `${meeting}.md`);
   expect(parsed.frontmatter.attendees).toEqual(people);
   const body = `${parsed.compiled_truth}\n${parsed.timeline}`;
-  // Auto-link always runs with a pack; gbrain-base-v2 is the one `gbrain init` sets.
+  // Auto-link always runs with a pack; gbrain-base-v2 is the one `foresights init` sets.
   const pack = (await loadResolvedPackByName('gbrain-base-v2')).manifest;
 
   const db = await extractPageLinks(meeting, body, parsed.frontmatter, 'meeting', resolver, { targetType: slug => pageTypes.get(slug), pack });

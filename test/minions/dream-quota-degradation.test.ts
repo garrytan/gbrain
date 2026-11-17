@@ -18,7 +18,7 @@
  *      Code-truth note vs the TODO's wording ("one skip per remaining
  *      transcript"): the REFUSED transcript gets a skip too — N transcripts
  *      → N skips, 1 message-form + (N-1) latch-form.
- *   3. `gbrain agent run --fanout-manifest` (src/commands/agent.ts): a
+ *   3. `foresights agent run --fanout-manifest` (src/commands/agent.ts): a
  *      mid-fanout refusal cancels the WHOLE tree (aggregator + already-
  *      submitted children, via cancelJob's recursive cascade) and the CLI
  *      exits 1.
@@ -373,7 +373,7 @@ describe('synthesize phase — admission-quota latch (C3.2)', () => {
   }, 60_000);
 });
 
-// ── consumer 3: `gbrain agent run --fanout-manifest` ─────────────────────
+// ── consumer 3: `foresights agent run --fanout-manifest` ─────────────────────
 
 function writeManifest(dir: string, prompts: string[]): string {
   const manifestPath = path.join(dir, 'manifest.json');

@@ -198,7 +198,7 @@ export async function searchWithoutEmbeddings(
     pushDegraded(degraded, 'embed_unavailable', 'embedding_disabled');
     warnOncePerProcess(
       'search-vector-leg-opted-out',
-      '[gbrain] embeddings are off on this brain by choice (embedding_disabled), so search is keyword-only and no query text is sent to an embedding provider. If the user wants semantic search, `gbrain doctor --json` names the enable command; turning it on needs their consent.',
+      '[foresights] embeddings are off on this brain by choice (embedding_disabled), so search is keyword-only and no query text is sent to an embedding provider. If the user wants semantic search, `foresights doctor --json` names the enable command; turning it on needs their consent.',
     );
   } else if (!opts?.decide?.keywordOnly) {
     pushDegraded(degraded, 'embed_unavailable', 'no_provider');
@@ -212,7 +212,7 @@ export async function searchWithoutEmbeddings(
       const reason = diag.ok ? 'provider_unreachable' : (diag.reason ?? 'provider_unreachable');
       warnOncePerProcess(
         'search-vector-leg-unavailable',
-        `[gbrain] vector search unavailable (${reason}) — results are keyword-only. Run \`gbrain doctor\` to diagnose.`,
+        `[foresights] vector search unavailable (${reason}) — results are keyword-only. Run \`foresights doctor\` to diagnose.`,
       );
     } catch {
       // Fail-open like every sibling stage: the warning is best-effort and a

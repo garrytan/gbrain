@@ -1,9 +1,9 @@
 # Test audit — LANE=patterns (cross-cutting sweep over `test/**`)
 
-Repo: garrytan/gbrain @ `2ede415` (v0.59.11.0). Read-only lane; no edits committed. All mutation
+Repo: aimonk2025/gbrain @ `2ede415` (v0.59.11.0). Read-only lane; no edits committed. All mutation
 probes were reverted with `git checkout -- .`; `git status --short` was empty after every batch.
 
-Method: openclaw `test-audit` skill (value bar, retention bar, candidate-evidence fields), gbrain
+Method: openclaw `test-audit` skill (value bar, retention bar, candidate-evidence fields), foresights
 `AGENTS.md`/`docs/TESTING.md` "Coverage responsibilities before consolidation" (shared PGLite/Postgres
 scenarios are NOT duplicate coverage; name a surviving owner for the same contract AND boundary).
 Scanners: `~/.capy/work/test-audit/scan.py`, `scan2.py` (raw output `scan.json`, `scan2.json`,
@@ -72,7 +72,7 @@ already fails `bun run typecheck` (tsconfig includes `src` and `test`) and every
 | test/operations-embedding-column.test.ts | 2× `exists` | subsequent tests in the same describes dereference the op | 719 |
 | test/search/query-op-autocut.test.ts, query-op-adaptive-return.test.ts | `query op exists` | same files | 346/395 |
 | test/helpers/agent-harness.unit.test.ts | `resolve*Binary returns a string or null`, `hasHermesAuth returns a boolean` (tautological unions) | none needed (helper smoke) | 448 |
-- **Probe F (key finding):** made `runFeatures` throw at entry → `test/features.test.ts` + `test/features-recipe-secrets.test.ts` **19 pass / 0 fail**. `gbrain features` has no behavioral test at all; the three probes give false confidence (one is literally named "covers all 7 recipes").
+- **Probe F (key finding):** made `runFeatures` throw at entry → `test/features.test.ts` + `test/features-recipe-secrets.test.ts` **19 pass / 0 fail**. `foresights features` has no behavioral test at all; the three probes give false confidence (one is literally named "covers all 7 recipes").
 - **Probe E:** `transcribe` throwing → the 3 typeof probes passed; the 2 real tests failed.
 - **Unlocks:** ≈36 tests, ≈180–220 test LOC, one whole file (`code-callers-cli.test.ts`). ms: small (per-test ~0; whole-file deletion of code-callers-cli saves ~191 ms).
 - **Risk:** low, except `features`: **action there = rewrite at boundary** (a real `runFeatures(engine, ['--json'])` PGLite test) before deleting the probes. Everywhere else: delete.
@@ -164,6 +164,6 @@ Orphan opt-in gates (skip-only in every CI lane; per TESTING.md a skip is not ev
 | Move-lane (orphan opt-in gates) | 8 files | 0 | 0 | ~5.0 s of skip-only slots (overlaps C8 by 3.4 s) |
 
 Bottom line: the pattern sweep finds a modest, high-confidence batch (~700 test LOC, ~27 prod LOC, a few seconds of
-CI) rather than a large one — gbrain's "zero-expect" and "duplicate" files are overwhelmingly deliberate shared-scenario
-engine parity. The most valuable finding is not a deletion: `gbrain features` has no behavioral test (probe F), and
+CI) rather than a large one — foresights's "zero-expect" and "duplicate" files are overwhelmingly deliberate shared-scenario
+engine parity. The most valuable finding is not a deletion: `foresights features` has no behavioral test (probe F), and
 the SIGPIPE lock-release path points at a nonexistent E2E owner (C9).

@@ -70,7 +70,7 @@ export interface ConsolidatePhaseOpts {
   /** Minimum age (ms) of the OLDEST fact in a bucket before consolidation. Default 24h. */
   minOldestAgeMs?: number;
   sourceId?: string;
-  /** `gbrain dream --phase consolidate --once`: run even when `cycle.consolidate.enabled` is false. */
+  /** `foresights dream --phase consolidate --once`: run even when `cycle.consolidate.enabled` is false. */
   once?: boolean;
 }
 
@@ -84,7 +84,7 @@ export const CONSOLIDATE_ENABLED_KEY = 'cycle.consolidate.enabled';
 async function disabledSkip(engine: BrainEngine, opts: ConsolidatePhaseOpts): Promise<PhaseResult | null> {
   if (opts.once || !/^\s*(false|0|off|no)\s*$/i.test(await engine.getConfig(CONSOLIDATE_ENABLED_KEY).catch(() => null) ?? '')) return null;
   return { phase: 'consolidate', status: 'skipped', duration_ms: 0, summary: `consolidate skipped: ${CONSOLIDATE_ENABLED_KEY}=false`,
-    details: { reason: 'disabled', enable_hint: `gbrain config set ${CONSOLIDATE_ENABLED_KEY} true` } };
+    details: { reason: 'disabled', enable_hint: `foresights config set ${CONSOLIDATE_ENABLED_KEY} true` } };
 }
 
 /** At most this many failed buckets are listed in `details.bucket_failures`; `buckets_failed` counts them all. */
@@ -154,7 +154,7 @@ async function writeValidUntilChain(tx: BrainEngine, cluster: FactRow[]): Promis
 /**
  * #5363: parse `cycle.consolidate.cluster_threshold`. A cosine similarity in
  * (0, 1]; lower values merge more facts into one take. Throws on anything
- * else so `gbrain config set` can refuse it.
+ * else so `foresights config set` can refuse it.
  */
 export function parseClusterThreshold(value: string): number {
   const n = Number(value.trim());
@@ -505,7 +505,7 @@ function clusterTie(cluster: FactRow[], claims: Map<number, ClaimShape>): SameIn
 
 /**
  * Marks the cluster consolidated into `takeId` and closes its chain, recording each member's before-state as the cluster's
- * consolidation generation first (GBRA-161 PR 2), so `gbrain repair generations --kind consolidation` can reopen it.
+ * consolidation generation first (GBRA-161 PR 2), so `foresights repair generations --kind consolidation` can reopen it.
  */
 async function closeCluster(tx: BrainEngine, bucket: { source_id: string; entity_slug: string }, cluster: FactRow[], takeId: number): Promise<void> {
   const before = await factPreimages(tx, bucket.source_id, cluster.map(f => f.id));
@@ -527,7 +527,7 @@ function heldCluster(bucket: { source_id: string; entity_slug: string }, tie: Sa
     fact_ids: tie.ids, fix: { ask_user: true, argv: ['gbrain', 'forget', '<FACT_ID>'], consent: [], actor: 'agent', requires_exclusive: false,
       inputs: [{ name: 'FACT_ID', how: `One of facts ${tie.ids.join(', ')}: the statement the user says is no longer current; for exact duplicates, any one of them.` }],
       why: 'Consolidation cannot order statements of one metric at one effective time, so it left the cluster unchanged; forgetting the stale one lets the next consolidate run promote the rest.',
-      user_message: `Facts ${tie.ids.join(', ')} on ${bucket.entity_slug} state ${claim} for the same effective time (${validFrom}), and gbrain cannot tell which one is current, so it left them unconsolidated. Which one should stay? The other is forgotten, and the next consolidate run promotes the cluster.` } };
+      user_message: `Facts ${tie.ids.join(', ')} on ${bucket.entity_slug} state ${claim} for the same effective time (${validFrom}), and foresights cannot tell which one is current, so it left them unconsolidated. Which one should stay? The other is forgotten, and the next consolidate run promotes the cluster.` } };
 }
 
 /** The typed-claim columns of a fact (FactRow does not carry them). */

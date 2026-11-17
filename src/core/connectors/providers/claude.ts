@@ -252,11 +252,11 @@ export const claudeProvider: ChatHistoryProvider = {
       'Connect Claude with your browser session cookie:',
       '  1. Open https://claude.ai in a browser where you are logged in.',
       '  2. Open DevTools → Application → Cookies → claude.ai; copy the `sessionKey` value.',
-      '  3. Run: gbrain connectors auth claude --cookie -   (paste `sessionKey=<value>`, then Ctrl-D)',
+      '  3. Run: foresights connectors auth claude --cookie -   (paste `sessionKey=<value>`, then Ctrl-D)',
       '',
       'Your cookie is stored only on this machine at ~/.gbrain/connectors/claude.json (0600)',
       'and is sent only to claude.ai. If a sync is blocked, use the official export',
-      '(Settings → Privacy → Export data) and `gbrain transcripts ingest conversations.json`.',
+      '(Settings → Privacy → Export data) and `foresights transcripts ingest conversations.json`.',
     ].join('\n');
   },
 };

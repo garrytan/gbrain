@@ -2,13 +2,13 @@
 /**
  * Q2 typing units: development dumps and identity tables (development data only).
  *
- *   bun scripts/q2-typing-dev.ts dump --evals <gbrain-evals checkout> --root <gbrain tree> \
+ *   bun scripts/q2-typing-dev.ts dump --evals <gbrain-evals checkout> --root <foresights tree> \
  *     --phrasing A|A2|A3|<dev phrasing JSON> [--seeds 3,5] [--units U1,U3|none] --out <dump.json>
  *   bun scripts/q2-typing-dev.ts compare --base <dump.json> --arm <dump.json> [--json]
- *   bun scripts/q2-typing-dev.ts world-v1 --evals <gbrain-evals checkout> --root <gbrain tree> [--units U1,U3|none] [--out <edges.json>]
+ *   bun scripts/q2-typing-dev.ts world-v1 --evals <gbrain-evals checkout> --root <foresights tree> [--units U1,U3|none] [--out <edges.json>]
  *
  * `dump` renders the temporal-edges world (gbrain-evals eval/generators/temporal-edges-gen.ts, E5 probe people
- * included) for each development seed, writes every page through `put_page` on in-memory PGLite using the gbrain
+ * included) for each development seed, writes every page through `put_page` on in-memory PGLite using the foresights
  * tree at `--root` (a checkout, a worktree or a gbrain-evals overlay), and records per person page: the derived link
  * rows (type, source, tense, context), the link_transitions rows, and what a default `get_links` returns.
  * `--units` (only for a tree that has src/core/link-typing-units.ts) runs with that typing-unit set instead of

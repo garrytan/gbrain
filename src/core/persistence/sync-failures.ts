@@ -43,7 +43,7 @@ export interface ManagedSyncFailure {
    * (a receipt from before #6643); the victim is then the only request named.
    */
   root_cause?: ManagedSyncRootCause;
-  /** #6712 PR 3 (L7): the gbrain version that recorded the failure; absent on failures recorded before it was kept. */
+  /** #6712 PR 3 (L7): the foresights version that recorded the failure; absent on failures recorded before it was kept. */
   gbrain_version?: string;
 }
 export interface ManagedSyncRootCause { request_id: string | null; slug: string | null; state: string | null; code: string | null; message: string | null;
@@ -153,7 +153,7 @@ export async function clearSettledManagedSyncFailures(engine: BrainEngine, run: 
 export interface ManagedFailureAcknowledgement { cleared: ManagedSyncFailure[]; refused: Array<{ failure: ManagedSyncFailure; reason: string }> }
 
 /**
- * #6288: `gbrain sync --source <id> --acknowledge-managed <request_id|path>` (host CLI only). Removes the matching recorded
+ * #6288: `foresights sync --source <id> --acknowledge-managed <request_id|path>` (host CLI only). Removes the matching recorded
  * failures only when the imported state already settles them; anything else is refused by reason, so no content is skipped.
  */
 export async function acknowledgeManagedSyncFailures(engine: BrainEngine, run: ManagedSyncImported, selector: string): Promise<ManagedFailureAcknowledgement> {

@@ -1,5 +1,5 @@
 /**
- * GBRA-224 W1: which release `gbrain upgrade` installs. The channel comes from `--channel`, then
+ * GBRA-224 W1: which release `foresights upgrade` installs. The channel comes from `--channel`, then
  * GBRAIN_RELEASE_CHANNEL, then `self_upgrade.channel`, then stable (core/self-upgrade.ts resolveReleaseChannel).
  * Alpha keeps the install method's own path (null target); stable installs exactly the evidence-backed release
  * (core/stable-channel.ts), never moves below the running build except off a version the record withdrew, and
@@ -60,18 +60,18 @@ export async function channelTarget(args: readonly string[], oldVersion: string,
   const plan = await planChannelUpgrade(args, oldVersion);
   if (plan.kind === 'invalid' || plan.kind === 'stable_failure') { refuse(plan, oldVersion, json); return 'stop'; }
   if (plan.kind === 'alpha') return null;
-  if (plan.kind === 'stable_current') { console.log(`Already on the stable channel's release: gbrain ${oldVersion}.`); return 'stop'; }
+  if (plan.kind === 'stable_current') { console.log(`Already on the stable channel's release: foresights ${oldVersion}.`); return 'stop'; }
   if (plan.kind === 'stable_ahead') {
-    console.log(`gbrain ${oldVersion} is newer than the stable channel's release (${plan.version}); the stable channel never downgrades. Nothing was changed.`);
+    console.log(`foresights ${oldVersion} is newer than the stable channel's release (${plan.version}); the stable channel never downgrades. Nothing was changed.`);
     return 'stop';
   }
   console.log(plan.withdrawn
-    ? `gbrain ${oldVersion} was withdrawn from the stable channel (known_bad in the stable record); installing the current stable release, gbrain ${plan.target.version}.`
-    : `Stable channel: installing gbrain ${plan.target.version} (promoted after its gates passed on this exact release).`);
+    ? `foresights ${oldVersion} was withdrawn from the stable channel (known_bad in the stable record); installing the current stable release, foresights ${plan.target.version}.`
+    : `Stable channel: installing foresights ${plan.target.version} (promoted after its gates passed on this exact release).`);
   return plan.target;
 }
 
-/** `gbrain upgrade --dry-run` (without --restart-only): the effective channel, where it came from and what would install. */
+/** `foresights upgrade --dry-run` (without --restart-only): the effective channel, where it came from and what would install. */
 export async function runUpgradeDryRun(args: readonly string[], json: boolean): Promise<boolean> {
   if (!args.includes('--dry-run')) return false;
   const plan = await planChannelUpgrade(args);
@@ -85,9 +85,9 @@ export async function runUpgradeDryRun(args: readonly string[], json: boolean): 
   console.log(`Channel: ${plan.resolution.channel} (from ${sourceLabel(plan.resolution)})`);
   console.log(plan.kind === 'alpha'
     ? 'Would update through the install method to the newest published release.'
-    : plan.kind === 'stable_install' ? `Would install gbrain ${target}${plan.withdrawn ? `, replacing the withdrawn ${VERSION}` : ''}.`
-    : plan.kind === 'stable_current' ? `Already on the stable release, gbrain ${VERSION}.`
-    : `gbrain ${VERSION} is ahead of stable (${target}); nothing would change.`);
+    : plan.kind === 'stable_install' ? `Would install foresights ${target}${plan.withdrawn ? `, replacing the withdrawn ${VERSION}` : ''}.`
+    : plan.kind === 'stable_current' ? `Already on the stable release, foresights ${VERSION}.`
+    : `foresights ${VERSION} is ahead of stable (${target}); nothing would change.`);
   console.log('Dry run: nothing was changed.');
   return true;
 }

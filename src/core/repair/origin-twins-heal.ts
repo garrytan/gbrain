@@ -4,7 +4,7 @@
  * inline body, readable file, compatible ids, one visibility and trust tier, no slug-keyed withdrawals, no file at a
  * twin's own slug path), nothing is ambiguous. So right after a managed sync of a source finishes and releases its drain
  * lease, this re-reads each such hold's group from the database and the file at the last synced commit, re-runs the
- * verdict, and merges each twin into the canonical page through the same coordinated write `gbrain repair origin-twins`
+ * verdict, and merges each twin into the canonical page through the same coordinated write `foresights repair origin-twins`
  * applies (`resolveOriginTwin`). Each resolved file is scheduled for re-screen, so the next sync imports it.
  *
  * Guards, as #6865's slug heal (slug-autoheal.ts): skipped on dry runs and non-ok results, under remote submission
@@ -32,7 +32,7 @@ const FALSE = /^(false|0|off|no)$/i;
 const TRUE = /^(true|1|on|yes)$/i;
 const OK_STATUSES: ReadonlyArray<SyncResult['status']> = ['synced', 'first_sync', 'up_to_date'];
 
-/** `gbrain config set` refusal text for a value that is not a boolean; null when it is one. */
+/** `foresights config set` refusal text for a value that is not a boolean; null when it is one. */
 export function originAutoResolveValueRefusal(value: string): string | null {
   return TRUE.test(value.trim()) || FALSE.test(value.trim()) ? null : `${ORIGIN_TWINS_AUTO_RESOLVE_KEY} must be true or false (got "${value}"). Nothing was written.`;
 }
@@ -78,7 +78,7 @@ function noticeOf(sourceId: string, r: Omit<OriginHealReport, 'notice' | 'previe
   const failed = r.failed ? `; ${r.failed} failed (${preview} shows why)` : '';
   const person = left ? `; ${left} held file(s) need a person (${preview})` : '';
   return `[sync] resolved ${r.resolved} file(s) of source ${sourceId} recorded by duplicate pages: ${r.twins_merged} twin page(s) merged into the page each path names `
-    + `(links moved, slug kept as an alias, soft-deleted without touching the file; restorable for 72 h)${more}${failed}${person}. Opt out: gbrain config set ${ORIGIN_TWINS_AUTO_RESOLVE_KEY} false.`;
+    + `(links moved, slug kept as an alias, soft-deleted without touching the file; restorable for 72 h)${more}${failed}${person}. Opt out: foresights config set ${ORIGIN_TWINS_AUTO_RESOLVE_KEY} false.`;
 }
 
 /** The post-sync heal of one managed source; returns the result with the report. Never throws. */
@@ -144,7 +144,7 @@ export async function healOriginTwinsAfterManagedSync(engine: BrainEngine, outer
     }
     return withReport(result, sourceId, { ...base, resolved_paths: healed.slice(0, 20) });
   } catch (error) {
-    serr(`[sync] the duplicate-origin heal of source ${sourceId} did not run (${error instanceof Error ? error.message : String(error)}); gbrain repair origin-twins --source ${sourceId} resolves them.`);
+    serr(`[sync] the duplicate-origin heal of source ${sourceId} did not run (${error instanceof Error ? error.message : String(error)}); foresights repair origin-twins --source ${sourceId} resolves them.`);
     return result;
   }
 }

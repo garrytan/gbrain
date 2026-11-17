@@ -2,10 +2,10 @@
  * #3697 — remediation text must name commands that actually resolve.
  *
  * Error messages, hints, and CHANGELOG "To take advantage" blocks routinely
- * rotted into naming commands that do not exist (`gbrain extract status
- * --rebuild-rollup`), flags the command never parses (`gbrain think --ab`,
- * `gbrain embed --source-id`), or subcommands that were never wired
- * (`gbrain takes nudge --hush`). Remediation text is the one string nobody
+ * rotted into naming commands that do not exist (`foresights extract status
+ * --rebuild-rollup`), flags the command never parses (`foresights think --ab`,
+ * `foresights embed --source-id`), or subcommands that were never wired
+ * (`foresights takes nudge --hush`). Remediation text is the one string nobody
  * ever runs: it is emitted only on a failure path and read only by someone
  * already stuck — so it rots silently, in the worst possible place.
  *
@@ -14,17 +14,17 @@
  * scripts/check-test-discriminates.sh and CONTRIBUTING.md's Discrimination
  * test field from #3665):
  *
- *   1. CHANGELOG (topmost entry only): every `gbrain <verb>` in fenced code /
+ *   1. CHANGELOG (topmost entry only): every `foresights <verb>` in fenced code /
  *      inline spans resolves to a live command. Historical entries document
  *      their era's CLI and are never rewritten (CLAUDE.md), so only the entry
  *      being shipped is gated — rot is caught while the author is still here.
  *
  *   2. src remediation strings: any string in src TS files that names
- *      `gbrain <verb> ... --flag` must use a verb that resolves AND flags
+ *      `foresights <verb> ... --flag` must use a verb that resolves AND flags
  *      present in that command's CLI_FLAG_REGISTRY row. The registry is
  *      deliberately over-inclusive (help-text mentions count), so a flag it
  *      does not know for that command is a strong rot signal. Verbs without
- *      any --flag in the same string are NOT gated (prose like "this gbrain
+ *      any --flag in the same string are NOT gated (prose like "this foresights
  *      build expects" would drown the signal) — documented limitation.
  *
  * The companion sibling is test/docs-cli-commands.test.ts (#3502), which
@@ -65,8 +65,8 @@ const REGISTRY_GAPS: Record<string, string[]> = {
  * prune it from here then.
  */
 const CHANGELOG_ALLOWLIST = new Set([
-  // v0.46.25.0 wrote `gbrain migrate-engine`; the real grammar is
-  // `gbrain migrate --to <engine>` (migrate-engine.ts is the module name,
+  // v0.46.25.0 wrote `foresights migrate-engine`; the real grammar is
+  // `foresights migrate --to <engine>` (migrate-engine.ts is the module name,
   // not the command).
   'migrate-engine',
 ]);
@@ -85,7 +85,7 @@ function scanChangelogTopEntry(): string[] {
   for (const { code } of codeRegions(topChangelogEntry())) {
     for (const { verb } of gbrainInvocations(code)) {
       if (valid.has(verb) || CHANGELOG_ALLOWLIST.has(verb)) continue;
-      violations.push(`CHANGELOG.md (top entry): \`gbrain ${verb}\` is not a real command — ${code.trim().slice(0, 90)}`);
+      violations.push(`CHANGELOG.md (top entry): \`foresights ${verb}\` is not a real command — ${code.trim().slice(0, 90)}`);
     }
   }
   return violations;
@@ -125,7 +125,7 @@ function scanSrcStrings(): string[] {
       if (/^(\/\/|\*|\/\*|--)/.test(t)) continue;   // TS comments + SQL comment lines
       if (!/['"`]/.test(l)) continue;               // only string-bearing lines
       // Tail stops at quote/backtick so we never leak across string boundaries.
-      for (const m of l.matchAll(/\bgbrain\s+([a-z][a-z0-9_-]{2,})\b([^'"`\n]*)/g)) {
+      for (const m of l.matchAll(/\b(?:foresights|gbrain)\s+([a-z][a-z0-9_-]{2,})\b([^'"`\n]*)/g)) {
         const verb = m[1]!;
         // Prose separators end the command: an em-dash clause or a new
         // sentence after the mention is instruction text, not the command's
@@ -135,7 +135,7 @@ function scanSrcStrings(): string[] {
         const flags = [...tail.matchAll(/--[a-z][a-z0-9-]*/g)].map((f) => f[0]);
         if (flags.length === 0) continue; // prose-mention; not gated (see header)
         if (!valid.has(verb)) {
-          violations.push(`${rel}:${i + 1}: \`gbrain ${verb}\` is not a real command — ${t.slice(0, 100)}`);
+          violations.push(`${rel}:${i + 1}: \`foresights ${verb}\` is not a real command — ${t.slice(0, 100)}`);
           continue;
         }
         const registry = (CLI_FLAG_REGISTRY as Record<string, readonly string[]>)[verb];
@@ -144,7 +144,7 @@ function scanSrcStrings(): string[] {
           if (registry.includes(flag)) continue;
           if (GLOBAL_FLAGS.has(flag)) continue;
           if (REGISTRY_GAPS[verb]?.includes(flag)) continue;
-          violations.push(`${rel}:${i + 1}: \`gbrain ${verb} ... ${flag}\` — flag not in ${verb}'s registry row — ${t.slice(0, 100)}`);
+          violations.push(`${rel}:${i + 1}: \`foresights ${verb} ... ${flag}\` — flag not in ${verb}'s registry row — ${t.slice(0, 100)}`);
         }
       }
     }
@@ -153,16 +153,16 @@ function scanSrcStrings(): string[] {
 }
 
 describe('#3697 — remediation text resolves against the live CLI surface', () => {
-  test('CHANGELOG top entry: every gbrain verb resolves', () => {
+  test('CHANGELOG top entry: every foresights verb resolves', () => {
     const violations = scanChangelogTopEntry();
     expect(
       violations,
-      `The entry being shipped names gbrain commands that do not resolve:\n${violations.join('\n')}\n` +
+      `The entry being shipped names foresights commands that do not resolve:\n${violations.join('\n')}\n` +
       `Fix the command text (or, if the command should exist, wire it).`,
     ).toEqual([]);
   });
 
-  test('src strings: every `gbrain <verb> --flag` uses a real verb + registered flags', () => {
+  test('src strings: every `foresights <verb> --flag` uses a real verb + registered flags', () => {
     const violations = scanSrcStrings();
     expect(
       violations,

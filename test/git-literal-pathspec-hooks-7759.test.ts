@@ -2,11 +2,11 @@
  * #7759: the door keeps its own paths literal per path (`:(literal)<path>`), never with git's global
  * `--literal-pathspecs` flag, which git exports to every hook and child process as GIT_LITERAL_PATHSPECS=1.
  * Protects:
- *   - a repository pre-commit guard that selects files by glob pathspec refuses `gbrain git commit-push` exactly as it
+ *   - a repository pre-commit guard that selects files by glob pathspec refuses `foresights git commit-push` exactly as it
  *     refuses a plain git commit (red before: the guard's '*.json' matched nothing, so a JSON file with conflict
  *     markers was committed and pushed); the refusal leaves HEAD, the index and the remote as they were;
  *   - no hook of a commit-push, and no child of the persistence door (clean filter, receive-pack), sees
- *     GIT_LITERAL_PATHSPECS, also when gbrain's own environment sets it; the door's session runs no repository hook;
+ *     GIT_LITERAL_PATHSPECS, also when foresights's own environment sets it; the door's session runs no repository hook;
  *   - files literally named with glob characters or a leading colon commit alone, never the files their glob or magic
  *     reading matches, through commit-push, the Git effect and the plumbing door.
  * Seams: none; real repositories and a bare remote, the real CLI for commit-push.
@@ -82,7 +82,7 @@ test('gitChildEnv drops Git\'s global pathspec switches; a caller may still set 
   expect(gitChildEnv({ GIT_LITERAL_PATHSPECS: '1' }, source)).toEqual({ PATH: '/usr/bin', GIT_LITERAL_PATHSPECS: '1' });
 });
 
-describe('a glob-pathspec pre-commit guard holds for gbrain git commit-push', () => {
+describe('a glob-pathspec pre-commit guard holds for foresights git commit-push', () => {
   test('a plain git commit and the door commit both refuse; nothing reaches HEAD, the index or the remote', async () => {
     const { root, bare, hooks, log } = checkout({}, true);
     installGlobGuard(hooks, log);
@@ -129,7 +129,7 @@ describe('no hook or door child sees GIT_LITERAL_PATHSPECS', () => {
   const probe = (log: string, name: string) => `echo "${name} \${GIT_LITERAL_PATHSPECS-unset}" >> '${log}'\n`;
 
   for (const inherited of [undefined, '1']) {
-    test(`commit-push hooks${inherited ? ' when gbrain\'s own environment sets it' : ''}; a post-commit hook's :(literal) pathspec works`, async () => {
+    test(`commit-push hooks${inherited ? ' when foresights\'s own environment sets it' : ''}; a post-commit hook's :(literal) pathspec works`, async () => {
       const { root, bare, hooks, log } = checkout({ 'tracked.txt': 'v1\n' }, true);
       for (const name of ['pre-commit', 'commit-msg', 'pre-push']) script(join(hooks, name), probe(log, name));
       script(join(hooks, 'post-commit'), `${probe(log, 'post-commit')}echo regenerated >> tracked.txt
@@ -155,7 +155,7 @@ git add -- ':(literal)tracked.txt' && echo "post-commit add ok" >> '${log}'
     for (const name of ['pre-commit', 'commit-msg', 'post-commit', 'reference-transaction']) script(join(hooks, name), probe(log, `hook ${name}`));
   }
 
-  test('the Git effect and its push, also when gbrain\'s own environment sets it; the session runs no repository hook', async () => {
+  test('the Git effect and its push, also when foresights\'s own environment sets it; the session runs no repository hook', async () => {
     const { root, bare, hooks, log } = checkout({}, true);
     doorProbes(root, hooks, log);
     // #8896: the effect's push refuses an unpublished commit that changes a .gitattributes, so the probe's is published first.
@@ -177,7 +177,7 @@ git add -- ':(literal)tracked.txt' && echo "post-commit add ok" >> '${log}'
     }
   });
 
-  test('the plumbing door commit, also when gbrain\'s own environment sets it; no repository hook runs', async () => {
+  test('the plumbing door commit, also when foresights\'s own environment sets it; no repository hook runs', async () => {
     const { root, hooks, log } = checkout({ 'notes/a.md': 'a\n' }, false);
     doorProbes(root, hooks, log);
     for (const inherited of [undefined, '1']) {

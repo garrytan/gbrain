@@ -1,5 +1,5 @@
 /**
- * #5988 producer checks: `gbrain frontmatter validate` keeps its strict
+ * #5988 producer checks: `foresights frontmatter validate` keeps its strict
  * exit-1-on-any-error contract (YAML that ingestion recovers by quoting still
  * fails), `--importable` reports the ingestion (hold-code) view, `--stdin` /
  * `-` validate piped content with an optional `--path` slug check,
@@ -58,7 +58,7 @@ describe('validate --stdin', () => {
     const strict = await runFm(['validate', '--stdin'], stdin(RECOVERABLE));
     expect(strict.verdict).toBe(1);
     expect(strict.out).toContain('[YAML_PARSE]');
-    expect(strict.out).toContain('importable but not canonical; run gbrain frontmatter validate <file> --fix (quoting only)');
+    expect(strict.out).toContain('importable but not canonical; run foresights frontmatter validate <file> --fix (quoting only)');
 
     const importable = await runFm(['validate', '--stdin', '--importable', '--json'], stdin(RECOVERABLE));
     expect(importable.verdict).toBe(0);
@@ -108,7 +108,7 @@ describe('validate --stdin', () => {
   test('--fix on stdin is refused with the file command', async () => {
     const r = await runFm(['validate', '--stdin', '--fix'], stdin(RECOVERABLE));
     expect(r.verdict).toBe(1);
-    expect(r.err).toContain('gbrain frontmatter validate <file> --fix');
+    expect(r.err).toContain('foresights frontmatter validate <file> --fix');
   });
 });
 
@@ -245,7 +245,7 @@ describe('validate --fix', () => {
     expect(thrown).toBeInstanceOf(OperationError);
     const error = thrown as OperationError;
     expect(error.code).toBe('writer_coordinator_required');
-    expect(error.suggestion).toContain('gbrain repair frontmatter');
+    expect(error.suggestion).toContain('foresights repair frontmatter');
     expect(error.fix?.argv?.slice(0, 3)).toEqual(['gbrain', 'repair', 'frontmatter']);
     expect(readFileSync(f, 'utf8')).toBe(RECOVERABLE);
     expect(existsSync(join(home(), '.gbrain', 'backups'))).toBe(false);

@@ -1,7 +1,7 @@
 # Minions fix: repairing a blocked worker or half-migrated install
 
-**Say to your agent:** *"Use `gbrain jobs supervisor status --json` and
-`gbrain doctor --no-migrate` to find why my worker stopped. Show me the affected
+**Say to your agent:** *"Use `foresights jobs supervisor status --json` and
+`foresights doctor --no-migrate` to find why my worker stopped. Show me the affected
 installation and proposed repair before changing anything or retrying jobs."*
 
 A local driver or child-CLI configuration failure is not a database outage.
@@ -22,13 +22,13 @@ existing launch options throughout the repair.
 
 | Owner | Inspect | Stop processing before repair | Explicit restart after verification |
 |---|---|---|---|
-| Foreground `gbrain jobs work` | Its startup output and terminal | Ctrl-C in that terminal; wait for shutdown | Run the same `gbrain jobs work` invocation again |
-| Standalone jobs supervisor | `gbrain jobs supervisor status --json` | `gbrain jobs supervisor stop --json` | `gbrain jobs supervisor start --detach --json` with the original options |
-| Autopilot under user systemd | `gbrain autopilot --status --json`; `systemctl --user status gbrain-autopilot.service` | `systemctl --user stop gbrain-autopilot.service` | `systemctl --user start gbrain-autopilot.service` |
-| Autopilot under launchd | `gbrain autopilot --status --json`; `launchctl print "gui/$(id -u)/com.gbrain.autopilot"` | `launchctl bootout "gui/$(id -u)/com.gbrain.autopilot"` | `launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.gbrain.autopilot.plist"` |
+| Foreground `foresights jobs work` | Its startup output and terminal | Ctrl-C in that terminal; wait for shutdown | Run the same `foresights jobs work` invocation again |
+| Standalone jobs supervisor | `foresights jobs supervisor status --json` | `foresights jobs supervisor stop --json` | `foresights jobs supervisor start --detach --json` with the original options |
+| Autopilot under user systemd | `foresights autopilot --status --json`; `systemctl --user status gbrain-autopilot.service` | `systemctl --user stop gbrain-autopilot.service` | `systemctl --user start gbrain-autopilot.service` |
+| Autopilot under launchd | `foresights autopilot --status --json`; `launchctl print "gui/$(id -u)/com.gbrain.autopilot"` | `launchctl bootout "gui/$(id -u)/com.gbrain.autopilot"` | `launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.gbrain.autopilot.plist"` |
 
 These are the default brain's user-service names. A brain under any other
-`GBRAIN_HOME` uses its own suffixed names; `gbrain autopilot --status --json`
+`GBRAIN_HOME` uses its own suffixed names; `foresights autopilot --status --json`
 prints them under `job` ([several brains on one host](live-sync.md#several-brains-on-one-host)).
 If the installation uses a different
 service definition, use its actual name and recorded launcher. For a foreground
@@ -175,7 +175,7 @@ those fallback labels are not extra worker protocol states.
 If readiness is still starting or the latest log says it is temporarily
 unavailable, compare successive owner-status observations and the owner's
 logs. A single slow probe or an expired handshake deadline is not a permanent
-fault. Check `gbrain engine status --probe` with the actual launcher; distinguish
+fault. Check `foresights engine status --probe` with the actual launcher; distinguish
 database/network failure from pool saturation. Restore connectivity or reduce
 the identified competing work with approval, then let the existing owner retry.
 Do not repeatedly start new supervisors to accelerate backoff. A foreground
@@ -199,9 +199,9 @@ worker's internal status environment into a new process.
 Stop the affected owner using the table above. Obtain approval for installation
 changes separately from diagnostic commands. Choose the matching branch:
 
-- **Bun global install:** reinstall a known-good GBrain release under the same
+- **Bun global install:** reinstall a known-good Foresights release under the same
   account and Bun installation used by the service. The canonical GitHub path
-  is `bun install -g github:garrytan/gbrain`; use an approved release ref when
+  is `bun install -g github:aimonk2025/gbrain`; use an approved release ref when
   pinning. Do not substitute the unrelated npm package or change another
   account's global installation.
 - **Checkout install:** switch that checkout to the approved fixed revision,
@@ -212,12 +212,12 @@ changes separately from diagnostic commands. Choose the matching branch:
   with the approved fixed build. Updating a separate source checkout does not
   change an already compiled executable.
 
-GBrain ships its cancellation-capable Postgres.js 3.4.9 in `vendor/postgres`,
+Foresights ships its cancellation-capable Postgres.js 3.4.9 in `vendor/postgres`,
 with the upstream license. The package-private `#postgres` import maps directly
 to that source; compiled builds embed the same resolved driver. The cancellation
 changes are recorded in `patches/postgres@3.4.9.patch`. This avoids relying on
 transitive local dependencies or a consuming global installation to reapply
-GBrain's dependency patch. Repair the GBrain package
+Foresights's dependency patch. Repair the Foresights package
 as a unit, not by installing stock `postgres` over it or editing another
 installation's `node_modules`.
 
@@ -251,7 +251,7 @@ fall back to a different PATH executable without explaining the change.
 ### Child protocol incompatible
 
 For `child_protocol_incompatible`, repair the selected child with a compatible
-GBrain release, not just the parent worker. A completed malformed reply or
+Foresights release, not just the parent worker. A completed malformed reply or
 missing required protocol/capability can cause this diagnosis; a timeout alone
 does not. Inspect the explicit override first. Compare each executable's
 reported version, but do not treat equal versions as proof of compatibility or
@@ -367,8 +367,8 @@ After verification, explicitly restart only the original owner using the
 table above. Confirm readiness, then inspect queue progress:
 
 ```bash
-gbrain jobs stats --json
-gbrain jobs list
+foresights jobs stats --json
+foresights jobs list
 ```
 
 Compare successive observations: completed jobs should increase when work is
@@ -419,7 +419,7 @@ set up (no `~/.gbrain/preferences.json`, autopilot still inline, cron jobs
 still on `agentTurn`), run:
 
 ```bash
-gbrain apply-migrations --yes
+foresights apply-migrations --yes
 ```
 
 It's idempotent. On an install that already migrated it's a cheap no-op.
@@ -427,8 +427,8 @@ It's idempotent. On an install that already migrated it's a cheap no-op.
 ## Context
 
 The Minions schema, queue, worker, and migration skill ship together, and
-the migration fires automatically on `gbrain upgrade` (and on
-`gbrain apply-migrations --yes`). An install is half-migrated when the schema is present
+the migration fires automatically on `foresights upgrade` (and on
+`foresights apply-migrations --yes`). An install is half-migrated when the schema is present
 but the migration never completed: no `~/.gbrain/preferences.json`,
 autopilot still runs inline, cron jobs still call `agentTurn`. This guide
 covers detecting that state and finishing the migration.
@@ -436,29 +436,29 @@ covers detecting that state and finishing the migration.
 ## Detecting the half-migrated state
 
 ```bash
-gbrain doctor
+foresights doctor
 ```
 
 If the install is half-migrated, you'll see the `minions_migration` check
 fail:
 
 ```
-[FAIL] minions_migration: MINIONS HALF-INSTALLED (partial migration: 0.11.0). Run: gbrain apply-migrations --yes
+[FAIL] minions_migration: MINIONS HALF-INSTALLED (partial migration: 0.11.0). Run: foresights apply-migrations --yes
 ```
 
 Three or more partial records in a row read as `WEDGED MIGRATION(s)` and name
-`gbrain apply-migrations --force-retry <version>`. After that retry the version
+`foresights apply-migrations --force-retry <version>`. After that retry the version
 is pending again, and doctor warns that it has not run yet with the plain
-`gbrain apply-migrations --yes` command. Doctor also warns when the ledger shows
+`foresights apply-migrations --yes` command. Doctor also warns when the ledger shows
 a host migration that a newer one already ran past, so it never ran:
 
 ```
-[WARN] minions_migration: 1 host migration(s) not run yet: 0.46.3. Run: gbrain apply-migrations --yes
+[WARN] minions_migration: 1 host migration(s) not run yet: 0.46.3. Run: foresights apply-migrations --yes
 ```
 
-`gbrain doctor --fast` has no database connection, so it cannot read the
+`foresights doctor --fast` has no database connection, so it cannot read the
 brain config that declines an opt-out migration (v0.53.0) and leaves such a
-version out of that list; the full `gbrain doctor` reports it.
+version out of that list; the full `foresights doctor` reports it.
 
 (Missing `~/.gbrain/preferences.json` on a fresh install is a valid
 pre-`apply-migrations` state — doctor deliberately does NOT fail on that
@@ -467,8 +467,8 @@ alone; the partial-migration record is the canonical half-migration signal.)
 For a machine-readable report (cron-friendly):
 
 ```bash
-gbrain skillpack-check --quiet && echo healthy || echo needs_action
-gbrain skillpack-check | jq -r '.actions[]'    # prints proposed repairs, without executing them
+foresights skillpack-check --quiet && echo healthy || echo needs_action
+foresights skillpack-check | jq -r '.actions[]'    # prints proposed repairs, without executing them
 ```
 
 Health checks report proposals only. Review the action and scope and obtain
@@ -477,20 +477,20 @@ separate approval before applying a repair, installing services or spending mone
 ## The fix
 
 ```bash
-gbrain apply-migrations --yes
+foresights apply-migrations --yes
 ```
 
 Reads `~/.gbrain/migrations/completed.jsonl`, diffs against the TS
 migration registry, runs whatever's pending. Seven phases:
 
 ```
-A. Schema        gbrain init --migrate-only
-B. Smoke         gbrain jobs smoke
+A. Schema        foresights init --migrate-only
+B. Smoke         foresights jobs smoke
 C. Mode          prompt (or --yes default pain_triggered)
 D. Prefs         write ~/.gbrain/preferences.json
-E. Host          AGENTS.md marker injection + cron rewrites for gbrain
+E. Host          AGENTS.md marker injection + cron rewrites for foresights
                  builtins; JSONL TODOs for host-specific handlers
-F. Install       gbrain autopilot --install (env-aware)
+F. Install       foresights autopilot --install (env-aware)
 G. Record        append completed.jsonl status:"complete"
 ```
 
@@ -498,7 +498,7 @@ If Phase E emits TODOs for host-specific handlers (e.g. your OpenClaw's
 own non-gbrain crons), the migration finishes with `status: "partial"`.
 Your host agent walks the TODOs using `skills/migrations/v0.11.0.md` +
 `docs/guides/plugin-handlers.md`, ships handler registrations in the
-host repo, then re-runs `gbrain apply-migrations --yes`. Newly
+host repo, then re-runs `foresights apply-migrations --yes`. Newly
 registerable cron entries get rewritten and the JSONL rows mark
 `status: "complete"`.
 
@@ -519,18 +519,18 @@ cat ~/.gbrain/migrations/completed.jsonl
 # (the exit code is the verdict — 0 fresh, 1 needs attention,
 #  2 self-disabled — so a nonzero exit here IS the finding, not a
 #  broken verify step. Under `set -e`, append `|| true` to keep going.)
-gbrain autopilot --status
+foresights autopilot --status
 ps aux | grep 'jobs work'
 
 # 4. Jobs show up in the queue
-gbrain jobs list
+foresights jobs list
 
 # 5. Any host-specific TODOs still pending
 cat ~/.gbrain/migrations/pending-host-work.jsonl 2>/dev/null || echo "(none — all host work is done)"
 
 # 6. Doctor + skillpack-check should both be clean
-gbrain doctor
-gbrain skillpack-check --quiet && echo ok
+foresights doctor
+foresights skillpack-check --quiet && echo ok
 ```
 
 ## If the fix fails
@@ -539,7 +539,7 @@ Each phase is idempotent. Re-running is safe. Common failure modes:
 
 - **Phase B smoke fails:** the schema didn't apply. Check
   `~/.gbrain/config.json` has a valid `database_url` (or `database_path`
-  for PGLite). Run `gbrain init --migrate-only` directly and look at
+  for PGLite). Run `foresights init --migrate-only` directly and look at
   the error.
 - **Phase F install fails:** your host environment doesn't match any
   detected target. Pass `--target <macos|linux-systemd|ephemeral-container|linux-cron>`

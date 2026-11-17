@@ -9,7 +9,7 @@ them is eligible to set a default.
 
 | Arm | Build | Settings |
 |---|---|---|
-| Baseline | gbrain `master` at the P3 merge base (`5bd9e8497`) | as shipped |
+| Baseline | foresights `master` at the P3 merge base (`5bd9e8497`) | as shipped |
 | Feedback | P3 pull-request head (frozen SHA recorded at handoff) | `feedback.enabled=true`, `feedback.influence=0.1`, `search.triplet_scoring=false` |
 | Triplet | same build | `feedback.enabled=false`, `search.triplet_scoring=true`, `search.triplet_penalty=3.0` |
 

@@ -131,16 +131,16 @@ export function passStatusNext(sourceId: string, reason: PassStatusReason, row: 
     case 'not_converged':
       return (row.value.obligations.not_converged_streak ?? 0) >= NOT_CONVERGED_REPORT_STREAK
         ? { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
-          why: `The last ${row.value.obligations.not_converged_streak} passes of ${sourceId} ended not converged; another sync will not change that. Report what doctor shows with the gbrain version (read-only).` }
+          why: `The last ${row.value.obligations.not_converged_streak} passes of ${sourceId} ended not converged; another sync will not change that. Report what doctor shows with the foresights version (read-only).` }
         : { ...sync, why: 'The last pass ran out of rounds before every path settled; the same sync continues from the current level.' };
     case 'deletes_withheld':
       // #7130: deleting pages is the user's decision, never an agent's: next is ask_user whatever the actor.
       return { ask_user: true, argv: ['gbrain', 'sync', '--source', sourceId, '--dry-run', '--json'], consent: [], actor: 'user', requires_exclusive: false, verify,
-        user_message: `Sync of ${sourceId} withheld a bulk delete (over half of its file-backed pages, or over sync.max_deletes / sync.max_delete_ratio); nothing was deleted. Review the withheld set in the dry run. If the checkout is the wrong one or incomplete, restore it and sync again; if the deletion is intended, run GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source ${sourceId} on the brain host.`,
+        user_message: `Sync of ${sourceId} withheld a bulk delete (over half of its file-backed pages, or over sync.max_deletes / sync.max_delete_ratio); nothing was deleted. Review the withheld set in the dry run. If the checkout is the wrong one or incomplete, restore it and sync again; if the deletion is intended, run GBRAIN_ALLOW_MASS_RECONCILE=1 foresights sync --source ${sourceId} on the brain host.`,
         why: 'The dry run lists the withheld set and its hash (read-only); everything else of the source is synced.' };
     case 'admission_paused':
       return { argv: ['gbrain', 'config', 'set', 'sync.admission', 'normal'], consent: [], actor: 'user', requires_exclusive: false, verify,
-        user_message: `sync.admission pauses what sync admits for ${sourceId}; restore it with gbrain config set sync.admission normal when the pause is over.`,
+        user_message: `sync.admission pauses what sync admits for ${sourceId}; restore it with foresights config set sync.admission normal when the pause is over.`,
         why: 'The pause is the owner\'s setting; it is never lifted automatically.' };
     case 'writeback_failed':
       return { argv: ['gbrain', 'sources', 'writer', 'retry-effects', sourceId, '--request-id', writebackFailed ?? '<id>', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, verify,
@@ -148,7 +148,7 @@ export function passStatusNext(sourceId: string, reason: PassStatusReason, row: 
         why: 'The preview names the parked effect and what a retry runs (read-only); until it commits, the source is never idle.' };
     case 'pass_abandoned':
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
-        why: `The last ${abandonedPasses(row, passReadClock(row), interrupted, banked)} sync passes of ${sourceId} stopped before they ended (the drain abandoned them for making no progress, or their process was killed) or on a transient stop that recurs (a statement timeout, a lost connection), so another plain sync is likely to stop the same way. Report what doctor shows, with the gbrain version and the newest sync run's drain.stall (read-only).` };
+        why: `The last ${abandonedPasses(row, passReadClock(row), interrupted, banked)} sync passes of ${sourceId} stopped before they ended (the drain abandoned them for making no progress, or their process was killed) or on a transient stop that recurs (a statement timeout, a lost connection), so another plain sync is likely to stop the same way. Report what doctor shows, with the foresights version and the newest sync run's drain.stall (read-only).` };
     case 'pass_interrupted':
       return { ...sync, why: `The newest pass of ${sourceId} stopped before it ended and no process holds its drain lease: its process was killed or crashed (an out-of-memory kill or a timeout), or stopped on an error it does not record (a dropped connection), so nothing recorded a failure. The plain sync continues it from the current level; if that pass stops the same way, status reads pass_abandoned.` };
     case 'selection_scoped':

@@ -1,7 +1,7 @@
 /**
  * Alias-footgun visibility (issue 3 of the five-issue fix wave).
  *
- * gbrain stores explicit frontmatter types literally and never re-normalizes
+ * foresights stores explicit frontmatter types literally and never re-normalizes
  * them, so a type that is an ALIAS of a canonical pack type (or undeclared
  * entirely) routes silently. These tests pin the mechanism that makes it loud:
  * classifyStoredType, the import-time type_warning field, the aggregated

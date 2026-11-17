@@ -12,7 +12,7 @@ were the key metrics from Acme Corp's Series A deck?"
 
 With this: every data room document is extracted, diarized, cross-referenced to
 the company page, and searchable. Index.md gives you the bull/bear case at a
-glance. `gbrain query "Acme Corp revenue growth"` finds the exact chart.
+glance. `foresights query "Acme Corp revenue growth"` finds the exact chart.
 
 ## Implementation
 
@@ -106,7 +106,7 @@ cd brain/ && scripts/brain-commit-push.sh "diligence: {Company} — {doc type} i
 
 Name the diligence directory and every page you edited; other agents may have
 uncommitted work in the same checkout, so never commit the whole tree. Without
-the helper, run `gbrain git commit-push -m "<msg>" -- <paths>`. On a non-zero
+the helper, run `foresights git commit-push -m "<msg>" -- <paths>`. On a non-zero
 exit: retry once on `commit_lock_busy`; stop and tell the user on
 `integrate_conflict` or `writer_coordinator_required`; never fall back to
 stash, `pull --rebase` or a plain push ([outcomes](shared-checkout-git.md#outcomes)).
@@ -144,7 +144,7 @@ A good diligence page reads like an intelligence assessment:
 ## How to Verify
 
 1. **Search for key metrics.** After ingestion, run
-   `gbrain search "revenue growth"` or `gbrain search "{company name} CAC"`.
+   `foresights search "revenue growth"` or `foresights search "{company name} CAC"`.
    The diarized content should appear in results. If it doesn't, the sync
    or embedding step was missed.
 
@@ -159,4 +159,4 @@ A good diligence page reads like an intelligence assessment:
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

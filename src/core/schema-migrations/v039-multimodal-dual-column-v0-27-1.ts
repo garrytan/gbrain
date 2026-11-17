@@ -44,7 +44,7 @@ export const v039: Migration = {
         throw new Error(
           `Migration v39 requires the pgvector extension. Install it via\n` +
           `  CREATE EXTENSION vector;\n` +
-          `then re-run \`gbrain apply-migrations --yes\`.`
+          `then re-run \`foresights apply-migrations --yes\`.`
         );
       }
       const version = rows[0].extversion;
@@ -55,7 +55,7 @@ export const v039: Migration = {
         throw new Error(
           `Migration v39 requires pgvector >= 0.5.0 (HNSW partial indexes).\n` +
           `Found pgvector ${version}.\n\n` +
-          `Fix: ALTER EXTENSION vector UPDATE; then re-run \`gbrain apply-migrations --yes\`.\n` +
+          `Fix: ALTER EXTENSION vector UPDATE; then re-run \`foresights apply-migrations --yes\`.\n` +
           `If your Postgres provider doesn't ship pgvector >= 0.5, request\n` +
           `an upgrade or migrate to PGLite for v0.27.1 multimodal support.`
         );

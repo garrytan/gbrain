@@ -4,15 +4,15 @@
 
 ```bash
 # Run your first shell job:
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
+GBRAIN_ALLOW_SHELL_JOBS=1 foresights jobs submit shell \
   --params '{"cmd":"echo hello","cwd":"/tmp"}' --follow
 # → exit_code: 0, stdout_tail: "hello\n", duration_ms: 43
 ```
 
 That's it. Your cron scripts now have a home with retry, backoff, DLQ, and
-`gbrain jobs list` visibility, without each one booting a full LLM session.
+`foresights jobs list` visibility, without each one booting a full LLM session.
 
-**PGLite users:** `gbrain jobs work` does not run on PGLite (exclusive file
+**PGLite users:** `foresights jobs work` does not run on PGLite (exclusive file
 lock). Every crontab invocation must use `--follow` for inline execution.
 Postgres users can run a persistent worker; see recipes below.
 
@@ -41,11 +41,11 @@ pass:
    own guard too, so an in-process handler can't programmatically bypass this.
 2. **Worker opt-in.** The shell handler is ALWAYS registered on the worker, but
    it is guarded: unless the worker was started with
-   `gbrain jobs work --allow-shell-jobs` (equivalently, `GBRAIN_ALLOW_SHELL_JOBS=1`
+   `foresights jobs work --allow-shell-jobs` (equivalently, `GBRAIN_ALLOW_SHELL_JOBS=1`
    exported in the worker's environment), a claimed shell job throws
    `UnrecoverableError` and goes straight to `dead` (no retries). Default: off.
    Your agent opts in per-host. A `.env` file in the worker's working directory
-   cannot set the variable — gbrain ignores it there. (Always-registered guarded
+   cannot set the variable — foresights ignores it there. (Always-registered guarded
    mode — not "unregistered", so unflagged workers fail shell jobs loudly
    instead of leaving them `waiting` forever.)
 
@@ -54,7 +54,7 @@ env: `PATH, HOME, USER, LANG, TZ, NODE_ENV`. Your secrets like `OPENAI_API_KEY`
 and `DATABASE_URL` are NOT passed to the child. You opt-in additional keys per
 job via `env: { ... }` (non-secret values only — see "Secrets" below) or via
 `inherit: ["database_url"]` (recommended for secrets — names only in the row,
-values resolved at child-spawn from `gbrain config set`). This stops accidental
+values resolved at child-spawn from `foresights config set`). This stops accidental
 `$OPENAI_API_KEY` interpolation in a user-authored script. It does **not**
 sandbox filesystem reads: a shell script can `cat ~/.env` or any file the
 worker process can read. The operator picks a safe `cwd`. That is the trust
@@ -79,7 +79,7 @@ secrets in `env:` instead.
 On one terminal, start a persistent worker:
 
 ```bash
-gbrain jobs work --allow-shell-jobs        # or: GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work
+foresights jobs work --allow-shell-jobs        # or: GBRAIN_ALLOW_SHELL_JOBS=1 foresights jobs work
 ```
 
 Rewrite crontab to submit shell jobs (no `--follow`):
@@ -89,7 +89,7 @@ Rewrite crontab to submit shell jobs (no `--follow`):
 #   OpenClaw cron: x-garrytan-unified
 # After (Minions worker):
 3 13,16,19,22,1,4,7,10 * * * \
-  gbrain jobs submit shell \
+  foresights jobs submit shell \
     --params '{"cmd":"node scripts/x-garrytan-daily.mjs","cwd":"/data/.openclaw/workspace"}' \
     --max-attempts 3 --timeout-ms 300000
 ```
@@ -106,7 +106,7 @@ uses `--follow` to run inline:
 ```cron
 # Each cron tick spawns a short-lived worker that runs the job inline.
 3 13,16,19,22,1,4,7,10 * * * \
-  GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
+  GBRAIN_ALLOW_SHELL_JOBS=1 foresights jobs submit shell \
     --params '{"cmd":"node scripts/x-garrytan-daily.mjs","cwd":"/data/.openclaw/workspace"}' \
     --follow --timeout-ms 300000
 ```
@@ -122,8 +122,8 @@ crontab's spawning limits. Postgres + persistent worker scales better.
 A common pattern is submitting shell jobs that run `gbrain` CLI commands:
 
 ```bash
-gbrain jobs submit shell --params '{
-  "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
+foresights jobs submit shell --params '{
+  "cmd": "foresights sync --skip-failed && foresights embed --stale",
   "cwd": "/data/gbrain",
   "inherit": ["database_url"]
 }'
@@ -135,7 +135,7 @@ env as `GBRAIN_DATABASE_URL`. The job row in `minion_jobs.data` stores
 `inherit: ["database_url"]` — **names only, never values**. The shell-audit
 JSONL records the same. Pre-enqueue validation rejects the submission if the
 worker can't resolve the requested key, with a paste-ready
-`gbrain config set database_url <value>` hint (that command is file-plane
+`foresights config set database_url <value>` hint (that command is file-plane
 routed — it writes `~/.gbrain/config.json`, exactly where the worker's
 `loadConfig()` looks, and works even when the DB is unreachable).
 
@@ -144,7 +144,7 @@ routed — it writes `~/.gbrain/config.json`, exactly where the worker's
 ```jsonc
 // ❌ Works, but plants the secret in the job row. Prefer inherit:.
 {
-  "cmd": "gbrain stats",
+  "cmd": "foresights stats",
   "cwd": "/data/gbrain",
   "env": { "GBRAIN_DATABASE_URL": "postgresql://..." }
 }
@@ -191,16 +191,16 @@ and from there into the brain DB row.
 (or pass `--redact-secrets` on the CLI):
 
 ```bash
-gbrain jobs submit shell --params '{
-  "cmd": "gbrain sync --skip-failed",
+foresights jobs submit shell --params '{
+  "cmd": "foresights sync --skip-failed",
   "cwd": "/data/gbrain",
   "inherit": ["database_url"],
   "redact_secrets": true
 }'
 
 # Or, equivalently:
-gbrain jobs submit shell \
-  --params '{"cmd":"gbrain sync --skip-failed","cwd":"/data/gbrain","inherit":["database_url"]}' \
+foresights jobs submit shell \
+  --params '{"cmd":"foresights sync --skip-failed","cwd":"/data/gbrain","inherit":["database_url"]}' \
   --redact-secrets
 ```
 
@@ -225,7 +225,7 @@ exfiltration.
 - **Wrap noisy CLI tools to suppress URLs on error.** `psql --quiet`,
   `pg_dump --quiet`, or pipe through
   `2>&1 | sed 's|postgresql://[^@]*@|postgresql://REDACTED@|g'`.
-- **Inspect with `gbrain jobs get <id>` after a failure** to verify what
+- **Inspect with `foresights jobs get <id>` after a failure** to verify what
   actually persisted.
 
 ### Submitting with `argv` (no shell interpolation)
@@ -234,7 +234,7 @@ For programmatic callers assembling commands from JSON, use `argv` instead of
 `cmd`. No shell, no injection surface:
 
 ```bash
-gbrain jobs submit shell \
+foresights jobs submit shell \
   --params '{"argv":["node","scripts/fetch.mjs","--date","2026-04-19"],"cwd":"/data"}' \
   --follow
 ```
@@ -245,10 +245,10 @@ gbrain jobs submit shell \
 
 ```bash
 # List dead shell jobs
-gbrain jobs list --status dead
+foresights jobs list --status dead
 
 # Inspect one
-gbrain jobs get 42
+foresights jobs get 42
 # → error_text, stacktrace, result.stdout_tail, result.stderr_tail
 
 # Submission audit log (operator trail, not forensic)
@@ -257,10 +257,10 @@ cat ~/.gbrain/audit/shell-jobs-*.jsonl | jq '.'
 # First-time failure mode: submitted without env flag on the worker.
 # The handler is always registered but guarded: an unflagged worker that claims
 # a shell job dead-letters it immediately (UnrecoverableError, no retries).
-gbrain jobs list --status dead --json | jq '.[] | select(.name == "shell")'
+foresights jobs list --status dead --json | jq '.[] | select(.name == "shell")'
 # → error_text: "shell handler disabled on this worker (start it with --allow-shell-jobs or GBRAIN_ALLOW_SHELL_JOBS=1 ...)"
 # `waiting` pileups mean NO worker is running at all (flagged or not) — check
-# `gbrain jobs supervisor status` in that case.
+# `foresights jobs supervisor status` in that case.
 ```
 
 ---
@@ -292,9 +292,9 @@ gbrain jobs list --status dead --json | jq '.[] | select(.name == "shell")'
 | `shell: inherit must be an array of config-key names` | `inherit` wasn't an array. | Pass `"inherit": ["database_url", ...]`. |
 | `shell: inherit entries must be non-empty strings` | An element of `inherit` was empty, non-string, or null. | Use snake_case config-key names like `database_url`, `anthropic_api_key`. |
 | `shell: inherit name "<X>" must match [a-z][a-z0-9_]*` | Name failed snake_case regex (uppercase, leading digit/underscore, special char). | Use the config-key name verbatim — `database_url`, not `DATABASE_URL`. |
-| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the requested name from `loadConfig()`. | Run `gbrain config set <X> <value>` on the worker host, OR check the config file at `~/.gbrain/config.json`. |
+| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the requested name from `loadConfig()`. | Run `foresights config set <X> <value>` on the worker host, OR check the config file at `~/.gbrain/config.json`. |
 | `shell: redact_secrets must be a boolean if set` | Caller passed a non-boolean for `redact_secrets`. | Pass `true` or `false` (or omit). The CLI `--redact-secrets` flag sets it automatically. |
 | `permission_denied` with an unsupported remote job message | An MCP client tried to submit a shell job. Shell submission requires local authority. | Submit from the local CLI or an authorized application handler. |
 | `protected job name 'shell' requires CLI or operation-local submitter` | An application called `MinionQueue.add('shell', ...)` without the protected-job opt-in. | An authorized local submitter supplies `{ allowProtectedSubmit: true }` as the fourth argument. The local CLI handles this; remote `submit_job` cannot grant it. |
-| `aborted: timeout` / `aborted: cancel` / `aborted: shutdown` / `aborted: lock-lost` | The worker's abort signal fired mid-execution. Child got SIGTERM, 5s grace, then SIGKILL. | Expected: timeout / user cancel / deploy restart / stall. Inspect `gbrain jobs get` to see which. |
-| `exit N: <stderr_tail_500>` | Script exited non-zero. | Read `stderr_tail` in `gbrain jobs get`. |
+| `aborted: timeout` / `aborted: cancel` / `aborted: shutdown` / `aborted: lock-lost` | The worker's abort signal fired mid-execution. Child got SIGTERM, 5s grace, then SIGKILL. | Expected: timeout / user cancel / deploy restart / stall. Inspect `foresights jobs get` to see which. |
+| `exit N: <stderr_tail_500>` | Script exited non-zero. | Read `stderr_tail` in `foresights jobs get`. |

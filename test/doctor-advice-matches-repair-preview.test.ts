@@ -1,7 +1,7 @@
 /**
  * #8848: a doctor check must not send the operator to a repair whose preview then reports nothing to repair.
  *
- * 1. Protects: derived_visibility counts only what `gbrain repair visibility` previews: pages on active sources.
+ * 1. Protects: derived_visibility counts only what `foresights repair visibility` previews: pages on active sources.
  *    A synthesized concept with no visibility on an archived source is neither counted nor previewed.
  * 2. Fails when: the check counts rows the repair's scope (every active source) never reads, so the advice it
  *    prints leads to a 0-item preview.

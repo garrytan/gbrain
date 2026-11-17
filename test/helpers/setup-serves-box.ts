@@ -1,5 +1,5 @@
 /**
- * The spawned half of the gbrain setup --serves suites (GST-363): a temp HOME / GBRAIN_HOME box with a gbrain launcher
+ * The spawned half of the foresights setup --serves suites (GST-363): a temp HOME / GBRAIN_HOME box with a foresights launcher
  * that runs this checkout's src/cli.ts, and the readers those suites assert through. Used by
  * test/setup-serves-several.test.ts, test/setup-serves-stdio-member.test.ts and test/setup-serves-upgrade.test.ts; each
  * case builds its own box, so no case reads another's brain.

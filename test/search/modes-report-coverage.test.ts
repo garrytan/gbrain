@@ -1,5 +1,5 @@
 /**
- * #4604 — `gbrain search modes` resolves EVERY ModeBundle knob.
+ * #4604 — `foresights search modes` resolves EVERY ModeBundle knob.
  *
  * buildModesReport used to hardcode a 12-knob literal array, so live
  * overrides like search.reranker.* and search.relational_retrieval were
@@ -138,7 +138,7 @@ describe('formatKnobValue — a legitimate null is not "(undefined)" (adversaria
     expect(formatKnobValue('expansion', false)).toBe('false');
   });
 
-  test('`gbrain search modes` text at bundle defaults prints expansion_variant_budget = legacy (null)', async () => {
+  test('`foresights search modes` text at bundle defaults prints expansion_variant_budget = legacy (null)', async () => {
     const report = await buildModesReport(stubEngine());
     expect(report.resolved.expansion_variant_budget.value).toBeNull();
     const text = searchCmd.formatModesText(report);

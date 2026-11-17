@@ -62,7 +62,7 @@ describe('jobs submit embed-backfill — PGLite worker surface', () => {
 
     expect(submit.status).toBe(1);
     expect(submit.stderr).toContain('PGLite has no persistent worker');
-    expect(submit.stderr).toContain('gbrain embed --stale --source default');
+    expect(submit.stderr).toContain('foresights embed --stale --source default');
 
     const list = run(['jobs', 'list', '--json']);
     expect(list.status, list.stderr).toBe(0);
@@ -82,7 +82,7 @@ describe('jobs submit embed-backfill — PGLite worker surface', () => {
     expect(submit.status).toBe(1);
     expect(submit.stdout).not.toContain('Would submit');
     expect(submit.stderr).toContain('PGLite has no persistent worker');
-    expect(submit.stderr).toContain('gbrain embed --stale --source default');
+    expect(submit.stderr).toContain('foresights embed --stale --source default');
 
     const list = run(['jobs', 'list', '--json']);
     expect(list.status, list.stderr).toBe(0);
@@ -100,7 +100,7 @@ describe('jobs submit embed-backfill — PGLite worker surface', () => {
 
     expect(submit.status).toBe(1);
     expect(submit.stderr).toContain('Invalid source_id');
-    expect(submit.stderr).not.toContain('gbrain embed --stale --source default;');
+    expect(submit.stderr).not.toContain('foresights embed --stale --source default;');
 
     const list = run(['jobs', 'list', '--json']);
     expect(list.status, list.stderr).toBe(0);

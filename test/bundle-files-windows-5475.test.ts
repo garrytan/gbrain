@@ -10,7 +10,7 @@
  *
  * Simulated cases run on every OS; the native case runs the real stage and
  * publish unmodified, including on the windows-latest row of the
- * security-regressions job. The packaged-pack `gbrain init` path is covered
+ * security-regressions job. The packaged-pack `foresights init` path is covered
  * end to end by test/init-packaged-skills-native.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';

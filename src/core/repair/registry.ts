@@ -1,7 +1,7 @@
 /**
- * The `gbrain repair` kind registry: one entry per kind in `REPAIR_KINDS`
+ * The `foresights repair` kind registry: one entry per kind in `REPAIR_KINDS`
  * order (the `--all` dependency order). Everything that lists, previews or
- * runs repairs reads this table — the `gbrain repair` command, the doctor
+ * runs repairs reads this table — the `foresights repair` command, the doctor
  * remediation plan and run, and the post-upgrade banner — so a new kind plugs
  * in by adding its name to `REPAIR_KINDS` and one entry here.
  *
@@ -24,7 +24,7 @@
  * maintenance cycle with a bare `--apply` (the current plan).
  *
  * `explicit_only` kinds run only when the operator names them
- * (`gbrain repair <kind>`): `--all`, the remediation plan and run, and the
+ * (`foresights repair <kind>`): `--all`, the remediation plan and run, and the
  * post-upgrade banner list them with their preview command
  * (`explicit_kind_required`) but never run them, and `runRepair` refuses one
  * that was not named, so a supplied remediation step cannot run it either.
@@ -186,7 +186,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   },
   'accepted-takes': {
     handler: acceptedTakesRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true,
-    summary: 'Restore takes that accepting a held strike-through or kind change removed on v0.60.253.0 (gbrain trust confirm tp<id> ran a takes_remove '
+    summary: 'Restore takes that accepting a held strike-through or kind change removed on v0.60.253.0 (foresights trust confirm tp<id> ran a takes_remove '
       + 'instead of applying the change). Only what the records prove: the accepted proposal, the takes_remove receipt bound to it, the page version that '
       + 'receipt archived (the fence row the accept should have applied) and the reservation row still holding its number. --apply --expect <hash> '
       + 'republishes each page with that row (a revision-bound put_page) at the tier of the write the owner accepted. A grade or resolution only the '
@@ -212,9 +212,9 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   },
   'google-file-modes': {
     handler: googleFileModesRepair, embeds: 'none', checks: ['google_file_modes'], explicit_only: true,
-    summary: 'Clear group and other permission bits on files and directories gbrain wrote under a Google source directory outside ~/.gbrain '
-      + '(cursor state, mail/calendar/contact pages and the subdirectories gbrain laid out), written before this release with the default umask. '
-      + 'Never the directory you chose, never through a symlink, never another user\'s file. Filesystem only; runs only when named (`gbrain repair google-file-modes`).',
+    summary: 'Clear group and other permission bits on files and directories foresights wrote under a Google source directory outside ~/.gbrain '
+      + '(cursor state, mail/calendar/contact pages and the subdirectories foresights laid out), written before this release with the default umask. '
+      + 'Never the directory you chose, never through a symlink, never another user\'s file. Filesystem only; runs only when named (`foresights repair google-file-modes`).',
   },
   'stale-atoms': {
     handler: staleAtomsRepair, embeds: 'none', checks: ['atom_provenance_drift'], explicit_only: true,
@@ -273,7 +273,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       what: 'Retire the previewed label-misattributed conversation facts in the database',
       why: 'The preview listed each fact; applying it expires exactly those rows (and the page completion markers they invalidate), with no model calls.',
       risk: 'Database rows only: no page or file changes. Retired facts are expired, not deleted, and keep "retired: conversation-labels" in their context; '
-        + 'recall stops returning them. Re-extracting a page writes fresh facts (gbrain extract-conversation-facts --slugs <page> --dry-run, then with --max-cost-usd).',
+        + 'recall stops returning them. Re-extracting a page writes fresh facts (foresights extract-conversation-facts --slugs <page> --dry-run, then with --max-cost-usd).',
       user_message: 'Retire the previewed label-misattributed conversation facts? They stop appearing in recall; the rows are expired, not deleted, and nothing calls a model.',
     },
     summary: 'Retire conversation facts the pre-v0.60.69 parser attributed to meeting-note labels (**Date:**, **Attendees:**, …) instead of speakers. '
@@ -284,7 +284,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   },
   'captured-facts': {
     handler: capturedFactsRepair, embeds: 'effect', checks: ['captured_facts_active'], explicit_only: true,
-    summary: 'Expire facts the capture lanes (writeback, compact, corpus sweep) extracted before v0.60.30.0 from gbrain\'s own claude-cli sessions '
+    summary: 'Expire facts the capture lanes (writeback, compact, corpus sweep) extracted before v0.60.30.0 from foresights\'s own claude-cli sessions '
       + '(evidence: a scratch-project harness transcript or a quarantined corpus file). Paste-derived facts are found by a heuristic over the retained '
       + 'corpus file and expire only with --include-ambiguous. A claim that also has an active copy from another lane is kept. Preview-bound: --apply '
       + '--expect <hash> expires exactly the previewed set; a fact that changed since reports changed_since_preview. Rows are expired, never withdrawn, '
@@ -369,7 +369,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: failedWritesRepair, embeds: 'effect', checks: ['lost_caller_writes'], explicit_only: true,
     summary: 'Resubmit caller writes (put_page, add_timeline_entry, remember) that the managed writer guard refused before v0.60.38.0 (#5983) or that ended '
       + 'conflict with source_changed because the page\'s file and database differed (#6429), from the intent their terminal receipt retains until receipt compaction. A write is kept when a later request with the same intent committed (already_written) '
-      + 'or is pending (duplicate), or a later write or delete of the page committed (superseded). Writes gbrain itself produced (sync and file imports, '
+      + 'or is pending (duplicate), or a later write or delete of the page committed (superseded). Writes foresights itself produced (sync and file imports, '
       + 'reconcile, relink, maintenance) are counted with the command that produces them again. Preview-bound: --apply --expect <hash> replays exactly '
       + 'the previewed set under new request ids, after re-checking each write\'s original authority; the failed receipts stay as history.',
   },
@@ -383,8 +383,8 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   },
   frontmatter: {
     handler: frontmatterRepair, embeds: 'effect', checks: ['git_held_files', 'frontmatter_repairable'], explicit_only: true, consent: 'destructive',
-    summary: 'Fix files whose YAML frontmatter gbrain holds or reads only by guessing (#5988), and pages an older import stored wrong: per file the minimal '
-      + 'line change (safe: quoting a value as gbrain already reads it, NUL bytes, nested quotes; interpretive with --include-ambiguous: folded lines, '
+    summary: 'Fix files whose YAML frontmatter foresights holds or reads only by guessing (#5988), and pages an older import stored wrong: per file the minimal '
+      + 'line change (safe: quoting a value as foresights already reads it, NUL bytes, nested quotes; interpretive with --include-ambiguous: folded lines, '
       + 'duplicate keys, #-leading titles, a missing closing fence, a conflicting slug line, re-imports and rename re-binds). --only/--skip <path> '
       + 'select files. Preview-bound: --apply --expect <hash> --yes writes exactly the previewed bytes, imports them and clears the hold (managed '
       + 'sources commit through the Git effect; legacy sources back up first and print the commit step). Files no rule fixes are listed with the exact manual fix.',
@@ -399,7 +399,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     consentText: {
       what: 'Rewrite the previewed pages so each timeline is in date order, without exact duplicate bullets, in one section',
       why: 'The preview listed each page whose timeline bullets are out of date order, repeat a bullet exactly, or sit in more than one timeline section, with the page revision it read.',
-      risk: 'Only timeline bullets move; a later exact copy of a bullet is dropped and a later timeline section\'s bullets join the first. No other text changes and no timeline row is added or removed. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with git revert or gbrain revert.',
+      risk: 'Only timeline bullets move; a later exact copy of a bullet is dropped and a later timeline section\'s bullets join the first. No other text changes and no timeline row is added or removed. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with git revert or foresights revert.',
       user_message: 'Put the previewed timelines in date order? Exact duplicate bullets are dropped and split timeline sections are joined',
     },
     summary: 'Put existing timelines back in date order (#7247): bulk imports and hand edits appended - **YYYY-MM-DD** | bullets at the end, '
@@ -414,7 +414,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     consentText: {
       what: 'Rewrite the previewed pages so each frontmatter contacts list keeps one row per (type, value)',
       why: 'The preview listed each page whose contacts list repeats a (type, value) row, with its row counts and the page revision it read.',
-      risk: 'Only the contacts key changes: repeated rows collapse into the first, keeping the newest last_used; rows that differ in any other field and every distinct value stay. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with git revert or gbrain revert.',
+      risk: 'Only the contacts key changes: repeated rows collapse into the first, keeping the newest last_used; rows that differ in any other field and every distinct value stay. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with git revert or foresights revert.',
       user_message: 'Collapse the previewed duplicated contact rows? One row per (type, value) is kept, with the newest last_used',
     },
     summary: 'Collapse duplicated frontmatter contact rows (#8109): a writer that appended a {type, value, last_used} row on every touch left the same value '
@@ -438,9 +438,9 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'file, or a page of another type with no title word in common) loses the slug: line deterministically; anything else is judged by the content-repair '
       + 'model (models.content_repair, else models.fence_repair, else the measured list) under the fences.repair caps and the same daily ledger as fences: '
       + 'remove_slug applies the one-line edit, merge_into and needs_human write nothing and record the recommendation on the hold for a person '
-      + '(gbrain sync status shows the paragraph). Managed sources commit through the Git effect with a gbrain-repair: trailer, legacy sources back up and '
+      + '(foresights sync status shows the paragraph). Managed sources commit through the Git effect with a gbrain-repair: trailer, legacy sources back up and '
       + 'print the commit step. --only/--skip <path> select; --no-llm keeps to the deterministic tier; --max-usd <n> lowers the model cap for this run. '
-      + 'Preview-bound: --apply --expect <hash> applies exactly the previewed set. gbrain repair content runs fences, then this kind.',
+      + 'Preview-bound: --apply --expect <hash> applies exactly the previewed set. foresights repair content runs fences, then this kind.',
   },
   'planner-stats': {
     handler: plannerStatsRepair, embeds: 'none', checks: ['planner_stats_stale'], approval: 'unbound',
@@ -558,7 +558,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   aliases: {
     handler: aliasesRepair, embeds: 'none', checks: ['dangling_aliases'], explicit_only: true,
     summary: 'Delete free-text page aliases and slug redirects whose target page has no row at all (purged or hard-deleted, #6619), which doctor '
-      + 'dangling_aliases reports as orphaned. Aliases of a soft-deleted page are kept for gbrain restore and counted; a redirect from an old name '
+      + 'dangling_aliases reports as orphaned. Aliases of a soft-deleted page are kept for foresights restore and counted; a redirect from an old name '
       + 'of a page that still exists is never touched. Each target slug is rechecked under its page lock; coordinated maintenance write on a managed '
       + 'brain, no journal admission. Runs only when named.',
   },
@@ -601,30 +601,30 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   'url-clone-fences': {
     handler: urlCloneFencesRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
-      what: 'Restore the previewed files of a clone gbrain owns from HEAD after keeping their gbrain fence rows database-only',
+      what: 'Restore the previewed files of a clone foresights owns from HEAD after keeping their foresights fence rows database-only',
       why: 'An older release appended ## Facts fence rows to these clone files, and the local change blocks every git pull --ff-only that touches them; the preview proved each file differs from HEAD by those rows alone.',
       risk: 'Each file is backed up under ~/.gbrain/backups/url-clone-fences/ before it changes, and its fact rows stay active and recallable in the database. A file that changed since the preview is skipped. Copy the backup back to undo.',
       user_message: 'Restore the previewed clone files from the last pulled commit? Their facts stay in the database and each file is backed up first',
     },
     summary: 'Clear the local changes an older release left in a gbrain-owned clone (sources add --url), which make every sync stop at the pull with '
       + 'pull_blocked_local_changes (#6946). The preview lists each tracked file that differs from HEAD and proves the difference is only ## Facts fence '
-      + 'rows gbrain appended; any other difference (a user edit, a staged change, a deleted file) is named and left untouched. --apply --expect <hash> --yes, '
+      + 'rows foresights appended; any other difference (a user edit, a staged change, a deleted file) is named and left untouched. --apply --expect <hash> --yes, '
       + 'per previewed file: back it up, keep its appended rows database-only in one transaction, import HEAD\'s bytes as the page, then restore the file '
-      + 'from HEAD. Unmanaged brains only (a managed brain uses gbrain sources mirror-readonly). Runs only when named.',
+      + 'from HEAD. Unmanaged brains only (a managed brain uses foresights sources mirror-readonly). Runs only when named.',
   },
   'segmented-mirror': {
     handler: segmentedMirrorRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
       what: 'Rewrite the previewed canonical files of pages stored in segments without their withdrawn or purged rows',
       why: 'The preview listed each file an older binary left holding a row a withdrawal or purge removed from the database; the apply rewrites each one to the page\'s canonical render through the withdrawal mirror.',
-      risk: 'Each listed file is replaced by the bytes gbrain export writes for its page (other formatting differences in it are normalized the same way). A file that changed since the preview refuses the apply (preview_changed), and one that differs from the database for any other reason is never rewritten. The Git effect commits the change; the old bytes stay in earlier commits.',
+      risk: 'Each listed file is replaced by the bytes foresights export writes for its page (other formatting differences in it are normalized the same way). A file that changed since the preview refuses the apply (preview_changed), and one that differs from the database for any other reason is never rewritten. The Git effect commits the change; the old bytes stay in earlier commits.',
       user_message: 'Rewrite the previewed page files without their withdrawn rows? Each becomes the page\'s canonical render',
     },
     summary: 'Re-mirror the canonical files of pages stored in segments whose withdrawal mirror an older binary (before v0.60.299.0) passed by '
       + '(skipped page_body_segmented), so the file still holds a row forget, forget_fact or purge_fact removed from the database. The preview, '
       + 'on the source\'s owner host and in bounded memory, lists each file-backed segmented page whose file is an older render: it passes the '
       + 'mirror\'s own file/database check and still holds a withdrawn or purged row; it prints the path, the file\'s SHA-256 and size and those '
-      + 'of the canonical render (gbrain export\'s bytes). A file that differs from the database for another reason is listed held '
+      + 'of the canonical render (foresights export\'s bytes). A file that differs from the database for another reason is listed held '
       + '(file_database_drift) and never rewritten. Preview-bound and destructive: --apply --expect <hash> --yes re-checks each page and commits, per '
       + 'page, one receipted request whose withdrawal-mirror and Git effects rewrite and commit the file. Runs only when named; never on upgrade.',
   },
@@ -671,13 +671,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     consentText: {
       what: 'Restore the previewed provenance stamps and lowering markers, and lower each listed page to match',
       why: 'The preview listed each page whose source_kind, ingested_via or ingested_at a remote write rewrote, or whose lowering marker it removed, before those stamps were server-owned (#7892), and each classified page whose file would re-read above its stored tier.',
-      risk: 'Only the three stamps and the trust_tier marker change, and a page is only lowered, never raised; each lowered page gets a lower_page proposal that gbrain trust review confirms or reverts. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with gbrain trust review or git revert.',
-      user_message: 'Restore where the previewed pages came from and lower their trust to match? Only their provenance stamps and trust marker change, and you can undo each one in gbrain trust review',
+      risk: 'Only the three stamps and the trust_tier marker change, and a page is only lowered, never raised; each lowered page gets a lower_page proposal that foresights trust review confirms or reverts. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with foresights trust review or git revert.',
+      user_message: 'Restore where the previewed pages came from and lower their trust to match? Only their provenance stamps and trust marker change, and you can undo each one in foresights trust review',
     },
     summary: 'Restore provenance stamps (source_kind, ingested_via, ingested_at) and lowering markers that writes removed before #7892, and stamp the '
       + 'trust marker on classified pages whose file would re-read above their stored tier (#7891, #7918). Remote damage is repaired; unattributed '
       + 'damage only with --include-ambiguous; the owner\'s own edits and pages a later local write also changed are listed, never written. '
-      + 'Each change only lowers, and a lowered page files a lower_page proposal for gbrain trust review. --slug <slug> narrows. Preview-bound and '
+      + 'Each change only lowers, and a lowered page files a lower_page proposal for foresights trust review. --slug <slug> narrows. Preview-bound and '
       + 'destructive: --apply --expect <hash> --yes writes exactly the previewed pages through the owner page write; local CLI only; never on upgrade.',
   },
   'secret-spans': {
@@ -744,11 +744,11 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: lostFenceRowsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
       what: 'Put the previewed fact and take rows back into their pages\' Facts and Takes sections',
-      why: 'The preview listed each row an older gbrain expired or deleted after a page rewrite dropped its section and a later remember or takes add re-created the section without it; page history holds each row. A section rebuilt by hand without a row looks the same, so check the list.',
+      why: 'The preview listed each row an older foresights expired or deleted after a page rewrite dropped its section and a later remember or takes add re-created the section without it; page history holds each row. A section rebuilt by hand without a row looks the same, so check the list.',
       risk: 'Each listed page is republished through a revision-bound put_page with the rows added and nothing else changed; a page that changed since the preview is skipped. A restored row never gets more trust than it had: a fact comes back at the tier the expired row had, and a take, or a fact with no recorded tier, at the lowest tier. If the page write is left pending, rerun the same apply to finish lowering the tiers. Page history keeps the earlier revision, and a managed source commits the file, so git revert undoes it.',
       user_message: 'Put the previewed facts and takes back into their pages? Only those rows are added',
     },
-    summary: 'Restore fact and take rows an older gbrain retired after a page rewrite dropped their Facts or Takes section: the next remember or takes add '
+    summary: 'Restore fact and take rows an older foresights retired after a page rewrite dropped their Facts or Takes section: the next remember or takes add '
       + 're-created the section with only its own row, and the write after that expired the facts and deleted the takes. Lists only rows the records '
       + 'prove: a fence generation retired the row without an empty-section proof, nothing on the page carries it now, and page history holds it in a '
       + 'section that then vanished before the retirement (a row an edit removed from a section that stayed is a deliberate removal and is not listed). '
@@ -770,7 +770,7 @@ export function repairMaySpend(spec: RepairKindSpec, noEmbed?: boolean): boolean
   return spec.spends === 'llm' || repairMayEmbed(spec, noEmbed);
 }
 
-/** The kinds `--all`, the remediation plan and `gbrain repair` with no kind run, in dependency order. */
+/** The kinds `--all`, the remediation plan and `foresights repair` with no kind run, in dependency order. */
 export const AUTO_REPAIR_REGISTRY: readonly RepairKindSpec[] = REPAIR_REGISTRY.filter(spec => !spec.explicit_only);
 
 /** The explicit-only kinds, listed by those surfaces with their preview command but never run by them. */
@@ -787,9 +787,9 @@ export function repairSpec(kind: RepairKind, registry: readonly RepairKindSpec[]
   return registry.find(spec => spec.kind === kind)!;
 }
 
-/** `gbrain repair <kind> [--source <id>]`, the read-only preview of one kind. */
+/** `foresights repair <kind> [--source <id>]`, the read-only preview of one kind. */
 export function repairPreviewCommand(kind: RepairKind, opts: { source?: string } = {}): string {
-  return `gbrain repair ${kind}${opts.source ? ` --source ${opts.source}` : ''}${kind === 'generations' ? ` --kind atom --since ${restoreDaysHint()}d` : ''}`;
+  return `foresights repair ${kind}${opts.source ? ` --source ${opts.source}` : ''}${kind === 'generations' ? ` --kind atom --since ${restoreDaysHint()}d` : ''}`;
 }
 
 /** How `--all`, the remediation plan and the banner report an explicit-only kind instead of running it. */
@@ -802,7 +802,7 @@ export function explicitRepairNotices(opts: { source?: string } = {}): ExplicitR
 
 /** `explicit_kind_required`: an explicit-only kind reached a runner without being named. */
 export function explicitKindRequired(kind: RepairKind): OperationError {
-  return catalogueError('explicit_kind_required', `gbrain repair ${kind} is explicit-only and runs only when named, never from --all or a remediation step.`,
+  return catalogueError('explicit_kind_required', `foresights repair ${kind} is explicit-only and runs only when named, never from --all or a remediation step.`,
     `Preview it on the brain host: ${repairPreviewCommand(kind)}`);
 }
 
@@ -811,13 +811,13 @@ export function repairForCheck(checkId: string): RepairKindSpec | undefined {
   return REPAIR_REGISTRY.find(spec => spec.checks.includes(checkId));
 }
 
-/** `gbrain repair <kind> --apply [--source <id>] [--no-embed]`, the exact command that applies one kind. */
+/** `foresights repair <kind> --apply [--source <id>] [--no-embed]`, the exact command that applies one kind. */
 export function repairApplyCommand(kind: RepairKind, opts: { source?: string; noEmbed?: boolean } = {}): string {
-  return `gbrain repair ${kind}${opts.source ? ` --source ${opts.source}` : ''}${opts.noEmbed && repairSpec(kind).embeds === 'inline' ? ' --no-embed' : ''} --apply`;
+  return `foresights repair ${kind}${opts.source ? ` --source ${opts.source}` : ''}${opts.noEmbed && repairSpec(kind).embeds === 'inline' ? ' --no-embed' : ''} --apply`;
 }
 
 /**
- * One local, trusted repair context shared by `gbrain repair` and the doctor
+ * One local, trusted repair context shared by `foresights repair` and the doctor
  * remediation run: the same config, embedding model and `--no-embed` handling,
  * so a kind previews and applies identically from either entry point.
  * `registry` replaces the registered kinds (tests register stub specs here).

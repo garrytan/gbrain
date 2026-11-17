@@ -54,8 +54,8 @@ export function hostFix(
   const transport = opTransport(ctx);
   const actor = transport === 'cli' ? 'agent' : transport === 'http' ? 'host_admin' : 'user';
   const relay = transport === 'http'
-    ? 'This needs the gbrain CLI on the machine that hosts this brain. Please ask whoever runs that server to run the command shown.'
-    : 'This needs the gbrain CLI in a terminal on this machine. Please run the command shown.';
+    ? 'This needs the foresights CLI on the machine that hosts this brain. Please ask whoever runs that server to run the command shown.'
+    : 'This needs the foresights CLI in a terminal on this machine. Please run the command shown.';
   return {
     argv, consent: opts.consent ?? [], actor, why,
     ...(transport === 'cli' && opts.user_message === undefined ? {} : { user_message: opts.user_message ?? relay }),
@@ -127,7 +127,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * B5: the one scope-denial error. Code `insufficient_scope` (the caller's
  * frozen `error` value rides `legacy_error`), the client id and current
- * scopes in `why`, and the exact `gbrain auth` command that widens this
+ * scopes in `why`, and the exact `foresights auth` command that widens this
  * connection's grant, run by the brain host's operator.
  */
 export function scopeDeniedError(opts: {
@@ -160,7 +160,7 @@ export function scopeDeniedError(opts: {
           ? `Widens this connection's grant to ${wanted.join(', ')}; only the brain host's operator can change grants.`
           : 'Shows this connection\'s grant so the operator can widen it.',
         user_message: opts.transport === 'http'
-          ? `${who} is missing the ${opts.required.join(', ')} scope for ${opts.op}. Please ask whoever runs this gbrain server to run the command shown, then reconnect.`
+          ? `${who} is missing the ${opts.required.join(', ')} scope for ${opts.op}. Please ask whoever runs this foresights server to run the command shown, then reconnect.`
           : `This MCP connection is missing the ${opts.required.join(', ')} scope for ${opts.op}. Please run the command shown in a terminal on this machine to review its grant.`,
         requires_exclusive: false,
       },
@@ -170,17 +170,17 @@ export function scopeDeniedError(opts: {
 /**
  * B6: a persistence administration path reached without the current trusted
  * CLI writer registration. The person at the brain host runs it from the
- * gbrain CLI; the fix reads the registration first (never re-registers).
+ * foresights CLI; the fix reads the registration first (never re-registers).
  */
 export function trustedCliRequired(message: string): OperationError {
   return opError('permission_denied', message,
-    'Run this from the gbrain CLI in a terminal on the brain host. It needs a current CLI writer registration: `gbrain auth local-writer list --json` shows it, and `gbrain auth local-writer register cli` creates one when none is active.',
+    'Run this from the foresights CLI in a terminal on the brain host. It needs a current CLI writer registration: `foresights auth local-writer list --json` shows it, and `foresights auth local-writer register cli` creates one when none is active.',
     {
       reason: 'trusted_cli_required',
       fix: {
         argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'], consent: [], actor: 'user',
         why: 'Administration paths run only under the brain host\'s trusted CLI registration; this shows whether one is active.',
-        user_message: 'This gbrain maintenance step has to run from a terminal on the machine that hosts the brain. Please run the command shown there.',
+        user_message: 'This foresights maintenance step has to run from a terminal on the machine that hosts the brain. Please run the command shown there.',
         requires_exclusive: false,
       },
     });

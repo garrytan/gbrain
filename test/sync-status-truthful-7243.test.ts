@@ -1,5 +1,5 @@
 /**
- * #7243 (GBRA-133 PR 3a lane S): `gbrain sync status` told an agent less than the truth on a large managed source. Each
+ * #7243 (GBRA-133 PR 3a lane S): `foresights sync status` told an agent less than the truth on a large managed source. Each
  * case is red on master, on PGLite and on Postgres (test/postgres-unit-arms.txt):
  * - plain --json printed every hold inline (thousands of rows); it now prints counts by code and state over every
  *   hold and the first PLAIN_STATUS_HOLDS rows, and --detail pages through the rest with a cursor;

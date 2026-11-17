@@ -98,7 +98,7 @@ not: the employment start pattern `EMPLOYMENT.start` in `src/core/link-temporal-
 closed the real one at that date. The rule did what it specifies; the start cue is too broad for that phrasing.
 
 Decision, as preregistered: `dream.single_value.mode` defaults to `propose`. Closures for declared types are recorded
-as proposals (`gbrain edge-proposals list`) and nothing is written to pages until a user accepts one or sets the mode
+as proposals (`foresights edge-proposals list`) and nothing is written to pages until a user accepts one or sets the mode
 to `apply`.
 
 Follow-ups (not in this pull request; each needs a fresh held-out run):

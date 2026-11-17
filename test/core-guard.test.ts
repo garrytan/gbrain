@@ -72,7 +72,7 @@ describe('owner-only marking', () => {
 
     const add = await put('notes/remote', page('Remote', 'x', { always_load: true }), true);
     expect(add.body).toMatchObject({ error: 'core_mark_owner_only' });
-    expect(add.body.message).toContain('gbrain core add --source default notes/remote');
+    expect(add.body.message).toContain('foresights core add --source default notes/remote');
 
     const rev = await revision('people/alice-example');
     const flip = await put('people/alice-example', page('Alice Example', 'Prefers tea.', { always_load: false }), true, { expected_revision: rev });

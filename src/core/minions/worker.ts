@@ -352,7 +352,7 @@ export class MinionWorker extends EventEmitter {
   }
 
   /**
-   * Read-only handler lookup. `gbrain jobs run-child` registers the builtin
+   * Read-only handler lookup. `foresights jobs run-child` registers the builtin
    * handlers against a throwaway worker (registerBuiltinHandlers's existing
    * contract) and resolves the one it needs through this accessor.
    */
@@ -616,13 +616,13 @@ export class MinionWorker extends EventEmitter {
           console.log(
             `⚠ Waiting-TTL is now active: ${tick.affected ?? 0} queued job(s) currently exceed their TTL and ` +
             `will be cancelled after a ${Math.round(ttlNoticeGraceMs() / 60_000)}min grace window. ` +
-            `Tune: gbrain config set minions.ttl_waiting_hours.<name> <hours|0>.`,
+            `Tune: foresights config set minions.ttl_waiting_hours.<name> <hours|0>.`,
           );
         } else if (tick.phase === 'swept' && tick.cancelled > 0) {
           const breakdown = Object.entries(tick.by_name).map(([n, c]) => `${n}: ${c}`).join(', ');
           console.log(
             `Waiting-TTL: cancelled ${tick.cancelled} job(s) that waited past their TTL (${breakdown}). ` +
-            `Tune: gbrain config set minions.ttl_waiting_hours.<name> <hours|0>. See 'gbrain jobs stats'.`,
+            `Tune: foresights config set minions.ttl_waiting_hours.<name> <hours|0>. See 'foresights jobs stats'.`,
           );
         }
       } catch (e) {
@@ -634,7 +634,7 @@ export class MinionWorker extends EventEmitter {
     // Periodic RSS watchdog — closes the production-freeze regression where
     // all concurrency slots are wedged with zero job completions, so the
     // per-job check in executeJob().finally() never fires. Disabled when
-    // maxRssMb is 0 (default for bare `gbrain jobs work`; supervisor sets 2048).
+    // maxRssMb is 0 (default for bare `foresights jobs work`; supervisor sets 2048).
     let rssTimer: ReturnType<typeof setInterval> | null = null;
     if (this.opts.maxRssMb > 0) {
       rssTimer = setInterval(() => {
@@ -726,7 +726,7 @@ export class MinionWorker extends EventEmitter {
           // Under a supervisor, the supervisor's progress watchdog (issue #1801)
           // owns forward-progress detection; running the worker's own stall
           // detector too would double-act (and both emitting 'unhealthy' +
-          // supervisor SIGTERM race). Bare `gbrain jobs work` keeps it.
+          // supervisor SIGTERM race). Bare `foresights jobs work` keeps it.
           if (!isSupervisedChild) {
           if (this.jobsCompleted > lastKnownCompleted || autopilotPaused()) { // #7966: a pause holds claims, so its ticks restart the clock
             lastKnownCompleted = this.jobsCompleted;
@@ -829,7 +829,7 @@ export class MinionWorker extends EventEmitter {
         if (!this.running) break;
 
         // Claim jobs up to concurrency limit — unless the system-wide pause
-        // marker is parked. `gbrain migrate` quiesces writers for the copy
+        // marker is parked. `foresights migrate` quiesces writers for the copy
         // window; the marker stops the autopilot dispatch loop, and gating
         // the CLAIM here extends that fence to queued jobs (an already
         // in-flight job finishes and is waited on by the migrate drain).
@@ -1515,7 +1515,7 @@ export class MinionWorker extends EventEmitter {
     // `shutdownSignal` is separate: fires only on worker process SIGTERM/SIGINT.
     // Handlers that need to run cleanup before worker exit (shell handler's
     // SIGTERM→5s→SIGKILL on its child) subscribe to shutdownSignal too.
-    // Builder shared with `gbrain jobs run-child` (job-context.ts) so the
+    // Builder shared with `foresights jobs run-child` (job-context.ts) so the
     // process-isolation child wires the exact same DB-backed callbacks.
     const context: MinionJobContext | null = isolated
       ? null
@@ -1682,7 +1682,7 @@ export class MinionWorker extends EventEmitter {
       // gate and route through `queue.releaseLeaseFullJob` which mirrors
       // `failJob` minus the `attempts_made` increment. Audit row to
       // `minion_lease_pressure_log` so operators see pressure live in
-      // `gbrain doctor` + `gbrain jobs stats lease_pressure`.
+      // `foresights doctor` + `foresights jobs stats lease_pressure`.
       if (err instanceof JobDeferredError) return this.deferJob(job, lockToken, err);
       const isLeaseFull = err instanceof RateLeaseUnavailableError;
       if (isLeaseFull) {
@@ -1701,7 +1701,7 @@ export class MinionWorker extends EventEmitter {
           return;
         }
         // Audit row write is best-effort — never blocks the bypass path.
-        // Denormalized columns persist past `gbrain jobs prune` so post-NULL
+        // Denormalized columns persist past `foresights jobs prune` so post-NULL
         // forensic queries still see context (Eng D8 / codex pass-3 #7).
         await logLeasePressure(this.engine, {
           job_id: job.id,

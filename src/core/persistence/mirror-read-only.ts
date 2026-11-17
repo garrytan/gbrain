@@ -1,6 +1,6 @@
 /**
  * #5409: a per-source read-only mirror (`sources.config.mirror_read_only`,
- * default false, set by `gbrain sources mirror-readonly|mirror-writable`).
+ * default false, set by `foresights sources mirror-readonly|mirror-writable`).
  * The source's Git remote is authoritative: managed publication never writes
  * a file into its checkout. Sync imports canonical metadata database-only, and
  * a page write into the source is stored database-only (`storage:
@@ -14,8 +14,8 @@
  * slug path, as they do an unbound-source page, and the apply that records
  * that origin clears the stamp.
  *
- * #6946: on an unmanaged brain a clone gbrain owns (`sources add --url`,
- * url-clone.ts) is read-only the same way without the flag, because gbrain
+ * #6946: on an unmanaged brain a clone foresights owns (`sources add --url`,
+ * url-clone.ts) is read-only the same way without the flag, because foresights
  * pulls it with `git pull --ff-only` on every sync.
  */
 import type { SqlEngine } from './model.ts';

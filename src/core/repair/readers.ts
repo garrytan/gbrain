@@ -1,5 +1,5 @@
 /**
- * GST-2476 (D1): `gbrain repair visibility --readers <list>` sets the readers of named pages (`--slug`, repeatable, or
+ * GST-2476 (D1): `foresights repair visibility --readers <list>` sets the readers of named pages (`--slug`, repeatable, or
  * `--slugs-file`, one slug per line) through the label-only door (repair/label-write.ts): the page keeps its trust tier,
  * files no lower_page proposal and keeps its provenance stamps (source_kind, ingested_via, ingested_at), its file changes
  * only on the `readable_by` line (persistence/label-edit.ts), and the pages_access_derive_readers trigger (v282) sets
@@ -7,7 +7,7 @@
  * adds readers is an agent content write: it lowers the page and, on a managed brain, stamps put_page provenance.
  *
  * Every reader must name an enabled member (`alice-example`, `member:alice-example`) or an existing group
- * (`group:team-a`); `none` removes the line. When `gbrain access owner` names an owner, a list that does not
+ * (`group:team-a`); `none` removes the line. When `foresights access owner` names an owner, a list that does not
  * name the owner directly refuses unless `--allow-without-owner`: readers that leave the owner out close the page to the
  * owner's own keys on every read path (access/caller.ts), and a group holding the owner does not count.
  *
@@ -72,13 +72,13 @@ async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Pro
   for (const principal of principals) {
     const id = shown(principal);
     if (principal.startsWith('group:')) {
-      if (!(await listGroups(engine, id.slice('group:'.length))).length) throw unknownReader('No group "' + id.slice('group:'.length) + '" exists on this brain.', 'List groups with gbrain access group list, or create it: gbrain access group add ' + id.slice('group:'.length) + ' --members <ids>.', 'unknown_group');
+      if (!(await listGroups(engine, id.slice('group:'.length))).length) throw unknownReader('No group "' + id.slice('group:'.length) + '" exists on this brain.', 'List groups with foresights access group list, or create it: foresights access group add ' + id.slice('group:'.length) + ' --members <ids>.', 'unknown_group');
       continue;
     }
     const member = await getMember(engine, id);
     if (member?.status !== 'enabled') {
       throw unknownReader(member ? 'Member "' + id + '" is ' + member.status + '.' : 'No member "' + id + '" exists on this brain.',
-        member?.status === 'disabled' ? 'Enable it (gbrain access member enable ' + id + ') or name another member.' : 'Check the id with gbrain access member list, or add it: gbrain access member add ' + id + '.',
+        member?.status === 'disabled' ? 'Enable it (foresights access member enable ' + id + ') or name another member.' : 'Check the id with foresights access member list, or add it: foresights access member add ' + id + '.',
         member ? member.status : 'unknown');
     }
   }
@@ -89,7 +89,7 @@ async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Pro
 /** The read-only command that previews this selection again, with the caller's flags. */
 function previewCommand(scope: RepairScope, request: ReadersRequest, slugs: string[], sourceFlag: boolean): string {
   const pages = request.slugsFile ? ' --slugs-file ' + request.slugsFile.path : slugs.map(slug => ' --slug ' + slug).join('');
-  return 'gbrain repair visibility' + (sourceFlag && scope.source_ids.length === 1 ? ' --source ' + scope.source_ids[0] : '') + pages
+  return 'foresights repair visibility' + (sourceFlag && scope.source_ids.length === 1 ? ' --source ' + scope.source_ids[0] : '') + pages
     + ' --readers ' + request.readers + (request.allowWithoutOwner ? ' --allow-without-owner' : '');
 }
 
@@ -166,18 +166,18 @@ async function pageHolds(engine: BrainEngine, item: ReadersItem, target: string[
 export async function planReaders(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null, opts: RepairPlanOptions & { readers: ReadersRequest }): Promise<RepairPlan> {
   const request = opts.readers;
   const slugs = [...new Set(request.slugsFile?.slugs ?? opts.slugs ?? [])].sort();
-  if (!slugs.length) throw invalid('gbrain repair visibility --readers names its pages with --slug or --slugs-file.', 'Name each page: --slug notes/a-example (repeatable), or --slugs-file <file> with one slug per line.');
-  if (opts.driftClass !== undefined) throw invalid('gbrain repair visibility takes --readers or --class, not both.', 'Set readers on named pages with --readers, or preview a visibility class with --class.');
+  if (!slugs.length) throw invalid('foresights repair visibility --readers names its pages with --slug or --slugs-file.', 'Name each page: --slug notes/a-example (repeatable), or --slugs-file <file> with one slug per line.');
+  if (opts.driftClass !== undefined) throw invalid('foresights repair visibility takes --readers or --class, not both.', 'Set readers on named pages with --readers, or preview a visibility class with --class.');
   if (slugs.length > READERS_MAX_PAGES) throw invalid('--readers lists ' + slugs.length + ' pages; one preview lists at most ' + READERS_MAX_PAGES + '.', 'Split the slugs file and preview each part.');
   const command = previewCommand(scope, request, slugs, true);
-  if (opts.apply && !opts.expect) throw invalid('gbrain repair visibility --readers applies only the set a preview printed.', 'Preview first: ' + command + ' — then run the apply command it prints: ' + command + ' --apply --expect <preview-hash>');
+  if (opts.apply && !opts.expect) throw invalid('foresights repair visibility --readers applies only the set a preview printed.', 'Preview first: ' + command + ' — then run the apply command it prints: ' + command + ' --apply --expect <preview-hash>');
   const { readers, owner } = await checkedReaders(engine, request);
   const selection: Selection = { source_ids: scope.source_ids, slugs, readers, allow_without_owner: request.allowWithoutOwner === true, owner };
   if (opts.apply) return { items: await approvedItems(engine, scope, selection, opts.expect!, command, after), preview_hash: opts.expect, residuals: {} };
   const { items, residuals } = await planPages(engine, selection);
   const hash = previewHash(hashParts(scope, selection, items));
   const twins = await openTwins(engine, readers?.length ? items : [], readers ?? [],
-    (source, named) => `gbrain repair visibility --source ${source}${named.map(slug => ` --slug ${slug}`).join('')} --readers ${request.readers}`);
+    (source, named) => `foresights repair visibility --source ${source}${named.map(slug => ` --slug ${slug}`).join('')} --readers ${request.readers}`);
   const selectionDigest = digest(selection);
   if (items.length) await saveApprovedSet<ApprovedReaders>(engine, { command: 'visibility', hash },
     items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, readers: item.readers, selection_digest: selectionDigest })));

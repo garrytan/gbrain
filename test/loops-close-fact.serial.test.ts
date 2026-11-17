@@ -185,7 +185,7 @@ describe('#5869 loops_close retires the commitment fact through the coordinator'
   }), 180_000);
 });
 
-describe('#5869 gbrain repair loop-facts and doctor loop_facts_drift', () => {
+describe('#5869 foresights repair loop-facts and doctor loop_facts_drift', () => {
   async function repair(engine: BrainEngine, args: string[]) {
     const lines: string[] = [];
     const original = console.log;
@@ -202,7 +202,7 @@ describe('#5869 gbrain repair loop-facts and doctor loop_facts_drift', () => {
         await engine.executeRaw("UPDATE open_loops SET status='done', closed_at=now(), closed_by='manual' WHERE id=$1", [loopId]);
         const before = await loopFactsDriftCheck(engine, [sourceId]);
         expect(before).toMatchObject({ name: 'loop_facts_drift', status: 'warn', details: { drifted: 1 } });
-        expect(before.message).toContain('gbrain repair loop-facts');
+        expect(before.message).toContain('foresights repair loop-facts');
         const preview = await repair(engine, ['--source', sourceId]);
         expect(preview.results[0]).toMatchObject({ affected: 1, applied: 0 });
         expect(await factState(engine, sourceId, factId)).toMatchObject({ expired: false, rowActive: true });

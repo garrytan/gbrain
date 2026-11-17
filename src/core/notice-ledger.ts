@@ -14,7 +14,7 @@
  *   configuration-persistent stages (a keyless brain's `embed_unavailable`),
  *   which shows once per session per distinct key.
  * - Mute applies to `coaching` and `info` only: globally for the local owner
- *   (`gbrain notices mute <code>`), per client on remote transports
+ *   (`foresights notices mute <code>`), per client on remote transports
  *   (`mute_notice`). Persisted under GBRAIN_HOME.
  * - A notice carrying `escalation` (#7165 coverage notices: held_files and a
  *   projection-only degraded_recall) shows once per session per key for

@@ -4,7 +4,7 @@ Measures which chat models may judge a `frontmatter_slug_conflict` hold that the
 
 ## Current result
 
-Measured 2026-10-09 at gbrain `ac6e0868` (branch `capy/gbra72-content-repair`, prompt version 1) with the harness from the same change; three runs per model, 432 pair runs, $2.05 in all. Every model qualifies: no hard failure in 144 pair runs each, no unusable answer, every stray slug removed, every ambiguous pair deferred, and every adversarial pair answered `remove_slug` or `needs_human`. They differ on how many true duplicates they merge rather than defer.
+Measured 2026-10-09 at foresights `ac6e0868` (branch `capy/gbra72-content-repair`, prompt version 1) with the harness from the same change; three runs per model, 432 pair runs, $2.05 in all. Every model qualifies: no hard failure in 144 pair runs each, no unusable answer, every stray slug removed, every ambiguous pair deferred, and every adversarial pair answered `remove_slug` or `needs_human`. They differ on how many true duplicates they merge rather than defer.
 
 | Model | Hard failures | True-duplicate accuracy | needs_human rate | USD per pair | Latency p50 / p95 | Qualifies |
 |---|---|---|---|---|---|---|
@@ -47,6 +47,6 @@ bun evals/content-repair-judgment/harness.ts --score results/*.jsonl --json summ
 - **True-duplicate accuracy** (preregistered): `merge_into` with the right canonical over true-duplicate pair runs. At least 80% required.
 - **needs_human rate**: deferrals over all pair runs; always acceptable.
 - **No answer**: no usable verdict (malformed, truncated, refused, unavailable); safe, reported apart.
-- **Cost and latency**: USD per pair run from gbrain's price table; wall time p50 and p95.
+- **Cost and latency**: USD per pair run from foresights's price table; wall time p50 and p95.
 
 Ranking: qualifying models first, by true-duplicate accuracy, ties to the cheaper model.

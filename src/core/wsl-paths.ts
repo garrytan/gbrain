@@ -2,7 +2,7 @@
  * WSL Windows-drive path translation (shared by doctor asset checks and the
  * hook transcript confinement, #1835 / #4522).
  *
- * A Windows-side writer (a Windows gbrain install, or Claude Code running on
+ * A Windows-side writer (a Windows foresights install, or Claude Code running on
  * the Windows host invoking hooks via `wsl.exe`) hands the Linux side Windows
  * drive literals (`C:\Users\x\file`, `D:/foo/img.jpg`). Inside WSL those are
  * reachable through the automount tree (`/mnt/c/Users/x/file` by default; the

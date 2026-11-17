@@ -1,4 +1,4 @@
-/** `gbrain sync` CLI body (`runSyncInner`): flag parsing, --all fan-out, watch mode. */
+/** `foresights sync` CLI body (`runSyncInner`): flag parsing, --all fan-out, watch mode. */
 import { existsSync } from 'fs';
 import { getCompanyBrainProfile } from '../../core/company-brain/profile.ts';
 import { slog, withSourcePrefix } from '../../core/console-prefix.ts';
@@ -100,7 +100,7 @@ function printTailNotice(result: SyncResult): void {
 }
 
 export async function runSyncInner(engine: BrainEngine, args: string[]) {
-  // v0.40 Federated Sync v2: `gbrain sync trigger` subcommand
+  // v0.40 Federated Sync v2: `foresights sync trigger` subcommand
   // Routes to runSyncTrigger which queues a 'sync' minion job with
   // auto_embed_backfill=true. Falls through to the normal sync path
   // if 'trigger' isn't the first arg.
@@ -203,7 +203,7 @@ async function runRoutedSync(engine: BrainEngine, args: string[], flags: ReturnT
   return await runSingleSourceSync(engine, { ...flags, ...fanout }, { sourceId, companyPolicy, noEmbed, resumeCommand, args });
 }
 
-/** #6288: `gbrain sync --source <id> --acknowledge-managed <request_id|path>` removes only recorded failures the imported commit settles. */
+/** #6288: `foresights sync --source <id> --acknowledge-managed <request_id|path>` removes only recorded failures the imported commit settles. */
 async function runAcknowledgeManaged(engine: BrainEngine, args: string[]): Promise<void> {
   const { opError } = await import('../../core/ops/contract.ts');
   const selector = args[args.indexOf('--acknowledge-managed') + 1];
@@ -211,18 +211,18 @@ async function runAcknowledgeManaged(engine: BrainEngine, args: string[]): Promi
   const status = (id: string) => ({ argv: ['gbrain', 'sync', 'status', '--source', id, '--json'], consent: [], actor: 'agent' as const, requires_exclusive: false,
     why: 'Shows the recorded failure, its class and the exact sync that settles it, read-only.' });
   if (!selector || selector.startsWith('--') || !sourceId) throw opError('invalid_params', '--acknowledge-managed needs --source <id> and a request id or path.',
-    `Name the source and one recorded failure's request id or path, for example gbrain sync --source ${sourceId ?? 'default'} --acknowledge-managed notes/a.md; gbrain sync status --source ${sourceId ?? 'default'} --json lists them.`,
+    `Name the source and one recorded failure's request id or path, for example foresights sync --source ${sourceId ?? 'default'} --acknowledge-managed notes/a.md; foresights sync status --source ${sourceId ?? 'default'} --json lists them.`,
     sourceId ? { fix: status(sourceId) } : undefined);
   const { acknowledgeManagedSyncFailures, readManagedSyncImported } = await import('../../core/persistence/sync-failures.ts');
   const imported = await readManagedSyncImported(engine, sourceId);
   if (!imported) throw opError('managed_failure_unsettled', `Source ${sourceId} has no successful managed sync yet, so nothing can be acknowledged.`,
-    `Run gbrain sync --no-pull --source ${sourceId} first; a recorded failure is acknowledged only when the imported commit settles it.`, { fix: status(sourceId) });
+    `Run foresights sync --no-pull --source ${sourceId} first; a recorded failure is acknowledged only when the imported commit settles it.`, { fix: status(sourceId) });
   const result = await acknowledgeManagedSyncFailures(engine, imported, selector);
   for (const failure of result.cleared) slog(`Acknowledged recorded failure ${failure.code} for ${failure.path} (request ${failure.request_id ?? '<not-admitted>'}): commit ${imported.target.slice(0, 12)} already imports it.`);
   if (result.refused.length || !result.cleared.length) {
     throw opError('managed_failure_unsettled', result.refused.length ? `${result.refused.length} recorded failure(s) for ${selector} are not settled by the imported state.` : `No recorded managed failure of source ${sourceId} matches ${selector}.`,
       result.refused.length ? `Refused: ${result.refused.map(r => `${r.failure.path} (${r.reason})`).join(', ')}. The file still differs from what commit ${imported.target.slice(0, 12)} imported, its run is unfinished, or it is held; nothing was removed for it. Resume or retry that sync instead.`
-        : `Check the request id or path against gbrain sync status --source ${sourceId} --json; nothing was removed.`, { fix: status(sourceId) });
+        : `Check the request id or path against foresights sync status --source ${sourceId} --json; nothing was removed.`, { fix: status(sourceId) });
   }
   if (args.includes('--json')) await writeJsonDocument(JSON.stringify({ source_id: sourceId, imported_commit: imported.target, cleared: result.cleared }));
 }
@@ -294,7 +294,7 @@ async function resolveCliSyncSource(
   // no flag, no env, no dotfile is present.
   //
   // v0.41.13 (#1434): always call the resolver, not just when explicit/env
-  // is set. Pre-fix, `gbrain sync` without --source skipped resolution and
+  // is set. Pre-fix, `foresights sync` without --source skipped resolution and
   // left sourceId undefined — which the engine treated as the seeded
   // 'default' source. Users with a single non-default registered source
   // (studiovault, etc.) silently routed every write to a source holding
@@ -308,7 +308,7 @@ async function resolveCliSyncSource(
   const { resolveSourceWithTier, resolveSourceForRepoPath, formatSoleNonDefaultNudge, defaultWriteAllowedByEnv } =
     await import('../../core/source-resolver.ts');
   // #3765: an explicit --repo anchors source resolution at the REPO dir, not
-  // the caller's cwd. Pre-fix, `gbrain sync --repo ~/other-vault` parsed the
+  // the caller's cwd. Pre-fix, `foresights sync --repo ~/other-vault` parsed the
   // path but resolved the source from cwd — anchors, page writes, and the
   // per-source lock (`syncLockId(sourceId)`) all followed the WRONG source.
   // Precedence: --source flag > repo-derived (dotfile/local_path at the repo
@@ -327,7 +327,7 @@ async function resolveCliSyncSource(
       }
       resolved = derived;
       process.stderr.write(
-        `[gbrain] routing sync to source '${derived.source_id}' (resolved from --repo via ${derived.tier}).\n`,
+        `[foresights] routing sync to source '${derived.source_id}' (resolved from --repo via ${derived.tier}).\n`,
       );
     }
   }
@@ -402,7 +402,7 @@ async function runSyncAll(
     );
   }
   if (!sources || sources.length === 0) {
-    slog('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
+    slog('No sources with local_path configured. Use `foresights sources add <id> --path <path>` first.');
     return;
   }
 
@@ -438,7 +438,7 @@ async function runSyncAll(
     writeHuman(`Skipping ${disabledCount} disabled source(s).`);
   }
   if (notApplicable.length > 0) {
-    writeHuman(`Skipping ${notApplicable.length} source(s) where sync does not apply (gbrain-owned content directory, not a Git checkout): ${notApplicable.join(', ')}. Add markdown files with \`gbrain import <dir> --source <id>\`.`);
+    writeHuman(`Skipping ${notApplicable.length} source(s) where sync does not apply (gbrain-owned content directory, not a Git checkout): ${notApplicable.join(', ')}. Add markdown files with \`foresights import <dir> --source <id>\`.`);
   }
 
   // --missing-path skip: classify sources whose checkout is not on this
@@ -864,7 +864,7 @@ async function runSingleSourceSync(
     ...(yesFlag ? { costApproved: true } : {}),
   };
 
-  // v0.42.42.0 (#2139, Step 4b): single-source `gbrain sync` gets the SAME
+  // v0.42.42.0 (#2139, Step 4b): single-source `foresights sync` gets the SAME
   // inline cost gate as `--all`. Previously single-source embedded inline with
   // NO gate (only rail: the ≤100-file inline cap). Single-source always embeds
   // INLINE (not the parallel-deferred fan-out), so mode is forced 'inline'.
@@ -917,11 +917,11 @@ async function runSingleSourceSync(
       slog(legacyRows ? 'No managed sync failures recorded; checking the durable sync cursor for unfinished or failed writes.' : 'No local ledger entries; checking the durable sync cursor for unfinished or failed writes.');
     } else {
       slog(`Retrying ${failures.length} previously-failed file(s)...`);
-      // #6712 PR 1: a failure whose run no cursor holds any more (an older gbrain's, under its own key) is not settled by
+      // #6712 PR 1: a failure whose run no cursor holds any more (an older foresights's, under its own key) is not settled by
       // a sync; the orphan repair retires it.
       const orphaned = managedBrain ? (await (await import('../../core/persistence/managed-sync-orphans.ts')).classifyManagedSyncOrphans(engine, [sourceId]))
         .orphans.filter(orphan => orphan.kind === 'failure_row').length : 0;
-      if (orphaned) slog(`${orphaned} of them belong to no sync run any more (an older gbrain's run under another cursor key); no sync settles them: preview and retire them with gbrain repair managed-sync-orphans --source ${sourceId}.`);
+      if (orphaned) slog(`${orphaned} of them belong to no sync run any more (an older foresights's run under another cursor key); no sync settles them: preview and retire them with foresights repair managed-sync-orphans --source ${sourceId}.`);
     }
   }
 
@@ -980,7 +980,7 @@ async function runSingleSourceSync(
     // until next clean run). v0.41.13.0 (T7 / D-V3-5): partial also skips —
     // conservative posture matches blocked_by_failures. Resolve the effective
     // repo path so the wire-up fires in the common case where the user runs
-    // `gbrain sync` without passing --repo every time.
+    // `foresights sync` without passing --repo every time.
     if (
       !companyPolicy && result.status !== 'dry_run' &&
       result.status !== 'blocked_by_failures' &&

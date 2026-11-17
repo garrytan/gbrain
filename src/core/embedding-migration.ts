@@ -280,7 +280,7 @@ export const TEXT_EMBEDDING_DIM_PINNED_TABLES: ReadonlyArray<{
  * Dropping the column discards the stored vectors, which is correct: they are
  * in the OLD embedding space and unusable after the swap. query_cache is a
  * cache (refills on the next query); facts re-embed on their next write /
- * `gbrain extract` pass.
+ * `foresights extract` pass.
  */
 async function transitionDimPinnedColumn(
   tx: { executeRaw: <T = unknown>(sql: string, params?: unknown[]) => Promise<T[]> },
@@ -368,7 +368,7 @@ export interface MigrationState {
  * home to gain, not four to miss.
  */
 export function renderResumeCommand(state: MigrationState): string {
-  return `gbrain migrate embeddings --to ${state.to_model} --dim ${state.to_dims} --yes`;
+  return `foresights migrate embeddings --to ${state.to_model} --dim ${state.to_dims} --yes`;
 }
 
 /**
@@ -1213,7 +1213,7 @@ export async function applyEmbeddingMigration(
     await withMigrationLeaseTransaction(engine, opts.assertOwned,
       tx => assertRetainedEmbeddingRebuildability(tx, plan.to_dims, plan.to_model, plan), { deadlockRetries: 3 });
     const readiness = await prepareEmbeddingProjections(engine, { repair: true, assertOwned: opts.assertOwned });
-    if (readiness.blocked) return { status: 'failed', reason: `projection_blocked: ${readiness.blocked} page(s) remain; no embedding invalidation performed. Canonical projection recovery may have made durable progress. Inspect blockers before retrying: archived sources require deliberate gbrain sources restore <id>; image pages are counted by class in gbrain doctor --only text_projection_readiness --json (gbrain projections drain seals the sealable ones). See docs/guides/embedding-migration.md#recovery.` };
+    if (readiness.blocked) return { status: 'failed', reason: `projection_blocked: ${readiness.blocked} page(s) remain; no embedding invalidation performed. Canonical projection recovery may have made durable progress. Inspect blockers before retrying: archived sources require deliberate foresights sources restore <id>; image pages are counted by class in foresights doctor --only text_projection_readiness --json (foresights projections drain seals the sealable ones). See docs/guides/embedding-migration.md#recovery.` };
     await opts.assertOwned?.();
     // 1. State marker FIRST — a crash after any later step is resumable.
     //    Same-target re-apply PRESERVES the original started_at (set-if-

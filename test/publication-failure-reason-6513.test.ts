@@ -55,15 +55,15 @@ test('an unknown operator trigger: reason unknown, and no part of its message is
 });
 
 test('the real graduation fence (55000) is recognised as graduation_in_progress and classified retry; a P0001 with its text is not', () => {
-  const real = databaseRefusal(pg({ code: '55000', message: 'graduation_in_progress: this database is fenced by gbrain engine graduation run 0b6f0c3a-1111-4222-8333-944455556666; writes are refused until the run grants it authority',
-    hint: 'Run: gbrain migrate --status --json', where: 'PL/pgSQL function gbrain_graduation_fence() line 5 at RAISE', table_name: 'pages' }))!;
+  const real = databaseRefusal(pg({ code: '55000', message: 'graduation_in_progress: this database is fenced by foresights engine graduation run 0b6f0c3a-1111-4222-8333-944455556666; writes are refused until the run grants it authority',
+    hint: 'Run: foresights migrate --status --json', where: 'PL/pgSQL function gbrain_graduation_fence() line 5 at RAISE', table_name: 'pages' }))!;
   expect(real).toMatchObject({ code: 'storage_error', detail: { origin: 'database_trigger', sqlstate: '55000', raiser: 'gbrain_graduation_fence', table: 'pages', reason: 'graduation_in_progress' } });
   expect(real.message).toContain('graduation_in_progress');
   expect(real.message).not.toContain('0b6f0c3a');
   expect(publicFailureDetail(real.detail)).toEqual({ origin: 'database_trigger', sqlstate: '55000', raiser: 'gbrain_graduation_fence', table: 'pages', reason: 'graduation_in_progress' });
   expect(classifySyncFault({ code: 'storage_error', detail: 'graduation_in_progress' })).toMatchObject({ safe_actions: ['retry'], needs_human: false });
   // The same text as a P0001 from another raiser, or a 55000 from another raiser, is unknown.
-  expect(databaseRefusal(raise('operator_hook', 'graduation_in_progress: this database is fenced by gbrain engine graduation run x'))!.detail).toMatchObject({ sqlstate: 'P0001', reason: 'unknown' });
+  expect(databaseRefusal(raise('operator_hook', 'graduation_in_progress: this database is fenced by foresights engine graduation run x'))!.detail).toMatchObject({ sqlstate: 'P0001', reason: 'unknown' });
   expect(databaseRefusal(pg({ code: '55000', message: 'graduation_in_progress: spoofed', where: 'PL/pgSQL function operator_hook() line 1 at RAISE' }))!.detail).toMatchObject({ sqlstate: '55000', raiser: 'operator_hook', reason: 'unknown' });
   // Any other SQLSTATE is still not a database refusal this module names.
   expect(databaseRefusal(pg({ code: '55P03', message: 'lock timeout' }))).toBeNull();

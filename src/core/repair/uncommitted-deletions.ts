@@ -1,5 +1,5 @@
 /**
- * `gbrain repair uncommitted-deletions --source <id>` (#7130): restore soft-deleted pages whose recorded file Git never
+ * `foresights repair uncommitted-deletions --source <id>` (#7130): restore soft-deleted pages whose recorded file Git never
  * held (`.gitignore` excludes it, or no commit holds it and it is not on the disk), which a managed sync deleted before
  * #7130 because it read the absent file as a deletion. Such a tombstone may hold the only copy of its page, and the
  * purge removes it for good after its retention window.
@@ -33,7 +33,7 @@ export const UNCOMMITTED_DELETIONS_LIMIT = 1000;
 const PATH_LIMIT = 5000;
 const DOCS = 'docs/guides/repair.md#uncommitted-deletions';
 
-export const uncommittedDeletionsPreviewCommand = (sourceId: string) => `gbrain repair uncommitted-deletions --source ${sourceId}`;
+export const uncommittedDeletionsPreviewCommand = (sourceId: string) => `foresights repair uncommitted-deletions --source ${sourceId}`;
 const previewFix = (sourceId: string) => readFix('Previews the restorable soft-deleted pages of the source again; writes nothing.',
   { argv: ['gbrain', 'repair', 'uncommitted-deletions', '--source', sourceId, '--json'] });
 
@@ -42,7 +42,7 @@ export const UNCOMMITTED_DELETIONS_CONSENT_TEXT = {
   what: 'Restore the previewed soft-deleted pages whose recorded file Git never held, as database-only pages',
   why: 'The preview listed each page with its recorded path and the evidence that Git never committed that file (or .gitignore excludes it), so the tombstone may hold the only copy and the purge would remove it for good.',
   risk: 'Each page comes back live and detached: it forgets its recorded file path (database_only_reason=detached) and no file is written, so sync never deletes it again; a file put at that path later is not linked to it. '
-    + `Undo one with gbrain delete <slug>. ${PURGED_NOTE}`,
+    + `Undo one with foresights delete <slug>. ${PURGED_NOTE}`,
   user_message: 'Restore the previewed pages that a sync deleted without Git evidence? They come back live as database-only pages; no file is written',
 };
 
@@ -74,8 +74,8 @@ export const uncommittedDeletionsRepair: RepairHandler = {
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair uncommitted-deletions needs --source <id>.',
-        'Git evidence is read in each source\'s own checkout on its canonical owner host; name one source, e.g. gbrain repair uncommitted-deletions --source default.',
+      throw opError('invalid_params', 'foresights repair uncommitted-deletions needs --source <id>.',
+        'Git evidence is read in each source\'s own checkout on its canonical owner host; name one source, e.g. foresights repair uncommitted-deletions --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: DOCS });
     }
     const sourceId = scope.source_ids[0]!;
@@ -83,7 +83,7 @@ export const uncommittedDeletionsRepair: RepairHandler = {
     const selection: Selection = { source_ids: scope.source_ids, include_ambiguous: opts?.includeAmbiguous === true, after: opts?.afterPage ?? null };
     if (opts?.apply) {
       if (!opts.expect) {
-        throw opError('invalid_params', 'gbrain repair uncommitted-deletions --apply restores only the set a preview printed.',
+        throw opError('invalid_params', 'foresights repair uncommitted-deletions --apply restores only the set a preview printed.',
           `Preview first: ${command} — then, after the user agrees, run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`,
           { fix: previewFix(sourceId), docs: DOCS });
       }
@@ -120,7 +120,7 @@ export const uncommittedDeletionsRepair: RepairHandler = {
       listing: [...selected.map(page => ({ item: `${page.source_id}:${page.slug}`, class: `restore:${page.evidence}`, detail: describeDeletion(page) })),
         ...excluded.map(page => ({ item: `${page.source_id}:${page.slug}`, class: 'excluded:deleted_by_other', detail: `${describeDeletion(page)}; restored only with --include-ambiguous` }))],
       details: { pages: selected.map(({ source_id, slug, source_path, deleted_at, evidence, deleted_by }) => ({ source_id, slug, source_path, deleted_at, evidence, deleted_by })),
-        purged: PURGED_NOTE, undo: 'gbrain delete <slug>', truncated: scan.truncated || cut !== undefined, ...(next !== undefined ? { next_after: next } : {}), docs: DOCS } };
+        purged: PURGED_NOTE, undo: 'foresights delete <slug>', truncated: scan.truncated || cut !== undefined, ...(next !== undefined ? { next_after: next } : {}), docs: DOCS } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, last } = entry as DeletionItem;
@@ -143,7 +143,7 @@ async function restoreDeletion(ctx: OperationContext, page: UncommittedDeletion)
   if (Number(snapshot.page.id) !== page.page_id || snapshot.revision !== page.revision || snapshot.page.source_path !== page.source_path) return changed('the page or its recorded file changed since the preview');
   if (!snapshot.page.deleted_at) return { applied: false, outcome: 'already_live' };
   if (!await absentRecordedFile(engine, page.source_id, snapshot.page)) {
-    return { applied: false, outcome: 'file_restored', reason: `${page.source_path} is in the checkout again, so ${page.slug} was not detached; commit the file and run gbrain sync --source ${page.source_id}, or restore it with gbrain restore ${page.slug} --source-id ${page.source_id}.` };
+    return { applied: false, outcome: 'file_restored', reason: `${page.source_path} is in the checkout again, so ${page.slug} was not detached; commit the file and run foresights sync --source ${page.source_id}, or restore it with foresights restore ${page.slug} --source-id ${page.source_id}.` };
   }
   const requestId = await repairRequestId(ctx, 'uncommitted-deletions', page, page.revision);
   try {

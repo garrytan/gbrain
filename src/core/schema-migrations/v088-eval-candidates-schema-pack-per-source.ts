@@ -7,7 +7,7 @@ export const v088: Migration = {
   // Renumbered v81→v82→v83→v88 across successive master merges. Final
   // renumber landed it after master's v0.38.1.0 agent-loop bundle.
   //
-  // Adds `eval_candidates.schema_pack_per_source JSONB` so `gbrain
+  // Adds `eval_candidates.schema_pack_per_source JSONB` so `foresights
   // eval replay` reproduces the EXACT per-source closure that the
   // captured query ran against. Without this, a year-old replay
   // against an evolved pack returns different rows than the original

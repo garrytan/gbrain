@@ -1,9 +1,9 @@
 /**
- * #8072: a scheduled `gbrain sources refresh` tick on files over the 24 MiB page ceiling.
+ * #8072: a scheduled `foresights sources refresh` tick on files over the 24 MiB page ceiling.
  *
  * 1. Protects: a Markdown file the streamed (segmented) preparation already read and refused is held `file_too_large`
  *    and stays held, unread, on later ticks while its bytes are unchanged: no new write request for it, no pass-2
- *    block read, the hold's attempt count unchanged. `gbrain sources retry-held` (and a gbrain upgrade) still
+ *    block read, the hold's attempt count unchanged. `foresights sources retry-held` (and a foresights upgrade) still
  *    re-screens it; a hold decided from the size alone keeps re-screening every sync (one lstat).
  *    The member syncs of one refresh are bounded by `sources.refresh_sync_budget_ms`, each member with an equal share of
  *    what is left: past it the refresh reports `sync_deferred` and still completes, so writes are admitted while the
@@ -106,7 +106,7 @@ test('#8072: a held over-ceiling file the streamed import refused is not read ag
   expect(await holdsOf(f)).toMatchObject([{ path: 'conv.md', code: 'file_too_large' }]);
 }), 600_000);
 
-test('#8072: a streamed file_too_large hold re-screens on retry or another gbrain version; a size-only one on every sync', () => {
+test('#8072: a streamed file_too_large hold re-screens on retry or another foresights version; a size-only one on every sync', () => {
   const hold = (meta: Partial<GitHoldRecord['meta']>) => ({ code: 'file_too_large' as const, meta: { recovery_version: 99, blob_oid: 'a'.repeat(40), ...meta } as GitHoldRecord['meta'] });
   expect(holdRescreenDue(hold({ streamed: { gbrain_version: VERSION } }), false)).toBe(false);
   expect(holdRescreenDue(hold({ streamed: { gbrain_version: VERSION } }), true)).toBe(true);
@@ -118,7 +118,7 @@ test('#8072: a refresh past its sync budget completes with its members deferred,
   const target = f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
   await f.engine.setConfig('sources.refresh_sync_budget_ms', '0');
   const deferred = await refreshWorktree(f.engine, f.alpha);
-  expect(deferred).toMatchObject({ status: 'sync_deferred', target_head: target, next: `gbrain sources refresh ${f.alpha}` });
+  expect(deferred).toMatchObject({ status: 'sync_deferred', target_head: target, next: `foresights sources refresh ${f.alpha}` });
   expect(deferred.synced.map(member => member.status)).toEqual(['deferred', 'deferred']);
   expect(f.head()).toBe(target);
   expect(await f.lastCommit(f.alpha)).not.toBe(target);
@@ -129,7 +129,7 @@ test('#8072: a refresh past its sync budget completes with its members deferred,
   try { printRefreshOutcome({ result: deferred }, true); expect(currentExitCode()).toBe(1); } finally { console.log = log; _resetCliExitVerdictForTests(); process.exitCode = 0; }
 
   const again = await refreshWorktree(f.engine, f.alpha);
-  expect(again).toMatchObject({ status: 'sync_deferred', next: `gbrain sources refresh ${f.alpha}` });
+  expect(again).toMatchObject({ status: 'sync_deferred', next: `foresights sources refresh ${f.alpha}` });
   expect(again.synced.map(member => member.status)).toEqual(['deferred', 'deferred']);
 
   expect((await f.put(f.alpha, 'notes/during-catch-up', page('During', 'A write while the member catches up.'))).state ?? 'committed').toBe('committed');
@@ -171,7 +171,7 @@ test('#8072: a refresh whose member sync never settles ends refresh_sync_timeout
     expect(stalls).toBeGreaterThan(0);
     expect(stalled).toMatchObject({ status: 'sync_blocked', target_head: target });
     expect(stalled.preserved_uncommitted).toHaveLength(PRESERVED);
-    expect(stalled.sync_blocked?.[0]).toMatchObject({ source_id: f.alpha, code: 'refresh_sync_timeout', resume: `gbrain sync --source ${f.alpha} --no-pull` });
+    expect(stalled.sync_blocked?.[0]).toMatchObject({ source_id: f.alpha, code: 'refresh_sync_timeout', resume: `foresights sync --source ${f.alpha} --no-pull` });
     expect(stalled.sync_blocked?.[0]?.message).toContain('is queued');
     expect(f.head()).toBe(target);
     expect(await f.lastCommit(f.alpha)).not.toBe(target);

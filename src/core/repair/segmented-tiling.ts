@@ -1,5 +1,5 @@
 /**
- * `gbrain repair segmented-tiling --source <id> [--slug <slug>]...` (GST-1209): republish, from the file Git holds at HEAD,
+ * `foresights repair segmented-tiling --source <id> [--slug <slug>]...` (GST-1209): republish, from the file Git holds at HEAD,
  * each live page stored in segments whose live generation's rows do not cover its body (doctor `segmented_tiling`). Such
  * a page refuses every read (`page_body_rows_unreadable`) and a managed sync holds its file on every retry: a write once
  * committed a generation without its rows (its staging, collected by a fact purge's abort or a sweep's expiry while the
@@ -76,7 +76,7 @@ export interface HealPage extends UntiledPage {
 type Selection = { source_id: string; slugs: string[] };
 type HealItem = RepairItem & { page: HealPage; hash: string; last: boolean };
 
-const previewCommand = (selection: Selection) => `gbrain repair segmented-tiling --source ${selection.source_id}${selection.slugs.map(slug => ` --slug ${slug}`).join('')}`;
+const previewCommand = (selection: Selection) => `foresights repair segmented-tiling --source ${selection.source_id}${selection.slugs.map(slug => ` --slug ${slug}`).join('')}`;
 const receiptKey = (hash: string, pageId: number) => `${hash}:${pageId}`;
 const audit = createAuditWriter<{ ts: string } & Record<string, unknown>>({ featureName: 'segmented-tiling', errorLabel: 'segmented-tiling-audit', errorTrailer: '; repair continues' });
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -89,7 +89,7 @@ const gitText = (root: string, args: string[]): string | null => { try { return 
  */
 async function sourceCheckout(engine: BrainEngine, sourceId: string): Promise<{ root: string; incarnation: string; managed: boolean }> {
   const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
-  if (!source) throw new OperationError('invalid_params', `Source ${sourceId} does not exist.`, 'List the sources with gbrain sources list, then preview again with one of them.', DOCS);
+  if (!source) throw new OperationError('invalid_params', `Source ${sourceId} does not exist.`, 'List the sources with foresights sources list, then preview again with one of them.', DOCS);
   const managed = await readManagedMode(engine);
   let root = source.local_path;
   if (managed) {
@@ -102,7 +102,7 @@ async function sourceCheckout(engine: BrainEngine, sourceId: string): Promise<{ 
   }
   if (!root || gitText(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']) === null) {
     throw opError('not_a_git_repo', `Source ${sourceId} has no Git checkout with a commit, so the pages it lists cannot be republished from Git.`,
-      'This repair republishes the copy of each page Git holds at HEAD; a repo-less source has no copy outside the database, so nothing was read or written. Rewrite the page from a copy you hold (put_page), or restore an earlier version of it (gbrain history).',
+      'This repair republishes the copy of each page Git holds at HEAD; a repo-less source has no copy outside the database, so nothing was read or written. Rewrite the page from a copy you hold (put_page), or restore an earlier version of it (foresights history).',
       { docs: DOCS });
   }
   return { root, incarnation: source.incarnation, managed };
@@ -127,8 +127,8 @@ const hashOf = (scope: RepairScope, selection: Selection, pages: readonly HealPa
 
 function selectionOf(scope: RepairScope, slugs: readonly string[] | undefined): Selection {
   if (scope.source_ids.length !== 1) {
-    throw new OperationError('invalid_params', 'gbrain repair segmented-tiling works on one source at a time; pass --source <id>.',
-      'Run doctor (gbrain doctor --only segmented_tiling) to see which sources hold damaged pages, then preview each with --source.', DOCS);
+    throw new OperationError('invalid_params', 'foresights repair segmented-tiling works on one source at a time; pass --source <id>.',
+      'Run doctor (foresights doctor --only segmented_tiling) to see which sources hold damaged pages, then preview each with --source.', DOCS);
   }
   return { source_id: scope.source_ids[0]!, slugs: [...new Set(slugs ?? [])].sort() };
 }
@@ -148,7 +148,7 @@ const segmentedReadHold = (hold: GitHoldRecord) => hold.code === 'page_write_fai
 async function stageable(engine: BrainEngine, page: { source_id: string; slug: string; source_path: string }, checkout: { root: string; incarnation: string },
   content: string): Promise<{ held: string } | { truth: string; timeline: string; hold: GitHoldRecord | null; asStored: boolean }> {
   const hold = await readGitHold(engine, page.source_id, checkout.incarnation, page.source_path);
-  if (hold && !segmentedReadHold(hold)) return { held: `its sync hold (${hold.code}) withholds the file; resolve that hold first (gbrain sources status ${page.source_id})` };
+  if (hold && !segmentedReadHold(hold)) return { held: `its sync hold (${hold.code}) withholds the file; resolve that hold first (foresights sources status ${page.source_id})` };
   const screen = await unreadPageImportScreen(engine, { sourceId: page.source_id, root: checkout.root, path: page.source_path, slug: page.slug, content,
     snapshot: await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }) });
   if (screen.status === 'refused') return { held: `the next sync would hold the file (${screen.refusal.code}): ${screen.refusal.message}` };
@@ -266,7 +266,7 @@ export const segmentedTilingRepair: RepairHandler = {
   kind: 'segmented-tiling',
   publication: 'projection',
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (opts?.remote !== false) throw trustedCliRequired('gbrain repair segmented-tiling reads the source\'s Git checkout and republishes stored pages, so it runs only from the trusted local CLI on the brain host.');
+    if (opts?.remote !== false) throw trustedCliRequired('foresights repair segmented-tiling reads the source\'s Git checkout and republishes stored pages, so it runs only from the trusted local CLI on the brain host.');
     const selection = selectionOf(scope, opts.slugs);
     const command = previewCommand(selection);
     if (!opts.apply) {
@@ -278,7 +278,7 @@ export const segmentedTilingRepair: RepairHandler = {
         details: { pages, ...(truncated ? { truncated: true, next: `More than ${PREVIEW_PAGE_LIMIT} damaged pages: apply this preview, then run ${command} again to list the rest.` } : {}) } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair segmented-tiling --apply republishes only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair segmented-tiling --apply republishes only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash>`, DOCS);
     }
     const expect = opts.expect;
@@ -302,7 +302,7 @@ export const segmentedTilingRepair: RepairHandler = {
       preview_hash: expect, residuals: {} };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
-    if (ctx.remote !== false) throw trustedCliRequired('gbrain repair segmented-tiling runs only from the trusted local CLI on the brain host.');
+    if (ctx.remote !== false) throw trustedCliRequired('foresights repair segmented-tiling runs only from the trusted local CLI on the brain host.');
     const { page, hash, last } = entry as HealItem;
     try {
       if ((await receiptsOf(ctx.engine, hash, [page])).has(page.page_id)) return { applied: true, outcome: 'republished', detail: { generation_before: page.body_generation } };

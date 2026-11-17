@@ -144,7 +144,7 @@ for (const kind of testBackends()) {
       const check = await checkUnattendedMaintenance(engine);
       expect(check).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'maintain', '--unattended'], consent: [] },
         details: { alternative_fix: { argv: ['gbrain', 'maintain', '--schedule'], consent: ['persistent_install'], preview_argv: ['gbrain', 'maintain', '--schedule', '--dry-run'] } } });
-      expect(check.message).toContain('add the opt-in schedule with gbrain maintain --schedule');
+      expect(check.message).toContain('add the opt-in schedule with foresights maintain --schedule');
       await engine.setConfig('maintenance.last_run', JSON.stringify({ at: new Date().toISOString(), runner: 'serve', status: 'ok', steps: [], held: [], cursor: null,
         next_due_at: new Date(Date.now() + 1000).toISOString(), consecutive_failures: [] }));
       expect((await checkUnattendedMaintenance(engine)).details).not.toHaveProperty('alternative_fix');

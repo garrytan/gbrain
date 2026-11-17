@@ -167,7 +167,7 @@ export class ImportAbortError extends Error {
 /** A managed import of a symlinked input root: name the path, its target and the command that works. */
 function symlinkedRootAbort(dirArg: string, dir: string): ImportAbortError {
   console.error(`Managed import refuses a symlinked input root: ${dirArg} resolves to ${dir}.`);
-  console.error(`Fix: gbrain import ${dir}`);
+  console.error(`Fix: foresights import ${dir}`);
   return new ImportAbortError('managed import refuses a symlinked input root');
 }
 
@@ -182,7 +182,7 @@ function lockAdmissionAbort(dirArg: string, dir: string, error: unknown): Import
     if (marker) console.error(`Marker: ${marker}`);
   } else {
     console.error(`Error: ${message}`);
-    console.error('Fix: gbrain doctor --json');
+    console.error('Fix: foresights doctor --json');
   }
   const reason = error instanceof OperationError ? `${error.code}: ${message}` : message;
   return new ImportAbortError(`source filesystem lock admission failed (${reason})`, 1, undefined, error);
@@ -241,9 +241,9 @@ async function keylessImportRefusal(engine: BrainEngine, args: string[], e: unkn
   const named = args.some(a => a === '--source' || a === '--source-id' || a.startsWith('--source=') || a.startsWith('--source-id='));
   const target = named ? undefined : await resolveSourceWithTier(engine, null).then(r => r.source_id, () => undefined);
   return opError('embedding_disabled', String(e instanceof Error ? e.message.split('\n')[0] : e),
-    'Embeddings are off by choice on this brain, so import needs --no-embed; turning embeddings on needs the user\'s consent (gbrain doctor --only embeddings --json shows the command).', {
+    'Embeddings are off by choice on this brain, so import needs --no-embed; turning embeddings on needs the user\'s consent (foresights doctor --only embeddings --json shows the command).', {
       reason: 'disabled_by_choice',
-      why: 'This brain was set up keyword-only. Importing with --no-embed keeps every page keyword-searchable; `gbrain embed --stale` adds vectors once embeddings are enabled.',
+      why: 'This brain was set up keyword-only. Importing with --no-embed keeps every page keyword-searchable; `foresights embed --stale` adds vectors once embeddings are enabled.',
       fix: {
         argv: ['gbrain', 'import', ...args.filter(a => a !== '--json' && a !== '--no-embed'), '--no-embed', '--json',
           ...(target ? ['--source', target] : []), ...brainRoutingArgs()],
@@ -281,7 +281,7 @@ export async function runImport(
     /**
      * #753/#774: glob patterns to exclude from the import (same semantics as
      * `isSyncable`'s `exclude` — matched against the dir-relative path).
-     * Threaded by performFullSync for `gbrain sync --exclude`.
+     * Threaded by performFullSync for `foresights sync --exclude`.
      */
     exclude?: string[];
     /**
@@ -290,7 +290,7 @@ export async function runImport(
      * `isPathPruned` in core/sync.ts. Unlike `exclude`, this cannot be a
      * post-collection filter: a pruned path is never collected in the
      * first place, so it has to reach `collectSyncableFiles` itself.
-     * Threaded by performFullSync for `gbrain sync --include-hidden`.
+     * Threaded by performFullSync for `foresights sync --include-hidden`.
      */
     includeHidden?: string[];
     /**
@@ -336,7 +336,7 @@ export async function runImport(
   // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
   // unless the user is explicitly skipping embedding via `--no-embed` (in
   // which case the chunks land without vectors and the user can backfill
-  // later with `gbrain embed --stale` after configuring a provider).
+  // later with `foresights embed --stale` after configuring a provider).
   if (!noEmbed) {
     const { assertEmbeddingEnabled } = await import('../core/embedding-dim-check.ts');
     const { loadConfig } = await import('../core/config.ts');
@@ -344,12 +344,12 @@ export async function runImport(
       assertEmbeddingEnabled(loadConfig());
     } catch (e) {
       if (jsonOutput) throw await keylessImportRefusal(engine, args, e);
-      console.error(`\n${e instanceof Error ? e.message : e}\nTip: run \`gbrain import <dir> --no-embed\` to import without embedding now.`);
+      console.error(`\n${e instanceof Error ? e.message : e}\nTip: run \`foresights import <dir> --no-embed\` to import without embedding now.`);
       throw new ImportAbortError('embedding disabled (deferred-setup sentinel)');
     }
 
     // v0.41.6.0 D1: preflight embedding credentials. Closes the bug class
-    // where `gbrain import` per-file embed writes N identical
+    // where `foresights import` per-file embed writes N identical
     // "missing OPENAI_API_KEY" failures into sync-failures.jsonl.
     const { validateEmbeddingCreds, EmbeddingCredentialError } = await import('../core/embed-preflight.ts');
     try {
@@ -501,7 +501,7 @@ export async function runImport(
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i) && args[i - 1] !== '--access-policy' && args[i - 1] !== '--prefix');
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--access-policy <exported-source>|none] [--include-gitignored] [--allow-noncanonical-root] [--calls [--prefix <slug prefix>]] [--json]');
+    console.error('Usage: foresights import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--access-policy <exported-source>|none] [--include-gitignored] [--allow-noncanonical-root] [--calls [--prefix <slug prefix>]] [--json]');
     throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
@@ -579,7 +579,7 @@ export async function runImport(
   // enumeration (codex C11 confirms dispatch was correct; bug was here).
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
-  console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
+  console.error(`[foresights phase] import.collect_files start dir=${dir} strategy=${strategy}`);
   const malformedExcluded: string[] = [];
   const company = currentCompanyBrainSync(sourceId);
   let allFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => join(dir, entry.path))
@@ -589,11 +589,11 @@ export async function runImport(
     onExcluded: (rel) => { malformedExcluded.push(rel); },
   });
   console.error(
-    `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
+    `[foresights phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
   if (malformedExcluded.length > 0) {
     console.error(
-      `[gbrain import] ${malformedExcluded.length} file(s) skipped: malformed filename ` +
+      `[foresights import] ${malformedExcluded.length} file(s) skipped: malformed filename ` +
       `(brackets/control chars; rename to import): ` +
       malformedExcluded.slice(0, 20).map(sanitizePathForDisplay).join(', ') +
       (malformedExcluded.length > 20 ? `, … (+${malformedExcluded.length - 20} more)` : ''),
@@ -612,7 +612,7 @@ export async function runImport(
     // NAV-4: everything excluded is almost always a mistyped pattern — warn.
     if (beforeExclude > 0 && allFiles.length === 0) {
       console.warn(
-        `[gbrain sync] No files matched after applying ${opts.exclude.length} --exclude pattern(s). ` +
+        `[foresights sync] No files matched after applying ${opts.exclude.length} --exclude pattern(s). ` +
         `Check your --exclude flags. Patterns: ${JSON.stringify(opts.exclude)}`,
       );
     }
@@ -691,7 +691,7 @@ export async function runImport(
   const errorSamples: Record<string, string> = {};
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
   // Alias-footgun visibility: aggregate per-file type_warning results once
-  // per distinct type per run (same surface `gbrain sync` carries).
+  // per distinct type per run (same surface `foresights sync` carries).
   const typeWarningCounts = new Map<string, import('../core/schema-pack/type-usage.ts').TypeWarningCount>(), fenceTally = importFenceTally(sourceId ?? 'default');
   const noteTypeWarning = (w: { kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string } | undefined): void => {
     if (!w) return;
@@ -752,7 +752,7 @@ export async function runImport(
       noteTypeWarning((result as { type_warning?: Parameters<typeof noteTypeWarning>[0] }).type_warning); fenceTally.note(importRelPath, result);
       const _fileMs = Date.now() - _fileT0;
       if (!settled && _fileMs > 5000) {
-        console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
+        console.error(`[foresights phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
       }
       if (await reportFileResult(opts.onFileResult, importRelPath, filePath, result) === 'held') {
         skipped++;
@@ -987,8 +987,8 @@ export async function runImport(
         const pct = ((untyped / total) * 100).toFixed(1);
         console.error(
           `\n[schema] ${untyped} of ${total} pages (${pct}%) in source \`${sid}\` ` +
-          `have no \`type\` matching the active schema pack. Run \`gbrain schema detect\` ` +
-          `to propose a pack matching your content shape, or \`gbrain doctor --json\` ` +
+          `have no \`type\` matching the active schema pack. Run \`foresights schema detect\` ` +
+          `to propose a pack matching your content shape, or \`foresights doctor --json\` ` +
           `for the persistent surface (schema_pack_consistency check).`,
         );
       }
@@ -1009,7 +1009,7 @@ export async function runImport(
       for (const line of renderTypeWarningSummary([...typeWarningCounts.values()])) {
         console.error(`  ${line}`);
       }
-      console.error(`  (silence with: gbrain config set schema.type_warnings false)`);
+      console.error(`  (silence with: foresights config set schema.type_warnings false)`);
     }
   }
 
@@ -1068,7 +1068,7 @@ export async function runImport(
     // #3839: a path that failed on a prior run and succeeded (imported or
     // unchanged) this run must clear its ledger row — pre-fix, clearFailures
     // existed but had no caller anywhere, so `open` rows never healed short
-    // of a manual `gbrain sync --skip-failed`. Runs on every non-empty
+    // of a manual `foresights sync --skip-failed`. Runs on every non-empty
     // success list regardless of whether this SAME run also had failures,
     // so a stale row from an earlier run gets cleared even if today's run
     // is only partially clean.
@@ -1095,8 +1095,8 @@ export async function runImport(
       } else {
         console.error(
           `\nImport completed with ${failures.length} failure(s). ` +
-          `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
-          `'gbrain sync --skip-failed' to acknowledge and move past them.`,
+          `sync.last_commit NOT advanced — re-run 'foresights sync' to retry, or ` +
+          `'foresights sync --skip-failed' to acknowledge and move past them.`,
         );
       }
       await engine.setConfig('sync.last_run', new Date().toISOString());
@@ -1105,7 +1105,7 @@ export async function runImport(
       console.error(
         `\n[import] sync.repo_path stays at ${configured ?? '(unset)'} — NOT repointing to "${dir}". ` +
         `Sync bookmarks were not advanced. If this directory IS your brain repo, run: ` +
-        `gbrain config set sync.repo_path "${dir}"`,
+        `foresights config set sync.repo_path "${dir}"`,
       );
     }
     // Non-default sources: deliberately silent no-op — the globals are not
@@ -1113,7 +1113,7 @@ export async function runImport(
   }
 
   // #1691: a named source registered with `local_path` but fed only via
-  // `gbrain import` (never `gbrain sync`) never got `sources.last_sync_at`
+  // `foresights import` (never `foresights sync`) never got `sources.last_sync_at`
   // touched, so doctor's `sync_freshness` read it as permanently
   // "never synced". Stamp it on a clean run only (mirrors the bookmark
   // gate above). `!opts.managedBookmark` excludes performFullSync's call —
@@ -1124,9 +1124,9 @@ export async function runImport(
   // dispatcher (autopilot.ts) reads last_sync_at to decide when to queue a
   // real `git pull` for those, and a plain import never pulls. A git-tracked
   // local_path is excluded too (scoped to #1691's actual "non-git local
-  // source" case): `gbrain import` never advances the source's own
+  // source" case): `foresights import` never advances the source's own
   // `last_commit`, so stamping last_sync_at for a git checkout would mask
-  // real commit-level staleness that `gbrain sync` (not `import`) is the
+  // real commit-level staleness that `foresights sync` (not `import`) is the
   // correct pipeline to detect. Detection reuses sync's own
   // `discoverGitRoot` (rev-parse --show-toplevel, walks UP) rather than a
   // bare `.git`-at-local_path probe, so a source anchored at a SUBDIR of a
@@ -1148,7 +1148,7 @@ export async function runImport(
       // shapes) own their last_sync_at via the connector's sync path — a google
       // source has a non-git local_path and no remote_url, so without this
       // check a stray `import --source-id` would mask connector staleness
-      // (and flip `gbrain waiting`'s google-freshness gate). parseSourceConfig,
+      // (and flip `foresights waiting`'s google-freshness gate). parseSourceConfig,
       // not a bare JSON.parse: nested-string / historical-array configs are
       // real shapes (#2829) and must not slip past the kind check.
       const cfg = parseSourceConfig(row?.config);
@@ -1225,7 +1225,7 @@ export async function runImport(
     slog(`  ${chunksCreated} chunks created`); for (const line of fenceTally.lines()) slog(line);
     if (resealSummary) {
       slog(`  ${resealSummary.pages} unchanged page(s) re-sealed for remote search; ${resealSummary.pending_chunks} chunk(s) need embedding`
-        + `${resealSummary.embedding_usd === null ? '' : ` (~$${resealSummary.embedding_usd.toFixed(4)})`}${noEmbed ? ' — run gbrain embed --stale' : ''}`);
+        + `${resealSummary.embedding_usd === null ? '' : ` (~$${resealSummary.embedding_usd.toFixed(4)})`}${noEmbed ? ' — run foresights embed --stale' : ''}`);
     }
   }
 
@@ -1436,7 +1436,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
 
   function walk(d: string, depth: number): void {
     if (depth >= maxDepth) {
-      console.warn(`[gbrain] walker depth limit reached at ${d}; skipping`);
+      console.warn(`[foresights] walker depth limit reached at ${d}; skipping`);
       return;
     }
     let entries: string[];
@@ -1465,19 +1465,19 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       try {
         stat = lstatSync(full);
       } catch {
-        console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
+        console.warn(`[foresights import] Skipping unreadable path: ${full}`);
         continue;
       }
 
       if (stat.isSymbolicLink()) {
-        console.warn(`[gbrain import] Skipping symlink: ${full}`);
+        console.warn(`[foresights import] Skipping symlink: ${full}`);
         continue;
       }
 
       if (stat.isDirectory()) {
         const inodeKey = `${stat.dev}:${stat.ino}`;
         if (visitedInodes.has(inodeKey)) {
-          console.warn(`[gbrain] walker cycle detected at ${full}; skipping`);
+          console.warn(`[foresights] walker cycle detected at ${full}; skipping`);
           continue;
         }
         visitedInodes.set(inodeKey, true);

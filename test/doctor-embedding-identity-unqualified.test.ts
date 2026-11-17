@@ -1,7 +1,7 @@
 /**
  * #6113: doctor `embedding_identity_unqualified` names the one supported
  * repair for a bare legacy `embedding_model` DB row: a read-only
- * `gbrain migrate embeddings --to <provider:model> --dry-run`, filled from the
+ * `foresights migrate embeddings --to <provider:model> --dry-run`, filled from the
  * model configured outside the database, with an `inputs` entry only when none
  * is configured. Real PGLite (DB plane), throwaway GBRAIN_HOME (file plane).
  */
@@ -48,7 +48,7 @@ describe('doctor embedding_identity_unqualified (#6113)', () => {
     expect(check.fix?.inputs).toBeUndefined();
     expect(check.fix?.consent).toEqual([]);
     expect(check.fix?.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'embedding_identity_unqualified', '--json']);
-    expect(check.message).toContain('gbrain migrate embeddings --to openai:text-embedding-3-small --dry-run');
+    expect(check.message).toContain('foresights migrate embeddings --to openai:text-embedding-3-small --dry-run');
     expect(categorizeCheck('embedding_identity_unqualified')).toBe('brain');
   });
 

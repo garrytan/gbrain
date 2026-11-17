@@ -1,11 +1,11 @@
 /**
- * `gbrain doctor --remediation-plan` and `gbrain doctor --remediate`: the CLI
+ * `foresights doctor --remediation-plan` and `foresights doctor --remediate`: the CLI
  * shell around the remediation library (src/core/remediation/). doctor.ts
  * re-exports these so import sites are unchanged.
  *
  * The plan lists job steps (driven by the brain score target) and, separately
  * and independent of the target, PROTECTED repair steps for every registered
- * `gbrain repair` kind with pending items. Each step prints the exact command
+ * `foresights repair` kind with pending items. Each step prints the exact command
  * that applies it, plus one combined command. `--remediate --yes` runs repair
  * steps only with `--include-repairs` (the user's agreement). The `--max-usd`
  * cap is cumulative across the original run and every `--resume`; the cap,
@@ -36,12 +36,12 @@ import { derivedCapExhaustedError, type CapSource } from '../../core/consent.ts'
 import { previewRemediationPlan, remediateConsent, remediateFlags, remediationPlanHash, type RemediateFlags } from './remediate-consent.ts';
 import { cliRenderContext, renderAction, renderNotice, type Action, type Notice } from '../../core/agent-output.ts';
 
-export const REMEDIATE_HELP = `Usage: gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]
-       gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]
+export const REMEDIATE_HELP = `Usage: foresights doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]
+       foresights doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]
                      [--max-jobs <n>] [--no-embed] [--dry-run] [--resume [<plan_hash>]] [--json]
 
 --remediation-plan previews job steps (driven by the brain score target) and,
-independent of the target, PROTECTED repair steps for every \`gbrain repair\`
+independent of the target, PROTECTED repair steps for every \`foresights repair\`
 kind with pending items. Each step prints the exact command that applies it,
 plus one combined command. Read-only.
 
@@ -89,7 +89,7 @@ const shellQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 
 /** The exact command that runs one job step on its own. */
 export function jobStepCommand(step: { job: string; params?: Record<string, unknown> }): string {
-  return `gbrain jobs submit ${step.job}${step.params && Object.keys(step.params).length ? ` --params ${shellQuote(JSON.stringify(step.params))}` : ''} --follow`;
+  return `foresights jobs submit ${step.job}${step.params && Object.keys(step.params).length ? ` --params ${shellQuote(JSON.stringify(step.params))}` : ''} --follow`;
 }
 
 /**
@@ -127,15 +127,15 @@ export function repairStepFix(step: Pick<RepairPlanStep, 'kind' | 'command' | 'p
     preview_argv: repairPreviewCommand(step.kind).split(' '),
     consent: ['destructive', ...(step.paid ? ['paid' as const] : [])],
     actor: 'agent',
-    why: `Rewrites ${step.affected} stored item(s) for gbrain repair ${step.kind}${cost}.`,
-    user_message: `gbrain wants to repair ${step.affected} item(s) (${step.kind}); this rewrites stored data${cost}. OK to apply it?`,
+    why: `Rewrites ${step.affected} stored item(s) for foresights repair ${step.kind}${cost}.`,
+    user_message: `foresights wants to repair ${step.affected} item(s) (${step.kind}); this rewrites stored data${cost}. OK to apply it?`,
     verify: { argv: ['gbrain', 'doctor', '--only', step.checks.length ? step.checks.join(',') : 'brain_score', '--json'] },
     requires_exclusive: true,
   };
 }
 
 /**
- * `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`, filled from the plan's estimates.
+ * `foresights doctor --remediate --yes --include-repairs --max-usd <n>`, filled from the plan's estimates.
  * With repair steps, `--expect <plan_hash>` binds the approval to this plan (C1).
  */
 export function combinedRemediateCommand(plan: Pick<RemediationPlanShape, 'est_total_usd_cost' | 'repair_steps'>, targetScore = 90,
@@ -144,7 +144,7 @@ export function combinedRemediateCommand(plan: Pick<RemediationPlanShape, 'est_t
   const unknown = repairs.some(step => step.paid && step.est_usd_cost === null);
   const total = plan.est_total_usd_cost + repairs.reduce((sum, step) => sum + (step.est_usd_cost ?? 0), 0);
   const cap = unknown ? '<n>' : String(Math.ceil(total * 100) / 100);
-  return `gbrain doctor --remediate --yes${repairs.length ? ' --include-repairs' : ''} --max-usd ${cap}${targetScore !== 90 ? ` --target-score ${targetScore}` : ''}`
+  return `foresights doctor --remediate --yes${repairs.length ? ' --include-repairs' : ''} --max-usd ${cap}${targetScore !== 90 ? ` --target-score ${targetScore}` : ''}`
     + `${opts.noEmbed ? ' --no-embed' : ''}${repairs.length && opts.planHash ? ` --expect ${opts.planHash}` : ''}`;
 }
 
@@ -164,7 +164,7 @@ export async function pendingMigrationsNotice(engine: BrainEngine): Promise<Noti
   const current = await engine.getConfig('version').catch(() => null);
   return {
     code: 'migrations_pending', kind: 'safety',
-    why: `Schema migrations are pending (brain at v${current ?? 'unknown'}, this gbrain expects v${LATEST_VERSION}). `
+    why: `Schema migrations are pending (brain at v${current ?? 'unknown'}, this foresights expects v${LATEST_VERSION}). `
       + 'The plan was computed without applying them; `doctor --remediate` applies them after consent, before any step runs.',
     fix: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent', requires_exclusive: true,
       why: 'Applies the pending schema migrations (the same ones every command applies on connect).',
@@ -285,7 +285,7 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
     lines.push(...failedPreviewLines(plan.repair_preview_failures, '  '));
   }
   if (plan.explicit_repairs?.length) {
-    lines.push('\nExplicit-only repairs (never run by --remediate or gbrain repair --all; preview each by name on this host):');
+    lines.push('\nExplicit-only repairs (never run by --remediate or foresights repair --all; preview each by name on this host):');
     for (const notice of plan.explicit_repairs) lines.push(`  ${notice.kind}: ${notice.preview_command}`);
   }
   if (plan.plan.length > 0 || repairs.length > 0) {
@@ -329,10 +329,10 @@ export function classifyWaveFindings(before: WaveFinding[], after: WaveFinding[]
       continue;
     }
     const base = { check_id: now.spec.id, message: now.check.message };
-    if (now.state === 'unknown') { findings.push({ ...base, class: 'pending', instruction: 'The check could not run; rerun gbrain doctor on the brain host.' }); continue; }
+    if (now.state === 'unknown') { findings.push({ ...base, class: 'pending', instruction: 'The check could not run; rerun foresights doctor on the brain host.' }); continue; }
     if (now.check.details?.partial === true) {
       findings.push({ ...base, class: 'pending', ...(kind ? { repair_kind: kind } : {}),
-        instruction: `The scan stopped at its deadline, so the finding is incomplete; raise ${now.spec.id === 'fence_integrity' ? 'GBRAIN_DOCTOR_FENCE_TIMEOUT_MS' : 'GBRAIN_DOCTOR_FM_TIMEOUT_MS'} and rerun gbrain doctor --only ${now.spec.id} on the brain host.` });
+        instruction: `The scan stopped at its deadline, so the finding is incomplete; raise ${now.spec.id === 'fence_integrity' ? 'GBRAIN_DOCTOR_FENCE_TIMEOUT_MS' : 'GBRAIN_DOCTOR_FM_TIMEOUT_MS'} and rerun foresights doctor --only ${now.spec.id} on the brain host.` });
       continue;
     }
     if (now.spec.resolution === 'operator') { findings.push({ ...base, class: 'operator_required', instruction: now.spec.instruction }); continue; }
@@ -346,7 +346,7 @@ export function classifyWaveFindings(before: WaveFinding[], after: WaveFinding[]
     }
     const skipped = result.repairs_skipped?.find(step => step.kind === kind);
     findings.push({ ...base, class: skipped ? 'consent_required' : 'pending', ...(kind ? { repair_kind: kind } : {}),
-      ...(skipped ? { command: skipped.command } : kind ? { command: `gbrain repair ${kind} --apply` } : {}) });
+      ...(skipped ? { command: skipped.command } : kind ? { command: `foresights repair ${kind} --apply` } : {}) });
   }
   return findings;
 }
@@ -447,7 +447,7 @@ export async function runRemediate(engine: BrainEngine, args: string[], complete
     console.error(`${e.message}\n${e.suggestion}`);
   } else if (result.budget_exhausted) {
     const cap = result.budget?.max_usd ?? result.budget_exhausted.cap;
-    console.error(`Resume with:\n  gbrain doctor --remediate --yes${result.budget?.include_repairs ? ' --include-repairs' : ''}`
+    console.error(`Resume with:\n  foresights doctor --remediate --yes${result.budget?.include_repairs ? ' --include-repairs' : ''}`
       + `${cap !== null && cap !== undefined ? ` --max-usd ${cap}` : ''} --resume ${result.budget_exhausted.plan_hash}\n`
       + '(the cap is cumulative: spend from this run counts against it)');
   }

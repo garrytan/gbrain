@@ -1,6 +1,6 @@
 /**
  * #8104 item 3: the operator output of the private-pages grant axis (GBRA-156). Authoring gate:
- * (1) protects `gbrain auth list --json` (its exact field set: no token_hash, a status and a private_pages field per token),
+ * (1) protects `foresights auth list --json` (its exact field set: no token_hash, a status and a private_pages field per token),
  * the "Private pages" column of `auth list`, `auth clients` (text and JSON) and `auth rescope` (token and client), the
  * `renderPrivatePages` labels, and the top rung of the `listClientRows` fallback ladder (a brain without the column
  * reads as none); (2) fails when token_hash or another raw column reaches the JSON, a granted principal prints as none,
@@ -30,7 +30,7 @@ async function withBrain<T>(run: (engine: BrainEngine) => Promise<T>): Promise<T
 
 const env = () => ({ GBRAIN_HOME: home, HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined });
 
-/** Runs one `gbrain auth` command and returns what it printed to stdout. */
+/** Runs one `foresights auth` command and returns what it printed to stdout. */
 async function auth(args: string[]): Promise<string> {
   const lines: string[] = [];
   const original = console.log;

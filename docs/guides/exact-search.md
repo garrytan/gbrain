@@ -1,15 +1,15 @@
 # Exact search
 
-`gbrain search --exact "<phrase>"` (MCP tool `search_exact`) finds every page
+`foresights search --exact "<phrase>"` (MCP tool `search_exact`) finds every page
 that contains a literal phrase or identifier. Use it where you would otherwise
 run `grep` over the brain's files. Ranked search returns the best few pages and
 can miss a rare phrase; exact search is unranked and exhaustive, and it tells you
 whether the scan covered everything.
 
 ```bash
-gbrain search --exact "INV-2024-0042"
-gbrain search --exact "quarterly board pack" --slug-prefix meetings/ --json
-gbrain search --exact "Acme Example" --case-sensitive --types company,person
+foresights search --exact "INV-2024-0042"
+foresights search --exact "quarterly board pack" --slug-prefix meetings/ --json
+foresights search --exact "Acme Example" --case-sensitive --types company,person
 ```
 
 ## What matches
@@ -43,11 +43,11 @@ are masked in the index, so a secret never matches.
     yet. They are counted under `unreadable.by_reason` and the first 20 are
     listed under `unreadable.sample`:
     - `unchunked`: the page has body text but no chunks (for example a page
-      held from chunking). `gbrain embed --stale` chunks it.
+      held from chunking). `foresights embed --stale` chunks it.
     - `projection_pending`: the page's text index is behind its latest edit.
     - `unsealed` (remote callers only): the page was indexed before the
       safe-chunk fence, so it is withheld from remote reads until
-      `gbrain repair safe-chunks` reseals it.
+      `foresights repair safe-chunks` reseals it.
     - `scan_timeout`: one page alone did not finish within the statement
       deadline.
 - `resume_after`: after `limit` or `deadline`, pass it back as `--after`

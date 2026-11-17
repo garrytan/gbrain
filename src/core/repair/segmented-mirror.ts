@@ -1,5 +1,5 @@
 /**
- * `gbrain repair segmented-mirror [--source <id>]`: re-mirror the canonical files of pages stored in segments that an
+ * `foresights repair segmented-mirror [--source <id>]`: re-mirror the canonical files of pages stored in segments that an
  * older binary's withdrawal mirror passed by. Before v0.60.299.0 a withdrawal (`forget`, `forget_fact`, `purge_fact`)
  * struck the row in the page's segments but skipped its file (`skipped` reason `page_body_segmented`), so the file can
  * still hold the withdrawn or purged row.
@@ -8,7 +8,7 @@
  * ledger is checked in bounded memory. A page is listed when its file is an older render the repair can explain: the
  * file passes the same file/database check the withdrawal mirror runs (the ledger overlaid on the file's facts fences
  * matches the stored body), and overlaying the ledger changes the file (it still holds a withdrawn or purged row). Each
- * listed page names its file's SHA-256 and size and those of the canonical render (`gbrain export`'s bytes, streamed
+ * listed page names its file's SHA-256 and size and those of the canonical render (`foresights export`'s bytes, streamed
  * from the segments). A file that differs from the database for any other reason (`file_database_drift`) is listed as
  * held with the reconcile preview and is never overwritten. The hash binds the listed pages, their revisions and both
  * file hashes.
@@ -60,7 +60,7 @@ export interface HeldMirror { source_id: string; slug: string; reason: string; m
 type Selection = { sources: string[] };
 type MirrorItem = RepairItem & { stale: StaleMirror; hash: string };
 
-const previewCommand = (scope: Pick<RepairScope, 'source_ids'>) => `gbrain repair segmented-mirror${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+const previewCommand = (scope: Pick<RepairScope, 'source_ids'>) => `foresights repair segmented-mirror${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 const toItem = (stale: StaleMirror, index: number, hash: string): MirrorItem => ({ cursor: { phase: 0, id: index + 1 }, source_id: stale.source_id, slug: stale.slug,
   chars: 0, action: 'remirror_file', change: { from: stale.file_sha256, to: stale.expected_sha256 }, stale, hash });
 const hashOf = (scope: RepairScope, selection: Selection, items: StaleMirror[]) => previewHash({ kind: 'segmented-mirror-v1', brain_id: scope.brain_id, selection,
@@ -238,7 +238,7 @@ export const segmentedMirrorRepair: RepairHandler = {
           detail: `${stale.path}: file sha256 ${stale.file_sha256} (${stale.file_bytes} bytes), canonical render sha256 ${stale.expected_sha256} (${stale.expected_bytes} bytes)` })),
         details: { stale: scan.items, held: scan.held } };
     }
-    if (!opts.expect) throw new OperationError('invalid_params', 'gbrain repair segmented-mirror --apply needs the preview hash.',
+    if (!opts.expect) throw new OperationError('invalid_params', 'foresights repair segmented-mirror --apply needs the preview hash.',
       `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, DOCS);
     const expect = opts.expect;
     const approved = (await loadApprovedSet<StaleMirror & { selection: Selection }>(engine, { command: 'segmented-mirror', hash: expect, previewCommand: command,

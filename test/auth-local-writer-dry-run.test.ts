@@ -1,6 +1,6 @@
 /**
- * #5595 ("also seen"): `gbrain auth local-writer register cli --dry-run`
- * failed with "unknown flag --dry-run for 'gbrain auth'" although --help
+ * #5595 ("also seen"): `foresights auth local-writer register cli --dry-run`
+ * failed with "unknown flag --dry-run for 'foresights auth'" although --help
  * documents it. auth hands that argv to runPersistenceAdminCli
  * (persistence-admin.ts), one module deeper than the flag-registry scan
  * takes consumption evidence from, so the generator dropped the safety flag.

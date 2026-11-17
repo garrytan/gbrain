@@ -1,5 +1,5 @@
 /**
- * Tests for env-aware `gbrain autopilot --install`.
+ * Tests for env-aware `foresights autopilot --install`.
  *
  * Covers:
  *   - detectInstallTarget picks the right target based on env vars +
@@ -54,8 +54,8 @@ afterEach(() => {
 
 function makeFakeGbrainOnPath(): { binDir: string; restore: () => void } {
   // writeWrapperScript() calls resolveGbrainCliPath(), which shells out to
-  // `which gbrain`. Put a harmless shim on PATH so the test is deterministic
-  // regardless of whether the CI/dev machine has a real gbrain on PATH.
+  // `which foresights`. Put a harmless shim on PATH so the test is deterministic
+  // regardless of whether the CI/dev machine has a real foresights on PATH.
   const binDir = mkdtempSync(join(tmpdir(), 'gbrain-fake-bin-'));
   writeFileSync(join(binDir, 'gbrain'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const originalPath = process.env.PATH;
@@ -135,7 +135,7 @@ describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () =>
 });
 
 // v0.42.x: the wrapper must export PATH with ~/.bun/bin before exec'ing
-// gbrain. The exec'd gbrain has a `#!/usr/bin/env bun` shebang, and the
+// foresights. The exec'd foresights has a `#!/usr/bin/env bun` shebang, and the
 // standard Debian ~/.bashrc ships a non-interactive guard
 // (`case $- in *i*) ;; *) return;; esac`) that exits early when cron/launchd/
 // systemd invokes bash non-interactively — so the PATH exports that
@@ -165,7 +165,7 @@ describe('autopilot wrapper script — bun PATH export (v0.42.x regression)', ()
 });
 
 // Status detection must recognize the wrapper-based cron line that --install
-// actually writes (…/autopilot-run.sh), not just the legacy `gbrain autopilot`
+// actually writes (…/autopilot-run.sh), not just the legacy `foresights autopilot`
 // invocation — otherwise `--status` reports installed:false on every Linux host
 // that installed via the wrapper indirection.
 describe('autopilot showStatus — wrapper-path detection', () => {
@@ -190,7 +190,7 @@ describe('autopilot showStatus — wrapper-path detection', () => {
 describe('autopilot wrapper script — key sourcing (#2608)', () => {
   test('wrapper sources zshrc AND bashrc independently (no || chain)', async () => {
     // PATH shim like the env-file suite below: writeWrapperScript resolves
-    // the gbrain CLI path and throws on CI runners with no gbrain on PATH.
+    // the foresights CLI path and throws on CI runners with no foresights on PATH.
     const fakeBin = makeFakeGbrainOnPath();
     try {
       const { writeWrapperScript } = await import('../src/commands/autopilot.ts');
@@ -210,7 +210,7 @@ describe('autopilot wrapper script — key sourcing (#2608)', () => {
 // run zshrc-only exports, and the stock Debian ~/.bashrc non-interactive
 // guard blocks even the .bashrc fallback — a common config, not a rare one.
 // The fix is additive: the wrapper now ALSO sources a gbrain-owned env file
-// (same resolved gbrain home the daemon itself uses, so it honors
+// (same resolved foresights home the daemon itself uses, so it honors
 // GBRAIN_HOME) after the profiles, and silently no-ops when that file is
 // absent.
 describe('autopilot wrapper script — gbrain-owned env file (#2608)', () => {
@@ -285,7 +285,7 @@ describe('autopilot wrapper script — gbrain-owned env file (#2608)', () => {
       const fullSrc = readFileSync(wrapperPath, 'utf8');
 
       // Execute the REAL generated sourcing preamble (everything up to, but
-      // excluding, the final `exec '<gbrain>' autopilot ...` line) so this
+      // excluding, the final `exec '<foresights>' autopilot ...` line) so this
       // proves runtime behavior of the actual generated code, not a
       // hand-duplicated copy of it — without launching autopilot for real.
       const execIdx = fullSrc.indexOf("exec '");
@@ -417,17 +417,17 @@ describe('chatBootWarning (#2608)', () => {
     expect(warn).toContain('[autopilot]');
     expect(warn).toMatch(/no chat provider/i);
     // Names both remediation paths so the operator isn't left guessing —
-    // derived from the passed gbrain dir, never a literal ~/.gbrain guess
+    // derived from the passed foresights dir, never a literal ~/.gbrain guess
     // that lies on GBRAIN_HOME installs.
     expect(warn).toContain('/custom/.gbrain/env');
     expect(warn).toContain('/custom/.gbrain/config.json');
     expect(warn).not.toContain('~/.gbrain');
-    // `gbrain config set` is banned for API keys by the canonical install
+    // `foresights config set` is banned for API keys by the canonical install
     // docs — the warning must not teach it.
     expect(warn).not.toContain('config set');
     // Load-bearing: the wrapper sources the env file only at exec and the
     // gateway folds env once pre-dispatch — without a reload nothing changes.
-    expect(warn).toContain('gbrain autopilot --install');
+    expect(warn).toContain('foresights autopilot --install');
   });
 });
 

@@ -32,7 +32,7 @@ export async function mergedRequestConfig(engine: BrainEngine): Promise<GBrainCo
   } catch (err) {
     console.warn(
       `[config] DB-plane merge failed; using file/env config only. ` +
-      `Values set via \`gbrain config set\` will not apply to this command: ` +
+      `Values set via \`foresights config set\` will not apply to this command: ` +
       `${(err as Error).message}`,
     );
     return fileConfig;
@@ -111,11 +111,11 @@ async function runOp(engine: BrainEngine, request: Extract<CliSocketRequest, { k
     emitResponseMeta: (key: string, value: unknown) => { if (key === 'retrieval' && value !== null && typeof value === 'object') meta = value as Record<string, unknown>; },
     emitNotice: (notice: Notice) => { notices.push(notice); },
   };
-  let stage = `gbrain ${request.command}: context`;
+  let stage = `foresights ${request.command}: context`;
   try {
     // GBRA-156: the merged config and the source resolution read the request's snapshot together (one round trip).
     const ctx = await withTimeout(track(work, cliRequestContext(engine, params, op, request, mergedRequestConfig(engine), sinks)), wallclockMs, stage);
-    stage = `gbrain ${request.command}`;
+    stage = `foresights ${request.command}`;
     const raw = await withTimeout(track(work, op.handler(ctx, params)), wallclockMs, stage);
     // src/cli/main.ts runSharedOperation: captureRetrievalNotices after the handler, before the JSON round trip.
     const retrieval = op.name === 'search' || op.name === 'query'
@@ -134,7 +134,7 @@ async function runRecall(engine: BrainEngine, request: Extract<CliSocketRequest,
   const { recallVerbForCaller } = await import('../../commands/recall.ts');
   const wallclockMs = wallclock(request);
   try {
-    const raw = await withTimeout(track(work, recallVerbForCaller(engine, request.args, { cwd: request.routing.cwd, env: request.routing.source_env ?? undefined })), wallclockMs, `gbrain ${request.command}`);
+    const raw = await withTimeout(track(work, recallVerbForCaller(engine, request.args, { cwd: request.routing.cwd, env: request.routing.source_env ?? undefined })), wallclockMs, `foresights ${request.command}`);
     if (raw === null) return { v: 1, kind: 'fallback', reason: 'not_a_recall_verb' };
     const result = JSON.parse(JSON.stringify(raw, bigintToStringReplacer) ?? 'null');
     // A cold recall prints the first chat-fallback hop at teardown (src/core/cli-force-exit.ts); the CLI does the same with these.

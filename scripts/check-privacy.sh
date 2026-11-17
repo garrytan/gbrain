@@ -158,8 +158,8 @@ ALLOW_LIST=(
   # meta-rule-enforcement exception as scripts/check-privacy.sh and
   # CHANGELOG.md — describing what the rule forbids requires naming it.
   'skills/functional-area-resolver/SKILL.md'
-  # v0.36.0.0: the gbrain skillpack harvest privacy linter's whole job
-  # is to catch the banned literal leaking into gbrain. The regex
+  # v0.36.0.0: the foresights skillpack harvest privacy linter's whole job
+  # is to catch the banned literal leaking into foresights. The regex
   # pattern in harvest-lint.ts is `\bWintermute\b` by necessity; the
   # tests verify that pattern fires by feeding it the banned string;
   # the harvest skill markdown describes the substitution policy

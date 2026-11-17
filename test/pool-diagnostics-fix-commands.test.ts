@@ -19,9 +19,9 @@ function assertCommandExists(command: string): void {
   const words = command.trim().split(/\s+/);
   expect(words[0]).toBe('gbrain');
   const name = words[1]!;
-  expect(CLI_FLAG_REGISTRY[name], `gbrain ${name} is not a CLI command`).toBeDefined();
+  expect(CLI_FLAG_REGISTRY[name], `foresights ${name} is not a CLI command`).toBeDefined();
   for (const flag of words.filter(word => word.startsWith('--'))) {
-    expect(CLI_FLAG_REGISTRY[name], `gbrain ${name} has no ${flag}`).toContain(flag);
+    expect(CLI_FLAG_REGISTRY[name], `foresights ${name} has no ${flag}`).toContain(flag);
   }
 }
 
@@ -42,7 +42,7 @@ describe('lane A fix commands', () => {
   });
 
   test('the persistence consumer line points at an existing writer status command', () => {
-    assertCommandExists('gbrain sources writer status --json');
+    assertCommandExists('foresights sources writer status --json');
   });
 
   test('pool_exhausted recommends the resident floor, not a pool of 2', () => {
@@ -51,6 +51,6 @@ describe('lane A fix commands', () => {
     expect(diagnosis.fix).toEqual(expect.objectContaining({ kind: 'set_env', name: 'GBRAIN_POOL_SIZE', value: String(RESIDENT_POOL_FLOOR) }));
     expect(diagnosis.remediation).toContain(`GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR}`);
     expect(diagnosis.remediation).toContain('docs/ENGINES.md#pool-sizing');
-    assertCommandExists('gbrain serve --http');
+    assertCommandExists('foresights serve --http');
   });
 });

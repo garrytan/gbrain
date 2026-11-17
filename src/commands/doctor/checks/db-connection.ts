@@ -41,9 +41,9 @@ async function runPgliteDataDir(ctx: DoctorContext): Promise<Check[]> {
   // Probe cost gate (a PGLite cold start is 5–20s): auto-runs ONLY when init
   // failed AND the disk diagnosis didn't already fully explain it — a live
   // lock or a missing dir needs no runtime probe (and 'locked' was exactly
-  // the reviewed false-positive: blaming the store while `gbrain serve` held
+  // the reviewed false-positive: blaming the store while `foresights serve` held
   // it). Explicit --probe-pglite always runs it. A routine healthy
-  // `gbrain doctor` never pays it.
+  // `foresights doctor` never pays it.
   {
     const probeRequested = args.includes('--probe-pglite');
     let cfgForProbe: ReturnType<typeof loadConfig> = null;
@@ -66,7 +66,7 @@ async function runPgliteDataDir(ctx: DoctorContext): Promise<Check[]> {
       }
     }
 
-    // #6649: a healthy PGLite brain nearing the backup-archive cap is warned before `gbrain backup create` refuses.
+    // #6649: a healthy PGLite brain nearing the backup-archive cap is warned before `foresights backup create` refuses.
     if (engine && !fastMode && cfgForProbe?.engine === 'pglite' && cfgForProbe.database_path) {
       try {
         const { resolve } = await import('node:path');
@@ -116,7 +116,7 @@ export function backupSizeCheck(dataDir: string, estimatedBytes?: number): Check
     name: 'pglite_data_dir',
     status: 'warn',
     message: `backup_too_large: this PGLite brain needs about ${formatGiB(bytes)} in a backup archive, ${over ? 'over' : 'near'} the ${formatGiB(BACKUP_ARCHIVE_MAX_BYTES)} cap, ` +
-      `so \`gbrain backup create\` ${over ? 'refuses it' : 'will refuse it soon'}. Plan a quiesced physical copy (${PHYSICAL_COPY_RUNBOOK}).`,
+      `so \`foresights backup create\` ${over ? 'refuses it' : 'will refuse it soon'}. Plan a quiesced physical copy (${PHYSICAL_COPY_RUNBOOK}).`,
     details: { code: 'backup_too_large', data_dir: dataDir, estimated_bytes: bytes, limit_bytes: BACKUP_ARCHIVE_MAX_BYTES, over_limit: over },
     fix: physicalCopyFix(),
   };
@@ -173,7 +173,7 @@ async function pgbouncerPrepareCheck(): Promise<Check | null> {
  * the very DB that's down (db-repair is the engine-free applier here).
  */
 function classifiedConnectionCheck(e: unknown, dbSource?: DbUrlSource): Check {
-  // A7: a live `gbrain serve` owns this PGLite brain (usually an agent session's stdio serve).
+  // A7: a live `foresights serve` owns this PGLite brain (usually an agent session's stdio serve).
   // The brain is not broken; doctor needs it to itself: stop that serve, then re-run doctor.
   const owner = liveServeOwner(e);
   if (owner) {
@@ -197,7 +197,7 @@ function classifiedConnectionCheck(e: unknown, dbSource?: DbUrlSource): Check {
     name: 'connection',
     status: 'fail',
     message: source ? `${d.message} (database URL from ${source})` : d.message,
-    details: { reason: d.reason, transient: d.transient, fix_hint: `${d.remediation} Run: gbrain db-repair`, ...(source ? { url_source: source } : {}) },
+    details: { reason: d.reason, transient: d.transient, fix_hint: `${d.remediation} Run: foresights db-repair`, ...(source ? { url_source: source } : {}) },
     readiness_state: 'unknown',
     fix: dbRepairFix(d.remediation),
   };
@@ -216,7 +216,7 @@ export function describeUrlSource(source: DbUrlSource | undefined): string | nul
 }
 
 function dbRepairFix(why: string): Action {
-  return agentFix(['gbrain', 'db-repair'], `${why} \`gbrain db-repair\` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix).`, 'connection',
+  return agentFix(['gbrain', 'db-repair'], `${why} \`foresights db-repair\` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix).`, 'connection',
     { docs: 'docs/ENGINES.md#engine-detection-and-access-repair' });
 }
 
@@ -244,7 +244,7 @@ async function runOfflineConnection(ctx: DoctorContext): Promise<Check[]> {
       } else if (!fastMode && dbSource) {
         msg = `Could not connect to configured DB (URL from ${dbSource}: ${describeUrlSource(dbSource)}); filesystem checks only`;
       } else {
-        msg = `No database configured (filesystem checks only; no URL in the environment or in ${configPath()}). Set GBRAIN_DATABASE_URL or run \`gbrain init\`.`;
+        msg = `No database configured (filesystem checks only; no URL in the environment or in ${configPath()}). Set GBRAIN_DATABASE_URL or run \`foresights init\`.`;
       }
       checks.push({
         name: 'connection', status: 'warn', message: msg, readiness_state: 'unknown',
@@ -254,7 +254,7 @@ async function runOfflineConnection(ctx: DoctorContext): Promise<Check[]> {
             ? { fix: dbRepairFix('The configured database did not accept the connection.') }
             : { fix: { argv: ['gbrain', 'init', '--pglite'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('connection'),
               why: 'No brain is configured on this machine; init creates a local PGLite brain (keyless unless the user adds a provider key).',
-              user_message: 'There is no gbrain brain on this machine yet. Shall I create a local one?' } as Action }),
+              user_message: 'There is no foresights brain on this machine yet. Shall I create a local one?' } as Action }),
       });
     }
     // URL-only + engine-free checks still run on a dead DB — that is the

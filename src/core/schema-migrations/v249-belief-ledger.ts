@@ -9,7 +9,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // `belief_events` table with its page lifetimes, commit marks, bulk retiering
 // manifest and purge redaction register (src/core/belief/schema.ts, also in
 // both blobs), plus the migration-only `sources.purge_epoch` counter. Additive
-// and empty: nothing appends until `gbrain beliefs enable` baselines a source.
+// and empty: nothing appends until `foresights beliefs enable` baselines a source.
 // The handler builds the facts index the batch state read uses (online on Postgres).
 export const v249: Migration = {
   version: 249,

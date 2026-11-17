@@ -2,7 +2,7 @@
  * GST-1943: `storage_manifest`, read-only health of the storage shelf. Warns on
  *   - cards on the shelf that fail the current card schema (or pages there that hold no card);
  *   - interim `stored-object` pages under `storage-manifest/` outside the shelf that are not adopted yet (the fix is
- *     the read-only `gbrain storage adopt` preview);
+ *     the read-only `foresights storage adopt` preview);
  *   - a hosted shelf (source `storage` with role storage_manifest) whose worktree or repository directory is gone.
  * Reports not_applicable when there is no shelf and no interim page. Values are never echoed: findings name ids.
  */
@@ -45,9 +45,9 @@ export async function storageManifestCheck(engine: BrainEngine): Promise<Check> 
     const first = interim[0]?.source_id;
     const fix: Action = missingDirs.length
       ? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, docs: DOCS, why: 'Only the user knows where the shelf repository went (moved, deleted, or on another machine).',
-        user_message: `The storage shelf's Git directory is missing: ${missingDirs.join(', ')}. Restore it from its push remote or a backup to the same path, then run gbrain doctor --only storage_manifest again.` }
+        user_message: `The storage shelf's Git directory is missing: ${missingDirs.join(', ')}. Restore it from its push remote or a backup to the same path, then run foresights doctor --only storage_manifest again.` }
       : invalid.length
-        ? agentFix(['gbrain', 'storage-get', invalid[0]!, '--json'], 'Read-only: names what the card breaks and its revision, so it can be fixed with gbrain storage-update.', NAME, { docs: DOCS })
+        ? agentFix(['gbrain', 'storage-get', invalid[0]!, '--json'], 'Read-only: names what the card breaks and its revision, so it can be fixed with foresights storage-update.', NAME, { docs: DOCS })
         : agentFix(['gbrain', 'storage', 'adopt', ...(first && first !== 'default' ? ['--source', first] : []), '--json'], 'Read-only preview: the card each interim record maps to and the fields a card refuses; it writes nothing.', NAME, { docs: DOCS });
     return { name: NAME, status: 'warn', message: `Storage shelf: ${problems.join('; ')}.`, details, fix };
   } catch (error) {

@@ -1,5 +1,5 @@
 /**
- * #6383: the gbrain side of the pool-health work, without a database.
+ * #6383: the foresights side of the pool-health work, without a database.
  *
  * Protects: the in-flight budget derives from the pool's statement_timeout
  * plus `GBRAIN_PG_STUCK_GRACE_MS` and switches off with the timeout or with
@@ -66,7 +66,7 @@ describe('warn lines', () => {
   test('pg_connection_stuck names the pool, the age, the queue depth and the statement by keyword and table only', () => {
     const line = formatStuckConnectionWarning('read', { age_ms: 330_412.6, queued: 3, statement: "SELECT p.id FROM pages p WHERE p.slug = $1 AND secret = 'x'" });
     expect(line).toContain('[gbrain] warn code=pg_connection_stuck pool=read age_ms=330413 queued=3 sql=SELECT_pages');
-    expect(line).toContain('fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-connection-stuck');
+    expect(line).toContain('fix="foresights doctor --json" docs=docs/ENGINES.md#pg-connection-stuck');
     expect(line).not.toContain('secret');
   });
 

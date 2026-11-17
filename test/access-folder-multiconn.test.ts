@@ -3,7 +3,7 @@
  *  (a) an import paused after it installed the imported rulebook (pending coverage committed, no page published yet)
  *      and then publishing its pages, while remote reads run through MCP dispatch on other pool connections: no read
  *      ever returns a page under the restricted prefix to a caller outside the rule, and the end state is stamped;
- *  (b) gbrain access rule migrate (database -> git) interrupted after its git commits and, separately, after the store
+ *  (b) foresights access rule migrate (database -> git) interrupted after its git commits and, separately, after the store
  *      switch: the applied rules never go missing (remote reads stay narrowed), the rerun or the next sync reconciles,
  *      the end state matches an uninterrupted run, and the switch waits for a page write already holding the source.
  */

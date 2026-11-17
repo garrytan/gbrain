@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 /**
- * A committed git repo carrying the gbrain durability post-commit hook and
+ * A committed git repo carrying the foresights durability post-commit hook and
  * one page whose only lint issue is fixable (a leading LLM preamble; #5433
  * made `ingested_at` count as temporal provenance, so it is not a finding).
  */
@@ -58,7 +58,7 @@ describe('cycle lint durability', () => {
     expect(git(root, 'log', '-1', '--format=%s')).toBe('gbrain: write-through note');
   });
 
-  test('a single-file target (gbrain lint --fix page.md) probes the page\'s directory for the hook', async () => {
+  test('a single-file target (foresights lint --fix page.md) probes the page\'s directory for the hook', async () => {
     const { root, page } = hardenedRepoWithNote();
 
     const result = await runLintCore({ target: page, fix: true });

@@ -1,5 +1,5 @@
 /**
- * #6686 (D8): `gbrain repair split-facts` merges a page's two ## Facts fences (one below the timeline sentinel, one a
+ * #6686 (D8): `foresights repair split-facts` merges a page's two ## Facts fences (one below the timeline sentinel, one a
  * managed writer added above it) into the fence below the sentinel, keeping every row number and fact id; a row number
  * in both fences is listed for a person and never merged. Real journal publication on PGLite, no providers.
  */
@@ -52,7 +52,7 @@ async function splitPage(sourceId: string, slug: string, below: Array<[number, s
 const facts = (sourceId: string, slug: string) => engine.executeRaw<{ id: number; fact: string; row_num: number; expired: boolean }>(
   'SELECT id,fact,row_num,expired_at IS NOT NULL AS expired FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 ORDER BY row_num', [sourceId, slug]);
 
-describe('gbrain repair split-facts', () => {
+describe('foresights repair split-facts', () => {
   test('merges the split fences below the sentinel, keeping row numbers and fact ids; a collision page is listed and kept', () => withEnv({ GBRAIN_HOME: home }, async () => {
     const sourceId = `split-${randomUUID().slice(0, 8)}`;
     const slug = 'people/split-example', clash = 'people/clash-example';
@@ -62,7 +62,7 @@ describe('gbrain repair split-facts', () => {
 
     // Detection: extract_facts names the repair instead of reconciling a split page.
     const extracted = await runExtractFacts(engine, { slugs: [slug], sourceId });
-    expect(extracted.warnings.join('\n')).toContain(`gbrain repair split-facts --source ${sourceId}`);
+    expect(extracted.warnings.join('\n')).toContain(`foresights repair split-facts --source ${sourceId}`);
 
     // Explicit-only: never in --all, the remediation plan or the maintenance cycle.
     expect(AUTO_REPAIR_REGISTRY.map(spec => spec.kind)).not.toContain('split-facts');

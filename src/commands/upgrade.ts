@@ -28,7 +28,7 @@ import {
   type TargetFloor,
 } from '../core/bun-floor.ts';
 
-const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
+const GBRAIN_GITHUB_REPO = 'aimonk2025/gbrain';
 
 /**
  * Compare the post-swap resolved version against the caller's target (#4366).
@@ -50,7 +50,7 @@ export function assessUpgradeOutcome(
 
 export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain upgrade [--channel stable|alpha] [--dry-run] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every gbrain process on this host onto the new build.\n\nDetects install method (bun, bun-link, binary) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        stable (the default: weekly, sooner only for security, data-loss and stable-regression fixes,\n                       and only to a release whose gates passed on its exact code) or alpha (every published\n                       release; latest is an alias). Precedence: --channel, GBRAIN_RELEASE_CHANNEL,\n                       self_upgrade.channel, stable. Persist it as self_upgrade.channel in config.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect gbrain\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'gbrain upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               Print the effective channel, where it came from and what would install; change nothing.\n                       With --restart-only: print the restart plan instead.\n--no-autopilot-install  Skip autopilot installation and service rewrites.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
+    console.log('Usage: foresights upgrade [--channel stable|alpha] [--dry-run] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       foresights upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every foresights process on this host onto the new build.\n\nDetects install method (bun, bun-link, binary) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        stable (the default: weekly, sooner only for security, data-loss and stable-regression fixes,\n                       and only to a release whose gates passed on its exact code) or alpha (every published\n                       release; latest is an alias). Precedence: --channel, GBRAIN_RELEASE_CHANNEL,\n                       self_upgrade.channel, stable. Persist it as self_upgrade.channel in config.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect foresights\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'foresights upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               Print the effective channel, where it came from and what would install; change nothing.\n                       With --restart-only: print the restart plan instead.\n--no-autopilot-install  Skip autopilot installation and service rewrites.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
     return;
   }
 
@@ -59,7 +59,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   const swapOnly = args.includes('--swap-only');
   const noAutopilotInstall = args.includes('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1';
   const checkBunFloor = !args.includes('--no-bun-floor-check');
-  // #5693: post-upgrade owns migrations. gbrain ships no postinstall now; the flag still tells an older release's postinstall to skip them.
+  // #5693: post-upgrade owns migrations. foresights ships no postinstall now; the flag still tells an older release's postinstall to skip them.
   const upgradeEnv = { ...process.env, GBRAIN_UPGRADE_OWNS_MIGRATIONS: '1', ...(noAutopilotInstall ? { GBRAIN_NO_AUTOPILOT_INSTALL: '1' } : {}) };
 
   const json = jsonRequested(args);
@@ -126,7 +126,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         if (installedDespiteFailure(oldVersion)) upgraded = true;
         else {
           console.error('Upgrade failed. Try running manually:');
-          console.error(`  cd ${bunGlobalRoot} && bun update ${BUN_BACKEND} gbrain`);
+          console.error(`  cd ${bunGlobalRoot} && bun update ${BUN_BACKEND} foresights`);
         }
       }
       break;
@@ -136,14 +136,14 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       // v0.42: real atomic self-update on the published targets
       // (darwin-arm64, linux-x64). Other platforms have no asset → notify.
       const { runBinarySelfUpdate } = await import('../core/binary-self-update.ts');
-      console.log('Updating gbrain binary (atomic download + replace)...');
+      console.log('Updating foresights binary (atomic download + replace)...');
       const result = await runBinarySelfUpdate();
       if (result.ok) {
         upgraded = true;
       } else if (result.reason === 'unsupported_platform' || result.reason === 'no_asset') {
         console.log('No published binary for this platform/arch.');
         console.log('Download the latest binary from GitHub Releases:');
-        console.log('  https://github.com/garrytan/gbrain/releases');
+        console.log('  https://github.com/aimonk2025/gbrain/releases');
       } else if (
         result.reason === 'integrity_failed' ||
         result.reason === 'integrity_unavailable' ||
@@ -163,7 +163,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         console.error(`Binary self-update rejected — integrity not confirmed: ${detail}.`);
         console.error('Your existing binary is unchanged and the download was discarded.');
         console.error('Retry later, or download + verify manually:');
-        console.error('  https://github.com/garrytan/gbrain/releases');
+        console.error('  https://github.com/aimonk2025/gbrain/releases');
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
@@ -174,13 +174,13 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       } else {
         console.error(`Binary self-update failed (${result.reason}${result.error ? `: ${result.error}` : ''}).`);
         console.error('Your existing binary is unchanged. Download manually if needed:');
-        console.error('  https://github.com/garrytan/gbrain/releases');
+        console.error('  https://github.com/aimonk2025/gbrain/releases');
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
           toVersion: opts.targetVersion ?? result.targetVersion ?? 'unknown',
           error: `${result.reason}${result.error ? `: ${result.error}` : ''}`,
-          recover: 'Download from https://github.com/garrytan/gbrain/releases',
+          recover: 'Download from https://github.com/aimonk2025/gbrain/releases',
         });
       }
       break;
@@ -189,8 +189,8 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
-      console.log(`  bun update ${BUN_BACKEND} gbrain`);
-      console.log('  Download from https://github.com/garrytan/gbrain/releases');
+      console.log(`  bun update ${BUN_BACKEND} foresights`);
+      console.log('  Download from https://github.com/aimonk2025/gbrain/releases');
   }
 
   if (!upgraded) {
@@ -212,10 +212,10 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   const oldParsed = parseSemver(oldVersion);
   const unchanged = !!newParsed && !!oldParsed && newParsed.join('.') === oldParsed.join('.');
   if (unchanged) {
-    console.log(`No newer version was installed: still running gbrain ${newVersion}.`);
+    console.log(`No newer version was installed: still running foresights ${newVersion}.`);
     writeSwapReceipt({ outcome: 'not_installed', from: oldVersion, installed: newVersion });
   } else {
-    console.log(newVersion ? `Upgrade complete. Now running: gbrain ${newVersion}` : 'Upgrade complete. Could not verify new version.');
+    console.log(newVersion ? `Upgrade complete. Now running: foresights ${newVersion}` : 'Upgrade complete. Could not verify new version.');
   }
   // #4366: a still-older resolved version means the swap never happened
   // (exact-tag Git pins make `bun update` a successful no-op). Fail loudly
@@ -236,7 +236,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     setCliExitVerdict(1);
     return;
   }
-  // #5311: a bare `gbrain upgrade` has no target, so the check above cannot
+  // #5311: a bare `foresights upgrade` has no target, so the check above cannot
   // fire, and on an exact-tag Git pin `bun update` is a successful no-op.
   // When the version did not change and the global install pins a tag, say
   // so and exit non-zero instead of reporting an upgrade. #6718: the target is
@@ -306,7 +306,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   } catch (e) {
     migrationsLine = await describeMigrationFailure(e, newVersion);
     // post-upgrade is best-effort, don't fail the upgrade. BUT leave a
-    // trail so `gbrain doctor` can surface it and give the user a clear
+    // trail so `foresights doctor` can surface it and give the user a clear
     // paste-ready recovery command. Silent failure here is how users end
     // up with half-upgraded brains and no signal. A competing runner is
     // not a failure: its own run finishes the migrations.
@@ -315,18 +315,18 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       fromVersion: oldVersion,
       toVersion: newVersion,
       error: e instanceof Error ? e.message : String(e),
-      recover: 'Run: gbrain apply-migrations --yes',
+      recover: 'Run: foresights apply-migrations --yes',
     });
   }
   // Run features scan to show what's new and what to fix
   try {
-    execSync('gbrain features', { stdio: 'inherit', timeout: 30_000 });
+    execSync('foresights features', { stdio: 'inherit', timeout: 30_000 });
   } catch {
     // features scan is best-effort
   }
   // GBRA-175: the new build restarts every process onto itself and verifies one build runs (this process is the old build).
   const restartLine = unchanged ? 'Restart: nothing to restart (no newer version was installed)'
-    : noRestart ? 'Restart: skipped (--no-restart). Run `gbrain upgrade --restart-only`; doctor reports runtime_build_skew until then'
+    : noRestart ? 'Restart: skipped (--no-restart). Run `foresights upgrade --restart-only`; doctor reports runtime_build_skew until then'
     : restartOntoNewBuild(stopMcp, newVersion);
   console.log(unchanged ? `Binary: no newer version installed (still ${newVersion})` : `Binary: installed ${newVersion || 'a new version (could not verify)'}`);
   console.log(migrationsLine);
@@ -338,9 +338,9 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
 /** GBRA-175: the new build restarts every process onto itself and verifies one build runs; returns the summary line. */
 function restartOntoNewBuild(stopMcp: boolean, newVersion: string): string {
   const restart = spawnSync('gbrain', ['upgrade', '--restart-only', ...(stopMcp ? ['--stop-mcp'] : [])], { stdio: cliChildStdio(), env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' }, timeout: 900_000 });
-  if (restart.status === 0) return `Restart: every gbrain process on this host runs ${newVersion || 'the new build'}`;
+  if (restart.status === 0) return `Restart: every foresights process on this host runs ${newVersion || 'the new build'}`;
   setCliExitVerdict(restart.status ?? 1);
-  return `Restart: incomplete (exit ${restart.status ?? restart.signal ?? 'unknown'}). Follow the steps above, then run \`gbrain upgrade --restart-only\``;
+  return `Restart: incomplete (exit ${restart.status ?? restart.signal ?? 'unknown'}). Follow the steps above, then run \`foresights upgrade --restart-only\``;
 }
 
 /**
@@ -377,7 +377,7 @@ async function installStableRelease(method: string, target: { version: string; c
     const result = await runBinarySelfUpdate(process.execPath, { fetchRelease: () => fetchReleaseByTag(`v${target.version}`) });
     if (result.ok) return 'installed';
     console.error(`Binary self-update to the stable release ${target.version} failed (${result.reason}${result.error ? `: ${result.error}` : ''}). Your existing binary is unchanged.`);
-    recordUpgradeError({ phase: 'binary-self-update', fromVersion: ctx.oldVersion, toVersion: target.version, error: `${result.reason}`, recover: 'Retry gbrain upgrade --channel stable, or download the release asset manually.' });
+    recordUpgradeError({ phase: 'binary-self-update', fromVersion: ctx.oldVersion, toVersion: target.version, error: `${result.reason}`, recover: 'Retry foresights upgrade --channel stable, or download the release asset manually.' });
     setCliExitVerdict(1);
     return 'failed';
   }
@@ -420,8 +420,8 @@ async function installStableRelease(method: string, target: { version: string; c
     return 'installed';
   } catch {
     if (installedDespiteFailure(ctx.oldVersion)) return 'installed';
-    console.error(`Installing ${spec} failed. Restoring gbrain ${ctx.oldVersion}...`);
-    try { bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
+    console.error(`Installing ${spec} failed. Restoring foresights ${ctx.oldVersion}...`);
+    try { bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored foresights ${ctx.oldVersion}.`); }
     catch { console.error(`Restore failed. Reinstall by hand: ${bunReinstallCommand(`#v${target.version}`)}`); }
     recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: bunReinstallCommand(`#v${target.version}`) });
     setCliExitVerdict(1);
@@ -430,7 +430,7 @@ async function installStableRelease(method: string, target: { version: string; c
 }
 
 /**
- * #5855: the Bun floor of the release `gbrain upgrade` would install for this
+ * #5855: the Bun floor of the release `foresights upgrade` would install for this
  * install method (the autopilot channel's pre-swap check). The swap re-reads
  * it, so a floor raised in between still refuses there. GBRA-175: on the stable
  * channel (self_upgrade.channel) it is the stable release's floor.
@@ -483,16 +483,16 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
   const back = r.method === 'bun-link' && r.repoRoot && r.previousSha
     ? `git -C ${r.repoRoot} checkout ${r.previousSha} && bun install`
     : r.method === 'bun' ? bunReinstallCommand(`#v${r.oldVersion}`) : null;
-  console.error(`gbrain ${newVersion || '(new version)'} was installed but does not start: \`gbrain --help\` failed (${why}).${detail ? `\n  ${detail}` : ''}`);
+  console.error(`foresights ${newVersion || '(new version)'} was installed but does not start: \`foresights --help\` failed (${why}).${detail ? `\n  ${detail}` : ''}`);
   console.error('Recovery:');
-  console.error('  If it names an old Bun: bun upgrade, then gbrain post-upgrade');
+  console.error('  If it names an old Bun: bun upgrade, then foresights post-upgrade');
   if (back) console.error(`  To return to ${r.oldVersion}: ${back}`);
   recordUpgradeError({
     phase: 'post-swap-smoke',
     fromVersion: r.oldVersion,
     toVersion: newVersion || 'unknown',
-    error: `gbrain --help failed after the swap (${why})${detail ? `: ${detail}` : ''}`,
-    recover: back ? `bun upgrade && gbrain post-upgrade, or return to ${r.oldVersion}: ${back}` : 'bun upgrade && gbrain post-upgrade',
+    error: `foresights --help failed after the swap (${why})${detail ? `: ${detail}` : ''}`,
+    recover: back ? `bun upgrade && foresights post-upgrade, or return to ${r.oldVersion}: ${back}` : 'bun upgrade && foresights post-upgrade',
   });
   setCliExitVerdict(1);
   return false;
@@ -501,14 +501,14 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
 /**
  * #5693: an install step can fail or time out after the new version is
  * already in place (postinstall work outlived the install timeout). Treat a
- * newer `gbrain --version` as a completed swap instead of reporting failure.
+ * newer `foresights --version` as a completed swap instead of reporting failure.
  */
 function installedDespiteFailure(oldVersion: string): boolean {
   try {
-    const observed = execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^gbrain\s*/i, '');
+    const observed = execSync('foresights --version', { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^(?:foresights|gbrain)\s*/i, '');
     const o = parseSemver(observed), prior = parseSemver(oldVersion);
     if (!o || !prior || !semverGt(o, prior)) return false;
-    console.log(`The install step did not finish cleanly, but gbrain ${observed} is installed. Migrations run in post-upgrade.`);
+    console.log(`The install step did not finish cleanly, but foresights ${observed} is installed. Migrations run in post-upgrade.`);
     return true;
   } catch {
     return false;
@@ -520,15 +520,15 @@ export async function describeMigrationFailure(error: unknown, newVersion: strin
     const config = loadConfig();
     const holder = config ? await readMigrationLockHolder(config) : null;
     return `Migrations: running (host ${holder?.host ?? 'unknown'}, pid ${holder?.pid ?? 'unknown'}) in another apply-migrations. `
-      + 'Wait for it to finish; `gbrain doctor` shows migration progress.';
+      + 'Wait for it to finish; `foresights doctor` shows migration progress.';
   }
   const ledger = newVersion ? loadCompletedMigrations() : [];
   const wedged = newVersion ? migrationLedgerSummary(newVersion).wedged.filter(v => forwardProgressPast(v, ledger) === null) : [];
   if (wedged.length > 0) {
     return `Migrations: wedged (${wedged.map(v => `v${v}`).join(', ')} ended partial 3+ times in a row). Fix the cause recorded in ${wedgedLedgerHint()}, then run: `
-      + `${wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ')} && gbrain apply-migrations --yes`;
+      + `${wedged.map(v => `foresights apply-migrations --force-retry ${v}`).join(' && ')} && foresights apply-migrations --yes`;
   }
-  return 'Migrations: failed. Run: gbrain apply-migrations --yes';
+  return 'Migrations: failed. Run: foresights apply-migrations --yes';
 }
 
 export function resolveBunGlobalRoot(): string {
@@ -644,7 +644,7 @@ function printPinnedReinstall(plan: PinnedReinstallPlan, oldVersion: string, lea
     console.error(`v${plan.unpublished} is not published yet: its release tag is not on GitHub (tags are created after the release checks pass). Nothing was removed.`);
   }
   if (!plan.version) {
-    if (plan.unpublished) return console.error('Retry `gbrain upgrade` later.');
+    if (plan.unpublished) return console.error('Retry `foresights upgrade` later.');
     console.error(lead);
     console.error(`  ${bunReinstallCommand('')}`);
     return;
@@ -655,12 +655,12 @@ function printPinnedReinstall(plan: PinnedReinstallPlan, oldVersion: string, lea
 
 function pinnedReinstallHint(plan: PinnedReinstallPlan): string {
   if (plan.version) return bunReinstallCommand(`#v${plan.version}`);
-  return plan.unpublished ? `v${plan.unpublished} is not published yet; retry gbrain upgrade later` : bunReinstallCommand('');
+  return plan.unpublished ? `v${plan.unpublished} is not published yet; retry foresights upgrade later` : bunReinstallCommand('');
 }
 
 /**
- * #5311: the exact Git tag the bun global install pins gbrain to
- * (`github:garrytan/gbrain#v0.51.0`), or null for an unpinned or branch spec.
+ * #5311: the exact Git tag the bun global install pins foresights to
+ * (`github:aimonk2025/gbrain#v0.51.0`), or null for an unpinned or branch spec.
  * With `commits`, a commit pin (`#<sha>`) counts too (GBRA-175).
  */
 export function bunGlobalExactTagPin(globalRoot: string, commits = false): string | null {
@@ -702,8 +702,8 @@ function findBunInstallRootFromArgv(): string | null {
 
 function verifyUpgrade(): string {
   try {
-    const output = execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000 }).trim();
-    return output.replace(/^gbrain\s*/i, '').trim();
+    const output = execSync('foresights --version', { encoding: 'utf-8', timeout: 10_000 }).trim();
+    return output.replace(/^(?:foresights|gbrain)\s*/i, '').trim();
   } catch {
     return '';
   }
@@ -711,9 +711,9 @@ function verifyUpgrade(): string {
 
 /**
  * Append a structured record to ~/.gbrain/upgrade-errors.jsonl when a
- * best-effort phase of the upgrade fails (e.g., `gbrain post-upgrade`
+ * best-effort phase of the upgrade fails (e.g., `foresights post-upgrade`
  * silently bombing). Without this trail, users end up with half-upgraded
- * brains and no signal. `gbrain doctor` reads this file and surfaces the
+ * brains and no signal. `foresights doctor` reads this file and surfaces the
  * paste-ready recovery hint. Failures here are themselves best-effort.
  */
 export function recordUpgradeError(record: {
@@ -769,7 +769,7 @@ function saveUpgradeState(oldVersion: string, newVersion: string) {
  *   1. Print feature_pitch headlines for migrations newer than the prior
  *      binary (cosmetic; runs only when upgrade-state.json is readable and
  *      has a from/to pair).
- *   2. Invoke `gbrain apply-migrations --yes` so the mechanical side of
+ *   2. Invoke `foresights apply-migrations --yes` so the mechanical side of
  *      every outstanding migration actually executes (schema, smoke, prefs,
  *      host rewrites, autopilot install). This is the Codex H8 fix:
  *      previously runPostUpgrade early-returned when upgrade-state.json
@@ -820,13 +820,13 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
       if (!su.mode_prompted) {
         console.log('');
         console.log('═══════════════════════════════════════════════════════════════');
-        console.log('[gbrain] Self-upgrade is ON in NOTIFY mode.');
-        console.log('[gbrain] Every gbrain invocation now checks for new versions and');
-        console.log('[gbrain] nudges when one is available. Apply with: gbrain self-upgrade');
+        console.log('[foresights] Self-upgrade is ON in NOTIFY mode.');
+        console.log('[foresights] Every foresights invocation now checks for new versions and');
+        console.log('[foresights] nudges when one is available. Apply with: foresights self-upgrade');
         console.log('[gbrain]');
-        console.log('[gbrain] Hands-off (silent quiet-hours auto-upgrade for always-on installs):');
-        console.log('[gbrain]   gbrain config set self_upgrade.mode auto');
-        console.log('[gbrain] Turn it off entirely: gbrain config set self_upgrade.mode off');
+        console.log('[foresights] Hands-off (silent quiet-hours auto-upgrade for always-on installs):');
+        console.log('[foresights]   foresights config set self_upgrade.mode auto');
+        console.log('[foresights] Turn it off entirely: foresights config set self_upgrade.mode off');
         console.log('═══════════════════════════════════════════════════════════════');
         console.log('');
         su.mode_prompted = true;
@@ -845,7 +845,7 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
     const { migrateSystemdUnitToRestartAlways } = await import('./autopilot.ts');
     const r = migrateSystemdUnitToRestartAlways();
     if (r.rewritten) {
-      console.log('[gbrain] Updated autopilot systemd unit to Restart=always (self-upgrade relaunch).');
+      console.log('[foresights] Updated autopilot systemd unit to Restart=always (self-upgrade relaunch).');
     }
   } catch {
     /* best-effort */
@@ -854,7 +854,7 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
 
 export async function runPostUpgrade(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain post-upgrade [--no-autopilot-install] [--json]');
+    console.log('Usage: foresights post-upgrade [--no-autopilot-install] [--json]');
     console.log('Prints feature pitches for new migrations and runs apply-migrations.');
     console.log('--no-autopilot-install (or GBRAIN_NO_AUTOPILOT_INSTALL=1) skips autopilot installation and service rewrites.');
     console.log('--json prints one result document on stdout (progress and banners go to stderr).');
@@ -866,7 +866,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   const report: PostUpgradeReport = { status: 'ok', warnings: [] };
 
   // v0.35.8.0: lay down ~/.gbrain/.gitignore retroactively. Existing users
-  // never re-run `gbrain init`, so init-only coverage misses them entirely
+  // never re-run `foresights init`, so init-only coverage misses them entirely
   // (codex F-CDX-8). Idempotent + non-clobbering — safe to run every upgrade.
   try {
     const { ensureGitignore } = await import('../core/config.ts');
@@ -893,7 +893,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             console.log(`NEW: ${m.featurePitch.headline}`);
             if (m.featurePitch.description) console.log(m.featurePitch.description);
             if (m.featurePitch.recipe) {
-              console.log(`Run \`gbrain integrations show ${m.featurePitch.recipe}\` to set it up.`);
+              console.log(`Run \`foresights integrations show ${m.featurePitch.recipe}\` to set it up.`);
             }
             console.log('');
           }
@@ -905,7 +905,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   }
 
   (await import('../core/setup/brain-first-upgrade-notice.ts')).printBrainFirstUpgradeNotice(); // GBRA-188: the command that writes a missing brain-first block
-  await (await import('../core/setup/hook-launcher-refresh.ts')).refreshHookLaunchers(); // #8424: hooks that start gbrain in the session's directory move onto the launcher
+  await (await import('../core/setup/hook-launcher-refresh.ts')).refreshHookLaunchers(); // #8424: hooks that start foresights in the session's directory move onto the launcher
   (await import('../core/post-upgrade-notice.ts')).writePostUpgradeCliNotice(); // F7: safety notice ([AGENT] block for agents)
   // Mechanical: run every outstanding migration. Idempotent; exits 0 quickly
   // when nothing is pending. Stays inside the same process so a long Phase F
@@ -921,11 +921,11 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     if (exitCode !== undefined && exitCode !== 0) process.exit(finishPostUpgrade(json, report, exitCode, failure));
   } catch (e) {
     // Surface the error but don't throw — post-upgrade is best-effort.
-    // Users can re-run `gbrain apply-migrations` manually if they want
+    // Users can re-run `foresights apply-migrations` manually if they want
     // to retry.
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`\napply-migrations failed: ${msg}`);
-    console.error('Run `gbrain apply-migrations --yes` manually to retry.');
+    console.error('Run `foresights apply-migrations --yes` manually to retry.');
     report.warnings.push(`apply-migrations failed: ${msg}`);
   }
 
@@ -959,7 +959,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // Entity mention index: [AGENT] catch-up line while pages are due (best-effort).
         await (await import('../core/mentions/upgrade-notice.ts')).printMentionIndexUpgradeNotice(engine);
         await (await import('../core/page-state/projection-upgrade-notice.ts')).printProjectionUpgradeNotice(engine); // #6803 image projections: read-only [AGENT] drain preview
-        // Large pages: re-index pages an older gbrain stored chunkless for size (keyless-safe, time-boxed, resumable).
+        // Large pages: re-index pages an older foresights stored chunkless for size (keyless-safe, time-boxed, resumable).
         await (await import('../core/oversized-backfill.ts')).printOversizedBackfillUpgradeNotice(engine);
 
         // Temporal typed edges: one-shot [AGENT] notice (live-by-default graph reads + relationship check), best-effort.
@@ -994,14 +994,14 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             const { total: affected, by_name } = await countTtlExpiredWaiting(engine, ttlNames);
             const parts = [...ttlNames].map(([name, hours]) => `${name} > ${hours}h: ${by_name[name] ?? 0}`);
             console.log('');
-            console.log(`⚠ [gbrain] Waiting-TTL is now active: queued jobs that never get claimed are`);
+            console.log(`⚠ [foresights] Waiting-TTL is now active: queued jobs that never get claimed are`);
             console.log(`  cancelled after their per-type TTL (${parts.join('; ') || 'defaults'}).`);
             if (affected > 0) {
               console.log(`  ${affected} currently-queued job(s) already exceed their TTL and will be`);
               console.log(`  cancelled after a ${Math.round(ttlNoticeGraceMs() / 60_000)}min grace window`);
-              console.log(`  (auditable error_text; visible in 'gbrain jobs stats').`);
+              console.log(`  (auditable error_text; visible in 'foresights jobs stats').`);
             }
-            console.log(`  Tune or disable: gbrain config set minions.ttl_waiting_hours.<name> <hours|0>`);
+            console.log(`  Tune or disable: foresights config set minions.ttl_waiting_hours.<name> <hours|0>`);
             console.log('');
             await engine.setConfig(TTL_NOTICE_SHOWN_KEY, new Date().toISOString());
           }
@@ -1010,7 +1010,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         }
 
         // PR1: skill-catalog publish consent. New installs default ON at
-        // `gbrain init`; EXISTING installs stay OFF (default-OFF runtime = no
+        // `foresights init`; EXISTING installs stay OFF (default-OFF runtime = no
         // silent capability grant on upgrade) until the owner opts in HERE.
         // One-time, gated by `mcp.publish_skills_prompted`. Strongly recommended.
         try {
@@ -1025,15 +1025,15 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
               : 'No registered content root: choose a canonical source and complete host content migration first.';
             console.log('');
             console.log('═══════════════════════════════════════════════════════════════');
-            console.log('[gbrain] Publish your skills to MCP clients?');
-            console.log('[gbrain] Codex desktop, Claude Code/Cowork, and Perplexity can then');
-            console.log('[gbrain] DISCOVER approved source-scoped skill prose over `gbrain serve`.');
-            console.log('[gbrain] This makes your MCP server dramatically more useful.');
+            console.log('[foresights] Publish your skills to MCP clients?');
+            console.log('[foresights] Codex desktop, Claude Code/Cowork, and Perplexity can then');
+            console.log('[foresights] DISCOVER approved source-scoped skill prose over `foresights serve`.');
+            console.log('[foresights] This makes your MCP server dramatically more useful.');
             console.log('[gbrain]');
-            console.log(`[gbrain] ${dirLine}`);
-            console.log('[gbrain] Effect: the CONTENTS of your SKILL.md files become readable by');
-            console.log('[gbrain] remote MCP callers you have authorized. Source code is NOT exposed.');
-            console.log('[gbrain] Following updates, bundle bytes and skill editing require separate approval.');
+            console.log(`[foresights] ${dirLine}`);
+            console.log('[foresights] Effect: the CONTENTS of your SKILL.md files become readable by');
+            console.log('[foresights] remote MCP callers you have authorized. Source code is NOT exposed.');
+            console.log('[foresights] Following updates, bundle bytes and skill editing require separate approval.');
             console.log('═══════════════════════════════════════════════════════════════');
             const { isInteractive } = await import('../core/interaction.ts');
             const isTty = isInteractive();
@@ -1042,13 +1042,13 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
               enabled = await promptEnableSkillPublishing();
             } else {
               console.log('[AGENT] Relay this to your operator. Recommended: enable it.');
-              console.log('[AGENT] Enable with: gbrain config set mcp.publish_skills true');
+              console.log('[AGENT] Enable with: foresights config set mcp.publish_skills true');
             }
             if (enabled) {
               await engine.setConfig('mcp.publish_skills', 'true');
-              console.log('[gbrain] Skill publishing ENABLED. Disable anytime: gbrain config set mcp.publish_skills false');
+              console.log('[foresights] Skill publishing ENABLED. Disable anytime: foresights config set mcp.publish_skills false');
             } else if (isTty) {
-              console.log('[gbrain] Left disabled. Enable later: gbrain config set mcp.publish_skills true');
+              console.log('[foresights] Left disabled. Enable later: foresights config set mcp.publish_skills true');
             }
             await engine.setConfig('mcp.publish_skills_prompted', 'true');
           }
@@ -1077,7 +1077,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           const msg = re instanceof Error ? re.message : String(re);
           console.warn(`\nChunker-bump reindex skipped: ${msg}`);
           report.warnings.push(`chunker-bump reindex skipped: ${msg}`);
-          console.warn('Run `gbrain reindex --markdown` manually when ready.');
+          console.warn('Run `foresights reindex --markdown` manually when ready.');
         }
 
         // Fix wave 3: run the wave checks once (full, not --fast) and relay a
@@ -1087,7 +1087,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
           for (const line of await postUpgradeRecoveryBanner(engine, `host (${engine.kind}${brain ? `, id ${brain.brain_id}` : ''})`)) console.log(line);
         } catch (be) {
-          console.warn(`\nRecovery checks skipped: ${be instanceof Error ? be.message : String(be)}. Run \`gbrain doctor --remediation-plan\` to preview.`);
+          console.warn(`\nRecovery checks skipped: ${be instanceof Error ? be.message : String(be)}. Run \`foresights doctor --remediation-plan\` to preview.`);
         }
       } finally {
         try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -1096,12 +1096,12 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   } catch (e) {
     // Non-fatal: connection or DDL failure here falls back to the existing
     // user-facing WARN. apply-migrations.ts:296-302 already surfaces the
-    // hint to run `gbrain init --migrate-only`.
+    // hint to run `foresights init --migrate-only`.
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`\nSchema auto-apply skipped: ${msg}`);
     report.schema = 'skipped';
     report.warnings.push(`schema auto-apply skipped: ${msg}`);
-    if ((e as { code?: unknown }).code !== 'client_behind') console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
+    if ((e as { code?: unknown }).code !== 'client_behind') console.warn('Run `foresights init --migrate-only` manually if your brain is wedged.');
   }
 
   // v0.25.1: agent-readable advisory listing recommended skills the
@@ -1114,22 +1114,22 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     // Best-effort cosmetic surface; never block post-upgrade.
   }
 
-  // v0.36 DX: skillpack reference sweep. After an upgrade, the gbrain bundle
+  // v0.36 DX: skillpack reference sweep. After an upgrade, the foresights bundle
   // may have shipped changes to scaffolded skills the host already has on
   // disk. Run `reference --all` automatically and print a one-line-per-skill
   // summary so the agent + operator see what drifted without manually
   // running the sweep. Skipped silently when:
   //   - GBRAIN_SKIP_REFERENCE_SWEEP=1 in env
-  //   - no target workspace can be auto-detected (gbrain installed but
+  //   - no target workspace can be auto-detected (foresights installed but
   //     never scaffolded anywhere)
-  //   - the detected workspace IS the gbrain repo (dev-mode, would just
-  //     compare gbrain against itself)
+  //   - the detected workspace IS the foresights repo (dev-mode, would just
+  //     compare foresights against itself)
   //   - every scaffolded skill is identical (nothing to say)
   await postUpgradeReferenceSweep();
 
   // v0.41.18.0 (A4 + A18, T14): post-upgrade onboard banner. Fail-open;
   // doesn't engine-connect (lightweight TTY check only). The actual
-  // recommendations need engine access via `gbrain onboard --check`;
+  // recommendations need engine access via `foresights onboard --check`;
   // the banner just nudges the user to run it.
   try {
     const { runUpgradeBanner } = await import('../core/onboard/init-nudge.ts');
@@ -1171,7 +1171,7 @@ function finishPostUpgrade(json: boolean, report: PostUpgradeReport, exitCode: n
   report.status = 'failed';
   if (!json) return exitCode;
   const e = failure ?? opError('migration_failed', `apply-migrations exited with status ${exitCode}.`,
-    'Read stderr for the failing migration, fix it, then run `gbrain post-upgrade` again.');
+    'Read stderr for the failing migration, fix it, then run `foresights post-upgrade` again.');
   return writeCliError(e, 'post-upgrade', { json: true, stderr: false, legacy: { ...report } });
 }
 
@@ -1205,8 +1205,8 @@ export async function postUpgradeReferenceSweep(
     const gbrainRoot = opts.gbrainRoot ?? findGbrainRoot();
     if (!gbrainRoot) return;
 
-    // Dev-mode guard: the detected workspace IS the gbrain repo. Sweeping
-    // gbrain against itself is always identical — print nothing.
+    // Dev-mode guard: the detected workspace IS the foresights repo. Sweeping
+    // foresights against itself is always identical — print nothing.
     if (path.resolve(targetWorkspace) === path.resolve(gbrainRoot)) return;
 
     const result = runReferenceAll({ gbrainRoot, targetWorkspace });
@@ -1248,7 +1248,7 @@ export async function postUpgradeReferenceSweep(
         `  ${newSkills.length} new built-in skill(s) not installed here: ${shown.join(', ')}` +
           (newSkills.length > shown.length ? `, … +${newSkills.length - shown.length} more` : ''),
       );
-      console.log('  Add them all: `gbrain skillpack sync`');
+      console.log('  Add them all: `foresights skillpack sync`');
     }
     for (const s of drifted) {
       console.log(
@@ -1257,7 +1257,7 @@ export async function postUpgradeReferenceSweep(
     }
     console.log('');
     console.log(
-      'New skills → `gbrain skillpack sync`. Drifted skills → `gbrain skillpack reference <slug>` (local edits are yours; nothing is overwritten).\nSee `skills/_AGENT_README.md` for what your agent should do on update.\nSkip this sweep: `GBRAIN_SKIP_REFERENCE_SWEEP=1`.',
+      'New skills → `foresights skillpack sync`. Drifted skills → `foresights skillpack reference <slug>` (local edits are yours; nothing is overwritten).\nSee `skills/_AGENT_README.md` for what your agent should do on update.\nSkip this sweep: `GBRAIN_SKIP_REFERENCE_SWEEP=1`.',
     );
   } catch {
     // Best-effort. Never block post-upgrade.
@@ -1291,7 +1291,7 @@ export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'unknown'
   if (bunLinkResult) return 'bun-link';
 
   // Check if running from node_modules (bun/npm install). Could be canonical
-  // (we publish under garrytan/gbrain) OR the squatter (npm `gbrain@1.3.x`).
+  // (we publish under aimonk2025/gbrain) OR the squatter (npm `gbrain@1.3.x`).
   // Sub-classify and warn loudly on suspect installs (#658).
   if (execPath.includes('node_modules') || process.argv[1]?.includes('node_modules')) {
     const verdict = classifyBunInstall();
@@ -1307,7 +1307,7 @@ export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'unknown'
     return 'binary';
   }
 
-  // #8464: never `clawhub update gbrain`. We publish no gbrain skill on ClawHub, and that
+  // #8464: never `clawhub update foresights`. We publish no foresights skill on ClawHub, and that
   // command installs whatever skill anyone else publishes under the name.
   return 'unknown';
 }
@@ -1316,7 +1316,7 @@ export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'unknown'
  * Detect bun-link source-clone installs (closes #656, fixes #368).
  *
  * Walk up from argv[1] looking for a `.git/config` whose remote url
- * contains `garrytan/gbrain` (case-insensitive substring).
+ * contains `aimonk2025/gbrain` (case-insensitive substring).
  *
  * v0.28.5 gated on lstatSync(argv1).isSymbolicLink(), but bun resolves
  * the entire symlink chain before setting process.argv[1], so the check
@@ -1361,7 +1361,7 @@ export function detectBunLink(): { repoRoot: string } | null {
  * npm, the package is the squatter — an unrelated `gbrain@1.3.x` that
  * silently overwrites our binary. This function reads the install
  * directory's package.json and checks two non-spoofable signals:
- *   - `repository.url` contains `garrytan/gbrain` (case-insensitive)
+ *   - `repository.url` contains `aimonk2025/gbrain` (case-insensitive)
  *   - the install dir contains a `src/cli.ts` file (squatter ships
  *     compiled binary, not source)
  *
@@ -1369,7 +1369,7 @@ export function detectBunLink(): { repoRoot: string } | null {
  * recovery message. Codex's plan-review noted these signals are spoofable
  * by a determined squatter — accepted; this is best-effort warning, not
  * an assertion. The right structural fix is publishing under a scoped
- * name like `@garrytan/gbrain` (tracked v0.29 follow-up).
+ * name like `@aimonk2025/gbrain` (tracked v0.29 follow-up).
  */
 function classifyBunInstall(): 'canonical' | 'suspect' {
   try {
@@ -1411,18 +1411,18 @@ function classifyBunInstall(): 'canonical' | 'suspect' {
 
 function printSquatterRecovery(): void {
   console.warn('');
-  console.warn('  WARNING: gbrain install does not appear to be from garrytan/gbrain.');
+  console.warn('  WARNING: foresights install does not appear to be from aimonk2025/gbrain.');
   console.warn('  This is likely the npm-name collision tracked in issue #658:');
   console.warn('    https://www.npmjs.com/package/gbrain (an unrelated package).');
   console.warn('');
   console.warn('  Recovery options:');
   console.warn('    1. Install from source:');
   console.warn('         bun remove -g gbrain');
-  console.warn('         git clone https://github.com/garrytan/gbrain.git');
-  console.warn('         cd gbrain && bun install && bun link');
+  console.warn('         git clone https://github.com/aimonk2025/gbrain.git');
+  console.warn('         cd foresights && bun install && bun link');
   console.warn('');
   console.warn('    2. Download a release binary:');
-  console.warn('         https://github.com/garrytan/gbrain/releases');
+  console.warn('         https://github.com/aimonk2025/gbrain/releases');
   console.warn('');
   console.warn('  See docs/INSTALL_FOR_AGENTS.md for the canonical install paths.');
   console.warn('');
@@ -1438,7 +1438,7 @@ export async function promptEnableSkillPublishing(
   opts: { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream; probe?: InteractiveProbe; timeoutMs?: number } = {},
 ): Promise<boolean> {
   const { readLine } = await import('../core/interaction.ts');
-  const answer = await readLine({ prompt: '[gbrain] Enable skill publishing now? (recommended) [Y/n] ', ...opts });
+  const answer = await readLine({ prompt: '[foresights] Enable skill publishing now? (recommended) [Y/n] ', ...opts });
   if (answer.kind !== 'line') return false;
   const a = answer.text.toLowerCase();
   return a === '' || a === 'y' || a === 'yes';

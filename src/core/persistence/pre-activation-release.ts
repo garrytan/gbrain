@@ -2,7 +2,7 @@
  * #6122: a source claimed on a brain whose managed persistence was never
  * activated. The claim (a source binding plus its worktree and host binding)
  * fences classic sync (`sync-authority.ts` refuses `writer_coordinator_required`)
- * but nothing publishes through it, so `gbrain sources writer deactivate` on
+ * but nothing publishes through it, so `foresights sources writer deactivate` on
  * such a brain releases it: once nothing is queued, running or recovering
  * (the same blockers as a managed deactivation), one transaction marks the
  * claimed worktrees `retired` (rows kept, as deactivation does), deletes the
@@ -65,7 +65,7 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
       // #5914: the release publishes nothing, so it needs the native lock and the reservation's worktree id and token, not the inode of a recreated directory.
       const lock = await acquireWorktree(binding, 0, undefined, undefined, { yieldLanes: true, identity: 'reservation' });
       if (!lock) throw new OperationError('writer_lock_unavailable', `A local process holds the worktree lock of claimed source '${claim.source_id}'.`,
-        'Stop the gbrain process on this host that holds it (gbrain serve or autopilot), then rerun deactivate.');
+        'Stop the foresights process on this host that holds it (foresights serve or autopilot), then rerun deactivate.');
       locks.push(lock);
     }
     return await engine.transaction(async tx => {

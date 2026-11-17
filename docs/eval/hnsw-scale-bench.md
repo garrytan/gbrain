@@ -1,6 +1,6 @@
 # HNSW vector search at production scale (E5.4.1, E5.4.2)
 
-gbrain's Postgres vector arm finds unfiltered and broadly filtered neighbours well from 250k to 2M chunks.
+foresights's Postgres vector arm finds unfiltered and broadly filtered neighbours well from 250k to 2M chunks.
 After this wave's two fixes, it also does so under selective random scopes and right after a bulk load.
 
 **Fix 1: scoped search scans deeper.** Every pooled attempt now visits up to 20,000 index tuples
@@ -262,7 +262,7 @@ Hybrid search calls the vector arm with `limit` = `min(max(limit×2, 50), 100)`,
 the realistic ones.
 
 **Truth.** Exact top 100 pages per query and filter, computed in float64 from the exact float4 values
-loaded. 15 queries per corpus (3 per filter) were checked against gbrain's own `exactSql`, and all 15
+loaded. 15 queries per corpus (3 per filter) were checked against foresights's own `exactSql`, and all 15
 matched in identical order at every size.
 
 **Filters.**
@@ -289,7 +289,7 @@ On disk at 2M (after VACUUM ANALYZE), `content_chunks` takes 32 GB including its
 **Server.** Ubicloud standard-16 (16 vCPU, 64 GB RAM, 320 GB disk), `pgvector/pgvector:pg16`
 (PostgreSQL 16.15, pgvector 0.8.7) in Docker, client on the same VM, one client, warm cache. Settings
 come from `scripts/bench/hnsw-scale-vm-setup.sh`: shared_buffers 16 GB, effective_cache_size 48 GB,
-random_page_cost 1.1, effective_io_concurrency 200, work_mem 4 MB, jit on (gbrain's read transaction
+random_page_cost 1.1, effective_io_concurrency 200, work_mem 4 MB, jit on (foresights's read transaction
 turns it off). Default builds use maintenance_work_mem 4 GB, 12 GB or 20 GB by size, with 8 parallel
 maintenance workers and `CREATE INDEX CONCURRENTLY`, as the deferred ANN build does. Production adds
 network round trips: about 7 per attempt by the code path (BEGIN, settings read, settings write,
@@ -583,7 +583,7 @@ What the table shows:
 - **Real-vector coverage is one corpus.** The 1M real corpus is English Wikipedia: 207,185 articles, 4.8
   chunks each, about 920 characters per chunk, LID median 20.7 [14.1, 35.9], query top-1 cosine 0.70.
   Queries are the first sentence of random chunks, embedded as voyage-4 queries. A personal brain's mail,
-  notes and transcripts may be more or less clustered. The truth was checked against gbrain's own
+  notes and transcripts may be more or less clustered. The truth was checked against foresights's own
   `exactSql` for 15 queries: the top-10 and top-50 sets matched every time, and the order differed once
   below rank 50 (float near-ties).
 - **The synthetic geometry is generated, not voyage-4 output.** Its local intrinsic dimension (median 15

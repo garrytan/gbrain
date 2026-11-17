@@ -23,7 +23,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { SearchMode } from '../../core/search/mode.ts';
 import type { LongMemEvalQuestion } from './adapter.ts';
 
-/** The pins that change fused results for one `gbrain eval longmemeval` run. */
+/** The pins that change fused results for one `foresights eval longmemeval` run. */
 export interface RetrievalPins {
   /** Resolved search mode (flag > config snapshot > balanced). */
   mode: SearchMode;

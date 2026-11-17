@@ -109,7 +109,7 @@ describeE2E('embed --stale cursor pagination (D7 + REGRESSION)', () => {
     // (the `default` row is treated as fixed). This test adds an
     // `other-source` row for the D7 cases; clean it up so later tests
     // running on the same DB don't see a never-synced source (which
-    // mechanical.test.ts:`gbrain doctor` would correctly fail on).
+    // mechanical.test.ts:`foresights doctor` would correctly fail on).
     try {
       await getConn()`DELETE FROM sources WHERE id <> 'default'`;
     } catch {

@@ -44,7 +44,7 @@ describe('non-TTY output contract: jobs watch (#1784)', () => {
       cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf-8', timeout: 30_000,
     });
     expect(out.length).toBeGreaterThan(0);                 // the bug was (no output)
-    expect(out).toContain('gbrain jobs watch');            // human renderer header
+    expect(out).toContain('foresights jobs watch');            // human renderer header
     expect(out).toContain('Queue');                        // human panel
     expect(out.trimStart().startsWith('{')).toBe(false);   // NOT JSON by default
   }, 35_000);

@@ -222,7 +222,7 @@ const rank_entities: Operation = {
     const coverage = await readCoverage(ctx, sourceIds, params.includeMentions, excludePrivate);
     const notes: string[] = [];
     if (resolution.status === 'pack_unavailable') notes.push('The schema pack did not load, so no entity types are known: pass types explicitly, e.g. ["person"].');
-    if (coverage.state === 'behind') notes.push('Link extraction is behind: counts cover only pages whose links are extracted (the brain host runs gbrain extract --stale to catch up).');
+    if (coverage.state === 'behind') notes.push('Link extraction is behind: counts cover only pages whose links are extracted (the brain host runs foresights extract --stale to catch up).');
     if (coverage.state === 'unread') notes.push('Link-extraction coverage was not read, so counts may cover only part of the brain.');
     return {
       direction: params.direction,

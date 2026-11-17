@@ -1,7 +1,7 @@
 /**
  * System One S6 `recall_needed` (know-to-ask) at the turn-context call site:
  * serve's `turn_context` IPC handler, which answers the engine-free
- * `gbrain hook user-prompt`.
+ * `foresights hook user-prompt`.
  *
  *   startRecallNeeded  — launched concurrently with reflex resolution: config,
  *                        policy and (when active) one probability question
@@ -175,7 +175,7 @@ export async function applyRecallNeeded(
   ctx: RecallApplyContext,
 ): Promise<RecallNeededApplied | null> {
   const applied = await decideRecall(engine, pending, ctx);
-  // Per-turn explain line for operators running `GBRAIN_DEBUG=1 gbrain serve` (no prompt text).
+  // Per-turn explain line for operators running `GBRAIN_DEBUG=1 foresights serve` (no prompt text).
   if (applied && process.env.GBRAIN_DEBUG === '1') process.stderr.write(`[turn-context] ${formatDecideSummary({ recall_needed: applied.meta })}\n`);
   return applied;
 }

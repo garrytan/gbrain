@@ -58,7 +58,7 @@ export async function saveContentReceipt(ctx: OperationContext, receipt: SharedC
 export async function setupSharedBrainContent(ctx: OperationContext, options: SharedContentOptions = {}): Promise<SharedContentReceipt> {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Content-root setup requires the trusted local host.',
-      'Content-root setup runs only from gbrain init on the brain host; a remote connection cannot create or choose content directories.');
+      'Content-root setup runs only from foresights init on the brain host; a remote connection cannot create or choose content directories.');
   }
   const receipt: SharedContentReceipt = {
     version: 1, brain_id: null, source_id: options.sourceId ?? ctx.sourceId ?? 'default', source_incarnation: null,
@@ -74,7 +74,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     'SELECT id,incarnation,local_path FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
   if (!source) {
     throw opError('source_changed', 'Content setup requires an active selected source.',
-      `Source ${sourceId} is archived or not registered. Check the registered sources, then run gbrain init again for an active one.`,
+      `Source ${sourceId} is archived or not registered. Check the registered sources, then run foresights init again for an active one.`,
       { fix: readFix('Lists the registered sources and whether each is archived.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   }
   receipt.brain_id = brain.brain_id;
@@ -109,11 +109,11 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   const existingRoot = source.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
   if (options.root && existingRoot && resolve(options.root) !== resolve(existingRoot)) {
     throw opError('local_conflict', 'The selected source already has a different content root; use an explicit source rebind.',
-      `Source ${sourceId} already uses ${existingRoot}. Run gbrain init without --content-root to keep it; moving it is a deliberate rebind the user must approve.`);
+      `Source ${sourceId} already uses ${existingRoot}. Run foresights init without --content-root to keep it; moving it is a deliberate rebind the user must approve.`);
   }
   if (options.dbOnly && existingRoot) {
     throw opError('local_conflict', 'DB-only setup cannot detach an existing canonical source root. Preserve it or use an explicit topology migration.',
-      `Source ${sourceId} already has the canonical root ${existingRoot}; run gbrain init without --db-only to keep it.`);
+      `Source ${sourceId} already has the canonical root ${existingRoot}; run foresights init without --db-only to keep it.`);
   }
   if (options.dbOnly || !options.root && !existingRoot && prior?.repository_kind === 'db_only') {
     receipt.repository_kind = 'db_only';
@@ -142,12 +142,12 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
       const activate = ['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--shared-skills', '--dry-run', '--json'];
       const activateStep = `activate writer persistence (preview with ${activate.join(' ')}, then run it without --dry-run with --admin-intent writer_activate --expected-state <admin_state>)`;
       throw opError('local_conflict', 'The canonical root changed after setup began.',
-        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). gbrain repair content-receipt-root lists only sources claimed under activated writer persistence, and this source ${bound ? 'is claimed but persistence is not activated' : 'has no canonical owner'}, so the repair has nothing to list yet. Ask the user, then ${bound ? activateStep : `claim it on this host (preview with ${claim.join(' ')}, then ${unboundBindCommand(sourceId, root)})${brain.enabled ? '' : ` and ${activateStep}`}`}. Then preview gbrain repair content-receipt-root --source ${sourceId}, which lists the step that rebinds the checkpoint, and run the migration again.`,
+        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). foresights repair content-receipt-root lists only sources claimed under activated writer persistence, and this source ${bound ? 'is claimed but persistence is not activated' : 'has no canonical owner'}, so the repair has nothing to list yet. Ask the user, then ${bound ? activateStep : `claim it on this host (preview with ${claim.join(' ')}, then ${unboundBindCommand(sourceId, root)})${brain.enabled ? '' : ` and ${activateStep}`}`}. Then preview foresights repair content-receipt-root --source ${sourceId}, which lists the step that rebinds the checkpoint, and run the migration again.`,
         { fix: readFix(bound ? 'Previews activating writer persistence with shared skills, read-only.' : `Previews claiming source ${sourceId}'s registered root on this host, read-only.`, { argv: bound ? activate : claim }) });
     }
     if (existingRoot) {
       throw opError('local_conflict', 'The canonical root changed after setup began.',
-        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). Preview gbrain repair content-receipt-root --source ${sourceId}: it lists what proves the new root and the step that rebinds the checkpoint; then run the migration again.`,
+        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). Preview foresights repair content-receipt-root --source ${sourceId}: it lists what proves the new root and the step that rebinds the checkpoint; then run the migration again.`,
         { fix: readFix(`Lists source ${sourceId}'s content checkpoint that names another root, with the step that rebinds it, read-only.`, { argv: ['gbrain', 'repair', 'content-receipt-root', '--source', sourceId] }) });
     }
     throw opError('local_conflict', 'The canonical root changed after setup began.',
@@ -155,17 +155,17 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   }
   if (existingRoot && !existed) {
     throw opError('local_conflict', 'The registered content root is missing; restore it rather than creating a replacement.',
-      `Source ${sourceId}'s registered root ${root} does not exist. Restore it (for example from its Git remote or backup), then run gbrain init again.`);
+      `Source ${sourceId}'s registered root ${root} does not exist. Restore it (for example from its Git remote or backup), then run foresights init again.`);
   }
   if (!existingRoot && existed && !prior && readdirSync(root).length > 0) {
     throw opError('local_conflict', 'The requested root contains unowned files; register an existing source explicitly instead.',
-      `${root} already has files. Pass --content-root a new or empty directory, or register that directory as a source with gbrain sources add.`);
+      `${root} already has files. Pass --content-root a new or empty directory, or register that directory as a source with foresights sources add.`);
   }
   if (prior?.owned_root && existed) {
     const stat = statSync(root);
     if (prior.root_identity ? prior.root_identity.device !== stat.dev || prior.root_identity.inode !== stat.ino : readdirSync(root).length > 0) {
       throw opError('local_conflict', 'The owned root changed or gained unverified files after setup was interrupted.',
-        `${root} was replaced or gained files after content setup was interrupted, so setup stopped. Ask the user whether those files belong there before resuming gbrain init.`);
+        `${root} was replaced or gained files after content setup was interrupted, so setup stopped. Ask the user whether those files belong there before resuming foresights init.`);
     }
     receipt.root_identity = { device: stat.dev, inode: stat.ino };
   }
@@ -193,7 +193,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   if (options.git === 'init' && receipt.repository_kind !== 'git') {
     if (!receipt.owned_root || readdirSync(root).length !== 0) {
       throw opError('local_conflict', 'Git initialization is allowed only in a newly owned empty content directory.',
-        `${root} is not a new empty directory gbrain created; run gbrain init without --git and initialize Git there yourself if the user wants it.`);
+        `${root} is not a new empty directory foresights created; run foresights init without --git and initialize Git there yourself if the user wants it.`);
     }
     const git = spawnSync('git', ['init', '--quiet', root], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
     if (!git.error && git.status === 0) receipt.repository_kind = 'git';
@@ -274,6 +274,6 @@ export async function installPackagedSharedSkills(ctx: OperationContext, sourceI
 
 function packagedPublicationPending(requestId: string | undefined) {
   return opError('publication_pending', 'The default pack was accepted but is not fully committed; rerun init to resume its durable requests.',
-    `Inspect the accepted request${requestId ? ` ${requestId}` : ''} first; gbrain init resumes the same durable request (same request_id), so it never publishes the pack twice.`,
+    `Inspect the accepted request${requestId ? ` ${requestId}` : ''} first; foresights init resumes the same durable request (same request_id), so it never publishes the pack twice.`,
     requestId ? { fix: readFix('Shows whether the default pack publication committed, is still pending, or failed.', { argv: ['gbrain', 'write-request', '--', requestId] }) } : {});
 }

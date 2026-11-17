@@ -1,4 +1,4 @@
-/** `gbrain jobs child-readiness` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs child-readiness` (dispatched by runJobs in src/commands/jobs.ts). */
 import type { JobsCommandContext } from './shared.ts';
 
 export async function runJobsChildReadiness({ engine }: JobsCommandContext): Promise<void> {

@@ -1,12 +1,12 @@
 /**
- * Read-only view of the `gbrain setup` connection receipts that belong to
- * this install (D8). Each `gbrain setup <harness>` writes a local-stdio
+ * Read-only view of the `foresights setup` connection receipts that belong to
+ * this install (D8). Each `foresights setup <harness>` writes a local-stdio
  * receipt beside the harness config (`.gbrain-connection-<harness>-<name>*.json`,
  * src/core/setup/claude-code.ts) recording the three consent decisions and
- * whether the harness now spawns a stdio `gbrain serve`. Two readers outside
+ * whether the harness now spawns a stdio `foresights serve`. Two readers outside
  * setup need that record:
  *
- *   - provider use: a recorded `providers: declined` keeps gbrain from
+ *   - provider use: a recorded `providers: declined` keeps foresights from
  *     contacting a provider it was not asked to use (model discovery, doctor),
  *     even when provider keys sit in the environment. Opt-outs win: one live
  *     receipt that declines is enough.
@@ -82,7 +82,7 @@ export function providerDeclineRecord(home?: string): LocalSetupRecord | null {
 }
 
 /**
- * True when an installed `gbrain setup claude-code` registration makes Claude
+ * True when an installed `foresights setup claude-code` registration makes Claude
  * Code spawn a stdio serve for a session started in `cwd`: a user-scope
  * receipt, or a project-scope receipt for exactly that directory (Claude Code
  * keys project MCP entries by the session's directory).

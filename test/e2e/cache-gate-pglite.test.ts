@@ -225,7 +225,7 @@ describe('cache gate end-to-end (PGLite)', () => {
     // (deleted_at is in the allow-list), bumping p1.generation; Layer 2
     // detects the mismatch and invalidates.
     //
-    // Hard-delete (raw DELETE FROM pages) is exercised by `gbrain sync`
+    // Hard-delete (raw DELETE FROM pages) is exercised by `foresights sync`
     // on EVERY run that sees a deleted file (not admin-only — CDX-11
     // correction). Post-v0.41.19.0 the statement-level
     // bump_page_generation_clock_trg fires on DELETE too, so hard-delete

@@ -1,5 +1,5 @@
 /**
- * Regression coverage for the `gbrain dream --input <file>` diagnostic gap:
+ * Regression coverage for the `foresights dream --input <file>` diagnostic gap:
  * an already-synthesized transcript used to report status='clean' with a
  * bare "Brain is healthy" line and NO indication that anything was
  * examined and skipped (or that the queue's idempotency_key dedupe

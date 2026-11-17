@@ -3,7 +3,7 @@
  * any explicit override), so `''`, `'   '`, `'Not A Slug!'` or
  * `'people/Bad Slug'` were published into the page's takes fence, where the
  * next write refused the whole fence (`target_fence_malformed`) and the page
- * was wedged until `gbrain repair fences`.
+ * was wedged until `foresights repair fences`.
  *
  * The write boundary now trims the holder, validates it against the fence
  * grammar (`isValidHolder`: `world`, `brain`, `people/<slug>`,
@@ -12,7 +12,7 @@
  * explicit override, never the inherited holder. Every prepared fence is
  * round-tripped before publication, so no write can leave behind a fence the
  * next write would refuse. A page whose stored holder is already malformed is
- * refused as before, and the refusal names `gbrain repair fences`.
+ * refused as before, and the refusal names `foresights repair fences`.
  *
  * Fresh page per case; every refusal asserts the stored body, revision and
  * takes rows unchanged. PGLite, trusted local caller. Synthetic content only.
@@ -133,7 +133,7 @@ describe('takes_supersede validates only an explicit holder override (#6450)', (
     expect(await holders(slug)).toEqual([[1, 'world', false], [2, 'brain', true]]);
   }));
 
-  test('a stored holder that is already malformed keeps refusing every takes write, and the refusal names gbrain repair fences', () => withEnv(env, async () => {
+  test('a stored holder that is already malformed keeps refusing every takes write, and the refusal names foresights repair fences', () => withEnv(env, async () => {
     const slug = await freshPage();
     await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
       'UPDATE pages SET compiled_truth=$3 WHERE source_id=$1 AND slug=$2', ['default', slug, `# Legacy\n\nSynthetic prose.\n\n${takesFence(takeRow(1, 'An old take', 'Not A Slug!'))}\n`]), TEST_WRITE_ATTRIBUTION));
@@ -141,12 +141,12 @@ describe('takes_supersede validates only an explicit holder override (#6450)', (
     // The existing malformed-fence refusal stays: typed invalid_fence / target_fence_malformed for the supersede.
     const superseded = await refusal(() => supersede(slug, 1));
     expect({ code: superseded.canonicalCode, reason: superseded.reason }).toEqual({ code: 'invalid_fence', reason: 'target_fence_malformed' });
-    expect(JSON.stringify(superseded.toJSON())).toContain('gbrain repair fences');
+    expect(JSON.stringify(superseded.toJSON())).toContain('foresights repair fences');
     await expectUnchanged(slug, before);
     // takes_add normalizes what it can; a holder it cannot resolve leaves the fence unparseable and the write refused.
     const added = await refusal(() => add(slug, 'world'));
     expect(['invalid_fence', 'invalid_params']).toContain(added.canonicalCode);
-    expect(JSON.stringify(added.toJSON())).toContain('gbrain repair fences');
+    expect(JSON.stringify(added.toJSON())).toContain('foresights repair fences');
     await expectUnchanged(slug, before);
   }));
 });

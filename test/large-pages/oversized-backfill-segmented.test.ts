@@ -1,5 +1,5 @@
 /**
- * Wave B: the oversized-page backfill (`gbrain reindex --oversized`) on
+ * Wave B: the oversized-page backfill (`foresights reindex --oversized`) on
  * segmented pages.
  *
  * 1. Protects: a segmented page carrying the gate's `embed_skip: oversized`

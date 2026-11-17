@@ -2,19 +2,19 @@
  * skillpack/apply-hunks.ts — pure-JS unified-diff parser + clean-hunk
  * applier (D15, TODO-3 folded).
  *
- * Used by `gbrain skillpack reference --apply-clean-hunks`. For each
- * hunk in a diff between gbrain's bundle and the user's local file,
+ * Used by `foresights skillpack reference --apply-clean-hunks`. For each
+ * hunk in a diff between foresights's bundle and the user's local file,
  * apply ONLY when the hunk's pre-change context lines (everything
  * prefixed with ' ' or '-') appear as a contiguous block in the user's
  * file. If the block is missing or appears more than once, the hunk
  * conflicts — skip it and report.
  *
- * Two-way diff against gbrain's CURRENT bundle (no scaffold-time base
+ * Two-way diff against foresights's CURRENT bundle (no scaffold-time base
  * tracking). Conflicting hunks are skipped, not merged — the agent
  * picks them up via the conflict report and merges by hand. This is
  * the explicit "agent is the merge driver" contract.
  *
- * No system `patch(1)` dependency — portable to every gbrain target.
+ * No system `patch(1)` dependency — portable to every foresights target.
  */
 
 export interface Hunk {

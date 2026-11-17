@@ -6,7 +6,7 @@
  * born with contextual_retrieval_mode = NULL and tripped doctor's
  * contextual_retrieval_coverage warn ("N page(s) never evaluated against
  * CR ladder") — an unclearable-by-design warn that recurred on every
- * extraction run right after a `gbrain reindex --markdown`.
+ * extraction run right after a `foresights reindex --markdown`.
  *
  * Two-layer fix pinned here:
  *   1. writeReceipt stamps mode 'none' after putPage — receipts are born

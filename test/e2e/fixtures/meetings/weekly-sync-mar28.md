@@ -31,7 +31,7 @@ Marcus Reid has been responsive and collaborative. He expressed interest in seei
 other AI infrastructure companies. Threshold's thesis around agent-native enterprise
 software aligns well with several companies in the current YC batch and recent alumni.
 
-### GBrain Search Quality
+### Foresights Search Quality
 
 Current keyword-only search is missing relevant results when queries use different
 terminology than stored documents. Example: searching "autonomous agents" does not
@@ -46,15 +46,15 @@ even if those exact words are not in every mention.
 
 ## Key Decisions
 
-- Ship hybrid search in GBrain v0.3. This is the highest priority feature.
+- Ship hybrid search in Foresights v0.3. This is the highest priority feature.
 - Use pgvector for embeddings, stored alongside content in Postgres.
 - Adopt Reciprocal Rank Fusion to merge vector and keyword result sets.
 - Continue tracking NovaMind progress for potential deeper engagement.
 
 ## Action Items
 
-- [ ] Implement pgvector extension and embedding storage in GBrain schema
-- [ ] Build hybrid search with RRF scoring in GBrain v0.3
+- [ ] Implement pgvector extension and embedding storage in Foresights schema
+- [ ] Build hybrid search with RRF scoring in Foresights v0.3
 - [x] Follow up with Sarah Chen on seed round status — confirmed closed
 - [ ] Send Marcus Reid list of AI infrastructure companies from recent batches
 - [ ] Write compiled-truth page for hybrid search concept
@@ -66,7 +66,7 @@ even if those exact words are not in every mention.
 
 ### 2025-03-28 — Meeting Notes
 
-Productive sync. The GBrain search discussion was the most substantive — we identified
+Productive sync. The Foresights search discussion was the most substantive — we identified
 clear failure cases with keyword-only search and agreed on the hybrid approach. The
 NovaMind seed closing is good news and validates the W25 batch quality. Marcus Reid
 continues to be a strong partner in the AI investment ecosystem. Next weekly sync

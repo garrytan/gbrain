@@ -11,10 +11,10 @@ import type { Recipe } from '../types.ts';
  * assurance: Mistral's own terms allow a request to be served outside the EU
  * unless the account disables transfers. Inference pinned to the EU is
  * Mistral's opt-in regional endpoint, https://api.eu.mistral.ai/v1, billed
- * at 1.1x list price per Mistral. gbrain does not switch to it by default
+ * at 1.1x list price per Mistral. foresights does not switch to it by default
  * (price and account enablement are the operator's call); opt in with
- * `gbrain config set provider_base_urls.mistral https://api.eu.mistral.ai/v1`
- * and verify with `gbrain config get provider_base_urls.mistral`. No separate
+ * `foresights config set provider_base_urls.mistral https://api.eu.mistral.ai/v1`
+ * and verify with `foresights config get provider_base_urls.mistral`. No separate
  * `mistral-eu` recipe: it would duplicate every model table for one URL.
  *
  * Verified against the live API on 2026-07-19 (model catalog, embedding
@@ -43,7 +43,7 @@ export const mistral: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   // No shipped rate for these yet: they warn and run under a default cap; a
-  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  // user cap refuses them until `foresights pricing set` registers one (X1 guard).
   unpriced_models: [
     'ministral-3b-latest',
     'mistral-small-latest',
@@ -96,7 +96,7 @@ export const mistral: Recipe = {
       ],
       supports_tools: true,
       // Same call as the Moonshot recipe: ordinary tool calls are fine, but
-      // gbrain's subagent loop stays Anthropic-pinned for stable tool_use_id
+      // foresights's subagent loop stays Anthropic-pinned for stable tool_use_id
       // behavior across crashes/replays.
       supports_subagent_loop: false,
       supports_prompt_cache: false,
@@ -106,5 +106,5 @@ export const mistral: Recipe = {
   },
   setup_hint: 'Get an API key at https://console.mistral.ai/api-keys, then `export MISTRAL_API_KEY=...` and use `mistral:mistral-embed` (1024 dims) for embeddings. '
     + 'api.mistral.ai is EU-hosted by default without a regional-inference assurance; for EU-pinned inference (1.1x list price) run '
-    + '`gbrain config set provider_base_urls.mistral https://api.eu.mistral.ai/v1` and verify with `gbrain config get provider_base_urls.mistral`.',
+    + '`foresights config set provider_base_urls.mistral https://api.eu.mistral.ai/v1` and verify with `foresights config get provider_base_urls.mistral`.',
 };

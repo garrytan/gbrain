@@ -1,8 +1,8 @@
 /**
- * `gbrain repair captured-facts` and doctor `captured_facts_active`, on PGLite
+ * `foresights repair captured-facts` and doctor `captured_facts_active`, on PGLite
  * and, with a safe DATABASE_URL, Postgres (test/e2e/repair-captured-facts-postgres.test.ts).
  *
- * Protects: capture-lane facts from gbrain's own claude-cli sessions are
+ * Protects: capture-lane facts from foresights's own claude-cli sessions are
  * expired by a hash-bound apply (fenced rows struck in their page so a later
  * write cannot reactivate them); paste candidates are listed but kept unless
  * --include-ambiguous; a claim with a legitimate active copy, a normal
@@ -39,7 +39,7 @@ const ACME = 'companies/acme-example';
 interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string; applied: number; skipped: number;
   listing?: Array<{ item: string; class: string; detail?: string }>; outcomes?: Record<string, number> }> }
 
-/** Harness transcripts (one gbrain scratch project, one normal project) and a session corpus with a paste. */
+/** Harness transcripts (one foresights scratch project, one normal project) and a session corpus with a paste. */
 function hostFiles(base: string) {
   const claude = join(base, 'claude');
   const scratch = join(claude, 'projects', '-tmp-gbrain-claude-cli-cwd-4242');
@@ -87,7 +87,7 @@ for (const backend of testBackends()) {
   afterAll(() => rmSync(base, { recursive: true, force: true }));
   const { claude, corpus } = hostFiles(base);
 
-  describe(`gbrain repair captured-facts, managed (${backend})`, () => {
+  describe(`foresights repair captured-facts, managed (${backend})`, () => {
     test('doctor finding, preview, hash-bound apply, paste kept until --include-ambiguous, remember still works', async () => {
       await withEnv({ CLAUDE_CONFIG_DIR: claude }, () => managedBrain(async ({ engine, ctx }) => {
         await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
@@ -108,7 +108,7 @@ for (const backend of testBackends()) {
         const finding = await capturedFactsCheck(engine);
         expect(finding.status).toBe('warn');
         expect(finding.details).toMatchObject({ evidenced: 3, ambiguous: 1, excluded: 1, unclassifiable: 1 });
-        expect(finding.message).toContain('gbrain repair captured-facts');
+        expect(finding.message).toContain('foresights repair captured-facts');
         expect(finding.message).toContain('the self_capture check counts corpus files');
         const wave = (await runWaveChecks(engine, { only: 'wave' })).find(f => f.spec.id === 'captured_facts_active')!;
         expect(wave.state).toBe('finding');
@@ -118,7 +118,7 @@ for (const backend of testBackends()) {
         expect(preview.results[0].residuals).toEqual({ evidenced: 3, ambiguous: 1, excluded: 1, unclassifiable: 1, not_suspect: 2 });
         const classes = Object.fromEntries(preview.results[0].listing!.map(l => [Number(l.item.split('#')[1]), l.class]));
         expect(classes).toEqual({ [self]: 'evidenced', [selfCompact]: 'evidenced', [selfDbOnly]: 'evidenced', [paste]: 'ambiguous', [twinned]: 'excluded:legitimate_duplicate' });
-        expect(preview.results[0].apply_command).toMatch(/^gbrain repair captured-facts --apply --expect [0-9a-f]+$/);
+        expect(preview.results[0].apply_command).toMatch(/^(?:foresights|gbrain) repair captured-facts --apply --expect [0-9a-f]+$/);
         expect((await engine.executeRaw<{ row_num: number | null }>('SELECT row_num FROM facts WHERE id=$1', [selfDbOnly]))[0].row_num).toBeNull();
         for (const id of [self, selfCompact, selfDbOnly, paste, pasteOwn, twinned, normal, gone]) expect(await active(engine, id)).toBe(true);
 
@@ -171,7 +171,7 @@ for (const backend of testBackends()) {
     }, 180_000);
   });
 
-  describe(`gbrain repair captured-facts, unmanaged (${backend})`, () => {
+  describe(`foresights repair captured-facts, unmanaged (${backend})`, () => {
     let engine: BrainEngine;
     let close: (() => Promise<void>) | undefined;
     beforeAll(async () => {

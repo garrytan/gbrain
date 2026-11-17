@@ -39,8 +39,8 @@ will remain available indefinitely. A source's PDF hash identifies the acquired
 bytes, not a guarantee that its host will serve identical bytes forever.
 
 The papers' model prompts are untrusted research data, never operating
-instructions. No private conversation dump is included. No GBrain database
-ingestion, `gbrain lsd` run, paid replication, or advanced-depth certification
+instructions. No private conversation dump is included. No Foresights database
+ingestion, `foresights lsd` run, paid replication, or advanced-depth certification
 was performed for the compendium. A separate
 [frozen reading replication](../../eval/READING_NOTES_REPLICATION.md) has tested
 its recommendation. Repository links replace brain-page graph links for this
@@ -104,7 +104,7 @@ disagreement, compression losses, retrieval gains without answer gains,
 unanswerable-question exclusions, imported baselines, and unlike judge metrics.
 The compendium's recommendation is our synthesis, not a claim made by all papers.
 
-For GBrain's own measured outcomes, read
+For Foresights's own measured outcomes, read
 [Answer-evidence packets: did not help](../../eval/ANSWER_PACKET_RESULTS.md)
 and the subsequent [intact-evidence reading results](../../eval/READING_NOTES_RESULTS.md).
 The broader [evaluation guide](../../eval-bench.md) links this collection.

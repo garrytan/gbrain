@@ -38,7 +38,7 @@ Locked decisions from the planning review (see plan file + `GSTACK REVIEW REPORT
 the bottom of the linked plan):
 
 - **Synthetic-only** — LongMemEval (public) + BrainBench (in-house). No `~/.gbrain` data.
-- **Answer-gen mode** — `gbrain eval longmemeval` runs the default answer-gen path
+- **Answer-gen mode** — `foresights eval longmemeval` runs the default answer-gen path
   (Anthropic Sonnet), then feeds the resulting hypothesis JSONL to LongMemEval's
   published `evaluate_qa.py` (OpenAI gpt-4o judge) for real correctness numbers.
   `--retrieval-only` is NOT used (would produce an attackable headline; the judge
@@ -74,14 +74,14 @@ the bottom of the linked plan):
 
 ## PR structure — as few as possible
 
-**PR α — gbrain repo: v0.35.1.0 infra.** All gbrain changes bundled. Lands first.
+**PR α — foresights repo: v0.35.1.0 infra.** All foresights changes bundled. Lands first.
 Bisect-friendly commits inside, ship at the very end.
 
 **PR β — gbrain-evals repo: adapter + smoke + curation + eval receipts + writeup.** The
 big one. Includes the full eval-run output committed alongside the code that produced
 it, plus the comparison writeup. Lands when everything is done.
 
-**PR γ (optional) — gbrain repo: v0.35.2.0 release** that cross-links the gbrain-evals
+**PR γ (optional) — foresights repo: v0.35.2.0 release** that cross-links the gbrain-evals
 benchmark in CHANGELOG. Small commit; no code changes.
 
 Total: 2 substantive PRs + 1 optional release commit. **No mid-stream ships.**
@@ -93,7 +93,7 @@ to hand off. Each session ends with a clean deliverable.
 
 ---
 
-## Session 1 — PR α: gbrain infra (v0.35.1.0)
+## Session 1 — PR α: foresights infra (v0.35.1.0)
 
 **Repo:** `/Users/garrytan/conductor/workspaces/gbrain/<NEW-WORKSPACE>` (fresh from `master`)
 **Branch:** `garrytan/v0.35.1.0-infra`
@@ -105,17 +105,17 @@ Three changes in one PR, bundled so the embedder shootout in gbrain-evals (PR β
 clean prereq baseline:
 
 1. Add `voyage:voyage-4-large` ($0.18/M) and `retired-provider:retired-embedding-1` ($0.05/M) to the
-   embedding pricing table. Patch the `gbrain models doctor` cost estimator + test.
+   embedding pricing table. Patch the `foresights models doctor` cost estimator + test.
 2. Expose `gbrain/ai/gateway` in `package.json` exports map so the gbrain-evals
    adapters can call `configureGateway({embedding_model, embedding_dimensions, reranker_model})`
-   from outside the gbrain process.
-3. Add `--resume-from <jsonl>` to `gbrain eval longmemeval` so a mid-run abort
+   from outside the foresights process.
+3. Add `--resume-from <jsonl>` to `foresights eval longmemeval` so a mid-run abort
    (rate-limit, cost-cap, OS interrupt) doesn't lose the cells we already paid for.
 
 Ships at the end as v0.35.1.0.
 
 ### Prereqs (verify before starting)
-- On gbrain master at v0.35.0.0 baseline. `cat VERSION` shows `0.35.0.0`.
+- On foresights master at v0.35.0.0 baseline. `cat VERSION` shows `0.35.0.0`.
 - `bun test` and `bun run verify` both pass on master.
 
 ### Commits (bisect-friendly, one feature per commit)
@@ -157,13 +157,13 @@ bun test test/embedding-pricing.test.ts test/public-exports.test.ts test/eval-lo
 ```
 
 ### Deliverable
-- `master` of gbrain at v0.35.1.0
+- `master` of foresights at v0.35.1.0
 - `gbrain/ai/gateway` reachable from external consumers (verified by canary test)
 - `git tag eval-run-v0.35.1.0-baseline` (annotated, names this exact commit)
-- `gbrain --version` prints `0.35.1.0`
+- `foresights --version` prints `0.35.1.0`
 
 ### Hand-off to Session 2
-- gbrain-evals can now `bun update gbrain` to v0.35.1.0
+- gbrain-evals can now `bun update foresights` to v0.35.1.0
 - The tag preserves the exact commit for any future reproducibility need
 
 ---
@@ -176,7 +176,7 @@ bun test test/embedding-pricing.test.ts test/public-exports.test.ts test/eval-lo
 **API spend:** ~$0.10 (smoke verification calls only)
 
 ### What this session ships into PR β (does NOT merge yet)
-Wire the harness to drive 3 embedding providers via the newly-exposed gbrain gateway:
+Wire the harness to drive 3 embedding providers via the newly-exposed foresights gateway:
 
 1. New typed `EvalAdapterConfig {embedder, dim, reranker?}` passed into each adapter.
 2. Rewrite `vector.ts` + `hybrid-rrf.ts` to call `configureGateway()` from
@@ -190,14 +190,14 @@ Wire the harness to drive 3 embedding providers via the newly-exposed gbrain gat
    itself comes in Session 3).
 
 ### Prereqs
-- Session 1 done. gbrain master at v0.35.1.0.
+- Session 1 done. foresights master at v0.35.1.0.
 - API keys present: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`,
   `RETIRED_PROVIDER_API_KEY`. Smoke fails-loud on missing key.
 
 ### Commits
 
 ```
-1. chore(deps): bump gbrain pin to v0.35.1.0
+1. chore(deps): bump foresights pin to v0.35.1.0
    - package.json + bun.lock
    - Verify: bun install && bun run typecheck
 
@@ -370,9 +370,9 @@ entry point that loops the 7 cells serially with smoke gating + cost-cap aborts.
 
 ```
 NEW: scripts/run-shootout-phase1.sh
-- Per cell: gbrain config set (embedder, dim, reranker, search.reranker.enabled, search.mode=tokenmax)
+- Per cell: foresights config set (embedder, dim, reranker, search.reranker.enabled, search.mode=tokenmax)
 - Per cell: bun run eval:smoke (abort cell on non-zero)
-- Per cell: gbrain eval longmemeval ... --output results/longmemeval-{cell}.jsonl
+- Per cell: foresights eval longmemeval ... --output results/longmemeval-{cell}.jsonl
 - Per cell: cost-cap check ($90/cell hard stop)
 - Per cell: --resume-from existing results/longmemeval-{cell}.jsonl if present
 - Logs to results/phase1-run-log.txt
@@ -466,7 +466,7 @@ bash scripts/run-shootout-phase2.sh 2>&1 | tee results/phase2-run-log.txt
 4. **HNSW footnote** — Voyage 2048 and retired provider 2560 used exact vector scan; OpenAI 1536
    and retired provider 1280 used HNSW. Quality is primary, latency is secondary
 5. **What this does NOT prove** — synthetic-only, tokenmax-only, no real-brain replay
-6. **Recommendation:** explicit NON-recommendation to change `gbrain init` default;
+6. **Recommendation:** explicit NON-recommendation to change `foresights init` default;
    defer to a v0.36.x evidence pass with real-brain replay data
 
 ### Commits
@@ -498,11 +498,11 @@ gh pr merge --squash
 
 ### Hand-off to Session 6 (optional)
 - gbrain-evals master has the full data + writeup
-- Ready for a v0.35.2.0 gbrain release that cross-links it
+- Ready for a v0.35.2.0 foresights release that cross-links it
 
 ---
 
-## Session 6 (optional) — PR γ: gbrain v0.35.2.0 release
+## Session 6 (optional) — PR γ: foresights v0.35.2.0 release
 
 **Repo:** `/Users/garrytan/conductor/workspaces/gbrain/<NEW-WORKSPACE>` (fresh from master)
 **Branch:** `garrytan/v0.35.2.0-benchmark-release`
@@ -510,7 +510,7 @@ gh pr merge --squash
 **API spend:** $0
 
 ### What this session ships
-A release-notes-only PR that bumps gbrain to v0.35.2.0 with a CHANGELOG entry
+A release-notes-only PR that bumps foresights to v0.35.2.0 with a CHANGELOG entry
 cross-linking the embedder shootout benchmark. Optional — could be folded into the
 next routine release if no rush.
 
@@ -537,7 +537,7 @@ next routine release if no rush.
 ```
 
 ### Deliverable
-- gbrain v0.35.2.0 on master
+- foresights v0.35.2.0 on master
 - CHANGELOG entry that drives the release-note headline
 
 ---
@@ -563,7 +563,7 @@ JSONL preserved for resume).
 |---|---|
 | Voyage/retired provider 429 rate-limit mid-cell | `gateway._shrinkState` halves safety_factor and retries. Cell continues. |
 | retired provider 5MB rerank payload cap hit | `applyReranker` fail-opens, returns un-reranked results. Stderr warn. |
-| Mid-cell OS interrupt / cost-cap abort | Re-run with `gbrain eval longmemeval --resume-from results/longmemeval-{cell}.jsonl`. Picks up where it left off. |
+| Mid-cell OS interrupt / cost-cap abort | Re-run with `foresights eval longmemeval --resume-from results/longmemeval-{cell}.jsonl`. Picks up where it left off. |
 | `evaluate_qa.py` auth fail | OPENAI_API_KEY check in wrapper aborts before any spend. |
 | Adapter typo (bad dim) | `EvalAdapterConfig` runtime assertion at constructor throws AIConfigError. Cell aborts before API call. |
 
@@ -574,16 +574,16 @@ JSONL preserved for resume).
   follow-ups if reviewers push back.
 - **Matched-dim cross-vendor row** — no shared dim exists across all 3 vendors.
   Permanently out.
-- **`gbrain eval whoknows` / `cross-modal` / `takes-quality`** — embedding-invariant;
+- **`foresights eval whoknows` / `cross-modal` / `takes-quality`** — embedding-invariant;
   rerunning across embedders produces noise.
-- **`gbrain eval code-retrieval`** — code corpus, separate concern.
-- **`gbrain eval suspected-contradictions`** — wants a real brain.
-- **`gbrain init --recommended` default change** — codex correctly flagged the evidence
+- **`foresights eval code-retrieval`** — code corpus, separate concern.
+- **`foresights eval suspected-contradictions`** — wants a real brain.
+- **`foresights init --recommended` default change** — codex correctly flagged the evidence
   base as insufficient. Defer to v0.36.x with real-brain replay data.
 
 ## What already exists (reused, not rebuilt)
 
-- `gbrain eval longmemeval` CLI (in-tree, answer-gen mode default)
+- `foresights eval longmemeval` CLI (in-tree, answer-gen mode default)
 - gbrain-evals BrainBench runner (`eval:run`) — needs adapter parameterization but
   per-cell test plumbing is reused
 - Gateway routing for Voyage + retired provider (shipped v0.35.0.0)

@@ -1,7 +1,7 @@
 /**
  * v0.32.7 CJK wave — reindex sweep tests.
  *
- * Drives `gbrain reindex --markdown` against an in-memory PGLite brain,
+ * Drives `foresights reindex --markdown` against an in-memory PGLite brain,
  * verifies the chunker_version sweep updates rows below the current
  * MARKDOWN_CHUNKER_VERSION and is idempotent on re-run.
  */
@@ -78,7 +78,7 @@ async function captureOutput<T>(fn: () => Promise<T>): Promise<{ result: T; stdo
   }
 }
 
-describe('gbrain reindex --markdown (v0.32.7)', () => {
+describe('foresights reindex --markdown (v0.32.7)', () => {
   // #5937 (absorbed in agent contract v1 D4)
   test('rejects invalid --limit values before dispatching any reindex mode', () => {
     for (const value of ['NaN', '0', '-1', '1.5', '1oops', '9007199254740992']) {

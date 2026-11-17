@@ -1,5 +1,5 @@
 /**
- * #6188 PR4: `gbrain repair fences`, end to end on managed, legacy,
+ * #6188 PR4: `foresights repair fences`, end to end on managed, legacy,
  * database-only and mirror sources, with the model behind the gateway's chat
  * transport seam.
  *
@@ -147,7 +147,7 @@ function helpers(engine: BrainEngine, id: string) {
   return { sync, holds, run };
 }
 
-/** Prints of `gbrain repair` with these args. */
+/** Prints of `foresights repair` with these args. */
 async function cli(engine: BrainEngine, args: string[]): Promise<string> {
   const out: string[] = [];
   const log = console.log;
@@ -199,7 +199,7 @@ test('preview lists every tier with its cost and calls no model; the printed app
   expect(details(result).samples.deterministic!.diff).toContain(`+${FBE}`);
   expect(details(result).samples.resolver!.diff).toContain('people/alice-example');
   expect(details(result).held[0]!.resolution).toContain('visibility');
-  expect(result.apply_command).toBe(`gbrain repair fences --source ${s.id} --apply --expect ${hashOf(result)}`);
+  expect(result.apply_command).toBe(`foresights repair fences --source ${s.id} --apply --expect ${hashOf(result)}`);
   expect(s.read('people/model.md')).toBe(md('Model', noHeader()));
   // The printed command runs exactly as printed.
   const applied = (JSON.parse(await cli(engine, [...result.apply_command.split(' ').slice(2), '--json'])) as { results: RepairResult[] }).results[0]!;
@@ -281,12 +281,12 @@ test('a transient provider error keeps the memo; model repair off and --no-llm h
   await engine.setConfig('fences.repair.max_usd_per_page', '0.05');
   const refused = await s.run();
   expect(details(refused).held[0]).toMatchObject({ reason: 'no_pricing' });
-  expect(details(refused).held[0]!.resolution).toContain('gbrain pricing set');
+  expect(details(refused).held[0]!.resolution).toContain('foresights pricing set');
   expect(calls).toHaveLength(0);
   // Under the default caps an unpriced model warns and runs, metered at the ceiling rate.
   await engine.executeRaw("DELETE FROM config WHERE key='fences.repair.max_usd_per_page'");
   const warned = await s.run();
-  expect(warned.warnings?.join(' ')).toContain('gbrain pricing set anthropic:claude-unpriced-zr4');
+  expect(warned.warnings?.join(' ')).toContain('foresights pricing set anthropic:claude-unpriced-zr4');
   expect(warned.cost.llm_usd).toBeGreaterThan(0);
   const ran = await s.run({ apply: true });
   expect(ran).toMatchObject({ repaired: 1 });
@@ -509,8 +509,8 @@ test('legacy sources: backup, import and an uncommitted-repair notice that clear
   expect(doctor).toMatchObject({ status: 'warn', details: { uncommitted_repairs: 2 } });
   expect(doctor.message).toContain('written and imported but not committed');
   const step = notices.find(n => n.path === 'notes/model.md')!.commit_step;
-  expect(step).toBe(`gbrain git commit-push --path ${r.root} -m 'gbrain: repair fence in notes/model.md (no_header)' -m 'gbrain-repair: invalid_fence llm high' -- notes/model.md`);
-  expect(doctor.message).toContain('gbrain git commit-push step');
+  expect(step).toBe(`foresights git commit-push --path ${r.root} -m 'gbrain: repair fence in notes/model.md (no_header)' -m 'gbrain-repair: invalid_fence llm high' -- notes/model.md`);
+  expect(doctor.message).toContain('foresights git commit-push step');
   const bare = join(home, `${r.id}.git`);
   execFileSync('git', ['init', '-q', '--bare', bare]);
   git(r.root, 'remote', 'add', 'origin', bare);
@@ -552,7 +552,7 @@ test('--slug reaches a page the census has not judged and binds it into the hash
   transport(() => answer('Slug claim one'));
   const one = await h.run({ slugs: ['notes/one'] });
   expect(one.listing!.map(entry => entry.item)).toEqual(['slugged:notes/one']);
-  expect(one.apply_command).toBe(`gbrain repair fences --source slugged --slug notes/one --apply --expect ${hashOf(one)}`);
+  expect(one.apply_command).toBe(`foresights repair fences --source slugged --slug notes/one --apply --expect ${hashOf(one)}`);
   expect(hashOf(one)).not.toBe(hashOf(await h.run()));
   let refused: unknown;
   try { await h.run({ apply: true, expect: hashOf(one) }); } catch (error) { refused = error; }
@@ -576,7 +576,7 @@ test('doctor --remediate: the plan counts the fences model estimate as paid, and
   expect(s.read('people/model.md')).toBe(md('Model', noHeader()));
 }), 240_000);
 
-test('models.fence_repair: unset, the first measured model with a key (else none); set, it always runs; gbrain models reports which', async () => withEnv(env, async () => {
+test('models.fence_repair: unset, the first measured model with a key (else none); set, it always runs; foresights models reports which', async () => withEnv(env, async () => {
   const engine = legacyEngine;
   const report = async () => {
     const chunks: string[] = [];
@@ -606,7 +606,7 @@ test('no measured model has a key and models.fence_repair is unset: model candid
   await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
     const preview = await s.run();
     expect(details(preview).held[0]).toMatchObject({ reason: 'no_measured_model', tier: 'llm' });
-    expect(details(preview).held[0]!.resolution).toContain('gbrain config set models.fence_repair <provider:model>');
+    expect(details(preview).held[0]!.resolution).toContain('foresights config set models.fence_repair <provider:model>');
     expect(await s.run({ apply: true })).toMatchObject({ repaired: 0, remaining: { no_measured_model: 1 } });
     expect((await s.holds())[0]!.meta.fence_repair).toMatchObject({ reason: 'no_measured_model', tier: 'llm' });
   });

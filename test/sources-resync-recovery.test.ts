@@ -278,7 +278,7 @@ describe('performSync re-clone branch (driven by sync.ts:320 logic)', () => {
       const state = validateRepoState(userTree, 'https://github.com/example/repo');
       expect(state).toBe('no-git');
       await expect(recloneIfMissing(engine, 'sync-unowned')).rejects.toThrow(
-        /unmanaged_path|not a clone gbrain created/,
+        /unmanaged_path|not a clone (?:foresights|gbrain) created/,
       );
       expect(existsSync(userTree)).toBe(true);
       expect(existsSync(sentinel)).toBe(true);

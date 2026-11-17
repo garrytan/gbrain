@@ -23,7 +23,7 @@ const OLDER_READ_MS = 3_000;
  * plus the concept synthesis skips recorded in `dream.concepts.drift_skips`.
  * It measures the drift itself, not conflict-row growth: producers back off
  * before admission, so a drifted page stops adding receipts. Names the
- * read-only audit and the explicit-only `gbrain repair file-drift` preview.
+ * read-only audit and the explicit-only `foresights repair file-drift` preview.
  * #6696 C7: on the owner host it also echoes each source's effective
  * `storage.keep_db` policy (`keep_db_policy`, present only when one is
  * declared): its prefixes, how many of the drifted pages checked here it

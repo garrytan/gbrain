@@ -6,7 +6,7 @@
  * doctor's graph_coverage and onboard's entity_link_coverage /
  * timeline_coverage must agree: a brain with 1-4 entity pages gets an `ok`
  * "not applicable" result with no remediation, never a 0% WARN that
- * `gbrain extract all` cannot clear.
+ * `foresights extract all` cannot clear.
  *
  * Protects: the status, message and remediation list each check returns at
  * the floor boundary. Fails if any of the three checks grades a ratio below

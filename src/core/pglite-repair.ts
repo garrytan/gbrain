@@ -138,8 +138,8 @@ interface RepairSidecar {
  * recently failed attempt put it on cooldown); while it exists
  * `PGLiteEngine.connect()` refuses before the lock or PGLite touch the data
  * dir, so no command keeps writing pg_wal/pg_subtrans into a damaged brain.
- * Cleared only by a completed `gbrain pglite-repair` (consented) or
- * `gbrain reinit-pglite`.
+ * Cleared only by a completed `foresights pglite-repair` (consented) or
+ * `foresights reinit-pglite`.
  */
 const REPAIR_FAILED_SUFFIX = '.repair-failed.json';
 
@@ -307,7 +307,7 @@ export function closeRepairEpisodeIfOpen(dataDir: string): void {
  * DELIBERATE: a later successful repair does NOT clear the cooldown — repeated
  * corruption right after a "success" usually means the unclean-shutdown
  * genesis is still active, and looping surgery would silently eat a WAL tail
- * per cycle. The manual `gbrain pglite-repair` command bypasses the cooldown.
+ * per cycle. The manual `foresights pglite-repair` command bypasses the cooldown.
  */
 export function repairCooldownActive(dataDir: string): { active: boolean; detail: string } {
   const seconds = Number(process.env.GBRAIN_PGLITE_WAL_REPAIR_COOLDOWN_SECONDS ?? DEFAULT_COOLDOWN_SECONDS);
@@ -328,7 +328,7 @@ export function repairCooldownActive(dataDir: string): { active: boolean; detail
       detail:
         `auto-repair already ran ${repairedInWindow}x in the last ${windowMs / 1000}s — repeated ` +
         'corruption means the unclean-shutdown genesis is still active; refusing to silently ' +
-        'discard another WAL tail. Run `gbrain doctor`, or `gbrain pglite-repair` manually.',
+        'discard another WAL tail. Run `foresights doctor`, or `foresights pglite-repair` manually.',
     };
   }
   const lastFailed = [...sidecar.attempts].reverse().find((a) => a.outcome === 'failed');
@@ -343,7 +343,7 @@ export function repairCooldownActive(dataDir: string): { active: boolean; detail
       detail:
         `last auto-repair attempt failed ${Math.round(ageMs / 1000)}s ago ` +
         `(cooldown ${windowMs / 1000}s — set GBRAIN_PGLITE_WAL_REPAIR_COOLDOWN_SECONDS=0 to bypass, ` +
-        `or run \`gbrain pglite-repair\` manually)`,
+        `or run \`foresights pglite-repair\` manually)`,
     };
   }
   return { active: false, detail: 'cooldown expired' };
@@ -428,9 +428,9 @@ export function validateWalRepairTarget(dataDir: string): WalRepairValidation {
   }
   // Live-postmaster refusal (red-team finding): real pg_resetwal refuses when
   // postmaster.pid exists. A LIVE native Postgres 17 data dir passes every
-  // layout check here — without this guard, `gbrain pglite-repair --path` at
+  // layout check here — without this guard, `foresights pglite-repair --path` at
   // such a dir would rename pg_wal out from under a running postmaster the
-  // gbrain lock cannot see. A stale pid file (dead process) stays repairable.
+  // foresights lock cannot see. A stale pid file (dead process) stays repairable.
   try {
     const pidRaw = readFileSync(join(dataDir, 'postmaster.pid'), 'utf-8').split('\n')[0]?.trim();
     const pid = Number(pidRaw);
@@ -454,7 +454,7 @@ export function validateWalRepairTarget(dataDir: string): WalRepairValidation {
   return { ok: true };
 }
 
-/** Read-only diagnosis for `gbrain doctor` and `pglite-repair --dry-run`. */
+/** Read-only diagnosis for `foresights doctor` and `pglite-repair --dry-run`. */
 export function inspectPgliteDataDir(dataDir: string): PgliteDirDiagnosis {
   const sidecar = readRepairSidecar(dataDir);
   const base: Omit<PgliteDirDiagnosis, 'verdict' | 'detail'> = {
@@ -732,7 +732,7 @@ export async function attemptWalRepairAndRetry<T>(
         reason: 'possibly-live-writer',
         detail:
           'this process acquired the data-dir lock by reaping a prior holder — ' +
-          'another gbrain process may still be using this brain. Stop it (or confirm ' +
+          'another foresights process may still be using this brain. Stop it (or confirm ' +
           'none is running), then re-run; a cleanly-acquired lock enables auto-repair.',
       };
     }
@@ -748,8 +748,8 @@ export async function attemptWalRepairAndRetry<T>(
         detail:
           `a lock on this brain was reaped ${Math.round(sinceReap / 1000)}s ago (possibly from a ` +
           'still-live process) — auto-repair stays off for ' +
-          `${REAP_QUARANTINE_MS / 60000} minutes after any reap. Confirm no gbrain process is ` +
-          'running, then re-run or use `gbrain pglite-repair`.',
+          `${REAP_QUARANTINE_MS / 60000} minutes after any reap. Confirm no foresights process is ` +
+          'running, then re-run or use `foresights pglite-repair`.',
       };
     }
     const validation = validateWalRepairTarget(dataDir);
@@ -765,7 +765,7 @@ export async function attemptWalRepairAndRetry<T>(
       process.stderr.write(
         `gbrain: PGLite failed to open ${dataDir} — attempting automatic WAL repair ` +
         `(backup at ${dataDir}${BACKUP_DIR_MARKER}*). If this command times out, run ` +
-        `\`gbrain pglite-repair\` to finish. Disable auto-repair with GBRAIN_PGLITE_WAL_REPAIR=off.\n`,
+        `\`foresights pglite-repair\` to finish. Disable auto-repair with GBRAIN_PGLITE_WAL_REPAIR=off.\n`,
       );
     } catch { /* EPIPE under a closed-pipe daemon parent must not read as surgery failure */ }
 

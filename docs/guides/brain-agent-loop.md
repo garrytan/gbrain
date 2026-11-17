@@ -27,9 +27,9 @@ DETECT entities (people, companies, concepts, original thinking)
   │
   ▼
 READ: check brain FIRST (before responding)
-  │  → gbrain search "{entity name}"
-  │  → gbrain get {slug} (if you know it)
-  │  → gbrain query "what do we know about {topic}"
+  │  → foresights search "{entity name}"
+  │  → foresights get {slug} (if you know it)
+  │  → foresights query "what do we know about {topic}"
   │  → full protocol: brain-first-lookup.md
   │
   ▼
@@ -37,13 +37,13 @@ RESPOND with brain context (every answer is better with context)
   │
   ▼
 WRITE: update brain pages (new info → compiled truth + timeline)
-  │  → gbrain put {slug} (update page)
+  │  → foresights put {slug} (update page)
   │  → add_timeline_entry (append to timeline)
   │  → add_link (cross-reference to other entities)
   │
   ▼
-SYNC: gbrain indexes changes
-  │  → gbrain sync --no-pull --no-embed
+SYNC: foresights indexes changes
+  │  → foresights sync --no-pull --no-embed
   │
   ▼
 (next signal arrives — agent is now smarter)
@@ -109,11 +109,11 @@ on_message(text):
 
 3. **Sync after every write batch.** Without sync, the brain search index is
    stale. The next query won't find what you just wrote. On installs set up
-   via `gbrain bootstrap`, per-turn context injection and session-end
+   via `foresights bootstrap`, per-turn context injection and session-end
    persistence hooks automate parts of this loop — see
    [bootstrap.md](bootstrap.md) and [push-context.md](push-context.md).
 
-4. **External APIs are fallback, not primary.** `gbrain search` before any
+4. **External APIs are fallback, not primary.** `foresights search` before any
    web or enrichment API. The full brain-before-external protocol (and why)
    lives in [brain-first-lookup.md](brain-first-lookup.md).
 
@@ -131,9 +131,9 @@ on_message(text):
    pull brain context without you asking. If it doesn't reference the brain
    page, the loop isn't running.
 
-4. **Check the sync.** After a conversation, run `gbrain search "{topic}"`
+4. **Check the sync.** After a conversation, run `foresights search "{topic}"`
    from the CLI. The new information should be searchable.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Entity Detection](entity-detection.md), [Brain-First Lookup](brain-first-lookup.md)*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md). See also: [Entity Detection](entity-detection.md), [Brain-First Lookup](brain-first-lookup.md)*

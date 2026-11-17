@@ -1,8 +1,8 @@
 # RLS and you
 
-Short version: every table in your gbrain's `public` schema needs Row Level
+Short version: every table in your foresights's `public` schema needs Row Level
 Security enabled. If one doesn't and the schema may be reachable with an anon
-key (Supabase, or PostgREST roles on the database), `gbrain doctor` fails and
+key (Supabase, or PostgREST roles on the database), `foresights doctor` fails and
 the process exits 1. On a plain Postgres with no such exposure it warns.
 
 This guide explains why, what to do when you hit the check, and the escape hatch
@@ -16,8 +16,8 @@ If RLS is off on a public table, the anon key can read it. On anything sensitive
 (auth tokens, chat history, financial data) that's an exfiltration vector, not
 a footgun.
 
-gbrain's service-role connection holds `BYPASSRLS`, so enabling RLS without
-policies does NOT break gbrain itself. It just blocks the anon key's default
+foresights's service-role connection holds `BYPASSRLS`, so enabling RLS without
+policies does NOT break foresights itself. It just blocks the anon key's default
 read. That's the security posture: deny-by-default to anon, full access for
 the service role.
 
@@ -33,11 +33,11 @@ If a table should stay readable by the anon key on purpose, see
 docs/guides/rls-and-you.md for the GBRAIN:RLS_EXEMPT comment escape hatch.
 ```
 
-99% of the time, you want the fix. Run the SQL. Re-run `gbrain doctor`. Done.
+99% of the time, you want the fix. Run the SQL. Re-run `foresights doctor`. Done.
 
 ## Auto-RLS: the event trigger and the one-time backfill
 
-gbrain ships two mechanisms (schema migration v35) that close the gap where a
+foresights ships two mechanisms (schema migration v35) that close the gap where a
 table could exist in your `public` schema without RLS for any amount of time
 at all.
 
@@ -45,7 +45,7 @@ at all.
 `auto_rls_on_create_table` runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY`
 on every newly created `public.*` table. It covers `CREATE TABLE`,
 `CREATE TABLE AS … SELECT`, and `SELECT … INTO` — every syntax Postgres
-reports as a table-creation command. Tables created by gbrain itself, by
+reports as a table-creation command. Tables created by foresights itself, by
 any other app sharing the same Supabase project, or by a human running raw
 SQL all get RLS enabled the moment they exist.
 Non-`public` schemas (`auth`, `storage`, `realtime`, etc.) are explicitly
@@ -54,15 +54,15 @@ ignored — Supabase manages those, and we should not touch them.
 **2. The one-time backfill.** The first upgrade that applies migration v35
 walks every existing `public.*` base table whose RLS is off and whose comment
 doesn't carry the `GBRAIN:RLS_EXEMPT` exemption (see below) and enables RLS
-on each. After the upgrade, `gbrain doctor`'s `rls` check should be a no-op
+on each. After the upgrade, `foresights doctor`'s `rls` check should be a no-op
 on every brain.
 
 **3. The gbrain-table backfill.** Schema migration v275 enables RLS on every
-table gbrain itself creates that is still without it. A gbrain table could
+table foresights itself creates that is still without it. A foresights table could
 miss RLS when its RLS came only from a full schema replay, which
-`gbrain apply-migrations --yes` does not run, or only from the event trigger
+`foresights apply-migrations --yes` does not run, or only from the event trigger
 above, which needs a superuser and is absent on many managed brains. v275
-touches only gbrain's own tables, leaves a table that already has RLS or
+touches only foresights's own tables, leaves a table that already has RLS or
 carries the `GBRAIN:RLS_EXEMPT` comment alone, and reads or writes no row. It
 acts only when the migrating role bypasses RLS and owns the table; otherwise
 it names the table on stderr and leaves it, and doctor's `rls` check keeps
@@ -72,7 +72,7 @@ naming it.
 
 If you have public tables that are intentionally RLS-off and you want them
 to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before**
-migration v35 (the RLS backfill) runs on that brain (for one of gbrain's own
+migration v35 (the RLS backfill) runs on that brain (for one of foresights's own
 tables, before v275). The backfill flips RLS on for any
 public table that doesn't carry the exact comment contract documented below.
 There is no `--dry-run` flag on the migration.
@@ -98,12 +98,12 @@ tables too. Two ways to handle that:
    app's policy lands.
 
 If neither condition holds, the app will fail to read its own freshly-created
-tables. The fix is at the app side, not gbrain's: either grant BYPASSRLS or
+tables. The fix is at the app side, not foresights's: either grant BYPASSRLS or
 ship a policy.
 
 ### What if the trigger gets dropped?
 
-`gbrain doctor` includes an `rls_event_trigger` check that verifies the
+`foresights doctor` includes an `rls_event_trigger` check that verifies the
 trigger is installed and enabled. If you drop it manually for any reason
 (debugging, migration testing, anything), doctor warns and points you here.
 
@@ -136,7 +136,7 @@ CREATE EVENT TRIGGER auto_rls_on_create_table
 (This is the DDL migration v35 runs, with the `SET search_path` later migrations add: keep that clause when you
 paste it, or doctor's `function_search_path` check fails until you run the `ALTER FUNCTION` it prints. The
 original lives in `src/core/schema-migrations/v035-auto-rls-event-trigger.ts`, one file per schema migration. There's no CLI shortcut:
-`gbrain apply-migrations --force-retry` targets the vX.Y.Z orchestrator
+`foresights apply-migrations --force-retry` targets the vX.Y.Z orchestrator
 registry, not numeric schema migrations like v35.)
 
 ### Why no FORCE ROW LEVEL SECURITY?
@@ -145,10 +145,10 @@ Postgres has two RLS dials. `ENABLE` blocks anon/authenticated; `FORCE` also
 blocks the table OWNER unless they hold BYPASSRLS. We use `ENABLE` only,
 matching the posture in `src/schema.sql`, migrations v24, and v29. `FORCE`
 would lock non-BYPASSRLS apps out of their own freshly-created tables (the
-trigger function inherits the caller's role, not the gbrain role) — which
+trigger function inherits the caller's role, not the foresights role) — which
 defeats the cross-app coexistence story above. If you want defense-in-depth
 `FORCE` on a specific gbrain-owned table, add it explicitly in your own
-migration; gbrain's auto-RLS does not opt you in by default.
+migration; foresights's auto-RLS does not opt you in by default.
 
 ## The 1% case: deliberate exemption
 
@@ -157,7 +157,7 @@ analytics view backing a public dashboard. A read-only reference table. A
 plugin that ships its own frontend and intentionally uses the anon key for
 reads.
 
-gbrain has an escape hatch for these. It is deliberately painful to set up.
+foresights has an escape hatch for these. It is deliberately painful to set up.
 That is the feature.
 
 ### The format
@@ -187,7 +187,7 @@ COMMENT ON TABLE public.expenses_ramp IS
   'GBRAIN:RLS_EXEMPT reason=analytics-only, anon-readable ok, owner=you, 2026-04-22';
 ```
 
-After that, `gbrain doctor` reports:
+After that, `foresights doctor` reports:
 
 ```
 rls: ok — RLS enabled on 20/21 public tables (1 explicitly exempt: expenses_ramp)
@@ -195,11 +195,11 @@ rls: ok — RLS enabled on 20/21 public tables (1 explicitly exempt: expenses_ra
 
 Note that every subsequent run re-enumerates your exemptions by name. That's
 intentional. The escape hatch is not a one-time sign-off, it's a recurring
-reminder. If you ever want to know which tables are open, run `gbrain doctor`.
+reminder. If you ever want to know which tables are open, run `foresights doctor`.
 
 ## Why SQL and not a CLI subcommand
 
-gbrain does NOT ship a `gbrain rls-exempt add <table>` command. A CLI command
+foresights does NOT ship a `foresights rls-exempt add <table>` command. A CLI command
 would make it easy for an agent to silently open a table to anon reads. The
 comment-in-psql requirement forces the operator to type the justification
 in SQL, which is:
@@ -207,7 +207,7 @@ in SQL, which is:
 - Visible in shell history.
 - Visible in a git-tracked schema dump.
 - Visible in `pg_dump` output the next time you restore.
-- Visible in `gbrain doctor` output on every run.
+- Visible in `foresights doctor` output on every run.
 
 An agent CAN still run the SQL, but it can't do it without the user seeing the
 action. That's the "write it in blood" design.
@@ -238,10 +238,10 @@ ALTER TABLE public.expenses_ramp ENABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE public.expenses_ramp IS NULL;
 ```
 
-`gbrain doctor` stops listing the table as exempt and goes back to checking
+`foresights doctor` stops listing the table as exempt and goes back to checking
 it like any other.
 
-## Adding a gbrain table (contributors)
+## Adding a foresights table (contributors)
 
 A new gbrain-owned table gets RLS in both places a brain can receive it. For
 fresh installs, add `ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;` to the
@@ -254,24 +254,24 @@ enables RLS too, with a `sqlFor: { pglite: ... }` variant that leaves it out.
 The auto-RLS event trigger and doctor's `rls` check backstop a table that
 slips through on Postgres, but they are the safety net, not the plan: the
 trigger needs a superuser and is missing on many managed brains, and
-`gbrain apply-migrations --yes` runs migrations without replaying
+`foresights apply-migrations --yes` runs migrations without replaying
 `src/schema.sql`. `test/e2e/rls-every-table-postgres.test.ts` checks every
 public table after a fresh install and after that migrations-only upgrade,
 both with the trigger inert, so a table that relies on either one fails it.
 
 ## Function search_path
 
-Every plpgsql function gbrain installs pins `search_path = pg_catalog, public, pg_temp`,
+Every plpgsql function foresights installs pins `search_path = pg_catalog, public, pg_temp`,
 so a same-named object in another schema can never change what the function
 reads or writes. `pg_temp` is named last because PostgreSQL otherwise searches the
 caller's temporary schema first for tables and views: a session, the owner included,
 could shadow a purge or withdrawal ledger a guard reads with an empty temporary one of
 the same name and store purged content again. On an older brain, migration v277 appends
-`pg_temp` to every gbrain function it owns with `ALTER FUNCTION` (no body changes), and
-`gbrain doctor` (`function_search_path`) names any function it could not change, with the
+`pg_temp` to every foresights function it owns with `ALTER FUNCTION` (no body changes), and
+`foresights doctor` (`function_search_path`) names any function it could not change, with the
 `ALTER FUNCTION` to run as its owner. This does not close the scoped-writer gap: on
 Postgres, a write role with no RLS policy on a ledger still reads it empty, so its purged
-or withdrawn writes still go through (gbrain#7659 tracks the fix; [docs/ENGINES.md](../ENGINES.md)
+or withdrawn writes still go through (foresights#7659 tracks the fix; [docs/ENGINES.md](../ENGINES.md)
 ("Purge and withdrawal guards") has the policy to add meanwhile). The three fact-fingerprint functions
 (`gbrain_fact_fingerprint`, `gbrain_fact_fingerprint_v1`,
 `gbrain_fact_normalize`) are SQL functions that an index expression uses, so
@@ -308,7 +308,7 @@ PostgREST or a similar API in front of the public schema. Fix: ALTER TABLE ...
 ```
 
 The fix is still worth running: `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` is
-harmless on any Postgres (it only constrains non-bypass roles, which gbrain
+harmless on any Postgres (it only constrains non-bypass roles, which foresights
 doesn't use), and the guard is in place if you add PostgREST later. Once one
 of those roles exists, the same table fails the check.
 

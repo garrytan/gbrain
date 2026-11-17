@@ -1,6 +1,6 @@
 # Getting Data Into Your Brain
 
-GBrain is the retrieval layer. But retrieval is only as good as what you put in.
+Foresights is the retrieval layer. But retrieval is only as good as what you put in.
 This directory covers how to get data flowing into your brain automatically.
 
 ## How Data Flows In
@@ -14,7 +14,7 @@ Agent analyzes it (LLM, judgment, entity detection)
   ↓
 Brain pages created/updated (compiled truth + timeline)
   ↓
-GBrain indexes it (chunking, embedding, search-ready)
+Foresights indexes it (chunking, embedding, search-ready)
   ↓
 Next query is smarter (the compounding effect)
 ```
@@ -24,7 +24,7 @@ Next query is smarter (the compounding effect)
 ### Self-Installing Recipes
 
 These are integration recipes your agent can set up for you. Run
-`gbrain integrations` to see what's available and their status.
+`foresights integrations` to see what's available and their status.
 
 | Recipe | Category | Requires | What It Does | Setup Time |
 |--------|----------|----------|-------------|------------|
@@ -44,10 +44,10 @@ These require manual setup (no self-installing recipe yet):
 |-------|-------------|
 | [Credential Gateway](credential-gateway.md) | Set up ClawVisor or Hermes for Gmail, Calendar, Contacts access |
 | [Meeting & Call Webhooks](meeting-webhooks.md) | Circleback meeting transcripts + Quo/OpenPhone SMS/calls |
-| [qm Harness](qm-harness.md) | gbrain as the company brain for a qm (multi-user agent harness) deployment — central HTTP MCP, per-scope clients, roster provisioning, write fencing |
+| [qm Harness](qm-harness.md) | foresights as the company brain for a qm (multi-user agent harness) deployment — central HTTP MCP, per-scope clients, roster provisioning, write fencing |
 
 Something came in wrong? [Reliability repair](reliability-repair.md) covers what
-`gbrain doctor` flags after import (double-encoded JSONB values, truncated
+`foresights doctor` flags after import (double-encoded JSONB values, truncated
 markdown bodies) and the commands that fix each one.
 
 ## How to Read a Recipe
@@ -92,7 +92,7 @@ each one, configures the integration, and runs a smoke test.
 
 ### Recipe trust boundary
 
-Only recipes shipped inside the gbrain package itself (the `recipes/` directory in
+Only recipes shipped inside the foresights package itself (the `recipes/` directory in
 a source install, or the global install copy) are trusted. Recipes discovered at
 runtime from `$GBRAIN_RECIPES_DIR` or a cwd-local `./recipes/` are marked untrusted:
 they cannot run `command` health checks, cannot run `http` health checks (SSRF

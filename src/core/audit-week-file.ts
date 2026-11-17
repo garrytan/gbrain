@@ -1,6 +1,6 @@
 /**
  * v0.37.x — single source of truth for the ISO-week filename math used by
- * every gbrain audit JSONL writer (shell-audit, phantom-audit,
+ * every foresights audit JSONL writer (shell-audit, phantom-audit,
  * slug-fallback-audit, budget-tracker audit, dream-budget audit).
  *
  * Why: each of those modules grew its own copy of the same ISO-week math

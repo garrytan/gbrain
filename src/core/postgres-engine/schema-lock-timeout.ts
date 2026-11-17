@@ -4,7 +4,7 @@
  * `initSchema` replays `schema.sql` through one `conn.unsafe(sqlText)` (dozens
  * of `ALTER TABLE` and `ENABLE ROW LEVEL SECURITY`, each an ACCESS EXCLUSIVE
  * lock even as a no-op) on the reserved DDL backend, with no `lock_timeout`.
- * One idle-in-transaction session touching any table made every `gbrain init`
+ * One idle-in-transaction session touching any table made every `foresights init`
  * and `upgrade` wait in `wait_event_type=Lock` with no output until killed.
  *
  * The replay is many statements, not one transaction, so `SET LOCAL` binds
@@ -90,7 +90,7 @@ export function schemaLockBlockedError(input: { step: string; timeoutMs: number;
     `Schema ${step} waited ${Math.round(timeoutMs / 1000)}s for ${input.lock ?? 'a table lock'} another session holds, and stopped instead of hanging. ${holders} Query text is not shown.`,
     `Nothing was changed by the cancelled step; the schema is as it was. Find what holds the lock (an open transaction in another client, a stuck job): ${pids.length
       ? `the blocking pid(s) are ${pids.join(', ')}. Let that session finish or, with the user's agreement, end it with SELECT pg_terminate_backend(<pid>) on the database host.`
-      : 'run SELECT pid, application_name, state FROM pg_stat_activity WHERE state LIKE \'idle in transaction%\' on the database host and let that session finish or, with the user\'s agreement, end it with SELECT pg_terminate_backend(<pid>).'} Then rerun the same gbrain command; a longer wait is GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS.`,
+      : 'run SELECT pid, application_name, state FROM pg_stat_activity WHERE state LIKE \'idle in transaction%\' on the database host and let that session finish or, with the user\'s agreement, end it with SELECT pg_terminate_backend(<pid>).'} Then rerun the same foresights command; a longer wait is GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS.`,
     { detail: step, docs: 'docs/ENGINES.md#schema-lock-blocked' });
 }
 

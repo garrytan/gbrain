@@ -143,7 +143,7 @@ export function detectCapabilities(opts: DetectCapabilitiesOpts = {}): Capabilit
  */
 export function renderCapabilityReport(caps: CapabilityReport): string {
   const lines: string[] = [];
-  lines.push(`gbrain capabilities: ${caps.mode} mode`);
+  lines.push(`foresights capabilities: ${caps.mode} mode`);
   lines.push(
     caps.embeddings.available
       ? `  embeddings: available via ${caps.embeddings.provider} — semantic (hybrid vector + keyword) search`
@@ -158,7 +158,7 @@ export function renderCapabilityReport(caps: CapabilityReport): string {
     lines.push(
       'keyless mode: keyword search, agent-authored memory; one optional key upgrades ' +
       'capabilities — OpenAI: semantic search + auto-extraction; Voyage: semantic search; ' +
-      'Anthropic: auto-extraction (see `gbrain providers list` for env-ready options).',
+      'Anthropic: auto-extraction (see `foresights providers list` for env-ready options).',
     );
   }
   return lines.join('\n');

@@ -1,6 +1,6 @@
 /**
  * Set-time validation for the `search.*` keys whose value is an enum, a
- * boolean or a bounded number, so `gbrain config set` refuses a value the reader would
+ * boolean or a bounded number, so `foresights config set` refuses a value the reader would
  * ignore (exit 2, `invalid_params`, nothing written) instead of storing it.
  */
 import { HNSW_ITERATIVE_SCAN_KEY, HNSW_ITERATIVE_SCAN_MODES, hnswIterativeScanValueProblem } from './hnsw-iterative-scan.ts';

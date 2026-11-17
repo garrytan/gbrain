@@ -19,15 +19,15 @@ const INTEGRATED_TURN_GATE = 'Gate 7 — Write-back';
 
 export const WRITEBACK_CONTRACT_BLOCK = `${WRITEBACK_CONTRACT_BEGIN}
 
-## GBrain same-turn write-back
+## Foresights same-turn write-back
 
 Context injection is the read side of memory. Before ending any turn where
-something durable was learned, write it through GBrain in the same turn:
+something durable was learned, write it through Foresights in the same turn:
 
 - Atomic facts, preferences, decisions, and commitments → \`remember\` with
   explicit provenance.
 - Richer entity or project knowledge → \`put_page\` / \`add_timeline_entry\`
-  through the brain tools; never edit indexed brain files behind GBrain's back.
+  through the brain tools; never edit indexed brain files behind Foresights's back.
 - Verify the write with \`recall\`, \`entity\`, or \`get_page\` before claiming it
   was stored.
 
@@ -55,7 +55,7 @@ function hasIntegratedWritebackContract(content: string): boolean {
   return (
     /same[- ]turn/.test(normalized) &&
     /write[- ]back/.test(normalized) &&
-    (normalized.includes('gbrain remember') || normalized.includes('`remember`')) &&
+    (/(?:foresights|gbrain) remember/.test(normalized) || normalized.includes('`remember`')) &&
     normalized.includes('provenance')
   );
 }

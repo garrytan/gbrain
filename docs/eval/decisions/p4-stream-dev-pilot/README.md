@@ -2,16 +2,16 @@
 
 The streaming compaction harness (gbrain-evals `capy/p4-streaming-harness` at
 `4c98318`, `eval/runner/p4-stream/`) runs LongMemEval-S as a live conversation
-with a 32k-token window through gbrain's real Claude Code hooks. These numbers
+with a 32k-token window through foresights's real Claude Code hooks. These numbers
 come from development questions only; they size the sealed run and guide the
 work. They never set a default.
 
 ## Builds
 
-| Arm | gbrain commit | Config |
+| Arm | foresights commit | Config |
 |---|---|---|
-| A′ | `5c82936a2` (gbrain#6025 head: MCP instructions reordered under the 2,048-char cap) | defaults |
-| B | `73bd681cb` (this PR merged with gbrain#6025) | `memory.core.enabled=false`, `memory.pressure.enabled=true`, `memory.pressure.context_window=32000` |
+| A′ | `5c82936a2` (foresights#6025 head: MCP instructions reordered under the 2,048-char cap) | defaults |
+| B | `73bd681cb` (this PR merged with foresights#6025) | `memory.core.enabled=false`, `memory.pressure.enabled=true`, `memory.pressure.context_window=32000` |
 | C | `73bd681cb` | `memory.core.enabled=true`, `memory.pressure.enabled=false`; profile page marked core |
 | B (growth trigger) | `cd613d775` (same, plus the growth-aware notice trigger) | as B |
 
@@ -53,7 +53,7 @@ Every B result above, and the first BEAM B results below, ran with two faults:
   call with empty arguments (`fact must be a non-empty string`; 182 of 245
   calls after the provenance fix). The harness now reissues a cut-off tool
   call with an 8,192-token cap and counts it (gbrain-evals `8cfae29`);
-  gbrain's error for an argument-less `remember` names that cause.
+  foresights's error for an argument-less `remember` names that cause.
 
 The LongMemEval-S B numbers above (including the +50.0-point growth-trigger
 result) were measured with both faults and are not evidence for or against

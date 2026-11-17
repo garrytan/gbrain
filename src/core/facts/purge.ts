@@ -92,7 +92,7 @@ export interface PurgePlan {
 export function purgeHostOnly(id: unknown): OperationError {
   const ref = typeof id === 'string' || typeof id === 'number' ? String(id) : '<fact-id>';
   return opError('trusted_local_only', 'purge_fact runs only from the trusted local CLI on the brain host, not over MCP.',
-    `Ask the user to run \`gbrain forget ${ref} --purge\` on the brain host. It prints a dry-run receipt first and asks before removing anything.`,
+    `Ask the user to run \`foresights forget ${ref} --purge\` on the brain host. It prints a dry-run receipt first and asks before removing anything.`,
     { legacy_error: 'permission_denied', fix: { argv: ['gbrain', 'forget', ref, '--purge'], consent: ['destructive'], actor: 'user', requires_exclusive: false,
       why: 'Purge removes text from the brain and cannot be undone, so only the owner on the brain host may run it.' } });
 }
@@ -192,7 +192,7 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
     if ((error as { code?: unknown } | null)?.code !== '57014') throw error;
     throw opError('purge_lookup_timeout', 'This purge could not finish; nothing was purged. Do not assume the requested content was erased.',
       `The lookup of historical write requests carrying fact ${target.id} in source ${target.source_id} exceeded its statement budget while the purge was planned, so no plan was made and nothing was removed, tombstoned or redacted. `
-      + 'Run the dry run again later (a smaller or compacted journal finishes it); if it times out again, report it with the persistence_request_indexes and persistence_request_growth entries of gbrain doctor --json.',
+      + 'Run the dry run again later (a smaller or compacted journal finishes it); if it times out again, report it with the persistence_request_indexes and persistence_request_growth entries of foresights doctor --json.',
       { fix: readFix('Lists the request-table indexes and their state, read-only.', { argv: ['gbrain', 'repair', 'request-indexes', '--json'] }) });
   });
   const inputs: DerivationRef[] = [...factIds.map(id => ({ table: 'facts', id })), ...takes.map(t => ({ table: 'takes', id: t.id }))];
@@ -224,7 +224,7 @@ async function ledgerLookup<T>(fn: () => Promise<T>, factId: number, sourceId: s
     if ((error as { code?: unknown } | null)?.code !== '57014') throw error;
     throw opError('purge_lookup_timeout', 'This purge could not finish; nothing was purged. Do not assume the requested content was erased.',
       `The belief ledger's redaction scan for fact ${factId} in source ${sourceId} exceeded the purge transaction's statement budget, so the transaction rolled back and nothing was removed, tombstoned or redacted. `
-      + 'Run the purge again with a new request id; if it times out again, report it with the belief_ledger_coverage entry of gbrain doctor --json.',
+      + 'Run the purge again with a new request id; if it times out again, report it with the belief_ledger_coverage entry of foresights doctor --json.',
     { fix: readFix('Lists the request-table indexes and their state, read-only.', { argv: ['gbrain', 'repair', 'request-indexes', '--json'] }) });
   }
 }
@@ -235,7 +235,7 @@ async function derivationSweep(fn: () => Promise<void>, factId: number, sourceId
     if ((error as { code?: unknown } | null)?.code !== '57014') throw error;
     throw opError('purge_lookup_timeout', 'This purge could not finish; nothing was purged. Do not assume the requested content was erased.',
       `Recording the sweep of stored derivation results holding fact ${factId} in source ${sourceId} exceeded the purge transaction's statement budget, so the transaction rolled back and nothing was removed, tombstoned or redacted. `
-      + 'Run the purge again with a new request id; if it times out again, report it with the output of gbrain doctor --json.',
+      + 'Run the purge again with a new request id; if it times out again, report it with the output of foresights doctor --json.',
     { fix: readFix('Reports the brain\'s health, read-only.', { argv: ['gbrain', 'doctor', '--json'] }) });
   }
 }
@@ -432,7 +432,7 @@ async function matchCandidates(engine: BrainEngine, sourceId: string, text: stri
   const rows = await engine.executeRaw<{ id: number; entity_slug: string | null; visibility: string; expired: boolean; fact: string }>(`SELECT id,entity_slug,visibility,
     expired_at IS NOT NULL AS expired,left(fact,160) AS fact FROM facts WHERE source_id=$1 AND strpos(lower(fact),lower($2))>0 ORDER BY id LIMIT 25`, [sourceId, text]);
   return { action: 'purge_fact', match: true, candidates: rows.map(r => ({ ...r, id: Number(r.id) })),
-    next: rows.length ? 'Pick one id and run gbrain forget <id> --purge; --match never purges.' : 'No fact in this source contains that text.' };
+    next: rows.length ? 'Pick one id and run foresights forget <id> --purge; --match never purges.' : 'No fact in this source contains that text.' };
 }
 
 /**
@@ -489,7 +489,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
     return { dry_run: true, action: 'purge_fact', request_id: p.requestId, confirm_token: token, expected_revision: plan.revision, ...receipt };
   }
   if (params.confirm !== token) throw opError('confirmation_required', 'Purge needs a confirmation bound to this fact.',
-    `Run the dry run first (gbrain forget ${p.rawId} --purge --dry-run), review its receipt with the user, then confirm with the fact's token (the first 8 characters of its fingerprint).`,
+    `Run the dry run first (foresights forget ${p.rawId} --purge --dry-run), review its receipt with the user, then confirm with the fact's token (the first 8 characters of its fingerprint).`,
     { fix: { argv: ['gbrain', 'forget', p.rawId, '--purge', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Prints what the purge would remove and the confirmation token, without changing anything.' } });
   // GBRA-217 (A7): while the claim still exists, the commits whose change reason quotes it (rechecked inside the transaction).

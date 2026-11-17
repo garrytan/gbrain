@@ -1,5 +1,5 @@
 /**
- * #7632: every migration run ends by putting pg_temp back on gbrain functions' search_path. That step is best-effort:
+ * #7632: every migration run ends by putting pg_temp back on foresights functions' search_path. That step is best-effort:
  * when it fails after the migrations committed (a lock it cannot take, a dropped connection), the run (and so
  * initSchema, apply-migrations and the upgrade preflight) still finishes, names the failure on stderr, and doctor's
  * function_search_path check names what it left. runMigrations directly: initSchema returns early on a PGLite snapshot.
@@ -71,7 +71,7 @@ describe('the search_path step after a migration run is best-effort (#7632)', ()
     const { result, stderr } = await captureStderr(() => runMigrations(engine));
     expect(result).toBeInstanceOf(Error);
     expect(state.calls).toBe(1);
-    expect(stderr).toContain('search_path: not put back on gbrain functions after the lock refusal');
+    expect(stderr).toContain('search_path: not put back on foresights functions after the lock refusal');
     expect(stderr).not.toContain('pg_temp not restored');
     expect(await engine.getConfig('version')).toBe(String(v277.version - 1));
     Object.assign(state, { calls: 0, failFrom: Infinity });

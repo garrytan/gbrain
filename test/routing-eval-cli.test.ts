@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain routing-eval` CLI surface — specifically --llm
+ * Tests for `foresights routing-eval` CLI surface — specifically --llm
  * placeholder behavior.
  *
  * v0.19 ships the structural layer only. The --llm flag is accepted
@@ -63,7 +63,7 @@ function makeFixture(created: string[]): string {
 
 const WARNING_NEEDLE = 'placeholder';
 
-describe('gbrain routing-eval CLI — --llm placeholder behavior', () => {
+describe('foresights routing-eval CLI — --llm placeholder behavior', () => {
   const created: string[] = [];
   afterEach(() => {
     for (const d of created) try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }

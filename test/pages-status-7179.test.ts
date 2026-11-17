@@ -1,5 +1,5 @@
 /**
- * `gbrain pages status <slug...>` (#7179): one read-only answer per page to "is this page searchable, and if not, why?".
+ * `foresights pages status <slug...>` (#7179): one read-only answer per page to "is this page searchable, and if not, why?".
  * Each state of the `sources resolve-path` vocabulary a page can be in, the large-page embedding hold (still
  * pending_embedding, fixed by the held approval and never a spend), the Git sync hold on the page's file (code exactly
  * as `readGitHold` returns it, with its own fix), strict arguments, and the `slugs` filter on `listEmbeddingStateRows`.
@@ -76,7 +76,7 @@ async function cli(engine: BrainEngine, args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
-describe('gbrain pages status: embedding states', () => {
+describe('foresights pages status: embedding states', () => {
   test('embedded, pending (worst chunk wins), chunkless with body, quarantined, missing and soft-deleted pages each read their state and fix', () => each(async engine => {
     const source = await newSource(engine);
     await page(engine, source, 'notes/alice-example', { vectors: [true, true] });
@@ -140,7 +140,7 @@ describe('gbrain pages status: embedding states', () => {
   }), 120_000);
 });
 
-describe('gbrain pages status: Git', () => {
+describe('foresights pages status: Git', () => {
   const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const commit = (root: string) => { git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'content'); return git(root, 'rev-parse', 'HEAD'); };
 
@@ -177,7 +177,7 @@ describe('gbrain pages status: Git', () => {
   }), 240_000);
 });
 
-describe('gbrain pages status: arguments', () => {
+describe('foresights pages status: arguments', () => {
   test('no slug, an unknown option, or --source without a value is invalid_params before any read', async () => {
     const engine = engines[0]!;
     await expect(cli(engine, ['--json'])).rejects.toMatchObject({ code: 'invalid_params' });

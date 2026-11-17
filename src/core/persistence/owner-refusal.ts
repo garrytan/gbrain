@@ -1,7 +1,7 @@
 /**
  * #6278: why a source's canonical owner is unavailable to this process, one
  * reason per condition. `maintenancePreflight` (chronicle, fact-fence
- * adoption, every maintenance submitter), `gbrain repair fences` and the
+ * adoption, every maintenance submitter), `foresights repair fences` and the
  * managed file repair admission all refuse with the code `owner_unavailable`
  * (the sync drain branches on that code), and this matrix gives each reason
  * its message, `why`, actor, next step and read-only verify, so the same
@@ -129,19 +129,19 @@ export function ownerRefusal(input: OwnerRefusalInput): OwnerRefusal {
       return { reason, retryable: false, message: `Source ${sourceId} has no canonical owner, so ${work} did not run.`,
         why: `No worktree binding records a canonical checkout for source ${sourceId}. ${never}`,
         fix: admin('Shows whether the source has a canonical binding and which host owns it; claiming one is the host administrator\'s decision.',
-          `gbrain could not run ${work} for source ${sourceId}: no host owns its checkout. Review writer status on the brain host and decide whether to claim it.`) };
+          `foresights could not run ${work} for source ${sourceId}: no host owns its checkout. Review writer status on the brain host and decide whether to claim it.`) };
     case 'incarnation_changed':
       return { reason, retryable: false, message: `Source ${sourceId}'s canonical binding belongs to an earlier incarnation of the source, so ${work} did not run.`,
         why: `The binding records incarnation ${short(binding?.source_incarnation)} but the source is now incarnation ${short(input.incarnation)} (it was removed and re-added, or restored), so the checkout it names is not this source's. ${never}`,
         fix: admin('Shows the binding\'s incarnation beside the source\'s; re-binding the checkout is the host administrator\'s decision.',
-          `gbrain could not run ${work} for source ${sourceId}: its checkout binding is from before the source was re-created. Review writer status on the brain host.`) };
+          `foresights could not run ${work} for source ${sourceId}: its checkout binding is from before the source was re-created. Review writer status on the brain host.`) };
     case 'host_mismatch': {
       const local = input.remote ? '' : ` (this process read its identity from ${join(persistenceHome(), 'host.json')})`;
       return { reason, retryable: false, message: `Source ${sourceId} is owned by host ${short(binding?.owner_host_id)}, not this host (${short(input.hostId)}), so ${work} did not run.`,
         why: `The canonical checkout of source ${sourceId} belongs to host id ${short(binding?.owner_host_id)}; this process runs as host id ${short(input.hostId)}${local}. `
           + `If both run on one machine, the two environments read different GBRAIN_HOME identity files (a launchd or cron worker with another GBRAIN_HOME or user than the shell), and retrying from this one cannot change the answer. ${never}`,
         fix: admin(`Shows the owner host of source ${sourceId}; run ${work} there, or align GBRAIN_HOME so the worker and the shell share one host identity. Do not copy or regenerate host.json: a new identity orphans the ownership recorded for the old one.`,
-          `gbrain could not run ${work} for source ${sourceId} because a different host identity owns its checkout. Run it on the owner host (writer status names it), or make both environments use the same GBRAIN_HOME.`) };
+          `foresights could not run ${work} for source ${sourceId} because a different host identity owns its checkout. Run it on the owner host (writer status names it), or make both environments use the same GBRAIN_HOME.`) };
     }
     case 'transfer_in_progress': {
       const minutes = drainingMinutes(binding);
@@ -149,14 +149,14 @@ export function ownerRefusal(input: OwnerRefusalInput): OwnerRefusal {
       const cancel = ['gbrain', 'sources', 'writer', 'transfer', 'cancel', sourceId, '--expected-epoch', epoch];
       if (minutes === null || minutes < TRANSFER_STALE_MINUTES) return { reason, retryable: true, message: `Source ${sourceId}'s worktree is draining for a writer transfer, so ${work} waits.`,
         why: `A writer transfer of source ${sourceId} is prepared and its worktree is in state draining; until the transfer is accepted or cancelled no host may publish to it. ${never}`,
-        fix: wait(`Source ${sourceId}'s worktree is draining for a writer transfer (gbrain sources writer transfer prepare was run); the status read shows its state. `
+        fix: wait(`Source ${sourceId}'s worktree is draining for a writer transfer (foresights sources writer transfer prepare was run); the status read shows its state. `
           + `If no successor will accept it, the owner host ends it with ${cancel.join(' ')} (preview with --dry-run).`) };
-      const accept = `gbrain sources writer transfer accept ${sourceId} --path <successor root> --expected-epoch ${epoch} --manifest <manifest digest printed by prepare> --admin-intent writer_transfer_accept --expected-state <admin_state>`;
+      const accept = `foresights sources writer transfer accept ${sourceId} --path <successor root> --expected-epoch ${epoch} --manifest <manifest digest printed by prepare> --admin-intent writer_transfer_accept --expected-state <admin_state>`;
       const apply = [...cancel, '--admin-intent', 'writer_transfer_cancel', '--expected-state', '<admin_state>'];
       return { reason, retryable: false, message: `Source ${sourceId}'s worktree has been draining for a writer transfer for ${minutes} minutes, so ${work} did not run.`,
         why: `A writer transfer of source ${sourceId} was prepared ${minutes} minutes ago (over ${TRANSFER_STALE_MINUTES}) and never accepted; a prepared transfer does not end on its own, and until it is accepted or cancelled no host may publish to it. ${never}`,
         fix: { ask_user: true, argv: apply, preview_argv: [...cancel, '--dry-run', '--json'], consent: [], actor: 'host_admin', requires_exclusive: false, verify,
-          inputs: [{ name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host` }],
+          inputs: [{ name: 'admin_state', how: `admin_state from foresights sources writer status ${sourceId} --json on the owner host` }],
           why: `Cancels the prepared transfer on the owner host: the worktree returns to active at epoch ${epoch} and the prepared manifest is cleared; pages and files are untouched. Run the --dry-run preview first.`,
           user_message: `A writer transfer of source ${sourceId} was prepared ${minutes} minutes ago and never accepted, so ${work} is paused. Either finish it on the successor host (${accept}) `
             + `or cancel it on this owner host (${apply.join(' ')}). Which do you want?` } };
@@ -169,12 +169,12 @@ export function ownerRefusal(input: OwnerRefusalInput): OwnerRefusal {
       return { reason, retryable: false, message: `This host has no registered checkout path for source ${sourceId}, so ${work} did not run.`,
         why: `Host ${short(input.hostId)} owns source ${sourceId}'s worktree but has no local path registered for it (the host binding row is missing or empty). ${never}`,
         fix: admin('Shows the host bindings of the worktree; registering the checkout path again is the host administrator\'s decision.',
-          `gbrain could not run ${work} for source ${sourceId}: this host owns the checkout but has no path registered for it. Review writer status on the brain host.`) };
+          `foresights could not run ${work} for source ${sourceId}: this host owns the checkout but has no path registered for it. Review writer status on the brain host.`) };
     case 'coordination_path_missing':
       return { reason, retryable: false, message: `This host's registration for source ${sourceId} has no coordination directory, so ${work} did not run.`,
         why: `Host ${short(input.hostId)} owns source ${sourceId}'s worktree and has a checkout path, but no coordination path (the directory the physical-root stamp and locks live in); the registration predates it or was edited. ${never}`,
         fix: admin('Shows the host binding with its coordination path; repairing the registration is the host administrator\'s decision.',
-          `gbrain could not run ${work} for source ${sourceId}: this host's checkout registration is incomplete. Review writer status on the brain host.`) };
+          `foresights could not run ${work} for source ${sourceId}: this host's checkout registration is incomplete. Review writer status on the brain host.`) };
   }
 }
 

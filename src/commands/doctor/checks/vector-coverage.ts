@@ -34,8 +34,8 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
   const model = await engine.getConfig('embedding_model');
   const dims = Number(await engine.getConfig('embedding_dimensions'));
   if (!model || !Number.isInteger(dims) || dims <= 0) {
-    checks.push({ name: 'fact_take_vectors', status: 'warn', message: 'Fact and take vectors were not verified: the brain records no embedding model and width. Fix: gbrain migrate embeddings --status',
-      details: { code: 'vectors_not_verified', applicable: true, fix: 'gbrain migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS },
+    checks.push({ name: 'fact_take_vectors', status: 'warn', message: 'Fact and take vectors were not verified: the brain records no embedding model and width. Fix: foresights migrate embeddings --status',
+      details: { code: 'vectors_not_verified', applicable: true, fix: 'foresights migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS },
       fix: agentFix(['gbrain', 'migrate', 'embeddings', '--status'], 'Shows which embedding model and width this brain was built with, read-only.', 'fact_take_vectors', { docs: VECTOR_COVERAGE_DOCS }) });
     return checks;
   }
@@ -65,17 +65,17 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
     const facts = { missing: sum('facts_missing'), other_model: sum('facts_stale') - sum('facts_missing'), stale: sum('facts_stale'),
       partially_embedded: partiallyEmbedded, oversized: oversized.length };
     const oversizedNote = oversized.length
-      ? ` ${oversized.length} of the stale fact(s) are longer than the embedding input limit (${maxTokens} tokens), so gbrain embed --facts skips them instead of truncating (first: ${oversizedFactLine(oversized[0]!, maxTokens)}). ${OVERSIZED_FACT_FIX} gbrain embed --held --dry-run lists them.`
+      ? ` ${oversized.length} of the stale fact(s) are longer than the embedding input limit (${maxTokens} tokens), so foresights embed --facts skips them instead of truncating (first: ${oversizedFactLine(oversized[0]!, maxTokens)}). ${OVERSIZED_FACT_FIX} foresights embed --held --dry-run lists them.`
       : '';
     const partialNote = partiallyEmbedded
       ? ` ${partiallyEmbedded} fact(s) are partially embedded: longer than ${EMBED_MAX_CHARS} characters, so their vector covers only the start of the fact. They stay current and are never re-embedded or charged again.`
       : '';
     const takes = { missing_or_changed: sum('takes_missing'), other_model: sum('takes_stale') - sum('takes_missing'), stale: sum('takes_stale') };
-    const takesFix = await takesAutoEmbedEnabled(engine) ? 'gbrain embed --stale' : 'gbrain takes embed';
+    const takesFix = await takesAutoEmbedEnabled(engine) ? 'foresights embed --stale' : 'foresights takes embed';
     const factSources = bySource.filter(r => r.facts_stale).map(r => r.source_id);
     const fix = [
       ...(takes.stale ? [takesFix] : []),
-      ...factSources.map(id => `gbrain embed --facts --stale --source ${id} --dry-run --json`),
+      ...factSources.map(id => `foresights embed --facts --stale --source ${id} --dry-run --json`),
     ];
     if (facts.stale === 0 && takes.stale === 0) {
       checks.push({ name: 'fact_take_vectors', status: 'ok', message: `Every active fact and take has a ${model} vector for its current text.${partialNote}`,
@@ -97,8 +97,8 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
     });
   } catch (err) {
     checks.push({ name: 'fact_take_vectors', status: 'warn',
-      message: `Fact and take vectors were not verified: ${err instanceof Error ? err.message : String(err)}. Fix: gbrain migrate embeddings --status`,
-      details: { code: 'vectors_not_verified', applicable: true, fix: 'gbrain migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS },
+      message: `Fact and take vectors were not verified: ${err instanceof Error ? err.message : String(err)}. Fix: foresights migrate embeddings --status`,
+      details: { code: 'vectors_not_verified', applicable: true, fix: 'foresights migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS },
       fix: agentFix(['gbrain', 'migrate', 'embeddings', '--status'], 'Shows which embedding model and width this brain was built with, read-only.', 'fact_take_vectors', { docs: VECTOR_COVERAGE_DOCS }) });
   }
   return checks;

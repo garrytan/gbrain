@@ -60,7 +60,7 @@ describe('the conversation archive upgrade notice', () => {
   test('the row says what is archived, where, what leaves the machine, the held backfill and the off command', () => {
     expect(text.length).toBeLessThanOrEqual(2000);
     expect(text).not.toContain('\n');
-    for (const phrase of ['gbrain transcripts archive off', 'conversations', 'gbrain embed --held --dry-run', 'keyless', 'gbrain transcripts archive on']) expect(text).toContain(phrase);
+    for (const phrase of ['foresights transcripts archive off', 'conversations', 'foresights embed --held --dry-run', 'keyless', 'foresights transcripts archive on']) expect(text).toContain(phrase);
     const entry = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     expect(entry).toContain('<!-- behavior-change: ' + ID + ' -->');
   });
@@ -72,7 +72,7 @@ describe('the conversation archive upgrade notice', () => {
       __resetBehaviorNoticeForTests();
       const first = await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'archive-personal' });
       expect(first?.code).toBe('behavior_changes');
-      expect(first!.why).toContain('gbrain transcripts archive off');
+      expect(first!.why).toContain('foresights transcripts archive off');
       expect(await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'archive-personal' })).toBeNull();
       __resetBehaviorNoticeForTests();
       expect(await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'archive-personal' })).toBeNull();
@@ -86,7 +86,7 @@ describe('the conversation archive upgrade notice', () => {
     await withEnv({ GBRAIN_HOME: home, ...NO_CHAIN }, async () => {
       __resetBehaviorNoticeForTests();
       const notice = await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'archive-shared' });
-      expect(notice!.why).toMatch(/shared[^.]*gbrain transcripts archive on/);
+      expect(notice!.why).toMatch(/shared[^.]*(?:foresights|gbrain) transcripts archive on/);
     });
     expect(await resolveArchiveEnabled(engine, { config: null })).toMatchObject({ enabled: false, offered: true });
     expect(await engine.getConfig(ARCHIVE_ENABLED_KEY)).toBeNull();

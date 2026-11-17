@@ -196,7 +196,7 @@ describe('code_blast / code_flow readiness envelope distinguishes unbuilt, out-o
     // The graph IS built (srcalpha + srcbeta hold code) but the caller's
     // resolved scope is srcgamma, which holds none. That is a scope/grant
     // problem, not an indexing one: the envelope must carry `scoped_source_id`
-    // so the hint can name the scope instead of misdirecting to `gbrain sync`.
+    // so the hint can name the scope instead of misdirecting to `foresights sync`.
     await seedTwoSourceCodeGraph();
     await registerSource('srcgamma');
     const ctx = ctxOf({ remote: false, sourceId: 'srcgamma' });

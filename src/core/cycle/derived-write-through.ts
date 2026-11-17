@@ -153,7 +153,7 @@ async function writeDerivedFile(engine: BrainEngine, slug: string, sourceId: str
 /**
  * Record a file this module just wrote or removed in the checkout's pending write-through ledger (`notePending`), so a
  * crash before its batch commits leaves it for the next locked commit there (`commitPathsLocked` sweeps the ledger's
- * paths that are inside the source root and still differ from HEAD). Only paths gbrain wrote are ever recorded.
+ * paths that are inside the source root and still differ from HEAD). Only paths foresights wrote are ever recorded.
  */
 function noteWritten(root: string, filePath: string): void {
   try {
@@ -259,7 +259,7 @@ function gitPaths(root: string, args: string[], input?: string): string[] {
  * restoring it would leave an uncommitted revert of HEAD. Null when every file of the batch is committed.
  * #8092: it runs under the checkout's commit lock (a short wait), so no writer commits between the HEAD check and the
  * restore, and it settles the restored paths out of the pending ledger, so a later edit at one of them is never swept into
- * a gbrain commit. When the lock stays busy nothing is restored: every file stays in the ledger for that writer's commit.
+ * a foresights commit. When the lock stays busy nothing is restored: every file stays in the ledger for that writer's commit.
  * Under a commit-push hook or child (BRAIN_COMMIT_LOCK_HELD naming this checkout's held lock) it runs under that lock.
  */
 async function rollBackDerived(engine: BrainEngine, root: string, batch: readonly DerivedFileChange[], error: unknown): Promise<DerivedCommitFailure | null> {
@@ -415,7 +415,7 @@ async function dreamFileTarget(engine: BrainEngine, brainDir: string, slug: stri
  * #6982: write the file of a page the dream cycle wrote in the database (a synthesis or patterns output, the cycle
  * summary) without replacing an edit only the file holds, then commit it (#8073: `commitDerivedChanges`; a refused
  * commit rolls the file back and returns its `write_through_failed` hold). Nothing is written with `sync.write_through`
- * off, for a read-only mirror or a clone gbrain owns (#8935: `readOnlyCheckout`, both checked before any path is
+ * off, for a read-only mirror or a clone foresights owns (#8935: `readOnlyCheckout`, both checked before any path is
  * resolved, so a mirror without a checkout gets no brainDir fallback file either), or for a declared `storage.db_only`
  * slug: the database is the copy of record. The file is
  * the page's file of record (`resolvePageWriteTarget`: recorded source_path, own-local_path roots); a source with no
@@ -470,7 +470,7 @@ async function writeDreamFile(engine: BrainEngine, brainDir: string, slug: strin
  * when the retired page (or one of its versions) holds everything in it; re-read right before the unlink. A file holding
  * an edit the database lacks stays, with its `file_database_drift` entry returned as `held`. The removal commits
  * (#8073); a refused commit puts the file back and returns its `write_through_failed` hold. A read-only mirror or a
- * clone gbrain owns keeps the file (#8935).
+ * clone foresights owns keeps the file (#8935).
  */
 export async function removeDreamPageFile(engine: BrainEngine, brainDir: string, slug: string, sourceId: string,
   nativeSourceId: string): Promise<{ removed: boolean; held?: string }> {

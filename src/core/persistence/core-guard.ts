@@ -115,7 +115,7 @@ export async function prepareCoreGuard(engine: BrainEngine, input: CoreGuardInpu
 
   if (remote && (before.core !== after.core || before.priority !== after.priority)) {
     if (!incoming && before.core) {
-      throw opError('core_delete_owner_only', `Page ${row.source_id}:${row.slug} is always-loaded core memory, so a remote caller cannot delete it. Ask the user to run: gbrain core remove --source ${row.source_id} ${row.slug}`,
+      throw opError('core_delete_owner_only', `Page ${row.source_id}:${row.slug} is always-loaded core memory, so a remote caller cannot delete it. Ask the user to run: foresights core remove --source ${row.source_id} ${row.slug}`,
         'Nothing was deleted. Ask the user to remove it from core first (command in fix), then delete it.',
         { fix: ownerFix(row, ['gbrain', 'core', 'remove', '--source', row.source_id, row.slug], 'Removes the page from always-loaded core memory on the brain host.') });
     }
@@ -134,7 +134,7 @@ export async function prepareCoreGuard(engine: BrainEngine, input: CoreGuardInpu
   const contentChanged = afterRendered !== beforeRendered;
 
   if (remote && before.core && contentChanged && settings.remoteEdit === 'refuse') {
-    throw opError('core_remote_edit_refused', `Page ${row.source_id}:${row.slug} is always-loaded core memory and memory.core.remote_edit is refuse. Ask the user to make this edit on the brain host, or to run: gbrain config set memory.core.remote_edit notify`,
+    throw opError('core_remote_edit_refused', `Page ${row.source_id}:${row.slug} is always-loaded core memory and memory.core.remote_edit is refuse. Ask the user to make this edit on the brain host, or to run: foresights config set memory.core.remote_edit notify`,
       'Nothing was written. Ask the user to make this edit from the brain host, or to allow remote edits with notices (command in fix).',
       { fix: ownerFix(row, ['gbrain', 'config', 'set', 'memory.core.remote_edit', 'notify'], 'Lets agents edit core pages; each remote edit then shows a review notice in the core block.') });
   }
@@ -146,8 +146,8 @@ export async function prepareCoreGuard(engine: BrainEngine, input: CoreGuardInpu
     if (!after.core) return;
     const { pages } = await coreUsage(exec, { exclude: { sourceId: row.source_id, slug: row.slug } });
     if (pages.length + 1 > CORE_MAX_PAGES && !before.core) {
-      throw opError('core_budget_exceeded', `Always-loaded core memory already has ${pages.length} pages; the limit is ${CORE_MAX_PAGES}. Remove a core page first (gbrain core remove) or keep ${row.source_id}:${row.slug} out of core.`,
-        `Nothing was written. Remove a core page first (gbrain core remove), or keep ${row.source_id}:${row.slug} out of core.`,
+      throw opError('core_budget_exceeded', `Always-loaded core memory already has ${pages.length} pages; the limit is ${CORE_MAX_PAGES}. Remove a core page first (foresights core remove) or keep ${row.source_id}:${row.slug} out of core.`,
+        `Nothing was written. Remove a core page first (foresights core remove), or keep ${row.source_id}:${row.slug} out of core.`,
         { fix: statusFix(), docs: `${CORE_DOCS}#budget` });
     }
     const total = coreChars([...pages, { chars: afterChars }]);

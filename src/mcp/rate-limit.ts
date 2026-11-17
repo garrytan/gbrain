@@ -1,5 +1,5 @@
 /**
- * Rate limiter for `gbrain serve --http`.
+ * Rate limiter for `foresights serve --http`.
  *
  * Token-bucket per key, stored in a bounded LRU map so attacker-controlled keys
  * can't grow memory unbounded. TTL prune on every access (entries older than

@@ -292,7 +292,7 @@ describe('commit protocol', () => {
     const second = first === 'demo/SKILL.md' ? 'demo/references/notes.md' : 'demo/SKILL.md';
     expect(read(env, second)).toBe('edited mid-update\n');
     expect(listJournals(env.backups)[0]!.skills[0]!.status).toBe('rolled_back');
-    expect(result.restore_command).toContain('gbrain skillpack restore');
+    expect(result.restore_command).toContain('foresights skillpack restore');
     expect(loadState({ statePath: env.statePath }).roots![env.skillsRoot]!.demo!.files[first]).toBe(sha256(V1[first as keyof typeof V1]));
   });
 
@@ -349,7 +349,7 @@ await runSkillpackUpdate({ gbrainRoot: ${JSON.stringify(env.gbrainRoot)}, skills
     const [incomplete] = (await runSkillpackUpdateChecks(undefined, env.backups));
     expect(incomplete).toMatchObject({ name: 'skillpack_update_incomplete', status: 'warn' });
     const id = listJournals(env.backups)[0]!.id;
-    expect(incomplete!.message).toContain(`gbrain skillpack restore ${id}`);
+    expect(incomplete!.message).toContain(`foresights skillpack restore ${id}`);
     await expect(update(env)).rejects.toMatchObject({ code: 'skillpack_update_incomplete' });
     expect((await update(env, { dryRun: true })).pending_journals).toEqual([id]);
 
@@ -486,7 +486,7 @@ describe('CLI contract', () => {
     release(env.gbrainRoot, { 'demo/SKILL.md': '# demo v4 without frontmatter\n' });
     const failed = cli(env, ['reference', 'demo', '--update-untouched', '--workspace', env.ws]);
     expect(failed.status).toBe(2);
-    expect(failed.stdout).toMatch(/gbrain skillpack restore \S+/);
+    expect(failed.stdout).toMatch(/(?:foresights|gbrain) skillpack restore \S+/);
     expect(read(env, 'demo/SKILL.md')).toBe(V3['demo/SKILL.md']);
 
     expect(cli(env, ['pin', 'demo', '--workspace', env.ws]).status).toBe(0);

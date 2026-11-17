@@ -1,5 +1,5 @@
 /**
- * gbrain eval export — stream captured eval_candidates rows as NDJSON (v0.21.0).
+ * foresights eval export — stream captured eval_candidates rows as NDJSON (v0.21.0).
  *
  * Consumer: sibling gbrain-evals repo, which imports the NDJSON as a
  * BrainBench-Real fixture alongside the fictional amara-life corpus.
@@ -11,7 +11,7 @@
  * warn on unknown versions instead of silently misparsing.
  *
  * Usage:
- *   gbrain eval export [--since 7d] [--limit N] [--tool query|search] > rows.ndjson
+ *   foresights eval export [--since 7d] [--limit N] [--tool query|search] > rows.ndjson
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -29,7 +29,7 @@ interface ExportOpts {
 }
 
 function parseDurationToMs(s: string): number | null {
-  // Accepts "30d", "7d", "1h", "90m", "3600s". Same shape as gbrain eval prune + jobs prune.
+  // Accepts "30d", "7d", "1h", "90m", "3600s". Same shape as foresights eval prune + jobs prune.
   const m = s.match(/^(\d+)\s*(ms|s|m|h|d)$/);
   if (!m) return null;
   const n = parseInt(m[1]!, 10);
@@ -61,7 +61,7 @@ function parseArgs(args: string[]): ExportOpts {
           opts.since = new Date(Date.now() - ms);
         } else {
           process.exit(writeCliRefusal(usageError(`Invalid --since value: ${next} (use like 7d, 1h, 30m)`,
-            'Example: gbrain eval export --since 7d'), 'eval', { json: jsonRequested(args) }));
+            'Example: foresights eval export --since 7d'), 'eval', { json: jsonRequested(args) }));
         }
         i++;
         break;
@@ -75,7 +75,7 @@ function parseArgs(args: string[]): ExportOpts {
           opts.tool = next;
         } else if (next) {
           process.exit(writeCliRefusal(usageError(`Invalid --tool value: ${next} (use 'query' or 'search')`,
-            'Example: gbrain eval export --tool query'), 'eval', { json: jsonRequested(args) }));
+            'Example: foresights eval export --tool query'), 'eval', { json: jsonRequested(args) }));
         }
         i++;
         break;
@@ -85,10 +85,10 @@ function parseArgs(args: string[]): ExportOpts {
 }
 
 function printHelp(): void {
-  console.error(`gbrain eval export — emit captured eval_candidates as NDJSON to stdout
+  console.error(`foresights eval export — emit captured eval_candidates as NDJSON to stdout
 
 USAGE:
-  gbrain eval export [--since DUR] [--limit N] [--tool query|search]
+  foresights eval export [--since DUR] [--limit N] [--tool query|search]
 
 FLAGS:
   --since DUR    Only rows created within DUR (e.g. 7d, 1h, 30m). Default: all.
@@ -102,9 +102,9 @@ OUTPUT:
   detect format changes.
 
 EXAMPLES:
-  gbrain eval export > rows.ndjson
-  gbrain eval export --since 7d --tool query | jq '.query'
-  gbrain eval export --limit 100 | head
+  foresights eval export > rows.ndjson
+  foresights eval export --since 7d --tool query | jq '.query'
+  foresights eval export --limit 100 | head
 `);
 }
 

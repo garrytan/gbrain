@@ -86,7 +86,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
         try { await extractTranscript(engine, ['Ship smaller'], 'b'.repeat(64)); } finally { console.error = log; }
         expect(await liveAtoms(engine)).toEqual(before);
-        expect(lines.some(line => line.includes('result held (shrunk)') && line.includes('gbrain repair generations --kind atom --mode release-held'))).toBe(true);
+        expect(lines.some(line => line.includes('result held (shrunk)') && line.includes('foresights repair generations --kind atom --mode release-held'))).toBe(true);
         const [held] = await engine.executeRaw<{ held_reason: string }>("SELECT held_reason FROM derived_generations WHERE state='held'");
         expect(held?.held_reason).toBe('shrunk');
       });

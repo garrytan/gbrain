@@ -1,5 +1,5 @@
 /**
- * #7245: several gbrain builds run at once on one host and nothing reported it.
+ * #7245: several foresights builds run at once on one host and nothing reported it.
  * After a checkout reset or an upgrade on disk, serve, the jobs supervisor and
  * the worker parents keep the build they loaded (in memory) while every
  * `jobs run-child` runs the build on disk. Pins the records each long-running

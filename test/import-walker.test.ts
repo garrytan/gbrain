@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { collectMarkdownFiles, collectSyncableFiles } from '../src/commands/import.ts';
 
-// These tests exercise the filesystem walker that feeds `gbrain import`.
+// These tests exercise the filesystem walker that feeds `foresights import`.
 // They target L002 (report/findings.md): a malicious symlink inside a shared
 // brain directory must not cause the walker to read files outside the brain
 // root. See src/commands/import.ts:collectMarkdownFiles.

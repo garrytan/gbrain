@@ -19,7 +19,7 @@ import type { BrainEngine } from '../engine.ts';
 
 export const REVISION_BACKFILL_STATE_KEY = 'page_state.revision_backfill';
 /** Re-runs the schema migration pass, which resumes this backfill even when no migration is pending. */
-export const REVISION_BACKFILL_RESUME_COMMAND = 'gbrain apply-migrations --force-schema';
+export const REVISION_BACKFILL_RESUME_COMMAND = 'foresights apply-migrations --force-schema';
 /** Passes a failing row is retried on before later passes stop retrying it. */
 export const REVISION_BACKFILL_MAX_ATTEMPTS = 3;
 const CHECK_NAME = 'pages_knowledge_revision_backfilled';
@@ -50,7 +50,7 @@ export interface RevisionBackfillStatus {
   failed: Array<FailedRow & { source_id: string; slug: string }>;
 }
 
-/** Read-only: where the backfill stands, for `gbrain doctor`. */
+/** Read-only: where the backfill stands, for `foresights doctor`. */
 export async function readRevisionBackfillStatus(engine: BrainEngine): Promise<RevisionBackfillStatus> {
   const column = await engine.executeRaw<{ notnull: boolean }>(
     `SELECT attnotnull AS notnull FROM pg_attribute
@@ -139,7 +139,7 @@ export async function resumePageRevisionBackfill(
   if (failed.length > 0) {
     await save();
     if (announced || retried) log(`[migrate] page revision backfill: ${failed.length} row(s) could not be updated (page ids ${failed.slice(0, 10).map(f => f.id).join(', ')}${failed.length > 10 ? ', …' : ''}). `
-      + `Writes that name a revision for them are refused with revision_backfill_pending. Diagnose with: gbrain repair orphan-children (preview, includes the torn-TOAST probe). See docs/guides/repair.md#orphan-children`);
+      + `Writes that name a revision for them are refused with revision_backfill_pending. Diagnose with: foresights repair orphan-children (preview, includes the torn-TOAST probe). See docs/guides/repair.md#orphan-children`);
     return { status: 'pending', backfilled: state.backfilled, failed };
   }
 

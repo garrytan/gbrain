@@ -1,5 +1,5 @@
 /**
- * decide-lane.ts — System One arms for `gbrain eval longmemeval` (shared
+ * decide-lane.ts — System One arms for `foresights eval longmemeval` (shared
  * plumbing in src/eval/decide-eval-flags.ts; this module holds the
  * LongMemEval-specific parts so the harness facade only delegates):
  *
@@ -57,7 +57,7 @@ export const LME_DECIDE_FLAGS: Array<{ name: string; arg?: string; help: string[
  */
 export function prepareLmeDecide<Q extends { question_id: string }>(opts: LmeDecideArgs, questions: Q[]): { run: DecideEvalRun | null; questions: Q[] } {
   setEvalPoolDepth(opts.evalPoolDepth ?? null);
-  const run = prepareDecideEval(opts.decide, { command: 'gbrain eval longmemeval', throwaway: true });
+  const run = prepareDecideEval(opts.decide, { command: 'foresights eval longmemeval', throwaway: true });
   if (!run) return { run, questions };
   if (!opts.noTrajectory) {
     throw new Error('--decide arms need --no-trajectory: trajectory routing reads the dataset question_type labels, and a matched pair must route with text-only classifiers (run the baseline arm with --no-trajectory too)');

@@ -3,7 +3,7 @@
  * consent violations and the false "no notes" answer real agents produced on
  * the candidate, each pinned against the real CLI / stdio MCP server.
  *
- *   1. Plain `gbrain doctor` (and --only, --remediation-plan) sends no provider
+ *   1. Plain `foresights doctor` (and --only, --remediation-plan) sends no provider
  *      request; the live embedding probe needs `--probe` plus authorization.
  *   2. Every remediation-plan step carries a fix with its effects; an explicit
  *      embedding backfill (`embed`, `jobs submit embed`) refuses unauthorized
@@ -12,7 +12,7 @@
  *      every command exits 3 with the consented repair, and the data dir stays
  *      byte-identical (zero writes) until the user runs the repair.
  *   4. A stdio agent learns that local transcripts exist (notice + readiness)
- *      and `gbrain transcripts recent --json` reads them through the live serve.
+ *      and `foresights transcripts recent --json` reads them through the live serve.
  *
  * Paid calls go to a local fake OpenAI endpoint that counts requests.
  * Serial: real subprocesses, PGLite brains in temp homes, a bound local port.
@@ -212,7 +212,7 @@ describe('a brain whose automatic repair failed is not opened or written', () =>
     const before = manifest(dataDir());
     for (const args of [['stats'], ['doctor', '--json'], ['list'], ['search', 'heron'], ['doctor', '--only', 'brain_score', '--json'], ['status', '--json']]) {
       const r = await cli(args);
-      expect(r.exitCode, `gbrain ${args.join(' ')}: ${r.stderr.slice(-500)}`).toBe(3);
+      expect(r.exitCode, `foresights ${args.join(' ')}: ${r.stderr.slice(-500)}`).toBe(3);
       expect(r.stdout + r.stderr).toContain('Do not copy, rebuild, move or modify the brain.pglite files yourself');
     }
     const json = oneDocument(await cli(['stats', '--json']), 'stats --json refusal');
@@ -286,7 +286,7 @@ describe('local transcripts are discoverable from stdio MCP', () => {
     const blocks = noticeBlocks(found).filter(b => b.startsWith('[gbrain notice local_transcripts '));
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toContain('1 recent session transcript file(s)');
-    expect(blocks[0]).toContain('gbrain transcripts recent --json');
+    expect(blocks[0]).toContain('foresights transcripts recent --json');
     expect(blocks[0]).toContain('Never answer "no transcripts"');
 
     // A plain non-empty listing carries no transcript pointer.

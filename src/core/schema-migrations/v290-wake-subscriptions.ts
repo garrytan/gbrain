@@ -10,7 +10,7 @@ import type { Migration } from './types.ts';
 // attempts, next attempt, a lease so two drainer hosts never emit the same
 // row, the last error code). Operational state, not brain content: a
 // repo-less brain gets it unchanged, and it stays empty unless the owner ran
-// gbrain wakeshift enable. Nothing is rewritten on upgrade. No schema.sql
+// foresights wakeshift enable. Nothing is rewritten on upgrade. No schema.sql
 // mirror: like v282-v286, it exists only through migrations.
 export const v290: Migration = {
   version: 290,

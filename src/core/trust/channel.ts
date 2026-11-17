@@ -47,7 +47,7 @@ const OWNER_SOURCE_KINDS = ['canonical_reconcile', 'managed_file_import', 'manag
 export const CHRONICLE_CAPTURED_VIA = 'life-chronicle:auto';
 /** Page frontmatter `source_kind` / `ingested_via` / `captured_via` values written by an ingestion capture (external). */
 export const EXTERNAL_CAPTURE_KINDS: readonly string[] = ['webhook', 'file-watcher', 'inbox-folder', 'cron-scheduler', 'ingest_capture'];
-/** ...and by an agent through a gbrain verb, or by the Life Chronicle extractor (agent_written). */
+/** ...and by an agent through a foresights verb, or by the Life Chronicle extractor (agent_written). */
 const AGENT_CAPTURE_KINDS = ['put_page', 'capture-cli', 'capture-mcp', 'capture', CHRONICLE_CAPTURED_VIA];
 /**
  * Harnesses whose `transcript_import` pages are the user's own sessions with
@@ -174,7 +174,7 @@ export function frontmatterTrustCapsSql(fm: string): string[] {
   ];
 }
 
-/** A per-source default set by `gbrain sources set-trust` (sources.config.trust_tier), clamped to operator_curated. */
+/** A per-source default set by `foresights sources set-trust` (sources.config.trust_tier), clamped to operator_curated. */
 export function sourceDefaultTier(config: Record<string, unknown> | null | undefined): TrustTier {
   const value = config?.trust_tier;
   return isTrustTier(value) ? minTrust(value, OWNER_TIER_FLOOR) : OWNER_TIER_FLOOR;

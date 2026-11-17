@@ -1,8 +1,8 @@
 # Lens packs
 
-Four bundled schema packs that turn the gbrain dream cycle into a multi-lens
-brain. Activate one with `gbrain config set schema_pack <name>` and the cycle
-picks up the pack's declared phases on the next `gbrain dream` run.
+Four bundled schema packs that turn the foresights dream cycle into a multi-lens
+brain. Activate one with `foresights config set schema_pack <name>` and the cycle
+picks up the pack's declared phases on the next `foresights dream` run.
 
 ## The four packs
 
@@ -81,7 +81,7 @@ The one rule that matters here: `phases` and `calibration_domains` are
 its own participation explicitly) — which is why `gbrain-everything`
 re-declares all its phases and all 7 `calibration_domains`.
 
-Activate via `gbrain config set schema_pack gbrain-everything` and
+Activate via `foresights config set schema_pack gbrain-everything` and
 calibration_profile produces all 7 domain scorecards in one JSONB.
 
 ## Calibration profile domains
@@ -102,7 +102,7 @@ extras}` entry. Four aggregator algorithms (closed enum):
 
 Pack manifests declare domains with `{name, aggregator, page_types}`.
 Domain names are OPEN (third-party packs can declare new domain labels
-without a gbrain release). Aggregator algorithms are CLOSED (safe SQL
+without a foresights release). Aggregator algorithms are CLOSED (safe SQL
 stays in code, validated at pack-load).
 
 ## take_domain_assignments table
@@ -118,14 +118,14 @@ investment in acme-example" can land in BOTH `deal_success` AND
 
 - **Atoms + concepts ship in the binary.** Your OpenClaw's parallel
   atom-pipeline-coordinator + atom-backfill-coordinator + concept-
-  synthesis crons can retire. One `gbrain dream` cron
+  synthesis crons can retire. One `foresights dream` cron
   covers everything.
-- **gstack learnings reach gbrain.** Engineer-pack-active brains
+- **gstack learnings reach foresights.** Engineer-pack-active brains
   surface every gstack-logged learning as a queryable page within
   seconds of being written.
 - **Multi-lens calibration.** Activate gbrain-everything and see how
   often you're wrong on deals AND market calls AND architecture
-  AND effort estimates in one `gbrain calibration --json` call.
+  AND effort estimates in one `foresights calibration --json` call.
 - **Lossless OpenClaw migration.** The `markdown-greenfield`
   importer (mode='migration') re-ingests existing OpenClaw
   pages with permanent slug-keyed idempotency + per-row JSONL audit

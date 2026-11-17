@@ -3,7 +3,7 @@
  * the Postgres arm is test/e2e/slug-autoheal-6865-postgres.test.ts.
  *
  * Protects: a held file whose `slug:` line names no page and no file is healed by the next plain sync (line removed,
- * aliases line left as written, indexed under its path slug, hold cleared, gbrain commit, declared slug kept as an
+ * aliases line left as written, indexed under its path slug, hold cleared, foresights commit, declared slug kept as an
  * alias); a line naming an existing page (a file-backed one, and a database-only one) is left held with nothing
  * recorded, and the lane's later verdict names both pages; the heal never edits a file while its source has an
  * unfinished sync, its path is busy, it changed since sync held it, or the sync runs under remote authority; a verdict an
@@ -183,7 +183,7 @@ export async function healNeverEditsInFlight(databaseUrl?: string) {
   }, { databaseUrl, setup: plant({ [STRAY]: STRAY_BYTES }) });
 }
 
-/** A verdict an older gbrain recorded is rechecked: listed or escalated no longer, and the next sync heals the file. */
+/** A verdict an older foresights recorded is rechecked: listed or escalated no longer, and the next sync heals the file. */
 export async function olderVerdictRecheckedAfterUpgrade(databaseUrl?: string) {
   await managedBrain(async brain => {
     const { engine, root } = brain;

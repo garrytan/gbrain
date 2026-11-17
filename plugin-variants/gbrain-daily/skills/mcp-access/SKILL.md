@@ -1,8 +1,8 @@
 ---
 name: mcp-access
-description: Open the GBrain owner dashboard, manage MCP clients and permissions, or connect a native OAuth harness. Distinguishes owner administration from ordinary MCP access.
+description: Open the Foresights owner dashboard, manage MCP clients and permissions, or connect a native OAuth harness. Distinguishes owner administration from ordinary MCP access.
 triggers:
-  - "GBrain admin login link"
+  - "Foresights admin login link"
   - "open the MCP admin panel"
   - "manage MCP clients"
   - "register an MCP client"
@@ -16,16 +16,16 @@ tools:
   - exec
 mutating: true
 brain_first: exempt
-when_to_use: "Use when the user asks: \"GBrain admin login link\", \"open the MCP admin panel\", \"manage MCP clients\", \"register an MCP client\", \"set up MCP OAuth\"."
+when_to_use: "Use when the user asks: \"Foresights admin login link\", \"open the MCP admin panel\", \"manage MCP clients\", \"register an MCP client\", \"set up MCP OAuth\"."
 ---
 
 # MCP access and administration
 
-Use [MCP administration](https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md) for the exact commands and
-recovery table, [hosted setup](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md) for
-client installation, and [deployment](https://github.com/garrytan/gbrain/blob/master/docs/mcp/DEPLOY.md) for the running
+Use [MCP administration](https://github.com/aimonk2025/gbrain/blob/master/docs/mcp/ADMIN.md) for the exact commands and
+recovery table, [hosted setup](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/hosted-harness-access.md) for
+client installation, and [deployment](https://github.com/aimonk2025/gbrain/blob/master/docs/mcp/DEPLOY.md) for the running
 service. If this skill is loaded remotely without those files, use
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/ADMIN.md.
+https://raw.githubusercontent.com/aimonk2025/gbrain/master/docs/mcp/ADMIN.md.
 No local brain initialization or personal-agent bootstrap is required to
 administer an existing server.
 
@@ -45,7 +45,7 @@ administrator harness in the handoff, rather than asking an arbitrary agent.
 
 ## Owner actions
 
-Commands run against the **existing** server with `gbrain mcp admin … --url URL`.
+Commands run against the **existing** server with `foresights mcp admin … --url URL`.
 Use `--admin-token-file PRIVATE_FILE`, or the protected
 `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` environment variable. Do not print their values.
 This HTTP path uses the live database connection; do not open a second PGLite
@@ -96,7 +96,7 @@ reviews and approves consent. Secret recovery alone establishes neither step.
 The client initiates authorization and owns its verifier. Public PKCE uses
 `token_endpoint_auth_method: none` and has no secret. Confidential PKCE uses the
 client's actual POST/Basic method and a protected secret delivery. An
-`OAuthClientSetup` file is not a machine handoff for `gbrain connect`.
+`OAuthClientSetup` file is not a machine handoff for `foresights connect`.
 
 Verify the connection with an authenticated call from the native harness, such
 as reading `gbrain://capabilities`. For an authorized memory round trip, follow
@@ -112,12 +112,12 @@ and never bypasses owner consent. Do not enable it as a silent repair.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `insufficient_scope` / `invalid_token` on an MCP call: this is a grant problem only the owner can change. Do not try successively broader OAuth scopes; tell the user which scope is missing.
 - A failed transport after a mutation was sent means the outcome is unknown: re-read the client list before retrying, never re-send blind.
 - A list call fails: a failed list is not an empty list; report the error.
-- A tool the grant should reach is missing (`unknown_tool`, or a write such as `put_pages` absent): read `grant_diagnosis` from `whoami` or `gbrain://capabilities`. It names the blocker (scope, operation snapshot, client pin or server ceiling) and counts the operations it hides without naming them. Relay its `fix` (`next: tell_user_to_run`) to the brain owner; on the host, `gbrain doctor` check `grant_new_ops_available` shows the exact commands. New memory-profile grants are on the full surface; older ones keep their stored surface until the owner changes it. An "original intent unknown" grant may be restricted on purpose: never widen it unasked, and offer `--operations all` (no snapshot, including operations later upgrades add) only as the user's explicit choice.
+- A tool the grant should reach is missing (`unknown_tool`, or a write such as `put_pages` absent): read `grant_diagnosis` from `whoami` or `gbrain://capabilities`. It names the blocker (scope, operation snapshot, client pin or server ceiling) and counts the operations it hides without naming them. Relay its `fix` (`next: tell_user_to_run`) to the brain owner; on the host, `foresights doctor` check `grant_new_ops_available` shows the exact commands. New memory-profile grants are on the full surface; older ones keep their stored surface until the owner changes it. An "original intent unknown" grant may be restricted on purpose: never widen it unasked, and offer `--operations all` (no snapshot, including operations later upgrades add) only as the user's explicit choice.
 - A `grant_blocked_operations` notice (once per session) is the same diagnosis delivered in band: relay its `fix` to the brain owner (preview, then the `then` command), confirm with `whoami` afterwards, and do not retry the blocked operations meanwhile. It never names operations, and a missing scope is named only when a call was refused.
 - A `hidden_tool_content` notice means the result left out takes that a tool outside your tool list serves. Follow its `fix` as given: call `takes_list` when it names it, call `request_tools {surface}` when it names that (then `takes_list`), or relay the owner's repair when `next` is `tell_user_to_run`. Do not answer "not found" from that result alone.
 

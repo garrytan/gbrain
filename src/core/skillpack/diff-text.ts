@@ -2,9 +2,9 @@
  * skillpack/diff-text.ts — minimal pure-JS unified-diff producer.
  *
  * Used by:
- *   - `gbrain skillpack reference` (T4) to present per-file diffs to
+ *   - `foresights skillpack reference` (T4) to present per-file diffs to
  *     the agent so it can decide what to integrate.
- *   - `gbrain skillpack reference --apply-clean-hunks` (T15) as the
+ *   - `foresights skillpack reference --apply-clean-hunks` (T15) as the
  *     producer side; the applier in `apply-hunks.ts` parses the same
  *     format on the consumer side.
  *

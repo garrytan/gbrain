@@ -1,5 +1,5 @@
 /**
- * #6188 PR3: paid chat model (LLM) cost surfaces of `gbrain repair` and how a
+ * #6188 PR3: paid chat model (LLM) cost surfaces of `foresights repair` and how a
  * `spends: 'llm'` repair step composes with the `doctor --remediate` budget.
  *
  * Protects: a `spends: 'llm'` kind's dry run reports its model estimate and
@@ -91,7 +91,7 @@ function llmKind(name: string, opts: { items: number; perItemUsd: number; estima
   return { spec, allowances };
 }
 
-describe('gbrain repair cost surfaces for a spends:llm kind', () => {
+describe('foresights repair cost surfaces for a spends:llm kind', () => {
   test('a dry run reports the model estimate and the cap left; other kinds carry no llm keys', async () => {
     await inHome(async () => {
       const stub = llmKind('llm-stub', { items: 2, perItemUsd: 0.25, estimate: 0.5, capRemaining: 2 });

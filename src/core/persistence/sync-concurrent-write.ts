@@ -4,7 +4,7 @@
  * flight. The file (Git) and the newer database revision genuinely diverge, so
  * neither side may win silently: the file is held with code `concurrent_write`
  * and the rest of the sync continues; nothing is overwritten. The hold's fix is
- * `gbrain sources reconcile <source> <slug> --preview` (sync-holds.ts router).
+ * `foresights sources reconcile <source> <slug> --preview` (sync-holds.ts router).
  *
  * The proof is revision-linked, not admission order: the page's live revision
  * differs from the revision the import was frozen against, and the committed

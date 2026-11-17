@@ -438,7 +438,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape. Publish-gate
   // subtraction happens per request (stdioVisibleTools) — no caching, so a
-  // `gbrain config set mcp.publish_skills true` takes effect on the next
+  // `foresights config set mcp.publish_skills true` takes effect on the next
   // tools/list without a serve restart (matches the HTTP transports).
   server.setRequestHandler(ListToolsRequestSchema, async () => trackStdioRpc(() => gate.list(async () => ({
     tools: statusMode && isEngineDegraded(engine)
@@ -455,7 +455,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
   // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
   // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
-  // gbrain ops are synchronous, so we return the legacy `{ content, isError? }`
+  // foresights ops are synchronous, so we return the legacy `{ content, isError? }`
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => trackStdioRpc(() => withRequestConfigSnapshot(engine, async () => {
     const { name, arguments: params } = request.params;
@@ -476,7 +476,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators
     // who want stdio to see everything should call ops directly via
-    // `gbrain call <op>` (sets remote=false in src/cli.ts).
+    // `foresights call <op>` (sets remote=false in src/cli.ts).
     // CX2-11: MCP carries `_meta.session_id` as a sibling of `arguments` in
     // request.params. Thread it (clamped in dispatch) into the typed
     // OperationContext.sessionId so the hot-memory metaHook's cache keys per
@@ -577,7 +577,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // Structured enter/exit lines for harness-log forensics.
     process.stderr.write(statusMode
       ? `[gbrain-serve] STATUS-ONLY: ${statusHeadline(statusMode)} Serving gbrain_status; the full tool list returns once a tool call finds the brain openable. Supervisors: --fail-fast exits instead.\n`
-      : '[gbrain-serve] DEGRADED: database unreachable at startup — tool calls return classified errors (GBRAIN_DB_ACCESS) and the server reconnects automatically. Fix: gbrain db-repair. Kill switch: GBRAIN_SERVE_DEGRADED=0.\n');
+      : '[gbrain-serve] DEGRADED: database unreachable at startup — tool calls return classified errors (GBRAIN_DB_ACCESS) and the server reconnects automatically. Fix: foresights db-repair. Kill switch: GBRAIN_SERVE_DEGRADED=0.\n');
     onEngineRecovered(engine, () => {
       // A reconnect can complete while shutdown is already draining (stdin
       // EOF during the attempt) — booting IPC/sweep on an exiting process
@@ -634,8 +634,8 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   process.on('SIGHUP', () => shutdown('SIGHUP'));
 }
 
-// Backward compat: used by `gbrain call` command (trusted local path).
-// v0.31.8 (D22): accept opts.sourceId so `gbrain call --source X <op> <json>`
+// Backward compat: used by `foresights call` command (trusted local path).
+// v0.31.8 (D22): accept opts.sourceId so `foresights call --source X <op> <json>`
 // can scope the op handler to that source. resolveSourceWithTier() in call.ts
 // is the upstream resolver; this layer just passes the resolved id through.
 // #3874: also accept opts.localFederatedSourceIds so an ambient-tier
@@ -649,7 +649,7 @@ export async function handleToolCall(
 ): Promise<unknown> {
   const [{ operations }, { buildOperationContext }] = await Promise.all([import('../core/operations.ts'), loadDispatch()]);
   const op = operations.find(o => o.name === tool);
-  if (!op) throw opError('unknown_tool', `Unknown tool: ${tool}`, 'Run `gbrain --tools-json` to list the tool names.');
+  if (!op) throw opError('unknown_tool', `Unknown tool: ${tool}`, 'Run `foresights --tools-json` to list the tool names.');
 
   const safeParams = normalizeOptionalParams(op, params);
   const validationFailure = findInvalidParam(op, safeParams);

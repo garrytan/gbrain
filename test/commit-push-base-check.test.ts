@@ -1,5 +1,5 @@
 /**
- * PR B: `gbrain git commit-push --base <path>=<blob>` binds a commit to the bytes the writer read.
+ * PR B: `foresights git commit-push --base <path>=<blob>` binds a commit to the bytes the writer read.
  *
  * Protects: a writer that read a file at blob X and commits with --base path=X is refused `commit_base_moved` when another
  * writer committed that file since (nothing staged, index unchanged, the other writer's bytes win); a matching base (and

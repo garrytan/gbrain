@@ -1,6 +1,6 @@
 # Forecast-journal gate (W7)
 
-The $0 synthetic gate for the private forecast journal (`src/core/forecast-journal.ts`, `gbrain takes journal`, `gbrain takes scorecard --group-by`). It checks three things on placeholder holders of known skill and placeholder topic pages:
+The $0 synthetic gate for the private forecast journal (`src/core/forecast-journal.ts`, `foresights takes journal`, `foresights takes scorecard --group-by`). It checks three things on placeholder holders of known skill and placeholder topic pages:
 
 - whether the per-holder statistics rank holders in their true order;
 - whether the journal answers "who was right about T" and keeps the unresolved denominator;
@@ -10,7 +10,7 @@ The preregistration is [`PREREGISTRATION.md`](PREREGISTRATION.md).
 
 ## Current result
 
-**PASS.** Measured on 2026-10-17 at gbrain `65ed40ec6` (branch `capy/w7-forecast-journal`), using the instrument and preregistration frozen in that commit. It was one run of all 20 cohorts and 5,622 predictions. It cost $0 and took 7.4 s on in-memory PGLite.
+**PASS.** Measured on 2026-10-17 at foresights `65ed40ec6` (branch `capy/w7-forecast-journal`), using the instrument and preregistration frozen in that commit. It was one run of all 20 cohorts and 5,622 predictions. It cost $0 and took 7.4 s on in-memory PGLite.
 
 | Criterion | Threshold | Result |
 |---|---|---|

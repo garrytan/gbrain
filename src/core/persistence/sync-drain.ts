@@ -921,7 +921,7 @@ function mergeExtraPass(first: SyncResult, extra: SyncResult, span: { from: stri
  */
 export function lanesLimit(lanes: Pick<LanesReport, 'maximum' | 'configured' | 'effective' | 'step_down' | 'busy'>, cap: LanesCap | undefined): LanesLimit {
   if (lanes.configured <= 1) return { kind: 'lanes_off', message: 'lanes are off, so one group publishes at a time.',
-    raise: 'Drop --no-lanes, or run gbrain config set sync.lanes 16, to publish groups in parallel.' };
+    raise: 'Drop --no-lanes, or run foresights config set sync.lanes 16, to publish groups in parallel.' };
   if (lanes.step_down) return { kind: 'database_contention', message: `lanes stepped down to ${lanes.effective} after ${lanes.step_down}.`,
     raise: 'The database was contended; rerun when it is less busy. No setting raises this.' };
   if (lanes.busy != null && lanes.busy < 0.75 * lanes.effective) return { kind: 'feeder',
@@ -929,7 +929,7 @@ export function lanesLimit(lanes: Pick<LanesReport, 'maximum' | 'configured' | '
   if (cap === 'pool') return { kind: 'pool', message: `the connection pool allowed ${lanes.configured} of ${lanes.maximum} lanes.`,
     raise: `Set GBRAIN_POOL_SIZE=${lanes.maximum + 4} for ${lanes.maximum} lanes, if the database has the connections to spare.` };
   return { kind: 'maximum', message: `the configured maximum of ${lanes.maximum} lanes was in use.`,
-    raise: lanes.maximum < 16 ? 'Pass gbrain sync --lanes 16, or run gbrain config set sync.lanes 16, to allow more.' : null };
+    raise: lanes.maximum < 16 ? 'Pass foresights sync --lanes 16, or run foresights config set sync.lanes 16, to allow more.' : null };
 }
 
 export interface DrainNext {
@@ -970,7 +970,7 @@ function passNext(stop: DrainStopReason | undefined, result: SyncResult, resumeC
   const status = ['gbrain', 'sync', 'status', '--source', sourceId, '--json'];
   const verify = { argv: status };
   const render = (action: Omit<Action, 'requires_exclusive' | 'consent'>) => renderAction({ consent: [], requires_exclusive: false, verify, ...action }, cliRenderContext());
-  const hostSync = `gbrain sync --source ${sourceId} --no-pull`;
+  const hostSync = `foresights sync --source ${sourceId} --no-pull`;
   switch (stop) {
     case 'not_converged': {
       const streak = result.pass?.not_converged_streak ?? 0;
@@ -978,21 +978,21 @@ function passNext(stop: DrainStopReason | undefined, result: SyncResult, resumeC
         why: `The pass ran ${result.pass?.round ?? 'its'} rounds without the level settling (another writer kept changing it); everything it admitted stands. The next sync reads the level again: rerun ${resumeCommand}.`,
         fix: render({ argv: resumeCommand.split(' '), actor: 'agent', why: 'Reruns the pass; it starts from what the last one settled.' }) };
       return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: 'not_converged',
-        why: `${streak} passes in a row ended without the level settling, so rerunning is not converging. Report it with the status (read-only) and gbrain doctor --json; the writer changing the checkout is named there.`,
+        why: `${streak} passes in a row ended without the level settling, so rerunning is not converging. Report it with the status (read-only) and foresights doctor --json; the writer changing the checkout is named there.`,
         fix: render({ actor: 'agent', why: `${streak} consecutive passes did not converge; report it instead of rerunning.` }) };
     }
     case 'admission_paused': return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: 'admission_paused',
-      why: 'sync.admission is not normal, so the pass admitted only what it allows and stopped; nothing failed. Restoring it is the owner\'s decision: gbrain config set sync.admission normal, then the next sync continues.',
+      why: 'sync.admission is not normal, so the pass admitted only what it allows and stopped; nothing failed. Restoring it is the owner\'s decision: foresights config set sync.admission normal, then the next sync continues.',
       fix: render({ argv: ['gbrain', 'config', 'set', 'sync.admission', 'normal'], actor: 'user', why: 'Restores what managed sync may write; never run automatically.',
-        user_message: `Managed sync of ${sourceId} is paused by sync.admission. To resume it, run: gbrain config set sync.admission normal` }) };
+        user_message: `Managed sync of ${sourceId} is paused by sync.admission. To resume it, run: foresights config set sync.admission normal` }) };
     case 'grant_scope': case 'reconcile_host_required': return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: stop,
       why: stop === 'grant_scope'
         ? `This writer's grant covers only part of source ${sourceId}, so the pass admitted what it could see and cannot finish the source; the owner host's sync finishes it: ${hostSync}.`
         : `What is left in source ${sourceId} needs the owner host (holds, markers or decisions a remote caller never writes); everything this run admitted stands. On the owner host run: ${hostSync}.`,
       fix: render({ argv: hostSync.split(' '), actor: 'user', why: 'Only the source\'s owner host finishes the pass.', user_message: `On the host that owns source ${sourceId}, run: ${hostSync}` }) };
     case 'reconcile_read_incomplete': return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, code: 'reconcile_read_incomplete',
-      why: `A Git listing of source ${sourceId}'s checkout did not finish cleanly, so the pass classified nothing and wrote nothing. Check the checkout (git status), then report it with gbrain doctor --json if it repeats.`,
-      fix: render({ actor: 'agent', why: 'The checkout could not be listed; report it with gbrain doctor --json.' }) };
+      why: `A Git listing of source ${sourceId}'s checkout did not finish cleanly, so the pass classified nothing and wrote nothing. Check the checkout (git status), then report it with foresights doctor --json if it repeats.`,
+      fix: render({ actor: 'agent', why: 'The checkout could not be listed; report it with foresights doctor --json.' }) };
     default: return null;
   }
 }
@@ -1026,7 +1026,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
     const raise = pause?.fix?.argv?.join(' ');
     return { command: resumeCommand, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'capacity_paused',
       why: `The sync paused: ${pause?.message ?? 'a cumulative write cap refused its next admission'} Nothing failed; the cursor and every accepted write are intact. `
-        + `${pause?.reason === 'lifetime_ids' ? 'Request ids never free, so ' : ''}${raise ? `the brain host runs ${raise} (reversible)` : 'the brain host raises the cap gbrain doctor --only persistence_capacity --json names'}`
+        + `${pause?.reason === 'lifetime_ids' ? 'Request ids never free, so ' : ''}${raise ? `the brain host runs ${raise} (reversible)` : 'the brain host raises the cap foresights doctor --only persistence_capacity --json names'}`
         + `${pause?.reason === 'terminal_bytes' ? ', or receipts compact over time' : ''}; then rerun: ${resumeCommand}`, ...(docs ? { docs } : {}) };
   }
   if (outcome === 'resumable' && (d?.stop_reason === 'drain_lease_held' || result.leaseHeld)) {
@@ -1041,9 +1041,9 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   // stall window. Waiting again would read as a clean exit on every tick, so this stops blocked with the holder named.
   if (d?.stop_reason === 'drain_stalled' && d.stall?.lease_holder) {
     const holder = d.stall.lease_holder, who = `the ${holder.kind} drainer${holder.pid ? ` (pid ${holder.pid}${holder.host ? ` on ${holder.host}` : ''})` : ''}`;
-    const breakLock = `gbrain sync --source ${sourceId} --no-pull --break-lock`;
-    return { command: `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: 'no_progress',
-      why: `Source ${sourceId}'s drain lease is held by ${who}${holder.version ? `, gbrain ${holder.version}` : ''}, which still heartbeats but has committed no page and saved no cursor for ${d.stall.stalled_seconds}s, `
+    const breakLock = `foresights sync --source ${sourceId} --no-pull --break-lock`;
+    return { command: `foresights sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: 'no_progress',
+      why: `Source ${sourceId}'s drain lease is held by ${who}${holder.version ? `, foresights ${holder.version}` : ''}, which still heartbeats but has committed no page and saved no cursor for ${d.stall.stalled_seconds}s, `
         + `so this run stopped following it. Inspect the writer (read-only), then stop that process (or wait for it if it is a long discovery) and rerun: ${resumeCommand}. `
         + `Once it has exited, ${breakLock} releases a lease it left behind; it never breaks a live holder.`,
       fix: renderAction({ argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'host_admin', requires_exclusive: false,
@@ -1061,16 +1061,16 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   }
   if (d?.stop_reason === 'preparation_systemic') {
     const breaker = result.breaker;
-    return { command: `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
+    return { command: `foresights sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
       why: `${breaker?.stalled ?? 'Several'} writes of this sync could not finish preparing${breaker?.step ? ` at step ${breaker.step}` : ''}`
         + `${breaker?.rule === 'consecutive' ? ` (${breaker.consecutive} in a row with no page committed between them)` : ''}, so the run stopped instead of holding every file: the write owner, not the files, `
-        + `is the likely cause. Inspect it (read-only), fix what it names or upgrade gbrain, then rerun: ${resumeCommand} (it re-freezes the stopped entry and re-screens the files this run held).`,
+        + `is the likely cause. Inspect it (read-only), fix what it names or upgrade foresights, then rerun: ${resumeCommand} (it re-freezes the stopped entry and re-screens the files this run held).`,
       ...(docs ? { docs } : {}) };
   }
   if (d?.stop_reason === 'write_capacity') {
     const c = d.capacity, scope = c?.scope ?? 'principal';
     const key = scope === 'brain' ? 'persistence.limits.brain_outstanding' : 'persistence.limits.principal_outstanding';
-    return { command: `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
+    return { command: `foresights sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
       why: `The sync could not admit its next write for ${c?.waited_seconds ?? 30}s: ${c?.outstanding ?? 'other'} of the ${scope === 'brain' ? "brain's" : "write principal's"} ${c?.limit ?? ''} outstanding-request slots `
         + 'were in use, most of them by another writer on this host (a maintenance run shares the CLI principal), so there was no room for a sync write. Nothing failed and the cursor is intact. '
         + `Inspect them (read-only) and let them finish, or raise ${key}, then rerun: ${resumeCommand}`,
@@ -1081,7 +1081,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
     return { command: resumeCommand, safe_to_loop: true, retry_after_ms: 60_000, ...estimate, code: 'connection_lost',
       why: `The database connection dropped ${d.connection?.drops ?? CONNECTION_STRIKES} times in a row (${d.connection?.last_error ?? 'connection error'}) with no page committed between the drops; `
         + 'the drain reconnected and retried at 5, 15 and 45 s each time. Nothing is recorded against the source: the cursor and its frozen manifest stand. '
-        + `Check the database and pooler (gbrain doctor --json), then rerun: ${resumeCommand} (safe in a loop after retry_after_ms; it resumes without re-freezing).`,
+        + `Check the database and pooler (foresights doctor --json), then rerun: ${resumeCommand} (safe in a loop after retry_after_ms; it resumes without re-freezing).`,
       ...(docs ? { docs } : {}) };
   }
   if (d?.stop_reason === 'database_contention') {
@@ -1097,7 +1097,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   }
   // GBRA-133 PR 3a: the head's owner reports restart_required: it claims nothing until it restarts and holds its root until it exits.
   if (d?.stop_reason === 'drain_stalled' && d.stall?.cause === 'owner_restart_required') {
-    const stall = d.stall, owner = `the gbrain ${stall.owner_row?.kind ?? stall.owner_kind ?? 'owner'} process (pid ${stall.owner_row?.pid ?? stall.owner_pid ?? '?'})`;
+    const stall = d.stall, owner = `the foresights ${stall.owner_row?.kind ?? stall.owner_kind ?? 'owner'} process (pid ${stall.owner_row?.pid ?? stall.owner_pid ?? '?'})`;
     const status = ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'];
     return { command: status.join(' '), safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: 'owner_restart_required',
       why: `The write at the head of this source (${stall.head_request_id ?? stall.request_id}) is held by ${owner} on this host${stall.phase ? `, ${stall.phase}${stall.step ? ` at step ${stall.step}` : ''}` : ''}, `
@@ -1120,9 +1120,9 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } }
       : { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'host_admin', requires_exclusive: false,
         why: `The ${owner} on this host holds the claim past the ceiling${stall.owner_row?.restart_required ? ' and reports restart_required' : ''}; only restarting that process ends the preparation it is parked in. Status names the request, step and owner, read-only.`,
-        user_message: `Restart the gbrain ${stall.owner_kind ?? 'owner'} process (pid ${stall.owner_pid ?? '?'}) on this host, then run: ${resumeCommand}`,
+        user_message: `Restart the foresights ${stall.owner_kind ?? 'owner'} process (pid ${stall.owner_pid ?? '?'}) on this host, then run: ${resumeCommand}`,
         verify: { argv: ['gbrain', 'sources', 'writer', 'movement', sourceId, '--json'] } };
-    return { command: ahead ? resumeCommand : `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: ahead, retry_after_ms: d.retry_after_ms ?? 0, ...estimate,
+    return { command: ahead ? resumeCommand : `foresights sources writer status --source ${sourceId} --json`, safe_to_loop: ahead, retry_after_ms: d.retry_after_ms ?? 0, ...estimate,
       why: `The write at the head of this source has been preparing for ${stall.stalled_seconds}s${where}, held by the ${owner} on this host`
         + `${stall.past_ceiling ? `, past the ${stall.ceiling_ms ? formatDuration(Math.round(stall.ceiling_ms / 1000)) : 'preparation'} ceiling` : stall.owner_row?.restart_required ? ', which reports restart_required' : ', whose heartbeat reports a root barrier past the ceiling'}. `
         + (ahead ? `Wait ${formatDuration(Math.ceil((d.retry_after_ms ?? 0) / 1000))} for the owner's own budget to free the root, then rerun: ${resumeCommand}`
@@ -1132,8 +1132,8 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   // #6405: a publish that never returned. Its transaction may still hold the request, page and worktree locks, so nothing here
   // promises a reclaim: the process that owns the publication has to end it (UC2).
   if (d?.stop_reason === 'drain_stalled' && d.stall?.in_pass && d.stall.cause === 'publication_overdue') {
-    const stall = d.stall, owner = stall.owner_pid ? `the gbrain ${stall.owner_kind ?? 'owner'} process (pid ${stall.owner_pid})` : 'the process that owns the publication';
-    return { command: `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: 'publication_overdue',
+    const stall = d.stall, owner = stall.owner_pid ? `the foresights ${stall.owner_kind ?? 'owner'} process (pid ${stall.owner_pid})` : 'the process that owns the publication';
+    return { command: `foresights sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: 'publication_overdue',
       why: `The write at the head of this source (${stall.head_request_id ?? 'unknown request'}) has been publishing for ${stall.stalled_seconds}s, past the ${formatDuration(Math.round((stall.ceiling_ms ?? PUBLICATION_CEILING_DEFAULT_MS) / 1000))} publication ceiling`
         + `${stall.step ? ` (step ${stall.step})` : ''}${stall.last_sql ? `, last statement ${stall.last_sql.label}` : ''}. The sync ended its pass and admits nothing more, but an unfinished publish can hold its locks until it settles, `
         + `so it is not reclaimed for you: restart ${owner}, then rerun: ${resumeCommand}`,
@@ -1143,15 +1143,15 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   }
   // #6305: the head stays queued as writer_lock_unavailable: no process that reached it could open the source's worktree lock.
   if (d?.stop_reason === 'drain_stalled' && (d.stall?.blocked_reason === 'writer_lock_unavailable')) {
-    return { command: `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: d.stall.cause,
+    return { command: `foresights sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: d.stall.cause,
       why: `The write ${d.stall.request_id} stayed queued for ${d.stall.stalled_seconds}s with blocked_reason=writer_lock_unavailable: the processes that claimed it could not open source ${sourceId}'s worktree lock `
         + '(a sandbox, or a lock directory this user cannot write; the consumer log line names the OS error), so they left it for an owner and none took it. Nothing failed and the cursor is intact. '
-        + `Run the sync from a process that can write the source's lock directory (the owner's gbrain serve, or this command outside the sandbox), then rerun: ${resumeCommand}`,
+        + `Run the sync from a process that can write the source's lock directory (the owner's foresights serve, or this command outside the sandbox), then rerun: ${resumeCommand}`,
       ...(docs ? { docs } : {}) };
   }
   const writerBlocked = d?.stop_reason && d.stop_reason !== 'blocked_by_failures' && d.stop_reason !== 'deadline';
   if (writerBlocked) {
-    return { command: `gbrain sources writer status ${sourceId}`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
+    return { command: `foresights sources writer status ${sourceId}`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
       why: d!.stop_reason === 'drain_stalled'
         ? `No write for this source made progress for ${d!.stall?.stalled_seconds ?? 30}s${d!.stall?.step ? ` (stuck at step ${d!.stall.step}${d!.stall.waiting_on && d!.stall.waiting_on !== 'unknown' ? `, waiting on ${d!.stall.waiting_on}` : ''})` : ''}`
           + `${d!.stall?.cause === 'owner_missing' ? '; its claim lapsed and no consumer here reclaimed it, so its owner is gone or a transaction holds the row' : d!.stall?.cause === 'preparation_overdue' ? `; its owner${d!.stall.owner_pid ? ` (${d!.stall.owner_kind ?? 'process'} pid ${d!.stall.owner_pid} on another host)` : ''} keeps renewing the claim past the preparation budget (an owner that predates deadlines, or one that ignores cancellation)` : ''}`
@@ -1172,7 +1172,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
 export type JobDisposition = 'synced' | 'continue' | 'needs_operator';
 export function jobDisposition(result: SyncResult, sourceId: string): JobDisposition | null {
   if (!result.drain) return null;
-  const next = drainNext(result, 'gbrain sync', sourceId);
+  const next = drainNext(result, 'foresights sync', sourceId);
   if (!next) return 'synced';
   return next.safe_to_loop ? 'continue' : 'needs_operator';
 }
@@ -1220,7 +1220,7 @@ export interface ManagedSyncBacklog {
   /** #6317: entries this cursor advanced past as holds (no page committed for them). */
   held: number;
   resume_command: string;
-  /** #6278: the arguments after `gbrain sync` that resume this cursor with its stored options. */
+  /** #6278: the arguments after `foresights sync` that resume this cursor with its stored options. */
   resume_args: string[];
   /**
    * #6712 PR 4b: set when the entry is a non-company source's pass row (design §3.7), not a cursor. `index`/`total` are

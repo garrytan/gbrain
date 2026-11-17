@@ -1,9 +1,9 @@
 /**
- * `gbrain diag [--json] [--budget-ms <ms>] [--query <text>]`: one bounded diagnostic bundle an agent can paste
+ * `foresights diag [--json] [--budget-ms <ms>] [--query <text>]`: one bounded diagnostic bundle an agent can paste
  * whole instead of answering question by question. Read-only. Sections, each with its own `elapsed_ms`:
  *
- *   gbrain   this CLI's version, engine and runtime
- *   skew     builds of this host's resident gbrain processes (doctor runtime_build_skew) and the writer version
+ *   foresights   this CLI's version, engine and runtime
+ *   skew     builds of this host's resident foresights processes (doctor runtime_build_skew) and the writer version
  *   sources  per source: last_sync_at, last synced commit, commits on this host's checkout HEAD after it, managed pass row
  *   holds    held files per source and code (counts only)
  *   pool     database connections: limit, backends by state, lock waits, long idle transactions, sessions the
@@ -22,7 +22,7 @@ import { classifyItemFailure } from '../core/item-failure.ts';
 
 export const DIAG_DEFAULT_BUDGET_MS = 30_000;
 export const DIAG_SECTION_CAP_MS = { gbrain: 2_000, skew: 5_000, sources: 10_000, holds: 5_000, pool: 3_000, search: 10_000 } as const;
-export const DIAG_PROBE_QUERY = 'gbrain diagnostic probe';
+export const DIAG_PROBE_QUERY = 'foresights diagnostic probe';
 type SectionName = keyof typeof DIAG_SECTION_CAP_MS;
 
 export type DiagSection = { status: 'ok' | 'not_read' | 'not_applicable' | 'error'; elapsed_ms: number; reason?: string; code?: string; message?: string } & Record<string, unknown>;
@@ -148,7 +148,7 @@ export async function collectDiag(engine: BrainEngine, opts: DiagOptions): Promi
 const SECTIONS: SectionName[] = ['gbrain', 'skew', 'sources', 'holds', 'pool', 'search'];
 
 export function formatDiag(doc: Record<string, unknown>): string {
-  const lines = [`gbrain diag (budget ${doc.budget_ms} ms, took ${doc.elapsed_ms ?? '?'} ms, ${doc.complete === false ? 'incomplete' : 'complete'})`];
+  const lines = [`foresights diag (budget ${doc.budget_ms} ms, took ${doc.elapsed_ms ?? '?'} ms, ${doc.complete === false ? 'incomplete' : 'complete'})`];
   for (const name of SECTIONS) {
     const s = doc[name] as DiagSection;
     const head = `  ${name}: ${s.status} (${s.elapsed_ms} ms)`;

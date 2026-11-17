@@ -370,11 +370,11 @@ describe('resolveMemorableBin rejects what it cannot actually run', () => {
 });
 
 describe('a failed relay becomes visible instead of silent', () => {
-  /** The relay is spawned detached with stdio ignored, so gbrain could only
+  /** The relay is spawned detached with stdio ignored, so foresights could only
    * ever verify the binary EXISTED. A `memorable record` that refused consent
-   * or hit a dead API was indistinguishable from success, and `gbrain doctor`
+   * or hit a dead API was indistinguishable from success, and `foresights doctor`
    * could report a healthy relay while nothing had been recorded for weeks.
-   * The child reports its own outcome; gbrain reads the PREVIOUS one, so
+   * The child reports its own outcome; foresights reads the PREVIOUS one, so
    * nothing is waited on and fire-and-forget is intact. */
   async function seed(home: string, lines: string[]): Promise<void> {
     const p = await relayResultsPath();
@@ -542,7 +542,7 @@ describe('memorableConsentEvidence — the CLI-side opt-in, read fail-closed', (
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
-  test('gbrain backend is ok — the gbrain-authored stamp is the evidence there', async () => {
+  test('foresights backend is ok — the gbrain-authored stamp is the evidence there', async () => {
     const home = tempHome();
     try {
       seedCliConfig(join(home, 'mg'), JSON.stringify({ backend: 'gbrain' }));

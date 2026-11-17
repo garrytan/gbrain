@@ -1,6 +1,6 @@
 # Fact supersession threshold with production embeddings: dev finding
 
-This replays the C2 supersession fixture (see [c2-interleave-dev](../c2-interleave-dev/README.md)) on gbrain
+This replays the C2 supersession fixture (see [c2-interleave-dev](../c2-interleave-dev/README.md)) on foresights
 7d2cc1c70. The fixture was embedded through the product gateway with each production model and swept over
 explicit-lane cosine thresholds from 0.80 to 0.97, for both candidate-fusion arms.
 
@@ -75,7 +75,7 @@ Fix 1 below is in the memory proof wave. Fix 2 is not.
   model and returns two commands, which need consent because the first one costs money:
   `bun scripts/eval-c2-candidate-fusion.ts calibrate <provider:model> <dims> <out>` embeds the fixture (about a
   cent), sweeps 0.80 to 0.97 and prints `threshold_pick.guarded`; then
-  `gbrain config set facts.supersession_thresholds` registers the result.
+  `foresights config set facts.supersession_thresholds` registers the result.
 
 ## Proposed fix
 
@@ -84,7 +84,7 @@ Fix 1 below is in the memory proof wave. Fix 2 is not.
    Keep `voyage:voyage-4` at 0.95. A model with no calibrated entry, such as `openai:text-embedding-3-large`,
    should not supersede by cosine. Its writes insert the new fact and leave the pair to the existing
    conflict review where that is enabled. At 0.95 on 3-large, that gives up the 37% of corrections it
-   catches today and removes the 54% of wrong replacements. `gbrain doctor` flags a brain whose embedding model has
+   catches today and removes the 54% of wrong replacements. `foresights doctor` flags a brain whose embedding model has
    no calibrated threshold. This fixture calibrates a new model for about a cent with
    `bun scripts/eval-c2-candidate-fusion.ts calibrate <provider:model> <dims> <out>`.
 2. **Make supersession slot-aware.** The remaining misses need more than a threshold. Supersession can use

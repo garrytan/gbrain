@@ -12,7 +12,7 @@
  * connected with, then the DB plane's `config` row), never by a request
  * parameter; connect itself issues no statement for it, so a borrower of an
  * in-flight pool still connects at once and a read-only command that never
- * searches reads nothing. `gbrain config set` therefore takes effect on the
+ * searches reads nothing. `foresights config set` therefore takes effect on the
  * next connection: the next CLI command, or a restart of the serving process. It
  * mitigates #6495 (a brain whose commonest terms cannot be ranked within the
  * bound) by letting the operator trade latency for coverage; ranking cost
@@ -52,7 +52,7 @@ export function keywordStatementTimeoutValueProblem(value: string): string | nul
  * The DB-plane read, with the key inlined instead of bound: a bound parameter
  * makes the driver describe the statement and record its type in the shared
  * pg-types cache, which is then written under `~/.gbrain/cache/pg-types/` at
- * exit, and read-only commands such as `gbrain graduate --plan` must not
+ * exit, and read-only commands such as `foresights graduate --plan` must not
  * write a byte (test/e2e/graduation-cli-zero-mutation-*.test.ts).
  */
 // engine-sql-ok: one Postgres-only config-row read with the key inlined so the driver describes no parameter (pg-types cache); PGLite sets no statement timeout

@@ -2,7 +2,7 @@
  * #4666 — MCP traverse_graph defaults must not hide inbound-only edges.
  *
  * The engine's legacy GraphNode traversal is outgoing-only. That remains fine
- * for trusted local compatibility (`gbrain graph`), but the remote/default
+ * for trusted local compatibility (`foresights graph`), but the remote/default
  * operation call should surface explicit edges from both directions so an
  * inbound-only graph does not read as nodes=1/links=0 (indistinguishable
  * from edge absence). An explicit `direction` param still wins for callers

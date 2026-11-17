@@ -1,5 +1,5 @@
 /**
- * #7897: `gbrain sources reconcile` publishes the merge of a canonical file and its stored page through
+ * #7897: `foresights sources reconcile` publishes the merge of a canonical file and its stored page through
  * `importFromContent` (reconcile-prepare.ts), whose screen did not hold a private request page privacy does not read.
  * Only the lowercase `visibility` key is protected from the file side, so a file that adds `Visibility: private` merged
  * in as an ordinary field (an additive one under `--auto-additive`) and the page was published world-readable while its

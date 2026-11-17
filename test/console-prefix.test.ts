@@ -135,7 +135,7 @@ describe('slog / serr line prefixing', () => {
   });
 
   test('slog outside a wrap is identical to console.log (back-compat invariant)', async () => {
-    // Single-source / non-parallel callers (single-source gbrain sync,
+    // Single-source / non-parallel callers (single-source foresights sync,
     // doctor, every existing caller that doesn't opt into withSourcePrefix)
     // must see bit-for-bit identical output. The fast path through
     // console.log preserves that — no prefix, no extra formatting.

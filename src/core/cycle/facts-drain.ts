@@ -1,8 +1,8 @@
 /**
  * `facts_drain` cycle phase (Lane D): one bounded run of the automatic facts
  * drain (src/core/facts/drain.ts) inside the cycle, so a PGLite brain run by
- * autopilot or `gbrain dream` extracts queued `facts-absorb` jobs without
- * `gbrain jobs work`. Postgres brains have a job worker and skip the phase.
+ * autopilot or `foresights dream` extracts queued `facts-absorb` jobs without
+ * `foresights jobs work`. Postgres brains have a job worker and skip the phase.
  * The phase never fails the cycle: deferrals (no key, budget) report `warn`
  * with the fix; an internal error reports `warn` with the doctor command.
  *
@@ -47,7 +47,7 @@ export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dry
 function deadRetrySummary(r: DeadAbsorbRetryResult & { error?: string }): string {
   const parts = [
     r.resubmitted ? `re-submitted ${r.resubmitted} dead facts-absorb job(s)` : '',
-    r.exhausted.length ? `${r.exhausted.length} dead facts-absorb job(s) reached the re-submit limit (${r.max_resubmits}); see gbrain facts retry-dead --list` : '',
+    r.exhausted.length ? `${r.exhausted.length} dead facts-absorb job(s) reached the re-submit limit (${r.max_resubmits}); see foresights facts retry-dead --list` : '',
     r.error ? `dead facts-absorb retry failed: ${r.error}` : '',
   ].filter(Boolean);
   return parts.length ? `; ${parts.join('; ')}` : '';

@@ -219,7 +219,7 @@ export function pinnedWorktreeConflict(done: Pick<WriteRequest, 'state' | 'error
 
 /**
  * The receipt of an import whose file bytes changed between admission and publication (`raw_file_changed` in verb-errors.ts),
- * or (#6858) whose stuck publication `gbrain repair stuck-recovery --keep disk` abandoned, keeping the file as edited on disk.
+ * or (#6858) whose stuck publication `foresights repair stuck-recovery --keep disk` abandoned, keeping the file as edited on disk.
  */
 export function fileChangedAfterAdmission(done: Pick<WriteRequest, 'state' | 'error_code' | 'error_message'>): boolean {
   return done.state !== 'committed' && done.error_code === 'source_changed'
@@ -247,7 +247,7 @@ export async function receiptPageFaultHold(engine: Pick<BrainEngine, 'executeRaw
   const repeated = await repeatedWriteFailure(engine, input.sourceId, input.incarnation, pending.slug, done);
   if (repeated) return base(entry, pending.slug, pending.pageId, 'page_write_failed',
     `${entry.path}: its ${entry.action === 'delete' ? 'deletion' : 'import'} failed the same way ${repeated.attempts} times (${repeated.origin ?? repeated.code}${repeated.errno ? `, SQLSTATE ${repeated.errno}` : ''}${repeated.error_class ? `, ${repeated.error_class}` : ''}; request ${done.request_id}), so it is held and the rest of the source synced. `
-      + 'Read the receipt with gbrain write-request, report it or fix the file, then gbrain sources retry-held; an upgrade re-tests it on its own.',
+      + 'Read the receipt with foresights write-request, report it or fix the file, then foresights sources retry-held; an upgrade re-tests it on its own.',
     typeof pending.intent.content === 'string' ? pending.intent.content : null, typeof pending.intent.blobOid === 'string' ? pending.intent.blobOid : null,
     { write_failure: { ...repeated, request_id: done.request_id, gbrain_version: VERSION } });
   const page = pending.intent.kind === 'managed_sync_import' && typeof pending.intent.content === 'string';

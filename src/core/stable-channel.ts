@@ -15,7 +15,7 @@ import { isNewerVersion, isValidVersionString } from './semver.ts';
 import type { Action } from './agent-output.ts';
 import { MATRIX_REQUIRED_FROM, channelSwitchCommand, type ChannelResolution, type StableLookupError } from './self-upgrade.ts';
 
-const REPO_SLUG = 'garrytan/gbrain';
+const REPO_SLUG = 'aimonk2025/gbrain';
 const GBRAIN_GIT_URL = `https://github.com/${REPO_SLUG}`;
 export const STABLE_RECORD_BRANCH = 'stable-record';
 export const STABLE_RECORD_FILE = 'stable.json';
@@ -23,7 +23,7 @@ export const STABLE_RECORD_URL = `https://raw.githubusercontent.com/${REPO_SLUG}
 export const RECORD_MAX_BYTES = 64 * 1024;
 const STABLE_ERRORS_DOCS = 'docs/guides/upgrades-auto-update.md#stable-channel-errors';
 const SHA_RE = /^[0-9a-f]{40}$/;
-const RUN_URL_RE = /^https:\/\/github\.com\/garrytan\/gbrain\/actions\/runs\/\d+(\/attempts\/\d+)?\/?$/;
+const RUN_URL_RE = /^https:\/\/github\.com\/garrytan\/(?:foresights|gbrain)\/actions\/runs\/\d+(\/attempts\/\d+)?\/?$/;
 
 export type StableCode = StableLookupError['code'];
 export type StableFailure = { ok: false; code: StableCode; cause: string };
@@ -183,7 +183,7 @@ export function stableFailureMessage(f: { code: StableCode; cause: string }): st
  * promotion or move this install to alpha with the command that overrides what chose stable.
  */
 export function stableFailureFix(f: { code: StableCode }, res: ChannelResolution): string {
-  if (f.code === 'stable_unreadable') return 'Nothing was changed. Retry in a few minutes: gbrain self-upgrade --check-only';
+  if (f.code === 'stable_unreadable') return 'Nothing was changed. Retry in a few minutes: foresights self-upgrade --check-only';
   return `Nothing was changed. Wait for a stable promotion, or follow every release on alpha: ${channelSwitchCommand('alpha', res)}`;
 }
 

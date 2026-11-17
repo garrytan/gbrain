@@ -66,7 +66,7 @@ test('a clipped pass whose kept pages were repaired keeps warning and is not tru
   const end = await runPass();
   expect(end.status).toBe('warn');
   expect(end.details).toMatchObject({ count: 'lower_bound', truncated: false, materializable_rows: 0 });
-  expect(end.message).toContain('gbrain repair timeline');
+  expect(end.message).toContain('foresights repair timeline');
   const next = await run();
   expect(next.status).toBe('warn');
   expect(next.details).not.toHaveProperty('last_full_pass');
@@ -80,7 +80,7 @@ test('a saved pass from before the clipped flag, with its list at the cap, is a 
   const end = await timelineHistoryCheck(engine, 'default');
   expect(end.status).toBe('warn');
   expect(end.details).toMatchObject({ count: 'lower_bound', truncated: false });
-  expect(end.message).toContain('gbrain repair timeline');
+  expect(end.message).toContain('foresights repair timeline');
   const fresh = await timelineHistoryCheck(engine, 'default');
   expect(fresh.status).toBe('warn');
   expect(fresh.details).toMatchObject({ count: 'exact', materializable_rows: 2 });

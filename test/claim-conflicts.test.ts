@@ -1,7 +1,7 @@
 /**
  * The keyless claim-conflict lane (GBRA-216 PR B): the detector
  * (facts/claim-conflicts.ts), the claim_conflicts dream phase on a source with
- * no local path, gbrain decide sweep --claims, the trust review contradiction
+ * no local path, foresights decide sweep --claims, the trust review contradiction
  * kind with every advertised command executed, and recall's contested label
  * under the caller's read policy.
  *
@@ -305,7 +305,7 @@ for (const kind of testBackends()) {
       const text = await capture(() => runSweepCommand(engine, ['--claims', '--source', src]));
       expect(text.result).toBe(0);
       expect(text.out).toContain(': complete (1 pair(s) found, 1 proposal(s) written');
-      expect(text.out).toContain('Review: gbrain trust review --kind contradiction');
+      expect(text.out).toContain('Review: foresights trust review --kind contradiction');
       expect(await proposals(src)).toHaveLength(1);
       const json = await capture(() => runSweepCommand(engine, ['--claims', '--source', src, '--json']));
       expect(JSON.parse(lastJson(json.out))).toMatchObject({ status: 'complete', pairs_found: 0 });
@@ -379,7 +379,7 @@ for (const kind of testBackends()) {
       const all = await capture(() => runTrustOwnerCommand(localTrustBackend(engine), 'review', ['--accept-all', '--from', src, '--kind', 'contradiction', '--json']));
       const allJson = JSON.parse(lastJson(all.out));
       expect(allJson.accepted).toEqual([]);
-      expect(allJson.skipped).toEqual([{ ref: after.items[0]!.ref, reason: 'contradiction', next: 'Decide it with one of its commands: gbrain trust review --kind contradiction' }]);
+      expect(allJson.skipped).toEqual([{ ref: after.items[0]!.ref, reason: 'contradiction', next: 'Decide it with one of its commands: foresights trust review --kind contradiction' }]);
     }));
 
     test('a paid-sweep conflict proposal lists as kind conflict; its forget withdraws the proposed fact and its confirm raises it, old fact untouched', async () => withEnv({ GBRAIN_HOME: home }, async () => {

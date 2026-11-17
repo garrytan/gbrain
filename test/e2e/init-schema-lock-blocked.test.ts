@@ -1,5 +1,5 @@
 /**
- * #5227 (W14 P1.6, [R8]): `gbrain init` / `upgrade` no longer hang behind an
+ * #5227 (W14 P1.6, [R8]): `foresights init` / `upgrade` no longer hang behind an
  * open transaction. The schema replay runs under a session-level
  * `lock_timeout` on the reserved DDL backend (restored afterwards), SQLSTATE
  * 55P03 becomes the typed `schema_lock_blocked` refusal naming the blocking

@@ -3,7 +3,7 @@
  * `pending_fresh_install` status every migration surface derives from them
  * (apply-migrations plan, get_health ledger summary, doctor), and the
  * in-process config read in v0.12.0. The end-to-end proof on a real
- * `gbrain init` brain is test/migrations-fresh-install-audit.serial.test.ts.
+ * `foresights init` brain is test/migrations-fresh-install-audit.serial.test.ts.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -164,7 +164,7 @@ describe('v0.12.0 config check reads auto_link in-process', () => {
   const check = () => withEnv({ HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
     () => v0120Testing.phaseBConfigCheck({ yes: true, dryRun: false, noAutopilotInstall: true }));
 
-  // Before E8 this shelled out to `gbrain config get`, which has no CLI to
+  // Before E8 this shelled out to `foresights config get`, which has no CLI to
   // resolve under bun test, so the disabled value was never seen.
   test('database plane auto_link=false skips the backfill; unset defaults to enabled', async () => {
     expect((await check()).autoLink).toEqual({ status: 'unknown', raw: undefined });

@@ -176,7 +176,7 @@ describe('verifyWorkspace — keyless pass', () => {
     // ws has no origin remote → the local-only variant with the repo upgrade
     // path) and the ONE next action (the cold-start skill via ClawVisor).
     expect(res.report).toContain('What you own');
-    expect(res.report).toContain('gbrain bootstrap repo');
+    expect(res.report).toContain('foresights bootstrap repo');
     expect(res.report).toContain('cold-start');
     expect(res.report).toContain('ClawVisor');
     expect(res.handoff.length).toBeGreaterThan(0);
@@ -402,7 +402,7 @@ describe('verifyWorkspace — engine-plane side effects', () => {
       expect(check.ok).toBe(true);
       expect(check.detail).toContain('world');
       expect(check.detail).toContain('facts.default_visibility');
-      expect(check.detail).toContain('gbrain config set');
+      expect(check.detail).toContain('foresights config set');
       // The key governs extraction-path writes only; `remember` hard-defaults
       // to 'world' — the message must disclose that carve-out (#5605).
       expect(check.detail).toContain('`remember`');
@@ -497,7 +497,7 @@ describe('verifyWorkspace — source_id collision resolution', () => {
       const check = res.checks.find((c) => c.id === 'source_id')!;
       expect(check.warn).toBe(true);
       expect(check.detail).toContain(derived);
-      expect(check.detail).toContain(`gbrain sources add ${derived}`);
+      expect(check.detail).toContain(`foresights sources add ${derived}`);
       expect(check.detail).toContain('hooks --repair');
 
       // Re-run is stable: the derived id is not itself in collision.
@@ -543,7 +543,7 @@ describe('verifyWorkspace — workspace source registration (#4328)', () => {
       // put_page fail its sources FK on any brain that never registered it.
       const resolved = await resolveVerifySourceId(e2, ws2);
       expect(resolved).toBe('default');
-      // The shape `gbrain sources add` leaves behind: the resolved source's
+      // The shape `foresights sources add` leaves behind: the resolved source's
       // local_path is the workspace brain/ so write-through materializes.
       // (Direct UPDATE — 'default' is seeded by migration, so add would collide.)
       await e2.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [join(ws2, 'brain')]);
@@ -579,7 +579,7 @@ describe('verifyWorkspace — workspace source registration (#4328)', () => {
         source_id: 'workspace',
       });
       // Initialized manifest wins resolution — but 'workspace' was never
-      // `gbrain sources add`-ed on this brain.
+      // `foresights sources add`-ed on this brain.
       expect(await resolveVerifySourceId(e2, ws2)).toBe('workspace');
       const res = await verifyWorkspace(e2, ws2, {
         sourceId: 'workspace',
@@ -591,7 +591,7 @@ describe('verifyWorkspace — workspace source registration (#4328)', () => {
       const rt = check(res.checks, 'roundtrip');
       expect(rt.length).toBe(1);
       expect(rt[0].ok).toBe(false);
-      expect(rt[0].detail).toContain(`gbrain sources add workspace --path ${join(ws2, 'brain')}`);
+      expect(rt[0].detail).toContain(`foresights sources add workspace --path ${join(ws2, 'brain')}`);
       // The named FAIL replaces the raw FK violation the put used to surface.
       for (const c of res.checks) expect(c.detail).not.toContain('foreign key');
       // put_page was SKIPPED (not attempted-and-failed): zero probe rows.
@@ -781,7 +781,7 @@ describe('bootstrap verify write wait (#6356)', () => {
     const text = detail(pending, 30_000);
     expect(text).toContain('still pending after 30s');
     expect(text).toContain('0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44');
-    expect(text).toContain('gbrain write-request -- 0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44');
+    expect(text).toContain('foresights write-request -- 0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44');
     expect(text).toContain('GBRAIN_WRITE_WAIT_MS');
     expect(detail(new Error('boom'), 30_000)).toBe('put_page failed: boom');
   });

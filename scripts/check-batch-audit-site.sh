@@ -2,7 +2,7 @@
 # v0.41.18.0 — CI guard against batch-audit-site typo drift (codex H-7).
 #
 # auditSite labels flow from call sites into the batch-retry audit JSONL
-# and from there into `gbrain doctor`'s batch_retry_health check. A typo
+# and from there into `foresights doctor`'s batch_retry_health check. A typo
 # like `'extract.lnks_inc'` doesn't break compilation (TypeScript narrows
 # string literals only via the BatchAuditSite type, but external string
 # values escape this — e.g. config, environment, dynamic dispatch).

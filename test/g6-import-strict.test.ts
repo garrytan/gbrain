@@ -1,5 +1,5 @@
 /**
- * G6 (git-canonical memory): `gbrain import` on a strict (canonical: git) managed source is door-only.
+ * G6 (git-canonical memory): `foresights import` on a strict (canonical: git) managed source is door-only.
  *
  * GBRA-176 found that a classic import rewrites the files it imports (it normalizes frontmatter order) and leaves the
  * rewrite uncommitted. On a strict source the managed import (import-mutations.ts importManagedFiles, prepared by
@@ -32,7 +32,7 @@ const files: Record<string, string> = {
 };
 const slugs = Object.keys(files).map(path => path.replace(/\.md$/, ''));
 
-for (const backend of testBackends()) describe(`[${backend}] G6: gbrain import on a strict source`, () => {
+for (const backend of testBackends()) describe(`[${backend}] G6: foresights import on a strict source`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
   test('normalized and untouched files, committed and new: every page at HEAD, clean tree, no census gap, one commit per group', () => managedBrain(async ({ engine, root }) => {

@@ -1,5 +1,5 @@
 /**
- * gbrain salience — Pages recently touched, ranked by emotional + activity salience.
+ * foresights salience — Pages recently touched, ranked by emotional + activity salience.
  *
  * Deterministic: zero LLM calls. The score blends `emotional_weight`
  * (computed during the dream cycle's recompute_emotional_weight phase),
@@ -7,10 +7,10 @@
  * `getRecentSalience` for the SQL.
  *
  * Usage:
- *   gbrain salience                            # top 20 over last 14 days
- *   gbrain salience --days 7                   # narrower window
- *   gbrain salience --kind personal            # filter to slug-prefix
- *   gbrain salience --json                     # JSON for agents
+ *   foresights salience                            # top 20 over last 14 days
+ *   foresights salience --days 7                   # narrower window
+ *   foresights salience --kind personal            # filter to slug-prefix
+ *   foresights salience --json                     # JSON for agents
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -49,7 +49,7 @@ function parseArgs(args: string[]): RunOpts | { help: true } {
   return opts;
 }
 
-const HELP = `Usage: gbrain salience [options]
+const HELP = `Usage: foresights salience [options]
 
 Pages recently touched, ranked by emotional + activity salience. Surfaces
 what's unusual without needing a search term — the inverse of /query.

@@ -175,7 +175,7 @@ export function encodeIndex(records: readonly SkillRecord[], variant: Variant): 
 }
 
 function incompatible(why: string, fixArgv?: string[]): ResolverError {
-  return new ResolverError('skill_index_incompatible', `The skill index cannot be read by this gbrain (${why}).`, { suggestion: 'Rebuild the index with the command it was built with.', ...(fixArgv ? { argv: fixArgv } : {}) });
+  return new ResolverError('skill_index_incompatible', `The skill index cannot be read by this foresights (${why}).`, { suggestion: 'Rebuild the index with the command it was built with.', ...(fixArgv ? { argv: fixArgv } : {}) });
 }
 
 /** A lazily read index: the dictionary and lengths up front, postings and meta per request. */
@@ -207,7 +207,7 @@ export class IndexReader {
   static open(path: string, fixArgv?: string[]): IndexReader {
     let fd: number;
     try { fd = openSync(path, 'r'); } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new ResolverError('skill_index_missing', 'The skill index file is missing.', { suggestion: 'Build it with gbrain skills index build.', ...(fixArgv ? { argv: fixArgv } : {}) });
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new ResolverError('skill_index_missing', 'The skill index file is missing.', { suggestion: 'Build it with foresights skills index build.', ...(fixArgv ? { argv: fixArgv } : {}) });
       throw e;
     }
     try {

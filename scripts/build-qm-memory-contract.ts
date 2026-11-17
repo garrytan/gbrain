@@ -49,13 +49,13 @@ const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_wr
 const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note']);
 /** Catalogue summaries v1 published before they changed, frozen. */
 const V1_SUMMARIES: Record<string, string> = {
-  actor_not_attested: "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
+  actor_not_attested: "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way foresights does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience foresights does not serve yet. Nothing was read or written.",
 };
 
 /** Who fixes each actor_not_attested reason, and how. Every reason the catalogue lists needs a row (the drift test checks). */
 export const ACTOR_REASON_FIXES: Record<string, { fixed_by: 'brain_operator' | 'calling_harness'; fix: string }> = {
-  no_attest_right: { fixed_by: 'brain_operator', fix: 'gbrain auth rescope --client <id> --attest-actor qm on the brain host; a client that already holds the right takes a new token with grant_type=client_credentials.' },
-  op_not_attested: { fixed_by: 'brain_operator', fix: 'gbrain auth rescope --client <id> --attest-actor qm --attest-ops <list>; a deferred operation cannot be attested yet.' },
+  no_attest_right: { fixed_by: 'brain_operator', fix: 'foresights auth rescope --client <id> --attest-actor qm on the brain host; a client that already holds the right takes a new token with grant_type=client_credentials.' },
+  op_not_attested: { fixed_by: 'brain_operator', fix: 'foresights auth rescope --client <id> --attest-actor qm --attest-ops <list>; a deferred operation cannot be attested yet.' },
   argument_mismatch: { fixed_by: 'calling_harness', fix: 'Send acting_user equal to the x-qm-actor header, or omit it.' },
   argument_without_attestation: { fixed_by: 'calling_harness', fix: 'Remove acting_user, or send the x-qm-actor header from a credential holding the attest right.' },
   invalid_actor_id: { fixed_by: 'calling_harness', fix: 'Send the canonical id unchanged: 1-256 visible ASCII characters, no spaces.' },
@@ -212,7 +212,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       read_as: v4
         ? 'the attested person (x-qm-actor): what that person may read, their own restricted pages included, so use these tools only in the person\'s own conversations; a tool marked scope_read: true reads as the scope instead when the call names sources (scope_read below)'
         : 'the attested person (x-qm-actor): what that person may read, their own restricted pages included, so use these tools only in the person\'s own conversations; no tool here is marked as a shared-scope read yet',
-      opt_in: 'only get_write_request is in default_attest_ops: the brain operator lists each other tool in the client\'s --attest-ops (gbrain auth rescope --client <id> --attest-actor qm --attest-ops <list>), or it is refused with actor_not_attested reason op_not_attested',
+      opt_in: 'only get_write_request is in default_attest_ops: the brain operator lists each other tool in the client\'s --attest-ops (foresights auth rescope --client <id> --attest-actor qm --attest-ops <list>), or it is refused with actor_not_attested reason op_not_attested',
       structured_content: 'an attested success carries the result in structuredContent and keeps it as JSON in content (notice blocks follow it); a list arrives as structuredContent.results; context_pack\'s text alone fills content, as memory_recall\'s does; an unattested call to the same tool gets no structuredContent',
       result_rule: 'each result lists the fields every success carries; other fields may appear and must be ignored',
       ...(v4 ? { scope_read: {
@@ -250,7 +250,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
     unlinked_recall: { isError: false, content: unlinked.content, structuredContent: unlinked.structuredContent },
     memory_write: {
       limits: { facts: { min: 1, max: MEMORY_WRITE_MAX_FACTS }, provenance_chars: MEMORY_WRITE_PROVENANCE_MAX, idempotency_key: { pattern: IDEMPOTENCY_KEY_RE.source }, kinds: [...MEMORY_WRITE_KINDS],
-        provenance: 'one line: no line breaks or control characters, and not starting with qm: (gbrain adds qm:<actor id> itself)',
+        provenance: 'one line: no line breaks or control characters, and not starting with qm: (foresights adds qm:<actor id> itself)',
         valid_from: 'YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.fraction]][Z|±HH:MM], a real calendar day in years 0001-9999' },
       validation: 'every fact is checked before any is saved: one bad fact refuses the whole call with invalid_params and the idempotency_key stays unused',
       saved_as: { page: 'memory/members/<member>', readers: ['member:<member>'], visibility: 'private', provenance: 'qm:<actor id>; <caller provenance>' },
@@ -271,7 +271,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       } } : {}),
     },
     ...(v4 ? { memory_propose: {
-      opt_in: 'not a default attested operation: the brain operator grants it with cancel_write_request beside it (gbrain auth rescope --client <id> --attest-actor qm --attest-ops cancel_write_request,get_write_request,memory_propose,memory_recall,memory_write); the client\'s bound_slug_prefixes must cover the pages it proposes to, and its allowed_operations must not list add_timeline_entry, add_link, put_page or edit_page',
+      opt_in: 'not a default attested operation: the brain operator grants it with cancel_write_request beside it (foresights auth rescope --client <id> --attest-actor qm --attest-ops cancel_write_request,get_write_request,memory_propose,memory_recall,memory_write); the client\'s bound_slug_prefixes must cover the pages it proposes to, and its allowed_operations must not list add_timeline_entry, add_link, put_page or edit_page',
       needs: 'an attested person (x-qm-actor; with none, actor_not_attested reason actor_required) who may read the target and a link\'s to page (else page_not_found)',
       kinds: {
         timeline: { required: ['date', 'summary'], optional: ['detail', 'source'], date: 'YYYY-MM-DD', summary: 'one line', source: 'one line' },

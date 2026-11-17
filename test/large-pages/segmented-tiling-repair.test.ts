@@ -1,5 +1,5 @@
 /**
- * GST-1209: doctor `segmented_tiling` and `gbrain repair segmented-tiling`.
+ * GST-1209: doctor `segmented_tiling` and `foresights repair segmented-tiling`.
  *
  * 1. Protects: doctor lists a live segmented page whose live rows do not cover its body and writes nothing. The repair's
  *    preview names the page, its file and HEAD's blob under a hash; `--apply` refuses without that hash; the apply
@@ -90,7 +90,7 @@ test('doctor lists the damaged page read-only; the repair republishes it from HE
   expect((held.held ?? []).map(hold => [hold.path, hold.code])).toEqual([[FILE, 'page_write_failed']]);
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.sourceId]);
   const hold = (await readGitHold(engine, f.sourceId, source!.incarnation, FILE))!;
-  expect(hold.message).toContain(`gbrain repair segmented-tiling --source <source> --slug ${SLUG}`);
+  expect(hold.message).toContain(`foresights repair segmented-tiling --source <source> --slug ${SLUG}`);
   expect((await readSyncStatus(engine, f.sourceId, { detail: false })).holds.find(h => h.path === FILE)).toMatchObject({ fault_code: 'page_body_rows_unreadable', needs_human: true,
     safe_actions: ['repair'], fix: { argv: ['gbrain', 'repair', 'segmented-tiling', '--source', f.sourceId, '--slug', SLUG] } });
 
@@ -281,7 +281,7 @@ test('#8504: an archived source is never listed, a multi-source fix names a sour
   const both = await segmentedTilingCheck(engine, [f.sourceId, g.sourceId]);
   const [firstSource, otherSource] = [f.sourceId, g.sourceId].sort();
   expect(both.fix?.argv).toEqual(['gbrain', 'repair', 'segmented-tiling', '--source', firstSource]);
-  expect(both.fix?.why).toContain(`gbrain repair segmented-tiling --source ${otherSource}`);
+  expect(both.fix?.why).toContain(`foresights repair segmented-tiling --source ${otherSource}`);
 
   const limited = await survey(engine, { source_id: f.sourceId, slugs: [] }, 1);
   expect([limited.pages.length + limited.held, limited.truncated]).toEqual([1, true]);

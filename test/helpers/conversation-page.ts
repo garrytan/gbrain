@@ -3,7 +3,7 @@
  * large-page tests and `scripts/bench-large-pages.ts`): day headers, speaker
  * turns between placeholder names, paragraphs of varied length, now and then a
  * fenced code block, and an optional unique needle word at chosen fractions of
- * the body. No gbrain fences, NUL bytes or real names. Deterministic per seed.
+ * the body. No foresights fences, NUL bytes or real names. Deterministic per seed.
  */
 const WORDS = ['launch', 'pricing', 'roadmap', 'hiring', 'metrics', 'retention', 'design', 'latency', 'budget', 'customer',
   'review', 'deploy', 'support', 'contract', 'migration', 'onboarding', 'feedback', 'forecast', 'incident', 'partner'];

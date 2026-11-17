@@ -56,11 +56,11 @@ for (const kind of testBackends()) {
       const suggestion = error!.suggestion;
       expect(suggestion.startsWith(WRITER_INSPECTION_HINT)).toBe(true);
       expect(suggestion).toContain(`Blocking effect ${effect.id} (kind embedding, state queued) for source effects-example, page notes/stuck, request ${published.request_id}.`);
-      expect(suggestion).toContain('Inspect it with: gbrain sources writer status effects-example --json.');
-      expect(suggestion).toContain('gbrain repair embedding-effects --source effects-example (preview first, then --apply)');
+      expect(suggestion).toContain('Inspect it with: foresights sources writer status effects-example --json.');
+      expect(suggestion).toContain('foresights repair embedding-effects --source effects-example (preview first, then --apply)');
 
       const expected = { effect_id: effect.id, kind: 'embedding', state: 'queued', recovering: false, source_id: 'effects-example',
-        slug: 'notes/stuck', request_id: published.request_id, inspect: 'gbrain sources writer status effects-example --json' };
+        slug: 'notes/stuck', request_id: published.request_id, inspect: 'foresights sources writer status effects-example --json' };
       expect(await listBlockingEffects(engine, { sourceId: 'effects-example', limit: 5 })).toEqual([expect.objectContaining(expected)]);
       expect(await listBlockingEffects(engine, { sourceId: 'default' })).toEqual([]);
       const status = await runPersistenceAdministration(engine, 'writer_status', {});
@@ -77,7 +77,7 @@ for (const kind of testBackends()) {
       expect(error?.code).toBe('writer_not_quiesced');
       expect(error!.suggestion.startsWith(WRITER_INSPECTION_HINT)).toBe(true);
       expect(error!.suggestion).toContain(`Blocking request ${admitted.request_id} (put_page, queued) for source queued-example, page notes/queued.`);
-      expect(error!.suggestion).toContain('Inspect it with: gbrain sources writer status queued-example --json.');
+      expect(error!.suggestion).toContain('Inspect it with: foresights sources writer status queued-example --json.');
     });
   });
 }

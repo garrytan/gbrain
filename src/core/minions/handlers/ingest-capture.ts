@@ -113,13 +113,13 @@ function captureSlug(jobSlug: unknown, event: IngestionEvent): string {
 
 /**
  * GST-2113: a webhook capture writes only inside its credential's write source. When that source is archived, unregistered
- * or removed after the 202, default may be outside the grant, so the job refuses (kept for gbrain jobs retry) instead of
+ * or removed after the 202, default may be outside the grant, so the job refuses (kept for foresights jobs retry) instead of
  * writing there. Other captures keep the default fallback.
  */
 function refuseWebhookFallback(webhookWrite: boolean, slug: string, fallback: NonNullable<IngestCaptureResult['source_fallback']>): void {
   if (!webhookWrite) return;
   throw opError('source_changed', `The webhook capture for ${slug} was not written: its write source ${fallback.requested} is ${fallback.reason === 'archived' ? 'archived' : 'no longer registered'}, and a capture never falls back to default, which its credential may not be granted.`,
-    `Restore source ${fallback.requested} and run gbrain jobs retry on this job, or send the capture again with a credential whose write source is live.`,
+    `Restore source ${fallback.requested} and run foresights jobs retry on this job, or send the capture again with a credential whose write source is live.`,
     { detail: 'webhook_source_unavailable' });
 }
 
@@ -148,7 +148,7 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   // refusal (or before the binding) is refused here at write time, since the capture cannot keep the page to the member.
   if (authority.principal && await defaultSourceMemberWriter(engine, authority)) {
     throw opError('permission_denied', `A capture from a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads, is refused: its page would land where other members and unbound credentials read.`,
-      'Write through the MCP put_page op, which keeps a new page to its member, or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).');
+      'Write through the MCP put_page op, which keeps a new page to its member, or ask the brain operator to grant this credential its own write source that is not federated (foresights auth rescope --sources <private-source>,default).');
   }
   // GST-2112: the snapshot is read before the visibility check, so the revision returned (which binds the write) is
   // never older than the state the writer was authorized against.
@@ -159,7 +159,7 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   // drops readable_by from a page that names readers, and the readers it names keep the writer.
   const frontmatter = parseMarkdown(content, target + '.md', { validate: true }).frontmatter;
   await remoteLabelsChecked(engine, authority, target, stored?.page, { parsedPage: { frontmatter } });
-  // A page the revision backfill has not reached has no revision to bind the write to: refused, kept in the job row for `gbrain jobs retry`.
+  // A page the revision backfill has not reached has no revision to bind the write to: refused, kept in the job row for `foresights jobs retry`.
   if (stored?.revision === REVISION_BACKFILL_PENDING) throw new RevisionBackfillPendingError(null);
   return stored?.revision ?? null;
 }
@@ -216,7 +216,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     if (!isText && !isTombstone) {
       // Binary content without a processor would land as a path-string
       // page, which isn't useful. Surface as job-level error so the
-      // operator sees the gap in `gbrain doctor` and can decide whether
+      // operator sees the gap in `foresights doctor` and can decide whether
       // to install the appropriate skillpack-distributed processor.
       throw new Error(
         `ingest_capture: content_type '${event.content_type}' requires a content-type ` +
@@ -228,7 +228,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
 
     // noEmbed defaults to true. Mirrors the sync handler's pattern:
     // embed runs as a separate Minion job (autopilot's embed phase OR an
-    // explicit `gbrain embed --stale`). Callers can opt in to inline embed
+    // explicit `foresights embed --stale`). Callers can opt in to inline embed
     // by passing { noEmbed: false } in job.data.
     const noEmbed = (data as { noEmbed?: unknown }).noEmbed !== false;
 
@@ -294,7 +294,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     const captured = (status: IngestCaptureResult['status'], chunks: number): IngestCaptureResult => ({ slug, status, chunks,
       untrusted_payload: untrustedPayload, source_kind: event.source_kind, source_uri: event.source_uri, ...(sourceFallback ? { source_fallback: sourceFallback } : {}) });
     // GST-1856: a capture applies once per job idempotency key. A later run of the key (a stalled attempt re-run after
-    // its write landed, a POST /ingest replayed after `gbrain jobs prune`) returns the first run's result and writes
+    // its write landed, a POST /ingest replayed after `foresights jobs prune`) returns the first run's result and writes
     // nothing, so it never reverts a newer edit. Tombstones and jobs queued without a key keep their old behavior.
     const appliedKey = !isTombstone && job.idempotency_key ? job.idempotency_key : null;
     const managedOutcome = (outcome: { noop?: boolean; chunks?: number }) => captured(outcome.noop ? 'skipped' : 'imported', Number(outcome.chunks ?? 0));
@@ -361,7 +361,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // replace an existing page); a write landing in between refuses revision_conflict and the job retries.
       // GST-1856: each run of a keyed capture sends a new request_id under the capture's prefix, so the applied check above
       // finds a committed run in the door's journal even when the worker died before recording it. The id is new per run
-      // because a stall re-run keeps attempts_made and `gbrain jobs retry` resets it: an id reused for an earlier request
+      // because a stall re-run keeps attempts_made and `foresights jobs retry` resets it: an id reused for an earlier request
       // that failed would replay that failure instead of writing. Another run of the key can commit after the check above
       // (a stalled original resuming after its re-run), so the check repeats after the snapshot read: any edit that
       // snapshot holds then post-dates a committed run, and expected_revision refuses a run committing after it.

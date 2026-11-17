@@ -154,7 +154,7 @@ describe('doctor wedged_queue under an autopilot pause (#7966)', () => {
     const check = await withEnv({ GBRAIN_HOME: brainHome(OPERATOR) }, () => computeWedgedQueueCheck(pgLike(), { readWorkers: liveWorker }));
     expect(check.status).toBe('warn');
     expect(check.message).toContain("'default'");
-    expect(check.message).toContain('gbrain autopilot resume');
+    expect(check.message).toContain('foresights autopilot resume');
     expect(check.message).not.toContain('supervisor stop');
     expect(check.details).toMatchObject({ paused: 'operator', wedged_queues: 1 });
   });

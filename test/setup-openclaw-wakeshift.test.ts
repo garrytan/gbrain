@@ -1,5 +1,5 @@
 /**
- * \`gbrain setup openclaw --wakeshift\` (Wakeshift plan D11) with an injected command runner: no test runs openclaw.
+ * \`foresights setup openclaw --wakeshift\` (Wakeshift plan D11) with an injected command runner: no test runs openclaw.
  * After consent (persistent install, egress) it runs exactly OpenClaw's pinned npm install and enable, then
  * inspects; a gateway that listens beyond this computer gets Wakeshift's allowNetworkHooks question printed and
  * never answered; no openclaw on PATH refuses with a fix line. Doctor's wakeshift_openclaw check compares the
@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 afterEach(() => { console.log = orig.log; console.error = orig.error; process.stdout.write = orig.out; process.stderr.write = orig.err; });
 
-describe('gbrain setup openclaw --wakeshift', () => {
+describe('foresights setup openclaw --wakeshift', () => {
   test('the pinned version lives in one constant and the commands are exactly OpenClaw\'s documented install', () => {
     expect(WAKESHIFT_OPENCLAW_VERSION).toBe('1.4.31');
     expect(wakeshiftOpenclawInstallArgv(BIN)).toEqual([INSTALL, ENABLE]);
@@ -67,7 +67,7 @@ describe('gbrain setup openclaw --wakeshift', () => {
     expect(out + err).toContain('confirmation_required');
   });
 
-  test('a gateway that listens beyond this computer gets Wakeshift\'s question, and gbrain never sets allowNetworkHooks', async () => {
+  test('a gateway that listens beyond this computer gets Wakeshift\'s question, and foresights never sets allowNetworkHooks', async () => {
     writeFileSync(join(stateDir, 'openclaw.json'), '{ gateway: { bind: "lan" } }');
     const code = await setup(['--yes'], { openclaw: { bin: BIN, run: runner() } });
     expect(code).toBe(0);
@@ -103,7 +103,7 @@ describe('gbrain setup openclaw --wakeshift', () => {
     const code = await withEnv(env, () => runSetup(['claude-code', '--wakeshift', '--yes'], { openclaw: { bin: BIN, run: runner() } }));
     expect(code).not.toBe(0);
     expect(ran).toEqual([]);
-    expect(err).toContain('applies to gbrain setup openclaw only');
+    expect(err).toContain('applies to foresights setup openclaw only');
   });
 });
 
@@ -113,7 +113,7 @@ describe('doctor wakeshift_openclaw', () => {
   test('warns on drift from the pinned version, ok when it matches, info when not installed, silent without openclaw', async () => {
     const [drift] = await runWakeshiftOpenclawCheck(null, { bin: BIN, run: inspect('1.4.30') });
     expect(drift).toMatchObject({ name: 'wakeshift_openclaw', status: 'warn' });
-    expect(drift!.message).toContain('gbrain setup openclaw --wakeshift');
+    expect(drift!.message).toContain('foresights setup openclaw --wakeshift');
     expect((await runWakeshiftOpenclawCheck(null, { bin: BIN, run: inspect('1.4.31') }))[0]).toMatchObject({ status: 'ok' });
     expect((await runWakeshiftOpenclawCheck(null, { bin: BIN, run: inspect(null) }))[0]).toMatchObject({ status: 'ok', severity: 'info' });
     expect(await runWakeshiftOpenclawCheck(null, { bin: null, run: inspect('1.4.30') })).toEqual([]);

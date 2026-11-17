@@ -40,21 +40,21 @@ describe('#6712 PR 2 L4: the fault table and source_changed routing', () => {
       expect(verdict).toMatchObject({ class: 'page', safe_actions: ['none'], needs_human: true });
       expect(verdict.human_reason).not.toContain('Unknown code');
     }
-    expect(classifySyncFault({ code: 'purged_content' }).human_reason).toContain('gbrain pages unpurge');
+    expect(classifySyncFault({ code: 'purged_content' }).human_reason).toContain('foresights pages unpurge');
     expect(classifySyncFault({ code: 'write_gate_rejected' }).human_reason).toContain('write_gate.external_mode');
   });
 
   test('source_changed routes by its recorded reason', () => {
     expect(classifySyncFault({ code: 'source_changed', detail: 'file_database_drift' })).toMatchObject({ class: 'page', safe_actions: ['reconcile'], needs_human: true,
-      human_reason: expect.stringContaining('gbrain repair file-drift') });
+      human_reason: expect.stringContaining('foresights repair file-drift') });
     expect(classifySyncFault({ code: 'source_changed', detail: 'canonical_file_missing' })).toMatchObject({ class: 'page', safe_actions: ['repair'], needs_human: true,
-      human_reason: expect.stringContaining('gbrain repair ghost-pages') });
+      human_reason: expect.stringContaining('foresights repair ghost-pages') });
     for (const detail of ['pending_import', 'raw_file_changed', 'pinned_git_worktree_conflict']) {
       expect(classifySyncFault({ code: 'source_changed', detail })).toMatchObject({ class: 'page', safe_actions: ['retry'], needs_human: false });
     }
     for (const detail of ['source_binding_changed', 'unsafe_file_target']) {
       expect(classifySyncFault({ code: 'source_changed', detail })).toMatchObject({ class: 'systemic', safe_actions: ['none'], needs_human: true,
-        human_reason: expect.stringContaining('gbrain sources writer status') });
+        human_reason: expect.stringContaining('foresights sources writer status') });
     }
     const base = { source_id: 'src', slug: 'notes/a', operation: 'put_page', state: 'conflict', error_code: 'source_changed', recovery: null, blocked_reason: null, compacted: true };
     const drift = classifyTerminal({ ...base, error_detail: { reason: 'file_database_drift' } })!;

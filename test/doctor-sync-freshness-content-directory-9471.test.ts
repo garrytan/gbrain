@@ -1,9 +1,9 @@
 /**
- * #9471: a second source registered on a plain folder inside gbrain's own content directory (beside the default
- * source's root) is one sync refuses with `sync_not_applicable`: gbrain owns that directory, there are no Git commits
- * to sync, and the refusal names `gbrain import` instead. `gbrain sources add` writes no content-setup record for it
- * (only `gbrain init` does, for the root it creates), so doctor's writer-owned exemption never covered it and
- * sync_freshness failed it with "no successful sync recorded; run gbrain sync --source <id>" - a command that refuses
+ * #9471: a second source registered on a plain folder inside foresights's own content directory (beside the default
+ * source's root) is one sync refuses with `sync_not_applicable`: foresights owns that directory, there are no Git commits
+ * to sync, and the refusal names `foresights import` instead. `foresights sources add` writes no content-setup record for it
+ * (only `foresights init` does, for the root it creates), so doctor's writer-owned exemption never covered it and
+ * sync_freshness failed it with "no successful sync recorded; run foresights sync --source <id>" - a command that refuses
  * that source. Doctor now asks the same question sync and the automatic sync schedulers ask, so the source is counted
  * as one where sync does not apply and no sync is recommended for it. A plain folder outside the content directory is
  * still judged, because sync imports it.
@@ -44,15 +44,15 @@ async function syncRefusal(id: string): Promise<string | null> {
   return assertSyncApplicable(engine, { sourceId: id }).then(() => null, (error: unknown) => error instanceof OperationError ? error.code : String(error));
 }
 
-describe('#9471 a source inside gbrain\'s content directory', () => {
+describe('#9471 a source inside foresights\'s content directory', () => {
   test('sync refuses it, and doctor neither fails it nor recommends that sync, locally or for a remote caller', () => inHome(async () => {
     await addSource('hr-example', join(home, '.gbrain', 'content', 'brain-example', 'hr-example'));
     expect(await syncRefusal('hr-example')).toBe('sync_not_applicable');
     for (const localOnly of [true, false]) {
       const check = await checkSyncFreshness(engine, { localOnly, sourceIds: ['hr-example'] });
       expect(check.status).toBe('ok');
-      expect(check.message).not.toContain('gbrain sync');
-      expect(check.message).toContain('gbrain import <dir> --source hr-example');
+      expect(check.message).not.toContain('foresights sync');
+      expect(check.message).toContain('foresights import <dir> --source hr-example');
       expect(check.fix).toBeUndefined();
       expect(check.details).toMatchObject({ stale_count: 0, content_directory_count: 1 });
     }
@@ -63,7 +63,7 @@ describe('#9471 a source inside gbrain\'s content directory', () => {
     expect(await syncRefusal('notes-example')).toBeNull();
     const check = await checkSyncFreshness(engine, { localOnly: true, sourceIds: ['notes-example'] });
     expect(check.status).toBe('fail');
-    expect(check.message).toContain('gbrain sync --source notes-example');
+    expect(check.message).toContain('foresights sync --source notes-example');
     expect(check.details).toMatchObject({ stale_count: 1 });
   }));
 });

@@ -1,7 +1,7 @@
 /**
  * Thin-client version-skew fixture (amendment 26 / ENG-20).
  *
- * A NEW thin-client `gbrain status` against an OLD brain server: the
+ * A NEW thin-client `foresights status` against an OLD brain server: the
  * schema_version-1 `get_status_snapshot` payload carries no workers/queue
  * keys. The client must degrade those sections to a graceful
  * "upgrade the remote" marker — never crash, never render the misleading
@@ -65,7 +65,7 @@ describe('OLD server (schema_version 1 — no workers/queue keys)', () => {
     applyRemoteSnapshot(report, v1Payload, wantAll);
     const out = renderHuman(report);
     expect(out).toContain('predates snapshot v2');
-    expect(out).toContain('upgrade the remote gbrain');
+    expect(out).toContain('upgrade the remote foresights');
     expect(out).not.toContain('N/A on remote brain');
   });
 });

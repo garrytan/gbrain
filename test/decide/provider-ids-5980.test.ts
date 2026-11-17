@@ -11,7 +11,7 @@
  * $0 against the daily and remote-share budgets (`usageCostUsd(...) ?? 0`).
  * An unpriced id is refused BEFORE transport with `unpriced_model` unless the
  * operator registered a price (`pricing.overrides`, written by
- * `gbrain pricing set`); the spend ledger never records $0 for an unknown
+ * `foresights pricing set`); the spend ledger never records $0 for an unknown
  * cost. Pinned here with NO outer budget tracker, so the decide-level policy
  * itself is what protects the budgets.
  */
@@ -156,7 +156,7 @@ describe('[R18] unpriced-model policy, with no outer budget tracker', () => {
 
   test('unpriced_model is a catalogued refusal and a receipt skip reason', () => {
     expect(SKIP_REASONS).toContain('unpriced_model');
-    expect(REFUSAL_CATALOG.unpriced_model?.fix).toContain('gbrain pricing set');
+    expect(REFUSAL_CATALOG.unpriced_model?.fix).toContain('foresights pricing set');
     expect(REFUSAL_CATALOG.unpriced_model?.anchor).toBe('#unpriced_model');
   });
 });

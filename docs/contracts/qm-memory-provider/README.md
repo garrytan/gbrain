@@ -1,6 +1,6 @@
 # QM memory-provider contract
 
-`v1.json` is the contract between gbrain and QM's memory provider: the two tools
+`v1.json` is the contract between foresights and QM's memory provider: the two tools
 (`memory_recall`, `memory_write`) with their argument schemas, output shapes and
 limits, the `x-qm-actor` header and actor id pattern, every error code and
 `actor_not_attested` reason with its fix, the operations not attestable yet, and

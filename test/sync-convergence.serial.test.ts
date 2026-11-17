@@ -19,8 +19,8 @@
  *       cycling a `--no-delegate` client, a resident serve running a delegated
  *       catch-up, and a serve together with the client delegating to it;
  *   (c) concurrent writers through the coordinator during the kill loop:
- *       `gbrain put` rewrites, `remember` facts on an entity page and a managed
- *       maintenance job (`gbrain extract timeline --source db`);
+ *       `foresights put` rewrites, `remember` facts on an entity page and a managed
+ *       maintenance job (`foresights extract timeline --source db`);
  *   (c-db) a DB-only competitor: a DB-only write racing a file change of the
  *       same page ends as a named `concurrent_write` hold with both versions
  *       kept; a DB-only write to a page whose file did not change converges;
@@ -36,7 +36,7 @@
  *       plain sync converges once the trigger is gone.
  *
  * Every scenario then gets a fresh serve (what a supervisor restarts) and at
- * most MAX_RECOVERY_RUNS plain `gbrain sync --no-pull` runs, with no operator
+ * most MAX_RECOVERY_RUNS plain `foresights sync --no-pull` runs, with no operator
  * step; only exit 0 with outcome `synced` counts. The oracle tests are named by
  * the persistence gate's violation class: disk == database for every page
  * (except the pages a mode's end state names: a ghost, a held page); no request
@@ -45,7 +45,7 @@
  * page keeps every fence fact; the acknowledged-write ledger (every writer
  * operation that returned success, recorded here independently of the brain)
  * survives or is causally superseded by a later acknowledged write; and
- * `gbrain sync status --json` reports the converged state with every field the
+ * `foresights sync status --json` reports the converged state with every field the
  * operator loop reads present.
  *
  * Every random choice comes from GBRAIN_TEST_CONVERGENCE_SEED (default 6650), and
@@ -154,7 +154,7 @@ const OWNER_KILL_STALL_BOUND_S = (CONSUMER_LIVE_MS + CONSUMER_RENEWAL_MS + 30_00
 
 // ---------------------------------------------------------------- the writers of mode (c)
 
-/** Rewrites notes through the coordinator (`gbrain put`), remembers facts on the entity page and runs the managed timeline maintenance job until `stop`. */
+/** Rewrites notes through the coordinator (`foresights put`), remembers facts on the entity page and runs the managed timeline maintenance job until `stop`. */
 async function runWriters(b: Brain, putTargets: string[], stop: () => boolean): Promise<string[]> {
   const results: string[] = [];
   const put = async () => {
@@ -481,7 +481,7 @@ scenario(['d'], 'committed git mv/git rm mid-run converge; an uncommitted deleti
     const next = JSON.stringify(ghostScan?.next ?? []);
     b.verdict([
       ...(JSON.stringify(listed) === JSON.stringify([...ghosts].sort()) ? [] : [`pages ghosts lists [${listed.join(', ')}], expected [${[...ghosts].sort().join(', ')}]`]),
-      ...(next.includes(`gbrain repair ghost-pages --source ${SOURCE}`) ? [] : [`pages ghosts next does not name gbrain repair ghost-pages: ${next}`]),
+      ...(next.includes(`foresights repair ghost-pages --source ${SOURCE}`) ? [] : [`pages ghosts next does not name foresights repair ghost-pages: ${next}`]),
     ]);
   });
 });

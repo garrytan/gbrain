@@ -1,7 +1,7 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 /**
- * gbrain sources-ops — pure async functions for source-management operations
+ * foresights sources-ops — pure async functions for source-management operations
  * (v0.28). Extracted from src/commands/sources.ts so the CLI handlers and the
  * MCP ops (sources_add / list / remove / status) share one implementation.
  *
@@ -104,7 +104,7 @@ export interface SourceRow {
   created_at: Date;
   /**
    * v0.40.3.0: per-source CR mode override. NULL falls through to global
-   * mode bundle. Written only by `gbrain sources set-cr-mode <id> <mode>`
+   * mode bundle. Written only by `foresights sources set-cr-mode <id> <mode>`
    * (CLI-write-only per D15 security gate); MCP / OAuth callers cannot
    * mutate this field.
    */
@@ -112,7 +112,7 @@ export interface SourceRow {
   /**
    * v0.40.3.0: per-source mount-frontmatter trust gate (D15). FALSE for
    * mounted sources by default. Flipped via
-   * `gbrain mounts trust-frontmatter <id>`. Host source (id='default') is
+   * `foresights mounts trust-frontmatter <id>`. Host source (id='default') is
    * always trusted in the resolver regardless of this column value.
    */
   trust_frontmatter_overrides?: boolean;
@@ -124,7 +124,7 @@ export interface SourceListEntry {
   local_path: string | null;
   remote_url: string | null;
   federated: boolean;
-  /** Persisted `config.strategy` (`gbrain sources set-strategy`); null means sync falls back to 'markdown'. */
+  /** Persisted `config.strategy` (`foresights sources set-strategy`); null means sync falls back to 'markdown'. */
   strategy: SyncStrategy | null;
   page_count: number;
   last_sync_at: string | null;
@@ -192,7 +192,7 @@ export interface AddSourceOpts {
   /**
    * v0.47: register a google-kind source (Gmail/Calendar/Contacts sync).
    * API-backed like github; credentials come from the vault
-   * (`gbrain google connect`), and `account` is only a pointer into it —
+   * (`foresights google connect`), and `account` is only a pointer into it —
    * no secret ever lands in sources.config. See src/core/google/google-source.ts.
    */
   google?: {
@@ -212,7 +212,7 @@ export interface AddSourceOpts {
     loopsExcludeLabels?: string[];
     /** Managed dir where pages are materialized. */
     dir: string;
-    /** Token acquisition: gbrain vault (default), a token-printing command, or an env var. */
+    /** Token acquisition: foresights vault (default), a token-printing command, or an env var. */
     access?: 'vault' | 'command' | 'env';
     tokenCommand?: string;
     tokenEnv?: string;
@@ -259,7 +259,7 @@ function shellQuote(arg: string): string {
 
 /**
  * Validate via the canonical regex from `source-id.ts` but rethrow as the
- * sources-ops-tagged error so `gbrain sources add` keeps its user-facing
+ * sources-ops-tagged error so `foresights sources add` keeps its user-facing
  * SourceOpError shape. The regex itself is in one place; only the error
  * envelope differs per caller.
  */
@@ -358,16 +358,16 @@ export function unownedHint(
   if (state === 'healthy') {
     return (
       `Source "${src.id}" has config.remote_url set but local_path ${path} is not a ` +
-      `clone gbrain created. gbrain syncs it read-only and will never re-clone or delete ` +
-      `it. To silence this, drop config.remote_url, or re-register with --url so gbrain ` +
+      `clone foresights created. foresights syncs it read-only and will never re-clone or delete ` +
+      `it. To silence this, drop config.remote_url, or re-register with --url so foresights ` +
       `owns the clone.`
     );
   }
   return (
     `Source "${src.id}" has config.remote_url set but local_path ${path} is not a clone ` +
-    `gbrain created and is not a usable git repo (state: ${state}). gbrain will NOT ` +
+    `foresights created and is not a usable git repo (state: ${state}). foresights will NOT ` +
     `re-clone over it (it is your working tree, not a gbrain-managed mirror). Restore the ` +
-    `directory yourself, or remove + re-add the source with --url to let gbrain manage the ` +
+    `directory yourself, or remove + re-add the source with --url to let foresights manage the ` +
     `clone.`
   );
 }
@@ -407,7 +407,7 @@ export async function assertNoOverlappingPath(
   const realPath = real(path);
   for (const other of others) {
     const b = other.local_path;
-    // #7630: a relative local_path names whatever directory gbrain runs from, never a tree, so it overlaps nothing.
+    // #7630: a relative local_path names whatever directory foresights runs from, never a tree, so it overlaps nothing.
     if (!isAbsolute(b)) continue;
     if (overlaps(path, b) || overlaps(realPath, real(b))) {
       throw new SourceOpError(
@@ -421,13 +421,13 @@ export async function assertNoOverlappingPath(
 
 /**
  * #2707: `--path` registration used to accept any existing directory with
- * zero git validation, deferring the failure to the first `gbrain sync`
+ * zero git validation, deferring the failure to the first `foresights sync`
  * ("Not inside a git repository: ..."). By the time that surfaces the
  * source has already been silently stale for however long nobody read the
  * sync logs. This is registration-time, fail-fast validation ONLY — it
  * never auto-`git init`s the directory (that would cross the consent
  * boundary #2967 established for sync-time self-heal: a `--path` source is
- * the user's own external directory, and gbrain must not mutate it without
+ * the user's own external directory, and foresights must not mutate it without
  * explicit ask). Callers who want to register before git-init exists opt in
  * via `force: true` (CLI: `--force`).
  */
@@ -465,7 +465,7 @@ export async function addSource(
   await assertUnmanagedCanonicalWriter(engine, 'sources add');
   validateSourceId(opts.id);
 
-  // gbrain#2955: normalize a Git Bash / MSYS drive path (`/c/Users/x`,
+  // foresights#2955: normalize a Git Bash / MSYS drive path (`/c/Users/x`,
   // `/cygdrive/c/x`) to native Windows form BEFORE the overlap check and the
   // INSERT — otherwise the recorded local_path later join-resolves to a
   // phantom `C:\c\Users\x` and sync/write-through silently miss the real
@@ -509,8 +509,8 @@ export async function addSource(
     `SELECT id, local_path FROM sources WHERE id = $1`,
     [opts.id],
   );
-  // #3903: attach, don't collide. `gbrain sync --source X` on a path-less
-  // source prints "Run: gbrain sources add X --path <path>" — so when the
+  // #3903: attach, don't collide. `foresights sync --source X` on a path-less
+  // source prints "Run: foresights sources add X --path <path>" — so when the
   // existing row has NO local_path and the caller supplies exactly a --path
   // (no --url, no --kind github), treat this as attaching a working tree to
   // the existing row (non-destructive UPDATE) instead of demanding
@@ -529,7 +529,7 @@ export async function addSource(
     throw new SourceOpError(
       'source_id_taken',
       `Source id "${opts.id}" is already registered${pathNote}. ` +
-        `To replace it, run 'gbrain sources remove ${opts.id} --confirm-destructive' ` +
+        `To replace it, run 'foresights sources remove ${opts.id} --confirm-destructive' ` +
         `first, then re-add — WARNING: remove permanently deletes every page ` +
         `imported for this source.`,
     );
@@ -573,7 +573,7 @@ export async function addSource(
     }
 
     // managed_clone:true is the ownership marker (#1881). It authorizes
-    // recloneIfMissing to rm+replace this clone — gbrain created it, here or at
+    // recloneIfMissing to rm+replace this clone — foresights created it, here or at
     // a --clone-dir path. A user-tree row (created by an external INSERT, no
     // --url) never carries this, so it can never be deleted by reclone.
     const config: Record<string, unknown> = { remote_url: parsedUrl.url, managed_clone: true };
@@ -726,7 +726,7 @@ export async function addSource(
       throw new SourceOpError(
         'not_a_git_repo',
         `"${opts.localPath}" is not a git repository with committed, tracked files ` +
-          `(or a subdirectory of one). GBrain sync requires every --path source to ` +
+          `(or a subdirectory of one). Foresights sync requires every --path source to ` +
           `be git-initialized, with the files actually committed — an empty commit ` +
           `is not enough (the walker reads through git objects, so untracked files ` +
           `stay invisible). Fix: \`git -C ${q} init && git -C ${q} add -A && ` +
@@ -809,7 +809,7 @@ export async function resolveDefaultSource(engine: BrainEngine): Promise<string>
   const sources = await listSources(engine);
   if (sources.length === 0) {
     throw new SourceResolutionError(
-      'no sources registered; run `gbrain sources add` first',
+      'no sources registered; run `foresights sources add` first',
       'no_sources',
       [],
     );
@@ -999,7 +999,7 @@ export async function removeSource(
   const remoteUrl = getRemoteUrl(src.config);
   const ghCfg = (typeof src.config === 'string' ? JSON.parse(src.config) : (src.config ?? {})) as Record<string, unknown>;
   // v0.46: github-kind mirrors at the default clone location are owned by
-  // gbrain (gh_managed marker) and get the same cleanup as --url clones.
+  // foresights (gh_managed marker) and get the same cleanup as --url clones.
   const ghManaged = ghCfg.kind === 'github' && ghCfg.gh_managed === true;
   // v0.47: google-kind mirrors mark g_managed the same way.
   const gManaged = ghCfg.kind === 'google' && ghCfg.g_managed === true;
@@ -1010,13 +1010,13 @@ export async function removeSource(
     cloneSkippedReason = 'relative_path';
     const cloneDir = defaultCloneDir(opts.id);
     console.error(
-      `[gbrain] WARN: clone cleanup skipped for "${opts.id}": its stored local_path "${src.local_path}" is not absolute on this host, so it would name the current directory. ` +
-      (existsSync(cloneDir) ? `gbrain's clone directory for this source is ${cloneDir}; delete it by hand if you still want it gone (a later sources add ${opts.id} --url refuses while it holds files).` : 'Delete the clone by hand if you still want it gone.'),
+      `[foresights] WARN: clone cleanup skipped for "${opts.id}": its stored local_path "${src.local_path}" is not absolute on this host, so it would name the current directory. ` +
+      (existsSync(cloneDir) ? `foresights's clone directory for this source is ${cloneDir}; delete it by hand if you still want it gone (a later sources add ${opts.id} --url refuses while it holds files).` : 'Delete the clone by hand if you still want it gone.'),
     );
   } else if (
     !opts.keepStorage &&
     src.local_path &&
-    (remoteUrl || ghManaged || gManaged) && // only auto-clean when gbrain managed the dir
+    (remoteUrl || ghManaged || gManaged) && // only auto-clean when foresights managed the dir
     isPathContained(src.local_path, cloneRoot)
   ) {
     try {
@@ -1037,7 +1037,7 @@ export async function removeSource(
       // Don't fail the whole remove if rmSync had a permission hiccup — log
       // and continue. The DB row deletion is the user-facing operation.
       console.error(
-        `[gbrain] WARN: clone cleanup at ${src.local_path} failed: ${(e as Error).message}`,
+        `[foresights] WARN: clone cleanup at ${src.local_path} failed: ${(e as Error).message}`,
       );
     }
   }
@@ -1110,7 +1110,7 @@ export function lfsDownloadsOff(config: unknown): boolean {
 
 /**
  * Re-clone a source's remote_url into its local_path if the clone is
- * missing on disk. Used by `gbrain sources restore` after an operator
+ * missing on disk. Used by `foresights sources restore` after an operator
  * autopurged $GBRAIN_HOME/clones/. Idempotent: returns false (didn't clone)
  * if the clone is already there.
  *
@@ -1140,14 +1140,14 @@ export async function recloneIfMissing(
   if (!remoteUrl || !src.local_path) return false;
   if (!isHostAbsolutePath(src.local_path)) {
     throw new SourceOpError('unmanaged_path',
-      `Refusing to re-clone "${id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Run gbrain sources set-path ${id} <absolute-directory>, then retry.`);
+      `Refusing to re-clone "${id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Run foresights sources set-path ${id} <absolute-directory>, then retry.`);
   }
 
   const state = validateRepoState(src.local_path, remoteUrl);
   if (state === 'healthy') return false;
 
   // #1881 ownership guard — abort BEFORE any filesystem op. recloneIfMissing
-  // deletes local_path; gbrain may only do that to a clone it created, never a
+  // deletes local_path; foresights may only do that to a clone it created, never a
   // user working tree. A row with remote_url + an unowned local_path (the
   // gstack-orchestrator federated shape) is refused here, loudly, untouched.
   if (!isOwnedClone(src)) {
@@ -1185,9 +1185,9 @@ export async function recloneIfMissing(
       // Symlink leaf guard: never rename/rm *through* a symlinked leaf — that's
       // the TOCTOU swap-in vector (an attacker plants a symlink at local_path
       // between the entry ownership check and this rename). An owned clone's leaf
-      // is a real dir gbrain created; a symlink here means tamper, so fail closed.
+      // is a real dir foresights created; a symlink here means tamper, so fail closed.
       // (Symlinked ANCESTORS are intentionally NOT rejected here: for an owned
-      // clone gbrain created the dir at this path — cloneRepo refuses a non-empty
+      // clone foresights created the dir at this path — cloneRepo refuses a non-empty
       // dest, so a pre-existing user tree can never become an owned clone — and a
       // realpath-chain check false-positives on ubiquitous system symlinks like
       // macOS /var -> /private/var. The residual DB-trust risk, a forged

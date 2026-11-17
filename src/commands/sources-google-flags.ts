@@ -1,5 +1,5 @@
 /**
- * The Google-kind tuning flags of the legacy `gbrain sources add` parser
+ * The Google-kind tuning flags of the legacy `foresights sources add` parser
  * (`--history-days`, `--future-days`, `--loops-exclude-labels`,
  * `--contacts-dir`, `--calendar-id`): one value each, validated the moment they are read.
  * The connected-source parser (sources-lifecycle-args.ts) validates the same
@@ -55,7 +55,7 @@ export function parseGoogleAddFlag(flag: string, value: string | undefined, tuni
     }
     case '--calendar-id': {
       const v = (value ?? '').trim();
-      if (!v) refuse('--calendar-id needs a value (see: gbrain google calendars).');
+      if (!v) refuse('--calendar-id needs a value (see: foresights google calendars).');
       tuning.calendarId = v;
       return true;
     }

@@ -188,7 +188,7 @@ describe('opencode workspace lane — default scope is USER-GLOBAL', () => {
       type: string; command: string[]; environment: Record<string, string>; enabled: boolean;
     };
     expect(entry.type).toBe('local');
-    // user scope: gbrain's launcher, then the absolute path (#8435: opencode starts it in the session's directory)
+    // user scope: foresights's launcher, then the absolute path (#8435: opencode starts it in the session's directory)
     expect(entry.command.slice(0, 2)).toEqual([hookLauncherPath(), FAKE_BIN]);
     expect(entry.command.slice(2)).toEqual(['serve', '--surface', 'starter', '--advertise', 'verbs']);
     expect(entry.environment.GBRAIN_SOURCE).toBeDefined();
@@ -213,28 +213,28 @@ describe('opencode workspace lane — default scope is USER-GLOBAL', () => {
     const ok = await capture(() =>
       runBootstrap(['hooks', '--workspace', okWs, '--harness', 'opencode', '--gbrain-bin', FAKE_BIN], {
         runner: makeRunner().runner,
-        probeSpawn: makeProbeSpawn('┌ MCP Servers\n✓ gbrain connected\n').spawn,
+        probeSpawn: makeProbeSpawn('┌ MCP Servers\n✓ foresights connected\n').spawn,
       }),
     );
     expect(ok.result).toBe(0);
-    expect(ok.out).toContain('✓ gbrain connected');
+    expect(ok.out).toContain('✓ foresights connected');
     rmSync(okWs, { recursive: true, force: true });
 
     const badWs = await readyWs();
     const bad = await capture(() =>
       runBootstrap(['hooks', '--workspace', badWs, '--harness', 'opencode', '--gbrain-bin', FAKE_BIN], {
         runner: makeRunner().runner,
-        probeSpawn: makeProbeSpawn('┌ MCP Servers\n✗ gbrain failed\n   Executable not found in $PATH\n').spawn,
+        probeSpawn: makeProbeSpawn('┌ MCP Servers\n✗ foresights failed\n   Executable not found in $PATH\n').spawn,
       }),
     );
     expect(bad.result).toBe(0); // config parse-back is authoritative; the probe warns
-    expect(bad.err).toContain('✗ gbrain failed');
+    expect(bad.err).toContain('✗ foresights failed');
     rmSync(badWs, { recursive: true, force: true });
   });
 
   test('probe hardening: ANSI-colored output still matches, and OPENCODE_DISABLE_AUTOUPDATE=1 rides the spawn env', async () => {
     const ws = await readyWs();
-    const probe = makeProbeSpawn('\u001b[1m┌ MCP Servers\u001b[0m\n\u001b[32m✓\u001b[0m gbrain connected\n');
+    const probe = makeProbeSpawn('\u001b[1m┌ MCP Servers\u001b[0m\n\u001b[32m✓\u001b[0m foresights connected\n');
     const r = await capture(() =>
       runBootstrap(['hooks', '--workspace', ws, '--harness', 'opencode', '--gbrain-bin', FAKE_BIN], {
         runner: makeRunner().runner,
@@ -242,29 +242,29 @@ describe('opencode workspace lane — default scope is USER-GLOBAL', () => {
       }),
     );
     expect(r.result).toBe(0);
-    expect(r.out).toContain('✓ gbrain connected'); // ANSI stripped before matching
+    expect(r.out).toContain('✓ foresights connected'); // ANSI stripped before matching
     // The auto-updater kill rides the spawn's OWN env (no process.env staging).
     expect(probe.calls[0]?.env.OPENCODE_DISABLE_AUTOUPDATE).toBe('1');
     rmSync(ws, { recursive: true, force: true });
   });
 
-  test('probe hardening: a ✓ gbrain-remote row never false-positives the bare gbrain name', async () => {
+  test('probe hardening: a ✓ gbrain-remote row never false-positives the bare foresights name', async () => {
     const ws = await readyWs();
     const r = await capture(() =>
       runBootstrap(['hooks', '--workspace', ws, '--harness', 'opencode', '--gbrain-bin', FAKE_BIN], {
         runner: makeRunner().runner,
-        probeSpawn: makeProbeSpawn('┌ MCP Servers\n✓ gbrain-remote connected\n✗ gbrain failed\n').spawn,
+        probeSpawn: makeProbeSpawn('┌ MCP Servers\n✓ gbrain-remote connected\n✗ foresights failed\n').spawn,
       }),
     );
     expect(r.result).toBe(0);
-    expect(r.out).not.toContain('✓ gbrain connected'); // gbrain-remote must NOT satisfy the success match
-    expect(r.err).toContain('✗ gbrain failed');
+    expect(r.out).not.toContain('✓ foresights connected'); // gbrain-remote must NOT satisfy the success match
+    expect(r.err).toContain('✗ foresights failed');
     rmSync(ws, { recursive: true, force: true });
   });
 
   test('SECURITY: the user-scope probe spawns from a fresh EMPTY temp dir, never the workspace cwd', async () => {
     const ws = await readyWs();
-    const probe = makeProbeSpawn('┌ MCP Servers\n✓ gbrain connected\n');
+    const probe = makeProbeSpawn('┌ MCP Servers\n✓ foresights connected\n');
     const r = await capture(() =>
       runBootstrap(['hooks', '--workspace', ws, '--harness', 'opencode', '--gbrain-bin', FAKE_BIN], {
         runner: makeRunner().runner,
@@ -312,7 +312,7 @@ describe('opencode workspace lane — explicit project opt-in', () => {
   test('MCP_SCOPE=project → workspace opencode.json, PATH-resolved command, SHARING WARNING, live probe SKIPPED', async () => {
     const ws = await readyWs({ scope: 'project' });
     const { runner } = makeRunner();
-    const probe = makeProbeSpawn('┌ MCP Servers\n✓ gbrain connected\n');
+    const probe = makeProbeSpawn('┌ MCP Servers\n✓ foresights connected\n');
     const r = await capture(() =>
       runBootstrap(['hooks', '--workspace', ws, '--harness', 'opencode', '--gbrain-bin', FAKE_BIN], {
         runner,
@@ -356,7 +356,7 @@ describe('opencode workspace lane — explicit project opt-in', () => {
     const state = JSON.parse(readFileSync(statePath, 'utf8')) as { answers: Record<string, unknown> };
     state.answers.MCP_SCOPE = { value: ' project ' };
     writeFileSync(statePath, JSON.stringify(state, null, 2));
-    const probe = makeProbeSpawn('┌ MCP Servers\n✓ gbrain connected\n');
+    const probe = makeProbeSpawn('┌ MCP Servers\n✓ foresights connected\n');
     const r = await capture(() =>
       runBootstrap(['hooks', '--workspace', ws, '--harness', 'opencode', '--gbrain-bin', FAKE_BIN], {
         runner: makeRunner().runner,
@@ -386,7 +386,7 @@ describe('opencode never-narrow: a rewritten entry keeps its surface form', () =
   }
 
   test('a pinned --surface stays pinned, a bare serve stays bare, an explicit --surface wins', async () => {
-    // A rewrite also moves the entry onto gbrain's launcher (#8435).
+    // A rewrite also moves the entry onto foresights's launcher (#8435).
     const L = hookLauncherPath();
     expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'full'])).toEqual([L, FAKE_BIN, 'serve', '--surface', 'full']);
     // S0: starter differs from the registration default (full), so keeping it is observable.
@@ -398,7 +398,7 @@ describe('opencode never-narrow: a rewritten entry keeps its surface form', () =
 });
 
 describe('opencode two-filename WRITE reconcile (sibling global file)', () => {
-  test('a gbrain LOCAL entry in the SIBLING global file is cleaned when the write lands in the other (note printed)', async () => {
+  test('a foresights LOCAL entry in the SIBLING global file is cleaned when the write lands in the other (note printed)', async () => {
     const ws = await readyWs();
     const ocDir = join(xdg, 'opencode');
     rmSync(ocDir, { recursive: true, force: true });
@@ -539,7 +539,7 @@ describe('opencode ownership arbitration', () => {
 });
 
 describe('opencode uninstall sweep', () => {
-  /** Workspace with an ISOLATED gbrain home INSIDE it (uninstall's HOME_GUARD
+  /** Workspace with an ISOLATED foresights home INSIDE it (uninstall's HOME_GUARD
    * requires a contained, signature-bearing home when GBRAIN_HOME is set) —
    * interview + render run under that home so the receipt lands there. */
   async function isolatedWs(opts: { scope?: 'project' | 'user' } = {}): Promise<{ ws: string; isolatedHome: string }> {
@@ -598,7 +598,7 @@ describe('opencode uninstall sweep', () => {
       expect(uninst.result).toBe(0);
       const after = parseOpencodeConfig(readFileSync(join(ocDir, 'opencode.json'), 'utf8'), 'opencode.json');
       expect((after.mcp as Record<string, unknown> | undefined)?.gbrain).toBeUndefined();
-      expect(uninst.out).toContain('removed the gbrain opencode MCP entry');
+      expect(uninst.out).toContain('removed the foresights opencode MCP entry');
     } finally {
       rmSync(ocDir, { recursive: true, force: true });
       restoreSuiteHome(ws);

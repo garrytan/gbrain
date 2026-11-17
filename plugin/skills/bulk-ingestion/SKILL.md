@@ -144,7 +144,7 @@ the directory; raw dumps go to `sources/`). If the pipeline becomes a skill
 
 Which entities get updated when a page is created? Define what goes on
 people pages (timeline entries?), company pages (status changes?), and which
-back-links get created (`gbrain link` / `add_link`). An unlinked mention is
+back-links get created (`foresights link` / `add_link`). An unlinked mention is
 a broken brain — see [conventions/quality.md](../conventions/quality.md).
 
 ### 1d. Dedup key
@@ -242,8 +242,8 @@ Key principles:
 - **Idempotent** — re-running on the same data produces the same result.
 - **Manifest-driven** — progress state lives in the manifest, not in the
   process's memory.
-- **Minion-friendly** — runnable as `gbrain jobs submit shell` payloads or
-  `gbrain agent run` subagents (Phase 9).
+- **Minion-friendly** — runnable as `foresights jobs submit shell` payloads or
+  `foresights agent run` subagents (Phase 9).
 
 ## Phase 7: TEST
 
@@ -262,7 +262,7 @@ Cover the deterministic logic before scaling it. See
 If the pipeline will run more than once, promote it to a proper skill.
 **Delegate to `skills/skillify/SKILL.md`** — its 11-item checklist covers
 SKILL.md authoring, resolver entry in `skills/RESOLVER.md`, routing eval,
-`gbrain check-resolvable`, cross-modal eval, and brain filing registration.
+`foresights check-resolvable`, cross-modal eval, and brain filing registration.
 Don't re-derive that checklist here.
 
 ## Phase 9: BULK
@@ -277,13 +277,13 @@ Execution routes through Minions (`skills/minion-orchestrator/SKILL.md`):
 
 ```bash
 # Deterministic pipeline as a shell job (durable, observable):
-gbrain jobs submit shell --params '{"cmd": "<your pipeline command> --offset 0 --limit 100"}'
+foresights jobs submit shell --params '{"cmd": "<your pipeline command> --offset 0 --limit 100"}'
 
 # LLM-heavy pipeline as a subagent (steerable, transcripted):
-gbrain agent run "Read skills/<pipeline-name>/SKILL.md and process the next 50 pending manifest items"
+foresights agent run "Read skills/<pipeline-name>/SKILL.md and process the next 50 pending manifest items"
 ```
 
-Shell jobs require the WORKER to be started with `gbrain jobs work --allow-shell-jobs`
+Shell jobs require the WORKER to be started with `foresights jobs work --allow-shell-jobs`
 (or `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker) — see
 minion-orchestrator Preconditions; do not set it yourself (it is an RCE-class
 operator authorization, and a submit-side env prefix is a no-op in the daemon
@@ -297,8 +297,8 @@ manifest has no atomic claim). Respect the routing policy in
 idempotent-worker contract in [MANIFEST-PATTERN.md](MANIFEST-PATTERN.md):
 claim by `id`, check status before processing, checkpoint every N items,
 and NEVER mark an item done without verifying its output artifact exists on
-disk. After the bulk run: `gbrain sync` to index everything, then
-`gbrain check-backlinks check` to catch propagation gaps.
+disk. After the bulk run: `foresights sync` to index everything, then
+`foresights check-backlinks check` to catch propagation gaps.
 
 ## Phase 10: MONITOR
 
@@ -346,7 +346,7 @@ Before declaring a pipeline "done":
 □ Every "done" item verified by artifact existence, not assertion
 □ Entity propagation spot-checked (10 pages)
 □ No duplicate pages (dedup key held)
-□ gbrain sync run after bulk write; check-backlinks clean
+□ foresights sync run after bulk write; check-backlinks clean
 □ Failure log + monitoring cadence wired
 ```
 
@@ -375,19 +375,19 @@ Before declaring a pipeline "done":
 - **`skills/media-ingest/SKILL.md` / `skills/meeting-ingestion/SKILL.md`** —
   type-specific pipelines that already exist. bulk-ingestion is how you
   BUILD the next one of those; once built, route directly to it.
-- **Native `gbrain sync`** — checkpointed file sync for brain repo sources.
+- **Native `foresights sync`** — checkpointed file sync for brain repo sources.
   It covers files already in a source repo; bulk-ingestion covers arbitrary
   external corpora (exports, APIs, archives) that must be transformed into
   pages first.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- Paid batch work (`gbrain agent run`, LLM extraction) stops for confirmation (exit 3) or with `cost_cap_exceeded`: relay the estimate and get the user's agreement before raising a cap; never add `--yes` or a bigger `--max-usd` yourself.
+- Paid batch work (`foresights agent run`, LLM extraction) stops for confirmation (exit 3) or with `cost_cap_exceeded`: relay the estimate and get the user's agreement before raising a cap; never add `--yes` or a bigger `--max-usd` yourself.
 - A budget stop exits 11 (`derived_cap_exhausted`): run the printed `resume_command`; it is safe to re-run and skips finished items.
-- `gbrain jobs submit` returns `rate_limited` or `queue_capacity`: back off for the stated delay; keep the manifest cursor so nothing is ingested twice.
-- `sync_in_progress` / `lock_busy` on `gbrain sync`: another run owns the source; wait and retry rather than starting a second pipeline.
+- `foresights jobs submit` returns `rate_limited` or `queue_capacity`: back off for the stated delay; keep the manifest cursor so nothing is ingested twice.
+- `sync_in_progress` / `lock_busy` on `foresights sync`: another run owns the source; wait and retry rather than starting a second pipeline.
 
 ## Anti-Patterns
 

@@ -21,12 +21,12 @@ const reapHandler = () => {};
 export function installSigchldHandler(): void {
   // SIGCHLD is POSIX-only. On Windows, `process.on('SIGCHLD', ...)` throws
   // "ENOTSUP" because Windows doesn't have signals. Guard by platform so a
-  // future Windows port of any gbrain CLI doesn't crash at boot.
+  // future Windows port of any foresights CLI doesn't crash at boot.
   if (process.platform === 'win32') return;
   if (!process.listeners('SIGCHLD').includes(reapHandler)) {
     process.on('SIGCHLD', reapHandler);
   }
-  // #2443: the handler above only reaps Bun-TRACKED children. When gbrain
+  // #2443: the handler above only reaps Bun-TRACKED children. When foresights
   // runs as PID 1 in a container (no tini / --init), orphaned grandchildren
   // re-parent to us and their exits are never reaped — install the /proc
   // scanning orphan reaper too. Self-gates (linux + pid==1 +

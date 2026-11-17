@@ -1,7 +1,7 @@
 /**
  * GST-2521: the label hold, part 2 (stacked on GST-2518).
  *
- * 1. Protects: (A) labels the owner sets on a page through the owner's label door (`gbrain repair visibility`, its
+ * 1. Protects: (A) labels the owner sets on a page through the owner's label door (`foresights repair visibility`, its
  *    `--readers` setter) raise the page's label guard tier, so a later local write at the page's own (agent) tier that
  *    drops or widens them is held like a write below an owner page; (B) a local write below operator_curated whose
  *    `readable_by` would stop the brain owner reading a page the owner reads now publishes with the owner still a
@@ -10,7 +10,7 @@
  * 2. Fails when: an equal-tier agent write drops an owner-set label, an agent write takes the owner out of the readers,
  *    accept does not apply the request, or something that should pass is held (the owner's readers setter, an agent
  *    narrowing that keeps the owner, the owner opt-in to read restricted pages).
- * 3. Real seams: local put_page through the write coordinator, `gbrain repair visibility` through runRepairCommand, remote
+ * 3. Real seams: local put_page through the write coordinator, `foresights repair visibility` through runRepairCommand, remote
  *    reads through MCP dispatch with legacy tokens, owner decisions through decideTrustProposal, the managed-brain harness
  *    (Git commit) and a repo-less brain. PGLite, and Postgres with DATABASE_URL.
  */
@@ -104,7 +104,7 @@ async function call(b: Brain, name: string, params: Record<string, unknown>): Pr
   return await operations.find(op => op.name === name)!.handler(b.ctx, { request_id: randomUUID(), wait_ms: 30_000, ...params }) as Record<string, any>;
 }
 
-/** `gbrain repair visibility` previewed, then applied with its preview hash, as the owner runs it on the brain host. */
+/** `foresights repair visibility` previewed, then applied with its preview hash, as the owner runs it on the brain host. */
 async function repairVisibility(engine: BrainEngine, argv: string[]): Promise<Record<string, any>> {
   const run = async (args: string[]) => {
     const log = console.log;

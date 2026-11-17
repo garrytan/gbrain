@@ -6,15 +6,15 @@
  * prose instruction sets, NOT executable code. This module reads them off the
  * server host's filesystem and shapes them for a thin MCP client (Codex desktop,
  * Claude Code, Perplexity) to discover and FOLLOW. "Using" a skill = fetching its
- * prose and then calling the gbrain MCP tools the same server already exposes.
+ * prose and then calling the foresights MCP tools the same server already exposes.
  *
  * TRUST-BOUNDARY MEMO (read before changing scope/localOnly on the ops):
  * These ops read the server-host filesystem and return file CONTENTS over HTTP.
- * gbrain treats `file_list`/`file_url` as `admin + localOnly` for exactly this
+ * foresights treats `file_list`/`file_url` as `admin + localOnly` for exactly this
  * reason. `read` + non-localOnly is defensible HERE, but ONLY because of the full
  * mitigation stack — do not weaken one piece without re-reading the rest:
  *   1. Explicit owner opt-in — the publish gate (`mcp.publish_skills`) defaults
- *      OFF at runtime; new installs turn it on at `gbrain init`, existing installs
+ *      OFF at runtime; new installs turn it on at `foresights init`, existing installs
  *      via a consenting migration. Unlike `file_list`, this is content the owner
  *      deliberately published.
  *   2. Confinement — only the resolved skills dir is reachable. The client `name`
@@ -26,8 +26,8 @@
  *      (private brain taxonomy) and `sources` (absolute paths) are dropped.
  *   4. Prose-only + size-capped — no source code (PR2 ships tarballs); `get_skill`
  *      caps the file size so a huge/binary file can't OOM the server.
- *   5. No install_path serve for remote — a hosted gbrain with no agent repo
- *      returns `storage_error`, never gbrain's own bundled dev skills.
+ *   5. No install_path serve for remote — a hosted foresights with no agent repo
+ *      returns `storage_error`, never foresights's own bundled dev skills.
  *   6. Bounded — the MCP rate limiter caps call rate; per-call memory is bounded
  *      by the size cap.
  *
@@ -151,8 +151,8 @@ export interface GetSkillResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Read `mcp.publish_skills` honoring BOTH config planes. `gbrain config set`
- * writes the DB plane (engine.setConfig) — so the DB value wins; `gbrain init`
+ * Read `mcp.publish_skills` honoring BOTH config planes. `foresights config set`
+ * writes the DB plane (engine.setConfig) — so the DB value wins; `foresights init`
  * also writes the DB plane. The file plane (`config.json` → `ctx.config.mcp`) is
  * a fallback for hand-edited configs. Absent in both → false (fail-safe).
  */
@@ -168,7 +168,7 @@ export async function readMcpPublishSkills(ctx: OperationContext): Promise<boole
 }
 
 /**
- * Read `mcp.skills_dir` from the DB plane (what `gbrain config set` writes),
+ * Read `mcp.skills_dir` from the DB plane (what `foresights config set` writes),
  * falling back to the file plane. Returns undefined when unset on both.
  */
 export async function readMcpSkillsDir(ctx: OperationContext): Promise<string | undefined> {
@@ -187,7 +187,7 @@ export async function readMcpSkillsDir(ctx: OperationContext): Promise<string | 
  * Resolve the skills dir for this call. An explicit `mcp.skills_dir` override
  * (resolved from either config plane by the caller) wins; otherwise autodetect.
  * REMOTE callers use `autoDetectSkillsDir` (no install_path tier — a hosted
- * gbrain must never serve its own bundled dev skills); LOCAL callers
+ * foresights must never serve its own bundled dev skills); LOCAL callers
  * (`ctx.remote === false`) use the read-only variant with the install_path
  * fallback. Throws `storage_error` (with the search-path hint) when nothing
  * resolves. Pure modulo filesystem state — `skillsDirOverride` keeps it testable
@@ -205,7 +205,7 @@ export function resolveSkillsDir(
       throw new OperationError(
         'storage_error',
         `Configured mcp.skills_dir does not exist: ${skillsDirOverride}`,
-        'Fix it with `gbrain config set mcp.skills_dir <path>` or unset it to autodetect.',
+        'Fix it with `foresights config set mcp.skills_dir <path>` or unset it to autodetect.',
       );
     }
     return { dir: skillsDirOverride, source: 'config' };
@@ -218,7 +218,7 @@ export function resolveSkillsDir(
     throw new OperationError(
       'storage_error',
       'No skills directory found on the server host.',
-      `Set it explicitly: \`gbrain config set mcp.skills_dir <path>\` (or $GBRAIN_SKILLS_DIR). Search order:\n${hint}`,
+      `Set it explicitly: \`foresights config set mcp.skills_dir <path>\` (or $GBRAIN_SKILLS_DIR). Search order:\n${hint}`,
     );
   }
   return { dir: det.dir, source: det.source };
@@ -278,7 +278,7 @@ export function confineManifestPath(skillsDir: string, entry: ManifestEntry): st
     realRoot = realpathSync(skillsDir);
   } catch {
     throw new OperationError('storage_error', `Cannot resolve skills dir: ${skillsDir}`,
-      'The skills directory on the brain host is missing or unreadable. The host\'s operator checks mcp.skills_dir (gbrain config get mcp.skills_dir) or unsets it so gbrain autodetects the directory.');
+      'The skills directory on the brain host is missing or unreadable. The host\'s operator checks mcp.skills_dir (foresights config get mcp.skills_dir) or unsets it so foresights autodetects the directory.');
   }
   const candidate = join(realRoot, entry.path);
   try {
@@ -620,7 +620,7 @@ export function assertPublishEnabled(ctx: OperationContext, publishSkills: boole
     'permission_denied',
     'This tool is not published by the brain owner, so it is hidden from your tool catalog. ' +
       'Ask the owner to enable skill publishing if you need it.',
-    'The owner can enable it with `gbrain config set mcp.publish_skills true`.',
+    'The owner can enable it with `foresights config set mcp.publish_skills true`.',
   );
   err.detail = 'config_key=mcp.publish_skills';
   throw err;

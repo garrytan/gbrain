@@ -248,7 +248,7 @@ export function readCanonicalAsImported(bytes: string, sourcePath: string): { co
  * uses it to bind a repair to the revision it read before reading the file.
  * `sourcePath` (the importer's path for the file, or a resolver for it) lets a
  * frontmatter-less file match the row an inferring import stored (#6605); the
- * raw reading still matches a row imported without inference (`gbrain reindex`
+ * raw reading still matches a row imported without inference (`foresights reindex`
  * on an unmanaged brain passes `inferFrontmatter: false`).
  */
 export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
@@ -335,10 +335,10 @@ export function labelEditRefused(page: { source_id: string; slug: string }, keys
   const labels = [...Object.keys(edit.set), ...edit.remove].join(', ') || 'the label';
   return keys.length
     ? opError('label_edit_refused', `${ref} was not written: with only its label lines edited, its file still differs from the page in ${keys.join(', ')}.`,
-      `In the page's file, make ${keys.join(', ')} match the page (gbrain get --source ${page.source_id} -- ${page.slug} prints it), commit it, run gbrain sync --source ${page.source_id}, then preview the repair again.`,
+      `In the page's file, make ${keys.join(', ')} match the page (foresights get --source ${page.source_id} -- ${page.slug} prints it), commit it, run foresights sync --source ${page.source_id}, then preview the repair again.`,
       { reason: 'file_differs', detail: keys.join(',') })
     : opError('label_edit_refused', `${ref} was not written: its file's ${labels} line cannot be edited as one line.`,
-      `In the page's file, write ${labels} as one plain line in the frontmatter block (no block or multi-line value, no duplicate key; add a frontmatter block if the file has none), commit it, run gbrain sync --source ${page.source_id}, then preview the repair again.`,
+      `In the page's file, write ${labels} as one plain line in the frontmatter block (no block or multi-line value, no duplicate key; add a frontmatter block if the file has none), commit it, run foresights sync --source ${page.source_id}, then preview the repair again.`,
       { reason: 'label_line', detail: labels });
 }
 /**
@@ -559,7 +559,7 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
     }
     // #6696 (A12): tagged, so a producer can refuse this before admission and the receipt says which refusal it was.
     throw opError('source_changed', 'The canonical file was removed outside coordinated publication.',
-      `Import the local deletion or recover the canonical file before editing this page. To narrow who reads it without restoring its file, add a page rule: gbrain access rule add --slug ${row.slug} --readers <member> --source ${row.source_id} (it previews; --yes applies).`, { detail: CANONICAL_FILE_MISSING });
+      `Import the local deletion or recover the canonical file before editing this page. To narrow who reads it without restoring its file, add a page rule: foresights access rule add --slug ${row.slug} --readers <member> --source ${row.source_id} (it previews; --yes applies).`, { detail: CANONICAL_FILE_MISSING });
   }
   // A normal edit may replace only the bytes represented by its read snapshot.
   // Unknown local edits require explicit import/recovery, even for force writes.
@@ -595,7 +595,7 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
       if (spliced !== null) return { path, root, content: spliced, expectedBeforeHash: beforeHash() };
       // GST-1601: the drifted file rides the refusal, so the owner can adopt a one-sided local edit (local-edit-adoption.ts).
       throw Object.assign(opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
-        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ' --adopt-slug-path (the page records no file of its own, so the preview adopts the file at its slug path)' : ''}, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
+        `On the brain host, run foresights sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ' --adopt-slug-path (the page records no file of its own, so the preview adopts the file at its slug path)' : ''}, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
         { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
           { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) }),
         adopt.length || options.deleting === true ? {} : { localEdit: { root, path } });
@@ -625,7 +625,7 @@ async function heldFileRefusal(engine: BrainEngine, row: Pick<WriteRequest, 'sou
   if (remote) {
     // Remote callers get the code and the host operator's command, never the held path or key.
     const error = opError('source_changed', heldFileMessage(kind, hold.code, { sourceId: row.source_id, incarnation: source!.incarnation }),
-      `Sync holds this page's canonical file in source ${row.source_id} (${hold.code}${hold.meta.reason ? `, ${hold.meta.reason}` : ''}) because gbrain cannot import it, `
+      `Sync holds this page's canonical file in source ${row.source_id} (${hold.code}${hold.meta.reason ? `, ${hold.meta.reason}` : ''}) because foresights cannot import it, `
       + `so ${effect} is read-only for put_page until the brain host operator repairs the file; retrying this write refuses the same way. Relay the fix to the user, then submit the intended write with a new request_id. Neither copy was overwritten.`,
       { fix: hostOperatorFix([{ source_id: row.source_id, route: recordRoute(hold) }], `The canonical file of page ${row.slug} is held (${hold.code}): only the brain host operator can inspect and repair it.`) });
     if (kind === 'drift') error.detail = 'file_database_drift';
@@ -635,7 +635,7 @@ async function heldFileRefusal(engine: BrainEngine, row: Pick<WriteRequest, 'sou
   const fix = gitHoldFix(hold);
   const where = [hold.meta.line !== undefined ? `line ${hold.meta.line}` : '', hold.meta.key ? `key "${hold.meta.key}"` : ''].filter(Boolean).join(', ');
   const error = opError('source_changed', heldFileMessage(kind, hold.code, { sourceId: row.source_id, incarnation: source!.incarnation }),
-    `Sync holds ${hold.path} in source ${row.source_id} (${hold.code}${hold.meta.reason ? `, ${hold.meta.reason}` : ''}${where ? ` at ${where}` : ''}) because gbrain cannot import it, `
+    `Sync holds ${hold.path} in source ${row.source_id} (${hold.code}${hold.meta.reason ? `, ${hold.meta.reason}` : ''}${where ? ` at ${where}` : ''}) because foresights cannot import it, `
     + `so ${effect} is read-only for put_page until the file is repaired; retrying this write refuses the same way. `
     + `Repair the file first (${shellQuote(fix.argv ?? [])}: ${fix.why}), then submit the intended write with a new request_id. Neither copy was overwritten. `
     + `Hold row read: op ${GIT_HOLD_OP}, fingerprint ${gitHoldFingerprint(row.source_id, source!.incarnation, hold.path)}, held since ${hold.held_at}.`, { fix });
@@ -693,8 +693,8 @@ async function prepareDeleteFileTarget(engine: BrainEngine, row: WriteRequest, s
 /** #6517: the recorded-origin census of a delete's file (file-claims.ts) and the other live pages that record it. */
 export interface SharedOrigin { target: FileClaimTarget; claimants: FileClaimant[] }
 export const sharedOriginReceipt = (sourceId: string, survivor: string | null) => 'The selected database page is hidden; the file and the surviving page remain. This does not erase that file\'s contents. '
-  + `Sync does not overwrite the surviving page with the file (#6712: a file whose page differs from it is held file_drift); import the file's current content into it with gbrain repair file-drift --source ${sourceId} --slug ${survivor ?? '<surviving-slug>'} --prefer file `
-  + '(it previews and writes nothing; run the apply command it prints), then gbrain sync --source ' + sourceId + ' --no-pull. Edit the file first if it holds the deleted page\'s text.';
+  + `Sync does not overwrite the surviving page with the file (#6712: a file whose page differs from it is held file_drift); import the file's current content into it with foresights repair file-drift --source ${sourceId} --slug ${survivor ?? '<surviving-slug>'} --prefer file `
+  + '(it previews and writes nothing; run the apply command it prints), then foresights sync --source ' + sourceId + ' --no-pull. Edit the file first if it holds the deleted page\'s text.';
 /**
  * #6517 [R8]: the survivor is revalidated under publication: the kept file must still resolve to the same real file and the
  * same live pages must still record it; otherwise the delete refuses and the file is never removed as a fallback.
@@ -765,8 +765,8 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
   const sharedRetention = shared !== null && purge && p.retention === true && snapshot.page.deleted_at != null;
   if (shared && purge && !sharedRetention) {
     const next = snapshot.page.deleted_at != null
-      ? 'The page is already soft-deleted (hidden; the file and the surviving page remain): the retention purge removes it database-only once it is older than the recovery window, with no content tombstone (gbrain pages purge-deleted --older-than 72h --yes, or the autopilot purge phase).'
-      : `Soft-delete it instead (gbrain delete ${row.slug} --source-id ${row.source_id} --expected-revision <rev>): the page is hidden, the file and the surviving page remain, and nothing is erased.`;
+      ? 'The page is already soft-deleted (hidden; the file and the surviving page remain): the retention purge removes it database-only once it is older than the recovery window, with no content tombstone (foresights pages purge-deleted --older-than 72h --yes, or the autopilot purge phase).'
+      : `Soft-delete it instead (foresights delete ${row.slug} --source-id ${row.source_id} --expected-revision <rev>): the page is hidden, the file and the surviving page remain, and nothing is erased.`;
     const error = pageRefusal('source_changed', `The page's canonical file is shared with another live page, so a purge (which tombstones its content source-wide) was refused and nothing was removed, tombstoned or redacted. ${next}`, row,
       `Another live page of source ${row.source_id} records the file of ${row.slug}.`, pageFix(row.source_id, row.slug));
     error.detail = 'shared_origin';
@@ -797,7 +797,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
   if (preparedPurge && !preparedPurge.retention && await isOriginTwinPage(engine, row.source_id, row.slug)) {
     const error = pageRefusal('source_changed', 'The page was merged into a duplicate that holds the same content, so a purge (which tombstones its content source-wide) was refused and nothing was removed, tombstoned or redacted. '
       + 'The 72 h retention purge removes it database-only; to erase the content itself, purge the page it was merged into.', row,
-      `${row.slug} of source ${row.source_id} was merged into a duplicate page (gbrain repair origin-twins).`, pageFix(row.source_id, row.slug));
+      `${row.slug} of source ${row.source_id} was merged into a duplicate page (foresights repair origin-twins).`, pageFix(row.source_id, row.slug));
     error.detail = 'origin_twin';
     throw error;
   }
@@ -824,7 +824,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
       // GST-2518: a soft delete authors no content, so the tombstone keeps its tier (and a write over it the page's label guard).
       if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
-        recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
+        recoverable_until: 'now + 72h via restore_page (remove immediately instead: foresights delete <slug> --purge, local CLI only)' };
     } };
   return prepared;
 }
@@ -1092,7 +1092,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       const [version] = await engine.executeRaw<PageVersion>(
         'SELECT * FROM page_versions WHERE id=$1 AND page_id=$2', [p.version_id, page.id]);
       if (!version) throw pageRefusal('not_found', 'Version not found for this page.', row,
-        `Version ${String(p.version_id)} is not in the history of page ${row.slug}, so nothing was reverted. List the page's versions (get_versions; CLI: gbrain history) and revert to one of them.`);
+        `Version ${String(p.version_id)} is not in the history of page ${row.slug}, so nothing was reverted. List the page's versions (get_versions; CLI: foresights history) and revert to one of them.`);
       if (version.body_storage === 'segmented' || isSegmentedPage(page)) throw segmentedRevertRefusal(row.slug, p.version_id);
       targetDeleted = version.is_deleted ?? (snapshot.page.deleted_at != null);
       page = { ...page, compiled_truth: version.compiled_truth, frontmatter: version.frontmatter,

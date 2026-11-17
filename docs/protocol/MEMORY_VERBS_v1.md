@@ -1,11 +1,11 @@
 # MEMORY_VERBS v1 — the memory wire protocol
 
-GBrain's frozen memory-verb interface over MCP: `recall`, `remember`,
+Foresights's frozen memory-verb interface over MCP: `recall`, `remember`,
 `entity`, `synthesize`, `forget`, plus the additive `context_pack` and
 `delta` — seven verbs, all at `protocol_version: 1`. The contract every harness can rely on the
 way every Postgres client relies on the wire protocol — and the contract any
 OTHER memory server can implement and certify against
-(`gbrain protocol conformance --target <endpoint>`).
+(`foresights protocol conformance --target <endpoint>`).
 
 ```
 agent (any MCP harness)
@@ -15,10 +15,10 @@ seven verbs  recall ─ remember ─ entity ─ synthesize ─ forget ─ contex
    │   self-describing envelopes: protocol_version, evidence, provenance,
    │   budget meta, cost block, enumerated error codes + a populated fix
    ▼
-your brain (reference implementation: gbrain; any conformant server)
+your brain (reference implementation: foresights; any conformant server)
 ```
 
-**Machine-readable spec:** `gbrain protocol --json` emits the input schemas
+**Machine-readable spec:** `foresights protocol --json` emits the input schemas
 from the live operation definitions plus the response-shape registry — doc and
 code structurally cannot drift; conformance validates live responses against
 the same registry.
@@ -48,10 +48,10 @@ the same registry.
 ## Install (the 4-command quickstart)
 
 ```bash
-gbrain init --pglite                                      # 2-second local brain
-gbrain setup claude-code                                  # registers serve behind gbrain's launcher; lists the verbs, the daily-driver tools stay callable
-gbrain remember "gbrain install check" --provenance install-check
-gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
+foresights init --pglite                                      # 2-second local brain
+foresights setup claude-code                                  # registers serve behind foresights's launcher; lists the verbs, the daily-driver tools stay callable
+foresights remember "foresights install check" --provenance install-check
+foresights recall --query "foresights install check"              # …now ask your agent in a NEW session
 ```
 
 The marker is a test value, never a fact about the user; ask the agent to
@@ -64,25 +64,25 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-gbrain setup codex
+foresights setup codex
 ```
 
-**Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
+**Grok Build** (verify with `grok mcp doctor foresights` — the add is lazy)
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+grok mcp add foresights -e "GBRAIN_HOME=$HOME" -- "$(command -v foresights)" serve --surface starter --advertise verbs
 ```
 
 **opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+opencode mcp add foresights --env GBRAIN_HOME=$HOME -- "$(command -v foresights)" serve --surface starter --advertise verbs
 ```
 
 **OpenClaw / any stdio MCP host** — register the server command
-`gbrain serve --surface starter --advertise verbs`. Remote brains: `gbrain serve --http` on the
-host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on
+`foresights serve --surface starter --advertise verbs`. Remote brains: `foresights serve --http` on the
+host, then `foresights connect https://host/mcp --token gbrain_xxx --install` on
 each client.
 
-**Listing:** `--advertise verbs` (gbrain's registrations) lists the verbs
+**Listing:** `--advertise verbs` (foresights's registrations) lists the verbs
 plus `request_tools`, which describes the rest; all of `--surface` stays callable.
 
 **Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
@@ -94,12 +94,12 @@ verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and 
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
 (pinned by test) — starter extends the ladder ABOVE verbs and never changes
 verb semantics. `--surface full` (the default for a bare `serve`) exposes
-every operation, verbs included. Every stdio registration gbrain writes
-(`gbrain init`'s quickstart, readiness, `gbrain bootstrap hooks`, the plugins)
+every operation, verbs included. Every stdio registration foresights writes
+(`foresights init`'s quickstart, readiness, `foresights bootstrap hooks`, the plugins)
 pins `full`, callable and advertised: in the held-out agent benchmark, listing
 only `starter` or `verbs` lowered task success and saved no tokens. A harness
 that caps its tool count can register `--surface starter` or `--surface verbs`.
-Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
+Persist a default for bare `serve` with `foresights config set mcp_surface verbs`.
 On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface` (a
 `.env` file in the working directory cannot set it); a
 session widens itself with `request_tools {"surface":"full"}` (see
@@ -110,7 +110,7 @@ is a CEILING, not the final answer. Each request resolves
 `min(ceiling, client row surface ?? mcp.default_surface_dcr ?? ceiling)` —
 so a verbs-pinned server always serves verbs regardless of client rows,
 while a full server can narrow individual clients
-(`gbrain auth rescope-client <id> --surface starter`) or let them narrow
+(`foresights auth rescope-client <id> --surface starter`) or let them narrow
 themselves via `request_tools` (never past the ceiling; an operator-set
 row is locked against self-service). Recomputed per request — rescopes
 take effect on the client's next request; clients should re-issue
@@ -204,7 +204,7 @@ Response — an additive SUPERSET of the plain facts envelope on EVERY call
 | `search_degraded` | string? | present when keyword-only fallback fired |
 | `facts_order` | string | `relevance` (question passed) or `newest` |
 | `facts[].relevance` | number? | question calls only: the ranking score (about 0 to 2.1); not a probability and not comparable across calls |
-| `facts_degraded` | object? | question calls only: `reason` (`keyword_only_no_embedding_provider`, `keyword_only_embedding_disabled`, `embed_timeout`, `embed_unavailable`, `no_query_terms`, `facts_embedding_column_missing`) and `unembedded` (facts in scope without a comparable embedding; the `facts_unembedded` notice carries the `gbrain embed --stale --facts` preview) |
+| `facts_degraded` | object? | question calls only: `reason` (`keyword_only_no_embedding_provider`, `keyword_only_embedding_disabled`, `embed_timeout`, `embed_unavailable`, `no_query_terms`, `facts_embedding_column_missing`) and `unembedded` (facts in scope without a comparable embedding; the `facts_unembedded` notice carries the `foresights embed --stale --facts` preview) |
 | `facts_calibration` | object? | question calls only, informational (additive since #6590): present when semantic matching ranked the facts on an embedding model whose fact admission floors were never measured; `status` (`unmeasured`) and `model_key` (`provider:model@dims`, the key doctor `fact_admission_floors` reports). A short or empty `facts[]` is then weaker evidence of "nothing matched". It never replaces `facts_degraded`; one `facts_calibration_unmeasured` notice (kind `info`) per brain per session explains it |
 | `budget_tokens` / `budget_used` / `dropped_count` | int? | present for a positive finite numeric budget, including when its floor is zero |
 | `budget_packing` | object? | present only when a valid `budget_policy` is supplied; effective policy and per-arm accounting |
@@ -244,7 +244,7 @@ policy retain their existing CLI source-resolution and fractional-budget rules.
 **Opt-in caller:** for a question about saved page evidence with a tight budget:
 
 ```bash
-gbrain recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json
+foresights recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json
 ```
 
 ```json
@@ -263,7 +263,7 @@ The named CLI accepts the policy before or after the other options, including
 and explicit facts-first paths preserve legacy integer parsing of budget text
 (`0.5` becomes an absent budget). Only explicit query-first with a nonblank query
 preserves numeric fractions until the operation floors them. MCP and
-`gbrain call recall` use the numeric operation contract above. Opt-in named calls
+`foresights call recall` use the numeric operation contract above. Opt-in named calls
 forward fact filters and use the remote operation on thin clients; `--watch`,
 `--since-last-run`, `--rollup`, and `--as-context` cannot be combined with the new
 policy option. Their existing calls without the option are unchanged.
@@ -309,7 +309,7 @@ Save ONE fact with mandatory attribution.
   consent line. An omitted `visibility` saves `private` when the target page is
   private (by `visibility` or a privacy alias such as `access: private`) or the
   operator set `facts.default_visibility` to private; a save never lands wider
-  than the page it is written into. In gbrain, a remote credential bound to
+  than the page it is written into. In foresights, a remote credential bound to
   one member saves `private` on its own member page unless it passes
   `share: true`, and its `visibility: "world"` is refused; the brain owner's
   own credential saves as above (shared by default, `private` on its member
@@ -320,7 +320,7 @@ Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —
 near-duplicates may insert; dedup and supersession ride embedding similarity).
 
-- `id` — opaque STRING (gbrain serializes integers; another implementation may
+- `id` — opaque STRING (foresights serializes integers; another implementation may
   use UUIDs). On `status: "duplicate"` it is the EXISTING fact's id.
 - `status` — `inserted` \| `duplicate` \| `superseded`. **Branch on `status`,
   never on `status_text`** (the human rendering). Supersession is
@@ -333,7 +333,7 @@ A claim that was forgotten is refused with `invalid_params` and the message
 prefix `fact_withdrawn`: remembering the same text again does not restore it,
 and a claim forgotten without an entity is withdrawn for every entity. To link
 a fact saved without an entity, do not forget it; remember it with `entity`
-and `replaces` set to its id. In gbrain, a fact saved without an entity is a
+and `replaces` set to its id. In foresights, a fact saved without an entity is a
 row of the `memory/unattributed` page's `## Facts` table, created on first
 use; linking it strikes that row in the same write. A remote save onto a
 member's own page is refused only when that member could read what was
@@ -578,7 +578,7 @@ list the referring pages of those types:
   the schema pack declares nor any page uses adds a `record_types_undeclared`
   info notice.
 
-Check which pages count as records without calling an agent: `gbrain config
+Check which pages count as records without calling an agent: `foresights config
 get entity.record_types`, then `get_backlinks {slug, type: <record type>,
 group: "page"}` or `list_pages {type: <record type>}`.
 
@@ -743,7 +743,7 @@ The pages the model reads are excerpts, not whole pages. Each gathered page
 gets `min(ceiling, floor(total / pages_gathered))` characters, never fewer
 than 600, with `total` from `think.pages_budget_chars` (4 000-200 000,
 default 12 000) and `ceiling` from `think.excerpt_ceiling_chars`
-(600-200 000, default 2 400), both set with `gbrain config set` on the brain
+(600-200 000, default 2 400), both set with `foresights config set` on the brain
 host (the verb surface stays frozen: no new parameter). The total is a SOFT
 bound: the 600-character floor wins, so 40 pages at the default read 24 000
 characters. Raising the total alone never delivers whole pages while the
@@ -792,7 +792,7 @@ forgetting the unlinked fact is refused with `invalid_params`, message prefix
 says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
-In gbrain, a credential bound to one member withdraws only facts on its own
+In foresights, a credential bound to one member withdraws only facts on its own
 member page (another fact it reads is refused naming the brain host); the
 brain owner's own credential also withdraws a shared fact it reads, and any
 other fact it reads on a page that credential can write, such as a page whose
@@ -800,7 +800,7 @@ other fact it reads on a page that credential can write, such as a page whose
 
 #### forget publishes like a page write (additive note)
 
-In gbrain, a forget is a write of the pages that carry the claim: each row is
+In foresights, a forget is a write of the pages that carry the claim: each row is
 struck (`~~claim~~`, a `valid_until` date and `forgotten: <reason>`) and every
 such file is published, in one commit, before the withdrawal commits. It is
 admitted and published like `remember`, so when the source's writer cannot
@@ -812,7 +812,7 @@ unchanged.
 
 `forget` keeps this contract: it expires, never deletes. Removing a claim's
 text from live stores is a separate owner-only operation, `purge_fact` (CLI:
-`gbrain forget <id> --purge` on the brain host), which is not a memory verb and
+`foresights forget <id> --purge` on the brain host), which is not a memory verb and
 is never callable over MCP; a remote call gets `trusted_local_only` with the
 command for the user. See [expire versus purge](../guides/memory-boundaries.md#purge).
 
@@ -866,7 +866,7 @@ Compaction may remove diagnostics, but must preserve those frozen result fields.
 The optional caller-chosen `request_id` identifies one write intent; reuse it
 only to retry the same write. Any id of 1 to 128 printable ASCII characters
 (0x21 to 0x7E, no spaces) is accepted. A UUID is used as is (lowercased); any
-other id maps to a deterministic UUIDv5 under one fixed gbrain namespace, so
+other id maps to a deterministic UUIDv5 under one fixed foresights namespace, so
 `request_id` in every response stays a UUID and the id the caller sent comes
 back as `client_request_id`, which is kept for the life of the receipt. The
 receipt helpers find a write by either id. Retry the same verb with the original
@@ -900,7 +900,7 @@ On the CLI, exit 0 means the write committed. A write that was admitted but
 has not committed when the wait ends exits **10** and prints its receipt (in
 full with `--json`, plus `poll_command`). It may still commit: poll it, or
 repeat the same command with the same `--request-id`. Exit 10 is distinct
-from 75, which `gbrain upgrade` reads as "another migration runner holds the
+from 75, which `foresights upgrade` reads as "another migration runner holds the
 lock".
 
 | Exit | Meaning |
@@ -918,7 +918,7 @@ The CLI waits up to 30 s for the commit (agents keep 5 s; a connector sync
 waiting for a retained publication to recover keeps 5 s unless one of the
 settings below is set). Precedence:
 `--wait <seconds>` (0 to 600) > `GBRAIN_WRITE_WAIT_MS` > the file-plane
-`persistence.write_wait_ms` (`gbrain config set persistence.write_wait_ms
+`persistence.write_wait_ms` (`foresights config set persistence.write_wait_ms
 45000`) > 30 s. The wait reaches a resident owner with each request, and over
 a thin client or an older owner the CLI replays the same request ID until the
 wait is spent. Each exchange's transport deadline is the wait plus 15 s of
@@ -929,10 +929,10 @@ receipt, but a remote server's own 5 s wait cannot be shortened, so keep
 `--timeout` above it.
 
 ```bash
-gbrain put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 < page.md
+foresights put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 < page.md
 echo $?   # 10: accepted, not yet committed
-gbrain call get_write_request '{"request_id":"7f3c0e9a-0000-4000-8000-000000000001"}'
-gbrain put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 --wait 60 < page.md   # 0 once committed
+foresights call get_write_request '{"request_id":"7f3c0e9a-0000-4000-8000-000000000001"}'
+foresights put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 --wait 60 < page.md   # 0 once committed
 ```
 
 <a id="partial-page-edits-edit_page"></a>
@@ -980,7 +980,7 @@ Refusals name the edit and never include protected text:
 ← {"error": "revision_conflict", "detail": "current_revision=9a42…", "suggestion": "Read get_page with include_content:true again, …"}
 ```
 
-From the CLI: `gbrain call edit_page '{"slug":"projects/example","expected_revision":"…","edits":[{"old_text":"…","new_text":"…"}]}'`.
+From the CLI: `foresights call edit_page '{"slug":"projects/example","expected_revision":"…","edits":[{"old_text":"…","new_text":"…"}]}'`.
 
 ### context_pack(entities, budget_tokens?, since?, session_id?, include_private?, counterparty?, intent?) — read, zero LLM
 
@@ -1205,9 +1205,9 @@ leave, and `truncated` reports a cut; `text` gains a
 `## Belief changes since <since>` section. The diff is a read of the window,
 not a cursor arm: it does not set `has_more` or hold a `session_id` cursor,
 so lines a cut dropped are not delivered on the next wake; read them with an
-explicit `since` (or `gbrain beliefs changes`). `min_trust` does not filter
+explicit `since` (or `foresights beliefs changes`). `min_trust` does not filter
 it; each change carries its `trust_tier`. The
-CLI twin is `gbrain beliefs changes [<entity>...] [--since 7d]`. Design:
+CLI twin is `foresights beliefs changes [<entity>...] [--since 7d]`. Design:
 [BELIEF_LEDGER.md section 15](../designs/BELIEF_LEDGER.md#15-w4-as-built-the-weekly-change-diff).
 
 ### Adjacent memory-settings ops (not verbs)
@@ -1261,7 +1261,7 @@ canonical secret scanner: a value becomes `<REDACTED:pattern>`. `recall`,
 `context_pack` and `delta` redact the facts' `fact`, `context` and `source`
 (`provenance`) fields for remote callers (`ctx.remote !== false`; every MCP transport,
 including stdio, and thin clients) and return them as stored to the trusted
-local CLI, so a remembered credential is readable only with `gbrain recall` on
+local CLI, so a remembered credential is readable only with `foresights recall` on
 the brain host. Search results, the rendered `text` and `entity` cards are
 redacted for every caller. Budgets, `budget_used` and the `delta` cursor are
 computed from the text each caller actually receives. See
@@ -1270,10 +1270,10 @@ computed from the text each caller actually receives. See
 ## Conformance + certification
 
 ```bash
-gbrain protocol conformance                                  # self-certify (stdio)
-gbrain protocol conformance --target http://localhost:3131/mcp --token gbrain_xxx
-gbrain protocol conformance --target "bun run src/cli.ts serve"
-gbrain protocol conformance --synthesize                     # also live-call synthesize
+foresights protocol conformance                                  # self-certify (stdio)
+foresights protocol conformance --target http://localhost:3131/mcp --token gbrain_xxx
+foresights protocol conformance --target "bun run src/cli.ts serve"
+foresights protocol conformance --synthesize                     # also live-call synthesize
 ```
 
 Pass criteria: response SHAPE (required fields, enum validity), CONTRACT
@@ -1293,7 +1293,7 @@ write-capable credentials and a brain you're comfortable leaving those
 synthetic artifacts in — they're marker-named for easy cleanup, not
 auto-deleted. The fixture set ships as data
 (`test/fixtures/memory-verbs/cases.json`) and seeds BrainBench's
-protocol-compliance arm. gbrain's CI certifies its own stdio + HTTP
+protocol-compliance arm. foresights's CI certifies its own stdio + HTTP
 transports; external certification is best-effort tooling until a second
 implementation exists.
 
@@ -1302,10 +1302,10 @@ implementation exists.
 Every verb call appends one line to
 `~/.gbrain/integrations/memory-verbs/usage.jsonl` — **local JSONL only, never
 uploaded**, stats-only (lock-free rotation may drop lines; POSIX O_APPEND
-line-atomic, best-effort on Windows). `gbrain protocol stats [--days N]`
+line-atomic, best-effort on Windows). `foresights protocol stats [--days N]`
 aggregates per-verb calls, error rate, latency, budget drops, entity hit rate,
 and the measured TTHW (install → first verb call, from the
-`protocol_installed_at` stamp). `gbrain doctor` carries a
+`protocol_installed_at` stamp). `foresights doctor` carries a
 `memory_verbs_usage` health line.
 
 ## 200K-page latency validation (manual recipe)

@@ -1,7 +1,7 @@
 /**
  * Embedding pass for typed take claims.
  *
- * Runs from `gbrain takes embed` and, unless `takes.auto_embed` is off, from
+ * Runs from `foresights takes embed` and, unless `takes.auto_embed` is off, from
  * every `embed --stale` drain (which the cycle's embed phase and the
  * embedding-model migration drain both use). A take is stale when it has no
  * vector, its claim changed since it was embedded, or another model or width
@@ -84,7 +84,7 @@ export async function embedStaleTakes(
     result.failures = stale.length;
     result.failure_samples.push(
       `takes_embedding_width_mismatch: takes.embedding is ${columnDims === null ? 'absent' : `${columnDims}d`}, the configured model is ${dims}d. ` +
-      'Fix: gbrain migrate embeddings --status',
+      'Fix: foresights migrate embeddings --status',
     );
     return result;
   }

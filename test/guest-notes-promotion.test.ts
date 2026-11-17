@@ -7,8 +7,8 @@
  * the guest page and its mark unchanged; the guest row then reads 'guest.promoted: true'. Promoting again to the same
  * page writes nothing. Everyone else (the broker, a member, the owner's credential speaking for a group, an enforced
  * member's stdio server) is refused guest_promotion_owner_only before anything is written, and an enforced member CLI's
- * gate refuses gbrain guests promote and the operation. The broker's remote delete of a promoted
- * guest page is refused guest_page_promoted; of an unpromoted one it still works. 'gbrain guests promote' runs the same
+ * gate refuses foresights guests promote and the operation. The broker's remote delete of a promoted
+ * guest page is refused guest_page_promoted; of an unpromoted one it still works. 'foresights guests promote' runs the same
  * op. All on a repo-less PGLite brain; one case promotes into a source with a git repository.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
@@ -268,7 +268,7 @@ describe('promote_guest_note (pglite, repo-less)', () => {
   }, 120_000);
 });
 
-describe('gbrain guests promote', () => {
+describe('foresights guests promote', () => {
   let out: string[] = [];
   let spies: Array<{ mockRestore: () => void }> = [];
   afterEach(() => { for (const s of spies) s.mockRestore(); spies = []; out = []; });

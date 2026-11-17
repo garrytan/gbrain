@@ -1,12 +1,12 @@
 /**
- * `gbrain sources status` view of each managed connector source's state row:
+ * `foresights sources status` view of each managed connector source's state row:
  * upgrade recovery, account pin continuity, pending receipts and the last
  * run's counts. Never includes the pinned account or installation id.
  *
  * #5988: also each Git source's held files (`readGitHoldStatuses`, limited
  * in SQL to `GBRAIN_SYNC_HOLD_CAP`) and the blocked sync requests recent runs
  * converted in place, shown beside connector holds. Only `sources status` and `sources retry-held` merge
- * the two; `readAllSourceHolds`, `gbrain waiting` and doctor
+ * the two; `readAllSourceHolds`, `foresights waiting` and doctor
  * `connector_held_items` stay connector-only.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -109,10 +109,10 @@ export function connectorStatusLines(sourceId: string, status: ConnectorSourceSt
     lines.push(`    ${status.purged_items.length} item(s) recently skipped as purged content (the purge tombstone working; they do not stop the sync): `
       + status.purged_items.slice(0, HELD_STATUS_LIMIT).map(item => `${item.slug} (${day(item.at)})`).join(', ')
       + `${status.purged_items.length > HELD_STATUS_LIMIT ? `, +${status.purged_items.length - HELD_STATUS_LIMIT} more` : ''}`);
-    lines.push('    to let one back in, the owner clears its tombstone on the brain host: gbrain pages unpurge <slug>');
+    lines.push('    to let one back in, the owner clears its tombstone on the brain host: foresights pages unpurge <slug>');
   }
   if (status.upgrade_recovery === 'resumed') {
-    lines.push(`    resumed from pre-upgrade checkpoint of ${status.resumed_from}; content selection since then is unverified; to re-walk: gbrain sync --source ${sourceId} --reset-checkpoint`);
+    lines.push(`    resumed from pre-upgrade checkpoint of ${status.resumed_from}; content selection since then is unverified; to re-walk: foresights sync --source ${sourceId} --reset-checkpoint`);
   } else if (status.upgrade_recovery === 'rewalking_once') {
     lines.push('    re-walking its window once after the upgrade (an expected admission spike, not #5470 churn)');
   }
@@ -127,7 +127,7 @@ const day = (iso: string | null) => (iso ? iso.slice(0, 16).replace('T', ' ') : 
 /** Held items: up to HELD_STATUS_LIMIT per source, then "+N more", and the retry command once. */
 export function heldItemLines(sourceId: string, held: ItemHoldRecord[]): string[] {
   if (!held.length) return [];
-  const lines = [`    ${held.length} held item(s) (they do not block freshness; \`gbrain waiting\` reports partial coverage):`];
+  const lines = [`    ${held.length} held item(s) (they do not block freshness; \`foresights waiting\` reports partial coverage):`];
   for (const record of held.slice(0, HELD_STATUS_LIMIT)) {
     const label = [record.meta.sender, record.meta.subject ?? record.meta.title].filter(Boolean).join(' · ') || 'metadata unknown';
     lines.push(`      ${record.key}  ${label}  ${record.code} (${record.class})  first ${day(record.first_failed_at)}, last ${day(record.last_failed_at)}, `
@@ -135,7 +135,7 @@ export function heldItemLines(sourceId: string, held: ItemHoldRecord[]): string[
       + `${record.legacy ? ' [carried from the pre-upgrade poison ledger]' : ''}`);
   }
   if (held.length > HELD_STATUS_LIMIT) lines.push(`      +${held.length - HELD_STATUS_LIMIT} more; --json lists all`);
-  lines.push(`    re-attempt them on the next sync: gbrain sources retry-held ${sourceId}`);
+  lines.push(`    re-attempt them on the next sync: foresights sources retry-held ${sourceId}`);
   return lines;
 }
 
@@ -222,8 +222,8 @@ export function gitHoldStatusLines(sourceId: string, status: GitHoldStatus): str
     lines.push(`  ${sourceId}: ${status.count} held file(s): not imported, and they do not block sync. A page whose newer file is held keeps its last good revision and is read-only for put_page until the file is repaired.`);
     for (const item of status.items.slice(0, HELD_STATUS_LIMIT)) lines.push(`    ${holdLine(item, 'Held').trim()} Held since ${day(item.held_since)}.`);
     if (status.count > HELD_STATUS_LIMIT) lines.push(`      +${status.count - HELD_STATUS_LIMIT} more; --json lists ${status.truncated ? `the first ${status.items.length}` : 'all'}`);
-    lines.push(`    Most holds re-screen on the next sync by themselves (the file changed or was deleted, or a newer gbrain can read it): ${status.sync_argv.join(' ')}`);
-    lines.push(`    to re-screen the held files on that sync even if nothing changed: gbrain sources retry-held ${sourceId}`);
+    lines.push(`    Most holds re-screen on the next sync by themselves (the file changed or was deleted, or a newer foresights can read it): ${status.sync_argv.join(' ')}`);
+    lines.push(`    to re-screen the held files on that sync even if nothing changed: foresights sources retry-held ${sourceId}`);
   }
   if (status.recent_conversions?.length) {
     lines.push(`  ${sourceId}: ${status.recent_conversions.length} blocked sync request(s) recently converted in place (the file was held or re-read instead of blocking the source):`);

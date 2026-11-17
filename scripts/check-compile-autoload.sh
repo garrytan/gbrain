@@ -7,7 +7,7 @@
 # binary's own code — before cli-preflight.ts, before the cwd-.env quarantine.
 # gbrain is a globally installed CLI that runs from arbitrary checkouts, so a
 # hostile repository carrying `bunfig.toml` + `preload = ["./x.ts"]` would get
-# code execution from a plain `gbrain --version` (verified on Bun 1.3.13 and 1.4.2). The
+# code execution from a plain `foresights --version` (verified on Bun 1.3.13 and 1.4.2). The
 # flag makes a cwd bunfig.toml inert for the compiled binary. The dev runtime
 # (`bun src/cli.ts`) stays bun-native: a contributor's cwd is trusted.
 #
@@ -68,7 +68,7 @@ fi
 # command table must be `() => import('./help/<name>.ts')` naming an existing
 # file, and every spec module under src/cli/help/ must have a record. A
 # computed specifier would drop the module from the compiled binary; an
-# eager import would load it on `gbrain --version`.
+# eager import would load it on `foresights --version`.
 TABLE="src/cli/command-table.ts"
 if [ -f "$TABLE" ]; then
   help_hits="$(grep -nE "name: '.*[[:space:],]help:" "$TABLE" | grep -vE "help: \(\) => import\('\./help/[a-z0-9-]+\.ts'\)" || true)"

@@ -17,7 +17,7 @@ export async function runMemoryProposalsDoctor(ctx: DoctorContext): Promise<Chec
     return checks;
   }
   checks.push({ name: 'memory_proposals_pending', status: 'warn',
-    message: `${pending} memory proposal(s) from QM await your decision${oldest !== null ? ` (oldest ${oldest} hours)` : ''}; review: gbrain memory-proposals list`,
+    message: `${pending} memory proposal(s) from QM await your decision${oldest !== null ? ` (oldest ${oldest} hours)` : ''}; review: foresights memory-proposals list`,
     details: { pending, oldest_hours: oldest },
     fix: { argv: ['gbrain', 'memory-proposals', 'list'], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Lists the proposed timeline entries and links with their pages; approving or denying each one is the owner\'s call.', verify: doctorVerify('memory_proposals_pending') } });

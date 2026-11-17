@@ -59,7 +59,7 @@ type ScopeAuth = Pick<AuthInfo, 'clientName' | 'readsUnscoped' | 'createdAt' | '
 
 type Inputs = NonNullable<Action['inputs']>;
 
-const MEMBER_INPUTS: Inputs = [{ name: 'MEMBER', how: 'The member this connection serves; gbrain access member list on the brain host names them. Ask the user which person it is.' }];
+const MEMBER_INPUTS: Inputs = [{ name: 'MEMBER', how: 'The member this connection serves; foresights access member list on the brain host names them. Ask the user which person it is.' }];
 
 interface Connection { handle: string; argv: string[]; inputs: Inputs; check?: string[]; optOut?: string[]; route?: string }
 
@@ -85,8 +85,8 @@ function why(policy: ServesPolicy): string {
 }
 
 function alternatives(c: Connection): string {
-  if (!c.optOut) return `On the brain host (gbrain access member list names the members): ${c.route}`;
-  return `On the brain host, see what the connection reads with ${c.check!.join(' ')}, then bind it to the person it serves: ${c.argv.join(' ')} (gbrain access member list names the members). `
+  if (!c.optOut) return `On the brain host (foresights access member list names the members): ${c.route}`;
+  return `On the brain host, see what the connection reads with ${c.check!.join(' ')}, then bind it to the person it serves: ${c.argv.join(' ')} (foresights access member list names the members). `
     + `A shared agent instead lists whom it may act for (--may-act-for <members>) and names the person on each call (X-Gbrain-On-Behalf-Of). `
     + `Last resort, for a team that shares everything: ${c.optOut.join(' ')} lets it read every page no rule restricts for whoever is asking.`;
 }
@@ -167,7 +167,7 @@ export async function withServesReread<T extends Partial<CallerAccess>>(engine: 
 function requesterScopeUnknown(op: string, c: Connection): OperationError {
   return opError('requester_scope_unknown',
     `This brain's settings could not be read (whether it serves one person or several; the config read failed twice), so ${op} from ${c.handle}, which is bound to no member, was not answered and nothing was read. This is not an access decision: the same call can succeed once the database answers.`,
-    'Retry the same call in a few seconds. If it keeps failing, the brain host\'s operator checks the database with gbrain doctor --json.',
+    'Retry the same call in a few seconds. If it keeps failing, the brain host\'s operator checks the database with foresights doctor --json.',
     { retryable: true, detail: 'retry_after_ms=2000',
       fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'provider', requires_exclusive: false,
         why: 'Nothing was read. Repeat the same call after about 2 s (retry_after_ms=2000); this read-only command shows whether the database is answering.',
@@ -215,9 +215,9 @@ export async function assertCredentialScoped(engine: Pick<BrainEngine, 'executeR
   const create = kind === 'token' ? ['gbrain', 'auth', 'create', name] : ['gbrain', 'auth', 'register-client', name];
   throw opError('credential_scope_required',
     `This brain serves several people (${why(serves)}), so the ${kind === 'token' ? 'token' : 'OAuth client'} ${name} was not created bound to nobody; nothing was created.`,
-    `Bind it to the person it serves: ${create.join(' ')} --member followed by that member's id (gbrain access member list names the members). A shared agent passes --may-act-for <members>; --reads-unscoped --yes creates one that reads every page no rule restricts for any asker.`,
+    `Bind it to the person it serves: ${create.join(' ')} --member followed by that member's id (foresights access member list names the members). A shared agent passes --may-act-for <members>; --reads-unscoped --yes creates one that reads every page no rule restricts for any asker.`,
     { fix: { argv: [...create, '--member', '<MEMBER>'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Creates the credential bound to one member, so it reads only what that person may read.',
-      inputs: [{ name: 'MEMBER', how: 'The member it serves; gbrain access member list names them. Ask the user which person it is.' }],
+      inputs: [{ name: 'MEMBER', how: 'The member it serves; foresights access member list names them. Ask the user which person it is.' }],
       verify: { argv: ['gbrain', 'access', 'member', 'list', '--json'] } } });
 }
 
@@ -281,7 +281,7 @@ export async function unscopedConnections(engine: Pick<BrainEngine, 'executeRaw'
   ] };
 }
 
-/** `gbrain post-upgrade`: each credential whose reads are (or will be) refused, with its one command. Best effort. */
+/** `foresights post-upgrade`: each credential whose reads are (or will be) refused, with its one command. Best effort. */
 export async function printUnscopedReadsUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw'>): Promise<void> {
   try {
     const found = await unscopedConnections(engine);
@@ -291,8 +291,8 @@ export async function printUnscopedReadsUpgradeNotice(engine: Pick<BrainEngine, 
     console.log(agentBlock({
       why: `This brain serves several people (${why(found.serves)}), and ${pending.length} connection(s) are bound to nobody. Their reads are refused (requester_scope_required) ${found.serves.enforce ? 'after the grace shown' : 'once access.requester_scope_enforce is on'}.`,
       actor: 'user',
-      next: 'Relay the list below to the user. Each command runs on the brain host; MEMBER is the person the connection serves (gbrain access member list names them). A team that shares everything may mark one connection with --reads-unscoped --yes on gbrain auth rescope instead.',
-      verify: 'gbrain doctor --only unscoped_shared_reads --json',
+      next: 'Relay the list below to the user. Each command runs on the brain host; MEMBER is the person the connection serves (foresights access member list names them). A team that shares everything may mark one connection with --reads-unscoped --yes on foresights auth rescope instead.',
+      verify: 'foresights doctor --only unscoped_shared_reads --json',
     }).trimEnd());
     for (const c of pending) console.log(`  ${c.connection}: ${c.state}${c.refuses_at ? ` until ${c.refuses_at}` : ''}. Fix: ${c.argv.join(' ')}`);
   } catch { /* cosmetic; never blocks the upgrade */ }

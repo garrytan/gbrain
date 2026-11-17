@@ -2,7 +2,7 @@
  * secret-scan.ts — pattern-based secret detection for USER workspaces
  * (agent-bootstrap plan: ENG-9 as amended by CX2-15, S3#2, D6).
  *
- * Consumers: `gbrain sources push` (block-before-commit gate), bootstrap
+ * Consumers: `foresights sources push` (block-before-commit gate), bootstrap
  * verify, and the transcript-corpus writer (redact-in-place via
  * `redactFindings`).
  *
@@ -61,7 +61,7 @@ export interface SecretFinding {
   /** Set by scanFiles: the path the finding came from (as given by the caller). */
   file?: string;
   /**
-   * The gbrain version that added or last changed this finding's rule
+   * The foresights version that added or last changed this finding's rule
    * (`patternSince`); absent for rules unchanged since before it was tracked.
    */
   since?: string;
@@ -185,7 +185,7 @@ interface CorePattern {
    */
   validate?: (value: string) => boolean;
   /**
-   * The gbrain version that added or last changed this rule. Copied onto
+   * The foresights version that added or last changed this rule. Copied onto
    * every finding of the pattern (`SecretFinding.since`) so a refusal can say
    * which upgrade started blocking it.
    */
@@ -301,7 +301,7 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
   { name: 'xai', source: 'xai-[A-Za-z0-9_]{80}(?![A-Za-z0-9_])', since: PROVIDER_KEYS_SINCE },
   { name: 'perplexity', source: 'pplx-[A-Za-z0-9]{48}(?![A-Za-z0-9])', since: PROVIDER_KEYS_SINCE },
   { name: 'replicate', source: 'r8_[A-Za-z0-9_-]{37}(?![A-Za-z0-9_-])', since: PROVIDER_KEYS_SINCE },
-  // gbrain's own tokens: generateToken (core/utils.ts) mints 'gbrain_' plus an
+  // foresights's own tokens: generateToken (core/utils.ts) mints 'gbrain_' plus an
   // optional OAuth infix (at_ access / rt_ refresh / cs_ client secret /
   // code_ auth code) plus 32 random bytes hex. Without this entry the scanner
   // redacts every vendor's keys but ships its own live tokens — MCP client
@@ -1082,7 +1082,7 @@ const PATTERN_SINCE: ReadonlyMap<string, string> = new Map([
   ['private_key_pem', SECURITY_WAVE_SINCE],
 ]);
 
-/** The gbrain version that added or last changed `pattern`'s rule, if tracked. */
+/** The foresights version that added or last changed `pattern`'s rule, if tracked. */
 export function patternSince(pattern: string): string | undefined {
   return PATTERN_SINCE.get(pattern);
 }

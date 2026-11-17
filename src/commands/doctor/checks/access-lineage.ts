@@ -24,7 +24,7 @@ async function rawOnlyRules(ctx: DoctorContext): Promise<Omit<Check, 'name'>> {
       'SELECT source_id, rule_id, prefix FROM access_rules WHERE NOT covers_derived ORDER BY source_id, rule_id');
     if (!rows.length) return infoCheck(name, 'Not applicable: every folder and page rule also keeps the pages and facts derived from its pages to its readers (no rule has covers_derived: false).', 'not_applicable');
     const rules = rows.map(r => `${r.source_id}:${r.rule_id} (${r.prefix})`);
-    return infoCheck(name, `${rows.length} raw-only rule(s) keep their pages to their readers, but not the pages and facts derived from them: whoever reads a summary of such a page reads it. Use raw-only rules for transcripts and similar raw material, never for a folder whose content is itself the secret: ${rules.slice(0, 10).join(', ')}${rows.length > 10 ? ', ...' : ''}. Turn one back: gbrain access rule add --id <rule> --prefix <folder/> --readers <list> (without --raw-only).`, 'ok', undefined, { rules: rows });
+    return infoCheck(name, `${rows.length} raw-only rule(s) keep their pages to their readers, but not the pages and facts derived from them: whoever reads a summary of such a page reads it. Use raw-only rules for transcripts and similar raw material, never for a folder whose content is itself the secret: ${rules.slice(0, 10).join(', ')}${rows.length > 10 ? ', ...' : ''}. Turn one back: foresights access rule add --id <rule> --prefix <folder/> --readers <list> (without --raw-only).`, 'ok', undefined, { rules: rows });
   } catch (error) {
     return checkError(name, `run ${name}`, error);
   }
@@ -35,8 +35,8 @@ async function audienceMembers(ctx: DoctorContext): Promise<Omit<Check, 'name'>>
   try {
     const ids = (await connectedEngine(ctx).executeRaw<{ id: string }>(
       "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id")).map(r => r.id);
-    if (!ids.length) return infoCheck(name, 'Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).', 'not_applicable');
-    return infoCheck(name, `${ids.length} audience member(s) (a group chat or shared assistant): the brain owner reads each one's own member page, older versions, derived pages and facts as if they named the owner: ${ids.join(', ')}. Undo with gbrain access member kind <id> person.`, 'ok', undefined, { members: ids });
+    if (!ids.length) return infoCheck(name, 'Not applicable: no member is marked as an audience (foresights access member kind <id> audience).', 'not_applicable');
+    return infoCheck(name, `${ids.length} audience member(s) (a group chat or shared assistant): the brain owner reads each one's own member page, older versions, derived pages and facts as if they named the owner: ${ids.join(', ')}. Undo with foresights access member kind <id> person.`, 'ok', undefined, { members: ids });
   } catch (error) {
     return checkError(name, `run ${name}`, error);
   }
@@ -48,7 +48,7 @@ async function membersReadLineage(ctx: DoctorContext): Promise<Omit<Check, 'name
     if (!(await membersReadLineageOn(connectedEngine(ctx)))) {
       return infoCheck(name, 'Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.', 'not_applicable');
     }
-    return infoCheck(name, 'access.members_read_lineage is on: a member\'s credential speaking for itself reads derived pages and facts whose origins it reads, so summaries of a page reach everyone that page lists. Every remote caller\'s whoami reports it. Turn it off with gbrain access members-read-lineage off.', 'ok');
+    return infoCheck(name, 'access.members_read_lineage is on: a member\'s credential speaking for itself reads derived pages and facts whose origins it reads, so summaries of a page reach everyone that page lists. Every remote caller\'s whoami reports it. Turn it off with foresights access members-read-lineage off.', 'ok');
   } catch (error) {
     return checkError(name, `run ${name}`, error);
   }

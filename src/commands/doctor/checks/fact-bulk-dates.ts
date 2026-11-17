@@ -8,7 +8,7 @@ import { agentFix, checkError } from '../check-fix.ts';
  * which a bulk load writes when it stamps the day it ran onto every row. Those dates record when the facts were
  * loaded, not when they happened. One read-only aggregate (`findBulkFactDays`, the rule the repair uses) over the
  * scoped sources' active facts reports each day with its fact and entity counts, the most frequent source tags and
- * how many claims state exactly one earlier date, and names the explicit-only `gbrain repair fact-claim-dates`
+ * how many claims state exactly one earlier date, and names the explicit-only `foresights repair fact-claim-dates`
  * preview. Remote callers see only their permitted sources.
  */
 export async function factBulkDatesCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
@@ -25,7 +25,7 @@ export async function factBulkDatesCheck(engine: BrainEngine, sourceIds?: string
     return { name, status: 'warn', details,
       message: `${days.length} calendar day(s) hold a bulk-loaded share of a source's facts as their valid_from: ${lines.join('; ')}. `
         + 'These dates record when the facts were loaded, not when they happened, so timelines and as-of reads put every such fact on that day. '
-        + `Preview moving the facts whose claim states its own date on the brain host: gbrain repair fact-claim-dates --source ${first.source_id}`
+        + `Preview moving the facts whose claim states its own date on the brain host: foresights repair fact-claim-dates --source ${first.source_id}`
         + `${source_ids.length > 1 ? ` (one source at a time: ${source_ids.map(id => `--source ${id}`).join(', ')})` : ''} — it changes nothing until the user agrees `
         + 'to the apply command it prints; facts without a date in the claim keep the load day.',
       fix: agentFix(['gbrain', 'repair', 'fact-claim-dates', '--source', first.source_id, '--json'],

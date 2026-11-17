@@ -65,11 +65,11 @@ export function detectManifestScope(root: string): WorktreeManifestScope {
     if (classifyGitCheckout(canonical) === 'not_git') return 'tree';
     throw unsafe('Git could not read this checkout, so no manifest was recorded.',
       `${canonical} holds a .git entry but \`git rev-parse\` failed (${top.reason === 'exit' ? 'a damaged repository, or a checkout owned by another user' : top.reason}), and hashing every file instead would read ignored files such as .env. `
-        + `Ask the user to run \`git -C ${canonical} status\` to see why Git refuses it and repair it (or run gbrain as the checkout's owner), then run the step again.`,
+        + `Ask the user to run \`git -C ${canonical} status\` to see why Git refuses it and repair it (or run foresights as the checkout's owner), then run the step again.`,
       { why: 'Without Git the manifest would cover every file, ignored secrets included, so nothing was hashed.',
         fix: { argv: ['git', '-C', canonical, 'status'], consent: [], actor: 'user', requires_exclusive: false,
           why: 'Git prints why it cannot read this checkout (a damaged HEAD or index, or a checkout owned by another user).',
-          user_message: `Git cannot read ${canonical}. Please run the command shown, repair what it reports, then run the gbrain step again.`,
+          user_message: `Git cannot read ${canonical}. Please run the command shown, repair what it reports, then run the foresights step again.`,
           verify: { argv: ['git', '-C', canonical, 'rev-parse', '--show-toplevel'] } } });
   }
   try { return realpathSync(top.stdout.toString('utf8').trim()) === canonical ? 'git' : 'tree'; } catch { return 'tree'; }

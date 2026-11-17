@@ -9,19 +9,19 @@ verb; `remember` and `extract_facts` do all the writing.
 
 **Say to your agent:** *"Turn on ambient memory writeback for my brain"* —
 *"remember things I tell you without being asked"* — your agent runs
-`gbrain config set memory.auto_writeback salient` and
-`gbrain bootstrap harness --yes`.
+`foresights config set memory.auto_writeback salient` and
+`foresights bootstrap harness --yes`.
 
 Off by default. Nothing in this feature ever enables itself.
 
 The [conversation archive](./conversation-archive.md) is a separate lane: it
 keeps the sessions themselves (one redacted page per conversation per day), is
 on by default on a personal brain, extracts no facts, and is turned off with
-`gbrain transcripts archive off`; `memory.auto_writeback` does not change it.
+`foresights transcripts archive off`; `memory.auto_writeback` does not change it.
 
 ## Who gets asked (and who is never asked)
 
-gbrain distinguishes PERSONAL brains from company/team brains and only ever
+foresights distinguishes PERSONAL brains from company/team brains and only ever
 *offers* ambient writeback on personal ones — capturing what people say to
 agents on a shared brain is a privacy decision the whole team owns, not a
 default.
@@ -33,13 +33,13 @@ default.
 - **The heuristic is conservative.** Without a declaration, only ≥3 distinct
   non-automation MCP clients active in the last 30 days reads as shared
   evidence (client count measures surface breadth, not people — Claude Code +
-  Codex + a phone client is one human). `gbrain doctor`'s `memory_writeback`
+  Codex + a phone client is one human). `foresights doctor`'s `memory_writeback`
   check shows the resolved audience and its reasons; correct a
-  misclassification with `gbrain config set brain.audience personal|shared`.
-- **The ask fires once.** On personal brains, `gbrain init` and the
+  misclassification with `foresights config set brain.audience personal|shared`.
+- **The ask fires once.** On personal brains, `foresights init` and the
   post-upgrade banner print a one-time `[AGENT]`-relayed disclosure + ask
   (sentinel `memory.auto_writeback_notice_shown`); declining is permanent.
-  `gbrain advisor` keeps a quiet reminder afterward — informational only,
+  `foresights advisor` keeps a quiet reminder afterward — informational only,
   never `--apply`-able: consent is never automated.
 - **Silence everywhere else:** shared/unknown brains, mounted team brains,
   thin clients, remote MCP callers, and any classifier failure.
@@ -56,7 +56,7 @@ default.
 | `salient` (recommended) | Durable, notable claims only: preferences, corrections, decisions, commitments, relationships, project-state changes. The backstop keeps medium+ notability facts. |
 | `all` | Every direct factual user statement — still excluding operational chatter, assistant-generated content, secrets/credentials, and quoted third-party material. Precision rides the extractor's semantic skip rules (the second of the two filters); expect more low-value facts and more extraction spend. |
 
-Both planes carry the setting: `gbrain config set memory.auto_writeback …`
+Both planes carry the setting: `foresights config set memory.auto_writeback …`
 dual-writes the DB plane (authoritative — the serve re-checks it before any
 extraction) and the `~/.gbrain/config.json` mirror (what the engine-free
 Stop-hook child reads). The mirror never *enables* anything on its own: it is
@@ -65,8 +65,8 @@ DB-only — a mounted or selected brain whose operator never opted in cannot
 inherit another brain's setting. When the planes disagree (a failed
 dual-write, a reinitialized DB, or a `config set` run on another machine of a
 shared Postgres brain), that is **plane drift**: extraction gates hold banked
-turns without the terminal skip (nothing is destroyed), `gbrain doctor` warns
-with the one-line re-sync (`gbrain config set memory.auto_writeback <mode>`),
+turns without the terminal skip (nothing is destroyed), `foresights doctor` warns
+with the one-line re-sync (`foresights config set memory.auto_writeback <mode>`),
 and a DB-write failure during `config set` itself exits non-zero and says the
 runtime value is unchanged. Selecting a MOUNTED brain (`--brain`,
 `GBRAIN_BRAIN_ID`, `.gbrain-mount`) writes the mount's DB row only — the
@@ -97,7 +97,7 @@ the file's claim and before any provider call:
   extracting it (`.progress` holds its turn hashes and a `writeback_off`
   `.ingested` sidecar names the reason), so a resumed session later extracts
   only its new turns. **hold** leaves the file untouched until the config is
-  coherent again; `gbrain doctor` names the re-sync command.
+  coherent again; `foresights doctor` names the re-sync command.
 - **Capture time counts too.** When the brain's own file plane says `off`, the
   PreCompact and SessionEnd hooks (and the OpenClaw compaction spool) write a
   `<file>.capture-off.json` record naming the brain and the hashes of the turns
@@ -117,20 +117,20 @@ the file's claim and before any provider call:
 - **What `off` does not stop:** facts already saved, explicit `remember` and
   `extract_facts` calls, and fact extraction from pages written on purpose
   (sync, `put_page`, imports). To review what the lanes already saved, run
-  `gbrain recall --since 30d --limit 500 --json` and look for rows whose
+  `foresights recall --since 30d --limit 500 --json` and look for rows whose
   `source` is `hook:compact`, `hook:writeback` or `sweep:corpus`; forget a fact
-  only with the user's agreement (`gbrain forget <fact-id>`).
+  only with the user's agreement (`foresights forget <fact-id>`).
 - **Stopping capture entirely.** `off` stops extraction, but the hooks still
   bank session text locally (it is retired, never extracted). To stop the
-  hooks themselves, SessionEnd included, run `gbrain bootstrap harness --remove`.
-- **Restart older workers.** Workers started on a gbrain older than this gate
-  don't run it: long-running `gbrain serve` processes (compaction harvest),
+  hooks themselves, SessionEnd included, run `foresights bootstrap harness --remove`.
+- **Restart older workers.** Workers started on a foresights older than this gate
+  don't run it: long-running `foresights serve` processes (compaction harvest),
   cron or autopilot sweeps (SessionEnd transcripts and the compaction
-  backstop), and any OpenClaw gateway hosting the gbrain context engine.
-  `gbrain config set memory.auto_writeback off` and `gbrain doctor`
+  backstop), and any OpenClaw gateway hosting the foresights context engine.
+  `foresights config set memory.auto_writeback off` and `foresights doctor`
   (`details.restart_after_off`) list them; enforcement is incomplete until they
   restart.
-- `gbrain config get memory.auto_writeback` prints the bare value on stdout and
+- `foresights config get memory.auto_writeback` prints the bare value on stdout and
   each lane's effective action on the stderr `[config]` line; doctor's
   `memory_writeback` row carries the same in `details.capture_lanes`.
 
@@ -150,7 +150,7 @@ the file's claim and before any provider call:
    it all get the base instructions instead (never orders to make calls
    dispatch will deny); `extract_facts` is only named when the transport's
    actual tool set can call it.
-2. **Managed harness instruction blocks.** `gbrain bootstrap harness --yes`
+2. **Managed harness instruction blocks.** `foresights bootstrap harness --yes`
    installs the same contract (same builder — the surfaces cannot drift) as a
    managed block between `<!-- gbrain:ambient-writeback:begin/end -->`
    sentinels in user-scope `CLAUDE.md` (Claude Code) and `$CODEX_HOME/AGENTS.md`
@@ -160,7 +160,7 @@ the file's claim and before any provider call:
    — bootstrap fails that target loudly and doctor warns, instead of reporting
    a dead integration as healthy. The block header names the serve endpoint;
    after changing mode/TTL/visibility config, re-run
-   `gbrain config set memory.auto_writeback <mode>` then `bootstrap harness`
+   `foresights config set memory.auto_writeback <mode>` then `bootstrap harness`
    (the config set refreshes the engine-free posture stamp the renderer
    reads; doctor's drift warning names the same combo). Blocks install only
    after the same run's MCP registration confirms, and a failed final smoke
@@ -181,7 +181,7 @@ the file's claim and before any provider call:
    outcome. Serve down? The file waits for the maintenance sweep. The lane is
    engine-uniform: the IPC listener keys its socket off the brain's
    connection URL, so Postgres brains harvest the same way whenever a
-   `gbrain serve` for that brain is running (heartbeat `no_serve` between
+   `foresights serve` for that brain is running (heartbeat `no_serve` between
    serves — the banked file is the durable artifact either way).
 
    When the brain's canonical writer stays busy past the extraction
@@ -190,12 +190,12 @@ the file's claim and before any provider call:
    seconds apart (heartbeat `writer_busy_requeued`), before any model call.
    A turn that still fails ends with the error name and code as its reason
    (for example `operationerror:writer_lock_unavailable`), the serve's
-   stderr names the first failure of each reason, and `gbrain doctor` warns
+   stderr names the first failure of each reason, and `foresights doctor` warns
    in `memory_writeback` when at least 10 harvests finished in the last 7
    days and more than 20% of them failed. A failed turn keeps its file and
    waits for a corpus sweep.
 
-   **A failed turn is swept on its own.** `gbrain serve --http` runs a
+   **A failed turn is swept on its own.** `foresights serve --http` runs a
    corpus drain every 10 minutes while any corpus file is still unextracted
    (a sweep with a 60-second budget), and a stdio serve sweeps at startup
    and after 10 minutes idle. A sweep's budget stops it between files, never
@@ -203,10 +203,10 @@ the file's claim and before any provider call:
    per turn) still finishes the file it started. Turns the serve could not
    extract (failed, over the per-session cap, or banked while the serve was
    down) are picked up by the next drain or sweep. To clear a backlog
-   sooner, run `gbrain sweep --once --budget-ms 600000` on the brain host.
+   sooner, run `foresights sweep --once --budget-ms 600000` on the brain host.
    A corpus file nothing has extracted is kept for three times
    `dream.synthesize.corpus_retention_days` (90 days by default), and
-   `gbrain doctor` warns in `memory_writeback` once one is past plain
+   `foresights doctor` warns in `memory_writeback` once one is past plain
    retention. `GBRAIN_SWEEP=0` turns every serve sweep and drain off.
    The drain writes its skip reasons and failures to serve's stderr.
 
@@ -215,28 +215,28 @@ the file's claim and before any provider call:
    refused), the sweep retries it on the next pass, then after 10, 20 and
    40 minutes, and then stops paying for it (`corpus_window_dead_lettered`).
    Changing the extraction model or provider retries it once more. Fix the
-   cause, then run `gbrain sweep --retry-failed` to see the stopped files
-   and `gbrain sweep --retry-failed --apply` to retry them (paid). A source
+   cause, then run `foresights sweep --retry-failed` to see the stopped files
+   and `foresights sweep --retry-failed --apply` to retry them (paid). A source
    whose canonical worktree is claimed but not activated is held before any
-   model call; `gbrain sources writer status <source>` says what to do.
+   model call; `foresights sources writer status <source>` says what to do.
    With no usable extraction model, files stay pending instead of being
    marked done with zero facts.
 
    **Say to your agent:** *"Make sure the turns my brain could not extract
-   are swept."* (the agent runs `gbrain sweep --once --budget-ms 600000` on
+   are swept."* (the agent runs `foresights sweep --once --budget-ms 600000` on
    the brain host) or *"Why are my writeback harvests
-   failing?"* (the agent reads `gbrain doctor` `memory_writeback` and the
+   failing?"* (the agent reads `foresights doctor` `memory_writeback` and the
    `writeback` heartbeat reasons).
 
-   Sessions run by gbrain's own `claude-cli` model provider are never
-   banked (heartbeat reason `self_capture`): extracting gbrain's internal
+   Sessions run by foresights's own `claude-cli` model provider are never
+   banked (heartbeat reason `self_capture`): extracting foresights's internal
    LLM calls as your conversations would spawn another call that banks
    again. The provider also starts its `claude` child with your Claude Code
    hooks disabled, and the serve-side harvest and the sweep skip any such
-   file an older binary left behind. `gbrain doctor` (`self_capture`) lists
+   file an older binary left behind. `foresights doctor` (`self_capture`) lists
    leftover files with one-time quarantine commands, and
    `captured_facts_active` counts facts already extracted from such sessions;
-   `gbrain repair captured-facts` previews and expires them
+   `foresights repair captured-facts` previews and expires them
    ([repair guide](repair.md#captured-facts)).
 
 ### Harnesses with an instruction cap
@@ -267,23 +267,23 @@ captured as a fact about you.
   before the extractor sees the text. An assistant reply that restates a
   pasted claim is still ordinary assistant text and can still be extracted.
 - **Retention.** Nothing is deleted. Transcripts, the session corpus files,
-  `gbrain transcripts ingest`, ambient recall and the dream `synthesize`
+  `foresights transcripts ingest`, ambient recall and the dream `synthesize`
   phase (which writes idea pages, not facts about you) still see the pasted
   text with its tags.
 - **Repair.** Facts extracted from pastes by releases before v0.60.30.0 stay
-  active until removed. `gbrain repair captured-facts --include-ambiguous`
+  active until removed. `foresights repair captured-facts --include-ambiguous`
   lists likely paste-derived facts (a word-overlap heuristic against the
   retained session corpus) and expires the previewed set only with
   `--apply --expect <hash>` ([repair guide](repair.md#captured-facts)). For a
-  single fact, find it with `gbrain recall` and withdraw it with
-  `gbrain forget <fact-id> --reason "came from a pasted email"`.
+  single fact, find it with `foresights recall` and withdraw it with
+  `foresights forget <fact-id> --reason "came from a pasted email"`.
 
 To keep something you pasted, save it explicitly with its provenance:
 
 ```bash
-gbrain remember "The team offsite moves to March; the budget is final" \
+foresights remember "The team offsite moves to March; the budget is final" \
   --entity projects/offsite-example --provenance "pasted email from a colleague, 2026-10-01"
-gbrain recall projects/offsite-example
+foresights recall projects/offsite-example
 ```
 
 Or ask your agent: *"Remember the offsite date from the email I just pasted,
@@ -294,7 +294,7 @@ and note that it came from that email."*
 An orchestrator that starts worker sessions on your account (`claude -p`,
 `codex exec`) writes each worker's first user turn itself, usually from a
 template. Those turns are not yours, but the transcript looks the same as one
-of your own sessions. Tell gbrain who wrote them with one environment variable
+of your own sessions. Tell foresights who wrote them with one environment variable
 on the worker's process:
 
 | `GBRAIN_SESSION_AGENT` | What happens |
@@ -308,7 +308,7 @@ on the worker's process:
 GBRAIN_SESSION_AGENT=fleet-worker claude -p "$(render-brief task-42)"
 ```
 
-`GBRAIN_HOOKS=0` turns off every gbrain hook, context injection included;
+`GBRAIN_HOOKS=0` turns off every foresights hook, context injection included;
 `GBRAIN_SESSION_AGENT=off` turns off only saving.
 
 **Automatic detection.** With the variable unset, the hook treats a session
@@ -340,7 +340,7 @@ nothing and reports `speaker_mismatch`, so your earlier turns stay yours. Agent 
 the consolidate phase and are not linked to entity pages as your statements.
 
 Facts saved as yours before this marker existed can be re-attributed:
-`gbrain doctor` (`agent_session_facts`) counts them and `gbrain repair
+`foresights doctor` (`agent_session_facts`) counts them and `foresights repair
 agent-session-facts` previews the change ([repair guide](repair.md)). The
 repair changes attribution and retires the takes they produced; it deletes
 nothing.
@@ -382,7 +382,7 @@ the database, the fact is kept and a warning names the lane. Explicit
 Each skip prints `[facts] capture dedup: lane=<lane> dropped a duplicate of
 fact #<id> (rule=same_entity|named_entity)` on stderr and adds a
 `writeback_dedup` heartbeat event (lane, `duplicate`, `near_duplicate`
-counts). `gbrain doctor` shows the 7-day totals as `cross_lane_duplicates_7d`
+counts). `foresights doctor` shows the 7-day totals as `cross_lane_duplicates_7d`
 and `near_duplicates_shadow_7d` under `memory_writeback`. Hot memory and the
 `context_pack`/`delta` facts show one line per duplicate group (the newest
 row, with every entity in `entity_slugs`).
@@ -394,7 +394,7 @@ them once only when the text is identical, and search can return both.
 
 **Say to your agent:** *"Remember that the renewal moved to November."*
 (the agent's `remember` is the copy that stays) or *"How many duplicate facts
-did automatic capture skip this week?"* (the agent runs `gbrain doctor --json`
+did automatic capture skip this week?"* (the agent runs `foresights doctor --json`
 and reads `memory_writeback`).
 
 ## Per-harness reality (honest limitations)
@@ -407,7 +407,7 @@ and reads `memory_writeback`).
 | opencode / OpenClaw / others | MCP instructions when connected | None wired — follow-ups filed. |
 
 The workspace-bootstrap "same-turn write-back" contract
-(`gbrain bootstrap contract`, AGENTS.md) and the two surfaces above are three
+(`foresights bootstrap contract`, AGENTS.md) and the two surfaces above are three
 renderings of one posture; the MCP section and the harness blocks share one
 builder, and the workspace contract is the always-on convention documented in
 [bootstrap.md](./bootstrap.md). Keep them coherent when editing any of them.
@@ -441,7 +441,7 @@ can come from other sessions. To keep each session to its own facts, turn on
 `context.hot_memory.session_only` (DB plane, off by default):
 
 ```bash
-gbrain config set context.hot_memory.session_only true
+foresights config set context.hot_memory.session_only true
 ```
 
 **Say to your agent:** *"Only show me facts from this session in hot memory."*
@@ -451,7 +451,7 @@ The serve reads the key on every `turn_context` and `context_pack` request, so
 the change applies on the next turn without a restart. With it on, a session
 with no facts of its own, or a request with no session id, gets no hot facts;
 entity cards, volunteered pages and `recall` are unchanged, and so is the
-`_meta.brain_hot_memory` block on MCP tool calls. `gbrain config unset
+`_meta.brain_hot_memory` block on MCP tool calls. `foresights config unset
 context.hot_memory.session_only` restores the fallback.
 
 ## Privacy and visibility
@@ -461,14 +461,14 @@ context.hot_memory.session_only` restores the fallback.
   SessionEnd corpus sweep) keep a claim the assistant made (a recommendation,
   answer, plan or research result) phrased "Assistant said …" with
   `attributed_to: assistant`, so recall can answer what the assistant told
-  you. `gbrain facts relink` never attaches such a fact, or a named third
+  you. `foresights facts relink` never attaches such a fact, or a named third
   party's, to an entity page, core pages included (#7270). Speaker
-  attribution is on by default; `gbrain config set facts.attribution false`
+  attribution is on by default; `foresights config set facts.attribution false`
   turns it off.
 - **What is never saved:** greetings, acknowledgements, fact-free questions,
   the assistant's plan narration, tool output, quoted
   third-party material, pasted/imported text (unless the user explicitly asks;
-  see [Pasted content](#pasted-content)), gbrain's own claude-cli calls,
+  see [Pasted content](#pasted-content)), foresights's own claude-cli calls,
   raw transcripts, and — in every mode — secrets/credentials (banked turns are
   secret-scanned before they touch disk; scanner unavailable = fail-closed
   skip).
@@ -478,8 +478,8 @@ context.hot_memory.session_only` restores the fallback.
   `facts.default_visibility` is unset, the instruction template tells agents
   to write `world`; only an explicitly-private brain gets the private posture,
   stated with its trade-off: private facts are readable by the local CLI only,
-  so remote agents cannot recall them later. `gbrain bootstrap harness` and
-  `gbrain doctor` (`memory_writeback`) warn when an explicitly private default
+  so remote agents cannot recall them later. `foresights bootstrap harness` and
+  `foresights doctor` (`memory_writeback`) warn when an explicitly private default
   meets remote readers on a brain not declared `brain.audience=shared`. An explicit private setting is
   never widened — not by the template, not by the backstop (which resolves
   `facts.default_visibility` exactly like `extract_facts` always has).
@@ -511,7 +511,7 @@ extraction switches.
 ### Long transcripts: windowed extraction
 
 **Say to your agent:** *"How much of my long sessions has the sweep
-extracted?"* (the agent runs `gbrain sweep --once --json` and reads
+extracted?"* (the agent runs `foresights sweep --once --json` and reads
 `corpus_files[]`) or *"Lower how many transcript windows the sweep extracts at
 once."* (the agent sets `GBRAIN_CORPUS_WINDOWS_PER_SWEEP` for the process that
 runs the sweep).
@@ -529,11 +529,11 @@ is kept in a `<file>.progress` file beside the transcript, so a resumed
 session or a compaction rewrite costs only its new turns. The compaction
 harvest extracts the first window right away; the sweep does the rest. Set
 `GBRAIN_CORPUS_WINDOWS_PER_SWEEP` to a positive integer in the environment of
-the process that runs the sweep (`gbrain serve` or `gbrain sweep --once`) to
+the process that runs the sweep (`foresights serve` or `foresights sweep --once`) to
 change the 32-window total; the per-file cap of 8 is fixed. An explicit
 `memory.auto_writeback off` stops all of this for session text
 ([Capture lanes and the off switch](#capture-lanes-and-the-off-switch)); the
-brain-wide `facts.extraction_enabled` stops every fact extraction. `gbrain sweep
+brain-wide `facts.extraction_enabled` stops every fact extraction. `foresights sweep
 --once --json` lists `corpus_files[]` with `windows_done` and
 `windows_remaining` per file. Transcripts marked done before windowed
 extraction existed are not re-read; only turns added after the upgrade are
@@ -541,7 +541,7 @@ extracted, so their tails past the first 8,000 characters stay unextracted.
 
 ## Diagnostics
 
-`gbrain doctor` → `memory_writeback`: resolved mode (+`mode_valid`), TTL
+`foresights doctor` → `memory_writeback`: resolved mode (+`mode_valid`), TTL
 (+`ttl_valid`), both visibility postures (instruction template vs backstop),
 brain audience + reasons, installed harness blocks (receipt vs live sentinel
 probe, override-file detection, config-drift warning — and a receipt target
@@ -558,9 +558,9 @@ results from the serve-side harvest receipts, plus the capture dedup totals
 append-only, loss-tolerant observability — never a source of truth.
 
 Two neighbouring checks cover capture residue: `self_capture` counts corpus
-files from gbrain's own claude-cli sessions, and `captured_facts_active`
+files from foresights's own claude-cli sessions, and `captured_facts_active`
 counts facts captured before v0.60.30.0 from those sessions or from pasted
-text (cleared by `gbrain repair captured-facts`).
+text (cleared by `foresights repair captured-facts`).
 
 ## Reading and changing it remotely
 
@@ -582,7 +582,7 @@ compaction harvest, SessionEnd transcripts). `memory.agent_writeback`
 what agents are told over MCP. The capture lanes never read it, so a remote
 `off` can't retire the host's banked session text, and a remote `all` can't
 start capture the operator never turned on. Harness instruction blocks
-installed by `gbrain bootstrap harness` also keep following the operator's
+installed by `foresights bootstrap harness` also keep following the operator's
 `memory.auto_writeback`; converge them with another bootstrap run if you
 change that. An unreadable or unrecognized `memory.agent_writeback` makes
 agents act as if writeback is off (never as if it inherited a wider mode), and
@@ -592,14 +592,14 @@ plain `off`.
 **Turning on remote changes (operator, on the brain host):**
 
 ```bash
-gbrain config set mcp.publish_memory_settings true      # the grant; default off
-gbrain auth create settings-app --scopes read,write,admin   # or: gbrain auth rescope --id TOKEN_ID --scopes read,write,admin
+foresights config set mcp.publish_memory_settings true      # the grant; default off
+foresights auth create settings-app --scopes read,write,admin   # or: foresights auth rescope --id TOKEN_ID --scopes read,write,admin
 # From an admin-scope connection:
 #   set_memory_writeback {"mode": "salient", "dry_run": true}   -> preview, writes nothing
 #   set_memory_writeback {"mode": "salient"}                    -> applied, audited
 #   get_memory_settings {}                                      -> effective_mode: "salient", source: "agent_override"
-gbrain config get memory.agent_writeback   # the same value from the CLI
-gbrain config set memory.agent_writeback inherit   # back to the operator's mode
+foresights config get memory.agent_writeback   # the same value from the CLI
+foresights config set memory.agent_writeback inherit   # back to the operator's mode
 ```
 
 Admin scope also carries `sources_admin` and `users_admin`, so grant it only
@@ -631,18 +631,18 @@ host session hooks, and its response says so.
 ## Enable / verify / disable
 
 ```bash
-gbrain config set memory.auto_writeback salient
-gbrain config set memory.auto_writeback_transient_ttl 3d   # optional; default
-gbrain bootstrap harness --harness codex --yes
+foresights config set memory.auto_writeback salient
+foresights config set memory.auto_writeback_transient_ttl 3d   # optional; default
+foresights bootstrap harness --harness codex --yes
 grep -n "gbrain:ambient-writeback" "${CODEX_HOME:-$HOME/.codex}/AGENTS.md"
-gbrain doctor | grep -A6 memory_writeback
+foresights doctor | grep -A6 memory_writeback
 # In a NEW agent session, say: "I prefer dark mode in every editor." Then:
-gbrain recall --grep "dark mode"
-gbrain sweep --once   # drives the sweep backstop extraction immediately
+foresights recall --grep "dark mode"
+foresights sweep --once   # drives the sweep backstop extraction immediately
 # Off switch (anytime; stops every capture lane, SessionEnd included;
 # converge harness blocks with another bootstrap run):
-gbrain config set memory.auto_writeback off
-gbrain bootstrap harness --yes
+foresights config set memory.auto_writeback off
+foresights bootstrap harness --yes
 # Stop the hooks from banking session text at all:
-gbrain bootstrap harness --remove
+foresights bootstrap harness --remove
 ```

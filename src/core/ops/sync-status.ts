@@ -9,7 +9,7 @@ import type { Operation, OperationContext } from './contract.ts';
 import { opError } from './contract.ts';
 import { opTransport, readFix } from './op-fix.ts';
 
-/** `gbrain sync --source <id>` on the CLI, `source_id: "<id>"` over MCP. */
+/** `foresights sync --source <id>` on the CLI, `source_id: "<id>"` over MCP. */
 function sourceRef(ctx: OperationContext, id: string): string {
   return opTransport(ctx) === 'cli' ? `--source ${id}` : `source_id: "${id}"`;
 }

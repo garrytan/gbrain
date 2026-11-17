@@ -1,6 +1,6 @@
 /**
  * D-11 (GBRA-131, #6982): retiring a generated atom never unlinks a checkout
- * file that holds content the database lacks, or a file outside gbrain's
+ * file that holds content the database lacks, or a file outside foresights's
  * write targets.
  *
  * Protects: with `cycle.extract_atoms.write_through` on, an atom
@@ -136,7 +136,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect({ retired: await b.atoms(false), file: existsSync(b.path(old!)) && b.file(old!) === edited, current: existsSync(b.path(current!)) })
           .toEqual({ retired: [old!], file: true, current: true });
         const held = holdFor(phase.holds, old!);
-        expect({ status: phase.status, held: held.length, fix: held.some(h => h.includes('gbrain sync --source default')) })
+        expect({ status: phase.status, held: held.length, fix: held.some(h => h.includes('foresights sync --source default')) })
           .toEqual({ status: 'warn', held: 1, fix: true });
       });
     }, 180_000);

@@ -29,7 +29,7 @@ async function verdict(ctx: DoctorContext): Promise<Check> {
         fix: agentFix(['gbrain', 'access', 'owner', '--json'], 'Read-only: shows the configured owner and why it is not in effect.', name, { ask_user: true }) };
     }
     return { name, status: 'ok', details,
-      message: `The owner opt-in is on: the ${view.bound_credentials.length} credential(s) bound to owner ${view.owner} read pages that readers lists and folder or page rules keep to other members, and their derived pages and facts, except another member's own member page. Every member's whoami reports it. Turn it off with gbrain access owner reads-restricted off.` };
+      message: `The owner opt-in is on: the ${view.bound_credentials.length} credential(s) bound to owner ${view.owner} read pages that readers lists and folder or page rules keep to other members, and their derived pages and facts, except another member's own member page. Every member's whoami reports it. Turn it off with foresights access owner reads-restricted off.` };
   } catch (error) {
     return checkError(name, `run ${name}`, error);
   }

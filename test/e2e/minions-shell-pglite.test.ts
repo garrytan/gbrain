@@ -4,8 +4,8 @@
  * Closes the T4 gap surfaced during PR #381 eng review. The sibling file
  * test/e2e/minions-shell.test.ts covers the Postgres + persistent-worker-daemon
  * path. This file covers the PGLite path documented in the minion-orchestrator
- * skill: `gbrain jobs submit shell ... --follow` runs inline because
- * `gbrain jobs work` (daemon) is not available on PGLite (exclusive file lock).
+ * skill: `foresights jobs submit shell ... --follow` runs inline because
+ * `foresights jobs work` (daemon) is not available on PGLite (exclusive file lock).
  *
  * Mirrors the Postgres test's structure but runs in-memory against PGLiteEngine.
  * No DATABASE_URL required, no Docker — runs in CI unconditionally.

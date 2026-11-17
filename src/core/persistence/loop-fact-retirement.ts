@@ -14,7 +14,7 @@
  * `fact_withdrawals` tombstone is written, so the same promise made again
  * later is stored normally.
  *
- * One rule, shared by `loops_close`, `gbrain repair loop-facts` and the doctor
+ * One rule, shared by `loops_close`, `foresights repair loop-facts` and the doctor
  * check `loop_facts_drift`: a commitment fact is retired only when it belongs
  * to the loop's source (E26) and no other open loop references it (E8);
  * otherwise the loop closes and the fact stays active with the reason

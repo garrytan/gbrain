@@ -1,5 +1,5 @@
 /**
- * #7307: `gbrain dream retriage` on a brain whose synthesize phase reads
+ * #7307: `foresights dream retriage` on a brain whose synthesize phase reads
  * conversation pages from the database (`dream.synthesize.conversation_pages
  * = true`, no `session_corpus_dir`). Retriage used to refuse with
  * config_error; it now triages the same transcript list synthesize does

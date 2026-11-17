@@ -1,6 +1,6 @@
 /**
  * GBRA-221 outside_content_fences: fence rows extract_facts indexed from imported pages whose body is outside-authored
- * text are listed for review (location and counts only, never a cell value); pages a gbrain writer owns are not.
+ * text are listed for review (location and counts only, never a cell value); pages a foresights writer owns are not.
  * PGLite in-memory ($0).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -54,7 +54,7 @@ describe('outside_content_fences doctor check', () => {
     await source('notes-example', {});
     await page('notes-example', 'notes/owner-note', 'note', FENCE);
     await page('google-example', 'people/alice-example', 'person', FENCE);
-    await page('google-example', 'emails/2026/01/clean-thread', 'email', 'A plain message with gbrain\\:facts:begin quoted inertly.');
+    await page('google-example', 'emails/2026/01/clean-thread', 'email', 'A plain message with foresights\\:facts:begin quoted inertly.');
     const check = await run();
     expect(check.status).toBe('ok');
     expect(categorizeCheck('outside_content_fences')).toBeDefined();

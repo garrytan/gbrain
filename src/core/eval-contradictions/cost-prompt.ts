@@ -16,7 +16,7 @@
  * the runner halts mid-run if the live cost exceeds the cap.
  *
  * @deprecated v0.41.13.0 T16: this module is slated for delete in
- *   v0.41.14.0+ once `gbrain eval suspected-contradictions` is fully
+ *   v0.41.14.0+ once `foresights eval suspected-contradictions` is fully
  *   retrofitted onto `src/core/progressive-batch/` (the primitive's
  *   stage-report subsumes this prompt's UX). v0.41.13.0 leaves the
  *   module + its 1 caller unchanged for behavior parity; the retrofit

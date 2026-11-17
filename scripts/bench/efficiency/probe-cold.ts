@@ -5,7 +5,7 @@
  *   bun scripts/bench/efficiency/probe-cold.ts [--label synth-full] [--engine postgres] [--n 20]
  *
  * Splits a fresh-process CLI call into: bun start (`bun -e 1`), module graph
- * (`import('src/cli.ts')` timed in-process), `gbrain --version`, and real reads,
+ * (`import('src/cli.ts')` timed in-process), `foresights --version`, and real reads,
  * each with stdout piped (what an agent shelling out sees) and with
  * GBRAIN_FLUSH_GRACE_MS=0 (the exit-flush grace that cli-force-exit.ts holds when
  * stdout is not a TTY). Prints a markdown table; with --label it also runs
@@ -42,11 +42,11 @@ console.log(`machine: ${machine()}  engine: ${home ? engine : 'none'}  brain: ${
 console.log('| step | N | p50 ms | p95 ms |\n|---|---|---|---|');
 await row('bun -e 1', [bun, '-e', '1']);
 await row('import src/core/operations.ts (module graph only)', [bun, '-e', importProbe]);
-await row('gbrain --version', [bun, CLI, '--version']);
-await row('gbrain --version, GBRAIN_FLUSH_GRACE_MS=0', [bun, CLI, '--version'], { GBRAIN_FLUSH_GRACE_MS: '0' });
+await row('foresights --version', [bun, CLI, '--version']);
+await row('foresights --version, GBRAIN_FLUSH_GRACE_MS=0', [bun, CLI, '--version'], { GBRAIN_FLUSH_GRACE_MS: '0' });
 if (home) {
-  await row('gbrain list --limit 5', [bun, CLI, 'list', '--limit', '5']);
-  await row('gbrain list --limit 5, GBRAIN_FLUSH_GRACE_MS=0', [bun, CLI, 'list', '--limit', '5'], { GBRAIN_FLUSH_GRACE_MS: '0' });
-  await row('gbrain call get_page (missing slug)', [bun, CLI, 'call', 'get_page', '{"slug":"bench/missing"}']);
-  await row('gbrain call get_page, GBRAIN_FLUSH_GRACE_MS=0', [bun, CLI, 'call', 'get_page', '{"slug":"bench/missing"}'], { GBRAIN_FLUSH_GRACE_MS: '0' });
+  await row('foresights list --limit 5', [bun, CLI, 'list', '--limit', '5']);
+  await row('foresights list --limit 5, GBRAIN_FLUSH_GRACE_MS=0', [bun, CLI, 'list', '--limit', '5'], { GBRAIN_FLUSH_GRACE_MS: '0' });
+  await row('foresights call get_page (missing slug)', [bun, CLI, 'call', 'get_page', '{"slug":"bench/missing"}']);
+  await row('foresights call get_page, GBRAIN_FLUSH_GRACE_MS=0', [bun, CLI, 'call', 'get_page', '{"slug":"bench/missing"}'], { GBRAIN_FLUSH_GRACE_MS: '0' });
 }

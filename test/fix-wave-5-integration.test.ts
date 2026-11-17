@@ -8,7 +8,7 @@
  * preview-helper contract (preview-approval).
  *
  *   1. #5731 restore on an upgraded managed brain with a projection backlog:
- *      the restore publishes, `gbrain projections drain` settles every queued
+ *      the restore publishes, `foresights projections drain` settles every queued
  *      page, recall and search find the restored fact, and a managed
  *      writeSingleFact for an absent entity stays a separate fact.
  *   2. explicit_only with both real kinds (stale-atoms, extractor-facts) and
@@ -75,7 +75,7 @@ const CHAT = [
   '**Bob Demo** (2024-03-15 9:01 AM): Great, thanks.',
 ].join('\n');
 
-/** Runs `gbrain repair <args> --json` in-process and returns its first result. */
+/** Runs `foresights repair <args> --json` in-process and returns its first result. */
 async function repair(engine: BrainEngine, args: string[]) {
   const lines: string[] = [];
   const original = console.log;
@@ -138,7 +138,7 @@ for (const backend of testBackends()) {
         expect(cooling).toBe(75);
         const before = await checkProjectionReadiness(engine);
         expect(before.status).toBe('warn');
-        expect(before.message).toContain('Run `gbrain projections drain`');
+        expect(before.message).toContain('Run `foresights projections drain`');
 
         const doctor = await extractorFactsCheck(engine);
         expect(doctor.details).toMatchObject({ evidenced: 2, ambiguous: 0 });
@@ -193,25 +193,25 @@ for (const backend of testBackends()) {
         const liveAtoms = async () => (await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE type='atom' AND deleted_at IS NULL"))[0].n;
         const activeFacts = async () => (await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE source_markdown_slug='conversations/expired' AND expired_at IS NULL"))[0].n;
         const untouched = async () => { expect(await liveAtoms()).toBe(30); expect(await activeFacts()).toBe(0); };
-        const previews = { 'accepted-takes': 'gbrain repair accepted-takes', 'google-file-modes': 'gbrain repair google-file-modes', 'stale-atoms': 'gbrain repair stale-atoms', 'atoms-restore': 'gbrain repair atoms-restore', 'atom-fence-rows': 'gbrain repair atom-fence-rows', 'extractor-facts': 'gbrain repair extractor-facts', 'unwithdrawn-facts': 'gbrain repair unwithdrawn-facts', 'purged-page-facts': 'gbrain repair purged-page-facts',
-          'conversation-labels': 'gbrain repair conversation-labels', 'captured-facts': 'gbrain repair captured-facts', 'agent-session-facts': 'gbrain repair agent-session-facts', 'redacted-facts': 'gbrain repair redacted-facts', 'loop-facts': 'gbrain repair loop-facts', 'ontology-facts': 'gbrain repair ontology-facts', 'facts-rehome': 'gbrain repair facts-rehome', 'consolidate-ties': 'gbrain repair consolidate-ties', 'duplicate-facts': 'gbrain repair duplicate-facts', 'orphan-children': 'gbrain repair orphan-children', 'failed-writes': 'gbrain repair failed-writes', 'split-facts': 'gbrain repair split-facts',
-          frontmatter: 'gbrain repair frontmatter', 'timeline-comments': 'gbrain repair timeline-comments', 'timeline-order': 'gbrain repair timeline-order', 'contact-rows': 'gbrain repair contact-rows', 'managed-sync-orphans': 'gbrain repair managed-sync-orphans', 'content-receipt-root': 'gbrain repair content-receipt-root', 'frontmatter-keys': 'gbrain repair frontmatter-keys', 'file-drift': 'gbrain repair file-drift',
-          'stuck-recovery': 'gbrain repair stuck-recovery', 'ghost-pages': 'gbrain repair ghost-pages', 'origin-twins': 'gbrain repair origin-twins', 'moved-pages': 'gbrain repair moved-pages', 'receipt-compaction': 'gbrain repair receipt-compaction', aliases: 'gbrain repair aliases', 'rename-identity': 'gbrain repair rename-identity',
-          'overwritten-edits': 'gbrain repair overwritten-edits', 'legacy-twins': 'gbrain repair legacy-twins', 'missing-tables': 'gbrain repair missing-tables', 'url-clone-fences': 'gbrain repair url-clone-fences', 'segmented-mirror': 'gbrain repair segmented-mirror',
-          'segmented-tiling': 'gbrain repair segmented-tiling',
-          'uncommitted-deletions': 'gbrain repair uncommitted-deletions',
+        const previews = { 'accepted-takes': 'foresights repair accepted-takes', 'google-file-modes': 'foresights repair google-file-modes', 'stale-atoms': 'foresights repair stale-atoms', 'atoms-restore': 'foresights repair atoms-restore', 'atom-fence-rows': 'foresights repair atom-fence-rows', 'extractor-facts': 'foresights repair extractor-facts', 'unwithdrawn-facts': 'foresights repair unwithdrawn-facts', 'purged-page-facts': 'foresights repair purged-page-facts',
+          'conversation-labels': 'foresights repair conversation-labels', 'captured-facts': 'foresights repair captured-facts', 'agent-session-facts': 'foresights repair agent-session-facts', 'redacted-facts': 'foresights repair redacted-facts', 'loop-facts': 'foresights repair loop-facts', 'ontology-facts': 'foresights repair ontology-facts', 'facts-rehome': 'foresights repair facts-rehome', 'consolidate-ties': 'foresights repair consolidate-ties', 'duplicate-facts': 'foresights repair duplicate-facts', 'orphan-children': 'foresights repair orphan-children', 'failed-writes': 'foresights repair failed-writes', 'split-facts': 'foresights repair split-facts',
+          frontmatter: 'foresights repair frontmatter', 'timeline-comments': 'foresights repair timeline-comments', 'timeline-order': 'foresights repair timeline-order', 'contact-rows': 'foresights repair contact-rows', 'managed-sync-orphans': 'foresights repair managed-sync-orphans', 'content-receipt-root': 'foresights repair content-receipt-root', 'frontmatter-keys': 'foresights repair frontmatter-keys', 'file-drift': 'foresights repair file-drift',
+          'stuck-recovery': 'foresights repair stuck-recovery', 'ghost-pages': 'foresights repair ghost-pages', 'origin-twins': 'foresights repair origin-twins', 'moved-pages': 'foresights repair moved-pages', 'receipt-compaction': 'foresights repair receipt-compaction', aliases: 'foresights repair aliases', 'rename-identity': 'foresights repair rename-identity',
+          'overwritten-edits': 'foresights repair overwritten-edits', 'legacy-twins': 'foresights repair legacy-twins', 'missing-tables': 'foresights repair missing-tables', 'url-clone-fences': 'foresights repair url-clone-fences', 'segmented-mirror': 'foresights repair segmented-mirror',
+          'segmented-tiling': 'foresights repair segmented-tiling',
+          'uncommitted-deletions': 'foresights repair uncommitted-deletions',
           // GBRA-161: the generations preview carries its ledger kind and the restore window, so the printed command runs as is.
-          generations: 'gbrain repair generations --kind atom --since 30d', 'lost-fence-rows': 'gbrain repair lost-fence-rows', 'fact-claim-dates': 'gbrain repair fact-claim-dates',
-          provenance: 'gbrain repair provenance', 'secret-spans': 'gbrain repair secret-spans', 'rows-behind': 'gbrain repair rows-behind',
-          'facts-home': 'gbrain repair facts-home', 'private-labels': 'gbrain repair private-labels' };
+          generations: 'foresights repair generations --kind atom --since 30d', 'lost-fence-rows': 'foresights repair lost-fence-rows', 'fact-claim-dates': 'foresights repair fact-claim-dates',
+          provenance: 'foresights repair provenance', 'secret-spans': 'foresights repair secret-spans', 'rows-behind': 'foresights repair rows-behind',
+          'facts-home': 'foresights repair facts-home', 'private-labels': 'foresights repair private-labels' };
 
         // The post-upgrade banner names both findings with the kind's read-only preview.
         const banner = await postUpgradeRecoveryBanner(engine, 'host');
-        expect(banner).toContain('[AGENT]   atom_provenance_drift: 30 (explicit_kind_required; preview with: gbrain repair stale-atoms)');
-        expect(banner).toContain('[AGENT]   extractor_facts_expired: 2 (explicit_kind_required; preview with: gbrain repair extractor-facts)');
+        expect(banner).toContain('[AGENT]   atom_provenance_drift: 30 (explicit_kind_required; preview with: foresights repair stale-atoms)');
+        expect(banner).toContain('[AGENT]   extractor_facts_expired: 2 (explicit_kind_required; preview with: foresights repair extractor-facts)');
         expect(banner.join('\n')).not.toMatch(/--apply|--yes/);
 
-        // gbrain repair --all --apply runs every automatic kind, lists the explicit ones and exits 0.
+        // foresights repair --all --apply runs every automatic kind, lists the explicit ones and exits 0.
         const all = await capture(() => runRepairCommand(engine, ['--all', '--apply', '--json']));
         const allBody = JSON.parse(all.out) as { results: Array<{ kind: string }>; explicit_kinds: Array<{ kind: string; code: string; preview_command: string }> };
         expect(allBody.results.map(r => r.kind)).toEqual(AUTO_REPAIR_REGISTRY.map(spec => spec.kind));
@@ -219,17 +219,17 @@ for (const backend of testBackends()) {
         expect(all.exit).toBe(0);
         await untouched();
 
-        // gbrain doctor --remediation-plan lists them apart from the repair steps, with no apply command.
+        // foresights doctor --remediation-plan lists them apart from the repair steps, with no apply command.
         const plan = JSON.parse((await capture(() => runRemediationPlan(engine, ['--remediation-plan', '--no-embed', '--json']))).out) as {
           repair_steps: Array<{ kind: string; command: string }>; explicit_repairs: Array<{ kind: string; preview_command: string }> };
         expect(plan.repair_steps.map(step => step.kind).filter(kind => kind in previews)).toEqual([]);
         expect(plan.explicit_repairs.map(n => [n.kind, n.preview_command])).toEqual(Object.entries(previews));
         const planText = (await capture(() => runRemediationPlan(engine, ['--remediation-plan', '--no-embed']))).out;
-        expect(planText).toContain('  stale-atoms: gbrain repair stale-atoms');
-        expect(planText).toContain('  extractor-facts: gbrain repair extractor-facts');
-        expect(planText).not.toMatch(/gbrain repair (stale-atoms|extractor-facts) --apply/);
+        expect(planText).toContain('  stale-atoms: foresights repair stale-atoms');
+        expect(planText).toContain('  extractor-facts: foresights repair extractor-facts');
+        expect(planText).not.toMatch(/(?:foresights|gbrain) repair (stale-atoms|extractor-facts) --apply/);
 
-        // gbrain doctor --remediate --include-repairs never runs them; each finding says explicit_kind_required with the preview.
+        // foresights doctor --remediate --include-repairs never runs them; each finding says explicit_kind_required with the preview.
         const run = JSON.parse((await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json'])))).out) as {
           repairs?: Array<{ kind: string }>; findings: Array<{ check_id: string; class: string; repair_kind?: string; command?: string }> };
         expect((run.repairs ?? []).map(r => r.kind).filter(kind => kind in previews)).toEqual([]);

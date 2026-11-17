@@ -1,5 +1,5 @@
 // v0.41 T11 → E4: envelope contract for the one surviving eval scaffold,
-// `gbrain eval synthesize-concepts`.
+// `foresights eval synthesize-concepts`.
 //
 // The v0.41 T11 wave shipped three undispatched eval scaffolds. Two of them
 // (extract-atoms, markdown-greenfield) returned ok:true for work they never

@@ -1,7 +1,7 @@
 /**
- * Argument parsing for `gbrain schema add-type` (#6135).
+ * Argument parsing for `foresights schema add-type` (#6135).
  *
- *   gbrain schema add-type <name> --primitive <p> (--prefix <dir/> | --no-prefix)
+ *   foresights schema add-type <name> --primitive <p> (--prefix <dir/> | --no-prefix)
  *     [--extractable] [--expert] [--alias <a>]... [--pack <name>] [--json]
  *
  * The type name is the first positional that is not a flag value (so
@@ -27,7 +27,7 @@ export interface AddTypeArgs {
 
 export const NO_PREFIX_NOTE = 'No path prefix: pages get this type only from frontmatter `type:`; it is never inferred from a file path.';
 
-const USAGE = 'gbrain schema add-type <name> --primitive <p> (--prefix <dir/> | --no-prefix) [--extractable] [--expert] [--alias <a>] [--pack <name>] [--json]';
+const USAGE = 'foresights schema add-type <name> --primitive <p> (--prefix <dir/> | --no-prefix) [--extractable] [--expert] [--alias <a>] [--pack <name>] [--json]';
 const VALUE_FLAGS = new Set(['--primitive', '--prefix', '--alias', '--pack', '--source', '--source-id']);
 const NO_PREFIX_CONFLICTS: Record<string, string> = {
   '--extractable': 'Extractable types are checked through their path prefixes (lint rule extractable_empty_corpus), so a type without one cannot be extractable.',
@@ -121,8 +121,8 @@ export function parseAddTypeArgs(args: string[]): AddTypeArgs {
   }
   if (!prefix && !noPrefix) {
     throw refusal('schema add-type needs --prefix <dir/> or --no-prefix.',
-      `Pass the directory its pages live in (--prefix people/researchers/), or --no-prefix for a type set by frontmatter only: gbrain schema add-type ${name} --primitive ${primitive} --no-prefix`,
-      'A path prefix lets gbrain infer the type from where a file lives; --no-prefix declares a type pages get only from frontmatter `type:`. Leaving out both is refused so a forgotten --prefix never creates a type nothing infers.',
+      `Pass the directory its pages live in (--prefix people/researchers/), or --no-prefix for a type set by frontmatter only: foresights schema add-type ${name} --primitive ${primitive} --no-prefix`,
+      'A path prefix lets foresights infer the type from where a file lives; --no-prefix declares a type pages get only from frontmatter `type:`. Leaving out both is refused so a forgotten --prefix never creates a type nothing infers.',
       repaired);
   }
   return {

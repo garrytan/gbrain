@@ -284,7 +284,7 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
       expect(events[0].outcome).toBe('skipped');
       expect(events[0].reason).toBe('fixture_unavailable');
       expect(events[0].detail).toContain('the nightly fixture is not readable at /this/repo/root/does/not/exist/test/fixtures/longmemeval-nightly.jsonl');
-      expect(events[0].detail).toContain('gbrain doctor');
+      expect(events[0].detail).toContain('foresights doctor');
     });
   });
 
@@ -334,7 +334,7 @@ describe('computeNightlyQualityProbeHealthCheck — pure doctor branch coverage'
     expect(check.name).toBe('nightly_quality_probe_health');
     expect(check.status).toBe('ok');
     expect(check.message).toMatch(/disabled \(opt-in\)/);
-    expect(check.message).toMatch(/gbrain config set autopilot\.nightly_quality_probe\.enabled true/);
+    expect(check.message).toMatch(/(?:foresights|gbrain) config set autopilot\.nightly_quality_probe\.enabled true/);
   });
 
   test('latest run skipped (fixture unavailable) → warn with skipped count and reason, never ok (#5187)', async () => {
@@ -573,7 +573,7 @@ describe('runNightlyQualityProbe: panel, failures and digest on the audit row (#
       expect(event.failures).toEqual(failures);
       expect(event.detail).toBe(
         `judge panel collapsed: ${SONNET} holds slots A, C, so its votes count more than once. ` +
-        'Set three different judge models: gbrain config set models.eval.cross_modal.slot_a <model> ' +
+        'Set three different judge models: foresights config set models.eval.cross_modal.slot_a <model> ' +
         '(and slot_b, slot_c; one provider is enough). ' +
         'See docs/eval-bench.md#nightly-cross-modal-quality-probe-opt-in-autopilot (batch verdict: fail); ' +
         '2/10 questions did not pass (directness mean_below_7 x2); judges: 2 distinct models from 1 provider',
@@ -798,7 +798,7 @@ describe('computeNightlyQualityProbeHealthCheck: judge panel (#5506)', () => {
   const DUPLICATE_NOTE =
     ` ${SONNET} holds more than one slot, so its votes count more than once. ` +
     'Next step: set models.eval.cross_modal.slot_a, slot_b and slot_c to three different models ' +
-    '(gbrain config set models.eval.cross_modal.slot_a <model>; one provider is enough, for example three claude-cli models).';
+    '(foresights config set models.eval.cross_modal.slot_a <model>; one provider is enough, for example three claude-cli models).';
   const NOT_CROSS_MODAL = ' Fewer than 3 providers judged, so the panel is not cross-modal (information only).';
   const PANELS = {
     collapsed: {

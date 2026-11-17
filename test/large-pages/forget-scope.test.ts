@@ -191,7 +191,7 @@ ${rows.join('\n')}
       };
     };
     const cases = [{ name: 'both', rowNum: 1 }, { name: 'both', rowNum: 3 }, { name: 'timelineOnly', rowNum: 1 }] as const;
-    const blocks = (text: string) => text.match(/<!--- gbrain:facts:begin -->[\s\S]*?<!--- gbrain:facts:end -->/g) ?? [];
+    const blocks = (text: string) => text.match(/<!--- (?:foresights|gbrain):facts:begin -->[\s\S]*?<!--- (?:foresights|gbrain):facts:end -->/g) ?? [];
     for (const engine of engines) {
       for (const [n, c] of cases.entries()) {
         const results: string[][] = [];

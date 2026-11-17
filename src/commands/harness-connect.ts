@@ -10,7 +10,7 @@ import { renderedExposure, sharedTokenNotice, writeExposureNotice } from '../cor
 
 export async function runHarnessConnect(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('gbrain connect <endpoint> --harness <id> --credentials-file <private-file> [--install [--fresh-token] [--no-instructions] [--skill-loading off|spring [--gbrain-bin <path>]] | --remove] [--root <persistent-root>] [--name <name>] [--json]\ngbrain connect --harness <id> --status [--root <persistent-root>] [--name <name>] [--json]');
+    console.log('foresights connect <endpoint> --harness <id> --credentials-file <private-file> [--install [--fresh-token] [--no-instructions] [--skill-loading off|spring [--gbrain-bin <path>]] | --remove] [--root <persistent-root>] [--name <name>] [--json]\ngbrain connect --harness <id> --status [--root <persistent-root>] [--name <name>] [--json]');
     return;
   }
   const value = (flag: string) => { const i = args.indexOf(flag); return i < 0 ? undefined : args[i + 1]; };
@@ -25,7 +25,7 @@ export async function runHarnessConnect(args: string[]): Promise<void> {
     const skillLoading = value('--skill-loading');
     if (skillLoading !== undefined && !isSkillLoading(skillLoading)) throw new Error(`Unknown --skill-loading '${skillLoading}'; pass off or spring`);
     const path = value('--credentials-file');
-    if (!path) throw new Error('--credentials-file is required; create the private handoff with gbrain mcp grant on the brain host');
+    if (!path) throw new Error('--credentials-file is required; create the private handoff with foresights mcp grant on the brain host');
     const c = readCredentials(path);
     const harness = harnessAdapter(value('--harness') ?? value('--agent') ?? c.harness ?? 'generic');
     const endpoint = normalizeMcpUrl(args[0] ?? '');
@@ -46,7 +46,7 @@ export async function runHarnessConnect(args: string[]): Promise<void> {
     const turnHookError = (result as { turn_hook?: { error?: { message: string; fix: { argv?: string[] } } } }).turn_hook?.error;
     if (skillsOutcomeFailed(skills) || turnHookError) {
       if (skillsOutcomeFailed(skills)) console.error(`skills index: ${skills!.detail}${'remote_membership_pending' in result && result.remote_membership_pending ? ' (remote membership deactivation is also pending; exit 1 outranks its exit 2)' : ''}`);
-      if (turnHookError) console.error(`turn_hook_not_loaded: the per-turn gbrain hook is not active: ${turnHookError.message}. Fix: ${turnHookError.fix.argv?.join(' ')}`);
+      if (turnHookError) console.error(`turn_hook_not_loaded: the per-turn foresights hook is not active: ${turnHookError.message}. Fix: ${turnHookError.fix.argv?.join(' ')}`);
       setCliExitVerdict(1);
     } else if (result.status === 'pending' || 'remote_membership_pending' in result && result.remote_membership_pending) setCliExitVerdict(2);
   } catch (error) {

@@ -25,7 +25,7 @@ import type { Check } from '../doctor.ts';
  *
  * Gated on bootstrap state actually existing on this machine (install
  * receipt, hook heartbeat, or push-status) — machines that never ran
- * `gbrain bootstrap` get ZERO checks from this group. Every probe is
+ * `foresights bootstrap` get ZERO checks from this group. Every probe is
  * fail-soft: a broken telemetry file degrades to a warn, never a throw.
  */
 /** #5878: warn when a shared-skills receipt epoch differs from this brain's membership row; true when it pushed. */
@@ -67,7 +67,7 @@ function pushHealthCheck(root: string | null | undefined, status: 'warn' | 'fail
   if (!root || !isManagedFilesystemPath(root)) return { name: 'bootstrap_push_health', status, message: `${finding}${unmanagedRemedy}` };
   return {
     name: 'bootstrap_push_health', status,
-    message: `${finding} — ${root} is a managed canonical worktree, where legacy bulk push is not available. Inspect the managed writer with \`gbrain sources writer status --probe --json\`; changes must be written through gbrain (put_page or capture), direct file edits here are not published.`,
+    message: `${finding} — ${root} is a managed canonical worktree, where legacy bulk push is not available. Inspect the managed writer with \`foresights sources writer status --probe --json\`; changes must be written through foresights (put_page or capture), direct file edits here are not published.`,
     fix: agentFix(['gbrain', 'sources', 'writer', 'status', '--probe', '--json'],
       'A managed canonical worktree is published by its persistence owner, not by a workspace push; the probe shows whether that owner is running and publishing, and changes nothing.',
       'bootstrap_push_health'),
@@ -100,7 +100,7 @@ async function recordedPushFailureCheck(git: GitProbe, failing: PushStatusEntry[
   const target = s.repoRoot ?? ws ?? undefined;
   const rest = live.length > 1 ? ` [+${live.length - 1} more workspace(s)]` : '';
   return pushHealthCheck(target, 'warn', `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest}`,
-    ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``);
+    ` — run \`foresights sources push${target ? ` --path ${target}` : ''}\``);
 }
 
 export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDeadlineAt?: number): Promise<Check[]> {
@@ -115,7 +115,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
 
   // 00. Plugin-lane coexistence. Runs BEFORE the bootstrap-state gate: a
   // hand-wired registration can coexist with a plugin on machines that never
-  // ran `gbrain bootstrap`. Emits rows ONLY when a gbrain plugin is ENABLED
+  // ran `foresights bootstrap`. Emits rows ONLY when a foresights plugin is ENABLED
   // in a harness config (machines without the plugin get zero noise):
   // warn = a hand-wired registration also exists (duplicate tool
   // registration; which server wins is host-defined), ok = the plugin is the
@@ -126,9 +126,9 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
     const { codexConfigPath, claudeUserMcpConfigPath } = await import('../../core/bootstrap/host-specs.ts');
     const lanes = enabledPluginLanes('gbrain').map((lane) => lane.harness === 'codex'
       ? { ...lane, dup: codexAnyRegistrationExists(codexConfigPath(), 'gbrain'),
-          disambiguate: 'keep one owner: `codex mcp remove gbrain` (drop the hand-wired entry) or `codex plugin remove gbrain@gbrain` (drop the plugin)' }
+          disambiguate: 'keep one owner: `codex mcp remove foresights` (drop the hand-wired entry) or `codex plugin remove gbrain@gbrain` (drop the plugin)' }
       : { ...lane, dup: claudeAnyRegistrationExists(claudeUserMcpConfigPath(), 'gbrain', process.cwd()),
-          disambiguate: 'keep one owner: `claude mcp remove gbrain` (drop the hand-wired entry) or disable the plugin in Claude Code' });
+          disambiguate: 'keep one owner: `claude mcp remove foresights` (drop the hand-wired entry) or disable the plugin in Claude Code' });
     for (const lane of lanes) {
       checks.push(
         lane.dup
@@ -136,14 +136,14 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
               name: 'plugin_lane_collision',
               status: 'warn',
               message:
-                `${lane.harness}: the '${lane.plugin}' plugin AND a hand-wired gbrain MCP registration both exist — ` +
+                `${lane.harness}: the '${lane.plugin}' plugin AND a hand-wired foresights MCP registration both exist — ` +
                 `duplicate tool registration is host-defined behavior; ${lane.disambiguate}. ` +
                 '(Plugin enabled is a config signal, not a health signal.)',
             }
           : {
               name: 'plugin_lane_collision',
               status: 'ok',
-              message: `${lane.harness}: the '${lane.plugin}' plugin provides gbrain and no hand-wired registration was found in the scanned configs (user scope + this directory).`,
+              message: `${lane.harness}: the '${lane.plugin}' plugin provides foresights and no hand-wired registration was found in the scanned configs (user scope + this directory).`,
             },
       );
     }
@@ -172,7 +172,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
   // wolf nor goes silent — skip (not a harness box) / warn (serve unreachable,
   // a normal transient; or receipt unreadable) / fail (a target failed, or a
   // prior rotation never converged). Token liveness needs the bearer (only
-  // recoverable from host config) — that's `gbrain bootstrap harness
+  // recoverable from host config) — that's `foresights bootstrap harness
   // --status`'s job; doctor stays offline-cheap.
   if (harnessState.state === 'ok') {
     const hr = harnessState.receipt;
@@ -186,7 +186,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
         status: 'fail',
         message:
           `harness wiring incomplete: ${failed.length} failed / ${pending.length} pending target(s)` +
-          ` — re-run \`gbrain bootstrap harness\` to converge (details: gbrain bootstrap harness --status).`,
+          ` — re-run \`foresights bootstrap harness\` to converge (details: foresights bootstrap harness --status).`,
       });
     } else if ((cleanup = await harnessCleanupReport(hr, ids => engine ? tokenStatesWith(engine, ids) : Promise.resolve({}))).length > 0) {
       // #6743: per id, a revoked credential awaiting enrollment cleanup reads apart from an active one (leave before revoke).
@@ -205,7 +205,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
       checks.push({
         name: 'bootstrap_harness_health',
         status: 'fail',
-        message: `harness removal pending: host wiring removed but the minted token (id ${hr.token.id}) is not yet revoked — stop the serve and re-run \`gbrain bootstrap harness\` with the remove flag, or run \`gbrain auth revoke\` with the id flag.`,
+        message: `harness removal pending: host wiring removed but the minted token (id ${hr.token.id}) is not yet revoked — stop the serve and re-run \`foresights bootstrap harness\` with the remove flag, or run \`foresights auth revoke\` with the id flag.`,
       });
     } else if (!(await pushSupersededEnrollmentCheck(checks, engine, hr))) {
       try {
@@ -216,20 +216,20 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
           checks.push({
             name: 'bootstrap_harness_health',
             status: 'ok',
-            message: `harness wired to ${hr.url} (serve healthy; token check: gbrain bootstrap harness --status)`,
+            message: `harness wired to ${hr.url} (serve healthy; token check: foresights bootstrap harness --status)`,
           });
         } else {
           checks.push({
             name: 'bootstrap_harness_health',
             status: 'warn',
-            message: `harness wired to ${hr.url} but the serve is not answering /health — start \`gbrain serve\` in http mode (a down serve is a normal transient, sessions just lose brain access until it returns).`,
+            message: `harness wired to ${hr.url} but the serve is not answering /health — start \`foresights serve\` in http mode (a down serve is a normal transient, sessions just lose brain access until it returns).`,
           });
         }
       } catch {
         checks.push({
           name: 'bootstrap_harness_health',
           status: 'warn',
-          message: `harness wired to ${hr.url} but the serve is unreachable — start \`gbrain serve\` in http mode.`,
+          message: `harness wired to ${hr.url} but the serve is unreachable — start \`foresights serve\` in http mode.`,
         });
       }
     }
@@ -239,7 +239,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
     checks.push({
       name: 'bootstrap_harness_health',
       status: 'warn',
-      message: `the harness receipt is unreadable (${harnessState.state}) — see \`gbrain bootstrap harness --status\`.`,
+      message: `the harness receipt is unreadable (${harnessState.state}) — see \`foresights bootstrap harness --status\`.`,
     });
   }
 
@@ -258,7 +258,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
         checks.push({
           name: 'bootstrap_hooks_heartbeat',
           status: 'fail',
-          message: `${failures}/${tail.length} recent hook invocations hard-failed — brain context is not reaching the session. Check \`gbrain bootstrap verify\` and the serve process.`,
+          message: `${failures}/${tail.length} recent hook invocations hard-failed — brain context is not reaching the session. Check \`foresights bootstrap verify\` and the serve process.`,
         });
       } else if (rate > 0.2) {
         checks.push({
@@ -365,7 +365,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
         }
         if (dirty && ws && Date.now() - Date.parse(pushStatusForWorkspace(pushStatuses, ws)?.ts ?? '') > PUSH_STALE_MS) { // #5432: this root's own receipt
           checks.push(pushHealthCheck(ws, 'fail', `last successful push ${pushStatusForWorkspace(pushStatuses, ws)?.ts} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]`,
-            `. Run \`gbrain sources push --path ${ws}\`.`));
+            `. Run \`foresights sources push --path ${ws}\`.`));
         } else if (stale && !targetMatchesWs) {
           // Multiple tracked push targets (or the one target names a
           // different repoRoot than `ws`) — the stale entry can't be
@@ -375,7 +375,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
           checks.push({
             name: 'bootstrap_push_health',
             status: 'warn',
-            message: `last successful push ${staleIso} (>48h ago) across ${pushStatuses.length} tracked workspace(s) — can't attribute the stale entry to a single tree; check each with \`gbrain sources status\``,
+            message: `last successful push ${staleIso} (>48h ago) across ${pushStatuses.length} tracked workspace(s) — can't attribute the stale entry to a single tree; check each with \`foresights sources status\``,
           });
         } else if (stale && known) {
           // Stale push + VERIFIED clean tree (no local changes, not ahead of
@@ -386,11 +386,11 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
         } else if (stale) {
           checks.push(ws
             ? pushHealthCheck(ws, 'warn', `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed)`,
-              ` — check ${ws} manually, or run \`gbrain sources push --path ${ws}\` to be safe`)
+              ` — check ${ws} manually, or run \`foresights sources push --path ${ws}\` to be safe`)
             : { name: 'bootstrap_push_health', status: 'warn', message: `last successful push ${staleIso} (>48h ago); workspace tree state unverified (no bootstrap receipt on this machine names a workspace to check) — check the workspace manually` });
         } else {
           // #5063: a recent successful push of something never certifies a tree that is still ahead.
-          checks.push(ahead > 0 ? pushHealthCheck(ws, 'warn', `last push ok (${staleIso}), but ${ws} has ${ahead} commit(s) not on origin — recent agent memory is unpushed`, `. Run \`gbrain sources push --path ${ws}\`.`)
+          checks.push(ahead > 0 ? pushHealthCheck(ws, 'warn', `last push ok (${staleIso}), but ${ws} has ${ahead} commit(s) not on origin — recent agent memory is unpushed`, `. Run \`foresights sources push --path ${ws}\`.`)
             : { name: 'bootstrap_push_health', status: 'ok', message: `last push ok (${staleIso})` });
         }
       }
@@ -444,25 +444,25 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
         checks.push({
           name: 'bootstrap_durability_job',
           status: 'warn',
-          message: `background persistence was consented (PERSIST_CRON=yes) but no scheduled job exists — run \`gbrain sources harden ${sourceId}\``,
+          message: `background persistence was consented (PERSIST_CRON=yes) but no scheduled job exists — run \`foresights sources harden ${sourceId}\``,
         });
       } else if (js.live === false) {
         checks.push({
           name: 'bootstrap_durability_job',
           status: 'warn',
-          message: `${js.kind} job is on disk but NOT loaded — a dead job looks healthy to presence checks. Re-run \`gbrain sources harden ${sourceId}\` to reload it.`,
+          message: `${js.kind} job is on disk but NOT loaded — a dead job looks healthy to presence checks. Re-run \`foresights sources harden ${sourceId}\` to reload it.`,
         });
       } else if (!js.wrapperPresent) {
         checks.push({
           name: 'bootstrap_durability_job',
           status: 'warn',
-          message: `${js.kind} job exists but its wrapper script is missing — re-run \`gbrain sources harden ${sourceId}\``,
+          message: `${js.kind} job exists but its wrapper script is missing — re-run \`foresights sources harden ${sourceId}\``,
         });
       } else if (js.logFresh === false) {
         checks.push({
           name: 'bootstrap_durability_job',
           status: 'warn',
-          message: `${js.kind} job present but the pull log is stale (no run within 2× the interval) — the job may be dead; re-run \`gbrain sources harden ${sourceId}\``,
+          message: `${js.kind} job present but the pull log is stale (no run within 2× the interval) — the job may be dead; re-run \`foresights sources harden ${sourceId}\``,
         });
       } else if (js.kind === 'crontab' && js.logFresh === undefined) {
         // The crontab LINE existing proves installation, not that the cron
@@ -486,7 +486,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
         status: holder.serve ? 'ok' : 'warn',
         message: holder.serve
           ? `live serve (pid ${holder.pid}) owns the brain — hook IPC available. One live serve per brain is the v1 contract; a second simultaneous session collides politely.`
-          : `a non-serve gbrain process (pid ${holder.pid}) holds the PGLite lock — hook IPC and new sessions will fail until it exits.`,
+          : `a non-serve foresights process (pid ${holder.pid}) holds the PGLite lock — hook IPC and new sessions will fail until it exits.`,
       });
     }
   } catch { /* probe is best-effort */ }
@@ -503,7 +503,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
         checks.push({
           name: 'bootstrap_hook_schema_pairing',
           status: 'warn',
-          message: `hooks are in use but the brain schema is v${version} (< v${LATEST_VERSION}) — hook context can degrade silently on missing tables [ENG-4]. Run \`gbrain apply-migrations --yes\`.`,
+          message: `hooks are in use but the brain schema is v${version} (< v${LATEST_VERSION}) — hook context can degrade silently on missing tables [ENG-4]. Run \`foresights apply-migrations --yes\`.`,
         });
       }
     } catch { /* schema_version check above already covers unreadable version */ }
@@ -532,7 +532,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDea
       const t = Date.parse(last.ts);
       const ageDays = Number.isFinite(t) ? (Date.now() - t) / 86_400_000 : NaN;
       if (!last.ok) {
-        checks.push({ name: 'bootstrap_last_verify', status: 'warn', message: `last bootstrap verify FAILED (${last.ts}): ${last.checks_failed.join(', ') || 'see snapshot'} — re-run \`gbrain bootstrap verify\`` });
+        checks.push({ name: 'bootstrap_last_verify', status: 'warn', message: `last bootstrap verify FAILED (${last.ts}): ${last.checks_failed.join(', ') || 'see snapshot'} — re-run \`foresights bootstrap verify\`` });
       } else if (Number.isFinite(ageDays) && ageDays > 14) {
         checks.push({ name: 'bootstrap_last_verify', status: 'warn', message: `last bootstrap verify passed ${Math.floor(ageDays)}d ago — re-run it as the workspace rot self-check` });
       } else {

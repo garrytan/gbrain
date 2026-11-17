@@ -1,10 +1,10 @@
 /**
- * `gbrain repair aliases` (#6619): delete alias rows whose target page has no
+ * `foresights repair aliases` (#6619): delete alias rows whose target page has no
  * row at all (purged or hard-deleted), the ones doctor `dangling_aliases`
  * reports as orphaned. A free-text alias (`page_aliases.slug`) or a slug
  * redirect (`slug_aliases.canonical_slug`) pointing at such a slug can still
  * resolve a name to a page that no longer exists. Rows whose target is
- * soft-deleted are left alone: `gbrain restore` inside the 72-hour window
+ * soft-deleted are left alone: `foresights restore` inside the 72-hour window
  * still needs them, and a purge removes them with the page. A redirect whose
  * alias_slug is the missing slug (an old name of a page that still exists)
  * is a rename redirect and is never touched.

@@ -1,5 +1,5 @@
 /**
- * #7002 (GBRA-133 PR 2a.4): an idle `gbrain jobs work` never started a persistence consumer (jobs/work.ts), so
+ * #7002 (GBRA-133 PR 2a.4): an idle `foresights jobs work` never started a persistence consumer (jobs/work.ts), so
  * when the serve on a host stopped, queued persistence effects waited for some later process to start one, although
  * the 0.60.117.0 notice says a jobs worker "promotes itself when that owner lapses". Phase 1 reproduced it on
  * Postgres (a request queued 30 s beside an idle worker).
@@ -8,7 +8,7 @@
  * the full consumer; beside a live owner it waits (waiter_only) and promotes when that owner stops. Its row goes away
  * when it exits. persistence.single_consumer is unchanged. PGLite keeps draining in the foreground and starts nothing.
  * Fails when: an idle worker has no consumer row, a second worker does not take over after the first stops, or a
- * stopped worker leaves its row. Real `gbrain jobs work` processes; asserts on the consumer rows (states), never on
+ * stopped worker leaves its row. Real `foresights jobs work` processes; asserts on the consumer rows (states), never on
  * elapsed time. PGLite always, Postgres when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

@@ -3,10 +3,10 @@
  * refuses `unexpected_file_bytes` and retains its record: only the user resolving the file clears it. The head probe used to
  * classify every effect recovery as live, so a sync behind it waited the whole no-progress window (5 minutes) before stopping.
  * Such a recovery is now intervention-required: the drain stops `drain_stalled` / `cause: head_blocked` after one governor tick
- * with a fix naming the file and running the `gbrain repair stuck-recovery` preview of the effect (GBRA-130 C-1: its `--keep withdrawn` is the exit).
+ * with a fix naming the file and running the `foresights repair stuck-recovery` preview of the effect (GBRA-130 C-1: its `--keep withdrawn` is the exit).
  * A recovery that can still finish forward (the file holds a recorded version) keeps the wait.
  * A page write's own publication recovery refused the same way (#6650) stops the same way, its fix pointing at
- * `gbrain repair stuck-recovery`.
+ * `foresights repair stuck-recovery`.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -135,7 +135,7 @@ describe('withdrawal-mirror effect recovery blocking a sync', () => {
       expect(result.drain, kind).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'head_blocked', in_pass: true, head_request_id: f.head.id,
         claimable_here: false, blocked_by: { predicate: 'effect_recovery', ids: [f.effectId], state: 'unexpected_file_bytes', intervention: true, file: { slug: f.slug, path: f.file } } } });
       expect(elapsed, kind).toBeLessThan(5_000);
-      const resume = `gbrain sync --source ${f.sourceId}`;
+      const resume = `foresights sync --source ${f.sourceId}`;
       const next = drainNext(result, resume, f.sourceId)!;
       const preview = ['gbrain', 'repair', 'stuck-recovery', '--source', f.sourceId, '--request-id', f.withdrawalRequestId];
       expect(next, kind).toMatchObject({ code: 'drain_stalled', cause: 'head_blocked', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#head-blocked',
@@ -162,7 +162,7 @@ describe('withdrawal-mirror effect recovery blocking a sync', () => {
 });
 
 describe('page-write request recovery blocking a sync', () => {
-  test('a request recovery refusing unexpected_file_bytes stops the sync at once and points at gbrain repair stuck-recovery; undoing the edit clears it', async () => {
+  test('a request recovery refusing unexpected_file_bytes stops the sync at once and points at foresights repair stuck-recovery; undoing the edit clears it', async () => {
     for (const [kind, engine] of engines) {
       const s = await stuckRecoveryFixture(engine, roots).stuck({ prior: PRIOR, after: AFTER, disk: EDITED, follower: true });
       const started = Date.now();
@@ -173,7 +173,7 @@ describe('page-write request recovery blocking a sync', () => {
       expect(result.drain, kind).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled',
         stall: { cause: 'head_blocked', in_pass: true, head_request_id: s.id, head_state: 'recovering', claimable_here: false, blocked_by: blockedBy } });
       expect(elapsed, kind).toBeLessThan(5_000);
-      const resume = `gbrain sync --source ${s.sourceId}`, preview = ['gbrain', 'repair', 'stuck-recovery', '--source', s.sourceId];
+      const resume = `foresights sync --source ${s.sourceId}`, preview = ['gbrain', 'repair', 'stuck-recovery', '--source', s.sourceId];
       const next = drainNext(result, resume, s.sourceId)!;
       expect(next, kind).toMatchObject({ code: 'drain_stalled', cause: 'head_blocked', safe_to_loop: false, command: preview.join(' '),
         fix: { actor: 'agent', next: 'run', argv: preview } });

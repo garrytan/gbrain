@@ -3,7 +3,7 @@
  *
  * A prefix in KNOWN_CONFIG_KEY_PREFIXES admits any sub-key, so a misspelled
  * or retired `search.token_budget` (the reader is `search.tokenBudget`) used
- * to be written and never read. Under these prefixes every key gbrain reads
+ * to be written and never read. Under these prefixes every key foresights reads
  * is registered in KNOWN_CONFIG_KEYS: `search.*` is pinned key by key in
  * test/config-search-registry.test.ts, and `content_sanity.*` has one reader,
  * the DB-plane merge in loadConfigWithEngine. Other prefixes hold per-phase,
@@ -11,7 +11,7 @@
  *
  * The refusal is a usage error (exit 2) naming the nearest registered
  * spelling; nothing is written. `--force` writes the key anyway (one a newer
- * gbrain reads) with a warning.
+ * foresights reads) with a warning.
  */
 import { KNOWN_CONFIG_KEYS } from '../../core/config.ts';
 import { suggestNearest } from '../../core/levenshtein.ts';
@@ -32,26 +32,26 @@ export function refuseUnregisteredEnumeratedKey(key: string, force: boolean): vo
   const shown = inertText(key, 80);
   const didYouMean = suggestion ? ` Did you mean "${suggestion}"?` : '';
   if (force) {
-    console.error(`[config] WARN: writing unregistered ${prefix}* key "${shown}" with --force. Nothing in gbrain reads it.${didYouMean}`);
+    console.error(`[config] WARN: writing unregistered ${prefix}* key "${shown}" with --force. Nothing in foresights reads it.${didYouMean}`);
     return;
   }
   const target = suggestion ?? '<KEY>';
   exitCliError(usageError(
     `Unknown config key "${shown}".${didYouMean} Nothing was written.`,
     suggestion
-      ? `Set the registered key instead: gbrain config set ${suggestion} <value>. To write "${shown}" anyway (a key that a newer release reads), re-run with --force.`
+      ? `Set the registered key instead: foresights config set ${suggestion} <value>. To write "${shown}" anyway (a key that a newer release reads), re-run with --force.`
       : `Set a registered ${prefix}* key instead. To write "${shown}" anyway (a key that a newer release reads), re-run with --force.`,
     {
-      why: `Every ${prefix}* key gbrain reads is registered, so nothing would read this one.`,
+      why: `Every ${prefix}* key foresights reads is registered, so nothing would read this one.`,
       fix: {
         argv: ['gbrain', 'config', 'set', target, '<VALUE>'],
         inputs: [
-          ...(suggestion ? [] : [{ name: 'KEY', how: `Ask the user which registered ${prefix}* key they meant; gbrain reads no other ${prefix}* key.` }]),
+          ...(suggestion ? [] : [{ name: 'KEY', how: `Ask the user which registered ${prefix}* key they meant; foresights reads no other ${prefix}* key.` }]),
           { name: 'VALUE', how: 'The value the refused command carried.' },
         ],
         consent: [],
         actor: suggestion ? 'agent' : 'user',
-        why: `Writes the value under the ${prefix}* key gbrain reads.`,
+        why: `Writes the value under the ${prefix}* key foresights reads.`,
         verify: { argv: ['gbrain', 'config', 'get', target] },
         requires_exclusive: false,
       },

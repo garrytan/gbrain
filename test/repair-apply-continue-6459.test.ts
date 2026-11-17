@@ -1,5 +1,5 @@
 /**
- * `gbrain repair <kind> --apply` and a per-item refusal (PR #6459): an item
+ * `foresights repair <kind> --apply` and a per-item refusal (PR #6459): an item
  * whose apply raises `invalid_params` (a page whose slug the grammar no longer
  * accepts) or `source_changed` (file/database drift, neither copy overwritten)
  * used to abort the whole run, and because the cursor is written only after a
@@ -11,7 +11,7 @@
  * but a later success writes a higher cursor, so a resumed run does NOT retry
  * it; the next full scan (a run that starts with no stored cursor, which every
  * completed run leaves behind) does. The human output and the JSON say so,
- * `gbrain repair` exits 1, and no `RepairResult` consumer (`doctor
+ * `foresights repair` exits 1, and no `RepairResult` consumer (`doctor
  * --remediate`, the content lane, the cycle phases) reads a run with failures
  * as an all-clear.
  *
@@ -171,7 +171,7 @@ describe('repair --apply continues past a per-item invalid_params / source_chang
     expect(text).toContain('applied 3, skipped 0, failed 2, complete');
     expect(text).toContain('FAILED default:notes/item-1 (invalid_params)');
     expect(text).toContain('FAILED default:notes/item-3 (source_changed)');
-    expect(text).toMatch(/left unchanged.*next full scan.*gbrain repair timeline --apply/);
+    expect(text).toMatch(/left unchanged.*next full scan.*(?:foresights|gbrain) repair timeline --apply/);
     expect(text).not.toContain('secret');
     expect(repairExitVerdict([result])).toBe(1);
     expect(repairExitVerdict([{ ...result, failed: [] }])).toBe(0);
@@ -180,7 +180,7 @@ describe('repair --apply continues past a per-item invalid_params / source_chang
 
   test('doctor --remediate reports a step with failures as failed, never completed', async () => {
     const stub = stubKind('timeline', 5, FAILURES);
-    const step: RepairPlanStep = { step: 1, id: 'repair:timeline', kind: 'timeline', affected: 5, command: 'gbrain repair timeline --apply', requires_user_agreement: true, protected: true,
+    const step: RepairPlanStep = { step: 1, id: 'repair:timeline', kind: 'timeline', affected: 5, command: 'foresights repair timeline --apply', requires_user_agreement: true, protected: true,
       paid: false, embeds: 'none', est_usd_cost: 0, lifetime_ids: 0, checks: [], rationale: 'stub' };
     const [stepResult] = await runRepairSteps(engine, [step], { remote: false, remainingUsd: () => undefined, registry: [stub.spec] });
     expect(stepResult).toMatchObject({ kind: 'timeline', status: 'failed', applied: 3, skipped: 0, failed: 2 });

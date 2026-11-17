@@ -85,14 +85,14 @@ function gazetteerFromEntries(entries: Omit<GazetteerEntry, 'tokens'>[]): Gazett
 // ============================================================
 
 describe('findMentionedEntities — pure cases', () => {
-  test('text inside HTML comments is never a mention: a gbrain fence marker does not link a page titled gbrain (#6740)', () => {
+  test('text inside HTML comments is never a mention: a foresights fence marker does not link a page titled foresights (#6740)', () => {
     const g = gazetteerFromEntries([
       { slug: 'projects/gbrain', source_id: 'default', title: 'gbrain' },
       { slug: 'companies/acme', source_id: 'default', title: 'Acme Example' },
     ]);
     const body = '## Facts\n<!--- gbrain:facts:begin -->\n| claim |\n<!--- gbrain:facts:end -->\n<!-- Acme Example owns this -->\nNotes.';
     expect(findMentionedEntities(body, g, { fromSlug: 'notes/n1', fromSourceId: 'default' })).toEqual([]);
-    const prose = '<!-- Acme Example --> We shipped gbrain with Acme Example.';
+    const prose = '<!-- Acme Example --> We shipped foresights with Acme Example.';
     const mentions = findMentionedEntities(prose, g, { fromSlug: 'notes/n1', fromSourceId: 'default' });
     expect(mentions.map(m => [m.slug, m.offset])).toEqual([
       ['projects/gbrain', prose.indexOf('gbrain')],

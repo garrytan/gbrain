@@ -2,7 +2,7 @@
  * Full-text search language configuration.
  *
  * Postgres tsvector/tsquery require a text search configuration name (e.g.
- * 'english', 'portuguese', 'spanish'). Historically GBrain hardcoded
+ * 'english', 'portuguese', 'spanish'). Historically Foresights hardcoded
  * 'english' across engines and trigger functions, which broke search
  * quality for non-English brains (no stemming, no stop-word removal).
  *
@@ -28,7 +28,7 @@ const VALID_CONFIG_NAME = /^[a-z][a-z0-9_]*$/;
 const DEFAULT_LANGUAGE = 'english';
 
 /**
- * Config-table key `gbrain reindex-search-vector` sets (value = target
+ * Config-table key `foresights reindex-search-vector` sets (value = target
  * language) before it flips the trigger functions and clears only after both
  * backfills finish. While present, rows written after the flip and rows not
  * yet backfilled are tokenized under different configurations, so keyword
@@ -63,7 +63,7 @@ export function getFtsLanguage(): string {
 
   if (!VALID_CONFIG_NAME.test(raw)) {
     console.warn(
-      `[gbrain] Invalid GBRAIN_FTS_LANGUAGE='${raw}' — must match /^[a-z][a-z0-9_]*$/. ` +
+      `[foresights] Invalid GBRAIN_FTS_LANGUAGE='${raw}' — must match /^[a-z][a-z0-9_]*$/. ` +
       `Falling back to '${DEFAULT_LANGUAGE}'.`
     );
     cachedLanguage = DEFAULT_LANGUAGE;
@@ -90,7 +90,7 @@ export function resetFtsLanguageCache(): void {
  * but the schema templates that `initSchema()` replays still carry the
  * literal 'english'. Those templates are applied with `CREATE OR REPLACE
  * FUNCTION`, so every `initSchema()` — including the one behind
- * `gbrain init --migrate-only`, which reports "Schema up to date" — silently
+ * `foresights init --migrate-only`, which reports "Schema up to date" — silently
  * reverts a non-English brain's trigger functions to english. The write side
  * then tokenizes under a different configuration than the read side, and
  * nothing warns: rows keep being indexed, just unreachable by the queries

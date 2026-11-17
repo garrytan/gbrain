@@ -3,7 +3,7 @@
  *
  * 1. Post-import extraction. Before, the sync hook parsed every markdown file in the tree for page types
  *    (loadFsPageTypes) to extract the links of a few changed pages. Now it parses only the files of the link
- *    endpoints those pages ask about, and the links equal the whole-tree parse that full gbrain extract still runs:
+ *    endpoints those pages ask about, and the links equal the whole-tree parse that full foresights extract still runs:
  *    a target typed in its frontmatter (off its path's type), a target whose newer file is not imported, a target
  *    never imported, and a schema-pack page-type change all resolve the same.
  * 2. The ghost-page report. Before, a managed sync scanned every live page of the source before it returned (and so

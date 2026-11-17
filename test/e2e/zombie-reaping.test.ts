@@ -7,13 +7,13 @@
  * Bun (like Node) only auto-reaps when at least one listener is registered.
  *
  * This test is the load-bearing real-binary verification: spawn the
- * compiled-or-interpreted gbrain CLI as `jobs work --concurrency 1` against
+ * compiled-or-interpreted foresights CLI as `jobs work --concurrency 1` against
  * a real Postgres, submit a shell job from the CLI side (`remote: false`,
  * no v0.26.9 RCE-gate), capture the PID of the worker's shell child from
  * the job result, then `ps -o stat= -p $PID` after ~300ms to verify the
  * worker reaped it (no Z state).
  *
- * Why not gbrain serve --http: that path doesn't start a worker, and
+ * Why not foresights serve --http: that path doesn't start a worker, and
  * `submit_job` over MCP carries `remote: true` which rejects shell at the
  * v0.26.9 gate (operations.ts:1391). The CLI submit + jobs work path is
  * the only architecture that exercises the SIGCHLD handler in a real boot.

@@ -1,5 +1,5 @@
 /**
- * Real-PTY test for the interactive `gbrain init` pickers — the one flow that
+ * Real-PTY test for the interactive `foresights init` pickers — the one flow that
  * needs a true TTY. Both pickers branch on stdin TTY-ness: the embedding
  * provider picker (fires BEFORE schema init, src/commands/init.ts) and the
  * search-mode picker (fires AFTER initSchema, src/commands/init-mode-picker.ts).
@@ -60,7 +60,7 @@ if (process.env.CI) {
 }
 const describePty = ptySupported() ? describe : describe.skip;
 
-describePty('gbrain init interactive pickers under a real PTY (keyless)', () => {
+describePty('foresights init interactive pickers under a real PTY (keyless)', () => {
   let tmpRoot: string;
   let homeDir: string;
   let workDir: string;

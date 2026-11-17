@@ -1,15 +1,15 @@
-/** D3 curated help for `gbrain doctor` (flags read by src/cli/commands/doctor.ts, src/commands/doctor.ts, src/commands/doctor/remediate.ts). */
+/** D3 curated help for `foresights doctor` (flags read by src/cli/commands/doctor.ts, src/commands/doctor.ts, src/commands/doctor/remediate.ts). */
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
   summary: 'Check brain health; preview and run remediation.',
   usage: [
-    'gbrain doctor [--fast] [--json] [--fix [--dry-run]] [--scope=brain] [--source <id>] [--no-migrate] [--locks]',
-    'gbrain doctor --tier ops|quick|standard|deep [--budget-ms <n>] [--json]',
-    'gbrain doctor --only <check>[,<check>…] [--tier ops] [--json]',
-    'gbrain doctor --alert [--tier <t>] [--budget-ms <n>] [--json]',
-    'gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]',
-    'gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]',
+    'foresights doctor [--fast] [--json] [--fix [--dry-run]] [--scope=brain] [--source <id>] [--no-migrate] [--locks]',
+    'foresights doctor --tier ops|quick|standard|deep [--budget-ms <n>] [--json]',
+    'foresights doctor --only <check>[,<check>…] [--tier ops] [--json]',
+    'foresights doctor --alert [--tier <t>] [--budget-ms <n>] [--json]',
+    'foresights doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]',
+    'foresights doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]',
     '              [--max-jobs <n>] [--no-embed] [--dry-run] [--resume [<plan_hash>]] [--json]',
   ].join('\n'),
   flags: [
@@ -43,9 +43,9 @@ export const help: CliHelpSpec = {
     { name: '--resume', type: 'string', desc: 'Resume a budget-stopped --remediate run (optionally naming its plan_hash).' },
   ],
   examples: [
-    'gbrain doctor --json',
-    'gbrain doctor --only harness_wiring --json',
-    'gbrain doctor --remediation-plan --json',
-    'gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd 5',
+    'foresights doctor --json',
+    'foresights doctor --only harness_wiring --json',
+    'foresights doctor --remediation-plan --json',
+    'foresights doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd 5',
   ],
 };

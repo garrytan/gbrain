@@ -115,7 +115,7 @@ in the brain, skip it. No duplicates.
 
 ## Prerequisites
 
-1. **GBrain installed and configured** (`gbrain doctor` passes)
+1. **Foresights installed and configured** (`foresights doctor` passes)
 2. **Node.js 18+** (for the sync script)
 3. **Circleback account** (https://circleback.ai) with meetings recorded
 
@@ -191,16 +191,16 @@ Should show files like `2026-04-10-weekly-team-sync.md`.
 
 Tell the user: "Found and synced N meetings. Here are the most recent: [list 3]."
 
-### Step 4: Import to GBrain
+### Step 4: Import to Foresights
 
 ```bash
-gbrain import brain/meetings/ --no-embed
-gbrain embed --stale
+foresights import brain/meetings/ --no-embed
+foresights embed --stale
 ```
 
 Verify:
 ```bash
-gbrain search "meeting" --limit 3
+foresights search "meeting" --limit 3
 ```
 
 ### Step 5: Propagate to Entity Pages
@@ -208,14 +208,14 @@ gbrain search "meeting" --limit 3
 This is YOUR job (the agent). For each meeting:
 
 1. **Read the meeting page** — understand who attended and what was discussed
-2. **For each attendee**, check brain: `gbrain search "attendee name"`
+2. **For each attendee**, check brain: `foresights search "attendee name"`
    - If page exists: append timeline entry:
      `- YYYY-MM-DD | Meeting: {title}. Discussed: {key points relevant to this person} [Source: Circleback]`
    - If no page and person is notable: create a brain page
 3. **For each company mentioned**: update company page timeline
 4. **Action items**: if the meeting has action items, ensure they're tracked
 5. **Cross-reference with calendar**: link meeting page to the calendar event
-6. **Sync**: `gbrain sync --no-pull --no-embed`
+6. **Sync**: `foresights sync --no-pull --no-embed`
 
 ### Step 6: Set Up Cron
 
@@ -349,7 +349,7 @@ if new_meetings_created > 0:
 ```
 
 The sync script commits only the files it wrote and pushes them. This
-triggers GBrain's live sync to index the new pages. Other agents may share
+triggers Foresights's live sync to index the new pages. Other agents may share
 the brain checkout, so it never stages the whole tree. On a non-zero exit
 the script stops and reports the error code: retry once on `commit_lock_busy`;
 stop and tell the user on `integrate_conflict` or

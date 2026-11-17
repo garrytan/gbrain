@@ -1,5 +1,5 @@
 /**
- * `gbrain jobs work --allow-shell-jobs` re-asserts GBRAIN_ALLOW_SHELL_JOBS=1
+ * `foresights jobs work --allow-shell-jobs` re-asserts GBRAIN_ALLOW_SHELL_JOBS=1
  * AFTER the startup cwd-.env quarantine (core/env-trust.ts drops that env var
  * whenever a .env in the worker's cwd assigns it), so a supervisor-spawned
  * worker (buildWorkerArgs pass-through) keeps its shell handler enabled.

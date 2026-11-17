@@ -141,7 +141,7 @@ describe('inherit — fail-fast on missing config value', () => {
     expect(() => validateShellJobParams(
       { cmd: 'echo', cwd: '/tmp', inherit: ['database_url'] },
       { config: { engine: 'postgres' } as GBrainConfig },
-    )).toThrow(/gbrain config set database_url/);
+    )).toThrow(/(?:foresights|gbrain) config set database_url/);
   });
   test('inherit:["database_url"] + null config → reject', () => {
     expect(() => validateShellJobParams(
@@ -177,7 +177,7 @@ describe('what the validator deliberately does NOT do (agency for the agent)', (
   test('caller can put inline secret-key=value in cmd', () => {
     // No inline-cmd scan. The agent knows what it's writing.
     const p = validateShellJobParams(
-      { cmd: 'GBRAIN_DATABASE_URL=postgresql://... gbrain sync', cwd: '/tmp' },
+      { cmd: 'GBRAIN_DATABASE_URL=postgresql://... foresights sync', cwd: '/tmp' },
       { config: fakeCfg },
     );
     expect(p.cmd).toContain('GBRAIN_DATABASE_URL');

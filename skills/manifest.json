@@ -42,7 +42,7 @@
     {
       "name": "setup",
       "path": "setup/SKILL.md",
-      "description": "Add keyless GBrain memory to an existing agent, or connect a hosted brain while preserving identity and configuration"
+      "description": "Add keyless Foresights memory to an existing agent, or connect a hosted brain while preserving identity and configuration"
     },
     {
       "name": "mcp-access",
@@ -162,32 +162,32 @@
     {
       "name": "schema-author",
       "path": "schema-author/SKILL.md",
-      "description": "Evolve the active schema pack. Add page types, propose new types from a corpus scan, backfill page.type via sync. Wraps the 14 gbrain schema CLI verbs + 9 MCP ops shipped in v0.40.7.0."
+      "description": "Evolve the active schema pack. Add page types, propose new types from a corpus scan, backfill page.type via sync. Wraps the 14 foresights schema CLI verbs + 9 MCP ops shipped in v0.40.7.0."
     },
     {
       "name": "skillify",
       "path": "skillify/SKILL.md",
-      "description": "Meta skill. Turn any raw feature into a properly-skilled, tested, resolvable, evaled unit. Paired with gbrain check-resolvable gives user-controllable auto-skill-creation."
+      "description": "Meta skill. Turn any raw feature into a properly-skilled, tested, resolvable, evaled unit. Paired with foresights check-resolvable gives user-controllable auto-skill-creation."
     },
     {
       "name": "skillpack-check",
       "path": "skillpack-check/SKILL.md",
-      "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
+      "description": "Agent-readable foresights health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
     },
     {
       "name": "skillpack-harvest",
       "path": "skillpack-harvest/SKILL.md",
-      "description": "Editorial workflow for lifting a proven skill from a host repo back into gbrain. Pairs with `gbrain skillpack harvest` CLI. Drives the genericization checklist that scrubs fork-specific names + real entities before files land in gbrain core."
+      "description": "Editorial workflow for lifting a proven skill from a host repo back into foresights. Pairs with `foresights skillpack harvest` CLI. Drives the genericization checklist that scrubs fork-specific names + real entities before files land in foresights core."
     },
     {
       "name": "smoke-test",
       "path": "smoke-test/SKILL.md",
-      "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
+      "description": "Post-restart smoke tests + auto-fix for foresights and OpenClaw environments"
     },
     {
       "name": "gbrain-upgrade",
       "path": "gbrain-upgrade/SKILL.md",
-      "description": "Keep gbrain current: act on the UPGRADE_AVAILABLE marker per self_upgrade.mode (notify prompt or silent auto)"
+      "description": "Keep foresights current: act on the UPGRADE_AVAILABLE marker per self_upgrade.mode (notify prompt or silent auto)"
     },
     {
       "name": "book-mirror",
@@ -257,12 +257,12 @@
     {
       "name": "gbrain-advisor",
       "path": "gbrain-advisor/SKILL.md",
-      "description": "Proactive 'make the most of gbrain' coaching. Runs gbrain advisor on a cadence and pings the user with the top high-leverage actions for their brain. Read-only; always asks before fixing."
+      "description": "Proactive 'make the most of foresights' coaching. Runs foresights advisor on a cadence and pings the user with the top high-leverage actions for their brain. Read-only; always asks before fixing."
     },
     {
       "name": "brain-taxonomist",
       "path": "brain-taxonomist/SKILL.md",
-      "description": "Filing gate consulted before every brain page write. Reads the active schema pack via `gbrain schema show --json`; emits a recommended filing path with reasoning."
+      "description": "Filing gate consulted before every brain page write. Reads the active schema pack via `foresights schema show --json`; emits a recommended filing path with reasoning."
     },
     {
       "name": "eiirp",
@@ -277,7 +277,7 @@
     {
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
-      "description": "Self-evolving skill optimization via gbrain skillopt \u2014 SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+      "description": "Self-evolving skill optimization via foresights skillopt \u2014 SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
     },
     {
       "name": "measure-before-you-fix",
@@ -372,7 +372,7 @@
     {
       "name": "db-repair",
       "path": "db-repair/SKILL.md",
-      "description": "Auto-fix gbrain Postgres access: GBRAIN_DB_ACCESS marker -> diagnose -> tiered gbrain db-repair ladder -> verify"
+      "description": "Auto-fix foresights Postgres access: GBRAIN_DB_ACCESS marker -> diagnose -> tiered foresights db-repair ladder -> verify"
     },
     {
       "name": "postgres-adopt",
@@ -382,7 +382,7 @@
     {
       "name": "remote-mcp",
       "path": "remote-mcp/SKILL.md",
-      "description": "Publish the user's own gbrain over MCP with `gbrain mcp expose` (Tailscale by default, Funnel only for cloud agents), keep the server alive as a user service, then grant, install and verify one least-privilege client per consumer."
+      "description": "Publish the user's own foresights over MCP with `foresights mcp expose` (Tailscale by default, Funnel only for cloud agents), keep the server alive as a user service, then grant, install and verify one least-privilege client per consumer."
     }
   ],
   "dependencies": {
@@ -391,7 +391,7 @@
   },
   "setup": {
     "skill": "setup",
-    "description": "Auto-provision Supabase or PGLite and configure GBrain (< 2 min)"
+    "description": "Auto-provision Supabase or PGLite and configure Foresights (< 2 min)"
   },
   "recipes_dir": "recipes/",
   "resolver": "RESOLVER.md",

@@ -90,7 +90,7 @@ describe('#6803 mis-pinned connector source in autopilot dispatch', () => {
       expect(await queued(engine, f.id)).toEqual([]);
       const events = lines.flatMap(l => l.split('\n')).filter(l => l.startsWith('{')).map(l => JSON.parse(l) as Record<string, unknown>);
       expect(events.some(e => e.event === 'freshness_source_path_skipped' && e.source_id === f.id && e.code === 'connector_account_changed')).toBe(true);
-      expect(events.some(e => e.event === 'fanout_source_path_skipped' && e.source_id === f.id && String(e.reason).includes(`gbrain sync --source ${f.id}`))).toBe(true);
+      expect(events.some(e => e.event === 'fanout_source_path_skipped' && e.source_id === f.id && String(e.reason).includes(`foresights sync --source ${f.id}`))).toBe(true);
 
       // The operator restores the credential and syncs by hand: the account check passes and clears the record.
       await sync(engine, f, googleConfig.g_account);

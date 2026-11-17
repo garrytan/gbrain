@@ -1,5 +1,5 @@
 /**
- * gbrain repair private-labels: clear the privacy labels that writer templates
+ * foresights repair private-labels: clear the privacy labels that writer templates
  * over-stamped on ordinary pages. Every live page that is private by its label
  * (visibility: private, or a privacy alias with no visibility) is classified:
  *
@@ -7,7 +7,7 @@
  *     pinned_question      pinned_question in frontmatter, or type question
  *     derived              an atom, a page with derived_from or source_slug, a synthesized
  *                          concept or a life-chronicle event;
- *                          its privacy follows its origin (gbrain repair visibility owns it)
+ *                          its privacy follows its origin (foresights repair visibility owns it)
  *     strong_alias         access restricted or confidential, or a private confidentiality value
  *     explicit_visibility  visibility: private with no access: private (a deliberate writer or connector)
  *
@@ -37,7 +37,7 @@
  * re-import would put the label back from the file.
  *
  * Reversible: the ledger the caller passes (`privateLabelsLedger`; the CLI keeps it at
- * <gbrain home>/repair/private-labels/<brain_id>.jsonl, src/commands/repair-private-labels.ts) is
+ * <foresights home>/repair/private-labels/<brain_id>.jsonl, src/commands/repair-private-labels.ts) is
  * write-ahead. Each item appends an `intent` line with the exact removed (or re-added) values before
  * its page write and a `committed` line with the revision it wrote after; a ledger that cannot take
  * the intent line refuses the item before anything is written. --class restore plans from the lines
@@ -153,14 +153,14 @@ function readableLine(raw: unknown): LedgerLine | null {
 const describeLabels = (labels: Labels) => Object.entries(labels).map(([key, value]) => `${key}: ${value}`).join(', ');
 const sameLabels = (a: Labels, b: Labels) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 const previewCommand = (scope: RepairScope, selection: Selection) =>
-  `gbrain repair private-labels${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.class ? ` --class ${selection.class}` : ''}`;
+  `foresights repair private-labels${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.class ? ` --class ${selection.class}` : ''}`;
 
 function selectedClass(opts?: RepairPlanOptions): LabelsClass | null {
   const value = opts?.driftClass;
   if (value === undefined) return null;
   if ((PRIVATE_LABELS_CLASSES as readonly string[]).includes(value)) return value as LabelsClass;
-  throw opError('invalid_params', `--class for gbrain repair private-labels takes ${PRIVATE_LABELS_CLASSES.join(', ')} (got "${value}").`,
-    'Preview the default classes with gbrain repair private-labels, or one with e.g. gbrain repair private-labels --class git-publish.');
+  throw opError('invalid_params', `--class for foresights repair private-labels takes ${PRIVATE_LABELS_CLASSES.join(', ')} (got "${value}").`,
+    'Preview the default classes with foresights repair private-labels, or one with e.g. foresights repair private-labels --class git-publish.');
 }
 
 const hashParts = (scope: RepairScope, selection: Selection, entries: Approved[]) => ({ kind: 'private-labels-v1', brain_id: scope.brain_id, selection,
@@ -399,7 +399,7 @@ async function prepareWrite(ctx: OperationContext, item: LabelsItem): Promise<Re
   } else {
     if (Object.keys(labels).some(key => Object.hasOwn(frontmatter, key))) return { outcome: CHANGED };
     if (!Object.values(labels).every(isPlainLabelValue)) {
-      return { outcome: { applied: false, outcome: 'label_not_plain', reason: `${describeLabels(labels)} cannot be written back as plain label lines; add it to the page's file by hand, commit it, then run: gbrain sync --source ${entry.source_id}` } };
+      return { outcome: { applied: false, outcome: 'label_not_plain', reason: `${describeLabels(labels)} cannot be written back as plain label lines; add it to the page's file by hand, commit it, then run: foresights sync --source ${entry.source_id}` } };
     }
     next = { ...frontmatter, ...labels };
   }
@@ -408,7 +408,7 @@ async function prepareWrite(ctx: OperationContext, item: LabelsItem): Promise<Re
     return { outcome: { applied: false, outcome: 'file_backed', detail: { path: file },
       reason: `${entry.source_id}:${entry.slug} has a file in its source's checkout (${file}); on a brain without managed persistence this repair writes only the database, `
         + `so the next sync or re-import would undo it from the file. ${entry.mode === 'clear' ? `Remove ${describeLabels(labels)} from that file's frontmatter`
-          : `Add ${describeLabels(labels)} back to that file's frontmatter if it is missing`}, commit it, then run: gbrain sync --source ${entry.source_id}` } };
+          : `Add ${describeLabels(labels)} back to that file's frontmatter if it is missing`}, commit it, then run: foresights sync --source ${entry.source_id}` } };
   }
   const content = serializePageToMarkdown({ ...snapshot.page, frontmatter: next }, snapshot.tags);
   // GST-2603: a file that holds the page but cannot take the label edit line by line declines here, before its intent line.
@@ -454,7 +454,7 @@ const labelEditOf = (entry: Approved): LabelEdit => entry.mode === 'clear' ? { s
 async function writeOne(ctx: OperationContext, item: LabelsItem, ready: Ready, line: LedgerLine, authority: MaintenanceAuthority | null, embed: boolean): Promise<RepairItemOutcome> {
   recordIntent(item, line);
   const written = await writeLabelPage(ctx, item.entry, { revision: ready.revision, content: ready.content, edit: labelEditOf(item.entry), requestId: line.request_id, embed,
-    preview: 'gbrain repair private-labels' }, authority);
+    preview: 'foresights repair private-labels' }, authority);
   if (!written && !authority) return CHANGED;
   return committedOutcome(item, line, written);
 }
@@ -468,14 +468,14 @@ export const privateLabelsRepair: RepairHandler = {
     const command = previewCommand(scope, selection);
     const ledger = opts?.privateLabelsLedger;
     if (!ledger && (opts?.apply || selection.class === 'restore')) {
-      throw opError('invalid_params', 'gbrain repair private-labels needs its undo ledger to apply or restore, and this caller passed none.', `Run it from the CLI on the brain host: ${command}`);
+      throw opError('invalid_params', 'foresights repair private-labels needs its undo ledger to apply or restore, and this caller passed none.', `Run it from the CLI on the brain host: ${command}`);
     }
     const toItems = (entries: Approved[]) => entries.map((entry, index): LabelsItem => ({ cursor: { phase: 0, id: index }, source_id: entry.source_id, slug: entry.slug,
       chars: entry.chars, action: `${entry.mode === 'clear' ? 'remove' : 're-add'} ${describeLabels(entry.labels)}`, entry, ledger: ledger!,
       ...(entry.tried ? { retried: true } : {}) }));
     if (opts?.apply) {
       if (!opts.expect) {
-        throw opError('invalid_params', 'gbrain repair private-labels --apply changes only the set a preview printed (clearing a label widens remote reads).',
+        throw opError('invalid_params', 'foresights repair private-labels --apply changes only the set a preview printed (clearing a label widens remote reads).',
           `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`);
       }
       const approved = await loadApprovedSet<Approved>(engine, { command: 'private-labels', hash: opts.expect, previewCommand: command,
@@ -513,17 +513,17 @@ export const privateLabelsRepair: RepairHandler = {
     const fileBacked = (await filesInCheckout(engine, window.map(entry => entry.page_id))).size;
     const owner = await ownerMemberId(engine);
     const twins = await openTwins(engine, restore ? window : [], owner ? [owner] : [],
-      (source, slugs) => `gbrain repair visibility --source ${source}${slugs.map(slug => ` --slug ${slug}`).join('')}`);
+      (source, slugs) => `foresights repair visibility --source ${source}${slugs.map(slug => ` --slug ${slug}`).join('')}`);
     const warnings = [
       ...(pastWindow ? [`This preview lists one window of ${window.length} item(s); ${pastWindow} more found past it. Apply this window (or decide not to), then preview again for the next one: ${command}`] : []),
       restore ? 'Restoring re-adds each recorded label, so remote callers that are not the brain owner stop reading these pages again.'
         : 'Clearing a label widens what remote callers that are not the brain owner can read: each cleared page becomes readable remotely (readable_by and folder rules still apply). '
-          + 'Undo with: gbrain repair private-labels --class restore',
+          + 'Undo with: foresights repair private-labels --class restore',
       ...(gitPublish && selection.class === 'git-publish' ? [`${gitPublish} page(s) of class git-publish live in git-canonical sources, where private pages are database-only; `
         + 'clearing commits each listed page into its source\'s Git history for the first time. That part is one-way: --class restore re-adds the label and removes the file '
         + 'from the checkout, but every earlier commit, and any remote it was pushed to, keeps the page\'s content.'] : []),
       ...(gitPublish && selection.class !== 'git-publish' ? [`${gitPublish} page(s) of class git-publish (git-canonical sources) carry the same label and are not in this preview: `
-        + 'private pages there are database-only, so clearing commits each into its source\'s Git history for the first time. Preview them by name: gbrain repair private-labels --class git-publish'] : []),
+        + 'private pages there are database-only, so clearing commits each into its source\'s Git history for the first time. Preview them by name: foresights repair private-labels --class git-publish'] : []),
       ...(exposed ? [`Clearing this window also exposes ${exposed} page(s) whose only privacy is a listed page's label: ${dependents!.derived_from} derived_from page(s), `
         + `${dependents!.atom} atom(s), ${dependents!.concept} synthesized concept(s) and ${dependents!.life_chronicle} life-chronicle event(s) extracted from a listed page. Remote callers that are not the brain owner `
         + 'can read them once this window applies (readable_by and folder rules still apply). To keep one private, give it its own label first; --class restore re-hides them with their origins.'] : []),

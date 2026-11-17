@@ -3,16 +3,16 @@
  * `section: ""`, `grep: ""`, or `null`) instead of leaving it out. The shared absent-idiom step
  * (`normalizeOptionalParams`: `""` on an optional string param and `null` on any optional param mean "not
  * provided") ran on MCP dispatch and the subagent registry, but the SkillOpt rollout and write-capture
- * registries and `gbrain call` handed the model's raw arguments to the handler. There `known_as_of: ""` took
+ * registries and `foresights call` handed the model's raw arguments to the handler. There `known_as_of: ""` took
  * get_page into its recorded-time branch and refused every call ("known_as_of must be an ISO 8601 instant").
  *
  * 1. Protects: on every tool-call entry point, a call whose optional arguments are `""` or `null` behaves exactly
  *    like the same call with them omitted, while a missing required argument and a non-empty invalid value still
  *    refuse with `invalid_params`.
  * 2. Fails when: any registry that runs model tool calls skips the normalize-then-validate step (the SkillOpt
- *    rollout and write-capture registries and `gbrain call` did).
+ *    rollout and write-capture registries and `foresights call` did).
  * 3. Existing coverage: test/mcp-dispatch-optional-params.test.ts pins recall through dispatchToolCall only; nothing
- *    drove the agent-loop registries or `gbrain call` with Sol-style arguments, or swept every read op.
+ *    drove the agent-loop registries or `foresights call` with Sol-style arguments, or swept every read op.
  * 4. Real seams: the production registries over a repo-less PGLite brain; the SkillOpt model loop is the
  *    `toolLoopFn` injection seam, which hands back the real tool handlers.
  */
@@ -99,7 +99,7 @@ function emptied(op: Operation, value: '' | null): Record<string, unknown> {
 
 const summary = (o: Outcome) => (o.ok ? 'ok' : o.code);
 /** The result object of an answered call; MCP paths append notice blocks after it. */
-const resultJson = (o: Outcome) => JSON.parse(o.text.split('\n[gbrain ')[0]!) as Record<string, unknown>;
+const resultJson = (o: Outcome) => JSON.parse(o.text.split('\n[foresights ')[0]!) as Record<string, unknown>;
 /** The subagent registry reports a schema failure as a plain Error naming the param; every other path as invalid_params. */
 const refusal = (o: Outcome) => (!o.ok && (o.code === 'invalid_params' || /^brain_\w+: (Missing required parameter|Parameter ")/.test(o.text)) ? 'invalid_params' : summary(o));
 
@@ -113,7 +113,7 @@ beforeAll(async () => {
 
   paths['mcp remote (http)'] = async (op, args) => fromDispatch(await dispatchToolCall(engine, op, args, { remote: true, transport: 'http', sourceId: 'default' }));
   paths['mcp local (stdio)'] = async (op, args) => fromDispatch(await dispatchToolCall(engine, op, args, { remote: false, transport: 'stdio', sourceId: 'default' }));
-  paths['gbrain call'] = async (op, args) => {
+  paths['foresights call'] = async (op, args) => {
     try { return { ok: true, text: JSON.stringify(await handleToolCall(engine, op, args)) }; } catch (e) { return thrown(e); }
   };
   paths['skillopt rollout'] = viaHandlers(await rolloutHandlers());

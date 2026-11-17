@@ -1,6 +1,6 @@
 /**
- * \`gbrain wakeshift watch\` on a brain host (Wakeshift plan D8), on a repo-less PGLite brain: the local CLI has no
- * conversation to wake, so watch_job's refusal prints with its fix (gbrain jobs wait <id>) and a non-zero exit, and a
+ * \`foresights wakeshift watch\` on a brain host (Wakeshift plan D8), on a repo-less PGLite brain: the local CLI has no
+ * conversation to wake, so watch_job's refusal prints with its fix (foresights jobs wait <id>) and a non-zero exit, and a
  * session_key passed on the command line is never written anywhere under GBRAIN_HOME nor echoed. The thin-client
  * route is pinned in test/thin-client-routing.test.ts and the refusal matrix golden.
  */
@@ -45,7 +45,7 @@ afterEach(() => {
   process.exitCode = orig.exitCode ?? 0;
 });
 
-describe('gbrain wakeshift watch on the brain host', () => {
+describe('foresights wakeshift watch on the brain host', () => {
   test('watch job prints watch_job\'s refusal with the local wait as its fix, exits non-zero, and never stores or echoes the session key', () =>
     withEnv({ GBRAIN_HOME: home, WAKESHIFT_API_KEY: undefined }, async () => {
       await runWakeshift(engine, ['watch', 'job', '5', '--session-key', SECRET, '--harness', 'claude-code']);
@@ -59,7 +59,7 @@ describe('gbrain wakeshift watch on the brain host', () => {
 
   test('watch --help prints the watch usage', async () => {
     await runWakeshift(engine, ['watch', '--help']);
-    expect(out).toContain('gbrain wakeshift watch job <id>');
+    expect(out).toContain('foresights wakeshift watch job <id>');
     expect(out).toContain('--session-key');
   });
 

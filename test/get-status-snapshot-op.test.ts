@@ -4,7 +4,7 @@
  * Pins the per-op decisions:
  *   - scope: 'admin' (codex MAJOR-9 / D10 — prevents read-scoped clients
  *     from seeing brain-host operational state).
- *   - localOnly: false (remote thin-client `gbrain status` callers need
+ *   - localOnly: false (remote thin-client `foresights status` callers need
  *     it via HTTP MCP — that's the whole point).
  *   - payload (schema_version 2, Minions-visibility wave): {schema_version,
  *     version, sync, cycle, queue, workers}. `queue` and `workers` were

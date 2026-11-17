@@ -1,7 +1,7 @@
 /**
  * Tests for src/core/skillpack/harvest-lint.ts — the privacy linter
  * that defends against accidentally publishing real names from a
- * private host fork into gbrain core.
+ * private host fork into foresights core.
  *
  * Pins:
  *   - default Wintermute pattern matches

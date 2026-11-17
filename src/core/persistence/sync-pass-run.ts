@@ -204,10 +204,10 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   // #6887: a both-moved import imports when the page still holds what its recorded disk blob imports (sync-screen.ts driftBaselineContent).
   const bothDrift = imports.filter(entry => entry.result.cls === 'drift' && entry.result.side === 'both' && entry.pageId !== null);
   const baselineRecords = await readSyncImportProvenances(engine, level.sourceId, level.incarnation, bothDrift.map(entry => entry.pageId!));
-  // #7338: a page with no import record (imported by an older gbrain) has its file at the incarnation's baseline commit as its baseline.
+  // #7338: a page with no import record (imported by an older foresights) has its file at the incarnation's baseline commit as its baseline.
   const driftBaseline = (entry: ShadowPath) => entry.pageId === null ? undefined : entry.result.side === 'both' ? baselineRecords.get(entry.pageId)?.disk_blob_oid ?? undefined
     : entry.result.side === 'unknown' ? entry.state.baseline ?? undefined : undefined;
-  // #7199: a side-`unknown` hold an older gbrain wrote after the pass that held it moved the source's last commit past the one
+  // #7199: a side-`unknown` hold an older foresights wrote after the pass that held it moved the source's last commit past the one
   // the classic sync read; its re-screen also compares the page with the file's last few committed versions before the held one.
   // GST-2515: one batched read for all of them, reporting each path it finished, so thousands of such holds neither start a Git
   // process each nor read as a stalled pass.
@@ -265,7 +265,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
         if (holderPath !== null) deleteEntries.delete(holderPath);
         continue;
       }
-      // A live page at the slug with no recorded origin (written straight to the database, or by an older gbrain) attests
+      // A live page at the slug with no recorded origin (written straight to the database, or by an older foresights) attests
       // neither side: the import is guarded as drift of unknown side, so the freeze imports it only as a proven no-op and
       // otherwise holds file_drift (as discovery's tree walk guards it, sync-prescreen.ts). A page written while the source was
       // unbound (#5254) is not guarded: its preparation refuses the file that now occupies its path (source_changed).

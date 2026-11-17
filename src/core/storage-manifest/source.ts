@@ -5,7 +5,7 @@
  *
  * Repo-less brain: a database-only source, created by the first `storage_register`; the database is the record.
  * Repo brain (any active source with a directory): git stays the parent, so the shelf is a hosted git-canonical
- * repository (`hostRepo`), created only by `gbrain storage init` after its preview, which needs managed persistence.
+ * repository (`hostRepo`), created only by `foresights storage init` after its preview, which needs managed persistence.
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
@@ -28,7 +28,7 @@ export interface StorageSourceState { exists: boolean; archived: boolean; repoBr
 
 /**
  * A repo brain is one with any active source that has a directory (or the legacy sync.repo_path of default); mixed
- * brains count. The gbrain-owned content directory `gbrain init` creates holds no Git checkout, so it does not count.
+ * brains count. The gbrain-owned content directory `foresights init` creates holds no Git checkout, so it does not count.
  */
 export async function isRepoBrain(engine: BrainEngine): Promise<boolean> {
   const rows = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL AND id <> $1', [STORAGE_SOURCE_ID]);
@@ -50,12 +50,12 @@ const unfinished = (state: StorageSourceState) => state.exists && !state.role &&
 
 function notOurs() {
   return opError('storage_manifest_missing', `Source ${STORAGE_SOURCE_ID} exists but is not a storage manifest; nothing was written.`,
-    `The storage shelf needs the source ID ${STORAGE_SOURCE_ID}. Ask the user what that source holds before anything else; gbrain sources list shows it. Its pages stay where they are.`);
+    `The storage shelf needs the source ID ${STORAGE_SOURCE_ID}. Ask the user what that source holds before anything else; foresights sources list shows it. Its pages stay where they are.`);
 }
 
 function archivedShelf() {
   return opError('storage_manifest_missing', `Source ${STORAGE_SOURCE_ID} is archived; nothing was written.`,
-    `Ask the user whether to bring it back with gbrain sources restore ${STORAGE_SOURCE_ID} (gbrain sources archived shows when it would be purged).`);
+    `Ask the user whether to bring it back with foresights sources restore ${STORAGE_SOURCE_ID} (foresights sources archived shows when it would be purged).`);
 }
 
 function initFix() {
@@ -73,7 +73,7 @@ async function markRole(engine: BrainEngine): Promise<void> {
 /**
  * Whether a storage write can land: throws the refusal it would get, and says whether the first write creates the
  * database-only shelf (a repo-less brain) or finishes one a crash or a concurrent first write left without its role.
- * A repo brain must run `gbrain storage init` first; any other `storage` source without the role is someone else's,
+ * A repo brain must run `foresights storage init` first; any other `storage` source without the role is someone else's,
  * refused. Writes nothing.
  */
 export async function shelfWritable(engine: BrainEngine): Promise<{ creates: boolean; exists: boolean }> {
@@ -82,8 +82,8 @@ export async function shelfWritable(engine: BrainEngine): Promise<{ creates: boo
   if (state.exists && state.role) return { creates: false, exists: true };
   if (unfinished(state)) return { creates: true, exists: true };
   if (state.exists) throw notOurs();
-  if (state.repoBrain) throw opError('storage_manifest_missing', 'This brain keeps its pages in Git, so the storage shelf is a hosted Git repository that gbrain storage init creates; nothing was written.',
-    'Preview it with gbrain storage init --dir <absolute path> --dry-run, and apply the command it prints after the user agrees. It needs managed persistence (gbrain sources writer activate).',
+  if (state.repoBrain) throw opError('storage_manifest_missing', 'This brain keeps its pages in Git, so the storage shelf is a hosted Git repository that foresights storage init creates; nothing was written.',
+    'Preview it with foresights storage init --dir <absolute path> --dry-run, and apply the command it prints after the user agrees. It needs managed persistence (foresights sources writer activate).',
     { fix: initFix() });
   return { creates: true, exists: false };
 }
@@ -103,7 +103,7 @@ export async function ensureStorageSource(engine: BrainEngine): Promise<void> {
 
 export interface StorageInitResult { action: 'none' | 'create_database_source' | 'host_repo'; dry_run: boolean; repo_brain: boolean; summary: string[]; apply?: string[]; plan?: HostRepoPlan }
 
-/** `gbrain storage init`: preview, then apply. Repo-less: a database-only source. Repo brain: hostRepo, then the role. */
+/** `foresights storage init`: preview, then apply. Repo-less: a database-only source. Repo brain: hostRepo, then the role. */
 export async function initStorageSource(engine: BrainEngine, opts: { dir?: string; pushRemote?: string; dryRun: boolean; expect?: string }): Promise<StorageInitResult> {
   const state = await storageSourceState(engine);
   if (state.archived) throw archivedShelf();
@@ -126,7 +126,7 @@ export async function initStorageSource(engine: BrainEngine, opts: { dir?: strin
     'Pass --dir <absolute path outside every checkout>; nothing was changed.', { fix: initFix() });
   if (!await managedPersistenceEnabled(engine)) throw opError('strict_requires_managed',
     'The storage shelf on a brain with a Git checkout is a git-canonical hosted repository, which needs managed persistence; nothing was created.',
-    'Ask the user whether to turn on managed persistence for this brain (gbrain sources writer activate), then preview gbrain storage init again.');
+    'Ask the user whether to turn on managed persistence for this brain (foresights sources writer activate), then preview foresights storage init again.');
   const plan = await hostRepo(engine, { sourceId: STORAGE_SOURCE_ID, dir: opts.dir, dryRun: opts.dryRun, ...(opts.pushRemote ? { pushRemote: opts.pushRemote } : {}), ...(opts.expect ? { expect: opts.expect } : {}) });
   const apply = plan.apply ? ['gbrain', 'storage', 'init', '--dir', opts.dir, ...(opts.pushRemote ? ['--push-remote', opts.pushRemote] : []), '--expect', plan.plan_hash] : undefined;
   if (!plan.dry_run) await markRole(engine);

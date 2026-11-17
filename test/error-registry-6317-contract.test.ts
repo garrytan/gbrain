@@ -56,7 +56,7 @@ describe('#6317 codes are registered with a full envelope', () => {
     expect(anchorsOf(path!).has(anchor!), `${code}: ${entry!.docs} does not resolve`).toBe(true);
     const row = errorCodeRow(code)!;
     expect(['agent', 'host_admin']).toContain(row.actor);
-    expect(row.verify).toStartWith('gbrain ');
+    expect(row.verify).toStartWith('foresights ');
     expect(row.effects).toEqual([]);
   });
 
@@ -71,7 +71,7 @@ describe('#6317 codes are registered with a full envelope', () => {
       expect(entry.fix!.verify!.argv).toEqual(['gbrain', 'doctor', '--only', code, '--json']);
       const rendered = renderAction(entry.fix!, cliRenderContext());
       expect(rendered.verify?.argv).toEqual(['gbrain', 'doctor', '--only', code, '--json']);
-      expect(rendered.command).toStartWith('gbrain ');
+      expect(rendered.command).toStartWith('foresights ');
     }
   });
 
@@ -106,9 +106,9 @@ describe('drain_stalled: the same-host stop has a cause vocabulary and a filled 
   });
 
   test('the rendered CLI envelope fills --source from the receipt and names the owner in why', () => {
-    const error = new OperationError('drain_stalled', 'Managed sync of source default stopped: the head write is held by gbrain serve (pid 4121) past the preparation ceiling.');
+    const error = new OperationError('drain_stalled', 'Managed sync of source default stopped: the head write is held by foresights serve (pid 4121) past the preparation ceiling.');
     error.reason = 'owner_wedged_here';
-    error.why = 'gbrain serve (pid 4121, nonce 7f3a) on this host has held request 01J9 at step import_screen for 660 s; the ceiling has passed, so only a restart of that process frees the root.';
+    error.why = 'foresights serve (pid 4121, nonce 7f3a) on this host has held request 01J9 at step import_screen for 660 s; the ceiling has passed, so only a restart of that process frees the root.';
     error.receiptFields = { operation: 'managed_sync_import', source_id: 'default', slug: null, principal_kind: 'cli', principal_id: 'local_cli' };
     const env = envelopeFor(error, 'cli');
     expect(env).toMatchObject({ code: 'drain_stalled', reason: 'owner_wedged_here', class: 'server', retryable: false, contract_version: 1 });
@@ -118,7 +118,7 @@ describe('drain_stalled: the same-host stop has a cause vocabulary and a filled 
     expect(env.fix?.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'managed_sync_not_moving', '--json']);
     expect(env.docs).toContain('docs/guides/write-refusals.md#drain-stalled');
     expect(env.docs_cmd).toEqual(['gbrain', 'errors', 'drain_stalled']);
-    expect(env.suggestion).toContain('gbrain sources writer status --source default --json');
+    expect(env.suggestion).toContain('foresights sources writer status --source default --json');
   });
 
   test('the write-refusals row and the live-sync outcome table carry the new meaning, not the old one', () => {
@@ -145,13 +145,13 @@ describe('the doctor codes each have a troubleshooting symptom row that names wh
     const cells = row!.split(' | ');
     expect(cells[2]!.length).toBeGreaterThan(10);
     expect(cells[3]!.length).toBeGreaterThan(3);
-    expect(cells[4]!).toContain('gbrain ');
+    expect(cells[4]!).toContain('foresights ');
   });
 
   test('the parked-catch-up section is a two-call journey and the transcript names each step', () => {
     expect(doc).toContain('<a id="managed-sync-not-moving"></a>');
     expect(doc).toContain('<a id="managed-sync-wedge-transcript"></a>');
-    for (const step of ['gbrain sources status default --json', 'gbrain doctor --only managed_sync_not_moving --json', 'gbrain sources writer status --source default --json', 'gbrain sources retry-held default', 'gbrain sources writer movement default']) {
+    for (const step of ['foresights sources status default --json', 'foresights doctor --only managed_sync_not_moving --json', 'foresights sources writer status --source default --json', 'foresights sources retry-held default', 'foresights sources writer movement default']) {
       expect(doc, `transcript lacks ${step}`).toContain(step);
     }
     expect(doc).toContain('"next": { "code": "claim_overdue"');

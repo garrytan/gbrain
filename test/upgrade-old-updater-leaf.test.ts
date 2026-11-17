@@ -1,7 +1,7 @@
 /**
  * GST-2688: the module old updaters load after the swap stays a leaf.
  *
- * 1. Protects: `gbrain upgrade` from about v0.60.150 to v0.60.248 ends with
+ * 1. Protects: `foresights upgrade` from about v0.60.150 to v0.60.248 ends with
  *    `(await import('./sources-writer-movement.ts')).MOVEMENT_SUPERVISOR_STEP`
  *    after the new release is on disk. That import runs in the OLD process,
  *    whose module cache still holds the old copies of everything it loaded at
@@ -31,6 +31,6 @@ describe('the path old updaters import after the swap', () => {
     const out = JSON.parse(r.stdout.toString().trim().split('\n').pop()!) as { step: string; loaded: string[] };
     expect(out.loaded.map(f => f.slice(REPO_ROOT.length + 1)).sort()).toEqual(['src/commands/movement-step.ts', 'src/commands/sources-writer-movement.ts']);
     expect(out.step).toBe(MOVEMENT_SUPERVISOR_STEP);
-    expect(out.step).toBe('after restarting serve and the workers, run: gbrain sources writer movement');
+    expect(out.step).toBe('after restarting serve and the workers, run: foresights sources writer movement');
   }, 60_000);
 });

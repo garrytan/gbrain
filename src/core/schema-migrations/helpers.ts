@@ -140,7 +140,7 @@ export async function buildIndexOnline(
   if (row?.building) return 'building';
   if (row) await dropInvalidConcurrentIndex(engine, version, index.name);
   opts.notice?.(`  building ${index.name} on ~${await tableRows(engine, index.table)} rows, then analyzing ${index.table}; `
-    + 'this can take minutes; it is safe to leave running; if interrupted, gbrain doctor names the rebuild command\n');
+    + 'this can take minutes; it is safe to leave running; if interrupted, foresights doctor names the rebuild command\n');
   // No session SET: a reservation can fall back to a transaction-pooled connection, where a SET or RESET
   // reaches another client's backend. The build runs under the session's startup timeouts; one that times
   // out leaves an INVALID index, which the next call drops and rebuilds.
@@ -148,7 +148,7 @@ export async function buildIndexOnline(
   // IF NOT EXISTS also skips an INVALID index a concurrent caller's failed build left behind.
   const [built] = await engine.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [index.name]);
   if (!built?.valid) {
-    const rebuild = opts.rebuild ?? (index.table === 'persistence_requests' ? 'gbrain repair request-indexes --apply' : 'gbrain apply-migrations --yes');
+    const rebuild = opts.rebuild ?? (index.table === 'persistence_requests' ? 'foresights repair request-indexes --apply' : 'foresights apply-migrations --yes');
     throw new Error(`Index ${index.name} is not valid after its concurrent build; rerun: ${rebuild}`);
   }
   await analyzeAfterIndexBuild(engine, index);
@@ -161,7 +161,7 @@ async function tableRows(engine: BrainEngine, table: string): Promise<number> {
   return Number(size?.rows ?? 0);
 }
 
-/** The hot tables `gbrain repair planner-stats` analyzes (PLANNER_STATS_TABLES; this leaf does not import planner-stats). */
+/** The hot tables `foresights repair planner-stats` analyzes (PLANNER_STATS_TABLES; this leaf does not import planner-stats). */
 const PLANNER_REPAIR_TABLES = new Set(['pages', 'links', 'facts', 'takes', 'content_chunks', 'timeline_entries']);
 
 /**
@@ -194,7 +194,7 @@ export async function analyzeYieldingToVacuum(engine: BrainEngine, table: string
  * doctor `planner_stats_stale` keeps reporting the index.
  */
 export async function analyzeAfterIndexBuild(engine: BrainEngine, index: { name: string; table: string }): Promise<boolean> {
-  const fix = PLANNER_REPAIR_TABLES.has(index.table) ? 'gbrain repair planner-stats --apply' : `ANALYZE ${index.table} as the table owner`;
+  const fix = PLANNER_REPAIR_TABLES.has(index.table) ? 'foresights repair planner-stats --apply' : `ANALYZE ${index.table} as the table owner`;
   let why: string;
   try {
     if (await analyzeYieldingToVacuum(engine, index.table, '', 60_000)) return true;

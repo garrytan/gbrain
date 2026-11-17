@@ -3,7 +3,7 @@
  *
  * Protects: after a successful managed sync, a failure row of that source whose cursor is gone and whose file the imported
  * commit settles (imported and not held; or absent from the commit with no live page) is removed from the database and from the JSONL mirror; a row for
- * a file that is held or never imported stays. `gbrain sync --acknowledge-managed <request_id|path>` removes only settled
+ * a file that is held or never imported stays. `foresights sync --acknowledge-managed <request_id|path>` removes only settled
  * rows and refuses the rest (unsettled, or an unfinished cursor) with `managed_failure_unsettled`.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';

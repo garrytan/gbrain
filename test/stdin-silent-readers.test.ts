@@ -2,7 +2,7 @@
  * C5 (agent operator wave): commands that read a payload from stdin never
  * hang on an open-but-silent pipe and never process partial input.
  *
- * Protects: `gbrain report` used readFileSync('/dev/stdin') (blocks forever on
+ * Protects: `foresights report` used readFileSync('/dev/stdin') (blocks forever on
  * an open pipe and ignores SIGTERM), `capture --stdin` and `connectors auth
  * --cookie -` used `for await (process.stdin)` (no EOF/timeout). Each now goes
  * through interaction.readStdinBounded via src/core/stdin-read.ts: a silent

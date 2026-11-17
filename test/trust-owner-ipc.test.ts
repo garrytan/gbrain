@@ -2,7 +2,7 @@
  * Owner trust actions while a resident owner holds the brain (#5575: DX-2,
  * ENG-15, CEO-2, CEO-9).
  *
- * Protects: `gbrain trust review|confirm|drop` reach the resident PGLite
+ * Protects: `foresights trust review|confirm|drop` reach the resident PGLite
  * owner over its 0600 administration socket (trust_read / trust_preview /
  * trust_apply) instead of failing on the lock; a non-TTY confirm through the
  * socket is refused with confirmation_required and changes nothing; the
@@ -107,7 +107,7 @@ async function loweredPage(slug: string): Promise<{ tp: string; id: number }> {
 }
 const tier = async (slug: string) => (await engine.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE slug=$1', [slug]))[0]!.trust_tier;
 
-describe('gbrain trust through the resident owner (DX-2)', () => {
+describe('foresights trust through the resident owner (DX-2)', () => {
   test('review lists the lowered page; a piped confirm is refused and changes nothing; drop dismisses', async () => {
     const { tp, id } = await loweredPage('notes/ipc-one-example');
     const review = await cli(['trust', 'review', '--json']);
@@ -116,7 +116,7 @@ describe('gbrain trust through the resident owner (DX-2)', () => {
     const piped = await cli(['trust', 'confirm', tp]);
     expect(piped.code).toBe(3);
     expect(piped.stderr).toContain('confirmation_required');
-    expect(piped.stderr).toContain(`gbrain trust confirm ${tp}`);
+    expect(piped.stderr).toContain(`foresights trust confirm ${tp}`);
     expect((await getTrustProposal(engine, id))!.status).toBe('pending');
     expect(await tier('notes/ipc-one-example')).toBe('agent_written');
     const dropped = await cli(['trust', 'drop', tp, '--json']);

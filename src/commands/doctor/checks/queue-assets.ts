@@ -188,7 +188,7 @@ async function runImageAssets(ctx: DoctorContext): Promise<Check[]> {
       for (const r of rows) {
         // #4910: an explicit non-git lane (supabase/s3/local backend) means
         // storage_path is a bucket key, never a source-relative file. Only
-        // `gbrain files verify` can probe those; unmarked rows keep the stat.
+        // `foresights files verify` can probe those; unmarked rows keep the stat.
         if (imageAssetStorageLane(r.metadata) === 'backend') { remote++; continue; }
         const root = r.source_local_path ?? repoRoot;
         if (!root) { unrooted++; continue; }
@@ -218,7 +218,7 @@ async function runImageAssets(ctx: DoctorContext): Promise<Check[]> {
       const foreignNote = (foreign > 0
         ? ` (${foreign} Windows-drive path(s) skipped — not resolvable on this platform)`
         : '') + (remote > 0
-        ? ` (${remote} storage-backend object(s) not checked locally — run \`gbrain files verify\`)`
+        ? ` (${remote} storage-backend object(s) not checked locally — run \`foresights files verify\`)`
         : '') + (unrooted > 0
         ? ` (${unrooted} image(s) not checkable here: their source has no local path)`
         : '') + (caseOnly > 0

@@ -21,7 +21,7 @@ outcomes, production changes or merging.
 
 ## Two comparisons, frozen together
 
-### GBrain transfer: 361 fresh evidence groups
+### Foresights transfer: 361 fresh evidence groups
 
 Run this comparison first, before inspecting the full paper replication.
 Both arms use the existing Sonnet 4.6 reader, identical retrieved sessions in
@@ -96,13 +96,13 @@ estimated request, including conservative chat overhead, is 23,948 tokens.
 
 The official `get_anscheck_prompt` function constructs oracle grading prompts,
 with a 10-token response limit and the official lowercase `yes`-substring
-rule. GBrain transfer retains its existing data-boundary judge prompt and
+rule. Foresights transfer retains its existing data-boundary judge prompt and
 16-token limit, using the same pinned judge snapshot. Malformed or failed
 judgments stop the experiment rather than silently becoming wrong answers.
 
 ## Interpretation and controls
 
-- **Primary GBrain contrast:** notes versus its intact full-session baseline.
+- **Primary Foresights contrast:** notes versus its intact full-session baseline.
   A validated transfer requires a positive paired 95% bootstrap interval and
   no net abstention loss. Report point estimates, every win/loss, category and
   gold-coverage strata even when this gate fails.
@@ -129,14 +129,14 @@ question types, but **all 500 question dates differ**, sometimes by days.
 The dates also differ for all 948 matched supporting-session occurrences,
 while their role/content turns are identical after ignoring gold annotations.
 Each phase retains its own corpus's dates. Do not splice oracle dates into
-GBrain's S-based retrieval or compare raw scores across phases as if the
+Foresights's S-based retrieval or compare raw scores across phases as if the
 inputs and readers were identical.
 
 ## Reproduction and receipt pins
 
 The upstream repository is pinned to
 [`9e0b455f4ef0e2ab8f2e582289761153549043fc`](https://github.com/xiaowu0162/LongMemEval/tree/9e0b455f4ef0e2ab8f2e582289761153549043fc).
-The local protocol uses GBrain commit `c8423e4`'s reader, source freezing,
+The local protocol uses Foresights commit `c8423e4`'s reader, source freezing,
 sanitizer, invocation guard, canonical pricing and paired summaries. Small
 private orchestration scripts execute the original prompt functions and
 record the experiment; no production implementation is changed.

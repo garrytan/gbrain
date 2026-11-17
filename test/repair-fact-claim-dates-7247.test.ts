@@ -1,5 +1,5 @@
 /**
- * #7247: doctor `fact_bulk_dates` and `gbrain repair fact-claim-dates`, on PGLite and Postgres (testBackends).
+ * #7247: doctor `fact_bulk_dates` and `foresights repair fact-claim-dates`, on PGLite and Postgres (testBackends).
  *
  * Protects: a day a bulk load stamped onto a large share of a source's facts is reported read-only, with the same
  * rule the repair uses; the repair previews without writing, moves only fence rows whose claim states exactly one
@@ -131,7 +131,7 @@ for (const backend of testBackends()) {
         expect(dry.listing!.map(entry => [entry.class, entry.item.split(' ')[0]])).toEqual([['rewrite', `default:${ACME}`], ['rewrite', `default:${ALICE}`]]);
         expect(dry.listing![0]!.detail).toContain(`#1 ${DAY} -> 2025-03-14`);
         expect(dry.warnings!.join('\n')).toContain('These dates record when the facts were loaded, not when they happened.');
-        expect(dry.apply_command).toBe(`gbrain repair fact-claim-dates --source default --apply --expect ${dry.preview_hash} --yes`);
+        expect(dry.apply_command).toBe(`foresights repair fact-claim-dates --source default --apply --expect ${dry.preview_hash} --yes`);
         expect(await factState(engine)).toEqual(before);
         expect(await revision(engine, ACME)).toBe(revisions.acme);
 

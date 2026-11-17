@@ -2,7 +2,7 @@
  * Multi-Query Expansion — v0.14+ delegates LLM call to the AI gateway.
  *
  * Sanitization layer (prompt-injection defense) stays HERE, not in the gateway:
- * the gateway is provider-agnostic; sanitization is gbrain's responsibility.
+ * the gateway is provider-agnostic; sanitization is foresights's responsibility.
  *
  * Security (Fix 3 / M1 / M2 / M3):
  *   - sanitizeQueryForPrompt() strips injection patterns from user input
@@ -29,7 +29,7 @@ export function sanitizeQueryForPrompt(query: string): string {
   q = q.replace(/^(\s*(ignore|forget|disregard|override|system|assistant|human)[\s:]+)+/gi, '');
   q = q.replace(/\s+/g, ' ').trim();
   if (q !== original) {
-    console.warn('[gbrain] sanitizeQueryForPrompt: stripped content from user query before LLM expansion');
+    console.warn('[foresights] sanitizeQueryForPrompt: stripped content from user query before LLM expansion');
   }
   return q;
 }

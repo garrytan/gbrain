@@ -2,7 +2,7 @@
  * GST-2492 PR 2: the doctor check `strict_facts_outside_git`.
  *
  * 1. Protects: a brain with no strict source is told so (ok). On a strict source, a fact the git-gap census counts with
- *    no Git home warns, names the count by group and gives the read-only `gbrain repair facts-home` preview as its fix.
+ *    no Git home warns, names the count by group and gives the read-only `foresights repair facts-home` preview as its fix.
  *    A source that is not strict is never judged, whatever its database holds.
  * 2. Fails when: a strict source's database-only fact goes unreported, the fix is not the preview, or a mixed source warns.
  * 3. Existing coverage: test/held-bare-name-move-gst2492.test.ts pins the held-row candidates in the message.
@@ -23,7 +23,7 @@ import { withEnv } from './helpers/with-env.ts';
 const gitRepo = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
 const check = async (engine: BrainEngine) => ((await strictFactsOutsideGitEntry.run({ engine, progress: { heartbeat() {} }, args: [] } as unknown as DoctorContext)) as Array<Record<string, any>>)
   .find(c => c.name === 'strict_facts_outside_git')!;
-/** A database-only fact row an older gbrain left, written outside the write guards. */
+/** A database-only fact row an older foresights left, written outside the write guards. */
 async function legacyFact(engine: BrainEngine, claim: string): Promise<void> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try { await engine.insertFact({ fact: claim, kind: 'fact', entity_slug: 'notes/kitchen-remodel', visibility: 'world', source: 'legacy import' } as never, { source_id: 'default' }); }

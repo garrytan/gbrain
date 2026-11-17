@@ -384,7 +384,7 @@ describe('checkpoint compaction (cathedral 5)', () => {
 //
 // OpenClaw has no session end; capture is per-compaction. These tests drive
 // the REAL engine.compact() path under a temp GBRAIN_HOME with the full
-// consent chain seeded (config gate + gbrain disclosure stamp + CLI-side
+// consent chain seeded (config gate + foresights disclosure stamp + CLI-side
 // evidence + stub binary), asserting the do-no-harm default and the
 // per-compaction receipt semantics.
 

@@ -88,14 +88,14 @@ describe('generateSelfDisableGuard', () => {
 describe('crontabIndicatesAutopilotInstall', () => {
   test('wrapper line and direct daemon line count as installs', () => {
     expect(crontabIndicatesAutopilotInstall("*/5 * * * * '/h/.gbrain/autopilot-run.sh' >> log 2>&1")).toBe(true);
-    expect(crontabIndicatesAutopilotInstall('*/5 * * * * gbrain autopilot --repo /data/brain')).toBe(true);
+    expect(crontabIndicatesAutopilotInstall('*/5 * * * * foresights autopilot --repo /data/brain')).toBe(true);
   });
 
   test('a status-monitor cron line is NOT an install', () => {
     // docs recommend cron-ing the status command as a health gate; counting
     // it as an install makes a monitor-only machine report installed and
     // never_run with exit 1 forever (adversarial review catch).
-    expect(crontabIndicatesAutopilotInstall('*/10 * * * * gbrain autopilot --status --json >> health.log')).toBe(false);
+    expect(crontabIndicatesAutopilotInstall('*/10 * * * * foresights autopilot --status --json >> health.log')).toBe(false);
   });
 
   test('comments and unrelated lines never count', () => {
@@ -182,9 +182,9 @@ describe('classifyAutopilotStatus', () => {
     // so a quiesced daemon looks 'fresh' by mtime while doing no work. Without
     // this state, a marker orphaned by a dead migrate is invisible — the
     // 71-day incident's shape again, reached through the pause path.
-    const r = classifyAutopilotStatus({ ...base, pausedReason: 'paused by gbrain migrate at 2026-08-11T00:00:00Z' });
+    const r = classifyAutopilotStatus({ ...base, pausedReason: 'paused by foresights migrate at 2026-08-11T00:00:00Z' });
     expect(r.state).toBe('paused');
-    expect(r.paused_reason).toContain('gbrain migrate');
+    expect(r.paused_reason).toContain('foresights migrate');
     expect(autopilotStatusExitCode(r.state)).toBe(1);
   });
 

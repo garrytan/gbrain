@@ -310,7 +310,7 @@ describe('rewindCursor', () => {
 describe('resume command', () => {
   test('rebuilt from the stored spec; truncation doubles the cap; paths quoted', () => {
     const cmd = buildResumeCommand('demo', 'run-1', SPEC, 'reflect_truncated');
-    expect(cmd).toStartWith('gbrain skillopt demo --resume run-1 ');
+    expect(cmd).toStartWith('foresights skillopt demo --resume run-1 ');
     expect(cmd).toContain(`--skills-dir '/tmp/my skills'`);
     expect(cmd).toContain(`--benchmark '/tmp/my skills/demo/skillopt-benchmark.jsonl'`);
     expect(cmd).toContain('--split 4:1:5 --epochs 2 --batch-size 4 --lr 4 --lr-schedule cosine');
@@ -385,7 +385,7 @@ describe('CLI', () => {
       reflect_errors: ['reflect_failure_truncated: 32000 output tokens, max_tokens=32000'],
       remediation: buildRemediation(['reflect_failure_truncated: x']),
       reflect_max_tokens: 32000,
-      resume_command: 'gbrain skillopt demo --resume run-1 --reflect-max-tokens 64000',
+      resume_command: 'foresights skillopt demo --resume run-1 --reflect-max-tokens 64000',
     } as RunReceipt;
     const out = formatRunSummary('errored', receipt, '/tmp/skills');
     expect(out).toContain('[skillopt] Outcome: errored');
@@ -396,7 +396,7 @@ describe('CLI', () => {
     expect(out).toContain('[skillopt] Stopped early');
     expect(out).toContain('[skillopt] Run id: run-1');
     expect(out).toContain('[skillopt] Checkpoint: /tmp/skills/demo/skillopt/checkpoint-run-1.json');
-    expect(out).toContain('[skillopt] Resume: gbrain skillopt demo --resume run-1 --reflect-max-tokens 64000');
+    expect(out).toContain('[skillopt] Resume: foresights skillopt demo --resume run-1 --reflect-max-tokens 64000');
   });
 
   test('a clean no_improvement summary prints no warnings', () => {

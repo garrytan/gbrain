@@ -78,7 +78,7 @@ describe('validateSchemaPackTrustGate (T8 D13)', () => {
       expect(msg).toContain('gbrain.yml');
       expect(msg).toContain('GBRAIN_SCHEMA_PACK');
       expect(msg).toContain('config.json');
-      expect(msg).toContain('gbrain config set');
+      expect(msg).toContain('foresights config set');
     }
   });
 });

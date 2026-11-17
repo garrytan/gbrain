@@ -1,10 +1,10 @@
 /**
  * GBRA-133 (data loss): a page written in the database after its file last held it is never soft-deleted because that
  * file is gone, even when a commit deleted the file.
- *   - `gbrain repair file-drift --held --side deleted --state file_gone --provenance deleted_by_commit --prefer file` lists
+ *   - `foresights repair file-drift --held --side deleted --state file_gone --provenance deleted_by_commit --prefer file` lists
  *     such a page apart (`database_ahead_of_file`) and soft-deletes only pages whose revision is file-backed (the
  *     revision sync last imported from the file);
- *   - `gbrain repair ghost-pages` lists it apart the same way and never approves it;
+ *   - `foresights repair ghost-pages` lists it apart the same way and never approves it;
  *   - the soft-delete itself refuses it (`refused`, `database_ahead_of_file`), so an approval saved before this check, or
  *     a page written between the preview and the apply, still keeps its content.
  * Before: the file's deleting commit was taken as the page's deletion, so the soft-delete dropped content no commit held.

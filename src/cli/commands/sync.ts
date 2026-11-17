@@ -1,5 +1,5 @@
 /**
- * `gbrain sync`: post-connect dispatch, run by handleCliOnly with the
+ * `foresights sync`: post-connect dispatch, run by handleCliOnly with the
  * engine connectEngine() opened. Moved verbatim from the src/cli.ts
  * handleCliOnly switch (refactor wave 1, W4 cli); the record lives in
  * src/cli/command-table.ts.
@@ -26,7 +26,7 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
     // unclassified internal error.
     if (err instanceof SyncLockBusyError) {
       throw opError('sync_in_progress', err.message,
-        `Wait for the running sync to finish and retry. If its holder is dead, run \`gbrain sync --break-lock\` (with the same --source).`,
+        `Wait for the running sync to finish and retry. If its holder is dead, run \`foresights sync --break-lock\` (with the same --source).`,
         { reason: 'lock_busy', detail: err.lockKey });
     }
     if (!(err instanceof OperationError) || !err.fix) throw err;

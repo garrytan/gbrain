@@ -27,7 +27,7 @@
  *     IngestionSource { return { id, kind, start, stop, healthCheck? }; }
  *
  * Trust model (v1): sources are in-process, evaluated as TS/JS modules in
- * the daemon. The TOFU prompt during `gbrain skillpack scaffold` is the user
+ * the daemon. The TOFU prompt during `foresights skillpack scaffold` is the user
  * acknowledging they trust the source's code. Subprocess / VM isolation is
  * a v2 hardening wave — see TODOS.md.
  *
@@ -164,7 +164,7 @@ export async function loadSkillpackSources(
     if (manifest.plugin_version !== SUPPORTED_PLUGIN_VERSION) {
       result.warnings.push(
         `[ingestion-load] unsupported plugin_version '${manifest.plugin_version}' at ${manifestPath} ` +
-          `(gbrain supports '${SUPPORTED_PLUGIN_VERSION}')`,
+          `(foresights supports '${SUPPORTED_PLUGIN_VERSION}')`,
       );
       continue;
     }
@@ -195,12 +195,12 @@ export async function loadSkillpackSources(
       if (!COMPATIBLE_API_VERSIONS.has(decl.api_version)) {
         result.warnings.push(
           `[ingestion-load] ${manifest.name} source '${decl.kind}' declares ` +
-            `api_version='${decl.api_version}' but gbrain expects ` +
+            `api_version='${decl.api_version}' but foresights expects ` +
             `'${INGESTION_SOURCE_API_VERSION}'. The skillpack was built ` +
             `against a different contract version. Fix: upgrade the ` +
             `skillpack (publisher needs to rebuild against the new ` +
-            `IngestionSource contract) OR downgrade gbrain. Skillpack docs: ` +
-            `https://github.com/garrytan/gbrain/blob/master/docs/ingestion-source-skillpack.md`,
+            `IngestionSource contract) OR downgrade foresights. Skillpack docs: ` +
+            `https://github.com/aimonk2025/gbrain/blob/master/docs/ingestion-source-skillpack.md`,
         );
         continue;
       }

@@ -1,5 +1,5 @@
 /**
- * gbrain sources — manage multi-source brain configuration (v0.18.0).
+ * foresights sources — manage multi-source brain configuration (v0.18.0).
  *
  * A source is a logical brain-within-the-DB: wiki, gstack, yc-media, etc.
  * Every page/file/ingest_log row is scoped to a sources(id) row. Slugs
@@ -7,24 +7,24 @@
  * full story.
  *
  * Subcommands:
- *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated] [--force]
+ *   foresights sources add <id> --path <path> [--name <display>] [--federated|--no-federated] [--force]
  *                               --path must be a git-initialized repo (files committed,
  *                               not just present) — #2707. --force skips the check.
- *   gbrain sources list [--json]
- *   gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
- *   gbrain sources rename <id> <new-name>
- *   gbrain sources default <id>
- *   gbrain sources attach <id>   — write .gbrain-source in CWD
- *   gbrain sources detach        — remove .gbrain-source from CWD
- *   gbrain sources federate <id>   — sources.config.federated = true
- *   gbrain sources unfederate <id> — sources.config.federated = false
- *   gbrain sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
- *   gbrain sources refresh <id> — drained worktree-wide ff-only refresh on a managed brain (F0)
- *   gbrain sources git-reconcile [<id>...] — idempotent publish/fast-forward of every source checkout (sources-git-reconcile.ts)
- *   gbrain sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
- *   gbrain sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
- *   gbrain sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
- *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
+ *   foresights sources list [--json]
+ *   foresights sources remove <id> [--yes] [--dry-run] [--keep-storage]
+ *   foresights sources rename <id> <new-name>
+ *   foresights sources default <id>
+ *   foresights sources attach <id>   — write .gbrain-source in CWD
+ *   foresights sources detach        — remove .gbrain-source from CWD
+ *   foresights sources federate <id>   — sources.config.federated = true
+ *   foresights sources unfederate <id> — sources.config.federated = false
+ *   foresights sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
+ *   foresights sources refresh <id> — drained worktree-wide ff-only refresh on a managed brain (F0)
+ *   foresights sources git-reconcile [<id>...] — idempotent publish/fast-forward of every source checkout (sources-git-reconcile.ts)
+ *   foresights sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
+ *   foresights sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
+ *   foresights sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
+ *   foresights sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
  *                               (agent-bootstrap; core in src/core/workspace-push.ts)
  *
  * NOT in scope for Step 6 (deferred per plan):
@@ -89,7 +89,7 @@ function validateSourceId(id: string): void {
     throw opError(
       'invalid_params',
       `Invalid source id "${id}". Must be 1-32 lowercase alnum chars with optional interior hyphens (e.g. "wiki", "yc-media").`,
-      'Use 1-32 lowercase letters, digits and interior hyphens, for example: gbrain sources attach wiki. gbrain sources list shows the existing ids.',
+      'Use 1-32 lowercase letters, digits and interior hyphens, for example: foresights sources attach wiki. foresights sources list shows the existing ids.',
       { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the existing source ids to attach to.' } },
     );
   }
@@ -152,13 +152,13 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack] ' +
+      'Usage: foresights sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
-        '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
+        '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: foresights google connect)\n' +
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
     );
     process.exit(2);
@@ -290,7 +290,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (gKind && !gAccount) {
     console.error(
       'Error: --kind google requires --account <email> (a connected Google account).\n' +
-        'Connect one first: gbrain google connect',
+        'Connect one first: foresights google connect',
     );
     process.exit(2);
   }
@@ -339,7 +339,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     } catch { /* preflight is best-effort */ }
     // Access-mode validation (default vault). command/env let a stack that
     // already holds Google access (gog, gcloud, a credential gateway) drive
-    // this source without gbrain's OAuth flow; --account stays required as
+    // this source without foresights's OAuth flow; --account stays required as
     // the IDENTITY (From/To matching, deep-link authuser).
     if (gAccess !== undefined && !['vault', 'command', 'env'].includes(gAccess)) {
       console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env.`);
@@ -365,7 +365,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       if (!entry) {
         console.error(
           `Error: no connected Google account "${gAccount}" in the credential vault.\n` +
-            `Connect it first: gbrain google connect --account ${gAccount}\n` +
+            `Connect it first: foresights google connect --account ${gAccount}\n` +
             `(or use another access mode: --access command --token-command "<cmd>" | --access env --token-env <VAR>)`,
         );
         process.exit(2);
@@ -467,36 +467,36 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const next = !fed && federated === null ? await noGrantFloorNext(engine, id).catch(() => null) : null;
   if (next) say(`  next: ${next.command} — ${next.why}`);
   if (ghKind || gKind) {
-    say(`  sync: run \`gbrain sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
+    say(`  sync: run \`foresights sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
   }
 
   // v0.42.44 — auto-harden managed clones for git durability the moment a brain
   // repo is added with a PAT. Best-effort: NEVER fail `add` if hardening fails.
-  // Only managed clones (gbrain owns the working tree); --path repos are unowned.
+  // Only managed clones (foresights owns the working tree); --path repos are unowned.
   if (finalRemoteUrl && created.local_path && !noHarden) {
     try {
       const { hardenBrainRepo, acceptPat } = await import('../core/brain-repo-durability.ts');
       const pat = acceptPat({ patFile });
-      for (const w of pat?.warnings ?? []) console.error(`[gbrain] ${w}`);
+      for (const w of pat?.warnings ?? []) console.error(`[foresights] ${w}`);
       if (!pat) {
-        console.error('[gbrain] No PAT provided (--pat-file or GBRAIN_GITHUB_PAT) — skipping durability hardening.');
-        console.error(`         Run \`gbrain sources harden ${id} --pat-file <p>\` later to enable auto-push.`);
+        console.error('[foresights] No PAT provided (--pat-file or GBRAIN_GITHUB_PAT) — skipping durability hardening.');
+        console.error(`         Run \`foresights sources harden ${id} --pat-file <p>\` later to enable auto-push.`);
       } else {
-        console.error('[gbrain] Hardening brain repo for durability…');
+        console.error('[foresights] Hardening brain repo for durability…');
         const report = await hardenBrainRepo({
           repoPath: created.local_path, sourceId: id, pat: pat.token,
           logger: (l) => console.error(`  ${l}`),
         });
         if (report.needs_attention.length) {
-          console.error('[gbrain] Durability hardened with warnings:');
+          console.error('[foresights] Durability hardened with warnings:');
           for (const n of report.needs_attention) console.error(`  - ${n}`);
         } else {
-          console.error('[gbrain] Durability hardened ✓');
+          console.error('[foresights] Durability hardened ✓');
         }
       }
     } catch (e) {
-      console.error(`[gbrain] Durability hardening skipped (non-fatal): ${(e as Error).message}`);
-      console.error(`         Run \`gbrain sources harden ${id}\` to retry.`);
+      console.error(`[foresights] Durability hardening skipped (non-fatal): ${(e as Error).message}`);
+      console.error(`         Run \`foresights sources harden ${id}\` to retry.`);
     }
   }
   if (json) console.log(JSON.stringify({ id, name: created.name, local_path: created.local_path, remote_url: finalRemoteUrl ?? null, federated: fed, ...(next ? { next } : {}), ...(notices ? { notices } : {}) }));
@@ -598,7 +598,7 @@ function deriveBrainId(created: OpsSourceRow, localPath: string): string {
 
 // ── Subcommand: push (agent-bootstrap D6/G6/G8/G14) ─────────
 //
-// `gbrain sources push [<id>|--path <dir>]` — scan-gated add→commit→pull→push
+// `foresights sources push [<id>|--path <dir>]` — scan-gated add→commit→pull→push
 // of a workspace repo. The heavy lifting (single-flight lock, deny-glob
 // backstop, secret scan, commit-first-then-pull ordering, remote-privacy
 // refusal, push-status.json) lives in src/core/workspace-push.ts; this
@@ -631,7 +631,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   if ((!id && !path) || (id && path) || (scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(scanTimeout))) {
-    console.error('Usage: gbrain sources push [<id> | --path <dir>] [--branch <b>] [--message <m>] [--allow-unverified-remote] [--scan-timeout <seconds>] [--json]');
+    console.error('Usage: foresights sources push [<id> | --path <dir>] [--branch <b>] [--message <m>] [--allow-unverified-remote] [--scan-timeout <seconds>] [--json]');
     process.exit(2);
   }
 
@@ -660,7 +660,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     commitMessage: message,
     allowUnverifiedRemote: allowUnverified,
     ...(scanTimeout ? { scanTimeoutMs: Number(scanTimeout) * 1000 } : {}),
-    logger: (l) => console.error(`[gbrain] ${l}`),
+    logger: (l) => console.error(`[foresights] ${l}`),
   });
 
   if (json) console.log(JSON.stringify(res, null, 2));
@@ -781,7 +781,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]');
+    console.error('Usage: foresights sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]');
     process.exit(2);
   }
   const yes = args.includes('--yes');
@@ -877,8 +877,8 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
     await unhardenBrainRepo({ repoPath: src.local_path ?? '', sourceId: id, logger: (l) => console.error(l) });
   } catch (e) {
     console.error(
-      `[gbrain] source row "${id}" is deleted, but durability teardown failed (non-fatal): ${(e as Error).message}. ` +
-      `Residue may remain${src.local_path ? ` at ${src.local_path}` : ''} (git hardening / cron entry / stored credential) — \`gbrain doctor\` surfaces it.`,
+      `[foresights] source row "${id}" is deleted, but durability teardown failed (non-fatal): ${(e as Error).message}. ` +
+      `Residue may remain${src.local_path ? ` at ${src.local_path}` : ''} (git hardening / cron entry / stored credential) — \`foresights doctor\` surfaces it.`,
     );
   }
 }
@@ -887,7 +887,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 
 // ── Subcommand: set-cr-mode (v0.40.3.0 — D5) ────────────────
 //
-// `gbrain sources set-cr-mode <id> <none|title|per_chunk_synopsis>`
+// `foresights sources set-cr-mode <id> <none|title|per_chunk_synopsis>`
 // writes sources.contextual_retrieval_mode for the per-source override
 // resolver. Empty value / "unset" / "default" clears the column (NULL
 // falls through to the global mode).
@@ -909,7 +909,7 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   const mode = args[1];
 
   if (!id || !mode) {
-    console.error('Usage: gbrain sources set-cr-mode <id> <none|title|per_chunk_synopsis>');
+    console.error('Usage: foresights sources set-cr-mode <id> <none|title|per_chunk_synopsis>');
     console.error('  Pass "unset" or "default" to clear the override (NULL falls through).');
     process.exit(2);
   }
@@ -933,7 +933,7 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   );
   if (exists.length === 0) {
     console.error(`Error: source "${id}" not found.`);
-    console.error(`  Run 'gbrain sources list' to see registered sources.`);
+    console.error(`  Run 'foresights sources list' to see registered sources.`);
     process.exit(4);
   }
 
@@ -953,7 +953,7 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
 async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources archive <id>');
+    console.error('Usage: foresights sources archive <id>');
     process.exit(2);
   }
 
@@ -981,7 +981,7 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
     );
     if (rows[0]?.archived) {
       console.log(`Source "${id}" is already archived — nothing to do.`);
-      console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
+      console.log(`  'foresights sources archived' shows its purge expiry; 'foresights sources restore ${id}' un-archives it.`);
       return;
     }
     console.error(`Failed to archive source "${id}".`);
@@ -997,7 +997,7 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   const noFederate = args.includes('--no-federate');
   if (!id) {
-    console.error('Usage: gbrain sources restore <id> [--no-federate]');
+    console.error('Usage: foresights sources restore <id> [--no-federate]');
     process.exit(2);
   }
 
@@ -1024,16 +1024,16 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
     }
   } catch (e) {
     if (e instanceof SourceOpError && e.code === 'unmanaged_path') {
-      // #1881: local_path is the user's own working tree, not a clone gbrain
-      // created. gbrain won't re-clone over it, and `gbrain sync` will refuse it
+      // #1881: local_path is the user's own working tree, not a clone foresights
+      // created. foresights won't re-clone over it, and `foresights sync` will refuse it
       // too — so the generic "missing clone, try sync to recover" guidance below
       // would be actively misleading. Surface the real situation instead.
       console.error(`  WARN: ${e.message}`);
-      console.error(`  The DB row is restored; gbrain syncs this path read-only.`);
+      console.error(`  The DB row is restored; foresights syncs this path read-only.`);
     } else if (e instanceof SourceOpError) {
       console.error(`  WARN: could not re-clone: ${e.message}`);
       console.error(`  The DB row is restored but the on-disk clone is missing.`);
-      console.error(`  Try \`gbrain sync --source ${id}\` to recover, or remove + re-add.`);
+      console.error(`  Try \`foresights sync --source ${id}\` to recover, or remove + re-add.`);
     } else {
       throw e;
     }
@@ -1108,7 +1108,7 @@ async function runListArchived(engine: BrainEngine, args: string[]): Promise<voi
   console.log('───────────────────────────────');
   for (const a of archived) {
     const hours = Math.max(0, Math.round((a.expiresAt.getTime() - Date.now()) / (1000 * 60 * 60)));
-    console.log(`  ${a.id.padEnd(20)}  ${String(a.pageCount).padStart(6)} pages  expires in ${hours}h  (restore: gbrain sources restore ${a.id})`);
+    console.log(`  ${a.id.padEnd(20)}  ${String(a.pageCount).padStart(6)} pages  expires in ${hours}h  (restore: foresights sources restore ${a.id})`);
   }
 }
 
@@ -1118,7 +1118,7 @@ async function runRename(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   const newName = args[1];
   if (!id || !newName) {
-    console.error('Usage: gbrain sources rename <id> <new-display-name>');
+    console.error('Usage: foresights sources rename <id> <new-display-name>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1135,7 +1135,7 @@ async function runRename(engine: BrainEngine, args: string[]): Promise<void> {
 async function runDefault(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources default <id>');
+    console.error('Usage: foresights sources default <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1154,7 +1154,7 @@ async function runDefault(engine: BrainEngine, args: string[]): Promise<void> {
 function runAttach(args: string[]): void {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources attach <id>');
+    console.error('Usage: foresights sources attach <id>');
     process.exit(2);
   }
   validateSourceId(id);
@@ -1179,7 +1179,7 @@ function runDetach(): void {
 async function runFederate(engine: BrainEngine, args: string[], value: boolean): Promise<void> {
   const id = args.find(a => !a.startsWith('-')), json = args.includes('--json'), say = json ? console.error : console.log;
   if (!id) {
-    console.error(`Usage: gbrain sources ${value ? 'federate' : 'unfederate'} <id>`);
+    console.error(`Usage: foresights sources ${value ? 'federate' : 'unfederate'} <id>`);
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1227,13 +1227,13 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
       const missing = m.total_chunks - m.embedded_chunks;
       say(`  → embed-backfill job ${sub.jobId} queued for missing ${missing} chunks.`);
     } else if (sub.status === 'cooldown') {
-      say(`  → embed-backfill skipped (cooldown). Manually trigger with: gbrain jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
+      say(`  → embed-backfill skipped (cooldown). Manually trigger with: foresights jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
     } else if (sub.status === 'spend_capped') {
       say(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
     } else if (sub.status === 'no_worker_surface') {
-      if (await (await import('../core/embedding-disabled.ts')).embeddingsDisabled(engine)) say('  → embed-backfill not queued: embedding is disabled on this brain (keyless by choice; keyword search works).'); else say(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
+      if (await (await import('../core/embedding-disabled.ts')).embeddingsDisabled(engine)) say('  → embed-backfill not queued: embedding is disabled on this brain (keyless by choice; keyword search works).'); else say(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: foresights embed --stale --source ${id}`);
     } else if (sub.status === 'stalled') {
-      say(`  → embed-backfill not queued: the last ${sub.failures} runs failed on the same blocked pages with nothing embedded. See: gbrain doctor --only embed_backfill_stalled`);
+      say(`  → embed-backfill not queued: the last ${sub.failures} runs failed on the same blocked pages with nothing embedded. See: foresights doctor --only embed_backfill_stalled`);
     } else if (sub.status === 'embedding_disabled') {
       say('  → embed-backfill not queued: embedding is disabled on this brain (keyless by choice; keyword search works).');
     } else { sub satisfies never; }
@@ -1246,7 +1246,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
 // ── v0.40 sources status (D12) ──────────────────────────────
 async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> {
   const { parseListingFlags } = await import('../core/bounded-listing-cli.ts');
-  const { request, rest: args } = parseListingFlags(rawArgs.filter(arg => arg !== '--holds'), 'gbrain sources status');
+  const { request, rest: args } = parseListingFlags(rawArgs.filter(arg => arg !== '--holds'), 'foresights sources status');
   const paged = rawArgs.some(arg => /^--(limit|cursor)(=|$)/.test(arg));
   const json = args.includes('--json'), only = args.find((arg, i) => !arg.startsWith('-') && args[i - 1] !== '--limit');
   if (request.cursor !== undefined && !only) {
@@ -1262,7 +1262,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
     if (json) {
       console.log(JSON.stringify({ schema_version: 1, sources: [] }, null, 2));
     } else {
-      console.log('No sources registered. Use `gbrain sources add <id> --path <path>` first.');
+      console.log('No sources registered. Use `foresights sources add <id> --path <path>` first.');
     }
     return;
   }
@@ -1276,7 +1276,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
 
   // #1950: a source holding a live (non-TTL-expired) per-source sync lock is
   // actively syncing RIGHT NOW. Without this it printed "idle" while a sync
-  // proc was live (the bug reported). Read the SAME live-lock signal `gbrain
+  // proc was live (the bug reported). Read the SAME live-lock signal `foresights
   // doctor` uses, via the shared helper, so the two surfaces never disagree.
   const { liveSyncStatus } = await import('../core/db-lock.ts');
   const syncRunning = new Map<string, { holder_pid: number; holder_host: string }>();
@@ -1365,13 +1365,13 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
     if (m.lag_seconds === null && !syncRunning.has(m.source_id)) {
       const { syncContentDirectory } = await import('../core/sync-applicability.ts');
       const owned = await syncContentDirectory(engine, { sourceId: m.source_id }).catch(() => null);
-      if (!owned) warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+      if (!owned) warns.push(`never synced — run \`foresights sync --source ${m.source_id}\``);
     }
     if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
-      warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`gbrain embed --stale --source ${m.source_id}\``);
+      warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`foresights embed --stale --source ${m.source_id}\``);
     }
     if (m.failed_jobs_24h >= 3) {
-      warns.push(`${m.failed_jobs_24h} failures in 24h — check \`gbrain jobs list --status failed\``);
+      warns.push(`${m.failed_jobs_24h} failures in 24h — check \`foresights jobs list --status failed\``);
     }
     if (warns.length > 0) {
       console.log(`  ⚠ ${m.source_id}: ${warns.join('; ')}`);
@@ -1390,7 +1390,7 @@ function formatLag(seconds: number): string {
 // Hoisted so both runWebhook's `case '--help'` and the top-level nested-help
 // guard in runSources (`sources webhook --help`, `sources webhook <sub>
 // --help`) print the identical text without dispatching into runWebhook.
-const SOURCES_WEBHOOK_HELP = `Usage: gbrain sources webhook <subcommand> <source-id> [options]
+const SOURCES_WEBHOOK_HELP = `Usage: foresights sources webhook <subcommand> <source-id> [options]
 
 Subcommands:
   set <id>    [--secret VAL] [--github-repo owner/name]   One-time reveal
@@ -1420,7 +1420,7 @@ async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
 async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook set <id> [--secret VAL] [--github-repo owner/name]');
+    console.error('Usage: foresights sources webhook set <id> [--secret VAL] [--github-repo owner/name]');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1458,7 +1458,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   console.log('  webhook_secret: (shown once below)');
   console.log('');
   console.log('--- Paste this into GitHub repo settings → Webhooks → Add webhook ---');
-  console.log('  Payload URL:  <your gbrain serve --http URL>/webhooks/github');
+  console.log('  Payload URL:  <your foresights serve --http URL>/webhooks/github');
   console.log('  Content type: application/json');
   console.log(`  Secret:       ${secret}`);
   console.log(
@@ -1470,13 +1470,13 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   );
   console.log('  Active:       checked');
   console.log('');
-  console.log('⚠ This secret is shown ONCE. Save it now; subsequent `gbrain sources webhook show` will NOT display it.');
+  console.log('⚠ This secret is shown ONCE. Save it now; subsequent `foresights sources webhook show` will NOT display it.');
 }
 
 async function runWebhookShow(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook show <id>');
+    console.error('Usage: foresights sources webhook show <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1498,7 +1498,7 @@ async function runWebhookShow(engine: BrainEngine, args: string[]): Promise<void
 async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook rotate <id>');
+    console.error('Usage: foresights sources webhook rotate <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1523,7 +1523,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
 async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook clear <id>');
+    console.error('Usage: foresights sources webhook clear <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1545,7 +1545,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
 async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources tracked-branch <id> [--set <branch>] [--detect]');
+    console.error('Usage: foresights sources tracked-branch <id> [--set <branch>] [--detect]');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -1638,7 +1638,7 @@ async function runCurrent(engine: BrainEngine, args: string[]): Promise<void> {
 }
 
 /**
- * v0.41 — `gbrain sources audit <id>` dry-run scan.
+ * v0.41 — `foresights sources audit <id>` dry-run scan.
  *
  * Walks the source's `local_path` on disk, runs `assessContentSanity`
  * per `.md` file, and reports:
@@ -1661,14 +1661,14 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   const includeWarns = args.includes('--include-warns');
 
   if (!sourceId) {
-    console.error('Usage: gbrain sources audit <source-id> [--json] [--include-warns]');
+    console.error('Usage: foresights sources audit <source-id> [--json] [--include-warns]');
     process.exit(2);
   }
 
   const { fetchSource } = await import('../core/sources-load.ts');
   const src = await fetchSource(engine, sourceId);
   if (!src) {
-    console.error(`Source not found: ${sourceId} (run \`gbrain sources list\` to see registered sources)`);
+    console.error(`Source not found: ${sourceId} (run \`foresights sources list\` to see registered sources)`);
     process.exit(1);
   }
   if (!src.local_path) {
@@ -1691,7 +1691,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  // Walk recursively. Mirror gbrain sync's descent rules so the file set
+  // Walk recursively. Mirror foresights sync's descent rules so the file set
   // we audit matches the file set that would actually be ingested.
   const files: string[] = [];
   function walk(dir: string): void {
@@ -1853,7 +1853,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
     console.log(
       `Facts backfill estimate: ${factsBackfillEstimate.pages} eligible page(s), ` +
       `~${factsBackfillEstimate.est_segments} segments, ~$${factsBackfillEstimate.est_cost_usd}. ` +
-      `Run: gbrain extract-conversation-facts --source-id ${sourceId} --max-cost-usd ${Math.max(factsBackfillEstimate.est_cost_usd, 1)}`,
+      `Run: foresights extract-conversation-facts --source-id ${sourceId} --max-cost-usd ${Math.max(factsBackfillEstimate.est_cost_usd, 1)}`,
     );
   }
   if (wouldHardBlock.length > 0) {
@@ -2001,7 +2001,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
 }
 
 function printHelp(): void {
-  console.log(`gbrain sources — manage multi-source brain configuration
+  console.log(`foresights sources — manage multi-source brain configuration
 
 Subcommands:
   inspect <path> [--profile company-brain] [--json] [--out <file>]
@@ -2083,22 +2083,22 @@ Subcommands:
                                     override (v0.40.3.0). Pass "unset" or
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
-  set-calendar <id> <calendar-id> [--yes]  Point a Google source at another calendar (ids: gbrain google calendars).
+  set-calendar <id> <calendar-id> [--yes]  Point a Google source at another calendar (ids: foresights google calendars).
   set-trust <id> <tier>|--clear     Trust default for this source's sync and import (operator_curated or lower).
-  writers <id> [--add|--remove <w>] [--clear] [--json]  Who may write a guest source (set one up: gbrain guests init).
+  writers <id> [--add|--remove <w>] [--clear] [--json]  Who may write a guest source (set one up: foresights guests init).
   set-path <id> <path> [--force]    Repair a source's local_path pointer
                                     (DB column only, never touches disk).
                                     --force skips the overlapping-path guard.
                                     Rejects a missing source or a path that
-                                    doesn't exist. See gbrain doctor's
+                                    doesn't exist. See foresights doctor's
                                     default_source_local_path check.
   retry-held <id> [--unindexed] [--dry-run] [--json]
                                     Re-attempt a connector source's held items, or re-screen a Git source's held files, on its next sync.
-                                    Runs nothing now. Most Git holds re-screen by themselves (file changed or deleted, newer gbrain); fix
-                                    frontmatter holds with gbrain repair frontmatter --source <id>; preview fence holds (invalid_fence) with gbrain repair fences --source <id>.
+                                    Runs nothing now. Most Git holds re-screen by themselves (file changed or deleted, newer foresights); fix
+                                    frontmatter holds with foresights repair frontmatter --source <id>; preview fence holds (invalid_fence) with foresights repair fences --source <id>.
                                     --unindexed instead schedules committed files with no page and no hold (doctor unindexed_files).
   resolve-path <id> <path...> [--stdin] [--json]
-                                    Read-only: the slug, skip, hold, page and search state gbrain gives each file path (for landing checks).
+                                    Read-only: the slug, skip, hold, page and search state foresights gives each file path (for landing checks).
   reset-upstream <id> --expect-local <sha> --expect-upstream <sha> [--dry-run] [--json]  After an upstream force-push (upstream_rewritten): back up HEAD, reset to upstream.
   shared-skills <id> on|off|status [--json]
                                     Opt a source out of (or back into) shared-skills adoption; status explains its effective policy.
@@ -2130,7 +2130,7 @@ Subcommands:
                                     Unverified-remote overrides (self-hosted git
                                     you trust; every use warns loudly): the flag
                                     above, GBRAIN_ALLOW_UNVERIFIED_REMOTE=1, or
-                                    "gbrain config set push.allow_unverified_remote
+                                    "foresights config set push.allow_unverified_remote
                                     true" (file-plane — reaches detached hook
                                     children). Single-flight (a concurrent push
                                     exits 0 as "skipped"); pushes even on a clean

@@ -53,7 +53,7 @@ async function call(args: string[], source?: string) {
 const take = () => renderTakesFence([{ rowNum: 3, claim: 'Current claim', kind: 'take', holder: 'self', weight: 0.8, active: true }]);
 const add = (claim: string, root: string, slug = 'shared/page') => ['add', slug, '--claim', claim, '--kind', 'take', '--who', 'self', '--dir', root];
 
-describe('gbrain takes CLI source scoping through the durable coordinator', () => {
+describe('foresights takes CLI source scoping through the durable coordinator', () => {
   test('GBRAIN_SOURCE selects the matching page and canonical root among identical slugs (#2684)', async () => {
     const other = await seed(); const target = await seed('dept'); const before = readFileSync(other.file, 'utf8');
     const result = await call(add('Dept-scoped claim', target.root), 'dept');

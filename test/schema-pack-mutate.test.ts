@@ -90,7 +90,7 @@ describe('locateMutablePackFile — bundled guard', () => {
     try { locateMutablePackFile('gbrain-base'); } catch (e) {
       const err = e as SchemaPackMutationError;
       expect(err.code).toBe('PACK_READONLY');
-      expect(err.message).toContain('gbrain schema fork');
+      expect(err.message).toContain('foresights schema fork');
     }
   });
 

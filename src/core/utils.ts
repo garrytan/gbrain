@@ -107,7 +107,7 @@ export const HASH_EPHEMERAL_FRONTMATTER_KEYS: readonly string[] = [
  * (`importFromContent`). Pre-fix, this helper (used by both engines' putPage
  * fallback) hashed a different shape — no ephemeral-key strip, no tags — so
  * the same logical page got one hash from `putPage` and another from
- * `gbrain sync`/import, and every putPage→sync roundtrip re-chunked +
+ * `foresights sync`/import, and every putPage→sync roundtrip re-chunked +
  * re-embedded unchanged content (real, unbounded embedding spend).
  *
  * Shape (field order is load-bearing — JSON.stringify serializes insertion
@@ -685,7 +685,7 @@ export function staleTakeRowToRow(row: Record<string, unknown>): StaleTakeRow {
  * round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of throwing
  * `TypeError: Do not know how to serialize a BigInt`. Shared by cli.ts's
  * local-result normalizer and the commands that stringify results themselves
- * (`gbrain call`, the extract explain JSON view) — commands import it from
+ * (`foresights call`, the extract explain JSON view) — commands import it from
  * here, never from the dispatcher. NOTE: no double-dash flag literals in this
  * comment — the flag-registry generator harvests them from every module a
  * command transitively imports, and utils.ts is imported by nearly all.

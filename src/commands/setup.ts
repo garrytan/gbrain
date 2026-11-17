@@ -1,10 +1,10 @@
 /**
- * `gbrain setup <harness>` (D8): one command from an installed CLI to a
+ * `foresights setup <harness>` (D8): one command from an installed CLI to a
  * harness with memory. An orchestrator over the existing pieces, never a new
  * installation system:
  *
  *   - target first: resolve the brain (existing local, hosted, or a new
- *     keyless PGLite brain through `gbrain init --pglite --no-embedding`), the
+ *     keyless PGLite brain through `foresights init --pglite --no-embedding`), the
  *     source, the transport, the absolute launcher and the registration owner,
  *     print them, and refuse (coded) before any write when another owner holds
  *     the target: a live PGLite server, an unowned entry, another install, the
@@ -128,14 +128,14 @@ import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 import { applyBrainLayout, askBrainShape, brainShapeDecision, describeLayout, layoutNotices, parseLayoutFlags, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { isInteractive } from '../core/interaction.ts';
 
-export const SETUP_HELP = `gbrain setup <harness> — give an agent harness memory in one command
+export const SETUP_HELP = `foresights setup <harness> — give an agent harness memory in one command
 
-Usage: gbrain setup claude-code [flags]
-       gbrain setup codex [flags]
+Usage: foresights setup claude-code [flags]
+       foresights setup codex [flags]
 
 Resolves the brain, source, transport, launcher and registration owner first and
 prints them; refuses before writing anything when another owner holds the target.
-With no brain configured it creates a keyless local one (gbrain init --pglite
+With no brain configured it creates a keyless local one (foresights init --pglite
 --no-embedding). It then writes the MCP entry and hooks into the harness's own
 config and verifies them with the harness_wiring smoke. Codex: [mcp_servers.<name>]
 and the hook trust entries in $CODEX_HOME/config.toml, the hooks in hooks.json.
@@ -157,9 +157,9 @@ Flags:
   --no-capture         Decline automatic capture (the default).
   --providers          Accept provider use: a new brain is created with embeddings.
   --no-providers       Decline provider use (the default: keyless, no paid calls).
-  --name NAME          MCP server name (default gbrain); one name per install.
+  --name NAME          MCP server name (default foresights); one name per install.
   --source ID          Pin the source the MCP server and hooks use.
-  --gbrain-bin PATH    Absolute gbrain launcher (default: the gbrain on PATH).
+  --gbrain-bin PATH    Absolute foresights launcher (default: the foresights on PATH).
   --serves one|several Whom the brain serves (default one: nothing changes). several labels each
                        person: config access.serves = several, a member, a folder rule
                        people/<member>/ only that member reads and one key bound to that member
@@ -191,24 +191,24 @@ Flags:
   --workspace DIR      OpenClaw: the agent workspace whose AGENTS.md gets the block
                        (default: agents.defaults.workspace, then ~/.openclaw/workspace).
   --skill-loading M    off (default), spring or resolve. spring adds a compact index of
-                       gbrain's bundled skills beside the brain-first block (about
+                       foresights's bundled skills beside the brain-first block (about
                        1.5k tokens) and loads a skill's full text only when a task
-                       matches (gbrain bundled-skill <name>, from this gbrain).
+                       matches (foresights bundled-skill <name>, from this foresights).
                        resolve (claude-code, codex, hermes) indexes the harness's own
                        skills (~/.claude/skills; Codex: ~/.agents/skills,
                        CODEX_HOME/skills; Hermes: $HERMES_HOME/skills) and adds a
                        separate per-turn hook that names the few skills that fit
                        each prompt (word match; nothing leaves the machine).
-                       gbrain setup pi --skill-loading resolve does the same for
+                       foresights setup pi --skill-loading resolve does the same for
                        Pi with an extension in $PI_CODING_AGENT_DIR/extensions.
-                       gbrain setup cursor --skill-loading resolve, run in a project,
-                       gives Cursor that project's pinned skills only (gbrain skills
+                       foresights setup cursor --skill-loading resolve, run in a project,
+                       gives Cursor that project's pinned skills only (foresights skills
                        pin) in .cursor/rules/gbrain-pinned-skills.mdc, kept out of
-                       commits; Cursor has no per-turn hook gbrain can use.
+                       commits; Cursor has no per-turn hook foresights can use.
                        off removes what an earlier run wrote. The
                        choice is remembered; GBRAIN_SKILL_LOADING sets it too.
   --wakeshift          OpenClaw: install Wakeshift's OpenClaw plugin (@wakeshift/openclaw, pinned)
-                       so gbrain can wake an OpenClaw session when a job finishes. Asks
+                       so foresights can wake an OpenClaw session when a job finishes. Asks
                        consent (--yes), runs OpenClaw's own installer, changes nothing else.
   --shape personal     claude-code, codex: give the brain a personal shape. Writes three
                        empty starter pages, create-only (me/facts, me/voice,
@@ -265,8 +265,8 @@ observed push is on record for this harness and setup wired and trusted that eve
 Codex: UserPromptSubmit, codex-cli 0.162.1).
 
 Refusals: setup never starts a second owner or a second brain. A hosted brain is
-wired with gbrain connect <url> --harness <harness> --install; a running
-serve --http owner with gbrain bootstrap harness --harness <harness> --yes.
+wired with foresights connect <url> --harness <harness> --install; a running
+serve --http owner with foresights bootstrap harness --harness <harness> --yes.
 
 Supported harnesses: claude-code, codex (MCP, hooks and instructions). opencode,
 openclaw, hermes and cursor: setup writes the instruction block and prints the MCP
@@ -354,10 +354,10 @@ function parseFlags(args: string[]): SetupFlags | string {
   const memberFlag = stdioMember !== undefined ? '--stdio-member' : noStdioMember ? '--no-stdio-member' : null;
   if (memberFlag && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return `${memberFlag} changes the stdio MCP entry setup writes for claude-code or codex (not --instructions-only or --remove); nothing was written`;
   const shared = stdioMember === undefined ? null : sharedStdioHarness();
-  if (shared) return `--stdio-member refused: ${shared} is installed on this host, and its sessions serve several people, so a stdio entry bound to one member is not something setup writes here; give each person their own key over HTTP instead (gbrain serve --http with gbrain auth create <name> --member <id> per person); nothing was written`;
+  if (shared) return `--stdio-member refused: ${shared} is installed on this host, and its sessions serve several people, so a stdio entry bound to one member is not something setup writes here; give each person their own key over HTTP instead (foresights serve --http with foresights auth create <name> --member <id> per person); nothing was written`;
   const layout = parseLayoutFlags(value, (f) => args.includes(f), positionals[0]);
   if (typeof layout === 'string') return layout;
-  if (layout.brain && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return '--shape shapes the brain behind gbrain setup claude-code or codex (not --instructions-only or --remove); nothing was written';
+  if (layout.brain && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return '--shape shapes the brain behind foresights setup claude-code or codex (not --instructions-only or --remove); nothing was written';
   const workspace = value('--workspace');
   if (workspace !== undefined && !workspace.startsWith('/') && !workspace.startsWith('~')) return '--workspace needs an absolute path';
   const flagLoading = value('--skill-loading');
@@ -366,7 +366,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (flagLoading === undefined && envLoading && envLoading !== 'resolve' && !isSkillLoading(envLoading)) return new InvalidSkillLoadingEnv(envLoading).message;
   const openclaw = positionals[0] === 'openclaw';
   const resolverHarness = positionals[0] === 'claude-code' || positionals[0] === 'codex' || positionals[0] === 'hermes' || positionals[0] === 'pi' || positionals[0] === 'cursor' || openclaw;
-  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code, Codex, Hermes, OpenClaw and Pi, and pinned skills for Cursor (claude-code, codex, cursor, hermes, openclaw, pi); other harnesses call gbrain skills resolve from their own adapter (docs/guides/skill-resolver.md)';
+  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code, Codex, Hermes, OpenClaw and Pi, and pinned skills for Cursor (claude-code, codex, cursor, hermes, openclaw, pi); other harnesses call foresights skills resolve from their own adapter (docs/guides/skill-resolver.md)';
   if (flagLoading === 'shadow' && !openclaw) return '--skill-loading shadow is for openclaw only (it resolves and logs each turn without showing the model anything)';
   const agentFlags = args.flatMap((a, i) => (a === '--agent' ? [args[i + 1] ?? ''] : []));
   if (agentFlags.some((a) => !/^[\w.@:-]{1,128}$/.test(a))) return '--agent needs an OpenClaw agent id';
@@ -470,7 +470,7 @@ function resolveConsent(flags: SetupFlags, prior: { consent: SetupConsent } | nu
   let capture: SetupConsent['capture'];
   if (writebackOff && flags.capture !== false) {
     capture = { value: 'declined', source: 'opt_out', note: 'memory.auto_writeback is off on this brain; that opt-out wins' };
-    if (flags.capture) notes.push('--capture ignored: memory.auto_writeback is off on this brain (an existing opt-out wins). Change it with `gbrain config set memory.auto_writeback salient`, then run setup with --capture.');
+    if (flags.capture) notes.push('--capture ignored: memory.auto_writeback is off on this brain (an existing opt-out wins). Change it with `foresights config set memory.auto_writeback salient`, then run setup with --capture.');
   } else if (flags.capture !== undefined) {
     capture = { value: flags.capture ? 'accepted' : 'declined', source: 'flag' };
   } else if (prior) {
@@ -490,14 +490,14 @@ function hookEvents<E extends string>(consent: SetupConsent, harness: SetupHarne
 }
 
 function describeTarget(t: Target, out: Out, harness: SetupHarnessId = 'claude-code'): void {
-  const brain = t.brain.kind === 'new-local-pglite' ? `new keyless PGLite brain at ${t.brain.path} (gbrain init --pglite --no-embedding)`
+  const brain = t.brain.kind === 'new-local-pglite' ? `new keyless PGLite brain at ${t.brain.path} (foresights init --pglite --no-embedding)`
     : t.brain.kind === 'local-pglite' ? `existing PGLite brain at ${t.brain.path}` : 'existing Postgres brain (from this install\'s config)';
   say(out, `Target (${HARNESS_LABEL[harness]}, ${t.scope} scope):`);
   say(out, `  brain      ${brain}`);
   say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
   say(out, `  transport  stdio MCP: ${[hookLauncherPath(t.brain.config_dir), ...stdioServeArgv(t.launcher, t.surface, t.advertise ?? null, t.stdio_member)].join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
-  say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the gbrain ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
-  if (t.live_owner) say(out, `  live       gbrain ${t.live_owner.transport === 'http' ? 'serve --http' : 'stdio serve'} PID ${t.live_owner.pid}${t.live_owner.ours ? ' (started by this registration)' : ''}`);
+  say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the foresights ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
+  if (t.live_owner) say(out, `  live       foresights ${t.live_owner.transport === 'http' ? 'serve --http' : 'stdio serve'} PID ${t.live_owner.pid}${t.live_owner.ours ? ' (started by this registration)' : ''}`);
   say(out, `  files      ${t.config_path} (MCP${t.hooks_path ? ' + hook trust' : ''}), ${t.hooks_path ?? t.settings_path} (hooks)`);
 }
 
@@ -518,7 +518,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
   const parsed = parseFlags(args);
   const out: Out = { json: args.includes('--json'), lines: [], notes: [] };
   if (typeof parsed === 'string') {
-    process.stderr.write(`gbrain setup: ${parsed}\n`);
+    process.stderr.write(`foresights setup: ${parsed}\n`);
     return 2;
   }
   const flags = parsed;
@@ -535,29 +535,29 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const guide = rows[0]?.docs;
     const named = flags.harness ? `'${flags.harness}'` : 'no harness';
     return refuse(opError('setup_harness_unsupported',
-      `gbrain setup does not wire ${named} yet. ${guide ? `Follow ${guide} to connect it by hand.` : `Supported: ${SETUP_CAPABILITIES.filter((r) => r.setup === 'supported').map((r) => r.harness).join(', ')}; known: ${SETUP_HARNESSES.join(', ')}.`}`,
-      guide ? `Follow ${guide}.` : 'Run `gbrain setup claude-code` or `gbrain setup codex`.',
+      `foresights setup does not wire ${named} yet. ${guide ? `Follow ${guide} to connect it by hand.` : `Supported: ${SETUP_CAPABILITIES.filter((r) => r.setup === 'supported').map((r) => r.harness).join(', ')}; known: ${SETUP_HARNESSES.join(', ')}.`}`,
+      guide ? `Follow ${guide}.` : 'Run `foresights setup claude-code` or `foresights setup codex`.',
       { reason: guide ? 'harness_not_wired' : 'unknown_harness', docs: 'docs/guides/repair.md#setup-harness-unsupported',
         fix: { consent: [], actor: 'user', requires_exclusive: false, why: guide ? `The manual steps for this harness are in ${guide}.` : 'Setup wires the harnesses in its capability table.',
-          user_message: guide ? `gbrain setup can't wire ${flags.harness} yet; the steps are in ${guide}.` : 'Pick a supported harness: gbrain setup claude-code or gbrain setup codex.',
+          user_message: guide ? `foresights setup can't wire ${flags.harness} yet; the steps are in ${guide}.` : 'Pick a supported harness: foresights setup claude-code or foresights setup codex.',
           ...(guide ? { docs: guide } : {}) } }), out);
   }
 
   const launcher = flags.gbrainBin ?? resolveGbrainBin();
   if (!launcher || !launcher.startsWith('/')) {
-    process.stderr.write('gbrain setup: cannot resolve an absolute gbrain launcher (GUI hosts inherit no PATH). Install gbrain globally (`bun install -g github:garrytan/gbrain`) or pass --gbrain-bin <absolute path>.\n');
+    process.stderr.write('foresights setup: cannot resolve an absolute foresights launcher (GUI hosts inherit no PATH). Install foresights globally (`bun install -g github:aimonk2025/gbrain`) or pass --gbrain-bin <absolute path>.\n');
     return 2;
   }
 
   let cfg: GBrainConfig | null;
   try { cfg = loadConfig(); } catch (e) {
-    process.stderr.write(`gbrain setup: this install's config cannot be read (${(e as Error).message}); run \`gbrain doctor\`.\n`);
+    process.stderr.write(`foresights setup: this install's config cannot be read (${(e as Error).message}); run \`foresights doctor\`.\n`);
     return 1;
   }
   const brainHome = configDir();
   if (flags.harness === 'codex') {
     if (flags.scope === 'project') {
-      process.stderr.write('gbrain setup: codex is wired at user scope only (its hooks.json and config.toml live in CODEX_HOME); drop --scope project.\n');
+      process.stderr.write('foresights setup: codex is wired at user scope only (its hooks.json and config.toml live in CODEX_HOME); drop --scope project.\n');
       return 2;
     }
     return runCodexSetup(flags, launcher, cfg, brainHome, out);
@@ -574,7 +574,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     if (hostedUrl) return refuse(hostedConnection(hostedUrl, receiptRead.hosted !== null, flags), out);
     const prior = receiptRead.setup;
     if (prior && prior.gbrain_home !== brainHome) {
-      return refuse(ownerConflict('other_install', `The '${flags.name}' connection belongs to the gbrain install at ${prior.gbrain_home}, not ${brainHome}.`, {
+      return refuse(ownerConflict('other_install', `The '${flags.name}' connection belongs to the foresights install at ${prior.gbrain_home}, not ${brainHome}.`, {
         actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--name', `${flags.name}-2`, '--dry-run', '--json'],
         why: 'Each install owns its own MCP name and hooks; preview this install under another name.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
@@ -621,14 +621,14 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
 
     if (liveOwner && !liveOwner.ours) return refuse(liveServeConflict(liveOwner, 'claude-code', flags.name), out);
     if (found.mcp.state === 'unowned' && !pluginOwner) {
-      return refuse(ownerConflict('unowned_entry', `${found.configPath} already has an MCP server named '${flags.name}' that gbrain setup did not write (or it was edited since); setup never overwrites it.`, {
+      return refuse(ownerConflict('unowned_entry', `${found.configPath} already has an MCP server named '${flags.name}' that foresights setup did not write (or it was edited since); setup never overwrites it.`, {
         actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--instructions-only', ...(flags.name === 'gbrain' ? [] : ['--name', flags.name]), ...(scope === 'project' ? ['--scope', 'project'] : [])],
-        why: 'Keeps that entry and adds only the brain-first block and the per-turn hook, so its sessions are told to check gbrain first on every turn. Or preview a setup under another name (--name), or remove that entry yourself and run setup again.', verify: verifyDryRun('claude-code', flags.name) }), out);
+        why: 'Keeps that entry and adds only the brain-first block and the per-turn hook, so its sessions are told to check foresights first on every turn. Or preview a setup under another name (--name), or remove that entry yourself and run setup again.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
     const harnessLane = harnessLaneWires(brainHome, 'claude-code', [dirname(claudeUserSettingsPath()), dirname(found.settingsPath)]);
     const laneEvents = found.otherLaneEvents.filter((e) => (plan.events as string[]).includes(e));
     if (harnessLane || laneEvents.length > 0) {
-      return refuse(ownerConflict('harness_lane', `${harnessLane ? '`gbrain bootstrap harness` already wires Claude Code for this install' : `${found.settingsPath} already wires ${laneEvents.join(', ')} through another gbrain install lane`}; two lanes would fire every hook twice.`, {
+      return refuse(ownerConflict('harness_lane', `${harnessLane ? '`foresights bootstrap harness` already wires Claude Code for this install' : `${found.settingsPath} already wires ${laneEvents.join(', ')} through another foresights install lane`}; two lanes would fire every hook twice.`, {
         actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'],
         why: 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
@@ -666,7 +666,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     if (!result.changed && !instructionsChanged(instructions) && !instructionsChanged(skills) && !resolverChanged(resolver)) say(out, 'Nothing changed: this install is already wired.');
 
     let verify: { ok: boolean; reason: string; message: string } | null;
-    if (pluginOwner) verify = { ok: false, reason: 'plugin_lane', message: `The '${pluginOwner}' plugin serves MCP; start a new Claude Code session and check /mcp lists gbrain.` };
+    if (pluginOwner) verify = { ok: false, reason: 'plugin_lane', message: `The '${pluginOwner}' plugin serves MCP; start a new Claude Code session and check /mcp lists foresights.` };
     else if (liveOwner?.ours) verify = { ok: true, reason: 'wired_running', message: `A live stdio serve (PID ${liveOwner.pid}) started by this registration holds the brain.` };
     else {
       const entry = desiredMcpEntry(plan) as { command: string; args: string[]; env: Record<string, string> };
@@ -682,13 +682,13 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
     if (e instanceof SetupAbortInjected) { process.stderr.write(`${e.message}\n`); return 1; }
-    process.stderr.write(`gbrain setup: ${(e as Error).message}\n`);
+    process.stderr.write(`foresights setup: ${(e as Error).message}\n`);
     return 1;
   }
 }
 
 /**
- * #7771: whether `gbrain bootstrap harness` wired the configuration setup is
+ * #7771: whether `foresights bootstrap harness` wired the configuration setup is
  * about to wire. One install can serve several HOMEs (or CODEX_HOMEs), so the
  * lane conflicts only through a target in one of `configDirs`, project-scoped
  * hooks (every configuration loads a project's), or a receipt that records
@@ -718,13 +718,13 @@ function liveOwnerOf(cfg: GBrainConfig | null, ours: boolean): { dataDir?: strin
 function liveServeConflict(live: NonNullable<Target['live_owner']>, harness: SetupHarnessId, name: string): OperationError {
   const http = live.transport === 'http';
   return ownerConflict('live_serve',
-    `A live gbrain ${http ? 'serve --http' : 'stdio serve'} (PID ${live.pid}) holds this PGLite brain's single-writer lock; a stdio registration would start a second server that fails on the lock.`,
+    `A live foresights ${http ? 'serve --http' : 'stdio serve'} (PID ${live.pid}) holds this PGLite brain's single-writer lock; a stdio registration would start a second server that fails on the lock.`,
     http
       ? { actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--harness', harness, '--yes'], consent: ['persistent_install', 'credentials'],
         why: `Connect ${HARNESS_LABEL[harness]} to the running shared server instead of starting a second owner.`, verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] } }
       : { actor: 'user', argv: ['kill', String(live.pid)],
         why: 'Stop the server that holds the brain (quit the agent session that started it), then run setup again.',
-        user_message: `gbrain's database is in use by another server (PID ${live.pid}). Please quit the agent session that started it, then I'll run setup again.`,
+        user_message: `foresights's database is in use by another server (PID ${live.pid}). Please quit the agent session that started it, then I'll run setup again.`,
         verify: verifyDryRun(harness, name) });
 }
 
@@ -744,7 +744,7 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
   return { outcome, notices: (base) => [...(ask && !shape.brain ? withBrainShape(base, brainShapeDecision(harness, undefined, scope, source)) : base), ...layoutNotices(outcome, harness, scope, source)] };
 }
 
-/** Run the `gbrain init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */
+/** Run the `foresights init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */
 function runBrainInit(initArgv: string[], out: Out, harness: SetupHarnessId): Notice[] {
   say(out, `Creating the brain: ${initArgv.join(' ')}`);
   const child = Bun.spawnSync(initArgv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
@@ -774,7 +774,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (hostedUrl) return refuse(hostedConnection(hostedUrl, receiptRead.hosted !== null, flags, 'codex'), out);
     const prior = receiptRead.setup;
     if (prior && prior.gbrain_home !== brainHome) {
-      return refuse(ownerConflict('other_install', `The '${flags.name}' connection belongs to the gbrain install at ${prior.gbrain_home}, not ${brainHome}.`, {
+      return refuse(ownerConflict('other_install', `The '${flags.name}' connection belongs to the foresights install at ${prior.gbrain_home}, not ${brainHome}.`, {
         actor: 'agent', argv: ['gbrain', 'setup', 'codex', '--name', `${flags.name}-2`, '--dry-run', '--json'],
         why: 'Each install owns its own MCP name and hooks; preview this install under another name.', verify: verifyDryRun('codex', flags.name) }), out);
     }
@@ -820,14 +820,14 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
 
     if (liveOwner && !liveOwner.ours) return refuse(liveServeConflict(liveOwner, 'codex', flags.name), out);
     if (found.mcp.state === 'unowned' && !pluginOwner) {
-      return refuse(ownerConflict('unowned_entry', `${found.configPath} already has [mcp_servers.${flags.name}] that gbrain setup did not write (or it was edited since); setup never overwrites it.`, {
+      return refuse(ownerConflict('unowned_entry', `${found.configPath} already has [mcp_servers.${flags.name}] that foresights setup did not write (or it was edited since); setup never overwrites it.`, {
         actor: 'agent', argv: ['gbrain', 'setup', 'codex', '--instructions-only', ...(flags.name === 'gbrain' ? [] : ['--name', flags.name])],
-        why: 'Keeps that table and adds only the brain-first block and the per-turn hook, so its sessions are told to check gbrain first on every turn. Or preview a setup under another name (--name), or remove that table yourself and run setup again.', verify: verifyDryRun('codex', flags.name) }), out);
+        why: 'Keeps that table and adds only the brain-first block and the per-turn hook, so its sessions are told to check foresights first on every turn. Or preview a setup under another name (--name), or remove that table yourself and run setup again.', verify: verifyDryRun('codex', flags.name) }), out);
     }
     const harnessLane = harnessLaneWires(brainHome, 'codex', [dirname(found.configPath), dirname(found.hooksPath)]);
     const laneEvents = found.otherLaneEvents.filter((e) => (plan.events as string[]).includes(e));
     if (harnessLane || laneEvents.length > 0) {
-      return refuse(ownerConflict('harness_lane', `${harnessLane ? '`gbrain bootstrap harness` already wires Codex for this install' : `${found.hooksPath} already wires ${laneEvents.join(', ')} through gbrain's bootstrap Codex lane`}; two lanes would fire every hook twice.`, {
+      return refuse(ownerConflict('harness_lane', `${harnessLane ? '`foresights bootstrap harness` already wires Codex for this install' : `${found.hooksPath} already wires ${laneEvents.join(', ')} through foresights's bootstrap Codex lane`}; two lanes would fire every hook twice.`, {
         actor: 'agent', argv: harnessLane ? ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'] : ['gbrain', 'setup', 'codex', laneEvents.every((e) => e === 'SessionEnd') ? '--no-capture' : '--no-hooks', '--dry-run', '--json'],
         why: harnessLane ? 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.' : 'Keep the bootstrap lane for those events and preview setup without them.', verify: verifyDryRun('codex', flags.name) }), out);
     }
@@ -868,7 +868,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (!result.changed && !instructionsChanged(instructions) && !instructionsChanged(skills) && !resolverChanged(resolver)) say(out, 'Nothing changed: this install is already wired.');
 
     let verify: { ok: boolean; reason: string; message: string };
-    if (pluginOwner) verify = { ok: false, reason: 'plugin_lane', message: `The '${pluginOwner}' plugin serves MCP; start a new Codex session and check /mcp lists gbrain.` };
+    if (pluginOwner) verify = { ok: false, reason: 'plugin_lane', message: `The '${pluginOwner}' plugin serves MCP; start a new Codex session and check /mcp lists foresights.` };
     else if (liveOwner?.ours) verify = { ok: true, reason: 'wired_running', message: `A live stdio serve (PID ${liveOwner.pid}) started by this registration holds the brain.` };
     else {
       const entry = desiredCodexMcpEntry(plan) as { command: string; args: string[]; env?: Record<string, string> };
@@ -885,19 +885,19 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
     if (e instanceof SetupAbortInjected) { process.stderr.write(`${e.message}\n`); return 1; }
-    process.stderr.write(`gbrain setup: ${(e as Error).message}\n`);
+    process.stderr.write(`foresights setup: ${(e as Error).message}\n`);
     return 1;
   }
 }
 
 async function runCodexRemove(flags: SetupFlags, receipt: CodexSetupReceipt | null, receiptPath: string, brainHome: string, out: Out): Promise<number> {
   if (!receipt) {
-    say(out, `No gbrain setup receipt at ${receiptPath}; setup owns nothing here, so nothing was removed.`);
+    say(out, `No foresights setup receipt at ${receiptPath}; setup owns nothing here, so nothing was removed.`);
     return finish(out, { harness: 'codex', dryRun: flags.dryRun, remove: true, steps: [], states: [], verify: null, notices: [], notes: [], resolver: await resolverFor('codex', flags, '') });
   }
   if (receipt.gbrain_home !== brainHome) {
-    return refuse(ownerConflict('other_install', `The '${receipt.name}' connection belongs to the gbrain install at ${receipt.gbrain_home}, not ${brainHome}; --remove leaves it alone.`, {
-      actor: 'user', why: `Run --remove with GBRAIN_HOME set to the install that owns it (${receipt.gbrain_home}).`, user_message: 'This setup belongs to another gbrain install; remove it from that install.' }), out);
+    return refuse(ownerConflict('other_install', `The '${receipt.name}' connection belongs to the foresights install at ${receipt.gbrain_home}, not ${brainHome}; --remove leaves it alone.`, {
+      actor: 'user', why: `Run --remove with GBRAIN_HOME set to the install that owns it (${receipt.gbrain_home}).`, user_message: 'This setup belongs to another foresights install; remove it from that install.' }), out);
   }
   const r = await removeCodexSetup(receipt, receiptPath, { dryRun: flags.dryRun });
   for (const s of r.steps) say(out, `  ${(flags.dryRun ? `would ${s.action}` : s.action).padEnd(14)} ${s.step.padEnd(7)} ${s.detail}`);
@@ -911,26 +911,26 @@ async function runCodexRemove(flags: SetupFlags, receipt: CodexSetupReceipt | nu
 
 function hostedConnection(url: string, wired: boolean, flags: Pick<SetupFlags, 'name' | 'skillResolver'>, harness: SetupHarnessId = 'claude-code'): OperationError {
   const label = HARNESS_LABEL[harness];
-  const resolver = flags.skillResolver === 'on' ? ` The skill resolver needs no local brain: set it up with \`gbrain setup ${harness} --skills-index-only --skill-loading resolve\`.` : '';
+  const resolver = flags.skillResolver === 'on' ? ` The skill resolver needs no local brain: set it up with \`foresights setup ${harness} --skills-index-only --skill-loading resolve\`.` : '';
   return opError('setup_hosted_connection',
-    `This machine already reaches a hosted brain (${url})${wired ? ` and ${label}'s '${flags.name}' entry points at it` : ''}; gbrain setup will not create a second, local brain.`,
-    (wired ? 'Nothing to do: the hosted connection is wired. `gbrain doctor --only harness_wiring` verifies it.' : `Connect ${label} to it with \`gbrain connect ${url} --harness ${harness} --install\`.`) + resolver,
+    `This machine already reaches a hosted brain (${url})${wired ? ` and ${label}'s '${flags.name}' entry points at it` : ''}; foresights setup will not create a second, local brain.`,
+    (wired ? 'Nothing to do: the hosted connection is wired. `foresights doctor --only harness_wiring` verifies it.' : `Connect ${label} to it with \`foresights connect ${url} --harness ${harness} --install\`.`) + resolver,
     { docs: 'docs/guides/repair.md#setup-hosted-connection',
       fix: wired
         ? { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows which brain the registration reaches and smoke-tests it.' }
         : { argv: ['gbrain', 'connect', url, '--harness', harness, '--install'], consent: ['persistent_install', 'credentials'], actor: 'user', requires_exclusive: false,
-          why: `The hosted connection installer writes the ${label} entry with the hosted credential.`, user_message: `Your brain is hosted at ${url}. Run gbrain connect for it (it needs your private handoff); setup will not create a local brain.`,
+          why: `The hosted connection installer writes the ${label} entry with the hosted credential.`, user_message: `Your brain is hosted at ${url}. Run foresights connect for it (it needs your private handoff); setup will not create a local brain.`,
           verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] } } });
 }
 
 async function runRemove(flags: SetupFlags, receipt: ClaudeSetupReceipt | null, receiptPath: string, brainHome: string, out: Out): Promise<number> {
   if (!receipt) {
-    say(out, `No gbrain setup receipt at ${receiptPath}; setup owns nothing here, so nothing was removed.`);
+    say(out, `No foresights setup receipt at ${receiptPath}; setup owns nothing here, so nothing was removed.`);
     return finish(out, { dryRun: flags.dryRun, remove: true, steps: [], states: [], verify: null, notices: [], notes: [], resolver: await resolverFor('claude-code', flags, '') });
   }
   if (receipt.gbrain_home !== brainHome) {
-    return refuse(ownerConflict('other_install', `The '${receipt.name}' connection belongs to the gbrain install at ${receipt.gbrain_home}, not ${brainHome}; --remove leaves it alone.`, {
-      actor: 'user', why: `Run --remove with GBRAIN_HOME set to the install that owns it (${receipt.gbrain_home}).`, user_message: 'This setup belongs to another gbrain install; remove it from that install.' }), out);
+    return refuse(ownerConflict('other_install', `The '${receipt.name}' connection belongs to the foresights install at ${receipt.gbrain_home}, not ${brainHome}; --remove leaves it alone.`, {
+      actor: 'user', why: `Run --remove with GBRAIN_HOME set to the install that owns it (${receipt.gbrain_home}).`, user_message: 'This setup belongs to another foresights install; remove it from that install.' }), out);
   }
   const r = await removeClaudeSetup(receipt, receiptPath, { dryRun: flags.dryRun });
   for (const s of r.steps) say(out, `  ${(flags.dryRun ? `would ${s.action}` : s.action).padEnd(14)} ${s.step.padEnd(7)} ${s.detail}`);
@@ -944,8 +944,8 @@ async function runRemove(flags: SetupFlags, receipt: ClaudeSetupReceipt | null, 
 /** The brain-first block for this run: decided from flags, env and the ledger, then applied (or previewed under --dry-run). */
 /** GST-363: a plugin serves this harness's MCP server, and setup never writes the plugin's launch arguments, so a member named here would bind nothing. */
 function pluginBindingRefusal(plugin: string, harness: SetupHarnessId, member: string): OperationError {
-  return opError('invalid_params', `--stdio-member ${member} refused: the '${plugin}' plugin serves this ${harness} gbrain MCP server, and setup does not write the plugin's launch arguments, so its sessions would not read as ${member}; nothing was written.`,
-    `Disable the '${plugin}' plugin and run gbrain setup ${harness} --stdio-member ${member}, or serve this brain over HTTP with one key per person (gbrain serve --http; for ${member}: gbrain auth create ${member}-key --member ${member}).`);
+  return opError('invalid_params', `--stdio-member ${member} refused: the '${plugin}' plugin serves this ${harness} foresights MCP server, and setup does not write the plugin's launch arguments, so its sessions would not read as ${member}; nothing was written.`,
+    `Disable the '${plugin}' plugin and run foresights setup ${harness} --stdio-member ${member}, or serve this brain over HTTP with one key per person (foresights serve --http; for ${member}: foresights auth create ${member}-key --member ${member}).`);
 }
 
 /** GST-363: the --stdio-member the harness entry will carry: the one named, none for --no-stdio-member, else the one setup's own entry carries now. */
@@ -962,7 +962,7 @@ function brainFirstFor(harness: BrainFirstHarness, flags: SetupFlags, access: Br
   const target = brainFirstTarget(harness, { ...where, workspace: flags.workspace });
   if ('error' in target) return null;
   const decision = resolveBrainFirstDecision(flags.instructions, priorBrainFirst(harness, target.path));
-  return syncBrainFirst({ target, access, decision, writer: `gbrain setup ${harness}`, dryRun: flags.dryRun });
+  return syncBrainFirst({ target, access, decision, writer: `foresights setup ${harness}`, dryRun: flags.dryRun });
 }
 
 /** The uninstall half: the block setup wrote for this harness and scope, at the path the ledger recorded. */
@@ -980,7 +980,7 @@ function skillsFor(harness: BrainFirstHarness, flags: SetupFlags, launcher: stri
   if (harness === 'cursor' && flags.skillResolver === 'on' && brainFirst?.decision.value !== 'declined') return null;
   const target = brainFirstTarget(harness, { ...where, workspace: flags.workspace });
   if ('error' in target) return null;
-  return installerSkillsBlock({ target, launcher, writer: `gbrain setup ${harness}`, brainFirstDeclined: brainFirst?.decision.value === 'declined', skillLoading: flags.skillLoading, audience: isThinClient(loadConfig()) ? 'downstream' : 'owner', dryRun: flags.dryRun });
+  return installerSkillsBlock({ target, launcher, writer: `foresights setup ${harness}`, brainFirstDeclined: brainFirst?.decision.value === 'declined', skillLoading: flags.skillLoading, audience: isThinClient(loadConfig()) ? 'downstream' : 'owner', dryRun: flags.dryRun });
 }
 
 function removeSkillsFor(harness: BrainFirstHarness, where: { scope?: WiringScope; projectDir?: string }, flags: SetupFlags): SkillsBlockOutcome | null {
@@ -1037,9 +1037,9 @@ async function openclawSkillFor(flags: SetupFlags, refreshOnly = false): Promise
 function openclawSkillRefusal(r: OpenclawSkillResult): OperationError {
   const e = r.error!;
   const detail = [e.recovery, ...(e.commands ?? []).map((c) => `still to run: ${c}`)].filter(Boolean).join('\n');
-  return opError(e.code, e.message, e.commands?.length ? `Run on the OpenClaw host: ${e.commands.join(' && ')}; then gbrain doctor --only skill_resolver.` : 'Fix the cause named above, then preview with gbrain setup openclaw --skill-loading resolve --dry-run.', {
+  return opError(e.code, e.message, e.commands?.length ? `Run on the OpenClaw host: ${e.commands.join(' && ')}; then foresights doctor --only skill_resolver.` : 'Fix the cause named above, then preview with foresights setup openclaw --skill-loading resolve --dry-run.', {
     docs: `docs/guides/skill-resolver.md#${e.code}`, ...(detail ? { detail } : {}),
-    fix: e.argv ? { argv: e.argv, consent: ['persistent_install'], actor: 'user', requires_exclusive: false, why: 'Finishes the OpenClaw install setup could not complete; gbrain doctor --only skill_resolver confirms it.' }
+    fix: e.argv ? { argv: e.argv, consent: ['persistent_install'], actor: 'user', requires_exclusive: false, why: 'Finishes the OpenClaw install setup could not complete; foresights doctor --only skill_resolver confirms it.' }
       : { argv: ['gbrain', 'setup', 'openclaw', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the OpenClaw resolver setup would make; changes nothing.' },
   });
 }
@@ -1068,14 +1068,14 @@ function servesBound(flags: SetupFlags): boolean {
   const launcher = flags.gbrainBin ?? resolveGbrainBin();
   const read = launcher && launcher.startsWith('/') ? readServesStatus(launcher) : null;
   const ok = !!read && 'status' in read && read.status.serves === 'several' && !!read.status.stdio_member;
-  if (!ok) process.stderr.write('gbrain setup: --serves several: this brain does not serve several people with a bound stdio server, so the instructions keep the one-person scoping lines.\n');
+  if (!ok) process.stderr.write('foresights setup: --serves several: this brain does not serve several people with a bound stdio server, so the instructions keep the one-person scoping lines.\n');
   return ok;
 }
 
 /**
  * `--instructions-only`, and the harnesses whose MCP registration setup does
  * not write (opencode, openclaw, hermes, cursor): manage the brain-first
- * block and nothing else. A client with no instruction file gbrain can write
+ * block and nothing else. A client with no instruction file foresights can write
  * (Claude Desktop, ChatGPT, …) gets the block printed to paste.
  */
 async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number> {
@@ -1097,7 +1097,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
       return 0;
     }
     writeExposureNotice(exposure);
-    console.log(`${adapter.label} has no instruction file gbrain can write. Paste this block into its custom or system instructions (keep the markers so a later paste replaces it):\n`);
+    console.log(`${adapter.label} has no instruction file foresights can write. Paste this block into its custom or system instructions (keep the markers so a later paste replaces it):\n`);
     console.log(snippet);
     console.log(adapter.connection === 'thin-cli'
       ? `The thin-CLI install in ${adapter.guide} already puts this block at the top of GBRAIN-INSTRUCTIONS.md; pass --gbrain-bin <absolute launcher> to print it with that launcher.`
@@ -1118,7 +1118,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   } else {
     say(out, `Target (${adapter.label}): ${target.path} (${target.role})`);
     const decision = resolveBrainFirstDecision(flags.instructions, priorBrainFirst(harness, target.path));
-    instructions = syncBrainFirst({ target, access, decision, writer: `gbrain setup ${harness}`, dryRun: flags.dryRun });
+    instructions = syncBrainFirst({ target, access, decision, writer: `foresights setup ${harness}`, dryRun: flags.dryRun });
     skills = skillsFor(harness, flags, flags.gbrainBin ?? indexLauncher() ?? 'gbrain', where, instructions);
   }
   const off = flags.remove || instructions?.decision.value === 'declined';
@@ -1144,11 +1144,11 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   writeExposureNotice(exposure);
   if (instructions) say(out, flags.remove ? describeBrainFirstOutcome(instructions, flags.dryRun) : describeInstructions(instructions, flags.dryRun));
   if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}${'next' in turnHook && turnHook.next ? `; wire it with: ${turnHook.next}` : ''}`);
-  else if (!off && placed) say(out, `  note     ${'turn hook'.padEnd(7)} ${adapter.label} has no per-turn hook gbrain can install; the rule reaches it through ${target.path} only.`);
+  else if (!off && placed) say(out, `  note     ${'turn hook'.padEnd(7)} ${adapter.label} has no per-turn hook foresights can install; the rule reaches it through ${target.path} only.`);
   if (skills && skillsOutcomeShown(skills)) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
   if (resolver) for (const line of describeResolverSetup(resolver, flags.dryRun)) say(out, line);
   if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
-  if (harness === 'openclaw' && turnHook && !off) say(out, `  note     ${'route'.padEnd(7)} the per-turn rule is OpenClaw's primary route to the brain. Skills from \`gbrain skillpack scaffold --harness openclaw\` are an optional fallback: agents seldom open a listed skill on their own.`);
+  if (harness === 'openclaw' && turnHook && !off) say(out, `  note     ${'route'.padEnd(7)} the per-turn rule is OpenClaw's primary route to the brain. Skills from \`foresights skillpack scaffold --harness openclaw\` are an optional fallback: agents seldom open a listed skill on their own.`);
   if (cursorPins) for (const line of describeCursorPins(cursorPins, flags.dryRun)) say(out, line);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
@@ -1157,7 +1157,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   if (skillPlugin?.error) return refuse(openclawSkillRefusal(skillPlugin), out);
   if (cursorPins?.error) {
     const e = cursorPins.error;
-    return refuse(opError(e.code, e.message, 'Fix the cause named above, then preview with gbrain setup cursor --skill-loading resolve --dry-run from the project directory.', {
+    return refuse(opError(e.code, e.message, 'Fix the cause named above, then preview with foresights setup cursor --skill-loading resolve --dry-run from the project directory.', {
       docs: `docs/guides/skill-resolver.md#${e.code}`,
       fix: { argv: ['gbrain', 'setup', 'cursor', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the Cursor pinned-skills setup would make in this project; changes nothing.' } }), out);
   }
@@ -1172,7 +1172,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
 async function runWakeshiftOpenclaw(flags: SetupFlags, args: string[], out: Out, deps: { bin?: string | null; run?: OpenclawRun }): Promise<number> {
   const remove = 'openclaw wakeshift reset && openclaw plugins uninstall wakeshift --force';
   if (flags.harness !== 'openclaw') {
-    return refuse(opError('invalid_params', `--wakeshift installs Wakeshift's OpenClaw plugin, so it applies to gbrain setup openclaw only (got ${flags.harness ?? 'no harness'}).`, 'Run gbrain setup openclaw --wakeshift where the OpenClaw gateway runs.'), out);
+    return refuse(opError('invalid_params', `--wakeshift installs Wakeshift's OpenClaw plugin, so it applies to foresights setup openclaw only (got ${flags.harness ?? 'no harness'}).`, 'Run foresights setup openclaw --wakeshift where the OpenClaw gateway runs.'), out);
   }
   if (flags.remove) {
     return refuse(opError('invalid_params', "setup does not remove Wakeshift's plugin; OpenClaw's own commands do, and they also undo the hooks settings it changed.", `Run: ${remove}`), out);
@@ -1181,7 +1181,7 @@ async function runWakeshiftOpenclaw(flags: SetupFlags, args: string[], out: Out,
   const commands = wakeshiftOpenclawInstallArgv().map((a) => a.join(' ')).join(' && ');
   if (!bin) {
     return refuse(opError('openclaw_not_found', "openclaw is not on PATH, so Wakeshift's OpenClaw plugin was not installed; nothing changed.",
-      `Run gbrain setup openclaw --wakeshift where the OpenClaw gateway runs (in its container, if it is in one), or run there: ${commands}`,
+      `Run foresights setup openclaw --wakeshift where the OpenClaw gateway runs (in its container, if it is in one), or run there: ${commands}`,
       { fix: { argv: ['gbrain', 'setup', 'openclaw', '--wakeshift'], consent: ['persistent_install', 'egress'], actor: 'user', requires_exclusive: false,
         why: 'The plugin installs where the OpenClaw gateway runs, with openclaw on PATH.' } }), out);
   }
@@ -1191,10 +1191,10 @@ async function runWakeshiftOpenclaw(flags: SetupFlags, args: string[], out: Out,
       await requireConsent({
         command: 'setup openclaw --wakeshift', effects: ['persistent_install', 'egress'], actor: 'user',
         what: `Install Wakeshift's OpenClaw plugin ${WAKESHIFT_OPENCLAW_PACKAGE}@${WAKESHIFT_OPENCLAW_VERSION} from npm and enable it: ${commands}`,
-        why: 'gbrain can then wake this OpenClaw session when a job, write or cron run it watches finishes, instead of the agent polling.',
+        why: 'foresights can then wake this OpenClaw session when a job, write or cron run it watches finishes, instead of the agent polling.',
         risk: "OpenClaw downloads the package from npm (published by Wakeshift with npm provenance). The plugin talks to Wakeshift's service and turns on OpenClaw's hooks endpoint with its own token, for conversations that connect through Wakeshift."
           + (networkHooksQuestion(bind) ? ' This gateway listens beyond this computer; the plugin asks before using the endpoint there.' : ''),
-        user_message: "Install Wakeshift's OpenClaw plugin so gbrain can report back to this OpenClaw chat when long jobs or cron runs finish?",
+        user_message: "Install Wakeshift's OpenClaw plugin so foresights can report back to this OpenClaw chat when long jobs or cron runs finish?",
         argv: ['gbrain', 'setup', 'openclaw', '--wakeshift', '--yes'], args,
       });
     } catch (e) {
@@ -1215,7 +1215,7 @@ async function runWakeshiftOpenclaw(flags: SetupFlags, args: string[], out: Out,
   }
   if (result.verify) say(out, `Verify: ${result.verify.message}`);
   if (result.network_hooks_question) say(out, `Question from Wakeshift (answer it yourself): ${result.network_hooks_question}`);
-  if (result.action === 'installed') say(out, 'Next: the brain owner turns reporting back on with gbrain wakeshift enable on the brain host; agents then offer watch_job after a long submit.');
+  if (result.action === 'installed') say(out, 'Next: the brain owner turns reporting back on with foresights wakeshift enable on the brain host; agents then offer watch_job after a long submit.');
   say(out, `Remove: ${remove}`);
   return code;
 }
@@ -1233,7 +1233,7 @@ async function cursorPinsFor(flags: SetupFlags, projectDir: string): Promise<Cur
 }
 
 /**
- * gbrain setup pi: the skill resolver only (pi-skill-extension.ts). Setup
+ * foresights setup pi: the skill resolver only (pi-skill-extension.ts). Setup
  * does not register an MCP server or write instructions for Pi.
  * --skill-loading resolve turns the extension on, off (or --remove) takes it
  * out, --skills-index-only refreshes the library, catalog and state, and a
@@ -1243,7 +1243,7 @@ async function runPiSetup(flags: SetupFlags, out: Out): Promise<number> {
   const home = configDir();
   const off = flags.skillResolver === 'off' || (flags.remove && flags.skillResolver !== 'on');
   if (!off && flags.skillResolver !== 'on' && !readPiSkillState(home)) {
-    return refuse(opError('invalid_params', 'gbrain setup pi wires only the skill resolver, and it is not on. Pass --skill-loading resolve to turn it on.', 'Run gbrain setup pi --skill-loading resolve --dry-run to preview it.',
+    return refuse(opError('invalid_params', 'foresights setup pi wires only the skill resolver, and it is not on. Pass --skill-loading resolve to turn it on.', 'Run foresights setup pi --skill-loading resolve --dry-run to preview it.',
       { docs: 'docs/guides/skill-resolver.md#pi-extension', fix: { argv: ['gbrain', 'setup', 'pi', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the Pi resolver setup would make; changes nothing.' } }), out);
   }
   const result = off ? removePiSkillExtension({ home, dryRun: flags.dryRun })
@@ -1256,7 +1256,7 @@ async function runPiSetup(flags: SetupFlags, out: Out): Promise<number> {
   else for (const line of describePiSkill(result, flags.dryRun)) say(out, line);
   if (result?.error) {
     const e = result.error;
-    return refuse(opError(e.code, e.message, 'Fix the cause named above, then preview with gbrain setup pi --skill-loading resolve --dry-run.', {
+    return refuse(opError(e.code, e.message, 'Fix the cause named above, then preview with foresights setup pi --skill-loading resolve --dry-run.', {
       docs: `docs/guides/skill-resolver.md#${e.code}`,
       fix: { argv: ['gbrain', 'setup', 'pi', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the Pi resolver setup would make; changes nothing.' } }), out);
   }
@@ -1268,7 +1268,7 @@ async function runPiSetup(flags: SetupFlags, out: Out): Promise<number> {
 async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> {
   const harness = flags.harness;
   if (!isBrainFirstHarness(harness)) {
-    return refuse(opError('invalid_params', `--skills-index-only needs a harness with an instruction file: ${BRAIN_FIRST_HARNESSES.join(', ')}`, 'Pass the harness whose skills index to refresh, e.g. gbrain setup claude-code --skills-index-only.'), out);
+    return refuse(opError('invalid_params', `--skills-index-only needs a harness with an instruction file: ${BRAIN_FIRST_HARNESSES.join(', ')}`, 'Pass the harness whose skills index to refresh, e.g. foresights setup claude-code --skills-index-only.'), out);
   }
   const outcomes = refreshSkillsIndexes(harness, { mode: flags.skillLoading, launcher: flags.gbrainBin, dryRun: flags.dryRun });
   const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
@@ -1278,7 +1278,7 @@ async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> 
     await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, skills_index_only: true, skills: outcomes, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}) }, null, 2)}\n`, (t) => process.stdout.write(t));
     return skillPlugin?.error ? exitCodeForCode(skillPlugin.error.code) : code;
   }
-  if (outcomes.length === 0 && !resolver && !skillPlugin) say(out, `No skills index is recorded for ${harness}. Add one with: gbrain setup ${harness} --skill-loading spring`);
+  if (outcomes.length === 0 && !resolver && !skillPlugin) say(out, `No skills index is recorded for ${harness}. Add one with: foresights setup ${harness} --skill-loading spring`);
   for (const o of outcomes) say(out, describeSkillsBlockOutcome(o, flags.dryRun));
   if (resolver) for (const line of describeResolverSetup(resolver, flags.dryRun)) say(out, line);
   if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
@@ -1290,21 +1290,21 @@ async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> 
 /**
  * Claude Code and Codex under --instructions-only (a plugin or a bare `mcp add`
  * serves MCP): the per-turn rule hook, unless setup's own hooks, a bootstrap
- * lane or a gbrain plugin already carry the rule.
+ * lane or a foresights plugin already carry the rule.
  */
 function turnRuleHookFor(harness: TurnRuleHarness, off: boolean, flags: SetupFlags, projectDir: string | undefined, rerun: string): TurnHookOutcome {
   const paths = projectDir ? { claudeSettings: join(projectDir, '.claude', 'settings.local.json') } : {};
   if (off || flags.noHooks) return removeTurnRuleHook({ harness, paths, dryRun: flags.dryRun });
   if (process.env.GBRAIN_HOOKS === '0') return { harness, action: 'skip', path: '', detail: 'GBRAIN_HOOKS=0 is set: no per-turn hook installed' };
   const carried = inspectTurnHook(harness, { projectDir });
-  // An entry of this lane beside another carrier still runs gbrain on every turn (it yields after starting), so it is refreshed, never left on an old launcher.
+  // An entry of this lane beside another carrier still runs foresights on every turn (it yields after starting), so it is refreshed, never left on an old launcher.
   if (carried.state !== 'missing' && carried.via !== 'turn-rule' && !hasTurnRuleHook(harness, paths)) return { harness, action: 'skip', path: '', detail: `per-turn rule already carried: ${carried.detail}` };
   return syncTurnRuleHook({ harness, gbrainBin: flags.gbrainBin ?? resolveGbrainBin(), gbrainHome: process.env.GBRAIN_HOME?.trim() || undefined, paths, dryRun: flags.dryRun, rerun });
 }
 
 function turnHookNotLoaded(harness: string, check: TurnHookVerdict, rerun: string[]): OperationError {
   const fix = turnHookFix(harness, rerun);
-  return opError('turn_hook_not_loaded', `The per-turn gbrain hook for ${harness} is not active: ${check.message}.${TURN_HOOK_NATIVE_INSPECT[harness] ? ` The harness's own check: ${TURN_HOOK_NATIVE_INSPECT[harness]}.` : ''}`, fix.why, { reason: check.reason, docs: 'docs/guides/repair.md#turn-hook-not-loaded', fix });
+  return opError('turn_hook_not_loaded', `The per-turn foresights hook for ${harness} is not active: ${check.message}.${TURN_HOOK_NATIVE_INSPECT[harness] ? ` The harness's own check: ${TURN_HOOK_NATIVE_INSPECT[harness]}.` : ''}`, fix.why, { reason: check.reason, docs: 'docs/guides/repair.md#turn-hook-not-loaded', fix });
 }
 
 async function finish(out: Out, doc: {
@@ -1345,9 +1345,9 @@ async function finish(out: Out, doc: {
   if (doc.turnHook?.ok) say(out, `Turn hook: ok (${doc.turnHook.reason}): ${doc.turnHook.message}`);
   if (state) say(out, `State: ${state} (${doc.states.join(' -> ')}).${state === 'native-verified' ? '' : ' Native push is not claimed until an observed event reaches a fresh session.'}`);
   if (state && !doc.remove) say(out, harness === 'codex'
-    ? 'Next: start a new Codex session (config and hooks are read at session start) and check that /mcp lists gbrain.'
-    : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
-  if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
+    ? 'Next: start a new Codex session (config and hooks are read at session start) and check that /mcp lists foresights.'
+    : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists foresights.');
+  if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with foresights remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
   if (state && !doc.remove) say(out, `Opt-ins (nothing is on until you turn it on): keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel: ${docsUrl('INSTALL_FOR_AGENTS.md#opt-ins')}`);
   writeCliNotices(notices.filter((n) => n.code !== 'hosted_option'));

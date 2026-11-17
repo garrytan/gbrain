@@ -1,5 +1,5 @@
 /**
- * v0.41.39 (#1700) — hermetic PGLite e2e for `gbrain enrich`.
+ * v0.41.39 (#1700) — hermetic PGLite e2e for `foresights enrich`.
  *
  * Covers both layers: the source-aware `listEnrichCandidates` engine method,
  * and the `runEnrichCore` synthesis pipeline (via the `synthesizeFn` DI seam so

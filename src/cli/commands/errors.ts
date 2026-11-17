@@ -1,6 +1,6 @@
 /**
- * `gbrain errors <code> [--json]` / `gbrain errors --changed [--json]` /
- * `gbrain errors [--json]`: offline lookup in the error code registry
+ * `foresights errors <code> [--json]` / `foresights errors --changed [--json]` /
+ * `foresights errors [--json]`: offline lookup in the error code registry
  * (agent contract v1, A2). Engine-free; the same rows as
  * docs/guides/error-codes.md.
  */
@@ -9,14 +9,14 @@ import { CODES } from '../../core/error-catalogue.ts';
 import { changedCodeRows, errorCodeRow, renderErrorCodeText } from '../../core/error-docs.ts';
 import { suggestNearest } from '../../core/levenshtein.ts';
 
-const HELP = `Usage: gbrain errors [<code>] [--changed] [--json]
+const HELP = `Usage: foresights errors [<code>] [--changed] [--json]
 
-Look up a gbrain error code offline: what it means, why it happens, the next
+Look up a foresights error code offline: what it means, why it happens, the next
 step, who acts, and how to verify.
 
-  gbrain errors <code>        one code (exit 2 when unknown, with a did-you-mean)
-  gbrain errors --changed     codes whose legacy \`error\` value differs from \`code\`
-  gbrain errors               every code, one line each
+  foresights errors <code>        one code (exit 2 when unknown, with a did-you-mean)
+  foresights errors --changed     codes whose legacy \`error\` value differs from \`code\`
+  foresights errors               every code, one line each
   --json                      machine-readable output
 `;
 
@@ -46,11 +46,11 @@ export async function run(args: string[]): Promise<void> {
     if (json) {
       await writeStdoutFinal(`${JSON.stringify({
         error: 'invalid_params', code: 'invalid_params', message,
-        suggestion: 'Run `gbrain errors` to list every code.', contract_version: 1,
+        suggestion: 'Run `foresights errors` to list every code.', contract_version: 1,
       }, null, 2)}\n`);
     } else {
       console.error(message);
-      console.error('Run `gbrain errors` to list every code.');
+      console.error('Run `foresights errors` to list every code.');
     }
     setCliExitVerdict(2);
     return;

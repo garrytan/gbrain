@@ -2,7 +2,7 @@
  * `idx_facts_fts`, the facts keyword index (`factsFtsDocument` under a literal
  * text search configuration), built and replaced without blocking writers or
  * leaving search without an index. The facts-index migration and
- * `gbrain reindex-search-vector` both call `ensureFactsFtsIndex`.
+ * `foresights reindex-search-vector` both call `ensureFactsFtsIndex`.
  *
  * The new definition is built as `idx_facts_fts_next` (CONCURRENTLY on
  * Postgres through `buildIndexOnline`), then one short transaction renames the

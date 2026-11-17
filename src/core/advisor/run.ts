@@ -85,7 +85,7 @@ export async function runAdvisor(ctx: AdvisorContext): Promise<AdvisorReport> {
         id: `collector_failed:${c.id}`,
         severity: 'warn',
         title: `Advisor check "${c.id}" could not complete, so its result is unknown (not healthy).`,
-        detail: 'This check failed to run, so this report does not cover it. Re-run `gbrain advisor`; if it keeps failing, run `gbrain doctor`.',
+        detail: 'This check failed to run, so this report does not cover it. Re-run `foresights advisor`; if it keeps failing, run `foresights doctor`.',
         fix: { command_argv: null },
         collector: c.id,
         ask_user: true,

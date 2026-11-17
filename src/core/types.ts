@@ -1,6 +1,6 @@
 // Page types
 // v0.38: `PageType` opens from a closed 23-element union to `string`. The
-// closed union was always a fiction — every gbrain user accumulated organic
+// closed union was always a fiction — every foresights user accumulated organic
 // types (`apple-note`, `therapy-session`, `tweet-bundle`, etc.) via
 // `as PageType` casts the engine never enforced. v0.38 schema packs make
 // the runtime authoritative: validation moves from compile-time
@@ -164,7 +164,7 @@ export interface Page {
   source_id: string;
 
   // v0.39.3.0 provenance read-path (WARN-8 + CV5). Migration v81 columns
-  // surfaced through getPage / list_pages so `gbrain call get_page | jq
+  // surfaced through getPage / list_pages so `foresights call get_page | jq
   // .source_kind` actually returns the value the put_page op wrote. NULL
   // on historical pages that pre-date v0.38. Three-state read pattern
   // (undefined: not in projection, null: column NULL, populated: real
@@ -266,7 +266,7 @@ export interface PageInput {
   import_filename?: string | null;
   /**
    * v0.32.7 CJK wave: bumped to MARKDOWN_CHUNKER_VERSION (2) on import so the
-   * post-upgrade `gbrain reindex --markdown` sweep can find pre-bump pages
+   * post-upgrade `foresights reindex --markdown` sweep can find pre-bump pages
    * via `WHERE chunker_version < 2`. Defaults to 1 at the schema level when
    * omitted (existing rows pre-migration inherit 1; new imports overwrite
    * with the current version).
@@ -283,7 +283,7 @@ export interface PageInput {
   // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6).
   // Migration v81 added these 4 nullable columns to `pages`. Until v0.39.3.0,
   // put_page wrote them into the file's frontmatter (via the write-through
-  // path) but never to the DB columns — `gbrain call get_page | jq .source_kind`
+  // path) but never to the DB columns — `foresights call get_page | jq .source_kind`
   // returned null even though the JSON receipt claimed `capture-cli`. These
   // params close the loop. Trust gate lives at the put_page op layer
   // (operations.ts): ONLY ctx.remote === false (trusted local callers like
@@ -348,7 +348,7 @@ export interface PageFilters {
    * Prefix-match filter on slug. Implemented as `WHERE slug LIKE prefix || '%'`
    * in both engines so it uses the (source_id, slug) UNIQUE constraint's btree
    * index for efficient range scans on large brains. Used by storage-tiering
-   * commands (gbrain storage status, gbrain export --restore-only) to scope
+   * commands (foresights storage status, foresights export --restore-only) to scope
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
@@ -467,7 +467,7 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
  * `engine.getRecentSalience` for the SQL.
  */
 /**
- * v0.37.0 — domain-bank sampling for `gbrain brainstorm` / `gbrain lsd`.
+ * v0.37.0 — domain-bank sampling for `foresights brainstorm` / `foresights lsd`.
  * Pulls one page per prefix from a caller-supplied prefix list.
  * Tiebreaker via JOIN to page_links (inbound link count = "structural centrality").
  * Stale-bias optional (LSD mode prefers forgotten pages via `last_retrieved_at`).
@@ -488,7 +488,7 @@ export interface DomainBankSampleOpts {
   sourceIds?: string[];
 }
 
-/** v0.37.0 — corpus-sampling fallback for `gbrain brainstorm` when prefix-stratified can't fill M. */
+/** v0.37.0 — corpus-sampling fallback for `foresights brainstorm` when prefix-stratified can't fill M. */
 export interface CorpusSampleOpts {
   /** Number of pages to sample. */
   n: number;
@@ -555,7 +555,7 @@ export interface SalienceResult {
 }
 
 /**
- * v0.41.39 (issue #1700) — `gbrain enrich --thin` candidate selection.
+ * v0.41.39 (issue #1700) — `foresights enrich --thin` candidate selection.
  *
  * One source-aware SQL query enumerates thin (stub) pages of the given
  * types, computes a source-correct inbound-link count per page, applies an
@@ -701,7 +701,7 @@ export interface Chunk {
   /** v0.27.1 multimodal. Read side of ChunkInput.modality — must round-trip through getChunks → embed-stale
    * merge → upsertChunks or image rows get reset to 'text' (EXCLUDED.modality) and vanish from the image arm. */
   modality?: 'text' | 'image';
-  /** #6871: the image vector; only getChunksWithEmbeddings reads it, so `gbrain migrate` carries it. */
+  /** #6871: the image vector; only getChunksWithEmbeddings reads it, so `foresights migrate` carries it. */
   embedding_image?: Float32Array | null;
   /** v244: UTF-8 byte span in the chunk_source's projected text (see ChunkInput); null when unrecorded. */
   projected_byte_start?: number | null;
@@ -760,7 +760,7 @@ export interface ChunklessPageRow {
 /**
  * v0.42.7 (#1696) — a page that needs link/timeline extraction, returned by
  * `listStalePagesForExtraction`. Carries the page CONTENT (compiled_truth +
- * timeline + frontmatter) so `gbrain extract --stale` extracts in ~1 query per
+ * timeline + frontmatter) so `foresights extract --stale` extracts in ~1 query per
  * batch instead of an N+1 `getPage` per page (mirrors how StaleChunkRow carries
  * chunk_text). `id` is the keyset cursor; `updated_at` lets callers reason about
  * the edited-since-extract staleness arm.
@@ -894,7 +894,7 @@ export interface SearchResult {
   matched_alias?: string;
   /** `search` `match: "keyword"`: an enumerated page whose text did not fit the evidence budget keeps its row, without text. */
   evidence_omitted?: boolean;
-  /** `generated` on pages gbrain wrote (dream_generated, extract_receipt); `generated_demotion` when ranked below a primary record (search/provenance-demotion.ts). */
+  /** `generated` on pages foresights wrote (dream_generated, extract_receipt); `generated_demotion` when ranked below a primary record (search/provenance-demotion.ts). */
   provenance?: 'generated'; generated_demotion?: number;
   /**
    * Extraction quarantine lane (issue #160): true when the result's page is
@@ -951,7 +951,7 @@ export interface SearchResult {
   /**
    * v0.40.4 graph signals — populated by applyGraphSignals when the
    * graph_signals mode-bundle knob is on. Surfaced in JSON envelope
-   * for agent introspection + the `gbrain search --explain` formatter.
+   * for agent introspection + the `foresights search --explain` formatter.
    */
   /** Number of OTHER top-K pages linking to this page (>= ADJACENCY_MIN_HITS). */
   graph_adjacency_hits?: number;
@@ -965,7 +965,7 @@ export interface SearchResult {
   graph_session_prefix?: string;
   /**
    * v0.43 relational recall arm — set when this result was surfaced by
-   * typed-edge traversal (not lexical/vector). Drives `gbrain search
+   * typed-edge traversal (not lexical/vector). Drives `foresights search
    * --explain` attribution ("surfaced via invested_in edge from widget-co").
    * Absent for organic keyword/vector results.
    */
@@ -996,7 +996,7 @@ export interface SearchResult {
   relational_pinned?: boolean;
   /**
    * v0.40.4 full attribution (D12=A) — per-stage score deltas for the
-   * `gbrain search --explain` formatter. Every boost stage stamps its
+   * `foresights search --explain` formatter. Every boost stage stamps its
    * contribution so the formatter can reconstruct the score derivation.
    *
    * base_score is captured once at runPostFusionStages entry BEFORE any
@@ -1077,7 +1077,7 @@ export interface SearchResult {
    * `superseded=true`, records the superseding (canon) page's slug in
    * `superseded_by`, and multiplies score by `supersede_penalty` (<1.0) so
    * current canon out-scores stale material. Absent when the page is current.
-   * Consumers (`gbrain search --explain`, the contradiction probe, agent
+   * Consumers (`foresights search --explain`, the contradiction probe, agent
    * renderers) surface a SUPERSEDED flag. The flag is authoritative even in
    * reranked modes where the cross-encoder owns the final head order.
    */
@@ -1190,7 +1190,7 @@ export interface AdjacencyRow {
 
 /**
  * v0.36 (D12) — declared shape of one entry in the `embedding_columns`
- * config registry. Users declare entries via `gbrain config set
+ * config registry. Users declare entries via `foresights config set
  * embedding_columns '...JSON...'` (DB plane); resolver merges with
  * built-ins. Field validation lives in src/core/search/embedding-column.ts
  * and runs at load time:
@@ -1286,7 +1286,7 @@ export interface SearchOpts extends PageReadPolicy {
    * pages whose `type` is in this list, pushed to SQL via
    * `AND p.type = ANY($N::text[])` in both engines. Stacks with the
    * single-value `type` filter (both are AND-applied). Primary consumer
-   * is `gbrain whoknows` (filters to ['person','company']); future
+   * is `foresights whoknows` (filters to ['person','company']); future
    * entity-only search reuses the parameter.
    */
   types?: PageType[];
@@ -1316,18 +1316,18 @@ export interface SearchOpts extends PageReadPolicy {
   detail?: 'low' | 'medium' | 'high';
   /**
    * v0.20.0 Cathedral II: filter by content_chunks.language (e.g., 'typescript',
-   * 'python', 'ruby'). Used by `gbrain query --lang <lang>`. NULL/undefined
+   * 'python', 'ruby'). Used by `foresights query --lang <lang>`. NULL/undefined
    * returns all languages.
    */
   language?: string;
   /**
    * v0.20.0 Cathedral II: filter by content_chunks.symbol_type (e.g., 'function',
-   * 'class', 'method', 'type', 'interface'). Used by `gbrain query --symbol-kind`.
+   * 'class', 'method', 'type', 'interface'). Used by `foresights query --symbol-kind`.
    */
   symbolKind?: string;
   /**
    * v0.20.0 Cathedral II: anchor the two-pass retrieval at a specific qualified
-   * symbol name. Pairs with walkDepth. Used by `gbrain query --near-symbol`.
+   * symbol name. Pairs with walkDepth. Used by `foresights query --near-symbol`.
    */
   nearSymbol?: string;
   /**
@@ -1378,7 +1378,7 @@ export interface SearchOpts extends PageReadPolicy {
    *    to ResolvedColumn at the boundary via `resolveEmbeddingColumn()`.
    *    Built-in names: 'embedding' (default, text), 'embedding_image'
    *    (multimodal). v0.36 cross-modal wave adds 'embedding_multimodal'
-   *    (unified column populated by `gbrain reindex --multimodal`). Custom
+   *    (unified column populated by `foresights reindex --multimodal`). Custom
    *    user-declared names also accepted when registered in
    *    `embedding_columns` config.
    *
@@ -1902,7 +1902,7 @@ export interface BrainStats {
 }
 
 /**
- * gbrain#4147: minimum entity pages before the entity-scoped coverage ratios
+ * foresights#4147: minimum entity pages before the entity-scoped coverage ratios
  * (link_coverage / timeline_coverage) are statistically worth reporting.
  * Behavior: 0 entities → null (0/0 used to read as a hard 0%); 1..4 → null
  * (a one-page "100% ± 0.0%" is noise, cf. #3945); >= 5 → the real ratio.
@@ -1923,7 +1923,7 @@ export interface BrainHealth {
   stale_pages: number;
   /**
    * Islanded pages — zero inbound AND zero outbound links, counted over
-   * LINKABLE pages only (the same scope as the `gbrain orphans` audit, so
+   * LINKABLE pages only (the same scope as the `foresights orphans` audit, so
    * doctor cannot report two contradictory orphan numbers). A hub page
    * that has references out but no back-references is NOT an orphan under
    * this definition (it's working as intended as an index). The metric
@@ -1946,7 +1946,7 @@ export interface BrainHealth {
    */
   dead_links: number;
   /**
-   * gbrain#4147: entity pages in the coverage denominator. Surfaced so
+   * foresights#4147: entity pages in the coverage denominator. Surfaced so
    * consumers can tell "0% coverage" from "no entities to grade".
    */
   entity_page_count: number;
@@ -1962,7 +1962,7 @@ export interface BrainHealth {
    * Entity link coverage, or null when entity_page_count is below
    * MIN_ENTITY_PAGES_FOR_COVERAGE — a 0/0 or single-page ratio is
    * statistically meaningless and used to read as a hard 0%/100%
-   * (gbrain#4147). Null means "not enough entity pages to grade"; consumers
+   * (foresights#4147). Null means "not enough entity pages to grade"; consumers
    * suppress the percentage AND its remediation actions.
    */
   link_coverage: number | null;
@@ -1975,7 +1975,7 @@ export interface BrainHealth {
   most_connected: Array<{ slug: string; link_count: number }>;
   /**
    * Per-component contribution to brain_score. Sum equals brain_score by
-   * construction. Displayed by `gbrain doctor` when brain_score < 100.
+   * construction. Displayed by `foresights doctor` when brain_score < 100.
    * Field names are distinct from the entity-scoped link_coverage /
    * timeline_coverage above to avoid semantic collision (these reflect
    * whole-brain measures used in the score formula).
@@ -1987,7 +1987,7 @@ export interface BrainHealth {
   no_dead_links_score: number;       // 0-10
   /**
    * Host migration-ledger summary so remote get_health callers can detect a
-   * wedged brain WITHOUT shelling SSH + gbrain doctor. Composed at the op
+   * wedged brain WITHOUT shelling SSH + foresights doctor. Composed at the op
    * layer by get_health from src/core/migration-ledger.ts
    * (migrationLedgerSummary — version strings only, never migration
    * internals); an unreadable/corrupt ledger degrades to the error variant.
@@ -2026,7 +2026,7 @@ export interface IngestLogInput {
 // Eval capture (v0.25.0)
 // Real MCP/CLI/subagent query+search calls are captured into eval_candidates
 // so gbrain-evals can replay them as BrainBench-Real. The companion
-// eval_capture_failures table records insert failures so gbrain doctor can
+// eval_capture_failures table records insert failures so foresights doctor can
 // surface silent capture drops cross-process.
 export interface EvalCandidateInput {
   tool_name: 'query' | 'search';
@@ -2056,7 +2056,7 @@ export interface EvalCandidateInput {
    * Engines coalesce undefined to NULL at insert time so the column is
    * always either a known column name or DB NULL — never JS undefined.
    *
-   * Replay (`gbrain eval replay`) re-runs the captured query against the
+   * Replay (`foresights eval replay`) re-runs the captured query against the
    * brain. Without this field, a replay after the user flipped
    * `search_embedding_column` produces "regressions" that are just
    * column changes. Replay reads this and uses it as a per-row override
@@ -2185,14 +2185,14 @@ export interface HybridSearchMeta {
   expansion_applied: boolean;
   /**
    * v0.32.x (search-lite): the intent the zero-LLM classifier inferred for
-   * this query. Surfaced for debugging — agents and the `gbrain query`
+   * this query. Surfaced for debugging — agents and the `foresights query`
    * command can show "intent: temporal" alongside results to make the
    * weighting decision auditable.
    */
   intent?: 'entity' | 'temporal' | 'event' | 'concept' | 'general';
   /**
    * v0.42 — adaptive return-sizing decision (intent, cap, kept, total).
-   * Omitted when the gate is off. Surfaced for `gbrain search --explain`.
+   * Omitted when the gate is off. Surfaced for `foresights search --explain`.
    */
   adaptive_return?: import('./search/return-policy.ts').AdaptiveReturnDecision;
   /**
@@ -2207,7 +2207,7 @@ export interface HybridSearchMeta {
   /**
    * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
    * Omitted when autocut didn't run (no reranker). Surfaced for
-   * `gbrain search --explain`.
+   * `foresights search --explain`.
    */
   autocut?: import('./search/autocut.ts').AutocutDecision;
   /**
@@ -2215,7 +2215,7 @@ export interface HybridSearchMeta {
    * fired relational arm's answer had to be promoted from beyond the limit
    * window (fusion overflow) or re-injected after autocut/trim dropped it.
    * Omitted on clean runs (evidence already on page 1) and when the arm
-   * didn't fire. Surfaced for `gbrain search --explain`.
+   * didn't fire. Surfaced for `foresights search --explain`.
    */
   relational_evidence_slot?: import('./search/relational-recall.ts').RelationalEvidenceSlotDecision;
   /**
@@ -2223,7 +2223,7 @@ export interface HybridSearchMeta {
    * the pool, the pinned rows with from/to/fused ranks, how many moved).
    * Present only when the reranker reordered the pool AND at least one
    * relational-arm row was pinned; omitted for non-relational queries, pin 0,
-   * and every reranker fail-open path. Surfaced for `gbrain search --explain`.
+   * and every reranker fail-open path. Surfaced for `foresights search --explain`.
    */
   relational_rerank_pin?: import('./search/relational-rerank-pin.ts').RelationalRerankPinDecision;
   /** Multi-hop planner outcome for a 2-3 relation question (status, anchor, per-hop counts, cap). */

@@ -11,7 +11,7 @@
  * never looked at the legacy `companies/aux` page that names it. The fix tags
  * a shortened name with a hash of the full name, checks that a page found at an
  * escaped slug names this entity, prefers the matching legacy page (also the
- * untagged cut slug an older gbrain minted for a long name), and gives
+ * untagged cut slug an older foresights minted for a long name), and gives
  * an entity whose slug another entity holds its own hash-tagged page.
  *
  * Real PGLite, plus the Postgres arm when DATABASE_URL is set
@@ -124,7 +124,7 @@ for (const { backend } of arms) {
       expect(await counts(engine(), two.slug)).toEqual({ timeline: 1, links: 1 });
     });
 
-    test('F8: a long name already stored at the untagged slug an older gbrain minted is updated there, with no tagged duplicate', async () => {
+    test('F8: a long name already stored at the untagged slug an older foresights minted is updated there, with no tagged duplicate', async () => {
       const name = `${OLD_PREFIX}Alpha`;
       expect(untagged(name)).not.toBe(slugifyEntity(name, 'company'));
       const result = await enrich(name, 'company');

@@ -3,7 +3,7 @@
  * Install-ref lint (GBRA-224): every install surface names INSTALL_REF (src/core/install-ref.ts).
  *
  * Checked in every tracked file except CHANGELOG.md and test/:
- *   - `github:garrytan/gbrain#<ref>` install pins with a named ref (a `v<version>`, a commit or a template is an exact pin,
+ *   - `github:aimonk2025/gbrain#<ref>` install pins with a named ref (a `v<version>`, a commit or a template is an exact pin,
  *     not a channel ref, and is left alone) must name INSTALL_REF; `#master` is never an install ref;
  *   - raw fetches of the install artifacts (BOOTSTRAP_FOR_AGENTS.md, scripts/setup-in-agent.sh) must use INSTALL_REF;
  *   - the setup helper's `gbrain_install_ref=` must equal INSTALL_REF;
@@ -20,8 +20,8 @@ import { INSTALL_REF } from '../src/core/install-ref.ts';
 
 export interface InstallRefDrift { file: string; line: number; found: string; why: string }
 
-const PIN = /github:garrytan\/gbrain#([A-Za-z][A-Za-z0-9._-]*)/g;
-const ARTIFACT = /raw\.githubusercontent\.com\/garrytan\/gbrain\/([A-Za-z0-9._-]+)\/(BOOTSTRAP_FOR_AGENTS\.md|scripts\/setup-in-agent\.sh)/g;
+const PIN = /github:garrytan\/(?:foresights|gbrain)#([A-Za-z][A-Za-z0-9._-]*)/g;
+const ARTIFACT = /raw\.githubusercontent\.com\/garrytan\/(?:foresights|gbrain)\/([A-Za-z0-9._-]+)\/(BOOTSTRAP_FOR_AGENTS\.md|scripts\/setup-in-agent\.sh)/g;
 const HELPER_REF = /^gbrain_install_ref=([A-Za-z0-9._-]+)$/gm;
 const EXACT_PIN = /^v|^[0-9]|^[0-9a-f]{7,40}$/;
 const OWNER = 'src/core/install-ref.ts';
@@ -55,8 +55,8 @@ export function driftIn(file: string, text: string, ref: string = INSTALL_REF): 
 export function rewriteText(file: string, text: string, ref: string = INSTALL_REF): string {
   if (skipped(file) || foldedIntoTs(file)) return text;
   return text
-    .replace(PIN, (all, r: string) => (EXACT_PIN.test(r) ? all : `github:garrytan/gbrain#${ref}`))
-    .replace(ARTIFACT, (all, r: string, path: string) => (/^[0-9a-f]{40}$/.test(r) ? all : `raw.githubusercontent.com/garrytan/gbrain/${ref}/${path}`))
+    .replace(PIN, (all, r: string) => (EXACT_PIN.test(r) ? all : `github:aimonk2025/gbrain#${ref}`))
+    .replace(ARTIFACT, (all, r: string, path: string) => (/^[0-9a-f]{40}$/.test(r) ? all : `raw.githubusercontent.com/aimonk2025/gbrain/${ref}/${path}`))
     .replace(HELPER_REF, `gbrain_install_ref=${ref}`);
 }
 

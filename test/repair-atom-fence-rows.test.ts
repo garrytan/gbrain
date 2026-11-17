@@ -1,5 +1,5 @@
 /**
- * `gbrain repair atom-fence-rows` and doctor's `atom_fence_rows`, on PGLite and Postgres.
+ * `foresights repair atom-fence-rows` and doctor's `atom_fence_rows`, on PGLite and Postgres.
  *
  * World atoms an earlier extraction produced from the whole page can carry the claim of a facts row whose visibility
  * is not world, or of a takes row held by someone other than world, and a remote read of the atom returns it. Doctor
@@ -42,7 +42,7 @@ test('atom_fence_rows is a host-only wave check that names the atom-fence-rows r
 });
 
 for (const kind of testBackends()) {
-  describe(`gbrain repair atom-fence-rows (${kind})`, () => {
+  describe(`foresights repair atom-fence-rows (${kind})`, () => {
     let engine: BrainEngine;
     let close: (() => Promise<void>) | undefined;
     let sourceId: string;
@@ -95,7 +95,7 @@ for (const kind of testBackends()) {
       const finding = await atomFenceRowsCheck(engine, [sourceId]);
       expect(finding.status).toBe('warn');
       expect(finding.details).toMatchObject({ count: 2, repair: 'atom-fence-rows' });
-      expect(finding.message).toContain(`gbrain repair atom-fence-rows --source ${sourceId} --json`);
+      expect(finding.message).toContain(`foresights repair atom-fence-rows --source ${sourceId} --json`);
       expect(JSON.stringify(finding)).not.toContain(PRIVATE_ROW);
       expect(JSON.stringify(finding)).not.toContain(CARRIES_FACT);
 

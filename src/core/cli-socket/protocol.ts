@@ -26,7 +26,7 @@ export const MAX_ROUND_TRIP_MS = 30_000;
  * builds the same error when the serve never answered in time.
  */
 export function warmRoundTripTimeout(command: string, ms: number, side: 'serve' | 'cli'): OperationError {
-  return opError('timeout', `gbrain ${command} did not finish within ${ms} ms on the warm CLI socket${side === 'serve' ? '; the serve cancelled it' : ' (the serve did not answer)'}.`,
+  return opError('timeout', `foresights ${command} did not finish within ${ms} ms on the warm CLI socket${side === 'serve' ? '; the serve cancelled it' : ' (the serve did not answer)'}.`,
     'Retry the same command; pass --timeout <ms> to bound it. If it keeps timing out, look in the serve\'s stderr log for a request still running.',
     { reason: 'cli_socket_round_trip_cap', retryable: true, docs: 'docs/guides/cli-socket.md',
       why: `The warm CLI socket caps one call at ${ms} ms so a caller never waits on a request without a bound; the call returned this error instead of starting over on the slower cold path.` });
@@ -54,7 +54,7 @@ export type CliSocketRequest = {
 
 /**
  * GBRA-175: a handshake-only probe. The serve checks the identity exactly as for a request and answers the handshake
- * line alone, running nothing, so `gbrain upgrade` can prove after a restart that the serve accepts this build.
+ * line alone, running nothing, so `foresights upgrade` can prove after a restart that the serve accepts this build.
  */
 export interface CliSocketProbe { v: 1; kind: 'probe'; identity: CliSocketIdentity }
 

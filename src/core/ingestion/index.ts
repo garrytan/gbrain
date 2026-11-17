@@ -12,8 +12,8 @@
  * The daemon itself is intentionally NOT exported — it's gbrain-internal.
  * Publishers run their sources via either:
  *   - the test harness (gbrain/ingestion/test-harness, for unit tests)
- *   - the CLI (`gbrain ingest test`, for hot-iteration dry-run)
- *   - the production daemon (`gbrain ingest`, which composes everything)
+ *   - the CLI (`foresights ingest test`, for hot-iteration dry-run)
+ *   - the production daemon (`foresights ingest`, which composes everything)
  */
 
 export type {

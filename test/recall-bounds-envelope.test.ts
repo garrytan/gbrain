@@ -1,7 +1,7 @@
 /**
- * `gbrain recall --since` / `--session` are filters that narrow the result.
+ * `foresights recall --since` / `--session` are filters that narrow the result.
  * A malformed or missing value must refuse with invalid_params (exit 2), like
- * `gbrain delta --since` and `recall --limit`, instead of silently dropping the
+ * `foresights delta --since` and `recall --limit`, instead of silently dropping the
  * bound and recalling every time window or every session. The flags are parsed
  * before any engine call, so no brain is opened.
  */
@@ -49,7 +49,7 @@ describe('recall --since invalid-input envelope', () => {
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain('--since is not a date or duration (got "yesterday-ish")');
     expect(r.stderr).toContain('6 weeks ago');
-    expect(r.stderr).toContain('Fix: gbrain recall --help');
+    expect(r.stderr).toContain('Fix: foresights recall --help');
   });
 });
 

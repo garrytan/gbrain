@@ -3,7 +3,7 @@
  * variable that repository source (src/) reads while the child runs, and
  * writes the list to HERMETIC_LOG on exit. Bun lets process.env be replaced,
  * so a Proxy sees reads through process.env; a stack frame under src/ marks
- * the read as gbrain's rather than the runtime's.
+ * the read as foresights's rather than the runtime's.
  */
 import { writeFileSync } from 'node:fs';
 import { sep } from 'node:path';

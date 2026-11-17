@@ -1,5 +1,5 @@
 /**
- * GST-2462: privacy labels gbrain does not read. A page with no `visibility` is private by an alias only when
+ * GST-2462: privacy labels foresights does not read. A page with no `visibility` is private by an alias only when
  * `access` or `confidentiality` holds one of the values in PRIVACY_ALIASES. Any other value is ignored: the page
  * reads like an unlabelled page to remote callers, and git placement (declaredDatabaseOnly) does not keep it out of
  * the brain's git remote. Writers stamp these keys with their own words (`access: personal`), so this module
@@ -38,7 +38,7 @@ function labelText(value: unknown): string | null {
   return text === '' ? null : text;
 }
 
-/** The `access` / `confidentiality` values gbrain ignores on this page; empty when none is ignored. */
+/** The `access` / `confidentiality` values foresights ignores on this page; empty when none is ignored. */
 export function ignoredPrivacyLabels(page: { type?: string | null; frontmatter?: unknown }): IgnoredPrivacyLabel[] {
   const fm = typeof page.frontmatter === 'object' && page.frontmatter !== null && !Array.isArray(page.frontmatter)
     ? page.frontmatter as Record<string, unknown> : null;
@@ -107,15 +107,15 @@ export function ignoredPrivacyLabelNotice(input: { labels: IgnoredLabelCount[]; 
   const known = keys.map(key => `${key} as private only when it is ${recognized(key)}`).join(', and ');
   const subject = input.slug
     ? `Page ${input.slug} has ${shown.join(' and ')} and no visibility key`
-    : `${input.pages}${input.pages >= SCAN_CAP ? '+' : ''} page(s) written to source ${input.sourceId} during this ${input.run ?? 'run'} carry a privacy label gbrain does not recognize and no visibility key: ${shown.join(', ')}${more}`;
+    : `${input.pages}${input.pages >= SCAN_CAP ? '+' : ''} page(s) written to source ${input.sourceId} during this ${input.run ?? 'run'} carry a privacy label foresights does not recognize and no visibility key: ${shown.join(', ')}${more}`;
   const them = input.slug ? 'it' : 'them';
-  const why = `${subject}. gbrain reads ${known}; it ignores any other value, so the label does not make ${input.slug ? 'the page' : 'these pages'} private: `
+  const why = `${subject}. foresights reads ${known}; it ignores any other value, so the label does not make ${input.slug ? 'the page' : 'these pages'} private: `
     + `every remote caller that can read the source can read ${them} (unless readable_by or a folder rule limits ${them})`
     + (input.repo ? `, and the label does not keep ${them} out of git, so ${them} can be committed and pushed to the brain's git remote` : '')
     + `. To keep ${input.slug ? 'the page' : 'a page'} private, add visibility: private to its frontmatter.`;
   const user_message = input.slug
-    ? `The page ${input.slug} is labelled ${shown.join(' and ')}, but gbrain doesn't treat that label as private, so it is readable over MCP${input.repo ? ' and can be pushed to git' : ''}. Should I add visibility: private to it?`
-    : `${input.pages} page(s) are labelled with a privacy value gbrain doesn't recognize (${shown.join(', ')}${more}), so they are readable over MCP${input.repo ? ' and can be pushed to git' : ''}. Should I add visibility: private to the ones that should stay private?`;
+    ? `The page ${input.slug} is labelled ${shown.join(' and ')}, but foresights doesn't treat that label as private, so it is readable over MCP${input.repo ? ' and can be pushed to git' : ''}. Should I add visibility: private to it?`
+    : `${input.pages} page(s) are labelled with a privacy value foresights doesn't recognize (${shown.join(', ')}${more}), so they are readable over MCP${input.repo ? ' and can be pushed to git' : ''}. Should I add visibility: private to the ones that should stay private?`;
   const fix: Action = {
     ask_user: true, consent: [], actor: 'agent', requires_exclusive: false, user_message,
     why: 'Adding visibility: private makes the page private to remote callers and keeps it out of git; it narrows who can read the page, so ask first.',

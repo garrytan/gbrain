@@ -239,7 +239,7 @@ describe('6. drift: an older binary edits the JSONB after migration', () => {
     const checks = await doctor();
     expect(checks.legacy_token_grant_drift.status).toBe('warn');
     expect(checks.legacy_token_grant_drift.details?.drift).toContainEqual({ name: minted.name, id: minted.id, axes: ['sources'] });
-    expect(checks.legacy_token_grant_drift.message).toContain(`gbrain auth rescope --token ${minted.name} --adopt-permissions`);
+    expect(checks.legacy_token_grant_drift.message).toContain(`foresights auth rescope --token ${minted.name} --adopt-permissions`);
     await expect(rescope(minted.name, '--takes-holders', 'world,brain')).rejects.toMatchObject({ reasons: ['legacy_token_grant_drift'] });
 
     await rescope(minted.name, '--adopt-permissions');

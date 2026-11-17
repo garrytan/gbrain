@@ -35,7 +35,7 @@ function load(root: string): StorageConfig | null {
   }
   // A fresh error per throw: callers may annotate the instance they receive.
   if ('cause' in entry) throw Object.assign(new OperationError('storage_error', 'The source storage configuration in gbrain.yml is invalid.',
-    'Run `gbrain storage status` for the exact problem, then fix gbrain.yml at the source root before writing to this source.'), { cause: entry.cause });
+    'Run `foresights storage status` for the exact problem, then fix gbrain.yml at the source root before writing to this source.'), { cause: entry.cause });
   return entry.config;
 }
 

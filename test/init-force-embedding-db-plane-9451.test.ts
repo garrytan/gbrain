@@ -1,5 +1,5 @@
 /**
- * #9451: `gbrain init --force --embedding-model X` on a keyless PGLite brain moved the file plane to X but left the
+ * #9451: `foresights init --force --embedding-model X` on a keyless PGLite brain moved the file plane to X but left the
  * database plane's embedding_model on the new-install default, so fact and take vectors, doctor and
  * `migrate embeddings --status` kept targeting a model the brain no longer uses. With no stored vectors from another
  * model, the re-init now records X in both planes.

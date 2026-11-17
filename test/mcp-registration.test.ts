@@ -1,5 +1,5 @@
 /**
- * One surface for every stdio registration gbrain writes
+ * One surface for every stdio registration foresights writes
  * (src/core/mcp-registration.ts): readiness (Claude Code, Codex, opencode),
  * init's quickstart line, `registerClaudeMcp` / `registerCodexMcp`, and the
  * plugin generator all build from REGISTRATION_SURFACE through
@@ -66,7 +66,7 @@ describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
 
 describe('every stdio registration path builds from REGISTRATION_SURFACE', () => {
   test('readiness harness_wiring: Claude Code and Codex pin the surface; opencode runs bootstrap hooks', () => {
-    // #8426: Claude Code and Codex register through gbrain setup, which puts serve behind the hook launcher.
+    // #8426: Claude Code and Codex register through foresights setup, which puts serve behind the hook launcher.
     expect(wiring('claude-code')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN]);
     expect(wiring('codex')?.argv).toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--gbrain-bin', BIN]);
     expect(wiring('opencode')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
@@ -102,7 +102,7 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
     try {
       const ok = spawnSync('bun', ['run', join(ROOT, 'scripts/generate-plugin-tree.ts'), '--out', join(out, 'plugin')], { encoding: 'utf8', timeout: 60_000 });
       expect(ok.status, ok.stderr).toBe(0);
-      expect(readFileSync(join(out, 'plugin', 'README.md'), 'utf8')).toContain(`gbrain serve --surface ${PLUGIN_SURFACE}`);
+      expect(readFileSync(join(out, 'plugin', 'README.md'), 'utf8')).toContain(`foresights serve --surface ${PLUGIN_SURFACE}`);
       for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json']) {
         const args = (JSON.parse(readFileSync(join(ROOT, file), 'utf8')) as { mcpServers: { gbrain: { args: string[] } } }).mcpServers.gbrain.args;
         expect(args[args.indexOf('--surface') + 1]).toBe(PLUGIN_SURFACE);
@@ -169,7 +169,7 @@ describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifes
     expect(offenders).toEqual([]);
   });
 
-  test('#8436: no install doc teaches a Claude Code or Codex stdio mcp add of serve that skips gbrain\'s launcher', () => {
+  test('#8436: no install doc teaches a Claude Code or Codex stdio mcp add of serve that skips foresights\'s launcher', () => {
     const offenders: string[] = [];
     for (const file of [...DOCS, 'docs/protocol/AGENT_OPERATOR_v1.md']) {
       readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {

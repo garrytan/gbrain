@@ -1,5 +1,5 @@
 /**
- * GBRA-133: a held `file_gone` file names its provenance, and `gbrain repair file-drift --held --side deleted --state file_gone`
+ * GBRA-133: a held `file_gone` file names its provenance, and `foresights repair file-drift --held --side deleted --state file_gone`
  * selects by it (`--provenance`):
  *   - each previewed page names the newest commit of HEAD's full history that deleted its file (sha, author, date,
  *     subject; a side branch's own deleting commit, not the merge that kept it), `never_committed` when no commit held it,

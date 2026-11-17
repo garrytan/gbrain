@@ -5,7 +5,7 @@ subtitle: "Why Markdown is Code and Your Agent is a Package Manager"
 author: Garry Tan
 created: 2026-04-11
 updated: 2026-04-11
-tags: [ai, gbrain, gstack, markdown-is-code, open-source, software-distribution, agents, openclaw]
+tags: [ai, foresights, gstack, markdown-is-code, open-source, software-distribution, agents, openclaw]
 status: draft-v2
 prior: "Thin Harness, Fat Skills"
 ---
@@ -62,13 +62,13 @@ A skill file is a method call. It takes parameters (your phone number, your brai
 
 Traditional package managers distribute artifacts: compiled binaries, source tarballs, container images. The consumer runs someone else's code.
 
-GBrain distributes recipes: markdown files that describe capabilities with enough specificity that an AI agent can implement them from scratch. The consumer gets a native implementation. No dependency hell. No version conflicts. No transitive vulnerability chains. Because there is no upstream code. There's a description of what to build and why.
+Foresights distributes recipes: markdown files that describe capabilities with enough specificity that an AI agent can implement them from scratch. The consumer gets a native implementation. No dependency hell. No version conflicts. No transitive vulnerability chains. Because there is no upstream code. There's a description of what to build and why.
 
 Here's how it works:
 
 1. **Build a feature.** Implement a voice agent, meeting ingestion pipeline, email triage system, investment diligence workflow, whatever.
 
-2. **GBrain captures the recipe.** Not just the code. The architecture, the integration points, the failure modes, the judgment calls. A markdown file that encodes the full capability.
+2. **Foresights captures the recipe.** Not just the code. The architecture, the integration points, the failure modes, the judgment calls. A markdown file that encodes the full capability.
 
 3. **Push to the repo.** Open source. Anyone can read it.
 
@@ -134,7 +134,7 @@ That's a pattern matcher expressed in English. An agent reads this and knows how
 
 ## Pick and choose
 
-GBrain is not monolithic. Recipes are independent. Take what you want:
+Foresights is not monolithic. Recipes are independent. Take what you want:
 
 - **Voice agent** — phone screening, caller ID, brain lookup, message routing
 - **Meeting ingestion** — transcript processing, entity extraction, action item capture, timeline updates
@@ -144,7 +144,7 @@ GBrain is not monolithic. Recipes are independent. Take what you want:
 - **Social monitoring** — X/Twitter timeline analysis, mention tracking, narrative detection
 - **Content pipeline** — idea capture, link ingestion, article summarization
 
-Each recipe is self-contained. Your agent knows what you already have. GBrain pings daily: "Three new recipes since last sync. Want any?" You pick. It builds.
+Each recipe is self-contained. Your agent knows what you already have. Foresights pings daily: "Three new recipes since last sync. Want any?" You pick. It builds.
 
 And because the source code is English, forking is trivial. Don't like how the voice agent handles unknown callers? Edit the markdown. Change "take a message" to "ask three screening questions first." The behavior changes because the spec changed.
 
@@ -159,7 +159,7 @@ This essay is a sequel. The prequel was "Thin Harness, Fat Skills," which argued
 - **Package** for the distribution system
 - **Source code** for the resulting capability
 
-Four artifacts collapsed into one. That's why this is different from every previous package manager. `brew install` separates the formula from the binary from the docs from the source. GBrain collapses them. The markdown is all four.
+Four artifacts collapsed into one. That's why this is different from every previous package manager. `brew install` separates the formula from the binary from the docs from the source. Foresights collapses them. The markdown is all four.
 
 ## The architecture underneath
 
@@ -183,6 +183,6 @@ This also means the best AI agent setups will be open source by default. Closed,
 
 Software distribution reimagined: the package is a markdown file, the runtime is a sufficiently smart model, the package manager is your AI agent, and the app store is a git repo.
 
-`gbrain skillpack scaffold voice-agent`
+`foresights skillpack scaffold voice-agent`
 
 That's it.

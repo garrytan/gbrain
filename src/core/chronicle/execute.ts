@@ -356,7 +356,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
-    console.warn(`[chronicle] ${row.slug}: publishing events failed (${error instanceof Error ? error.message : String(error)}); the row retries with backoff. Run now: gbrain dream --phase chronicle`);
+    console.warn(`[chronicle] ${row.slug}: publishing events failed (${error instanceof Error ? error.message : String(error)}); the row retries with backoff. Run now: foresights dream --phase chronicle`);
     await finish(engine, row, attempts, { state: 'failed', reason: 'publish_error', nextAttemptAt: backoff(attempts, now, maxAttempts), ...spend });
     return done('failed', 'publish_error', { ...judged, dropped });
   }

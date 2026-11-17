@@ -1,5 +1,5 @@
 /**
- * `gbrain jobs [--help]` + `gbrain jobs <subcommand> --help` guard.
+ * `foresights jobs [--help]` + `foresights jobs <subcommand> --help` guard.
  *
  * Regression test for two defects:
  *  1. `jobs` was in CLI_ONLY but not CLI_ONLY_SELF_HELP, so `jobs --help`
@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
-const STUB_MARKER = 'run gbrain --help for the full command list';
+const STUB_MARKER = 'run foresights --help for the full command list';
 
 async function runJobsHelp(args: string[]): Promise<{ code: number; out: string }> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-jobshelp-'));

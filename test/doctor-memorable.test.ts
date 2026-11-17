@@ -94,7 +94,7 @@ describe('memorable_relay_health rung ladder', () => {
       await withEnv({ GBRAIN_HOME: home, GBRAIN_MEMORABLE: undefined }, async () => {
         const c = await buildMemorableRelayCheck();
         expect(c.status).toBe('fail');
-        expect(c.message).toContain('gbrain config set integrations.memorable.enabled true');
+        expect(c.message).toContain('foresights config set integrations.memorable.enabled true');
         expect(c.details?.reason).toBe('disclosure_missing');
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
@@ -215,7 +215,7 @@ describe('codex hooks wired but never fired [OV8c]', () => {
       const codexHome = join(home, 'codex-home');
       mkdirSync(codexHome, { recursive: true });
       writeFileSync(join(codexHome, 'hooks.json'), JSON.stringify({
-        hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: 'x gbrain hook session-end --harness codex y', timeout: 3 }] }] },
+        hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: 'x foresights hook session-end --harness codex y', timeout: 3 }] }] },
       }));
       await withEnv({ GBRAIN_HOME: home, GBRAIN_MEMORABLE: undefined, GBRAIN_MEMORABLE_CONFIG: ev, PATH: stubBinDir(home), MEMORABLE_BIN: '', CODEX_HOME: codexHome }, async () => {
         await writeMemorableConsent();
@@ -243,7 +243,7 @@ describe('codex hooks wired but never fired [OV8c]', () => {
       const codexHome = join(home, 'codex-home');
       mkdirSync(codexHome, { recursive: true });
       writeFileSync(join(codexHome, 'hooks.json'), JSON.stringify({
-        hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: 'x gbrain hook session-end --harness codex y', timeout: 3 }] }] },
+        hooks: { SessionEnd: [{ hooks: [{ type: 'command', command: 'x foresights hook session-end --harness codex y', timeout: 3 }] }] },
       }));
       await withEnv({ GBRAIN_HOME: home, GBRAIN_MEMORABLE: undefined, GBRAIN_MEMORABLE_CONFIG: ev, PATH: stubBinDir(home), MEMORABLE_BIN: '', CODEX_HOME: codexHome }, async () => {
         await writeMemorableConsent();

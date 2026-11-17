@@ -124,7 +124,7 @@ describe.skipIf(!databaseUrl)('vendored driver: the desync tripwire', () => {
     }
     const desync = lines.filter(l => l.includes('pg_connection_desync'));
     expect(desync).toHaveLength(1);
-    expect(desync[0]).toMatch(/^\[gbrain\] warn code=pg_connection_desync pool=direct message=C connection=\d+ sql=SELECT_pg_class /);
+    expect(desync[0]).toMatch(/^\[(?:foresights|gbrain)\] warn code=pg_connection_desync pool=direct message=C connection=\d+ sql=SELECT_pg_class /);
     expect(desync[0]).not.toContain('literal-text');
     expect(desync[0]).not.toContain('param-value');
     expect(desync[0]).not.toContain('relname');

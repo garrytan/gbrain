@@ -1,5 +1,5 @@
 /**
- * #5088: `gbrain migrate embeddings` used to recreate the HNSW indexes inside
+ * #5088: `foresights migrate embeddings` used to recreate the HNSW indexes inside
  * the schema transition, before the bulk re-embed, so every vector write went
  * into a live HNSW graph. The transition now restores only the non-ANN
  * dependents and records the HNSW definitions in the migration marker; they
@@ -22,7 +22,7 @@ import { parseDeferredAnnIndexes } from '../src/core/embedding-ann-build.ts';
 
 const FROM_DIMS = 1024;
 const PAGES = ['page-1', 'page-2', 'page-3', 'page-4', 'page-5', 'page-6'];
-const PROBE_TEXT = 'gbrain embedding migration probe';
+const PROBE_TEXT = 'foresights embedding migration probe';
 const TARGET = 'openai:text-embedding-3-small';
 
 let engine: PGLiteEngine;

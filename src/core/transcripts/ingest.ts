@@ -1,7 +1,7 @@
 /**
  * ingest.ts — the transcripts-import core (cathedral-4).
  *
- * Engine-facing, CLI-free: `gbrain transcripts ingest` parses flags and
+ * Engine-facing, CLI-free: `foresights transcripts ingest` parses flags and
  * calls runTranscriptsIngest; e2e tests call it directly. Pipeline per
  * session (ATOMICITY = SESSION, never file — a multi-session file commits
  * the sessions that pass and skips the ones that fail; idempotent re-runs
@@ -95,7 +95,7 @@ export interface TranscriptsIngestOpts {
   /** Embedding opt-in (default OFF: bulk imports defer to the embed backfill). */
   embed?: boolean;
   /**
-   * gbrain#4149: explicit byte-cap OVERRIDE threaded to every adapter's
+   * foresights#4149: explicit byte-cap OVERRIDE threaded to every adapter's
    * parse. Undefined = each adapter keeps its own format-specific default
    * (Hermes 512MB store guard, 50MB jsonl cap, ...) — the override exists
    * for legitimate oversized stores, not to replace the defaults.
@@ -281,7 +281,7 @@ export async function runTranscriptsIngest(
     }
     fileOutcome.format = detected.adapter.format;
 
-    // gbrain#4149: thread the explicit cap override; omit the opts object
+    // foresights#4149: thread the explicit cap override; omit the opts object
     // entirely when unset so adapters keep their native defaults.
     const gen = opts.maxBytes != null
       ? detected.adapter.parse(path, { maxBytes: opts.maxBytes })

@@ -6,7 +6,7 @@ you probably want them.
 ## First signal: jobs aren't running
 
 ```bash
-gbrain doctor --json | jq '.checks[] | select(.name == "queue_health")'
+foresights doctor --json | jq '.checks[] | select(.name == "queue_health")'
 ```
 
 `queue_health` flags two patterns:
@@ -38,12 +38,12 @@ This self-heals — you usually won't have to do anything:
 The signal is loud; check either:
 
 ```bash
-gbrain jobs stats --queue default          # prints a WEDGED QUEUE line
-gbrain doctor --json | jq '.checks[] | select(.name == "wedged_queue")'
+foresights jobs stats --queue default          # prints a WEDGED QUEUE line
+foresights doctor --json | jq '.checks[] | select(.name == "wedged_queue")'
 ```
 
 `wedged_queue` is a per-queue health **error** (0 active_healthy + waiting > 0 +
-stale completions). While an autopilot pause is in place (`gbrain autopilot
+stale completions). While an autopilot pause is in place (`foresights autopilot
 pause`, or the marker a migration sets), workers claim nothing, so the check
 reports the held queue as a **warning** that names the resume step, and the
 worker's stall watchdog stays quiet. Restarting a worker doesn't help then.
@@ -52,10 +52,10 @@ Manual fix if you ever need it:
 ```bash
 # Restart the supervisor with a fresh pool. `start` alone runs in the
 # FOREGROUND (blocks); use --detach to get your shell back.
-gbrain jobs supervisor stop && gbrain jobs supervisor start --detach --json
+foresights jobs supervisor stop && foresights jobs supervisor start --detach --json
 
 # Re-queue any jobs that were dead-lettered during the wedge.
-gbrain jobs retry <id>
+foresights jobs retry <id>
 ```
 
 ## The backlog grows structurally (DIVERGENT QUEUE)
@@ -65,9 +65,9 @@ type's intake structurally exceeds its completions, so the waiting pile
 grows forever. The queue has admission control and the signal is loud:
 
 ```bash
-gbrain jobs stats            # Drained/Waiting columns + a DIVERGENT QUEUE
+foresights jobs stats            # Drained/Waiting columns + a DIVERGENT QUEUE
                              # scream per offending type (also in --json)
-gbrain doctor --json | jq '.checks[] | select(.name == "queue_health")'
+foresights doctor --json | jq '.checks[] | select(.name == "queue_health")'
                              # same findings for cron topologies
 ```
 
@@ -85,14 +85,14 @@ What's already protecting you, and the knobs:
   `minions.coalesce_params.<name>`.
 - **Waiting-TTL** (default 48h for `subagent`): jobs still waiting past the
   TTL are cancelled with an auditable reason instead of queueing forever.
-  Tune or disable: `gbrain config set minions.ttl_waiting_hours.<name> <hours|0>`.
+  Tune or disable: `foresights config set minions.ttl_waiting_hours.<name> <hours|0>`.
   The first sweep never fires cold — a one-time notice prints with the
   affected-job count, then a one-hour grace window holds before the first
   cancellation.
 - **Waiting quota** (opt-in, off by default): a hard cap on a type's waiting
   count, name-global across queues, exact under concurrent submitters. New
   submits past the cap are rejected with a structured, retryable error.
-  Opt in: `gbrain config set minions.quota_max_waiting.<name> <n>`.
+  Opt in: `foresights config set minions.quota_max_waiting.<name> <n>`.
 - **Kill-switch**: `GBRAIN_MINIONS_ADMISSION=0` disables all three at once
   (incident escape hatch, no DB needed).
 
@@ -100,20 +100,20 @@ What's already protecting you, and the knobs:
 
 ```bash
 # Who's active right now?
-gbrain jobs list --status active
+foresights jobs list --status active
 
 # Who's waiting, biggest pile first?
-gbrain jobs list --status waiting --limit 50
+foresights jobs list --status waiting --limit 50
 
 # What's wrong with a specific job?
-gbrain jobs get <id>
+foresights jobs get <id>
 
 # Which queues hold the work? One line per queue (`by_queue` in --json);
 # the per-run dream-inline-* queues share one `dream-inline (N queues)` line.
-gbrain jobs stats
+foresights jobs stats
 ```
 
-`gbrain jobs stats --queue dream-inline-<ms>-<id>` still scopes the wedge and
+`foresights jobs stats --queue dream-inline-<ms>-<id>` still scopes the wedge and
 ABANDONED PRIVATE QUEUE lines to one per-run queue.
 
 ## Rescue actions (in order of escalation)
@@ -123,13 +123,13 @@ ABANDONED PRIVATE QUEUE lines to one per-run queue.
 # observe its abort signal, and after 30s it is force-evicted from tracking
 # but the promise keeps running; with --job-isolation process the child is
 # actually SIGTERM→SIGKILLed once cancellation is detected):
-gbrain jobs cancel <id>
+foresights jobs cancel <id>
 
 # Clear a specific job entirely (last resort):
-gbrain jobs delete <id>
+foresights jobs delete <id>
 
 # Health smoke on the mechanism itself:
-gbrain jobs smoke --wedge-rescue
+foresights jobs smoke --wedge-rescue
 ```
 
 ## What each subcheck means
@@ -139,7 +139,7 @@ gbrain jobs smoke --wedge-rescue
   2× `timeout_ms`. Long-lane handlers (subagent, autopilot-cycle,
   embed-backfill, …) always have a budget: it is stamped at submit and
   COALESCEd from `HANDLER_DEFAULT_TIMEOUT_MS` at claim for rows with a NULL
-  budget. `gbrain jobs get <id>`
+  budget. `foresights jobs get <id>`
   prints the effective budget and which kill path applies. If a short-lane
   job is still active with no budget, the null-default sweep
   (2 × lock-duration × max_stalled) evicts it within minutes. Cancel it if
@@ -152,7 +152,7 @@ gbrain jobs smoke --wedge-rescue
 - **waiting-depth** — Submitters are piling up jobs faster than workers
   drain them. Set `--max-waiting N` on the submission or on the programmatic
   `queue.add()` call. If you want a taller pile, raise the threshold via
-  `GBRAIN_QUEUE_WAITING_THRESHOLD=50 gbrain doctor`.
+  `GBRAIN_QUEUE_WAITING_THRESHOLD=50 foresights doctor`.
 - **divergent queue** — A type's 24h intake structurally exceeds its 24h
   completions while a real backlog waits (same thresholds as the
   `jobs stats` scream, so the two surfaces agree). The finding names the
@@ -161,7 +161,7 @@ gbrain jobs smoke --wedge-rescue
 - **waiting-TTL cancellations** — The admission sweep cancelled queued work
   that expired unclaimed in the last 24h. That's operating as designed, but
   it means the divergence is being shredded, not worked — intake still
-  exceeds drain. Tune with `gbrain config set
+  exceeds drain. Tune with `foresights config set
   minions.ttl_waiting_hours.<name> <hours|0>`.
 
 ## Lock-renewal: reading an eviction, and the knobs
@@ -207,7 +207,7 @@ call timeout ≤ renewal cadence, hard evict ≥ soft deadline) — a
 misconfigured knob can degrade cadence but cannot silently re-break the
 deadline math.
 
-Per-job lease: `gbrain jobs submit --lock-duration-ms N` (clamped
+Per-job lease: `foresights jobs submit --lock-duration-ms N` (clamped
 [5 s, 1 h] — enforced at submit, re-applied to the resolved lease at
 claim, and backed by a database range constraint; `--dry-run` echoes the
 clamped value that will actually be stored); `sync` and the long LLM handlers default to 300 s via
@@ -220,14 +220,14 @@ worker's long-lease job requeues after lease + grace + one sweep interval.
 ```bash
 # If you're running autopilot with --no-worker, check that your external
 # worker (systemd / Docker / OpenClaw service-manager) is alive:
-gbrain jobs list --status active | head -5
+foresights jobs list --status active | head -5
 ```
 
 If the list is empty AND your submissions keep piling up, no worker is
 claiming. Start one:
 
 ```bash
-gbrain jobs work --concurrency 4 --allow-shell-jobs   # drop --allow-shell-jobs if you never submit shell jobs
+foresights jobs work --concurrency 4 --allow-shell-jobs   # drop --allow-shell-jobs if you never submit shell jobs
 ```
 
 ## Reading the DB-probe verdicts (pool starved vs server unreachable)

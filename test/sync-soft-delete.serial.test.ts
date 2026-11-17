@@ -11,7 +11,7 @@
  * within the window revives the page via putPage's upsert.
  *
  * Serial-file requirement: the decompose tests write real rows to the
- * sync-failure ledger under the gbrain home — GBRAIN_HOME is isolated per
+ * sync-failure ledger under the foresights home — GBRAIN_HOME is isolated per
  * test, mirroring test/sync-rename-reconcile.serial.test.ts.
  *
  * Under test (orchestration-level, real performSync):
@@ -26,7 +26,7 @@
  *      (searchKeyword arm) and get_links/get_backlinks results — pins that
  *      the closed #1702 class STAYS closed for the new sync path.
  *   5. E1: the rename lane meeting a soft-deleted row (out-of-band
- *      `gbrain delete` between syncs, then git mv) converges with a live
+ *      `foresights delete` between syncs, then git mv) converges with a live
  *      page at the destination and no live duplicate.
  */
 
@@ -128,7 +128,7 @@ describe('#4587: removed-file drain soft-deletes (72h recovery)', () => {
     const repo = mkRepo({ 'notes/pre-deleted.md': '# Pre\n\noperator removed me already\n' });
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
 
-    // Operator soft-deletes between syncs (gbrain delete semantics).
+    // Operator soft-deletes between syncs (foresights delete semantics).
     expect(await engine.softDeletePage('notes/pre-deleted', { sourceId: 'default' })).not.toBeNull();
     const before = await engine.executeRaw<{ deleted_at: string | Date }>(
       `SELECT deleted_at FROM pages WHERE source_id = 'default' AND slug = 'notes/pre-deleted'`,
@@ -365,7 +365,7 @@ describe('#4587: full-sync reconcile + unsyncable lane are SOFT, purge window is
     commitAll(repo, 'junk lands');
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
 
-    // …but a pre-gate gbrain had already ingested it (seed the poisoned row).
+    // …but a pre-gate foresights had already ingested it (seed the poisoned row).
     await engine.putPage(JUNK_SLUG, {
       type: 'note',
       title: 'Poisoned page',

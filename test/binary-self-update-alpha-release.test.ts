@@ -19,8 +19,8 @@ function fakeFetch(answers: Record<string, { status: number; body: string }>) {
   return { impl, urls };
 }
 
-const VERSION_URL = 'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION';
-const TAG_URL = 'https://api.github.com/repos/garrytan/gbrain/releases/tags/v0.60.722.0';
+const VERSION_URL = 'https://raw.githubusercontent.com/aimonk2025/gbrain/latest-stable/VERSION';
+const TAG_URL = 'https://api.github.com/repos/aimonk2025/gbrain/releases/tags/v0.60.722.0';
 
 describe('fetchAlphaRelease', () => {
   test('reads VERSION at latest-stable, then fetches that exact release, never releases/latest', async () => {

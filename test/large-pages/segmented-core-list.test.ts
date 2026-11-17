@@ -8,7 +8,7 @@
  *    list without reading a segment, the list, core usage and the session block still answer, doctor core_memory counts
  *    it (`skipped_segmented: 1`; the page within 24 MiB is not counted), and nothing stored changes.
  * 2. Fails when: a segmented core page lists as its title alone (its NULL compiled_truth column), a withdrawn one
- *    throws page_body_segmented out of listCorePages (session-start core, context_pack, gbrain core status and the core
+ *    throws page_body_segmented out of listCorePages (session-start core, context_pack, foresights core status and the core
  *    budget check then fail for every page), or a page over 24 MiB is read whole.
  * 3. PGLite always; PostgreSQL when DATABASE_URL is set (test/postgres-unit-arms.txt). Cost assertions are segment read
  *    counts, never time.

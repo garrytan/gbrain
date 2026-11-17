@@ -116,7 +116,7 @@ function thinkScopeFromQueryScope(scope: SourceScope): { sourceId?: string; allo
 /**
  * The returned rows: redacted, snippet-capped, then projected to the caller's
  * row shape (C1: lean for remote callers unless `fields: "full"`, the host's
- * `mcp.result_rows: full` or gbrain's thin client). Every internal consumer
+ * `mcp.result_rows: full` or foresights's thin client). Every internal consumer
  * (capture, response meta, last-retrieved bump) has already read full rows.
  */
 function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], meta: Record<string, unknown>, snippetCap: number,
@@ -241,7 +241,7 @@ async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], 
  * #5004/#5247: does the caller's read scope still hold pages of any kind
  * below the safe-chunk index version? Every remote chunk read withholds them
  * (the `requireSafeChunks` predicate in each engine leg) until they are
- * re-sealed (`gbrain repair safe-chunks`, or an unchanged re-import), so a
+ * re-sealed (`foresights repair safe-chunks`, or an unchanged re-import), so a
  * remote result on such a brain may be incomplete, not a clean or complete
  * answer. Same scope precedence as sourceScopeOpts (federated array > scalar
  * > brain-wide); LIMIT 1 probe, portable SQL on both engines, fail-open.
@@ -583,7 +583,7 @@ const SALIENCE_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'],
  * full MCP surface only: every declared param is re-sent to the model on each
  * turn, so the cheap `search` tool and the starter list stay lean (a starter
  * session reaches them with `request_tools {surface: 'full'}`). The local CLI
- * passes them to `search` too (`gbrain search --explain`).
+ * passes them to `search` too (`foresights search --explain`).
  */
 const EXPLAIN_PARAMS = {
   explain: { type: 'boolean' as const, description: 'Per-row score_details.', fullSurfaceOnly: true },
@@ -1037,7 +1037,7 @@ const query: Operation = {
         'invalid_params',
         'query requires either `query` (text) or `image` (base64 bytes).',
         ctx.remote === false
-          ? `Pass the search text as the positional argument (e.g. gbrain query "acme-example roadmap"), or ${paramUse(ctx, 'image', 'photo.png')}.`
+          ? `Pass the search text as the positional argument (e.g. foresights query "acme-example roadmap"), or ${paramUse(ctx, 'image', 'photo.png')}.`
           : 'Pass `query` with your search text (e.g. {"query": "acme-example roadmap"}), or `image` with base64 image bytes.',
       );
     }
@@ -1338,7 +1338,7 @@ const assemble_evidence: Operation = {
 
 // ---------------------------------------------------------------------------
 // CLI→MCP gap-closure wave — search/cache introspection ops. Read-only views
-// shared with the `gbrain search modes|stats|tune` + `gbrain cache stats` CLI
+// shared with the `foresights search modes|stats|tune` + `foresights cache stats` CLI
 // (the builders live in core/search/). User story for each: a thin-client
 // user whose CLI routes these subcommands remotely, or an agent asked to
 // diagnose retrieval quality/cost. Telemetry ops are admin-scoped

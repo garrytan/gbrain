@@ -1,5 +1,5 @@
 /**
- * v0.41.30.0 — `gbrain dream` runs against a checkout-less (postgres-shaped)
+ * v0.41.30.0 — `foresights dream` runs against a checkout-less (postgres-shaped)
  * brain (BUG 2).
  *
  * Pre-fix dream.ts:resolveBrainDir process.exit(1)'d with "No brain directory

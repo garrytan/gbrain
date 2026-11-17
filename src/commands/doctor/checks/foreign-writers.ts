@@ -1,8 +1,8 @@
 /**
  * PR B Part 4 (docs/designs/REFRESH_WRITE_BARRIER.md): `foreign_writers`. Every registered source checkout on this host,
  * managed worktrees included, deduplicated by git common dir: each commit created locally in the covered window that
- * gbrain's commit ledger (src/core/git/commit-ledger.ts) does not name was made by another writer, and every page file
- * left untracked or modified that gbrain is not about to commit is listed with its age. Read-only.
+ * foresights's commit ledger (src/core/git/commit-ledger.ts) does not name was made by another writer, and every page file
+ * left untracked or modified that foresights is not about to commit is listed with its age. Read-only.
  *
  * - Locally created commits come from the reflogs (logs/HEAD and logs/refs/heads/* in the common dir, and each
  *   worktrees/<name>/logs/HEAD). Porcelain creations (commit, amend, initial, cherry-pick, revert, rebase picks,
@@ -19,7 +19,7 @@
  *   checkout whose probe fails, roots past the scan cap, an unreadable ledger, a git status that failed or timed out
  *   (given up to 30 s within doctor's budget), doctor's budget itself. A scan that read no repository but skipped one is
  *   a warn, never not_applicable. A foreign commit whose message carries a `gbrain-*:` trailer is still foreign (a
- *   trailer is forgeable) but is named as possibly an older gbrain without the commit ledger.
+ *   trailer is forgeable) but is named as possibly an older foresights without the commit ledger.
  */
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -68,7 +68,7 @@ function insideGitCheckout(root: string): boolean {
     if (dirname(dir) === dir) return false;
   }
 }
-/** A commit message whose trailer paragraph (its last) carries a `gbrain-*:` trailer gbrain writes (repair, supersedes, adopted). */
+/** A commit message whose trailer paragraph (its last) carries a `gbrain-*:` trailer foresights writes (repair, supersedes, adopted). */
 const gbrainTrailer = (message: string) => /^gbrain-[a-z][a-z-]*:\s/m.test(message.trim().split(/\n[ \t]*\n/).at(-1) ?? '');
 const canonical = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
 
@@ -166,7 +166,7 @@ async function repositories(engine: BrainEngine): Promise<{ repos: Repo[]; skipp
   return { repos: [...repos.values()], skipped };
 }
 
-/** Paths gbrain is about to commit: queued or running git effects, absolute. */
+/** Paths foresights is about to commit: queued or running git effects, absolute. */
 async function pendingEffectPaths(engine: BrainEngine): Promise<Set<string>> {
   let hostId: string | null = null;
   try { hostId = existingHostIdFor(engine); } catch { /* embedded engine without an id */ }
@@ -364,30 +364,30 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
   const scope = `${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}${partial ? ' (partial)' : ''}`;
   if (foreign.length) {
     const newest = foreign[0]!;
-    const line = `Commit ${newest.sha.slice(0, 12)} (${label(newest)}, "${newest.subject}", ${newest.time}) in ${newest.checkout} was not made by gbrain; route that writer through gbrain git commit-push or a page write`;
+    const line = `Commit ${newest.sha.slice(0, 12)} (${label(newest)}, "${newest.subject}", ${newest.time}) in ${newest.checkout} was not made by foresights; route that writer through foresights git commit-push or a page write`;
     const trailed = foreign.filter(c => c.gbrain_trailer);
-    const older = trailed.length ? ` ${trailed.length} of them carry a gbrain- commit trailer (${trailed.slice(0, 3).map(c => c.sha.slice(0, 12)).join(', ')}): possibly an older gbrain without the commit ledger, co-installed on this host; upgrade every gbrain that writes to this checkout (a trailer alone does not prove gbrain made the commit).` : '';
+    const older = trailed.length ? ` ${trailed.length} of them carry a gbrain- commit trailer (${trailed.slice(0, 3).map(c => c.sha.slice(0, 12)).join(', ')}): possibly an older foresights without the commit ledger, co-installed on this host; upgrade every foresights that writes to this checkout (a trailer alone does not prove foresights made the commit).` : '';
     checks.push({ name: 'foreign_writers', status: 'fail', details,
       message: `${foreign.length} commit(s) in ${scope} were made by a writer outside gbrain: ${foreign.slice(0, 5).map(c => `${c.sha.slice(0, 12)} ${label(c)} by ${c.committer}`).join(', ')}${foreign.length > 5 ? ', ...' : ''}. ${line}.${older}`,
       fix: { ask_user: true, argv: ['git', '-C', newest.checkout, 'show', '--stat', newest.sha], consent: [], actor: 'user', requires_exclusive: false,
-        why: `${line}. A commit made around gbrain skips its writer lock and leaves files no import recorded; finding and rerouting the writer (a cron, a script, an agent running plain git, or an older gbrain without the commit ledger) is the user's call.`,
-        user_message: `A writer outside gbrain committed ${newest.sha.slice(0, 12)} ("${newest.subject}") in ${newest.checkout} at ${newest.time}. Which job or agent makes these commits, so it can be switched to gbrain git commit-push or a page write?`,
+        why: `${line}. A commit made around foresights skips its writer lock and leaves files no import recorded; finding and rerouting the writer (a cron, a script, an agent running plain git, or an older foresights without the commit ledger) is the user's call.`,
+        user_message: `A writer outside foresights committed ${newest.sha.slice(0, 12)} ("${newest.subject}") in ${newest.checkout} at ${newest.time}. Which job or agent makes these commits, so it can be switched to foresights git commit-push or a page write?`,
         verify: doctorVerify('foreign_writers') } });
     return checks;
   }
   if (unconfirmed.length || unknown.length || old.length || partial) {
     const parts = [
       partial ? `the scan did not finish (${reasons.join('; ')}), so part of the window is unchecked` : '',
-      unconfirmed.length ? `${unconfirmed.length} commit(s) match a gbrain intent whose commit line is missing (a crash between git commit and the ledger append): ${unconfirmed.slice(0, 5).map(c => c.sha.slice(0, 12)).join(', ')}; they are not written back to the ledger` : '',
+      unconfirmed.length ? `${unconfirmed.length} commit(s) match a foresights intent whose commit line is missing (a crash between git commit and the ledger append): ${unconfirmed.slice(0, 5).map(c => c.sha.slice(0, 12)).join(', ')}; they are not written back to the ledger` : '',
       unknown.length ? `${unknown.length} ref move(s) whose commits could not be read: ${unknown.slice(0, 5).map(u => `${u.ref} -> ${u.new.slice(0, 12)}`).join(', ')}` : '',
-      old.length ? `${old.length} page file(s) have been untracked or modified for more than ${FOREIGN_DIRTY_WARN_MS / 60_000} minutes with no gbrain commit pending: ${old.slice(0, 5).map(d => `${d.path} (${d.state}, ${ago(d.age_ms)})`).join(', ')}${old.length > 5 ? ', ...' : ''}` : '',
+      old.length ? `${old.length} page file(s) have been untracked or modified for more than ${FOREIGN_DIRTY_WARN_MS / 60_000} minutes with no foresights commit pending: ${old.slice(0, 5).map(d => `${d.path} (${d.state}, ${ago(d.age_ms)})`).join(', ')}${old.length > 5 ? ', ...' : ''}` : '',
     ].filter(Boolean);
     checks.push({ name: 'foreign_writers', status: 'warn', details,
       message: `No foreign commit in ${scope}, but: ${parts.join('; ')}. A file another writer left there becomes a drift hold or rides along with the next commit made without paths.` });
     return checks;
   }
   checks.push({ name: 'foreign_writers', status: 'ok', details,
-    message: `Every locally created commit in the covered window of ${scope} is in gbrain's commit ledger, and no page file waits uncommitted for more than ${FOREIGN_DIRTY_WARN_MS / 60_000} minutes.${reports.some(r => !r.ledger) ? ' A repository gbrain has not committed in yet has no ledger, so its window is empty.' : ''}` });
+    message: `Every locally created commit in the covered window of ${scope} is in foresights's commit ledger, and no page file waits uncommitted for more than ${FOREIGN_DIRTY_WARN_MS / 60_000} minutes.${reports.some(r => !r.ledger) ? ' A repository foresights has not committed in yet has no ledger, so its window is empty.' : ''}` });
   return checks;
 }
 

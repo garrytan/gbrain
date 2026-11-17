@@ -27,7 +27,7 @@ export function harnessHookCarrierChecks(hr: HarnessReceipt, launcher: string | 
     if (scan.state === 'unparseable') {
       checks.push({
         name: NAME, status: 'warn',
-        message: `the harness hook carrier ${path} is not valid JSON (${scan.error}) — Claude Code cannot run its hooks and gbrain cannot inspect them. Fix the JSON by hand, then re-run \`gbrain doctor --only ${NAME}\`.`,
+        message: `the harness hook carrier ${path} is not valid JSON (${scan.error}) — Claude Code cannot run its hooks and foresights cannot inspect them. Fix the JSON by hand, then re-run \`foresights doctor --only ${NAME}\`.`,
         details: { reason: 'harness_hook_carrier_unparseable', path },
         fix_unavailable_reason: 'no_safe_automatic_fix',
       });
@@ -48,7 +48,7 @@ export function harnessHookCarrierChecks(hr: HarnessReceipt, launcher: string | 
           argv: ['gbrain', 'bootstrap', 'harness', ...projects, ...(capture ? [] : ['--no-capture']), '--yes'],
           consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
           why: 'A re-run strips every entry this install owns (marked or not) and writes one per event; it also mints a fresh harness token.',
-          user_message: `gbrain's session hooks are wired twice in ${path}, so they fire twice. May I re-run \`gbrain bootstrap harness\` with the same options to clean that up? It rewrites the hook entries and rotates the harness token.`,
+          user_message: `foresights's session hooks are wired twice in ${path}, so they fire twice. May I re-run \`foresights bootstrap harness\` with the same options to clean that up? It rewrites the hook entries and rotates the harness token.`,
           verify: doctorVerify(NAME),
         },
       });
@@ -56,7 +56,7 @@ export function harnessHookCarrierChecks(hr: HarnessReceipt, launcher: string | 
     if (unowned.length > 0) {
       checks.push({
         name: NAME, status: 'warn',
-        message: `${unowned.map((e) => `hooks.${e}`).join(', ')} in ${path} looks like gbrain's harness hook but is not this install's exact command (edited, or another install's launcher); gbrain leaves it alone. If it is a leftover it fires next to this install's entry — ask the user whether to delete it by hand.`,
+        message: `${unowned.map((e) => `hooks.${e}`).join(', ')} in ${path} looks like foresights's harness hook but is not this install's exact command (edited, or another install's launcher); foresights leaves it alone. If it is a leftover it fires next to this install's entry — ask the user whether to delete it by hand.`,
         details: { code: 'harness_hook_unowned', path, events: unowned },
         fix_unavailable_reason: 'operator_judgement',
       });
@@ -64,7 +64,7 @@ export function harnessHookCarrierChecks(hr: HarnessReceipt, launcher: string | 
     if (duplicates.length === 0 && unowned.length === 0 && unmarked > 0) {
       checks.push({
         name: NAME, status: 'ok', severity: 'info',
-        message: `${unmarked} harness hook entr${unmarked === 1 ? 'y' : 'ies'} in ${path} carry no _gbrain marker (Claude Code drops unknown keys when it rewrites settings.json); gbrain recognizes them by their exact command, so removal and re-runs still find them. Nothing to do.`,
+        message: `${unmarked} harness hook entr${unmarked === 1 ? 'y' : 'ies'} in ${path} carry no _gbrain marker (Claude Code drops unknown keys when it rewrites settings.json); foresights recognizes them by their exact command, so removal and re-runs still find them. Nothing to do.`,
         details: { reason: 'harness_hook_marker_stripped', path, unmarked },
       });
     }

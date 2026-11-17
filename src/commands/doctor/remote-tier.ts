@@ -18,7 +18,7 @@ import { redactForTransport } from '../../core/agent-output.ts';
 
 export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<string, unknown>): Promise<DoctorReport> {
   if (p.tier !== undefined && p.tier !== 'ops') {
-    throw invalidParam(ctx, 'run_doctor', 'tier', 'run_doctor: tier must be "ops" (the standard and deep tiers run only on the brain host: gbrain doctor --tier deep).', { example: 'ops' });
+    throw invalidParam(ctx, 'run_doctor', 'tier', 'run_doctor: tier must be "ops" (the standard and deep tiers run only on the brain host: foresights doctor --tier deep).', { example: 'ops' });
   }
   const only = p.only === undefined ? null : Array.isArray(p.only) && p.only.every((n) => typeof n === 'string' && n.length > 0) ? p.only as string[] : undefined;
   if (only === undefined || (only && only.length === 0)) throw invalidParam(ctx, 'run_doctor', 'only', 'run_doctor: only must be a non-empty array of check names.', { example: ['persistence_capacity'] });

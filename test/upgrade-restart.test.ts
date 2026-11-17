@@ -1,5 +1,5 @@
 /**
- * GBRA-175: `gbrain upgrade` restarts every gbrain process on the host onto
+ * GBRA-175: `foresights upgrade` restarts every foresights process on the host onto
  * the installed build, or refuses with the exact step for each process it
  * cannot restart, then verifies one build runs and the warm CLI socket
  * accepts it. Fakes stand in for ps, the PID file, the worker registry, the
@@ -37,22 +37,22 @@ const proc = (pid: number, role: HostProcess['role'], version: string | null = O
 });
 
 describe('classifyGbrainCommand', () => {
-  test('long-running gbrain processes get a role; one-shot, transient and wrapper commands do not', () => {
+  test('long-running foresights processes get a role; one-shot, transient and wrapper commands do not', () => {
     expect(classifyGbrainCommand('/usr/bin/bun /home/alice-example/.bun/bin/gbrain serve --http --port 3131')).toBe('serve');
     expect(classifyGbrainCommand('bun /srv/gbrain/src/cli.ts serve')).toBe('mcp');
-    expect(classifyGbrainCommand('gbrain jobs work --queue default')).toBe('worker');
-    expect(classifyGbrainCommand('gbrain jobs supervisor start --detach')).toBe('supervisor');
-    expect(classifyGbrainCommand('gbrain jobs supervisor')).toBe('supervisor');
-    expect(classifyGbrainCommand('gbrain jobs supervisor stop')).toBeNull();
-    expect(classifyGbrainCommand('gbrain autopilot --repo /srv/brain-example')).toBe('autopilot');
-    expect(classifyGbrainCommand('gbrain autopilot start')).toBe('autopilot');
-    expect(classifyGbrainCommand('gbrain autopilot --install')).toBeNull();
-    expect(classifyGbrainCommand('gbrain autopilot status')).toBeNull();
-    expect(classifyGbrainCommand('gbrain jobs supervisor --max-rss 512')).toBe('supervisor');
-    expect(classifyGbrainCommand('gbrain sync --source source-a')).toBe('sync');
-    expect(classifyGbrainCommand('gbrain search alice')).toBeNull();
-    expect(classifyGbrainCommand('gbrain upgrade --restart-only')).toBeNull();
-    expect(classifyGbrainCommand('gbrain serve status')).toBeNull();
+    expect(classifyGbrainCommand('foresights jobs work --queue default')).toBe('worker');
+    expect(classifyGbrainCommand('foresights jobs supervisor start --detach')).toBe('supervisor');
+    expect(classifyGbrainCommand('foresights jobs supervisor')).toBe('supervisor');
+    expect(classifyGbrainCommand('foresights jobs supervisor stop')).toBeNull();
+    expect(classifyGbrainCommand('foresights autopilot --repo /srv/brain-example')).toBe('autopilot');
+    expect(classifyGbrainCommand('foresights autopilot start')).toBe('autopilot');
+    expect(classifyGbrainCommand('foresights autopilot --install')).toBeNull();
+    expect(classifyGbrainCommand('foresights autopilot status')).toBeNull();
+    expect(classifyGbrainCommand('foresights jobs supervisor --max-rss 512')).toBe('supervisor');
+    expect(classifyGbrainCommand('foresights sync --source source-a')).toBe('sync');
+    expect(classifyGbrainCommand('foresights search alice')).toBeNull();
+    expect(classifyGbrainCommand('foresights upgrade --restart-only')).toBeNull();
+    expect(classifyGbrainCommand('foresights serve status')).toBeNull();
     expect(classifyGbrainCommand('vim notes/gbrain-serve.md')).toBeNull();
     expect(classifyGbrainCommand('/usr/bin/tini -s -- /home/alice-example/.bun/bin/gbrain jobs work --queue default')).toBeNull();
   });
@@ -70,28 +70,28 @@ describe('gbrainEntry (#8723)', () => {
     expect(classifyGbrainCommand('bun run src/cli.ts jobs supervisor', { cwd: '/srv/other-tool', packageName: () => 'other-tool' })).toBeNull();
   });
 
-  test('an absolute entry is gbrain by its package root, not by a path substring', () => {
+  test('an absolute entry is foresights by its package root, not by a path substring', () => {
     expect(classifyGbrainCommand(`/usr/local/bin/bun ${CHECKOUT}/src/cli.ts jobs work --queue default`, { packageName })).toBe('worker');
     expect(classifyGbrainCommand('bun /srv/gbrain-notes/src/cli.ts serve', { packageName })).toBeNull();
     expect(classifyGbrainCommand('bun /srv/gbrain/src/cli.ts serve', { packageName })).toBe('mcp');
   });
 
-  test('interpreter flags that take a value are skipped with their value, as gbrain\'s own sanitized re-run passes them', () => {
+  test('interpreter flags that take a value are skipped with their value, as foresights\'s own sanitized re-run passes them', () => {
     expect(classifyGbrainCommand('bun --preload ./p.ts /home/alice-example/.bun/bin/gbrain serve --http')).toBe('serve');
     expect(classifyGbrainCommand(`bun --cwd /x ${CHECKOUT}/src/cli.ts serve`, { packageName })).toBe('mcp');
     expect(classifyGbrainCommand('node --require /x/hook.js /home/alice-example/.bun/bin/gbrain jobs work')).toBe('worker');
     expect(classifyGbrainCommand('bun run --env-file .env src/cli.ts jobs supervisor', { cwd: CHECKOUT, packageName })).toBe('supervisor');
   });
 
-  test('with no working directory a relative entry still matches a gbrain path (macOS)', () => {
+  test('with no working directory a relative entry still matches a foresights path (macOS)', () => {
     expect(classifyGbrainCommand('bun ../gbrain/src/cli.ts serve', { cwd: null })).toBe('mcp');
     expect(gbrainEntry('bun ../gbrain/src/cli.ts serve', { cwd: null })?.entry).toBe('../gbrain/src/cli.ts');
   });
 
-  test('bunx and bun run <bin> are wrappers; the child they start is the gbrain process', () => {
-    expect(gbrainEntry('/usr/local/bin/bun x gbrain jobs supervisor --queue q')).toBeNull();
+  test('bunx and bun run <bin> are wrappers; the child they start is the foresights process', () => {
+    expect(gbrainEntry('/usr/local/bin/bun x foresights jobs supervisor --queue q')).toBeNull();
     expect(gbrainEntry('bunx gbrain jobs supervisor')).toBeNull();
-    expect(gbrainEntry('/usr/local/bin/bun run gbrain jobs work')).toBeNull();
+    expect(gbrainEntry('/usr/local/bin/bun run foresights jobs work')).toBeNull();
     expect(classifyGbrainCommand('/usr/local/bin/bun /home/alice-example/proj/node_modules/.bin/gbrain jobs supervisor --queue q')).toBe('supervisor');
     expect(classifyGbrainCommand('/home/alice-example/.bun/bin/gbrain jobs supervisor start --detach')).toBe('supervisor');
   });
@@ -121,14 +121,14 @@ describe('gbrainEntry (#8723)', () => {
         { pid: 30, ppid: 1, command: `sh -c DATABASE_URL=${databaseUrl} bun run src/cli.ts jobs supervisor`, started_ms: 600, gbrain_home: HOME, cwd: null },
         { pid: 31, ppid: 30, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
         { pid: 21, ppid: 20, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
-        { pid: 40, ppid: 1, command: `timeout 3600 env ANTHROPIC_API_KEY=${apiKey} gbrain jobs work`, started_ms: 600, gbrain_home: HOME, cwd: null },
-        { pid: 41, ppid: 40, command: 'gbrain jobs work', started_ms: 700, gbrain_home: HOME, cwd: null },
+        { pid: 40, ppid: 1, command: `timeout 3600 env ANTHROPIC_API_KEY=${apiKey} foresights jobs work`, started_ms: 600, gbrain_home: HOME, cwd: null },
+        { pid: 41, ppid: 40, command: 'foresights jobs work', started_ms: 700, gbrain_home: HOME, cwd: null },
       ],
     });
     expect(processes.map(p => [p.pid, p.role])).toEqual([[21, 'worker'], [31, 'worker'], [41, 'worker']]);
     const plan = planRestart(processes, ctx());
     const [manual, shell, wrapper] = plan.manual;
-    expect(manual!.instruction).toContain('its parent, pid 20 (`bun`), is not a process this restart recognises as gbrain');
+    expect(manual!.instruction).toContain('its parent, pid 20 (`bun`), is not a process this restart recognises as foresights');
     expect(shell!.instruction).toContain('its parent, pid 30 (`sh`), is not a process');
     expect(wrapper!.instruction).toContain('its parent, pid 40 (`timeout`), is not a process');
     const printed = JSON.stringify({ processes, plan });
@@ -170,15 +170,15 @@ describe('collectHostProcesses', () => {
     heartbeats: async () => [], supervisor: () => null, workers: () => [], processTable: () => [], home: HOME, exclude: [], ...over,
   });
 
-  test('merges ps, heartbeats, the PID file and the worker registry by pid; the parent is the nearest gbrain process (through tini)', async () => {
+  test('merges ps, heartbeats, the PID file and the worker registry by pid; the parent is the nearest foresights process (through tini)', async () => {
     const processes = await collectHostProcesses(sources({
       processTable: () => [
-        { pid: 10, ppid: SERVE_PID, command: 'gbrain serve --http', started_ms: 500, gbrain_home: HOME },
+        { pid: 10, ppid: SERVE_PID, command: 'foresights serve --http', started_ms: 500, gbrain_home: HOME },
         { pid: SERVE_PID, ppid: 1, command: '/bin/sh /home/alice-example/.gbrain/serve/gbrain-serve.sh', started_ms: 400, gbrain_home: HOME },
-        { pid: 20, ppid: 1, command: 'gbrain jobs supervisor start --queue ingest', started_ms: 600, gbrain_home: HOME },
+        { pid: 20, ppid: 1, command: 'foresights jobs supervisor start --queue ingest', started_ms: 600, gbrain_home: HOME },
         { pid: 22, ppid: 20, command: '/usr/bin/tini -s -- /usr/local/bin/gbrain jobs work --queue ingest', started_ms: 650, gbrain_home: HOME },
         { pid: 21, ppid: 22, command: '/usr/local/bin/gbrain jobs work --queue ingest', started_ms: 700, gbrain_home: HOME },
-        { pid: 30, ppid: 99, command: 'gbrain serve', started_ms: 800, gbrain_home: undefined },
+        { pid: 30, ppid: 99, command: 'foresights serve', started_ms: 800, gbrain_home: undefined },
       ],
       heartbeats: async () => [{ pid: 10, kind: 'serve', version: OLD }, { pid: 40, kind: 'autopilot', version: NEW }, { pid: 50, kind: 'cli', version: NEW }],
       supervisor: () => ({ pid: 20, version: OLD }),
@@ -199,7 +199,7 @@ describe('collectHostProcesses', () => {
     expect(classifyGbrainCommand('bun --define X=1 /opt/gbrain/src/cli.ts serve')).toBe('mcp');
     expect(classifyGbrainCommand('node --stack-size 4000 /home/alice-example/.bun/bin/gbrain jobs work')).toBe('worker');
     expect(gbrainEntry('bun --dns-result-order ipv4first /workspace/acme-example/src/cli.ts serve', { packageName: () => 'acme-example' })).toBeNull();
-    expect(gbrainEntry('bun run gbrain serve')).toBeNull();
+    expect(gbrainEntry('bun run foresights serve')).toBeNull();
     const processes = await collectHostProcesses(sources({
       processTable: () => [{ pid: 61, ppid: 1, command: serve, started_ms: 500, gbrain_home: HOME }],
       heartbeats: async () => [{ pid: 61, kind: 'serve', version: OLD }],
@@ -207,7 +207,7 @@ describe('collectHostProcesses', () => {
     expect(processes).toEqual([{ pid: 61, ppid: null, role: 'serve', version: OLD, started_ms: 500, ancestors: [], args: ['serve', '--http'], install_version: null, install_root: null }]);
   });
 
-  test('a record whose pid the process table does not list as gbrain is stale and dropped (a dead or reused pid is never signalled)', async () => {
+  test('a record whose pid the process table does not list as foresights is stale and dropped (a dead or reused pid is never signalled)', async () => {
     const processes = await collectHostProcesses(sources({
       processTable: () => [{ pid: 77, ppid: 1, command: 'sleep 600', started_ms: 500, gbrain_home: HOME }],
       heartbeats: async () => [{ pid: 77, kind: 'mcp', version: OLD }, { pid: 78, kind: 'serve', version: OLD }],
@@ -227,9 +227,9 @@ describe('collectHostProcesses', () => {
   test('skips another brain home and the upgrade process itself', async () => {
     const processes = await collectHostProcesses(sources({
       processTable: () => [
-        { pid: 10, ppid: 1, command: 'gbrain serve --http', started_ms: 500, gbrain_home: '/home/bob-example' },
-        { pid: 11, ppid: 1, command: 'gbrain serve --http', started_ms: 500, gbrain_home: `${HOME}/` },
-        { pid: 12, ppid: 1, command: 'gbrain jobs work', started_ms: 500, gbrain_home: HOME },
+        { pid: 10, ppid: 1, command: 'foresights serve --http', started_ms: 500, gbrain_home: '/home/bob-example' },
+        { pid: 11, ppid: 1, command: 'foresights serve --http', started_ms: 500, gbrain_home: `${HOME}/` },
+        { pid: 12, ppid: 1, command: 'foresights jobs work', started_ms: 500, gbrain_home: HOME },
       ],
       exclude: [12],
     }));
@@ -285,7 +285,7 @@ describe('planRestart', () => {
       ['serve', ['kill', '10']], ['worker', ['kill', '21']], ['autopilot', ['gbrain', 'autopilot', '--install']], ['sync', ['gbrain', 'sync', 'status', '--json']], ['supervisor', ['kill', '20']],
     ]);
     expect(plan.manual[0]!.instruction).toContain('was not started by the installed serve service');
-    expect(plan.manual[1]!.instruction).toContain('gbrain jobs supervisor start --detach');
+    expect(plan.manual[1]!.instruction).toContain('foresights jobs supervisor start --detach');
     expect(plan.manual[3]!.instruction).toContain('let it finish');
     expect(plan.manual[4]!.instruction).toContain('not restarted with defaults');
   });
@@ -463,15 +463,15 @@ describe('another install on the host (GBRA-175 production finding: serve ran fr
     const ok = run(null);
     expect((await runRestartSteps(plan, ok.exec))[0]).toMatchObject({ ok: true });
     expect(ok.calls.slice(0, 3)).toEqual([
-      `git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v${NEW}`,
+      `git ls-remote --exit-code --tags https://github.com/aimonk2025/gbrain refs/tags/v${NEW}`,
       'BUN_INSTALL=/opt/gbrain-example bun remove -g gbrain',
-      `BUN_INSTALL=/opt/gbrain-example bun add -g github:garrytan/gbrain#v${NEW}`,
+      `BUN_INSTALL=/opt/gbrain-example bun add -g github:aimonk2025/gbrain#v${NEW}`,
     ]);
     const bad = run(`#v${NEW}`);
     const [result] = await runRestartSteps(plan, bad.exec);
     expect(result).toMatchObject({ ok: false });
     expect(result!.detail).toContain(`restored v${OLD}`);
-    expect(bad.calls[3]).toBe(`BUN_INSTALL=/opt/gbrain-example bun add -g github:garrytan/gbrain#v${OLD}`);
+    expect(bad.calls[3]).toBe(`BUN_INSTALL=/opt/gbrain-example bun add -g github:aimonk2025/gbrain#v${OLD}`);
     const untagged = run('ls-remote');
     expect((await runRestartSteps(plan, untagged.exec))[0]!.detail).toContain('has no release tag');
     expect(untagged.calls.some(c => c.includes('bun remove'))).toBe(false);
@@ -483,10 +483,10 @@ describe('another install on the host (GBRA-175 production finding: serve ran fr
     expect(mismatchedBuilds(plan, [back])).toEqual([back]);
     const [problem] = restartProblems(plan, [back], 4_000, { before: { state: 'absent' }, after: { state: 'absent' } });
     expect(problem).toContain(`serve pid 110 (v${OLD}) runs a build other than v${NEW}; it runs from ${COPY}, which holds v${OLD}`);
-    expect(problem).toContain(`BUN_INSTALL=/opt/gbrain-example bun remove -g gbrain && BUN_INSTALL=/opt/gbrain-example bun add -g github:garrytan/gbrain#v${NEW}`);
+    expect(problem).toContain(`BUN_INSTALL=/opt/gbrain-example bun remove -g gbrain && BUN_INSTALL=/opt/gbrain-example bun add -g github:aimonk2025/gbrain#v${NEW}`);
     const fix = mismatchFix(back, NEW);
     expect(fix).toMatchObject({ ask_user: true, actor: 'user', argv: ['env', 'BUN_INSTALL=/opt/gbrain-example', 'bun', 'remove', '-g', 'gbrain'] });
-    expect(fix.then?.argv).toEqual(['env', 'BUN_INSTALL=/opt/gbrain-example', 'bun', 'add', '-g', `github:garrytan/gbrain#v${NEW}`]);
+    expect(fix.then?.argv).toEqual(['env', 'BUN_INSTALL=/opt/gbrain-example', 'bun', 'add', '-g', `github:aimonk2025/gbrain#v${NEW}`]);
     expect(fix.then?.then?.argv).toEqual(['gbrain', 'upgrade', '--restart-only']);
     expect(fix.user_message).toContain(COPY);
     const reportsNone = fromCopy(111, 'serve', COPY, OLD, { version: null, started_ms: 5_000 });

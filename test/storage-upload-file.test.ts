@@ -6,7 +6,7 @@
  *     aborts the multipart upload when a part fails;
  *   - Supabase TUS reads each 6 MiB chunk from disk;
  *   - local copies the file.
- * The callers (file_upload, gbrain files upload | upload-raw | sync | mirror)
+ * The callers (file_upload, foresights files upload | upload-raw | sync | mirror)
  * hash and upload from the path, never via a whole-file read.
  *
  * The memory bound is asserted without allocating gigabytes: no request body
@@ -327,7 +327,7 @@ describe('upload callers hash and upload from disk (#7427)', () => {
     rmSync(storageDir, { recursive: true, force: true });
   });
 
-  test('gbrain files upload, upload-raw, sync and mirror never read the whole original', async () => {
+  test('foresights files upload, upload-raw, sync and mirror never read the whole original', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gb-7427-home-'));
     const storageDir = mkdtempSync(join(tmpdir(), 'gb-7427-cli-'));
     mkdirSync(join(home, '.gbrain'), { recursive: true });

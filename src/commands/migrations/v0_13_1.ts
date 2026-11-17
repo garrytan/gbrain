@@ -10,7 +10,7 @@
  *
  * Orchestrators apply by ledger alone: a version with no row in
  * ~/.gbrain/migrations/completed.jsonl is pending. A brain whose ledger never
- * recorded v0.13.1 (created by `gbrain init` before init stamped
+ * recorded v0.13.1 (created by `foresights init` before init stamped
  * fresh-install migrations, or reached from a new GBRAIN_HOME) therefore ran
  * the grandfather on upgrade against pages written long after v0.13.1, and
  * the upgrade rewrote the user's frontmatter.

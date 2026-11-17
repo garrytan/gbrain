@@ -1,5 +1,5 @@
 /**
- * #4524 — `find_orphans` / `gbrain orphans` counted pages with NO INBOUND
+ * #4524 — `find_orphans` / `foresights orphans` counted pages with NO INBOUND
  * link, while `get_health.orphan_pages` counted ISLANDED pages (no inbound
  * AND no outbound, endpoint-liveness both ways). Mid-curation the two
  * numbers diverged wildly (145 vs 20 on a real brain), so doctor-driven

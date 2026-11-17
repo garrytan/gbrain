@@ -52,12 +52,12 @@ export function matchesWatchPattern(path: string, patterns: ReadonlyArray<string
   return false;
 }
 
-/** Files that mark a gbrain source checkout (vs an installed package or compiled binary). */
+/** Files that mark a foresights source checkout (vs an installed package or compiled binary). */
 const CHECKOUT_MARKERS = ['src/cli.ts', 'skills/RESOLVER.md', '.git'] as const;
 
 /**
- * Locate the gbrain SOURCE CHECKOUT this module was loaded from, or null
- * when gbrain is running as an installed package (no `.git`) or a compiled
+ * Locate the foresights SOURCE CHECKOUT this module was loaded from, or null
+ * when foresights is running as an installed package (no `.git`) or a compiled
  * binary (virtual `/$bunfs/` URL). The drift check only means something
  * against a checkout: an installed CLI has no git diff to inspect.
  */

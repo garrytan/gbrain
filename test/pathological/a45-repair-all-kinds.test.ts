@@ -1,5 +1,5 @@
 /**
- * GBRA-130 A-45: \`gbrain repair\` (the no-kind preview) and \`gbrain repair --all
+ * GBRA-130 A-45: \`foresights repair\` (the no-kind preview) and \`foresights repair --all
  * [--apply]\` run every automatic kind in one loop (src/commands/repair.ts
  * runRepairKinds).
  *
@@ -82,7 +82,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const results = await expectUnitNotAborted(() => runAll(stubs, apply));
         expect(results.map(r => r.kind)).toEqual(KINDS);
         const failed = results[1]!;
-        expectItemFailure({ key: failed.kind, code: failed.stopped?.reason, fix: failed.stopped?.fix }, { key: 'visibility', code: 'error', fix: /"gbrain","repair","visibility"/ });
+        expectItemFailure({ key: failed.kind, code: failed.stopped?.reason, fix: failed.stopped?.fix }, { key: 'visibility', code: 'error', fix: /"(?:foresights|gbrain)","repair","visibility"/ });
         expect(failed.stopped?.message).toContain('visibility plan exploded');
         expect(JSON.stringify(results)).not.toContain('secret');
         expect(results[2]!.affected).toBe(2);

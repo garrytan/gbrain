@@ -28,7 +28,7 @@ import { RECORD_MAX_BYTES } from '../../src/core/stable-channel.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
-const REPO = 'garrytan/gbrain';
+const REPO = 'aimonk2025/gbrain';
 const RUN_URL = `https://github.com/${REPO}/actions/runs/123456`;
 const SOAK = '.github/workflows/soak.yml';
 const sha = (c: string) => c.repeat(40);
@@ -200,8 +200,8 @@ describe('soak run URL parsing', () => {
   });
 
   test('refuses a run of another repository and anything that is not a run URL', () => {
-    refused(() => parseRunUrl('https://github.com/acme-example/gbrain/actions/runs/123456', REPO), /run of acme-example\/gbrain, not garrytan\/gbrain/);
-    for (const junk of ['', 'not a url', 'http://github.com/garrytan/gbrain/actions/runs/1', `${RUN_URL}/job/9`, 'https://github.com/garrytan/gbrain/actions/runs/abc', `${RUN_URL}?x=1`, 'https://example.com/garrytan/gbrain/actions/runs/1']) {
+    refused(() => parseRunUrl('https://github.com/acme-example/gbrain/actions/runs/123456', REPO), /run of acme-example\/(?:foresights|gbrain), not garrytan\/(?:foresights|gbrain)/);
+    for (const junk of ['', 'not a url', 'http://github.com/aimonk2025/gbrain/actions/runs/1', `${RUN_URL}/job/9`, 'https://github.com/aimonk2025/gbrain/actions/runs/abc', `${RUN_URL}?x=1`, 'https://example.com/aimonk2025/gbrain/actions/runs/1']) {
       refused(() => parseRunUrl(junk, REPO), /is not a GitHub Actions run URL/);
     }
   });
@@ -260,7 +260,7 @@ describe('tag message and summary', () => {
 
   test('renders the exact key: value body', () => {
     expect(renderTagMessage(fields)).toBe([
-      'gbrain stable channel: v0.60.361.0',
+      'foresights stable channel: v0.60.361.0',
       '',
       'version: 0.60.361.0',
       `commit: ${sha('b')}`,
@@ -561,7 +561,7 @@ describe('promote against real git', () => {
       expect(git(work, 'cat-file', '-t', 'refs/tags/stable')).toBe('tag');
       expect(git(work, 'cat-file', '-t', 'refs/tags/stable-v1.0.1')).toBe('tag');
       const body = git(work, 'for-each-ref', '--format=%(contents)', 'refs/tags/stable');
-      expect(body).toContain('gbrain stable channel: v1.0.1\n\nversion: 1.0.1\n');
+      expect(body).toContain('foresights stable channel: v1.0.1\n\nversion: 1.0.1\n');
       expect(body).toContain('previous: 1.0.0\nrollback: false\nreason: -');
       const remote = git(work, 'ls-remote', '--tags', origin);
       expect(remote).toContain('refs/tags/stable-v1.0.0');
@@ -780,7 +780,7 @@ describe('promote: the upgrade matrix run (stability plan 3a)', () => {
       [greenRun, { ...greenReceipt(), profile: 'explicit' }, /ran the explicit profile/],
       [greenRun, { ...greenReceipt(), from: [{ tag: 'v0.60.360.0', roles: ['N-1'] }], skipped: [] }, /predates the stable-window from-versions/],
       [greenRun, null, /has no upgrade-matrix-receipt artifact/],
-      [greenRun, greenReceipt(), /matrix_run_url names a run of acme-example\/gbrain/, 'https://github.com/acme-example/gbrain/actions/runs/777'],
+      [greenRun, greenReceipt(), /matrix_run_url names a run of acme-example\/(?:foresights|gbrain)/, 'https://github.com/acme-example/gbrain/actions/runs/777'],
       [greenRun, greenReceipt(), /matrix_run_url names attempt 2/, `${MATRIX_URL}/attempts/2`],
     ];
     for (const [run, receipt, pattern, url] of cases) {
@@ -898,9 +898,9 @@ describe('GitHub Latest release', () => {
   });
 
   test('rolledUpNotes keeps an entry\'s own ## sub-headings, like its upgrade steps', () => {
-    const changelog = ['## [0.60.361.0] - 2026-10-21', '', 'Lead.', '', '## To take advantage of v0.60.361.0', '', 'Run gbrain upgrade.', '', '### Itemized changes', '- one', '', '## [0.60.360.0] - 2026-10-20', 'old', ''].join('\n');
+    const changelog = ['## [0.60.361.0] - 2026-10-21', '', 'Lead.', '', '## To take advantage of v0.60.361.0', '', 'Run foresights upgrade.', '', '### Itemized changes', '- one', '', '## [0.60.360.0] - 2026-10-20', 'old', ''].join('\n');
     const notes = rolledUpNotes(changelog, '0.60.360.0', '0.60.361.0', REPO);
-    expect(notes).toContain('## To take advantage of v0.60.361.0\n\nRun gbrain upgrade.');
+    expect(notes).toContain('## To take advantage of v0.60.361.0\n\nRun foresights upgrade.');
     expect(notes).toContain('### Itemized changes\n- one');
     expect(notes).not.toContain('old');
   });

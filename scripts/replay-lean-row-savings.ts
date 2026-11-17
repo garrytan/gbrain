@@ -9,7 +9,7 @@
  * Input: Cat 40 transcripts (gbrain-evals `--transcripts`): one JSON object
  * per attempt with `tools: [{ name, args, result }]`, where `result` is the
  * tool's text blocks joined by newlines (content[0] JSON first, then the
- * `[gbrain search]` / `[gbrain dates]` trailers and notices). The runner
+ * `[foresights search]` / `[foresights dates]` trailers and notices). The runner
  * stores at most 40,000 characters of each result; `--results` reads each
  * call's real size from the cell results (`sessions[].run.tool_calls[].chars`),
  * so a clipped call's saving is the saving measured on its stored prefix,
@@ -133,8 +133,8 @@ function main(): void {
   process.stdout.write(`gbrain-arm tool-result characters: ${gbrainToolChars}${resultsPath ? ` (real sizes from ${resultsPath}; ${joinFailures} attempts not joined)` : ' (stored sizes)'}\n`);
   for (const [op, r] of Object.entries(report.ops)) {
     process.stdout.write(`${op}: ${r.calls} calls, ${r.clipped} clipped in the transcript (estimated), ${r.mismatches} projection mismatches; ${r.before} chars\n`
-      + `  starter (no fetch): ${r.starter} chars, saves ${r.before - r.starter} = ${r.starter_saved_pct}% of ${op} (${r.starter_saved_pct_exact_calls}% on unclipped calls), ${r.starter_saved_pct_of_gbrain_tool_chars}% of gbrain tool results\n`
-      + `  full (fetch callable): ${r.full} chars, saves ${r.before - r.full} = ${r.full_saved_pct}% of ${op} (${r.full_saved_pct_exact_calls}% on unclipped calls), ${r.full_saved_pct_of_gbrain_tool_chars}% of gbrain tool results\n`);
+      + `  starter (no fetch): ${r.starter} chars, saves ${r.before - r.starter} = ${r.starter_saved_pct}% of ${op} (${r.starter_saved_pct_exact_calls}% on unclipped calls), ${r.starter_saved_pct_of_gbrain_tool_chars}% of foresights tool results\n`
+      + `  full (fetch callable): ${r.full} chars, saves ${r.before - r.full} = ${r.full_saved_pct}% of ${op} (${r.full_saved_pct_exact_calls}% on unclipped calls), ${r.full_saved_pct_of_gbrain_tool_chars}% of foresights tool results\n`);
   }
 }
 

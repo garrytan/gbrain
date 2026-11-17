@@ -1,4 +1,4 @@
-/** `gbrain jobs work` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs work` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, parseFlag, parseJobIsolationFlag, parseMaxRssFlag, parseNiceFlag, resolveWorkerConcurrency, type JobsCommandContext } from './shared.ts';
 import { applyNiceness, formatNice } from '../../core/minions/niceness.ts';
 import { resolveChildCliInvocation } from '../../core/minions/job-isolation.ts';
@@ -32,13 +32,13 @@ export async function maybeRunWorkerStartupRecovery(
     ]);
     if (recovered.cancelled_jobs > 0) {
       console.error(
-        `[gbrain jobs] private-queue startup recovery: cancelled ${recovered.cancelled_jobs} ` +
+        `[foresights jobs] private-queue startup recovery: cancelled ${recovered.cancelled_jobs} ` +
         `job(s) across ${recovered.cancelled_queues} orphaned queue(s)`,
       );
     }
   } catch (e) {
     if (isLocalConfigurationError(e)) throw e;
-    console.error(`[gbrain jobs] private-queue startup recovery failed: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`[foresights jobs] private-queue startup recovery failed: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     if (deadline) clearTimeout(deadline);
   }
@@ -57,7 +57,7 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
   if (engine.kind === 'pglite') {
     await drainPgliteQueue(engine, queue, queueName, registerBuiltinHandlers);
     // Wakeshift (plan D8): deliver the wakes this drain's jobs owe before the process exits; a no-op while off.
-    await drainWakesUntilIdle(engine).catch(e => console.error(`[gbrain jobs] wake drain failed: ${e instanceof Error ? e.message : String(e)}`));
+    await drainWakesUntilIdle(engine).catch(e => console.error(`[foresights jobs] wake drain failed: ${e instanceof Error ? e.message : String(e)}`));
     return;
   }
   const concurrency = resolveWorkerConcurrency(args);
@@ -104,7 +104,7 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     niceResult = applyNiceness(niceVal);
     if (!niceResult.applied) {
       console.error(
-        `[gbrain jobs] could not set niceness to ${niceVal}: ${niceResult.error ?? 'unknown'}. ` +
+        `[foresights jobs] could not set niceness to ${niceVal}: ${niceResult.error ?? 'unknown'}. ` +
         `Negative nice needs privilege; running at niceness ${niceResult.effective ?? 'unchanged'}.`,
       );
     }
@@ -145,7 +145,7 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     childTiniPath = detectTini();
     if (maxRssMb > 0) {
       console.error(
-        `[gbrain jobs] note: with process isolation on, --max-rss ${maxRssMb} MB applies to the worker and to each ` +
+        `[foresights jobs] note: with process isolation on, --max-rss ${maxRssMb} MB applies to the worker and to each ` +
         'job child\'s process tree separately; a child past it is stopped and its attempt fails. ' +
         'Size host memory for (concurrency + 1) x the cap.',
       );
@@ -172,7 +172,7 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
       reportWorkerConfiguration(error);
       process.exit(WORKER_EXIT_CONFIGURATION);
     }
-    console.error('[gbrain jobs] Worker schema readiness failed; no jobs were admitted. Inspect doctor before retrying.');
+    console.error('[foresights jobs] Worker schema readiness failed; no jobs were admitted. Inspect doctor before retrying.');
     process.exit(1);
   }
 
@@ -186,7 +186,7 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     if (cm?.isDualPoolActive && !cm.isDualPoolActive()) {
       const killSwitched = cm.describeMode?.().kill_switch_active === true;
       console.error(
-        `[gbrain jobs] single-pool mode: lock renewal, health probes and handler workload share ` +
+        `[foresights jobs] single-pool mode: lock renewal, health probes and handler workload share ` +
         `one connection pool${killSwitched ? ' (direct-lane kill switch is active)' : ''}. ` +
         `Under heavy handler load this pool can starve the lock heartbeat. For Supabase brains, ` +
         `ensure the direct (5432) host is reachable or set GBRAIN_DIRECT_DATABASE_URL.`,
@@ -296,7 +296,7 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     // "engine ownership stays with the creator" invariant that broke
     // tests in earlier waves of this branch.
     try { await engine.disconnect(); }
-    catch (e) { console.error('[gbrain jobs work] engine disconnect failed during shutdown:', e); }
+    catch (e) { console.error('[foresights jobs work] engine disconnect failed during shutdown:', e); }
 
     if (worker.configurationError) {
       process.exit(WORKER_EXIT_CONFIGURATION);
@@ -333,14 +333,14 @@ export function startWorkerPersistenceConsumer(engine: BrainEngine, log: (line: 
     startPersistenceConsumer(engine, loadConfig() ?? { engine: engine.kind });
     return true;
   } catch (error) {
-    log(`[gbrain jobs] persistence consumer did not start: ${error instanceof Error ? error.message : String(error)}; queued effects wait for the next resident owner`);
+    log(`[foresights jobs] persistence consumer did not start: ${error instanceof Error ? error.message : String(error)}; queued effects wait for the next resident owner`);
     return false;
   }
 }
 
 /**
  * PGLite has no background worker (the brain is single-writer, so a daemon
- * would lock every other command out). There `gbrain jobs work` drains (agent-
+ * would lock every other command out). There `foresights jobs work` drains (agent-
  * first operator wave E5): it runs the queue's waiting jobs in the foreground,
  * registered as a live worker, and exits once none it can run are waiting or
  * active. Jobs scheduled for a later retry stay queued and are named.
@@ -375,7 +375,7 @@ export async function drainPgliteQueue(
     unregister();
   }
   const delayed = await count(['delayed']);
-  console.log(`Queue '${queueName}' drained.${delayed > 0 ? ` ${delayed} job(s) are scheduled for a later retry; run \`gbrain jobs work${queueName === 'default' ? '' : ` --queue ${queueName}`}\` again after their backoff.` : ''}`);
+  console.log(`Queue '${queueName}' drained.${delayed > 0 ? ` ${delayed} job(s) are scheduled for a later retry; run \`foresights jobs work${queueName === 'default' ? '' : ` --queue ${queueName}`}\` again after their backoff.` : ''}`);
   return { delayed };
 }
 

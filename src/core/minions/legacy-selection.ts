@@ -1,7 +1,7 @@
 /**
  * Preview-bound bulk selection of legacy job rows (#5157 T3, DX-T2): the
  * `--select` grammar, the active-job precondition and the preview summary
- * shared by `gbrain jobs authorize-legacy --select` and `gbrain jobs cancel
+ * shared by `foresights jobs authorize-legacy --select` and `foresights jobs cancel
  * --select`. Both are CLI-only: neither is an operation, so MCP and
  * remediation can never run them.
  *
@@ -40,7 +40,7 @@ export function formatSelection(selection: LegacyJobSelection): string {
 
 /** The filled preview command, or the apply command when `hash` is given. */
 export function selectCommand(command: LegacySelectCommand, selection: LegacyJobSelection, hash?: string): string {
-  const preview = `gbrain jobs ${command} --select "${formatSelection(selection)}"`;
+  const preview = `foresights jobs ${command} --select "${formatSelection(selection)}"`;
   return hash ? `${preview} --expect ${hash} --yes` : preview;
 }
 
@@ -52,7 +52,7 @@ export function selectedStatuses(command: LegacySelectCommand, selection: Legacy
 export function parseLegacyJobSelection(raw: string | undefined, command: LegacySelectCommand): LegacyJobSelection {
   const invalid = (what: string) => catalogueError('legacy_job_selection_invalid',
     `${what}; --select takes the keys status and name, with statuses ${SELECT_STATUSES[command].join('|')}.`,
-    `gbrain jobs ${command} --select "${SELECT_EXAMPLE[command]}"`);
+    `foresights jobs ${command} --select "${SELECT_EXAMPLE[command]}"`);
   if (!raw?.trim()) throw invalid('--select needs a filter');
   const selection: LegacyJobSelection = { statuses: [], names: [] };
   const seen = new Set<string>();
@@ -76,7 +76,7 @@ export function parseLegacyJobSelection(raw: string | undefined, command: Legacy
 }
 
 /** Shared stop instruction for every legacy-job refusal (ENG-O4: active jobs are cancelled, never finished). */
-export const STOP_PRODUCERS = 'Stop producers (gbrain serve, gbrain autopilot) and workers';
+export const STOP_PRODUCERS = 'Stop producers (foresights serve, foresights autopilot) and workers';
 
 /** Every live status a legacy review can authorize: one preview then covers what a required cancellation leaves behind. */
 export const REVIEWABLE_LIVE_STATUSES = ['waiting', 'delayed', 'waiting-children', 'paused'] as const;
@@ -92,7 +92,7 @@ export const LIVE_LEGACY_PREVIEW = selectCommand('authorize-legacy', { statuses:
  * hash, restart.
  */
 export function legacyRecoveryHint(activeIds: readonly number[] = []): string {
-  const cancels = activeIds.length ? activeIds.slice(0, 10).map(id => `gbrain jobs cancel ${id}`).join('; ') : 'gbrain jobs cancel <id>';
+  const cancels = activeIds.length ? activeIds.slice(0, 10).map(id => `foresights jobs cancel ${id}`).join('; ') : 'foresights jobs cancel <id>';
   return `${STOP_PRODUCERS}, cancel active jobs (${cancels}), preview with ${LIVE_LEGACY_PREVIEW}, apply with the printed --expect <hash> --yes, then restart them.`;
 }
 
@@ -103,8 +103,8 @@ export async function assertNoActiveJobs(engine: BrainEngine, previewCommand: st
   const [total] = active.length > 10
     ? await engine.executeRaw<{ count: string }>("SELECT count(*)::text AS count FROM minion_jobs WHERE status = 'active'")
     : [{ count: String(active.length) }];
-  const cancels = active.slice(0, 10).map(row => `gbrain jobs cancel ${row.id}`).join('; ');
-  const more = active.length > 10 ? `; list the rest with gbrain jobs list --status active` : '';
+  const cancels = active.slice(0, 10).map(row => `foresights jobs cancel ${row.id}`).join('; ');
+  const more = active.length > 10 ? `; list the rest with foresights jobs list --status active` : '';
   throw catalogueError('legacy_jobs_active',
     `${total!.count} job(s) are active, so legacy jobs cannot be reviewed until producers and workers are stopped and active jobs are cancelled.`,
     `${STOP_PRODUCERS}, cancel the active jobs (${cancels}${more}), then re-run ${previewCommand}.`);

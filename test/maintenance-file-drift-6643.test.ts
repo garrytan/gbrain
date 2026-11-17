@@ -13,7 +13,7 @@
  *     without a request row, while a replay of an earlier request returns its receipt;
  *   - B0: the conflict audit groups receipts by slug with the live check for the
  *     trusted CLI and database-derived fields only for scoped MCP readers;
- *   - B2: `gbrain repair file-drift` previews, refuses mixed drift classes under
+ *   - B2: `foresights repair file-drift` previews, refuses mixed drift classes under
  *     --all-drifted unless --class keeps one, applies exactly the previewed set
  *     with per-page outcomes and resumes an interrupted apply; --prefer keeps
  *     one-sided metadata, tags and protected metadata as reconcile protects them;
@@ -123,7 +123,7 @@ for (const backend of testBackends()) describe(`#6643 maintenance file drift (${
       const details = result.details as Record<string, unknown>;
       expect(details.skipped_file_drift).toEqual([CONCEPT]);
       expect(result.status).toBe('warn');
-      expect(result.summary).toContain('gbrain repair file-drift');
+      expect(result.summary).toContain('foresights repair file-drift');
       expect(result.summary).toContain('--audit --conflicts');
     }
     expect(calls).toBe(0);
@@ -185,7 +185,7 @@ for (const backend of testBackends()) describe(`#6643 maintenance file drift (${
       .then(() => null, (error: { code?: string; detail?: string; suggestion?: string }) => error);
     expect(refused).toMatchObject({ code: 'source_changed', detail: 'file_database_drift' });
     expect(refused!.suggestion).toContain('--audit --conflicts');
-    expect(refused!.suggestion).toContain('gbrain repair file-drift');
+    expect(refused!.suggestion).toContain('foresights repair file-drift');
     expect(await requests(sourceId)).toBe(before);
   }), 240_000);
 
@@ -261,7 +261,7 @@ for (const backend of testBackends()) describe(`#6643 maintenance file drift (${
     expect(surveyed.preview_hash).toBeUndefined();
     expect(surveyed.listing!.filter(row => row.item.startsWith(`${sourceId}:`)).map(row => [row.item, row.class]))
       .toEqual([[`${sourceId}:notes/additive`, 'additive_with_suggestions'], [`${sourceId}:notes/rewritten`, 'review_required']]);
-    expect(surveyed.details!.next_actions).toContain(`Preview: gbrain repair file-drift --source ${sourceId} --all-drifted --class review_required --prefer file (or --prefer database)`);
+    expect(surveyed.details!.next_actions).toContain(`Preview: foresights repair file-drift --source ${sourceId} --all-drifted --class review_required --prefer file (or --prefer database)`);
     const mixed = await runner.run('file-drift', scope, { explicit: true, sourceFlag: sourceId, allDrifted: true, prefer: 'file' }).then(() => null, error => error);
     expect(mixed).toMatchObject({ code: 'invalid_params' });
     expect(mixed.message).toContain('2 drift classes');

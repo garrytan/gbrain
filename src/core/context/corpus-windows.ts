@@ -417,7 +417,7 @@ function windowKey(turns: CorpusTurn[], at: { turn: number; offset: number }): s
  * another window or another source incarnation does not apply. A capped
  * window stays stopped, except once when the extraction-config fingerprint
  * changed since its last failure. #9279: a window stopped by a deterministic
- * failure runs once on a gbrain build other than the one that recorded it
+ * failure runs once on a foresights build other than the one that recorded it
  * (a record from before #9279 carries no build), so an upgrade that fixes the
  * refusal extracts it with no command. That automatic retry happens once per
  * record (upgrade_retried); after it only an operator retry runs the window.

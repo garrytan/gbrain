@@ -1,5 +1,5 @@
 /**
- * #6696 (A9): `gbrain repair receipt-compaction` compacts terminal receipts on
+ * #6696 (A9): `foresights repair receipt-compaction` compacts terminal receipts on
  * demand. `--older-than` is floored at the configured retention unless
  * `--force` (retention 90 days: a 30-day request is refused, and the refusal's
  * fix is the preview at the floor); failures stay unless
@@ -26,7 +26,7 @@ const databaseUrl = process.env.DATABASE_URL;
 test('flags parse with the purge-deleted duration grammar and belong to receipt-compaction only', () => {
   expect(parseRepairArgs(['receipt-compaction', '--older-than', '90d', '--include-failures', '--force'])).toMatchObject({ kind: 'receipt-compaction', olderThan: '90d', includeFailures: true, force: true });
   expect(() => parseRepairArgs(['receipt-compaction', '--older-than', '3w'])).toThrow(/hours \(72 or 72h\) or days \(30d\)/);
-  expect(() => parseRepairArgs(['timeline', '--older-than', '30d'])).toThrow(/applies only to gbrain repair receipt-compaction/);
+  expect(() => parseRepairArgs(['timeline', '--older-than', '30d'])).toThrow(/applies only to (?:foresights|gbrain) repair receipt-compaction/);
   expect([parseOlderThanHours('72'), parseOlderThanHours('72h'), parseOlderThanHours('30d'), parseOlderThanHours('x')]).toEqual([72, 72, 720, null]);
   expect(repairSpec('receipt-compaction')).toMatchObject({ explicit_only: true, preview_bound: true, consent: 'destructive' });
   expect(repairSpec('receipt-compaction').handler.publication).toBe('projection');
@@ -80,7 +80,7 @@ for (const kind of testBackends()) {
       // --force reaches inside the window; the apply is bound to the preview and resumes after an interruption.
       const preview = await run(false, { olderThan: '30d', force: true });
       expect(preview.affected).toBe(2);
-      expect(preview.apply_command).toBe(`gbrain repair receipt-compaction --older-than 30d --force --apply --expect ${preview.preview_hash} --yes`);
+      expect(preview.apply_command).toBe(`foresights repair receipt-compaction --older-than 30d --force --apply --expect ${preview.preview_hash} --yes`);
       const before = await bytes();
       const reserved = Number((await row(old)).terminal_reservation) + Number((await row(month)).terminal_reservation);
       const first = await run(true, { olderThan: '30d', force: true, expect: preview.preview_hash, limit: 1 });

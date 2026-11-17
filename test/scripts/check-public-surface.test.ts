@@ -17,8 +17,8 @@ afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true
 const TODAY = '2026-11-16';
 const manifest = (over: Record<string, unknown> = {}) => JSON.stringify({
   version: 1,
-  'cli-command': ['gbrain search'],
-  'cli-flag': ['gbrain search --limit', 'gbrain search --match'],
+  'cli-command': ['foresights search'],
+  'cli-flag': ['foresights search --limit', 'foresights search --match'],
   'mcp-tool': ['search'],
   'mcp-param': ['search.limit'],
   'config-key': ['search.mode'],
@@ -94,17 +94,17 @@ const record = (surface: string, name: string, removeAfter: string) => `---\nsur
 
 describe('dropped manifest entries', () => {
   test('a flag removed with no record is refused', () => {
-    const r = run(repo({}, { [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --match'] }) }));
+    const r = run(repo({}, { [MANIFEST]: manifest({ 'cli-flag': ['foresights search --match'] }) }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain('cli-flag `gbrain search --limit` is removed or changed with no deprecations.d/<id>.md naming it');
+    expect(r.out).toContain('cli-flag `foresights search --limit` is removed or changed with no deprecations.d/<id>.md naming it');
   });
 
   test('a record whose remove_after has not come refuses the removal; a matured one allows it', () => {
-    const head = { [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --match'] }) };
-    const early = run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-20') }, head));
+    const head = { [MANIFEST]: manifest({ 'cli-flag': ['foresights search --match'] }) };
+    const early = run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'foresights search --limit', '2026-11-20') }, head));
     expect(early.code).toBe(1);
     expect(early.out).toContain('is removed before its record deprecations.d/search_limit_flag_1234.md allows it (remove_after 2026-11-20)');
-    const due = run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-16') }, head));
+    const due = run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'foresights search --limit', '2026-11-16') }, head));
     expect(due.code).toBe(0);
   });
 
@@ -132,7 +132,7 @@ describe('dropped manifest entries', () => {
   test('a matured cli-command or mcp-tool record also covers the flags or parameters the removal drops', () => {
     const gone = { [MANIFEST]: manifest({ 'cli-command': [], 'cli-flag': [], 'mcp-tool': [], 'mcp-param': [] }) };
     const r = run(repo({
-      'deprecations.d/search_command_1234.md': record('cli-command', 'gbrain search', '2026-11-10'),
+      'deprecations.d/search_command_1234.md': record('cli-command', 'foresights search', '2026-11-10'),
       'deprecations.d/search_tool_1234.md': record('mcp-tool', 'search', '2026-11-10'),
     }, gone));
     expect(r.out).not.toContain('FAIL');
@@ -339,33 +339,33 @@ describe('the base it compares with', () => {
 
 describe('deprecation records', () => {
   test('a new record must give at least 14 days; an old record keeps its date', () => {
-    const short = run(repo({}, { 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-29') }));
+    const short = run(repo({}, { 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'foresights search --limit', '2026-11-29') }));
     expect(short.code).toBe(1);
     expect(short.out).toContain('remove_after 2026-11-29 is less than 14 days away');
-    expect(run(repo({}, { 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-30') })).code).toBe(0);
-    expect(run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-29') }, {})).code).toBe(0);
+    expect(run(repo({}, { 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'foresights search --limit', '2026-11-30') })).code).toBe(0);
+    expect(run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'foresights search --limit', '2026-11-29') }, {})).code).toBe(0);
   });
 
   test('an announced date can move later, never earlier', () => {
     const path = 'deprecations.d/search_limit_flag_1234.md';
-    const early = run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-12-20') },
-      { [path]: record('cli-flag', 'gbrain search --limit', '2026-11-16'), [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --match'] }) }));
+    const early = run(repo({ [path]: record('cli-flag', 'foresights search --limit', '2026-12-20') },
+      { [path]: record('cli-flag', 'foresights search --limit', '2026-11-16'), [MANIFEST]: manifest({ 'cli-flag': ['foresights search --match'] }) }));
     expect(early.code).toBe(1);
     expect(early.out).toContain(`${path}: remove_after moves from 2026-12-20 to 2026-11-16`);
-    expect(run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20') }, { [path]: record('cli-flag', 'gbrain search --limit', '2026-12-20') })).code).toBe(0);
+    expect(run(repo({ [path]: record('cli-flag', 'foresights search --limit', '2026-11-20') }, { [path]: record('cli-flag', 'foresights search --limit', '2026-12-20') })).code).toBe(0);
   });
 
   test('a record on the base keeps the surface and name it was announced with', () => {
     const path = 'deprecations.d/search_limit_flag_1234.md';
-    const r = run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20') },
-      { [path]: record('cli-flag', 'gbrain search --match', '2026-11-20'), [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --limit'] }) }));
+    const r = run(repo({ [path]: record('cli-flag', 'foresights search --limit', '2026-11-20') },
+      { [path]: record('cli-flag', 'foresights search --match', '2026-11-20'), [MANIFEST]: manifest({ 'cli-flag': ['foresights search --limit'] }) }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain(`${path}: it named cli-flag \`gbrain search --limit\` on base; a record keeps the surface and name it was announced with, so add a new record for cli-flag \`gbrain search --match\``);
-    expect(run(repo({ [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20') }, { [path]: record('cli-flag', 'gbrain search --limit', '2026-11-20').replace('alice-example', 'bob-example') })).code).toBe(0);
+    expect(r.out).toContain(`${path}: it named cli-flag \`foresights search --limit\` on base; a record keeps the surface and name it was announced with, so add a new record for cli-flag \`foresights search --match\``);
+    expect(run(repo({ [path]: record('cli-flag', 'foresights search --limit', '2026-11-20') }, { [path]: record('cli-flag', 'foresights search --limit', '2026-11-20').replace('alice-example', 'bob-example') })).code).toBe(0);
   });
 
   test('a record with a bad surface, no owner or no date is refused', () => {
-    const r = run(repo({}, { 'deprecations.d/bad_record_1234.md': '---\nsurface: cli-thing\nname: gbrain x\n---\nText.\n' }));
+    const r = run(repo({}, { 'deprecations.d/bad_record_1234.md': '---\nsurface: cli-thing\nname: foresights x\n---\nText.\n' }));
     expect(r.code).toBe(1);
     expect(r.out).toContain('surface: must be one of cli-command, cli-flag, mcp-tool, mcp-param, config-key, exit-code, page-format, json-field');
     expect(r.out).toContain('owner: is missing');
@@ -374,7 +374,7 @@ describe('deprecation records', () => {
 
   test('a page-format or --json field record is accepted though the list does not hold those surfaces', () => {
     for (const surface of ['page-format', 'json-field']) {
-      expect(run(repo({}, { 'deprecations.d/old_field_1234.md': record(surface, 'gbrain stats --json .old_field', '2026-11-30') })).code).toBe(0);
+      expect(run(repo({}, { 'deprecations.d/old_field_1234.md': record(surface, 'foresights stats --json .old_field', '2026-11-30') })).code).toBe(0);
     }
   });
 });
@@ -396,11 +396,11 @@ describe('new behaviour-change rows', () => {
     expect(bare.code).toBe(1);
     expect(bare.out).toContain('kind: breaking needs exception: security or data-loss, or deprecation: <id>');
     expect(run(repo({}, { 'behavior-changes.d/new_row_1234.md': '---\nkind: breaking\nexception: security\n---\nText.\n' })).code).toBe(0);
-    const young = run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-12-01') },
+    const young = run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'foresights search --limit', '2026-12-01') },
       { 'behavior-changes.d/new_row_1234.md': '---\nkind: breaking\ndeprecation: search_limit_flag_1234\n---\nText.\n' }));
     expect(young.code).toBe(1);
     expect(young.out).toContain('deprecation: search_limit_flag_1234 has not matured (remove_after 2026-12-01)');
-    expect(run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'gbrain search --limit', '2026-11-10') },
+    expect(run(repo({ 'deprecations.d/search_limit_flag_1234.md': record('cli-flag', 'foresights search --limit', '2026-11-10') },
       { 'behavior-changes.d/new_row_1234.md': '---\nkind: breaking\ndeprecation: search_limit_flag_1234\n---\nText.\n' })).code).toBe(0);
   });
 });
@@ -434,8 +434,8 @@ describe('the committed manifest', () => {
     expect(await buildMain(['--check'], join(import.meta.dir, '..', '..'))).toBe(0);
     expect(MANIFEST).toBe('docs/contracts/public-surface.json');
     const m = JSON.parse(await Bun.file(join(import.meta.dir, '..', '..', 'docs/contracts/public-surface.json')).text());
-    expect(m['cli-command']).toContain('gbrain search');
-    expect(m['cli-flag']).toContain('gbrain search --limit');
+    expect(m['cli-command']).toContain('foresights search');
+    expect(m['cli-flag']).toContain('foresights search --limit');
     expect(m['mcp-param']).toContain('search.query');
     expect(m['config-key']).toContain('engine');
     expect(typeof m['exit-code'].not_found).toBe('number');
@@ -447,8 +447,8 @@ describe('the committed manifest', () => {
     const { CLI_COMMANDS } = await import('../../src/cli/command-table.ts');
     const dispatched = (name: string) => cliOps.has(name) || cliAliases.has(name) || CLI_COMMANDS.some(r => r.name === name);
     const m = await buildSurface();
-    expect(m['cli-command'].filter(c => !dispatched(c.slice('gbrain '.length)))).toEqual([]);
-    expect(m['cli-flag'].filter(f => !dispatched(f.slice('gbrain '.length, f.indexOf(' --'))))).toEqual([]);
+    expect(m['cli-command'].filter(c => !dispatched(c.slice('foresights '.length)))).toEqual([]);
+    expect(m['cli-flag'].filter(f => !dispatched(f.slice('foresights '.length, f.indexOf(' --'))))).toEqual([]);
     const mcpOnly = OPERATION_MANIFEST.filter(op => !op.cliOnly && !op.cliHints?.name);
     expect(mcpOnly.length).toBeGreaterThan(0);
     for (const op of mcpOnly) {

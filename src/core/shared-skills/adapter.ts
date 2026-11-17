@@ -51,7 +51,7 @@ export function createSharedSkillsAdapter(options: SharedSkillsAdapterOptions) {
   const root = checkedRoot(options.root);
   const adapter = harnessAdapter(options.adapter);
   if (options.launcher && (!isAbsolute(options.launcher) || /[\x00-\x1f]/.test(options.launcher))) throw opError('invalid_params', 'The launcher must be an absolute installation-bound path.',
-    'Record the launcher as the absolute path of this installation\'s own gbrain binary, with no control characters; reinstalling the harness wiring writes one.');
+    'Record the launcher as the absolute path of this installation\'s own foresights binary, with no control characters; reinstalling the harness wiring writes one.');
   const receiptPath = join(root, 'receipt.json');
   const fail = (code: RegistryCode, message: string, suggestion: string, opts: OpErrorOpts = { docs: TROUBLESHOOT }): never => { throw opError(code, message, suggestion, opts); };
   const refreshAgain = 'Refresh again for the current authorized view; keep cached shared skills unused until a refresh succeeds. Memory keeps working.';
@@ -73,7 +73,7 @@ export function createSharedSkillsAdapter(options: SharedSkillsAdapterOptions) {
     if (!existsSync(absolute)) return null;
     const stat = lstatSync(absolute);
     if (!stat.isFile() || stat.size > MAX_BYTES) return fail('local_conflict', 'A managed file has been replaced by a non-file or oversized file.',
-      `${absolute} is no longer the file gbrain installed. Move it aside after the user confirms, then refresh; gbrain never overwrites it.`);
+      `${absolute} is no longer the file foresights installed. Move it aside after the user confirms, then refresh; foresights never overwrites it.`);
     return sha256(readFileSync(absolute));
   }
   function preflight(receipt: SharedSkillsLocalReceipt, files: Map<string, Uint8Array | string>) {
@@ -81,7 +81,7 @@ export function createSharedSkillsAdapter(options: SharedSkillsAdapterOptions) {
       const current = existingHash(path);
       const pending = receipt.pending_files[path];
       if (current !== null && current !== receipt.owned_files[path] && current !== pending?.before && current !== pending?.after) fail('local_conflict', 'A managed artifact was edited; preserve it and resolve the native shadow copy before following updates.',
-        `${confinedPath(root, path)} was edited after gbrain installed it. Show the user the edit; once they keep a copy elsewhere and restore or remove the file, refresh again. gbrain never overwrites edits.`);
+        `${confinedPath(root, path)} was edited after foresights installed it. Show the user the edit; once they keep a copy elsewhere and restore or remove the file, refresh again. foresights never overwrites edits.`);
       if (current !== null && path.startsWith('revisions/') && files.has(path) && current !== sha256(files.get(path)!)) fail('local_conflict', 'An immutable revision cannot be rewritten in place.',
         `${confinedPath(root, path)} differs from the published revision. Move it aside after the user confirms; the next refresh writes the published bytes again.`);
     }
@@ -155,7 +155,7 @@ export function createSharedSkillsAdapter(options: SharedSkillsAdapterOptions) {
           paths.add(file.path);
           const asset = await options.call<{ content: string; encoding?: string; sha256?: string }>('get_skill_asset', { ...selector, path: file.path });
           if (typeof asset.content !== 'string' || !['utf8', 'base64', undefined].includes(asset.encoding)) fail('stale_unavailable', 'Unsupported asset encoding.',
-            `The server sent ${file.path} of ${sharedSkillKey(skill)} in an encoding other than utf8 or base64; the brain host likely runs another gbrain version. Ask its operator to upgrade, then refresh.`);
+            `The server sent ${file.path} of ${sharedSkillKey(skill)} in an encoding other than utf8 or base64; the brain host likely runs another foresights version. Ask its operator to upgrade, then refresh.`);
           const bytes = Buffer.from(asset.content, asset.encoding === 'base64' ? 'base64' : 'utf8');
           total += bytes.length;
           if (total > MAX_BYTES || bytes.length > 2 * 1024 * 1024 || sha256(bytes) !== file.sha256 || (file.size !== undefined && bytes.length !== file.size)) fail('stale_unavailable', 'The approved bundle exceeded its bounds or failed a hash check.',
@@ -194,7 +194,7 @@ export function createSharedSkillsAdapter(options: SharedSkillsAdapterOptions) {
         const pending = receipt.pending_files[path];
         const current = existingHash(path);
         if (current !== pending.before && current !== pending.after) fail('local_conflict', 'An artifact changed during installation.',
-          `Another writer changed ${confinedPath(root, path)} while gbrain installed it. Stop that writer, keep its version for the user, then refresh again.`);
+          `Another writer changed ${confinedPath(root, path)} while foresights installed it. Stop that writer, keep its version for the user, then refresh again.`);
         if (current !== pending.after) privateWrite(confinedPath(root, path), bytes);
         receipt.owned_files[path] = pending.after;
         delete receipt.pending_files[path];
@@ -234,7 +234,7 @@ export function createSharedSkillsAdapter(options: SharedSkillsAdapterOptions) {
     join: (follow_policy: FollowPolicy) => locked(async () => {
       const prior = read();
       if (!prior && readdirSync(root).some(path => path !== 'adapter.lock')) fail('local_conflict', 'Refusing to adopt an unowned shared-skills directory.',
-        `${root} already holds files gbrain did not create. Join with an empty shared-skills directory, or have the user move those files aside first.`);
+        `${root} already holds files foresights did not create. Join with an empty shared-skills directory, or have the user move those files aside first.`);
       const snapshot = await options.call<MembershipSnapshot>('join_brain', { adapter: adapter.id, follow_policy });
       assertSnapshot(snapshot);
       if (prior && (prior.brain_id !== snapshot.brain_id || prior.installation_id !== snapshot.installation_id)) fail('local_conflict', 'The cache belongs to another principal or brain.',

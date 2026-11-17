@@ -5,7 +5,7 @@
  *   is a TEXT[] with no FK) → warn naming the client + the missing id.
  * - (b) an empty auto-created '<name>-workspace' source with no live client
  *   referencing it (the post-failure / post-revoke residue from
- *   `gbrain agent register`) → warn naming the source.
+ *   `foresights agent register`) → warn naming the source.
  * - A pages-bearing non-default source is NEVER flagged (that shape is
  *   every ordinary local brain, not residue).
  * - An empty workspace still referenced by a live client is NOT residue.
@@ -68,13 +68,13 @@ describe('checkOauthClientScopeHealth', () => {
     expect(r.message).toMatch(/rescope-client/);
     // Arm (b): names the orphaned workspace, with the removal hint.
     expect(r.message).toMatch(/aurora-coder-workspace/);
-    expect(r.message).toMatch(/gbrain sources remove/);
+    expect(r.message).toMatch(/(?:foresights|gbrain) sources remove/);
   });
 
   test('zero-page workspace WITH facts → NOT flagged (revoked agent memory, not residue)', async () => {
     // A revoked agent's workspace: the client row is gone, no pages were ever
     // written, but FACTS exist (the primary agent write lane). Recommending
-    // `gbrain sources remove` here would cascade the facts away.
+    // `foresights sources remove` here would cascade the facts away.
     await engine.executeRaw(
       `INSERT INTO sources (id, name) VALUES ('revoked-agent-workspace', 'revoked-agent-workspace')`,
     );

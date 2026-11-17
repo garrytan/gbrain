@@ -1,8 +1,8 @@
 /**
  * Serve-delegated maintenance sweep — the CLI half (#677).
  *
- * On a PGLite brain a live `gbrain serve` holds the single-writer lock for
- * its lifetime, so `gbrain sweep --once` used to exit 1 with
+ * On a PGLite brain a live `foresights serve` holds the single-writer lock for
+ * its lifetime, so `foresights sweep --once` used to exit 1 with
  * LiveServeLockError. The pre-connect hook in cli.ts calls
  * maybeDelegateSweepToServe: when the holder is a live serve, the sweep runs
  * INSIDE the serve over the resolve-IPC socket (sweep_start / sweep_status;
@@ -83,7 +83,7 @@ export function parseDelegatedSweepArgs(args: string[]): ParsedDelegatedSweepArg
 }
 
 /**
- * Delegate `gbrain sweep --once` to a live serve when one holds this PGLite
+ * Delegate `foresights sweep --once` to a live serve when one holds this PGLite
  * brain's lock. Mirrors maybeDelegateSyncToServe's ladder.
  */
 export async function maybeDelegateSweepToServe(dataDir: string, args: string[]): Promise<boolean> {
@@ -106,7 +106,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
   const parsed = parseDelegatedSweepArgs(args);
   if (!parsed.ok) {
     serr(
-      `[sweep] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain, and ` +
+      `[sweep] a live \`foresights serve\` (PID ${holder.pid}) holds this PGLite brain, and ` +
       `\`${parsed.refused}\` isn't supported through serve-delegated sweep. ` +
       remediation(holder.pid),
     );
@@ -129,9 +129,9 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
   const secret = readIpcSecret(dataDir);
   if (!existsSync(sock) || !secret) {
     serr(
-      `[sweep] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain's ` +
-      `single-writer lock but exposes no sweep IPC (older gbrain, or ` +
-      `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'Restart that serve on this gbrain version.'),
+      `[sweep] a live \`foresights serve\` (PID ${holder.pid}) holds this PGLite brain's ` +
+      `single-writer lock but exposes no sweep IPC (older foresights, or ` +
+      `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'Restart that serve on this foresights version.'),
     );
     await setVerdict(1);
     return true;
@@ -147,7 +147,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
     start = await requestSweepStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
-        `[sweep] the live \`gbrain serve\` (PID ${holder.pid}) is not answering its IPC socket. ` +
+        `[sweep] the live \`foresights serve\` (PID ${holder.pid}) is not answering its IPC socket. ` +
         remediation(holder.pid, 'It may be wedged.'),
       );
       await setVerdict(1);
@@ -156,8 +156,8 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
   }
   if ('degraded' in (start as object)) {
     serr(
-      `[sweep] the running \`gbrain serve\` (PID ${holder.pid}) predates serve-delegated sweep. ` +
-      remediation(holder.pid, 'Restart it on this gbrain version.'),
+      `[sweep] the running \`foresights serve\` (PID ${holder.pid}) predates serve-delegated sweep. ` +
+      remediation(holder.pid, 'Restart it on this foresights version.'),
     );
     await setVerdict(1);
     return true;
@@ -167,7 +167,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
     const messages: Record<string, string> = {
       busy: `another delegated sweep is already running inside the serve — wait a moment and re-run.`,
       unauthorized: `the serve rejected the IPC secret — restart the serve (it re-provisions \`.gbrain-ipc-secret\`) and re-run.`,
-      source_mismatch: `the serve is bound to a different source — run \`gbrain sweep --once --source <the serve's source>\`, or stop the serve.`,
+      source_mismatch: `the serve is bound to a different source — run \`foresights sweep --once --source <the serve's source>\`, or stop the serve.`,
       unsupported_kind: `the serve has delegation disabled (GBRAIN_SERVE_SYNC_IPC=0, an older serve, or a startup failure).`,
     };
     const detail = messages[startResp.error ?? ''] ??
@@ -179,7 +179,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
 
   const jobId = startResp.jobId!;
   serr(
-    `[sweep] live \`gbrain serve\` (PID ${holder.pid}) holds the PGLite lock — running ` +
+    `[sweep] live \`foresights serve\` (PID ${holder.pid}) holds the PGLite lock — running ` +
     `the sweep inside it (job ${jobId}).`,
   );
 
@@ -193,7 +193,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
       if (failures % PID_PROBE_EVERY === 0) {
         const still = probeLivePgliteHolder(dataDir);
         if (!still || !still.serve) {
-          serr(`[sweep] the serve (PID ${holder.pid}) died mid-sweep — re-run \`gbrain sweep --once\`.`);
+          serr(`[sweep] the serve (PID ${holder.pid}) died mid-sweep — re-run \`foresights sweep --once\`.`);
           await setVerdict(1);
           return true;
         }
@@ -210,7 +210,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
     if (!status.ok) {
       serr(
         status.error === 'unknown_job'
-          ? `[sweep] the serve restarted mid-sweep (job ${jobId} is gone) — re-run \`gbrain sweep --once\`.`
+          ? `[sweep] the serve restarted mid-sweep (job ${jobId} is gone) — re-run \`foresights sweep --once\`.`
           : `[sweep] delegated sweep failed: ${status.error}`,
       );
       await setVerdict(1);

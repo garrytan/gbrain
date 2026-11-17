@@ -197,7 +197,7 @@ test('#6513: a canonical writeback refused for newer uncommitted bytes is held w
 
 test('#6513: working-tree bytes that already are the canonical correction import without a second writeback', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
-    // The correction gbrain itself writes for this fence, taken from a clean sync of the same bytes.
+    // The correction foresights itself writes for this fence, taken from a clean sync of the same bytes.
     const reference = await fixture(engine, { 'people/fixable.md': fixable() });
     expect((await performManagedSync(engine, reference.opts)).status).toBe('first_sync');
     const canonical = readFileSync(join(reference.root, 'people/fixable.md'), 'utf8');

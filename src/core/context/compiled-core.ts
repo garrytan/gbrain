@@ -1,7 +1,7 @@
 /**
- * Static-file delivery of always-loaded core memory (`gbrain compile-context
+ * Static-file delivery of always-loaded core memory (`foresights compile-context
  * --include-core`): git safety for the output path and a small local record
- * of every compiled file that carries core, so `gbrain doctor` can name
+ * of every compiled file that carries core, so `foresights doctor` can name
  * stale or leftover copies and the command that refreshes them.
  */
 import { execFileSync } from '../spawn.ts';
@@ -77,6 +77,6 @@ export function updateCompiledCoreRecord(path: string, record: Omit<CompiledCore
 
 /** Reads `core_revision=` from a compiled file's header line; null when the file has no core. */
 export function compiledCoreRevision(text: string): string | null {
-  const m = /<!-- gbrain:compiled-context [^\n]*core_revision=([0-9a-f]+|disabled)/.exec(text);
+  const m = /<!-- (?:foresights|gbrain):compiled-context [^\n]*core_revision=([0-9a-f]+|disabled)/.exec(text);
   return m ? m[1]! : null;
 }

@@ -1,5 +1,5 @@
 /**
- * v0.28: `gbrain takes` CLI.
+ * v0.28: `foresights takes` CLI.
  *
  * Subcommands:
  *   takes <slug>                          — list takes for a page
@@ -58,7 +58,7 @@ function exitTakesError(err: unknown): never {
   if (err instanceof TakesWriteError) {
     switch (err.code) {
       case 'page_not_found':
-        console.error(`${err.message} Run \`gbrain sync\` first.`);
+        console.error(`${err.message} Run \`foresights sync\` first.`);
         process.exit(1);
       default:
         console.error(err.hint && err.code !== 'holder_denied' ? `${err.message} ${err.hint}` : err.message);
@@ -85,13 +85,13 @@ async function resolveTakesSourceId(engine: BrainEngine): Promise<string> {
 // --- Subcommands ---
 
 async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
-  // #2079: slug is optional. `gbrain takes list` (no slug) lists ALL active
+  // #2079: slug is optional. `foresights takes list` (no slug) lists ALL active
   // takes — CLI parity with the takes_list operation. A leading flag is not
   // a slug.
   const slug = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
   // #7271: there is no status filter here; an ignored --status read as a filtered list.
   if (args.includes('--status')) {
-    console.error('takes list has no --status filter: it lists active takes, and --expired lists superseded ones. Proposed takes wait in the proposal queue: gbrain takes propose --json');
+    console.error('takes list has no --status filter: it lists active takes, and --expired lists superseded ones. Proposed takes wait in the proposal queue: foresights takes propose --json');
     process.exit(1);
   }
   const json = flagPresent(args, '--json');
@@ -162,7 +162,7 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
 async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
   const query = args[0];
   if (!query) {
-    console.error('Usage: gbrain takes search "<query>" [--semantic] [--limit N] [--json]');
+    console.error('Usage: foresights takes search "<query>" [--semantic] [--limit N] [--json]');
     process.exit(1);
   }
   const json = flagPresent(args, '--json');
@@ -456,7 +456,7 @@ async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void
 }
 
 /**
- * #2411 / #4102 — `gbrain takes propose` drains the take_proposals queue the
+ * #2411 / #4102 — `foresights takes propose` drains the take_proposals queue the
  * propose_takes cycle phase fills. Bare invocation lists pending proposals;
  * --accept promotes one into the page's takes fence via the shared
  * write-through core (D17: the ONLY queue→canonical path); --reject dismisses.
@@ -482,7 +482,7 @@ async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string)
     if (json) { console.log(JSON.stringify(failed, null, 2)); return; }
     if (failed.length === 0) { console.log(`No pages held by propose_takes in ${target}.`); return; }
     for (const f of failed) console.log(`${f.slug} (${f.code}, prompt ${f.prompt_version}, held ${f.proposed_at})`);
-    console.log(`Retry one with \`gbrain takes propose --retry-failed --slug <slug> --source ${target}\`, or every page by omitting --slug.`);
+    console.log(`Retry one with \`foresights takes propose --retry-failed --slug <slug> --source ${target}\`, or every page by omitting --slug.`);
     return;
   }
   const acceptRaw = flagValue(args, '--accept');
@@ -495,7 +495,7 @@ async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string)
   const parseId = (raw: string, flag: string): number => {
     const id = parseInt(raw, 10);
     if (!Number.isFinite(id) || id <= 0 || String(id) !== raw.trim()) {
-      console.error(`Invalid ${flag} "${raw}". Expected a proposal id (from \`gbrain takes propose\`).`);
+      console.error(`Invalid ${flag} "${raw}". Expected a proposal id (from \`foresights takes propose\`).`);
       process.exit(1);
     }
     return id;
@@ -580,14 +580,14 @@ async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string)
     const domain = p.domain ? ` • ${p.domain}` : '';
     console.log(`#${p.id} ${p.page_slug} [${p.kind} • ${p.holder} • w=${w}${domain}]\n  ${p.claim_text}\n`);
   }
-  console.log('Accept with `gbrain takes propose --accept <id>`; reject with `--reject <id>`.');
+  console.log('Accept with `foresights takes propose --accept <id>`; reject with `--reject <id>`.');
 }
 
 // --- Dispatcher ---
 
 export async function runTakes(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: gbrain takes <subcommand> [options]
+    console.log(`Usage: foresights takes <subcommand> [options]
 
 Subcommands:
   takes <slug> [--json] [--who h] [--kind k] [--sort weight|since_date|created_at] [--expired]
@@ -680,7 +680,7 @@ Common flags:
 }
 
 /**
- * v0.41.18.0 (A12, A24, T9) — `gbrain takes extract --from-pages` runs
+ * v0.41.18.0 (A12, A24, T9) — `foresights takes extract --from-pages` runs
  * Haiku over concept/atom/lore/briefing/writing/originals pages and
  * lifts gradeable claims into the takes fence.
  *
@@ -692,7 +692,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
-      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--before <updated_at>,<id>] [--include-covered] [--holder <name>]\n' +
+      'Usage: foresights takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--before <updated_at>,<id>] [--include-covered] [--holder <name>]\n' +
       'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. Pass a run\'s next_before to --before to continue past pages that yielded no claims. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
@@ -720,7 +720,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const bootstrapEnabled = bootstrapEnabledCfg === 'true' || bootstrapEnabledCfg === '1';
   if (!bootstrapEnabled) {
     process.stderr.write(
-      `takes-bootstrap is opt-in. Enable with:\n  gbrain config set takes.bootstrap_enabled true\nThen run it again with the user's approval (--yes).\n`,
+      `takes-bootstrap is opt-in. Enable with:\n  foresights config set takes.bootstrap_enabled true\nThen run it again with the user's approval (--yes).\n`,
     );
     process.exit(2);
   }
@@ -787,7 +787,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   if (result.budget_exhausted) {
     process.stderr.write(
       `[takes extract] stopped at the USD budget; raise it with ` +
-      `\`gbrain config set takes.bootstrap_budget_usd <usd>\` and re-run to continue.\n`,
+      `\`foresights config set takes.bootstrap_budget_usd <usd>\` and re-run to continue.\n`,
     );
   }
   if (result.duplicates_skipped > 0) {
@@ -827,7 +827,7 @@ export function parseTakesBeforeCursor(rest: readonly string[]): { updatedAt: st
 }
 
 /**
- * v0.36.1.0 (TD4 / D30) — `gbrain takes revisit <slug>` opens $EDITOR on
+ * v0.36.1.0 (TD4 / D30) — `foresights takes revisit <slug>` opens $EDITOR on
  * the source page so the user can write a follow-up immediately. The
  * action the admin SPA's "revisit now" link triggers (via a small
  * route handler that dispatches into this CLI command).
@@ -838,7 +838,7 @@ export function parseTakesBeforeCursor(rest: readonly string[]): { updatedAt: st
 async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
   const slug = rest[0];
   if (!slug) {
-    process.stderr.write('Usage: gbrain takes revisit <slug>\n');
+    process.stderr.write('Usage: foresights takes revisit <slug>\n');
     process.exit(1);
   }
   const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
@@ -848,7 +848,7 @@ async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
   const cfg = loadConfig();
   const repoPath = (cfg as { sync?: { repo_path?: string } } | null)?.sync?.repo_path;
   if (!repoPath) {
-    process.stderr.write('No brain repo configured. Run `gbrain config set sync.repo_path /path/to/brain`.\n');
+    process.stderr.write('No brain repo configured. Run `foresights config set sync.repo_path /path/to/brain`.\n');
     process.exit(1);
   }
   const filePath = join(repoPath, `${slug}.md`);
@@ -879,9 +879,9 @@ async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
  * so a thin client refuses it.
  */
 async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
-  const usage = 'Usage: gbrain takes horizon scan [--apply] [--source-id <id>] [--json]\n' +
-    '       gbrain takes horizon set <slug> --row N --date YYYY-MM-DD [--source-id <id>]\n' +
-    '       gbrain takes horizon clear <slug> --row N [--source-id <id>]';
+  const usage = 'Usage: foresights takes horizon scan [--apply] [--source-id <id>] [--json]\n' +
+    '       foresights takes horizon set <slug> --row N --date YYYY-MM-DD [--source-id <id>]\n' +
+    '       foresights takes horizon clear <slug> --row N [--source-id <id>]';
   const fail = (message: string): never => { process.stderr.write(`${message}\n`); process.exit(1); };
   const { scanStatedHorizons, setTakeHorizon, clearTakeHorizon } = await import('../core/takes-horizon.ts');
   const [sub, ...rest] = args;
@@ -898,7 +898,7 @@ async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
     for (const p of scan.proposed) console.log(`  take ${p.take_id}: ${p.horizon_date} (${p.basis}, "${p.phrase}")${p.replaces ? ` replaces ${p.replaces}` : ''}  ${p.claim}`);
     const tail = `${scan.kept_owner} owner horizon(s) kept, ${scan.unparsed} take(s) state no single deadline.`;
     if (apply) console.log(`Wrote ${scan.written} stated horizon(s). ${tail}`);
-    else console.log(`${scan.proposed.length} stated horizon(s) to write. ${tail}${scan.proposed.length ? ' Write them with: gbrain takes horizon scan --apply' : ''}`);
+    else console.log(`${scan.proposed.length} stated horizon(s) to write. ${tail}${scan.proposed.length ? ' Write them with: foresights takes horizon scan --apply' : ''}`);
     return;
   }
 
@@ -912,7 +912,7 @@ async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
     `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND t.row_num = $3 AND p.deleted_at IS NULL`,
     [sourceId, slug, row]);
-  if (!take) fail(`No take ${slug}#${row} on source ${sourceId}. List the page's takes with: gbrain takes ${slug}`);
+  if (!take) fail(`No take ${slug}#${row} on source ${sourceId}. List the page's takes with: foresights takes ${slug}`);
   const takeId = Number(take!.id);
 
   if (sub === 'set') {
@@ -932,7 +932,7 @@ async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
  * so a thin client refuses it.
  */
 async function cmdJournal(engine: BrainEngine, args: string[]): Promise<void> {
-  const usage = 'Usage: gbrain takes journal [--holder h] [--about <slug-prefix>] [--state resolved|overdue|open|undated]\n' +
+  const usage = 'Usage: foresights takes journal [--holder h] [--about <slug-prefix>] [--state resolved|overdue|open|undated]\n' +
     '       [--since YYYY-MM] [--until YYYY-MM] [--limit N] [--source-id <id>] [--json]';
   const fail = (message: string): never => { process.stderr.write(`${message}\n`); process.exit(1); };
   const { readForecastJournal } = await import('../core/forecast-journal.ts');

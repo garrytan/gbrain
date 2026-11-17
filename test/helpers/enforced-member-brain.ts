@@ -30,7 +30,7 @@ export const FIRST = (who: string, command: string) => 'gbrain: refused under GB
 export const NOTICE = 'gbrain: results limited to what GBRAIN_ENFORCED_MEMBER=' + MEMBER + ' may read';
 export const REMEMBER_FIRST = 'gbrain: refused under GBRAIN_ENFORCED_MEMBER=' + MEMBER + ': remember saves a fact only with --entity <slug of a page you can read>; nothing was saved [GBRAIN_ENFORCED_REFUSED]';
 export const WRITES_OFF_FIRST = 'gbrain: refused under GBRAIN_ENFORCED_MEMBER=' + MEMBER + ': writes are off for members on this brain; nothing was saved [GBRAIN_ENFORCED_REFUSED]';
-export const REMEMBER_RETRY = 'Retry: gbrain remember "<one fact>" --entity <exact slug of a page you can read, from gbrain find or gbrain search> --provenance "<where you learned it>"';
+export const REMEMBER_RETRY = 'Retry: foresights remember "<one fact>" --entity <exact slug of a page you can read, from foresights find or foresights search> --provenance "<where you learned it>"';
 
 export const PAGES = {
   open: { slug: 'notes/open-example', title: 'Open example plan', canary: 'canaryemopen', fm: {} as Record<string, unknown>, source: 'default' },

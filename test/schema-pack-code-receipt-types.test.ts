@@ -1,6 +1,6 @@
 /**
  * #6818 + PR #6915: the stock base pack (gbrain-base-v2, the init default)
- * and packs extending it (company-brain) declare the two page types gbrain's
+ * and packs extending it (company-brain) declare the two page types foresights's
  * own writers stamp outside the canonical content taxonomy: `code` (the code
  * importer, import-file.ts) and `extract_receipt` (the extract receipt
  * writer, under extracts/).

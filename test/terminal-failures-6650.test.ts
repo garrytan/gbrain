@@ -197,7 +197,7 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     // With the recovery record gone, nothing blocks and no defect is open: the pile alone does not warn.
     await engine.executeRaw('UPDATE persistence_requests SET recovery=NULL WHERE request_id=$1::uuid', [blocker]);
     expect((await terminalFailuresCheck(engine))!.status).toBe('ok');
-    // An owner exception is a gbrain defect: it warns whatever the trend, on an active source only.
+    // An owner exception is a foresights defect: it warns whatever the trend, on an active source only.
     await seed({ slug: 'notes/boom', state: 'failed', code: 'storage_error', detail: { origin: 'owner_exception', error_class: 'TypeError' }, hoursAgo: 100 });
     const defect = (await terminalFailuresCheck(engine))!;
     expect(defect.status).toBe('warn');
@@ -221,13 +221,13 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     expect(ranked.unresolved.groups[0]!.drill_down).toEqual(['gbrain', 'sources', 'writer', 'failures', SOURCE, '--category', 'owner_exception', '--code', 'storage_error', '--origin', 'owner_exception', '--json']);
     expect(ranked.historical).toEqual({ rows: 2 });
     const blockingAt = check.message.indexOf('Blocking now (1)');
-    const unresolvedAt = check.message.indexOf('Unresolved, not blocking: 5 row(s) on 5 page(s) in 3 group(s): owner_exception/storage_error ×1 on tf-a (gbrain defect)');
+    const unresolvedAt = check.message.indexOf('Unresolved, not blocking: 5 row(s) on 5 page(s) in 3 group(s): owner_exception/storage_error ×1 on tf-a (foresights defect)');
     const historicalAt = check.message.indexOf('Historical: 2 row(s)');
     expect(blockingAt).toBeGreaterThanOrEqual(0);
     expect(unresolvedAt).toBeGreaterThan(blockingAt);
     expect(historicalAt).toBeGreaterThan(unresolvedAt);
-    expect(check.message).toContain(`recovery record ${blocker} (notes/held) on source ${SOURCE} blocks every queued write on the source's root; fix: gbrain sync --source ${SOURCE} --no-pull --json`);
-    expect(check.message).toContain(`Group them: gbrain sources writer failures ${SOURCE} --group-by category --json`);
+    expect(check.message).toContain(`recovery record ${blocker} (notes/held) on source ${SOURCE} blocks every queued write on the source's root; fix: foresights sync --source ${SOURCE} --no-pull --json`);
+    expect(check.message).toContain(`Group them: foresights sources writer failures ${SOURCE} --group-by category --json`);
 
     // A remote caller sees the ranking, never a page slug or file path, and is sent to the brain host.
     const remote = (await terminalFailuresCheck(engine, undefined, { remote: true }))!;
@@ -376,7 +376,7 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     expect(summary.sources[0]!.new_last_24h_older_builds).toEqual({ rows: 4, builds: ['0.60.200.0'] });
     const check = (await terminalFailuresCheck(engine))!;
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('4 of them were written by gbrain 0.60.200.0, older than the release that fixed their class: an older write owner is still producing these; upgrade or restart it.');
+    expect(check.message).toContain('4 of them were written by foresights 0.60.200.0, older than the release that fixed their class: an older write owner is still producing these; upgrade or restart it.');
     expect((check.fix as { argv: string[] }).argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', SOURCE, '--json']);
     expect(check.details).toMatchObject({ spike: { spiking: true, older_builds: { rows: 4, builds: ['0.60.200.0'] } } });
     // The same spike from the current build stays the generic drill-down.

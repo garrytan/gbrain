@@ -1,5 +1,5 @@
 /**
- * `gbrain init --prefer-postgres` — the Postgres-first install ladder
+ * `foresights init --prefer-postgres` — the Postgres-first install ladder
  * (db-availability loop 5a). Spawned against the real cli.ts entrypoint (the
  * house pattern for CLI-surface tests, see engine-status.test.ts) with
  * GBRAIN_HOME pointed at a fresh temp dir per test, so nothing touches the
@@ -75,7 +75,7 @@ function writeConfig(cfg: Record<string, unknown>): void {
   writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(cfg));
 }
 
-describe('gbrain init --prefer-postgres', () => {
+describe('foresights init --prefer-postgres', () => {
   test('existing-config refusal: exit 1, points at engine status + db-repair, config untouched', () => {
     const url = 'postgresql://u:p@db.example.com:5432/gbrain';
     writeConfig({ engine: 'postgres', database_url: url });

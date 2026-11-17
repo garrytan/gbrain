@@ -74,8 +74,8 @@ const expectStrictAdvice = (text: string) => {
   expect(text).not.toContain('fix the YAML');
   expect(text).not.toContain('fix the frontmatter');
   expect(text).not.toContain("or use '--skip-failed'");
-  expect(text).not.toContain("'gbrain sync --skip-failed' to move on");
-  expect(text).not.toMatch(/acknowledge these files with 'gbrain sync --skip-failed/);
+  expect(text).not.toContain("'foresights sync --skip-failed' to move on");
+  expect(text).not.toMatch(/acknowledge these files with '(?:foresights|gbrain) sync --skip-failed/);
 };
 
 for (const backend of testBackends()) describe(`[${backend}] a strict source on a brain without managed persistence says why it imported nothing (GST-2492 PR 2)`, () => {

@@ -295,7 +295,7 @@ export function sourceIngestionReceiptTests(label: string, getEngine: () => Brai
       const r = await beginSourceIngestionReceipt(engine, input);
       const stale = envelopeFor(await caught(() => transitionSourceIngestionReceipt(engine, { ...mutation(r), expectedRevision: r.revision + 1, phase: 'CONTENT' })));
       expect(stale).toMatchObject({ code: 'receipt_conflict', fix: { argv: ['gbrain', 'sources', 'status', input.sourceId, '--json'], next: 'run' } });
-      expect(stale.suggestion).toContain(`gbrain sync --source ${input.sourceId} --no-embed --no-pull`);
+      expect(stale.suggestion).toContain(`foresights sync --source ${input.sourceId} --no-embed --no-pull`);
       let advanced = r;
       for (const phase of ['CONTENT', 'GRAPH', 'VERIFY'] as const) advanced = await transitionSourceIngestionReceipt(engine, { ...mutation(advanced), phase });
       const failed = envelopeFor(await caught(() => recordSourceIngestionOutcome(engine, { ...mutation(advanced), outcome: 'complete', contentCommitted: true,

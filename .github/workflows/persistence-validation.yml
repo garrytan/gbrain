@@ -206,7 +206,7 @@ jobs:
   # from this job's ARM_FILE lines). Each job runs two files at a time, each
   # worker against its own PostgreSQL service; a shard's two-worker makespan,
   # doubled for a slow runner, must end a minute inside the step's 20 minutes
-  # (ARM_SHARD_BUDGET_MS, 570 s). On 2026-11-14 (gbrain#9342) the list filled
+  # (ARM_SHARD_BUDGET_MS, 570 s). On 2026-11-14 (foresights#9342) the list filled
   # 21 shards to the budget, so one more arm file put 19 shards over; 22 shards
   # bring the largest to 545.6 s. The job runs both arms of
   # every listed file: the unit shards skip *.slow.test.ts, so this lane is the

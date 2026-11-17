@@ -19,7 +19,7 @@
  * per request body. Cached entries remember the upstream latency and the proxy
  * replays it, so wall times stay realistic; --fast skips the replay.
  *
- * --config applies 'gbrain config set key value' after init (for example search.reranker.enabled=false to score without the reranker).
+ * --config applies 'foresights config set key value' after init (for example search.reranker.enabled=false to score without the reranker).
  *
  * --home reuses an already-built brain (skips init/sync/embed) so scoring changes
  * can be iterated without a rebuild. The brain schema belongs to the checkout that

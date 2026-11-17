@@ -1,7 +1,7 @@
 /**
- * Wave B PR 2 (spec 7.4): `gbrain get` of a segmented page over PAGE_MAX_BYTES.
+ * Wave B PR 2 (spec 7.4): `foresights get` of a segmented page over PAGE_MAX_BYTES.
  *
- * 1. Protects: the local `gbrain get` streams a 26 MB page in writes no larger
+ * 1. Protects: the local `foresights get` streams a 26 MB page in writes no larger
  *    than a segment, and the stream hashes to the trusted markdown view's
  *    size.sha256; the thin client pages the page to its end, verified, and
  *    prints it window by window. `--json` would hold the page in one string,
@@ -39,7 +39,7 @@ async function refusal(p: Promise<unknown>): Promise<OperationError> {
 }
 const codeOf = (e: OperationError) => (e as any).canonical ?? e.code;
 
-describe('gbrain get of a segmented page over PAGE_MAX_BYTES', () => {
+describe('foresights get of a segmented page over PAGE_MAX_BYTES', () => {
   beforeAll(async () => {
     engine = new PGLiteEngine();
     await engine.connect({});

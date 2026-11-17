@@ -1,17 +1,21 @@
 ---
 name: postgres-adopt
 description: |
-  Detect which gbrain engine is in use (PGLite vs Postgres), prefer Postgres
+  Detect which foresights engine is in use (PGLite vs Postgres), prefer Postgres
   for agent-harness installs, install/provision Postgres (Supabase discovery
   via SUPABASE_ACCESS_TOKEN, local Postgres, opt-in Docker), and move an
   existing PGLite brain to Postgres with its history (plan, ask, run).
   Detection is one engine-free command; the install ladder is one flag.
 triggers:
+  - "which foresights engine"
   - "which gbrain engine"
   - "pglite or postgres"
+  - "foresights engine status"
   - "gbrain engine status"
   - "upgrade to postgres"
+  - "switch foresights to postgres"
   - "switch gbrain to postgres"
+  - "install postgres for foresights"
   - "install postgres for gbrain"
   - "move my brain to supabase"
   - "set up postgres for the brain"
@@ -31,10 +35,10 @@ brain_first: exempt
 ## Contract
 
 This skill guarantees:
-- Detection is engine-free and read-only: `gbrain engine status --json`
+- Detection is engine-free and read-only: `foresights engine status --json`
   answers with the database down (that is the point of the command).
 - Engine changes NEVER happen by editing config. A PGLite brain moves with
-  `gbrain migrate --to postgres` (alias `--to supabase`), which graduates it:
+  `foresights migrate --to postgres` (alias `--to supabase`), which graduates it:
   plan first (exit 3), run only with the user's `--yes --expect <plan_hash>`,
   verify every table, then flip routing. This skill wraps it; it never
   reimplements it.
@@ -47,7 +51,7 @@ This skill guarantees:
 ## Step 1 — Detect
 
 ```bash
-gbrain engine status --json
+foresights engine status --json
 ```
 
 Branch on the output:
@@ -70,7 +74,7 @@ Branch on the output:
 ## Step 2 — Fresh install, Postgres-first
 
 ```bash
-gbrain init --prefer-postgres
+foresights init --prefer-postgres
 ```
 
 The ladder tries, in order: an env URL → Supabase Management-API discovery
@@ -89,7 +93,7 @@ one-line note and falls through; nothing is silent.
 
 ## Step 3 — Existing PGLite brain: plan, ask, run
 
-Full reference: [Move a PGLite brain to Postgres](https://github.com/garrytan/gbrain/blob/master/docs/guides/move-to-postgres.md).
+Full reference: [Move a PGLite brain to Postgres](https://github.com/aimonk2025/gbrain/blob/master/docs/guides/move-to-postgres.md).
 
 1. **Target URL.** Ask the user to put the connection string in an
    environment variable without pasting it into the conversation
@@ -99,39 +103,39 @@ Full reference: [Move a PGLite brain to Postgres](https://github.com/garrytan/gb
 2. **Plan.** This changes nothing and exits 3 with the
    `confirmation_required` document:
    ```bash
-   gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --json
+   foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --json
    ```
    Relay `user_message`, what moves, what stays on this computer, blockers
    and the estimate. Stop and wait for the user. A blocker with its own
    `fix` gets cleared first (ask when it says `ask_user`).
 3. **Run, after the user agrees.** Use `fix.command` from the document:
    ```bash
-   gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect <plan_hash>
+   foresights migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect <plan_hash>
    ```
    `preview_changed` means the plan changed: go back to step 2. For thousands
-   of pages run it in the background and poll `gbrain migrate --status --json`.
+   of pages run it in the background and poll `foresights migrate --status --json`.
 4. **Report.** Relay the target doctor verdict from the run's output, that
    existing tokens, OAuth clients and local writers stay valid, the
-   `gbrain mcp expose` follow-up for other machines, and, if a serve handed
+   `foresights mcp expose` follow-up for other machines, and, if a serve handed
    the brain over, that the user restarts the MCP client.
 
-- A `gbrain serve` holding the brain hands it over on its own; never ask the
+- A `foresights serve` holding the brain hands it over on its own; never ask the
   user to stop it first. `graduation_source_writer_held` names the process to
   stop when one does not.
 - The old data dir is kept as `<path>.graduated-<run_id>` (doctor's
   `pglite_leftovers` reports it). Deleting it is the user's call.
-- `gbrain doctor`'s `pglite_scale` check warns at 1000+ pages and points at
+- `foresights doctor`'s `pglite_scale` check warns at 1000+ pages and points at
   the plan command — that warning is this skill's cue.
 
 ## Step 4 — A move already underway
 
 ```bash
-gbrain migrate --status --json
+foresights migrate --status --json
 ```
 
 It is read-only and names the next command for the state. Exit 75 or a
-run in progress → wait and poll. Interrupted → `gbrain migrate --resume`
-(or `gbrain migrate --rollback-to-source` if the user wants to stay on
+run in progress → wait and poll. Interrupted → `foresights migrate --resume`
+(or `foresights migrate --rollback-to-source` if the user wants to stay on
 PGLite). Every refusal names its fix; the recovery table is in the guide.
 A rollback that lists data loss runs only with the user's
 `--rollback-to-source --yes --expect <hash>`.
@@ -147,15 +151,15 @@ otherwise PGLite is genuinely fine.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `effective_engine: "postgres"` but the probe fails: this is an access problem; run `gbrain engine status --probe`, then the db-repair skill.
+- `effective_engine: "postgres"` but the probe fails: this is an access problem; run `foresights engine status --probe`, then the db-repair skill.
 - Provisioning steps (Docker, installing Postgres) and the move itself need the user's explicit agreement; the docker rung needs `--allow-docker`, the move needs `--yes --expect <plan_hash>` after the user saw the plan.
-- `gbrain config set engine …` is refused by design: switch engines through the migrate path, never by editing config.
+- `foresights config set engine …` is refused by design: switch engines through the migrate path, never by editing config.
 
 ## Anti-Patterns
 
-- NEVER `gbrain config set engine ...` — it is refused by design; an engine
+- NEVER `foresights config set engine ...` — it is refused by design; an engine
   flip without a data migration splits the brain across two stores.
 - NEVER pick Postgres over a healthy PGLite brain without the migrate path.
 - NEVER add `--yes` before the user has seen the plan, and never use
@@ -175,6 +179,6 @@ Action: <none | init rung that won | migrate --to postgres result>
 Next:   <upgrade note, or "healthy — nothing to do">
 ```
 
-Quote `gbrain engine status` output as-is (it is already redacted); name the
+Quote `foresights engine status` output as-is (it is already redacted); name the
 winning ladder rung when an install ran; after a migration, include the
-target's `gbrain doctor` verdict.
+target's `foresights doctor` verdict.

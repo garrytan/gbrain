@@ -28,7 +28,7 @@ export interface SyncResult {
   leaseHeld?: import('../core/persistence/sync-lease.ts').DrainLeaseHeld;
   /**
    * #6712 PR 1 (#6552 §1): processing opt-outs this run kept from the unfinished cursor it resumed though the caller did
-   * not set them (`gbrain embed --stale` / `gbrain extract --stale` settle the pages they skipped).
+   * not set them (`foresights embed --stale` / `foresights extract --stale` settle the pages they skipped).
    */
   inherited_options?: Array<'noEmbed' | 'noExtract' | 'noSchemaPack'>;
   /** #6693: caller remembers refused while their page's file awaited import (or was held), replayed after this sync imported it. */
@@ -76,7 +76,7 @@ export interface SyncResult {
   tail?: Omit<import('../core/persistence/sync-tail.ts').SyncTailReport, 'links'>;
   /** GBRA-217: the pass's change-reason notices (a failed or capped trailer scan, a secret in a pushed trailer) and its count of skipped malformed trailers. */
   reason_notices?: import('../core/agent-output.ts').Notice[];
-  /** GST-2462: the run's one `privacy_label_ignored` notice, counting by value the pages it wrote whose privacy label gbrain ignores. */
+  /** GST-2462: the run's one `privacy_label_ignored` notice, counting by value the pages it wrote whose privacy label foresights ignores. */
   privacy_label_notice?: import('../core/agent-output.ts').Notice;
   reason_trailers_malformed?: number;
   /** #5459 (P4.5): live pages a `--full` tree walk kept because their file is in the working tree and their import provenance is the working tree or unknown. */
@@ -332,8 +332,8 @@ export interface SyncOpts {
    * Why source-id keyed by default (v0.40.3.0):
    *   PR #1314 originally only changed the lock id inside the parallel
    *   `sync --all` fan-out. That introduced a worse race than the global
-   *   lock fixes — `gbrain sync --all` (per-source lock) running
-   *   concurrently with `gbrain sync --source foo` (global lock) would
+   *   lock fixes — `foresights sync --all` (per-source lock) running
+   *   concurrently with `foresights sync --source foo` (global lock) would
    *   both write source foo simultaneously. The fix: every source-scoped
    *   sync (CLI, --all fan-out, cycle, jobs handler) defaults to the
    *   per-source lock. Same source = same lock id, always.

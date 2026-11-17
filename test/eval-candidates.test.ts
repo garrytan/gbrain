@@ -140,7 +140,7 @@ describe('listEvalCandidates', () => {
     const limited = await engine.listEvalCandidates({ limit: 3 });
     expect(limited).toHaveLength(3);
     // ORDER BY created_at DESC, id DESC — same-millisecond rows fall back to
-    // id DESC, which matches insertion order. Critical for `gbrain eval export`
+    // id DESC, which matches insertion order. Critical for `foresights eval export`
     // since unstable tiebreaks would cause duplicate/missed rows across runs.
     expect(limited.map(r => r.id)).toEqual([ids[4]!, ids[3]!, ids[2]!]);
   });

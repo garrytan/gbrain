@@ -4,7 +4,7 @@
 > brain-ops, query, ingest, smoke-test, migrations). Reference via
 > `> **Convention:** see [skills/_friction-protocol.md](_friction-protocol.md).`
 
-When you encounter friction running gbrain — anything confusing, missing, surprising, or wrong — log it via `gbrain friction log` so maintainers can see it without you writing a bug report. Friction reports drive the claw-test feedback loop (the harness collects, renders, and re-runs).
+When you encounter friction running foresights — anything confusing, missing, surprising, or wrong — log it via `foresights friction log` so maintainers can see it without you writing a bug report. Friction reports drive the claw-test feedback loop (the harness collects, renders, and re-runs).
 
 ## When to log
 
@@ -26,7 +26,7 @@ Log delight (positive signal) when:
 ## How to log
 
 ```
-gbrain friction log \
+foresights friction log \
   --severity {confused|error|blocker|nit} \
   --phase <which-phase-or-command> \
   --message "<one-line-what-happened>" \
@@ -51,11 +51,11 @@ Be specific: "doctor says `schema_version=0` and points at apply-migrations, but
 ## Inspecting reports
 
 ```
-gbrain friction list                      # recent runs with counts
-gbrain friction render --run-id <id>      # markdown report (default)
-gbrain friction render --run-id <id> --json
-gbrain friction summary --run-id <id>     # friction + delight side-by-side
-gbrain friction diff --base <run-or-agent> --compare <run-or-agent>   # cross-run/cross-agent comparison
+foresights friction list                      # recent runs with counts
+foresights friction render --run-id <id>      # markdown report (default)
+foresights friction render --run-id <id> --json
+foresights friction summary --run-id <id>     # friction + delight side-by-side
+foresights friction diff --base <run-or-agent> --compare <run-or-agent>   # cross-run/cross-agent comparison
 ```
 
 `render` defaults to `--redact` for markdown (strips `$HOME`/`$CWD` to `<HOME>`/`<CWD>` placeholders) so reports paste safely into PRs and issues.

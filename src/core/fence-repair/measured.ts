@@ -16,7 +16,7 @@
  *
  * `FENCE_REPAIR_MEASURED`: the sentence the behavior-change notice prints
  * about how often the model's rewrites are accepted. HTTP clients see it too,
- * so it names no model or provider (`gbrain models` names the model).
+ * so it names no model or provider (`foresights models` names the model).
  */
 export const FENCE_REPAIR_MEASURED_MODELS: readonly string[] = ['openai:gpt-6.1-sol', 'anthropic:claude-opus-5-5'];
 

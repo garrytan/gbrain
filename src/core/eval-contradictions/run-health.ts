@@ -100,7 +100,7 @@ export function zeroTotalContradictionsCheck(latest: {
       message:
         `Latest probe run (${day}) judged ZERO pairs — all ${health.judge_errors_total} judge calls errored. ` +
         `The "0 contradictions" result is not trustworthy. Check the judge model/API key and re-run ` +
-        '`gbrain eval suspected-contradictions`.',
+        '`foresights eval suspected-contradictions`.',
     };
   }
   const errNote =

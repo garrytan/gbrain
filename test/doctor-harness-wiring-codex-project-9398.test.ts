@@ -1,7 +1,7 @@
 /**
- * #9398: `harness_wiring` warned "Codex is installed but has no gbrain MCP
- * registration" when the only gbrain server was the project-scoped table in the
- * bootstrap workspace's `.codex/config.toml` (the config `gbrain bootstrap hooks
+ * #9398: `harness_wiring` warned "Codex is installed but has no foresights MCP
+ * registration" when the only foresights server was the project-scoped table in the
+ * bootstrap workspace's `.codex/config.toml` (the config `foresights bootstrap hooks
  * --adopt --harness codex` records), and pointed at a user-scope duplicate.
  * The check reads that project config after the user-scope one, the way the
  * Claude Code lane reads the workspace `.mcp.json` (#7422).
@@ -41,11 +41,11 @@ function box(registrations: Array<{ host: string; scope: string; detail?: string
 const PROJECT_TABLE = '[mcp_servers.gbrain]\ncommand = "/opt/example/bin/gbrain"\nargs = ["serve"]\n';
 
 describe('#9398 harness_wiring reads the workspace Codex project config', () => {
-  test('a gbrain table only in the workspace .codex/config.toml counts as registered', async () => {
+  test('a foresights table only in the workspace .codex/config.toml counts as registered', async () => {
     const b = box();
     writeFileSync(join(b.ws, '.codex', 'config.toml'), PROJECT_TABLE);
     const c = await b.check();
-    expect(c.message).not.toContain('has no gbrain MCP registration');
+    expect(c.message).not.toContain('has no foresights MCP registration');
     expect(c.message).toContain('Codex → /opt/example/bin/gbrain serve');
   });
 
@@ -55,7 +55,7 @@ describe('#9398 harness_wiring reads the workspace Codex project config', () => 
     const c = await b.check();
     expect(c.status).toBe('ok');
     expect(c.details).toMatchObject({ reason: 'registration_recorded', harnesses: ['codex'] });
-    expect(c.message).not.toContain('has no gbrain MCP registration');
+    expect(c.message).not.toContain('has no foresights MCP registration');
   });
 
   test('negative control: only an unrelated server in the project config still warns', async () => {
@@ -63,6 +63,6 @@ describe('#9398 harness_wiring reads the workspace Codex project config', () => 
     writeFileSync(join(b.ws, '.codex', 'config.toml'), '[mcp_servers.other]\ncommand = "/opt/example/bin/other"\n');
     const c = await b.check();
     expect(c.status).toBe('warn');
-    expect(c.message).toContain('has no gbrain MCP registration');
+    expect(c.message).toContain('has no foresights MCP registration');
   });
 });

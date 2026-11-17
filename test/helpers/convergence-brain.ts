@@ -64,7 +64,7 @@ export function prng(seed: number): () => number {
 
 // ---------------------------------------------------------------- the status oracle
 
-/** Every `gbrain sync status --json` field the operator loop reads (sync-status.ts `SyncStatus`). */
+/** Every `foresights sync status --json` field the operator loop reads (sync-status.ts `SyncStatus`). */
 export const STATUS_FIELDS = ['source_id', 'run_id', 'cursor', 'committed_last_10m', 'live_job_id', 'holds', 'last_error', 'needs_human',
   'resume_argv', 'checkpoint_blockers', 'cursors', 'terminal_failures', 'next'] as const;
 export interface StatusExpectation { holds?: Array<{ code: string; path: string }>; needsHuman?: boolean }
@@ -488,7 +488,7 @@ export function fileHash(slug: string, content: string): string {
   return contentHash({ title: parsed.title, type: parsed.type, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline, frontmatter: parsed.frontmatter, tags: [...parsed.tags].sort() });
 }
 
-/** One stdio MCP session against a spawned `gbrain serve`; the serve is the host's resident persistence owner. */
+/** One stdio MCP session against a spawned `foresights serve`; the serve is the host's resident persistence owner. */
 export class StdioServe {
   readonly child: ChildProcess;
   stderr = '';

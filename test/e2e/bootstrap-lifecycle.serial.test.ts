@@ -137,7 +137,7 @@ beforeAll(() => {
   process.env.CODEX_HOME = join(tmpParent, 'codex-home');
   mkdirSync(process.env.CODEX_HOME, { recursive: true });
 
-  // Engine phase artifact: the config `gbrain init --pglite` would write.
+  // Engine phase artifact: the config `foresights init --pglite` would write.
   writeFileSync(join(home, 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dbDir }, null, 2));
 
   // Workspace: a fresh git repo (the cwd the human pasted in).
@@ -229,7 +229,7 @@ exit 0
   );
   chmodSync(join(shimDir, 'codex'), 0o755);
 
-  // A dummy absolute gbrain binary for registrations/hook command strings
+  // A dummy absolute foresights binary for registrations/hook command strings
   // (never executed by this test — hooks fire in-process).
   writeFileSync(join(shimDir, 'gbrain'), '#!/bin/sh\nexit 0\n');
   chmodSync(join(shimDir, 'gbrain'), 0o755);
@@ -279,7 +279,7 @@ afterAll(() => {
 });
 
 describe('bootstrap lifecycle (serial e2e)', () => {
-  test('CLI wiring smoke: `gbrain bootstrap status --json` reaches the dispatcher as a subprocess', () => {
+  test('CLI wiring smoke: `foresights bootstrap status --json` reaches the dispatcher as a subprocess', () => {
     const res = spawnSync('bun', ['run', join(REPO_ROOT, 'src', 'cli.ts'), 'bootstrap', 'status', '--json'], {
       cwd: ws,
       env: { ...process.env },
@@ -342,7 +342,7 @@ describe('bootstrap lifecycle (serial e2e)', () => {
     ).toBe(0);
 
     const rec = record();
-    expect(rec).toContain('claude mcp add gbrain --scope project -e GBRAIN_SOURCE=workspace');
+    expect(rec).toContain('claude mcp add foresights --scope project -e GBRAIN_SOURCE=workspace');
     expect(rec).toContain('claude mcp list');
 
     const settingsPath = join(ws, '.claude', 'settings.local.json');
@@ -382,7 +382,7 @@ describe('bootstrap lifecycle (serial e2e)', () => {
   }, 60_000);
 
   test('verify: real PGLite engine, keyless — exit 0 with magic moment + committed brain/ write-through', async () => {
-    // Pre-init the brain the way `gbrain init --pglite` + `sources add` would.
+    // Pre-init the brain the way `foresights init --pglite` + `sources add` would.
     const engineConfig = { engine: 'pglite' as const, database_path: dbDir };
     const engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
@@ -464,7 +464,7 @@ describe('bootstrap lifecycle (serial e2e)', () => {
         }),
       );
       expect(hooksCode).toBe(0);
-      expect(record()).toContain('codex mcp add gbrain --env GBRAIN_SOURCE=workspace');
+      expect(record()).toContain('codex mcp add foresights --env GBRAIN_SOURCE=workspace');
       // [FIX7] the stateful shim echoes the recorded reg on `mcp get`, so the
       // registration smoke VERIFIES it targets THIS workspace (binary + source)
       // rather than falling back to the substring probe. A regressed

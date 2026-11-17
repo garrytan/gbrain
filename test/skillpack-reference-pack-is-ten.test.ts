@@ -2,7 +2,7 @@
  * Regression test pinning examples/skillpack-reference/ at 10/10.
  *
  * Per the locked DX spec: every gbrain-shipped skillpack must score 10/10.
- * If this test ever fails, gbrain is shipping below the bar it demands of
+ * If this test ever fails, foresights is shipping below the bar it demands of
  * third-party publishers. Fix the reference pack, never lower the bar.
  */
 import { describe, test, expect } from 'bun:test';
@@ -24,7 +24,7 @@ describe('examples/skillpack-reference — 10/10 invariant', () => {
       const failed = r.dimensions.filter((d) => !d.passed).map((d) => `${d.id}.${d.name} (${d.detail})`);
       throw new Error(
         `Reference pack regressed below 10/10. Failing dimensions:\n  ${failed.join('\n  ')}\n\n` +
-          `This is the bar gbrain demands of third-party publishers. Fix the reference pack, do not lower the rubric.`,
+          `This is the bar foresights demands of third-party publishers. Fix the reference pack, do not lower the rubric.`,
       );
     }
     expect(r.score).toBe(10);

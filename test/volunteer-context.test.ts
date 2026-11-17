@@ -533,7 +533,7 @@ describe('volunteer-events sink — timeout branch (long-lived process safety)',
     ]);
     const { unfinished } = await awaitPendingVolunteerEventWrites(20);
     expect(unfinished).toBe(1);
-    // Snapshot dropped so a long-lived `gbrain watch` never accumulates
+    // Snapshot dropped so a long-lived `foresights watch` never accumulates
     // references to forever-pending work (the last-retrieved C1 class).
     expect(_peekPendingVolunteerEventWritesForTests()).toBe(0);
     _resetPendingVolunteerEventWritesForTests();

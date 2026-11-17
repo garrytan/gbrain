@@ -2,10 +2,10 @@
  * Structured error envelope for agent-consumable failures.
  *
  * Shape matches `CycleReport.PhaseResult.error` from v0.17.0 so the agent
- * surface is consistent across `gbrain dream`, `sync --all`, `code-def`,
+ * surface is consistent across `foresights dream`, `sync --all`, `code-def`,
  * `code-refs`, `repos`, and `importCodeFile`.
  *
- * Agents consuming gbrain via CLI+JSON (OpenClaw and similar) need to
+ * Agents consuming foresights via CLI+JSON (OpenClaw and similar) need to
  * distinguish retryable from fatal, user-config from programmer errors,
  * and get a hint to recover. Raw Error().message strings lose that signal.
  */

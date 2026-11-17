@@ -10,7 +10,7 @@ can take the top rows. `get_backlinks` lists who links to one page and
 ## Try it
 
 ```bash
-gbrain rank-entities --types '["person"]' --direction in --limit 10 --json
+foresights rank-entities --types '["person"]' --direction in --limit 10 --json
 ```
 
 The same call from an agent over MCP:
@@ -91,7 +91,7 @@ as doctor's `links_extraction_lag` for each source in scope and also gets the
 page counts. A remote caller gets the state alone, computed over the pages it
 can read (the same rule as the ranking): a private, quarantined or
 foreign-source page never makes its coverage `behind`. The brain host catches
-up with `gbrain extract --stale`.
+up with `foresights extract --stale`.
 
 ## rank_entities_timeout
 

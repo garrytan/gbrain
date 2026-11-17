@@ -1,12 +1,12 @@
 /**
- * skillpack/harvest-lint.ts — privacy linter for `gbrain skillpack harvest`.
+ * skillpack/harvest-lint.ts — privacy linter for `foresights skillpack harvest`.
  *
  * Reads `~/.gbrain/harvest-private-patterns.txt` (one regex per line,
  * user-maintained) plus a small built-in default list of patterns that
- * commonly leak when harvesting from a personal fork into gbrain core:
+ * commonly leak when harvesting from a personal fork into foresights core:
  *
  *   - `\bWintermute\b` — the canonical private fork name (CLAUDE.md
- *     explicitly bans this from gbrain core)
+ *     explicitly bans this from foresights core)
  *   - common email regex
  *   - common Slack channel pattern (`#channel-name`)
  *
@@ -37,7 +37,7 @@ export class PrivacyLintConfigError extends Error {
   }
 }
 
-/** Default patterns shipped with gbrain (CLAUDE.md responsible-disclosure rule). */
+/** Default patterns shipped with foresights (CLAUDE.md responsible-disclosure rule). */
 export const DEFAULT_PRIVATE_PATTERNS: string[] = [
   String.raw`\bWintermute\b`,
   // Email regex (RFC-5322-lite — good enough for harvest-time scrubbing).

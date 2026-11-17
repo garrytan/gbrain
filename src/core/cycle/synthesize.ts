@@ -50,7 +50,7 @@ import { deferPublishOrThrow, finishDeferredPostprocess, loadCommittedOutputsOrD
  * NOT in v1:
  *   - git auto-commit / push (deferred to v1.1, codex finding #5).
  *   - Borderline-band mid-tier routing + scheduled reject sample-audit
- *     (manual `gbrain dream retriage --audit-rejects` is the v1 control).
+ *     (manual `foresights dream retriage --audit-rejects` is the v1 control).
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
@@ -135,7 +135,7 @@ const DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS = 35 * 60 * 1000;
  * concrete-facts segment-selection nudge. The bump invalidates every cached
  * verdict; the first post-upgrade cycle re-judges the corpus bounded by
  * dream.triage.max_ms (deferred files continue next cycle), and
- * `gbrain dream retriage` is the operator remedy for a full sweep.
+ * `foresights dream retriage` is the operator remedy for a full sweep.
  */
 export const TRIAGE_VERSION = 2;
 /**
@@ -351,7 +351,7 @@ export interface SynthesizePhaseOpts {
   yieldDuringPhase?: () => Promise<void>;
   /**
    * Override the corpus directory and other tunables. Primarily for the
-   * `gbrain dream --input <file>` ad-hoc path; bypasses config reads.
+   * `foresights dream --input <file>` ad-hoc path; bypasses config reads.
    */
   inputFile?: string;
   date?: string;
@@ -368,7 +368,7 @@ export interface SynthesizePhaseOpts {
    *  clampSubagentBudgets template so a child submitted late in the cycle
    *  cannot outlive the parent's kill switch; under the minimum budget the
    *  phase skips honestly instead of submitting a guaranteed-timeout child.
-   *  Null/unset (`gbrain dream` CLI) keeps the configured defaults. */
+   *  Null/unset (`foresights dream` CLI) keeps the configured defaults. */
   deadlineAtMs?: number | null;
   /**
    * Disable the self-consumption guard. Wired from the
@@ -388,7 +388,7 @@ export interface SynthesizePhaseOpts {
   /** Internal: minion owner job id for private dream-inline queue recovery. */
   privateQueueOwnerJobId?: number | null;
   /**
-   * issue #2860 — `gbrain dream --phase synthesize --once`. Bypasses the
+   * issue #2860 — `foresights dream --phase synthesize --once`. Bypasses the
    * `dream.synthesize.enabled` gate for THIS call only (does NOT bypass
    * the `session_corpus_dir` not-configured check — there's nothing to
    * run without a corpus). Never reads or writes config.
@@ -525,7 +525,7 @@ async function runPhaseSynthesizeInner(
                 await loadPatternsOutputSlugPrefix(engine, config.outputRoot),
                 dirname(buildDreamSummarySlug(config.outputRoot, 'x')),
               ].map(prefix => join(opts.brainDir, prefix)),
-          // #5413: corpus files captured from gbrain's own claude-cli calls.
+          // #5413: corpus files captured from foresights's own claude-cli calls.
           selfCaptureSessionIds: claudeCliSelfSessionIds(),
         })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun }, routing);
 
@@ -1568,7 +1568,7 @@ export interface SynthConfig {
    * completion + programmatic validated writes with automatic per-transcript
    * fallback to the agentic loop; 'agentic' = the classic multi-turn tool
    * loop. Config `dream.synthesize.mode`; unknown values warn + default.
-   * Revert dial: `gbrain config set dream.synthesize.mode agentic`.
+   * Revert dial: `foresights config set dream.synthesize.mode agentic`.
    */
   mode: 'agentic' | 'oneshot';
 }
@@ -1852,7 +1852,7 @@ async function checkCooldown(
 // moved from `new Anthropic()` to
 // `gateway.chat()` so any provider with a registered recipe (Anthropic,
 // DeepSeek, OpenRouter, Voyage, Ollama, llama-server, etc.) is reachable
-// via `gbrain config set models.dream.synthesize_verdict <provider>:<model>`.
+// via `foresights config set models.dream.synthesize_verdict <provider>:<model>`.
 //
 // This mirrors v0.35.5.0's `tryBuildGatewayClient` in src/core/think/index.ts
 // (which closed #952 for runThink). Same pattern, same trade-offs:
@@ -2421,7 +2421,7 @@ export interface TriagePassResult {
  * A chat_fallback_chain answer (`answeredBy`) is never stored, so it can't be
  * a hit for either path. `maxChars`/`maxTokens` are deliberately NOT part of
  * validity — tuning them must not cold-restart the corpus; use
- * `gbrain dream retriage --force` to re-judge under new sampling knobs.
+ * `foresights dream retriage --force` to re-judge under new sampling knobs.
  *
  * Time budget: once `now() - start > maxMs` (>0), workers stop pulling new
  * MISSES — remaining misses are reported `deferred` (not cached, not
@@ -2651,7 +2651,7 @@ export async function runTriagePass(
       // AIConfigError at chat time = provider auth/config went bad mid-run
       // (revoked key, recipe misconfig surfacing at first real call). Skip
       // this transcript with the gateway error message so the user sees the
-      // shape of the problem in `gbrain dream --phase synthesize --dry-run`.
+      // shape of the problem in `foresights dream --phase synthesize --dry-run`.
       if (e instanceof AIConfigError) {
         reports[idx] = {
           filePath: t.filePath,

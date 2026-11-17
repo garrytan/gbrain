@@ -1,7 +1,7 @@
 /**
  * Day-zero doctor on a keyless brain (agent-first operator wave E2 + E11).
  *
- * `gbrain init --pglite --no-embedding`, then `gbrain doctor --json` with no
+ * `foresights init --pglite --no-embedding`, then `foresights doctor --json` with no
  * provider keys, non-TTY, from a hermetic HOME. Baseline on 5b20e98 was
  * 6 WARN / health 70 (retrieval_reflex_health, skill_preconditions,
  * embedding_provider, backup_coverage, cycle_freshness, takes_count): every
@@ -23,7 +23,7 @@ beforeAll(async () => {
   // helper seeds one for the skill checks; day zero must not inherit it).
   rmSync(h.skillsDir, { recursive: true, force: true });
   const init = await runGbrain(h, ['init', '--pglite', '--no-embedding']);
-  if (init.exitCode !== 0) throw new Error(`gbrain init failed (${init.exitCode}): ${init.stderr}`);
+  if (init.exitCode !== 0) throw new Error(`foresights init failed (${init.exitCode}): ${init.stderr}`);
 }, 120_000);
 
 afterAll(() => h?.cleanup());

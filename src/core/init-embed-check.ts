@@ -88,7 +88,7 @@ function formatInitEmbedWarning(d: Exclude<EmbeddingDiagnosis, { ok: true }>): s
       break;
     case 'user_provided_dims_unset':
       lines.push(`  Provider "${d.provider}" ships no default embedding dimension — set one explicitly.`);
-      lines.push(`    re-run: gbrain init --embedding-dimensions <N>   (e.g. 1024 for bge-large)`);
+      lines.push(`    re-run: foresights init --embedding-dimensions <N>   (e.g. 1024 for bge-large)`);
       break;
     case 'no_model_configured':
       lines.push('  No embedding model is configured.');
@@ -97,9 +97,9 @@ function formatInitEmbedWarning(d: Exclude<EmbeddingDiagnosis, { ok: true }>): s
       lines.push('  Embedding gateway is not configured (startup-order bug — please file an issue).');
       break;
   }
-  lines.push('  Without it, `gbrain sync` imports pages but embeds 0 (search + code graph stay empty).');
+  lines.push('  Without it, `foresights sync` imports pages but embeds 0 (search + code graph stay empty).');
   lines.push('  Fixes:');
-  lines.push('    • Set the key above, then run `gbrain sync`.');
+  lines.push('    • Set the key above, then run `foresights sync`.');
   lines.push('    • Or defer embedding entirely: re-run init with --no-embedding.');
   lines.push('    • Or skip this check: --skip-embed-check (or GBRAIN_INIT_SKIP_EMBED_CHECK=1).');
   return lines.join('\n');
@@ -111,7 +111,7 @@ function formatLiveProbeWarning(p: { reason: string; message: string }, model: s
     `  Heads up: an embedding key is set but a test embed failed (${p.reason}).`,
     `  Model: ${model}`,
     `  Error: ${p.message}`,
-    '  `gbrain sync` may fail to embed. Verify the key/endpoint, or re-run init',
+    '  `foresights sync` may fail to embed. Verify the key/endpoint, or re-run init',
     '  with --skip-embed-check to bypass this probe.',
   ].join('\n');
 }

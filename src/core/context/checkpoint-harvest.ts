@@ -558,7 +558,7 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
   duplicate?: number;
   superseded?: number;
 }> {
-  // #5820: a turn banked from gbrain's own claude-cli session (an older
+  // #5820: a turn banked from foresights's own claude-cli session (an older
   // binary's Stop hook, or a child that still ran user hooks) is terminal
   // here exactly as in the sweep — extracting it would spawn another
   // claude-cli call that banks again.
@@ -653,7 +653,7 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
  * #6785: the facts-absorb owner-readiness preflight (#5362) before any model
  * call. A claimed but not activated canonical worktree refuses the fence
  * write after extraction; the turn stays banked (no sidecar) for the sweep,
- * which holds it under the same check until `gbrain sources writer activate`.
+ * which holds it under the same check until `foresights sources writer activate`.
  */
 /** #6785: the extraction-config fingerprint a capped window re-arms on (null: never re-arms). */
 async function harvestFingerprint(job: HarvestJob): Promise<string | null> {
@@ -669,7 +669,7 @@ async function writerRefused(job: HarvestJob): Promise<boolean> {
   } catch (e) {
     if ((e as { code?: unknown }).code !== 'writer_coordinator_required') throw e;
     logFirstHarvestError(job, 'writer_coordinator_required', new Error(
-      `${e instanceof Error ? e.message : String(e)} Check the writer: gbrain sources writer status ${job.sourceId}`));
+      `${e instanceof Error ? e.message : String(e)} Check the writer: foresights sources writer status ${job.sourceId}`));
     return true;
   }
 }

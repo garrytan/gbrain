@@ -1,5 +1,5 @@
 /**
- * v0.34 W6 — gbrain edges-backfill CLI.
+ * v0.34 W6 — foresights edges-backfill CLI.
  *
  * Operator escape hatch for the symbol-resolution backfill chain. Calls
  * `resolveSymbolEdgesIncremental` from src/core/chunkers/symbol-resolver.ts
@@ -59,7 +59,7 @@ function parseFlags(args: string[]): BackfillOpts {
 
 function printHelp(): void {
   process.stderr.write(
-    `Usage: gbrain edges-backfill [--source <id> | --all-sources] [--max-chunks N] [--json]\n\n` +
+    `Usage: foresights edges-backfill [--source <id> | --all-sources] [--max-chunks N] [--json]\n\n` +
       `Resumable symbol-resolution backfill. Walks every content_chunks row whose\n` +
       `edges_backfilled_at is NULL or older than EDGE_EXTRACTOR_VERSION_TS, and\n` +
       `resolves its emitted edges against same-page symbol_name_qualified candidates.\n\n` +

@@ -164,14 +164,14 @@ async function appendPrepared(engine: BrainEngine, sourceId: string, slug: strin
     if (!source || source.incarnation !== prepared.incarnation) return 0;
     if (source.purgeEpoch !== prepared.epoch) {
       throw opError('belief_stale_preparation', `A purge ran in source ${sourceId} after the backfill of ${slug} was prepared.`,
-        'The backfill prepares the page again from the current, redacted versions; rerun gbrain beliefs backfill if it gave up.');
+        'The backfill prepares the page again from the current, redacted versions; rerun foresights beliefs backfill if it gave up.');
     }
     const [open] = await tx.executeRaw<{ id: number; page_lifetime: string | null }>(`SELECT p.id, l.page_lifetime::text AS page_lifetime FROM pages p
       LEFT JOIN belief_page_lifetimes l ON l.source_incarnation = $2::uuid AND l.slug = p.slug AND l.ended_at IS NULL WHERE p.source_id = $1 AND p.slug = $3`,
     [sourceId, source.incarnation, slug]);
     if (Number(open?.id) !== prepared.pageId || open?.page_lifetime !== prepared.lifetime) {
       throw opError('belief_stale_preparation', `The page at ${slug} in source ${sourceId} was renamed or replaced after its backfill was prepared.`,
-        'The backfill prepares the page again; rerun gbrain beliefs backfill if it gave up.');
+        'The backfill prepares the page again; rerun foresights beliefs backfill if it gave up.');
     }
     const [done] = await tx.executeRaw<{ id: number }>(`SELECT id FROM belief_events WHERE page_lifetime = $1::uuid AND event_type = 'backfill' LIMIT 1`, [prepared.lifetime]);
     if (done) return 0;
@@ -197,7 +197,7 @@ export async function backfillBeliefHistory(engine: BrainEngine, sourceId: strin
   const [first] = await coverageIntervals(engine, sourceId);
   if (!first) {
     throw opError('belief_coverage_required', `The belief ledger is not enabled on source ${sourceId}, so there is no coverage start to backfill before.`,
-      `Ask the user, then run gbrain beliefs enable --source ${sourceId} first.`);
+      `Ask the user, then run foresights beliefs enable --source ${sourceId} first.`);
   }
   const since = first.started_at;
   const slugs = opts.slugs ?? (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 ORDER BY slug', [sourceId])).map(r => r.slug);

@@ -1,8 +1,8 @@
 /**
  * The Cursor half of doctor's skill_resolver check: the pinned-skills rule
- * gbrain setup cursor --skill-loading resolve writes per project
+ * foresights setup cursor --skill-loading resolve writes per project
  * (src/core/setup/cursor-skill-pins.ts). For each recorded project it reports
- * whether the rule file is gbrain's and present, the project catalog's
+ * whether the rule file is foresights's and present, the project catalog's
  * freshness and the pin count. Cursor's coverage is always partial: pinned
  * only, no per-turn hook, and unverified, since nothing on this host can
  * see Cursor's model request.
@@ -37,6 +37,6 @@ export function describeCursorSkillView(v: CursorSkillView): { line: string; pro
   const bad = v.projects.find((p) => p.fresh === null || (p.pins > 0 && p.rule !== 'present'));
   const problem = !bad ? null
     : bad.fresh === null ? { code: 'skill_index_missing', what: 'the ' + bad.catalog + ' catalog for ' + bad.project + ' is missing, so its pins cannot be checked', project: bad.project }
-      : { code: 'skill_resolver_plugin_not_installed', what: bad.rule === 'foreign' ? 'the pinned-skills rule in ' + bad.project + ' is not gbrain\'s any more' : 'the pinned-skills rule is gone from ' + bad.project, project: bad.project };
+      : { code: 'skill_resolver_plugin_not_installed', what: bad.rule === 'foreign' ? 'the pinned-skills rule in ' + bad.project + ' is not foresights\'s any more' : 'the pinned-skills rule is gone from ' + bad.project, project: bad.project };
   return { line, problem };
 }

@@ -1,5 +1,5 @@
 /**
- * #5626 — `gbrain lint` validates a page's explicit `type` against the active
+ * #5626 — `foresights lint` validates a page's explicit `type` against the active
  * schema pack. Pre-fix, `type: banana` linted clean; the `type-undeclared`
  * rule now flags any type the pack neither declares nor aliases (the same
  * classification as `schema lint --with-db`'s stored_type_undeclared).
@@ -27,7 +27,7 @@ describe('#5626 type-undeclared lint rule', () => {
     expect(issue.fixable).toBe(false);
     expect(issue.message).toContain("'banana'");
     expect(issue.message).toContain("'gbrain-base-v2'");
-    expect(issue.message).toContain('gbrain schema add-type banana');
+    expect(issue.message).toContain('foresights schema add-type banana');
     expect(flagged('note')).toEqual([]);
     expect(flagged('memo')).toEqual([]);
   });

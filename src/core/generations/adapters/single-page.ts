@@ -6,8 +6,8 @@
  * - Expected revision: the writer passes the page revision it read before composing (null: no page). It is the
  *   generation's input pin, rechecked under the page lock, so a writer whose page changed since is fenced
  *   (`generation_fenced`, `pin_moved`) and writes nothing.
- * - Version first: a live page the write changes is copied to `page_versions` (`gbrain restore`) and its bounded preimage
- *   is kept on the ledger (`gbrain repair generations --kind <kind> --mode restore`), in the same transaction.
+ * - Version first: a live page the write changes is copied to `page_versions` (`foresights restore`) and its bounded preimage
+ *   is kept on the ledger (`foresights repair generations --kind <kind> --mode restore`), in the same transaction.
  * - Trust: a derived page carries its derivation (the writer's tier and taint inputs), applied in that transaction.
  *
  * Managed brains keep their coordinated page request, which already binds the expected revision and versions first.

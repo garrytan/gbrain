@@ -93,7 +93,7 @@ Extract people, companies, concepts from the incoming signal.
 ### Step 2: Check brain state
 
 For each entity:
-- `gbrain search "name"` -- does a page already exist?
+- `foresights search "name"` -- does a page already exist?
 - **If yes:** UPDATE path (add new signal, update compiled truth if material)
 - **If no:** CREATE path (check notability gate first, then create)
 
@@ -116,7 +116,7 @@ Don't just capture facts. Capture texture:
 Priority order -- stop when you have enough signal for the entity's tier.
 
 **4a. Brain cross-reference (always, all tiers)**
-- `gbrain search "name"` and `gbrain query "what do we know about name"`
+- `foresights search "name"` and `foresights query "what do we know about name"`
 - Check related pages: company pages for person enrichment and vice versa
 - This is free and often the richest source
 
@@ -167,7 +167,7 @@ the raw data shows exactly what the API returned.
 1. Check notability gate (see `skills/_brain-filing-rules.md`)
 2. Resolve the entity's type, directory and subtype from the ACTIVE schema
    pack, never from the templates below: follow
-   `skills/brain-taxonomist/SKILL.md` (`gbrain schema show --json`, or MCP
+   `skills/brain-taxonomist/SKILL.md` (`foresights schema show --json`, or MCP
    `get_active_schema_pack`; `schema_explain_type` for one type). When the
    pack declares an entity type the evidence fits better than `person` or
    `company` (an investment firm, a protocol foundation), file it under that
@@ -180,10 +180,10 @@ the raw data shows exactly what the API returned.
    placeholder.
 4. Fill compiled truth with citations
 5. Add first timeline entry
-6. Omit sections with nothing to put under them (`gbrain lint` flags empty ones)
+6. Omit sections with nothing to put under them (`foresights lint` flags empty ones)
 7. In a batch, create the pages other pages will link to first. A link to a
    page that doesn't exist yet is recorded as a wanted page and becomes an
-   edge once that page is written (`gbrain wanted` lists them).
+   edge once that page is written (`foresights wanted` lists them).
 
 #### UPDATE path
 
@@ -302,9 +302,9 @@ writes (stdio and HTTP) skip inline auto-link (`auto_links.skipped: "remote"`)
 but queue plain `mentions` edges to pages that already exist
 (`auto_links.mention_links: "queued"`). Typed and frontmatter edges
 (`works_at`, `invested_in`, `source`, ...) wait for a maintenance pass: the
-stdio serve sweep, or `gbrain sweep --once` on the host for an HTTP brain.
+stdio serve sweep, or `foresights sweep --once` on the host for an HTTP brain.
 Use `add_link` for a typed edge you need immediately.
-Timeline entries still need explicit `gbrain timeline-add` calls.
+Timeline entries still need explicit `foresights timeline-add` calls.
 
 ## Bulk Enrichment Rules
 
@@ -336,7 +336,7 @@ This creates an audit trail for brain enrichment over time.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - External enrichment APIs return `rate_limited` or an auth failure: back off for the stated delay; on auth failure stop and tell the user which key is missing. Never fill the gap with guessed facts.
 - `put_page` returns `revision_conflict`: re-read the entity page, merge, and save with the new revision.
@@ -372,11 +372,11 @@ Both page types have bidirectional back-links to every entity they mention.
 
 ## Tools Used
 
-- Read a page from gbrain (get_page)
-- Store/update a page in gbrain (put_page)
-- Add a timeline entry in gbrain (add_timeline_entry)
-- List pages in gbrain by type (list_pages)
-- Store raw API data in gbrain (put_raw_data)
-- Retrieve raw data from gbrain (get_raw_data)
-- Link entities in gbrain (add_link)
-- Check backlinks in gbrain (get_backlinks)
+- Read a page from foresights (get_page)
+- Store/update a page in foresights (put_page)
+- Add a timeline entry in foresights (add_timeline_entry)
+- List pages in foresights by type (list_pages)
+- Store raw API data in foresights (put_raw_data)
+- Retrieve raw data from foresights (get_raw_data)
+- Link entities in foresights (add_link)
+- Check backlinks in foresights (get_backlinks)

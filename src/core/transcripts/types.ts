@@ -1,12 +1,12 @@
 /**
  * types.ts — the transcript-adapter seam (cathedral-4).
  *
- * One contract for every dead-log format gbrain can import: coding-harness
+ * One contract for every dead-log format foresights can import: coding-harness
  * session logs (Claude Code, Codex, OpenClaw, Hermes, Grok) and consumer chat
  * exports (ChatGPT, Claude.ai). Each adapter is a leaf module in this
  * directory; the registry in detect.ts is the only place formats are
  * enumerated. Every adapter carries a DATED SPEC_TARGET (the
- * bootstrap/host-specs.ts discipline) because these are host formats gbrain
+ * bootstrap/host-specs.ts discipline) because these are host formats foresights
  * does not control.
  *
  * Cardinality: one FILE may contain MANY sessions (Hermes state.db, ChatGPT

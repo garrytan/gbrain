@@ -12,7 +12,7 @@
  * by test/doctor.test.ts; this file is a structural regression guard
  * for the 3 new v0.41.16.0 checks.
  *
- * Spawning the subprocess matches the actual user experience (`gbrain
+ * Spawning the subprocess matches the actual user experience (`foresights
  * doctor`) and avoids the in-process env/stdout-capture brittleness
  * that bit the original test draft.
  */

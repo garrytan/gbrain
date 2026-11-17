@@ -187,12 +187,12 @@ describe('stripFrontmatter', () => {
       '',
       '# x',
       '',
-      'Body says gbrain search comes first.',
+      'Body says foresights search comes first.',
       'Then perplexity for follow-up.',
     ].join('\n');
     const body = stripFrontmatter(content);
     // `web_search` appears ONLY in frontmatter — body has no external pattern
-    // before the gbrain reference.
+    // before the foresights reference.
     expect(findFirstBrainRefOffset(body)).toBeGreaterThanOrEqual(0);
     // Body should NOT contain `web_search` (it was in the stripped frontmatter).
     expect(body.includes('web_search')).toBe(false);
@@ -200,10 +200,10 @@ describe('stripFrontmatter', () => {
 });
 
 describe('offset helpers', () => {
-  test('findFirstBrainRefOffset finds earliest gbrain ref', () => {
-    const body = 'Some preamble. gbrain search and later gbrain query.';
+  test('findFirstBrainRefOffset finds earliest foresights ref', () => {
+    const body = 'Some preamble. foresights search and later foresights query.';
     const o = findFirstBrainRefOffset(body);
-    expect(o).toBe(body.indexOf('gbrain search'));
+    expect(o).toBe(body.indexOf('foresights search'));
   });
 
   test('findFirstExternalRefOffset finds earliest external pattern', () => {
@@ -424,7 +424,7 @@ describe('analyzeSkillBrainFirst (fixture corpus)', () => {
 describe('analyzeSkillBrainFirst (PR #1206 regression preservation)', () => {
   test('PR test case: good skill with Step 0 brain context passes', () => {
     // Direct copy of PR #1206 `good-skill` test case shape.
-    const content = `---\nname: good-skill\n---\n# Good Skill\n\n## Step 0: Brain Context\nSearch the brain first with \`gbrain search\` for relevant context.\n\n## Step 1: External Lookup\nUse web_search to find additional information.\n`;
+    const content = `---\nname: good-skill\n---\n# Good Skill\n\n## Step 0: Brain Context\nSearch the brain first with \`foresights search\` for relevant context.\n\n## Step 1: External Lookup\nUse web_search to find additional information.\n`;
     const result = analyzeSkillBrainFirst(content, 'good-skill', parseSkillFrontmatter(content));
     expect(result.status).toBe('ok');
   });
@@ -436,7 +436,7 @@ describe('analyzeSkillBrainFirst (PR #1206 regression preservation)', () => {
   });
 
   test('PR test case: skill with brain search reference is not flagged', () => {
-    const content = `---\nname: bf\n---\n# Brain-First\n\nFirst, search the brain for existing context.\nThen use web_search for anything missing. Use gbrain search.\n`;
+    const content = `---\nname: bf\n---\n# Brain-First\n\nFirst, search the brain for existing context.\nThen use web_search for anything missing. Use foresights search.\n`;
     const result = analyzeSkillBrainFirst(content, 'bf', parseSkillFrontmatter(content));
     expect(result.status).toBe('ok');
   });

@@ -3,7 +3,7 @@
  * an admission of the managed sync pass itself; the separate maintenance worker is retired.
  *
  * A source whose gbrain.yml declares `keep_db:` prefixes asks that a drifted page under them be reconciled with the
- * database copy winning, the resolution `gbrain repair file-drift --prefer database` previews, inside the same reconcile
+ * database copy winning, the resolution `foresights repair file-drift --prefer database` previews, inside the same reconcile
  * protections. Only the owner host's pass writes it, and only for a path it classified `keep_db` (row 18) or
  * `db_ahead`/`db_only` under a keep_db prefix (row 15) in committed mode with `Dp = clean`:
  *

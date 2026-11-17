@@ -1,5 +1,5 @@
 /**
- * Batched exact-key page snapshots for bulk walks (`gbrain extract --source db`).
+ * Batched exact-key page snapshots for bulk walks (`foresights extract --source db`).
  *
  * One statement returns, for a run of `(slug, sourceId)` refs, the same
  * `PageSnapshot` that `engine.readPageSnapshot(slug, { sourceId })` returns

@@ -1,5 +1,5 @@
 /**
- * gbrain lint link checks: dead and ambiguous links between the brain's own pages.
+ * foresights lint link checks: dead and ambiguous links between the brain's own pages.
  *
  * Deterministic and read-only: zero LLM calls, no database. Reads the markdown
  * files under the lint root, builds the slug set and the basename index the

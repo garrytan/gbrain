@@ -1,6 +1,6 @@
 /**
  * #6454 [R16]: the consented, source-scoped, preview-bound
- * `gbrain repair frontmatter-keys` sweep and its doctor check
+ * `foresights repair frontmatter-keys` sweep and its doctor check
  * `stale_frontmatter_keys`. The sweep is hygiene (the compare-side fix makes
  * the stored keys inert); it runs as a coordinated maintenance write under
  * the pages' key locks because the managed writer guard refuses a bare
@@ -92,7 +92,7 @@ async function sweepCase(engine: BrainEngine): Promise<void> {
       const warn = await staleFrontmatterKeysCheck(engine, [sources.a, sources.b]);
       expect(warn.status).toBe('warn');
       expect(warn.details).toMatchObject({ count: 4, sources: [{ source_id: sources.a, n: 2 }, { source_id: sources.b, n: 2 }], repair: 'frontmatter-keys' });
-      expect(warn.message).toContain(`gbrain repair frontmatter-keys --source ${sources.a}`);
+      expect(warn.message).toContain(`foresights repair frontmatter-keys --source ${sources.a}`);
       expect(warn.message).toContain('knowledge_revision');
 
       // Preview: writes nothing, reports the rows and the revision advance, prints the hash.
@@ -106,7 +106,7 @@ async function sweepCase(engine: BrainEngine): Promise<void> {
       expect(preview.listing).toEqual([{ item: expect.stringMatching(new RegExp(`^${sources.a}:pages#\\d+-\\d+$`)), class: 'strip', detail: expect.stringContaining('2 page(s)') }]);
       expect(preview.details).toMatchObject({ total: 2, by_key: { type: 2, title: 2, tags: 2 } });
       expect(preview.cost).toMatchObject({ lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 0 });
-      expect(preview.apply_command).toBe(`gbrain repair frontmatter-keys --source ${sources.a} --apply --expect ${preview.preview_hash}`);
+      expect(preview.apply_command).toBe(`foresights repair frontmatter-keys --source ${sources.a} --apply --expect ${preview.preview_hash}`);
       for (const slug of slugs) expect(await revisionOf(sources.a, slug)).toBe(revisionsBefore[slug]!);
       expect(await frontmatterOf(sources.a, slugs[0])).toMatchObject(STALE);
 

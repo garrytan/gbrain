@@ -2,7 +2,7 @@
  * v0.34 pre-w0 — retrieval strategies for the code-retrieval eval.
  *
  * Two strategies ship in the pre-w0 PR:
- *   - baseline: query + search via hybridSearch (today's gbrain)
+ *   - baseline: query + search via hybridSearch (today's foresights)
  *   - with-code-intel: code_blast / code_flow / code_def / etc.
  *
  * The with-code-intel strategy is a stub until v0.34 W3 lands; the harness

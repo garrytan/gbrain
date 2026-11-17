@@ -1,5 +1,5 @@
 /**
- * A live writer during a conversion: door commits (`gbrain git commit-push` in a managed checkout, file-first and under the
+ * A live writer during a conversion: door commits (`foresights git commit-push` in a managed checkout, file-first and under the
  * checkout's commit lock) that land after strict_pass_2 read its level used to leave the closing plan with Git ahead of the
  * database and the apply incomplete (`git_conversion_incomplete`), however fast it ran. The apply now runs bounded closing
  * strict passes that import them, and refuses with the operator contract only when Git is still ahead after the last one.

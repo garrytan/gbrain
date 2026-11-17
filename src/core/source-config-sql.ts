@@ -61,7 +61,7 @@ export const SOURCE_CONFIG_OBJECT_SQL = `(
     ) AS entry(key, value)
 )`;
 
-/** Paste-ready repair used by `gbrain doctor`. */
+/** Paste-ready repair used by `foresights doctor`. */
 export const REPAIR_SOURCE_CONFIG_SQL =
   `UPDATE sources SET config = ${SOURCE_CONFIG_OBJECT_SQL} ` +
   `WHERE jsonb_typeof(config) <> 'object';`;

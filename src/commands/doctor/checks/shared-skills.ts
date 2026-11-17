@@ -19,7 +19,7 @@ export async function checkSharedSkillsSources(engine: BrainEngine): Promise<Che
     const parked = views.filter(view => view.parked);
     if (!optedOut.length && !parked.length) return null;
     const details = { opted_out: optedOut, parked: parked.map(view => ({ source_id: view.source_id, limit: view.parked!.limit, parked_at: view.parked!.parked_at })), docs: SHARED_SKILLS_OPT_OUT_DOCS };
-    const off = optedOut.length ? `Opted out of shared-skills adoption (config.shared_skills=false): ${optedOut.join(', ')}; turn one back on with gbrain sources shared-skills <id> on.` : '';
+    const off = optedOut.length ? `Opted out of shared-skills adoption (config.shared_skills=false): ${optedOut.join(', ')}; turn one back on with foresights sources shared-skills <id> on.` : '';
     if (!parked.length) return { name: 'shared_skills_sources', status: 'ok', message: off, details };
     return {
       name: 'shared_skills_sources', status: 'warn', details,

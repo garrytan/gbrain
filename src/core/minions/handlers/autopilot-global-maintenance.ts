@@ -19,7 +19,7 @@ import { reportJobProgress } from './job-progress.ts';
  * recorded phase. A phase that was running when a job died (timeout or crash)
  * is skipped for the rest of that pass so later phases still run; doctor's
  * `global_maintenance_timeouts` check reports it and names
- * `gbrain dream --phase <name>` to run it without the job deadline.
+ * `foresights dream --phase <name>` to run it without the job deadline.
  *
  * GBRA-130 A-10 (#6837): a phase that blocks the stamp records a streak in the
  * same progress row (`failures[phase]`), counted once per pass. A typed
@@ -29,8 +29,8 @@ import { reportJobProgress } from './job-progress.ts';
  * backlog that shrinks keeps withholding it, and budget and child blockers
  * always do.
  * Failing and child kinds back off from their third pass. A streak recorded
- * by another gbrain version is dropped, a new blocker key starts a new streak,
- * and `gbrain autopilot --retry-global` ends the back-off. A job whose
+ * by another foresights version is dropped, a new blocker key starts a new streak,
+ * and `foresights autopilot --retry-global` ends the back-off. A job whose
  * failures look systemic (ItemRun breaker) persists no streak.
  *
  * A phase failure classified run-scoped is the phase's typed blocker too
@@ -67,7 +67,7 @@ export interface PhaseStreak {
   count: number;
   first_at: string;
   last_at: string;
-  /** The gbrain version that recorded it; another running version drops the streak. */
+  /** The foresights version that recorded it; another running version drops the streak. */
   version: string;
   /** The pass that last counted it, so a phase rerun within one pass counts once. */
   pass: string;
@@ -118,11 +118,11 @@ export async function resolveGlobalFloorMin(engine: BrainEngine): Promise<number
 
 /** The command that ends a phase's back-off so the next pass runs it. */
 export function phaseRetryCommand(phase: string): string {
-  return `gbrain autopilot --retry-global --phase ${phase}`;
+  return `foresights autopilot --retry-global --phase ${phase}`;
 }
 
 /** Judges every transcript triage keeps deferring, without the dream.triage.max_ms window (#7307). */
-export const DEFERRED_TRIAGE_FIX = 'gbrain dream retriage';
+export const DEFERRED_TRIAGE_FIX = 'foresights dream retriage';
 
 /** The next command for a phase streak: retriage for a triage deferral, else the back-off release. */
 export function phaseStreakFix(phase: string, streak: Pick<PhaseStreak, 'key'>): string {
@@ -155,7 +155,7 @@ function phaseBlocker(phase: PhaseResult): string | null {
 function phaseFailureError(result: PhaseResult): Error {
   const code = result.code ?? result.error?.code;
   const message = result.error?.message ?? result.summary;
-  if (code && code in CODES) return new OperationError(code as never, message, result.error?.hint ?? 'Rerun the phase with gbrain dream --phase ' + result.phase + ' once the cause is fixed.');
+  if (code && code in CODES) return new OperationError(code as never, message, result.error?.hint ?? 'Rerun the phase with foresights dream --phase ' + result.phase + ' once the cause is fixed.');
   return Object.assign(new Error(message), code ? { code } : {});
 }
 
@@ -216,7 +216,7 @@ export function makeAutopilotGlobalMaintenanceHandler(engine: BrainEngine, deps:
     const died = progress.running_phase;
     if (died && progress.running_job !== runToken) {
       recordTimeout(died);
-      console.warn(`[autopilot-global-maintenance] phase ${died} was running when an earlier job died; skipping it for this pass. Run it alone with: gbrain dream --phase ${died}`);
+      console.warn(`[autopilot-global-maintenance] phase ${died} was running when an earlier job died; skipping it for this pass. Run it alone with: foresights dream --phase ${died}`);
     }
     const resumeAt = progress.next_phase ? phases.indexOf(progress.next_phase as never) : -1;
     const start = resumeAt >= 0 ? resumeAt : 0;
@@ -280,8 +280,8 @@ export function makeAutopilotGlobalMaintenanceHandler(engine: BrainEngine, deps:
       const phase = phases[i]!;
       if (progress.skip_this_pass.includes(phase)) {
         progress.pass_failed = true;
-        ran.push({ phase, status: 'skipped', duration_ms: 0, summary: `skipped: killed an earlier job; run gbrain dream --phase ${phase}`,
-          details: { reason: 'timed_out_previous_job', recovery: `gbrain dream --phase ${phase}` } });
+        ran.push({ phase, status: 'skipped', duration_ms: 0, summary: `skipped: killed an earlier job; run foresights dream --phase ${phase}`,
+          details: { reason: 'timed_out_previous_job', recovery: `foresights dream --phase ${phase}` } });
         continue;
       }
       const streak = progress.failures[phase];

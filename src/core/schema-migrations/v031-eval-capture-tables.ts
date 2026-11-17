@@ -13,7 +13,7 @@ export const v031: Migration = {
   //     subagent_id let gbrain-evals partition replay by run.
   //   eval_capture_failures: insert-side audit trail. When logEvalCandidate
   //     fails (DB down, RLS reject, CHECK violation, scrubber exception),
-  //     the capture path records the reason here so `gbrain doctor` can
+  //     the capture path records the reason here so `foresights doctor` can
   //     surface silent drops cross-process. In-process counters don't work
   //     because doctor runs in a separate process from the MCP server.
   //

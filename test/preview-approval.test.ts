@@ -20,10 +20,10 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
 const COMMANDS: Array<{ command: PreviewApprovalCommand; preview: string }> = [
-  { command: 'authorize-legacy', preview: 'gbrain jobs authorize-legacy --select "status=waiting"' },
-  { command: 'jobs-cancel', preview: 'gbrain jobs cancel --select "status=waiting|delayed"' },
-  { command: 'stale-atoms', preview: 'gbrain repair stale-atoms --source default' },
-  { command: 'extractor-facts', preview: 'gbrain repair extractor-facts --include-ambiguous' },
+  { command: 'authorize-legacy', preview: 'foresights jobs authorize-legacy --select "status=waiting"' },
+  { command: 'jobs-cancel', preview: 'foresights jobs cancel --select "status=waiting|delayed"' },
+  { command: 'stale-atoms', preview: 'foresights repair stale-atoms --source default' },
+  { command: 'extractor-facts', preview: 'foresights repair extractor-facts --include-ambiguous' },
 ];
 
 async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
@@ -54,10 +54,10 @@ describe('previewHash', () => {
   });
 
   test('preview_changed carries the DX-O2 message, the filled preview command and the anchor', () => {
-    const error = previewChangedError('abc123', 'gbrain repair stale-atoms');
+    const error = previewChangedError('abc123', 'foresights repair stale-atoms');
     expect(error.toJSON()).toMatchObject({ error: 'preview_changed',
-      message: 'The preview changed since abc123; re-run gbrain repair stale-atoms and use the new hash.',
-      suggestion: 'Re-run the preview: gbrain repair stale-atoms', docs: 'docs/guides/repair.md#preview-changed' });
+      message: 'The preview changed since abc123; re-run foresights repair stale-atoms and use the new hash.',
+      suggestion: 'Re-run the preview: foresights repair stale-atoms', docs: 'docs/guides/repair.md#preview-changed' });
   });
 });
 

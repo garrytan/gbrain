@@ -10,7 +10,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // rows by (worktree, sequence), so on a large request table each claim walked
 // every receipt and overran the claim phase. Postgres builds the partial index
 // CONCURRENTLY outside a transaction, after dropping an INVALID leftover of an
-// interrupted build (the blob omits it); PGLite builds it inline. `gbrain repair
+// interrupted build (the blob omits it); PGLite builds it inline. `foresights repair
 // request-indexes` runs the same helper on a brain whose schema is already
 // current. DDL only: no column, no backfill.
 export const v276: Migration = {

@@ -23,7 +23,7 @@
  *    edit re-hashes.
  *  - SessionEnd handlers are hard-killed at 3s — the command captures stdin
  *    to a temp file and detaches a grandchild (`nohup … &`) that runs the
- *    real `gbrain hook session-end --harness codex`, so ingest time never
+ *    real `foresights hook session-end --harness codex`, so ingest time never
  *    races the kill.
  *  - Deliberately NO GBRAIN_SOURCE in the command [OV2]: hooks.json is
  *    user-global; a baked source would stamp every codex session on the
@@ -74,7 +74,7 @@ export const CODEX_HOOKS_SPEC_TARGET: HostSpecTarget = {
 export const CODEX_HOOK_OWNERSHIP_TOKEN = 'hook session-end --harness codex';
 
 const GBRAIN_DESCRIPTION =
-  'gbrain session-end capture — the SessionEnd entry whose command mentions "gbrain" is managed by `gbrain bootstrap` (re-runs rewrite it; `gbrain bootstrap uninstall` deletes it)';
+  'foresights session-end capture — the SessionEnd entry whose command mentions "gbrain" is managed by `foresights bootstrap` (re-runs rewrite it; `foresights bootstrap uninstall` deletes it)';
 
 const TRUST_BLOCK_BEGIN = '# --- gbrain:codex-hooks-trust (managed block — do not edit; gbrain bootstrap rewrites it) ---';
 const TRUST_BLOCK_END = '# --- /gbrain:codex-hooks-trust ---';
@@ -111,10 +111,10 @@ function shellQuote(arg: string): string {
  * non-POSIX shell (fish, csh) where bare `var=value` assignments and `$( )`
  * are syntax errors — so the TOP level is a single `sh -c '<script>' <bin>`
  * invocation and only /bin/sh ever parses the POSIX script. The outer sh's
- * $0 is the gbrain binary (no nested quoting of the path); the grandchild
+ * $0 is the foresights binary (no nested quoting of the path); the grandchild
  * inherits GBRAIN_BIN/GBRAIN_PAYLOAD through the env-prefix assignments.
  * With `launcher` (src/core/setup/hook-launcher.ts) the outer $0 is the
- * launcher and $1 the binary, so the grandchild starts gbrain from the
+ * launcher and $1 the binary, so the grandchild starts foresights from the
  * launcher's directory instead of the session's.
  */
 export function buildCodexSessionEndCommand(gbrainBin: string, launcher?: string): string {
@@ -164,7 +164,7 @@ interface HooksJson {
   [k: string]: unknown;
 }
 
-/** A bootstrap-lane group: carries the ownership token and is not a `gbrain setup` group (those are owned by hash). */
+/** A bootstrap-lane group: carries the ownership token and is not a `foresights setup` group (those are owned by hash). */
 function isOurGroup(group: { hooks?: Array<{ command?: unknown }> }): boolean {
   return (group.hooks ?? []).some((h) => typeof h.command === 'string' && h.command.includes(CODEX_HOOK_OWNERSHIP_TOKEN) && !h.command.includes(CODEX_SETUP_LANE_TOKEN));
 }
@@ -180,7 +180,7 @@ export interface WriteCodexHooksResult {
 }
 
 /**
- * Write (or rewrite) gbrain's SessionEnd entry + its trust-state entry.
+ * Write (or rewrite) foresights's SessionEnd entry + its trust-state entry.
  * Fail-closed: a hooks.json that exists but does not parse is NEVER touched
  * (codex itself would skip it; overwriting could destroy the user's own
  * hooks), and a foreign [hooks.state] entry for our exact key outside our
@@ -188,7 +188,7 @@ export interface WriteCodexHooksResult {
  */
 export function writeCodexHooks(opts: {
   gbrainBin: string;
-  /** The trusted-directory launcher the capture starts gbrain through (src/core/setup/hook-launcher.ts), never the session's directory (#8428). */
+  /** The trusted-directory launcher the capture starts foresights through (src/core/setup/hook-launcher.ts), never the session's directory (#8428). */
   hookLauncher?: string;
   hooksPath?: string;
   configPath?: string;
@@ -221,7 +221,7 @@ export function writeCodexHooks(opts: {
   const withoutDupes = sessionEnd.filter((g, i) => i === priorIdx || !isOurGroup(g));
   if (withoutDupes.length !== sessionEnd.length) {
     notes.push(
-      `${sessionEnd.length - withoutDupes.length} duplicate gbrain SessionEnd group(s) dropped — foreign groups after them shift down; re-trust any of your own entries that stop firing.`,
+      `${sessionEnd.length - withoutDupes.length} duplicate foresights SessionEnd group(s) dropped — foreign groups after them shift down; re-trust any of your own entries that stop firing.`,
     );
   }
   const nextSessionEnd = replacedPrior ? withoutDupes.map((g, i) => (i === priorIdx ? ourGroup : g)) : [...withoutDupes, ourGroup];
@@ -287,7 +287,7 @@ export function writeCodexHooks(opts: {
   const foreignCount = nextSessionEnd.length - 1;
   if (foreignCount > 0) {
     notes.push(
-      `${foreignCount} foreign SessionEnd group(s) preserved at their original indexes (${replacedPrior ? "gbrain's entry replaced in place" : "gbrain's entry appended last"}) so their trust-state entries never go stale.`,
+      `${foreignCount} foreign SessionEnd group(s) preserved at their original indexes (${replacedPrior ? "foresights's entry replaced in place" : "foresights's entry appended last"}) so their trust-state entries never go stale.`,
     );
   }
   return { ok: true, hooksPath, configPath, trustKey, replacedPrior, notes };
@@ -300,7 +300,7 @@ export interface RemoveCodexHooksResult {
   notes: string[];
 }
 
-/** Strip gbrain's SessionEnd entry + managed trust block. Foreign content
+/** Strip foresights's SessionEnd entry + managed trust block. Foreign content
  * survives byte-for-byte; an unparseable hooks.json is left untouched. */
 export function removeCodexHooks(opts: { hooksPath?: string; configPath?: string } = {}): RemoveCodexHooksResult {
   const hooksPath = opts.hooksPath ?? codexHooksPath();
@@ -325,7 +325,7 @@ export function removeCodexHooks(opts: { hooksPath?: string; configPath?: string
         // non-execution). Say so instead of leaving them to find out.
         if (ourIdx >= 0 && ourIdx < sessionEnd.length - 1) {
           notes.push(
-            `${sessionEnd.length - 1 - ourIdx} of your own SessionEnd group(s) sat after gbrain's — their index just shifted down, so codex will treat their config.toml trust entries as stale. Re-trust them (codex prompts on next run) or update the [hooks.state] indexes.`,
+            `${sessionEnd.length - 1 - ourIdx} of your own SessionEnd group(s) sat after foresights's — their index just shifted down, so codex will treat their config.toml trust entries as stale. Re-trust them (codex prompts on next run) or update the [hooks.state] indexes.`,
           );
         }
       }
@@ -340,7 +340,7 @@ export function removeCodexHooks(opts: { hooksPath?: string; configPath?: string
         atomicWriteTextFile(hooksPath, JSON.stringify({ ...doc, hooks }, null, 2) + '\n', { freshMode: 0o600, forceMode: 0o600 });
       }
     } catch {
-      notes.push(`${hooksPath} does not parse — left untouched (nothing gbrain wrote survives a hand-mangled file; remove it manually).`);
+      notes.push(`${hooksPath} does not parse — left untouched (nothing foresights wrote survives a hand-mangled file; remove it manually).`);
     }
   }
 
@@ -356,7 +356,7 @@ export function removeCodexHooks(opts: { hooksPath?: string; configPath?: string
   return { hooksPath, configPath, removed, notes };
 }
 
-// ── `gbrain setup codex` lane: owned by exact hash, never by token ──────────
+// ── `foresights setup codex` lane: owned by exact hash, never by token ──────────
 //
 // Setup's groups carry `GBRAIN_HOOK_LANE=setup` so the bootstrap lane above
 // (token-owned) never claims or strips them; setup itself recognizes its
@@ -369,7 +369,7 @@ const SKILL_RESOLVER_LANE_TOKEN = 'GBRAIN_HOOK_LANE=skill-resolver';
 export const CODEX_SETUP_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SessionEnd'] as const;
 export type CodexSetupEvent = (typeof CODEX_SETUP_EVENTS)[number];
 
-/** State label, normalized timeout and `gbrain hook` subcommand per event. The
+/** State label, normalized timeout and `foresights hook` subcommand per event. The
  * context events run synchronously within 15s (above session-start's own
  * deadline); SessionEnd keeps the detached 3s capture command. */
 const SETUP_EVENT_SPECS: Record<CodexSetupEvent, { stateName: string; timeout: number; subcommand: string }> = {
@@ -380,7 +380,7 @@ const SETUP_EVENT_SPECS: Record<CodexSetupEvent, { stateName: string; timeout: n
 
 export interface CodexHookGroup { hooks: Array<{ type: 'command'; command: string; timeout: number }> }
 
-/** Setup's group for one event (or the turn-rule lane's, src/core/setup/turn-hook.ts). `env` is POSIX `env` (any $SHELL parses it); the values pin this install. `launcher`: the trusted-directory hook launcher gbrain starts through (src/core/setup/hook-launcher.ts). */
+/** Setup's group for one event (or the turn-rule lane's, src/core/setup/turn-hook.ts). `env` is POSIX `env` (any $SHELL parses it); the values pin this install. `launcher`: the trusted-directory hook launcher foresights starts through (src/core/setup/hook-launcher.ts). */
 export function codexSetupHookGroup(gbrainBin: string, event: CodexSetupEvent, env: { GBRAIN_HOME?: string; GBRAIN_SOURCE?: string }, lane = 'setup', launcher?: string): CodexHookGroup {
   const assignments = [`GBRAIN_HOOK_LANE=${lane}`, ...(env.GBRAIN_HOME ? [`GBRAIN_HOME=${env.GBRAIN_HOME}`] : []), ...(env.GBRAIN_SOURCE ? [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`] : [])];
   const spec = SETUP_EVENT_SPECS[event];
@@ -439,10 +439,10 @@ export function codexHookCensus(hooksPath: string): CodexHookCensusGroup[] {
 }
 
 /**
- * Whether Codex runs gbrain's handler in group `index` of a context event
+ * Whether Codex runs foresights's handler in group `index` of a context event
  * (SessionStart, UserPromptSubmit): its `[hooks.state."<hooksPath>:<state>:
  * <index>:<handler>"]` entry in `configPath` is not `enabled = false` and its
- * `trusted_hash` equals the hash of the handler as written (gbrain's shape: no
+ * `trusted_hash` equals the hash of the handler as written (foresights's shape: no
  * matcher, not async, an unset timeout normalized to 600). Codex never runs an
  * untrusted or disabled user-layer hook. Throws on an unparseable file.
  */

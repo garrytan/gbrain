@@ -8,7 +8,7 @@
  * the check runs under --fast and --scope=brain alike. Ladder:
  *
  *   gate off (default)                 → ok    ("intentionally off" — zero noise)
- *   enabled WITHOUT the gbrain stamp   → FAIL  (the `memorable enable`
+ *   enabled WITHOUT the foresights stamp   → FAIL  (the `memorable enable`
  *                                        out-of-band state; names the fix)
  *   stamp ok, CLI shows no opt-in      → warn  (relay skips every spawn)
  *   stamp ok, no runnable binary       → FAIL  (enabled-but-not-installed)
@@ -43,7 +43,7 @@ import {
 import type { Check } from '../../doctor.ts';
 
 const NAME = 'memorable_relay_health';
-const ENABLE_FIX = 'gbrain config set integrations.memorable.enabled true';
+const ENABLE_FIX = 'foresights config set integrations.memorable.enabled true';
 
 export async function buildMemorableRelayCheck(): Promise<Check> {
   try {
@@ -149,7 +149,7 @@ export async function buildMemorableRelayCheck(): Promise<Check> {
         status: 'warn',
         message:
           'codex SessionEnd hook is wired but no codex-harness receipt appears in the recent receipt window — codex hooks fail ' +
-          'SILENTLY when their config.toml trust entry is stale/missing. Re-run `gbrain bootstrap hooks --harness codex` to re-trust.',
+          'SILENTLY when their config.toml trust entry is stale/missing. Re-run `foresights bootstrap hooks --harness codex` to re-trust.',
         details: { ...details, reason: 'codex_hooks_never_fired' },
       };
     }

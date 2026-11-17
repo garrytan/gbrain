@@ -7,7 +7,7 @@ import { mockEmbedProjectionEngine as mockEngine, embeddingUpdates } from './hel
  * inside a try whose catch only logged to stderr: when the batch threw,
  * upsertChunks never ran, so EVERY sibling chunk stayed NULL (~8.6x blast
  * radius from a single bad chunk), and EmbedResult had no failure field —
- * `gbrain embed` exited 0 on a total no-op.
+ * `foresights embed` exited 0 on a total no-op.
  *
  * Pinned here:
  *   1. --stale and --all: a page with ONE bad chunk still embeds its other

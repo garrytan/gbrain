@@ -1,6 +1,6 @@
 /**
  * #6527: doctor `lost_caller_writes` counted every retained refused caller
- * write, while `gbrain repair failed-writes` (the command it names) keeps an
+ * write, while `foresights repair failed-writes` (the command it names) keeps an
  * unpinned `remember` and a `put_page` whose page moved past the revision the
  * caller read out of its replay set. The count now leaves those two
  * SQL-decidable classes out and reports them under `not_replayable`, so the

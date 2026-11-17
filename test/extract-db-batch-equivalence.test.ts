@@ -1,5 +1,5 @@
 /**
- * GBRA-69: `gbrain extract all --source db` reads and publishes pages in
+ * GBRA-69: `foresights extract all --source db` reads and publishes pages in
  * batches. The rows it leaves are pinned by a golden captured with the
  * per-page walk it replaced (master before the change), so batching changes
  * no link, timeline, transition, relationship, wanted-link, stamp or request

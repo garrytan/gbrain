@@ -303,7 +303,7 @@ function registryStaleScenario(name: string, getEngine: () => BrainEngine) {
     expect(staleAfterEmbed.some((r) => r.slug === SLUG)).toBe(false);
 
     // getChunks' embedding_is_null reports the ACTIVE column's truth (the
-    // per-page `gbrain embed <slug>` filter keys on it).
+    // per-page `foresights embed <slug>` filter keys on it).
     const chunks = await engine.getChunks(SLUG, { includeUnsealed: true });
     expect(chunks.length).toBe(1);
     expect(chunks[0].embedding_is_null).toBe(false);

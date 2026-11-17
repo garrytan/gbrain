@@ -86,7 +86,7 @@ function manualOnlySkips(engine: BrainEngine) {
           id: step.id, job: step.job, params: step.params,
           ...(step.est_usd_cost !== undefined ? { est_usd_cost: step.est_usd_cost } : {}),
           why: `${step.job} is manual-only, so this automatic run did not submit it`
-            + (jobs.length ? `; ${jobs.length} ${step.job} job(s) an earlier run queued (${jobs.map((j) => `#${j.id} ${j.status}`).join(', ')}) still run when a worker picks them up unless cancelled with gbrain jobs cancel <id>.` : '.'),
+            + (jobs.length ? `; ${jobs.length} ${step.job} job(s) an earlier run queued (${jobs.map((j) => `#${j.id} ${j.status}`).join(', ')}) still run when a worker picks them up unless cancelled with foresights jobs cancel <id>.` : '.'),
           fix: renderAction(manualOnlyFix(step), cliRenderContext()),
           ...(jobs.length ? { queued_jobs: jobs } : {}),
         });
@@ -147,7 +147,7 @@ export async function runRemediation(
   const repairs = opts.repairs;
   if (repairs?.include && repairs.remote !== false) {
     throw new OperationError('permission_denied', 'Repair steps are PROTECTED: only a trusted local caller on the brain host can include them.',
-      'On the brain host, run: gbrain doctor --remediation-plan');
+      'On the brain host, run: foresights doctor --remediation-plan');
   }
 
   // Lazy-load orchestration deps so the library entry-point doesn't pay
@@ -367,7 +367,7 @@ export async function runRemediation(
       else if (status === 'completed' && pendingEmbedSources.length) status = 'stopped';
       repairResults.push({ id: 'repair:safe-chunks:embeddings', kind: 'safe-chunks', status, applied: embedded, skipped: 0, failed: 0,
         ...(status === 'budget_exhausted' || status === 'budget_refused' ? { message: 'The --max-usd budget does not cover the embeddings of re-sealed pages; resume with a higher cap to continue.' }
-          : status === 'stopped' ? { message: `Some re-sealed pages still lack embeddings (${pendingEmbedSources.join(', ')}); check the embedding provider, then run gbrain embed --stale.` } : {}) });
+          : status === 'stopped' ? { message: `Some re-sealed pages still lack embeddings (${pendingEmbedSources.join(', ')}); check the embedding provider, then run foresights embed --stale.` } : {}) });
     }
     if (repairSteps.length === 0) return;
     for (const step of repairSteps) hooks.onRepairStepStart?.(step);

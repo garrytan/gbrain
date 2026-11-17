@@ -1,5 +1,5 @@
 /**
- * #8109: `gbrain repair contact-rows` on real publication, PGLite and Postgres. A managed source (claimed worktree: the
+ * #8109: `foresights repair contact-rows` on real publication, PGLite and Postgres. A managed source (claimed worktree: the
  * canonical file is published through the coordinated writer) and a database-only (repo-less) source share one run.
  * The preview writes nothing, a moved preview refuses, the apply collapses exactly the planned pages without dropping a
  * distinct value, a page whose file drifted is listed needs_reconcile and left alone, and a second preview finds nothing.
@@ -48,7 +48,7 @@ const revision = async (engine: BrainEngine, sourceId: string, slug: string) => 
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
-  describe(`#8109 gbrain repair contact-rows (${backend})`, () => {
+  describe(`#8109 foresights repair contact-rows (${backend})`, () => {
     test('preview writes nothing; the apply collapses exactly the planned pages on a managed and a repo-less source; drift is left for reconcile', () => managedBrain(async ({ engine, ctx, root }) => {
       const file = (slug: string) => readFileSync(join(root, `${slug}.md`), 'utf8');
       // Dana's file moved one last_used forward outside gbrain: file/database drift.
@@ -67,7 +67,7 @@ for (const backend of testBackends()) {
       expect(first.residuals).toEqual({ pages_to_dedupe: 3, rows_to_remove: 5, needs_reconcile: 1 });
       expect(first.listing!.map(entry => [entry.class, entry.item.split(' ')[0]])).toEqual([
         ['dedupe', 'default:people/alice-example'], ['dedupe', 'default:people/bob-example'], ['needs_reconcile', 'default:people/dana-example'], ['dedupe', 'source-a:people/carol-example']]);
-      expect(first.listing!.find(entry => entry.class === 'needs_reconcile')!.detail).toContain('gbrain sources reconcile default people/dana-example --brain host --preview --auto-additive');
+      expect(first.listing!.find(entry => entry.class === 'needs_reconcile')!.detail).toContain('foresights sources reconcile default people/dana-example --brain host --preview --auto-additive');
       expect({ alice: file('people/alice-example'), bob: file('people/bob-example'), dana: file('people/dana-example') }).toEqual(files);
       expect(await contacts(engine, 'source-a', 'people/carol-example')).toHaveLength(5);
 

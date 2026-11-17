@@ -1,5 +1,5 @@
 /**
- * `gbrain sources set-strategy <id> <markdown|code|auto>` (#4899, PR #5955 by
+ * `foresights sources set-strategy <id> <markdown|code|auto>` (#4899, PR #5955 by
  * @rokas-tarasevicius; fix wave 14 P2.7 ships the reviewed minimum surface).
  *
  * Protects: the one writer persists `sources.config.strategy` by a single-key
@@ -48,7 +48,7 @@ test('set-strategy persists config.strategy by a single-key merge and sources li
   const set = await cli(['set-strategy', id, 'code']);
   expect(set.exit).toBeNull();
   expect(set.out).toContain(`Source "${id}" now syncs with strategy code.`);
-  expect(set.out).toContain(`gbrain sync --source ${id} --full`);
+  expect(set.out).toContain(`foresights sync --source ${id} --full`);
   expect(await config(id)).toEqual({ federated: true, mirror_read_only: true, strategy: 'code' });
   expect((await listSources(engine)).find(source => source.id === id)).toMatchObject({ strategy: 'code', federated: true });
   const listed = JSON.parse((await cli(['list', '--json'])).out) as { sources: Array<{ id: string; strategy: string | null }> };
@@ -88,8 +88,8 @@ test('[R26] an unfinished managed sync run refuses a strategy change and names h
   const refused = await cli(['set-strategy', id, 'code']);
   expect(refused.exit).toBe(1);
   expect(refused.err).toContain('sync_run_unfinished');
-  expect(refused.err).toContain(`gbrain sync --source ${id} --no-pull`);
-  expect(refused.err).toContain(`gbrain repair managed-sync-orphans --source ${id}`);
+  expect(refused.err).toContain(`foresights sync --source ${id} --no-pull`);
+  expect(refused.err).toContain(`foresights repair managed-sync-orphans --source ${id}`);
   expect(await config(id)).toEqual({ strategy: 'markdown' });
   // Re-stating the current value is a no-op, not a change, so it is allowed.
   expect((await cli(['set-strategy', id, 'markdown'])).exit).toBeNull();

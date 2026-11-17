@@ -17,7 +17,7 @@ export function makeCyclePhaseHandler(engine: BrainEngine, phase: string): Minio
   return async (job: any) => {
     const { runCycle } = await import('../../cycle.ts');
     // v0.41.38 (codex P2 review): fall back to null (NOT cwd '.') when no repo
-    // is configured, matching the autopilot-cycle handler + `gbrain dream`. On a
+    // is configured, matching the autopilot-cycle handler + `foresights dream`. On a
     // checkout-less postgres brain a filesystem phase (synthesize/patterns/...)
     // skips with reason 'no_brain_dir' instead of running against the worker cwd;
     // DB-only phases (resolve_symbol_edges/embed/...) ignore brainDir either way.

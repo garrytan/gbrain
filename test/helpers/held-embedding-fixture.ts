@@ -1,6 +1,6 @@
 /**
  * Fixture for the held-embedding CLI tests (#6803 part 3, #6847): an on-disk
- * PGLite brain made by the real `gbrain init`, large pages held for approval
+ * PGLite brain made by the real `foresights init`, large pages held for approval
  * the way the post-upgrade backfill holds them (`upgrade_backfill`), and a
  * local OpenAI-compatible `/v1/embeddings` server standing in for the
  * provider. `dense` bills one token per character (CJK, minified code): four
@@ -50,12 +50,12 @@ export function gbrain(brain: HeldBrain, args: string[], env: Record<string, str
   return runCli(args, { home: brain.home, env: { ...brain.env, ...env }, timeoutMs: 120_000 });
 }
 
-/** A PGLite brain made by `gbrain init` (keyless), then pointed at `model` at the keyless column's 1024 dimensions, writer management off. */
+/** A PGLite brain made by `foresights init` (keyless), then pointed at `model` at the keyless column's 1024 dimensions, writer management off. */
 export async function makeHeldBrain(model: string, env: Record<string, string | undefined>): Promise<HeldBrain> {
   const home = mkdtempSync(join(tmpdir(), 'gb-held-'));
   const brain: HeldBrain = { home, env: { ...Object.fromEntries(SCRUB.map(k => [k, undefined])), ...env }, cleanup: () => rmSync(home, { recursive: true, force: true }) };
   const init = await gbrain(brain, ['init', '--pglite', '--no-embedding', '--non-interactive']);
-  if (init.exitCode !== 0) throw new Error(`gbrain init failed: ${init.stderr}`);
+  if (init.exitCode !== 0) throw new Error(`foresights init failed: ${init.stderr}`);
   const path = join(home, '.gbrain', 'config.json');
   const cfg = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   delete cfg.embedding_disabled;

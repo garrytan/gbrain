@@ -5,7 +5,7 @@ import type { Migration } from './types.ts';
 //
 // GST-359 C1 (GBRA-218, after train M v282-v285): an attested actor. A trusted
 // system's credential (only 'qm' today) may name the person a call serves in
-// a header; gbrain maps that person's opaque canonical id to a member through
+// a header; foresights maps that person's opaque canonical id to a member through
 // access_member_links (system, external_id) and reads as that member.
 // external_id is 1-256 visible ASCII characters, compared exactly (no case
 // folding); one member may hold several ids. The right to attest is a

@@ -48,7 +48,7 @@ export function companyBrainProfile(config: unknown): CompanyBrainProfile | null
   const parsed = profileSchema.safeParse(source.company_brain);
   if (!parsed.success || typeof source.federated !== 'boolean' || source.strategy !== 'markdown' || source.slug_root_mode !== 'source-root' || source.kind != null || source.remote_url != null) {
     throw opError('profile_incompatible', 'The persisted company profile is invalid. Reinspect and reconnect explicitly; missing policy values are never defaulted.',
-      'The stored company-brain profile of this source fails validation, usually because its config was edited. Do not edit it back by hand: preview the source\'s removal with gbrain sources remove and --dry-run, and only after the user\'s destructive approval remove it, then inspect and connect the checkout again.',
+      'The stored company-brain profile of this source fails validation, usually because its config was edited. Do not edit it back by hand: preview the source\'s removal with foresights sources remove and --dry-run, and only after the user\'s destructive approval remove it, then inspect and connect the checkout again.',
       { docs: 'docs/guides/company-brain-ingestion.md#resume-and-verify' });
   }
   return parsed.data;
@@ -79,5 +79,5 @@ export function assertCompanyBrainPolicy(profile: CompanyBrainProfile, receipt: 
 export function assertCompanyBrainExtractor(extractorVersion: string, destination: { sourceId: string; brainId: string }): void {
   if (extractorVersion !== LINK_EXTRACTOR_VERSION_TS) throw new OperationError('extractor_identity_mismatch',
     'The approved extractor differs from the installed extractor; this receipt cannot resume or admit another revision.',
-    `Review removal with gbrain sources remove ${destination.sourceId} --brain ${destination.brainId} --dry-run. Only after explicit destructive approval, remove that registration with --confirm-destructive before reinspecting and reconnecting this checkout, or use a separate authorized checkout/destination. V1 has no in-place reapproval transition.`);
+    `Review removal with foresights sources remove ${destination.sourceId} --brain ${destination.brainId} --dry-run. Only after explicit destructive approval, remove that registration with --confirm-destructive before reinspecting and reconnecting this checkout, or use a separate authorized checkout/destination. V1 has no in-place reapproval transition.`);
 }

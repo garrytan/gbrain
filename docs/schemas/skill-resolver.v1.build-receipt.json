@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "skill-resolver.v1.build-receipt.json",
-  "title": "gbrain skill resolver: build receipt (schema_version 1)",
-  "description": "Printed by `gbrain skills index build --json` and written last, as receipt.json, beside index.bin. Within v1, changes are additive only.",
+  "title": "foresights skill resolver: build receipt (schema_version 1)",
+  "description": "Printed by `foresights skills index build --json` and written last, as receipt.json, beside index.bin. Within v1, changes are additive only.",
   "type": "object",
   "additionalProperties": false,
   "required": [

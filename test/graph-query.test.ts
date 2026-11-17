@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain graph-query` command.
+ * Tests for `foresights graph-query` command.
  *
  * Validates direction (in/out/both) and link_type filters via the underlying
  * traversePaths engine method (which is exercised in pglite-engine.test.ts);

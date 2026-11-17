@@ -1,8 +1,8 @@
 /**
  * E2E: multi-agent shared brain — continuity + isolation (cathedral-6, T7).
  *
- * Spins up a real `gbrain serve --http` against real Postgres, mints scoped
- * agent clients through the NEW `gbrain agent register` CLI (presets,
+ * Spins up a real `foresights serve --http` against real Postgres, mints scoped
+ * agent clients through the NEW `foresights agent register` CLI (presets,
  * --json --show-token, --url probe, --reissue), and exercises the full
  * cross-agent story end-to-end:
  *
@@ -256,7 +256,7 @@ describeE2E('serve-http multi-agent E2E (cathedral-6)', () => {
     return { status: res.status, isError, payload, text, raw };
   }
 
-  /** Run `gbrain agent register <args>` as a subprocess. spawnSync (not
+  /** Run `foresights agent register <args>` as a subprocess. spawnSync (not
    * execSync) so stdout and stderr assert separately — same ambient-env
    * passthrough idiom as the model file's execSync calls (the CLI reaches
    * the serve's brain via the ambient DATABASE_URL). */

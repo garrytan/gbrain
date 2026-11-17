@@ -1,7 +1,7 @@
 /**
  * #6712 PR 2 (L4): the one `--since` parser. A relative age (`90s`, `15m`, `6h`, `7d`) or an ISO-8601 instant
  * (`2026-10-01`, `2026-10-01T12:00:00Z`) becomes one concrete instant, so a command that prints its own follow-up
- * (`gbrain repair file-drift ... --since`, `gbrain agent logs --since`) prints that instant, never the relative age:
+ * (`foresights repair file-drift ... --since`, `foresights agent logs --since`) prints that instant, never the relative age:
  * the same command run later selects the same rows and its plan hash still matches.
  */
 const RELATIVE = /^(\d+)\s*(s|m|h|d)$/i;

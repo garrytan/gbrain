@@ -226,7 +226,7 @@ export async function syncBrain(ctx: OperationContext, params: { installation_id
     const authority = await memberAuthority(tx, 'sync_brain_skills');
     const member = await ownMember(tx, params.installation_id, authority.principal);
     if (!member.active || Number(member.epoch) !== params.enrollment_epoch) fail('membership_inactive', 'Membership was left or superseded; delayed delivery cannot reactivate it.',
-      member.active ? `Installation ${member.installation_id} is at enrollment epoch ${member.epoch}, not ${params.enrollment_epoch}. Re-join under the recorded follow policy so the receipt and router adopt the current epoch; for bootstrap-managed wiring that is gbrain bootstrap harness --refresh-skills on the harness host.`
+      member.active ? `Installation ${member.installation_id} is at enrollment epoch ${member.epoch}, not ${params.enrollment_epoch}. Re-join under the recorded follow policy so the receipt and router adopt the current epoch; for bootstrap-managed wiring that is foresights bootstrap harness --refresh-skills on the harness host.`
         : `Installation ${member.installation_id} left this brain. Following again needs the user's follow approval and a new join; keep cached skills unused.`,
       { docs: 'docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollment' });
     const snapshot = await catalog(authority.ctx);

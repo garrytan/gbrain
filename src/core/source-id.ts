@@ -46,7 +46,7 @@ export const ALL_SOURCES = '__all__';
 
 /**
  * Sentinel for a legacy token whose stored source grant is an explicit empty
- * list (`gbrain auth rescope-token <name> --sources none`). Like
+ * list (`foresights auth rescope-token <name> --sources none`). Like
  * `ALL_SOURCES` it can never name a real source; `sourceScopeOpts`, the
  * dispatch fence and write submission refuse it instead of falling back to
  * the `default` floor.

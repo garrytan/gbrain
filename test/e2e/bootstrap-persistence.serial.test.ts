@@ -5,7 +5,7 @@
  * `io.spawnPush` seam (it only records that a push WOULD fire). This file
  * closes the remaining gap: it drives the session-end hook against a REAL
  * local bare git remote with the REAL push implementation — the same
- * `workspacePush` the detached `gbrain sources push` child runs — so the full
+ * `workspacePush` the detached `foresights sources push` child runs — so the full
  * hook → scan → commit → push chain is exercised and its outcome verified on
  * the remote.
  *
@@ -56,7 +56,7 @@ let bare: string;
 let work: string;
 let saved: Record<string, string | undefined>;
 
-/** Real push path, in-process: exactly what `gbrain sources push --path`
+/** Real push path, in-process: exactly what `foresights sources push --path`
  * invokes. Captured so the test can await the chain the hook kicks off. */
 let pushes: Promise<WorkspacePushResult>[];
 const realSpawnPush = (r: string) => {
@@ -183,7 +183,7 @@ describe('session-end → real workspace push', () => {
 //
 // SessionEnd never fires on /exit; the Stop hook fires after EVERY assistant
 // turn. This chain proves a turn's authored work physically lands on the real
-// bare remote from a single `gbrain hook stop`, and that the per-root debounce
+// bare remote from a single `foresights hook stop`, and that the per-root debounce
 // holds across consecutive stops.
 
 describe('stop → real workspace push (per-turn durability)', () => {

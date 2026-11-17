@@ -89,7 +89,7 @@ export function formatReembedPrompt(est: ReembedEstimate): string {
   // wrapper (Anthropic's published methodology). Re-embed picks up the
   // title-tier wrapper for balanced-mode users automatically (free at
   // runtime — pure string concat). Tokenmax users can later run
-  // `gbrain config set search.mode tokenmax` to upgrade pages to per-chunk
+  // `foresights config set search.mode tokenmax` to upgrade pages to per-chunk
   // Haiku synopsis via the contextual_reindex_per_chunk Minion handler.
   // Documented inline so the prompt explains WHY the re-embed is firing.
   const crNote =
@@ -109,8 +109,8 @@ export interface PromptResult {
 }
 
 /** What to run instead when the operator has not agreed to re-embed now. */
-export const REEMBED_DEFERRED_HINT = '[chunker-bump] Not re-embedding without your consent. When ready: `gbrain reindex --markdown` '
-  + '(re-embeds), or `gbrain repair safe-chunks --apply --no-embed` to re-chunk without provider calls, then `gbrain embed --stale`.';
+export const REEMBED_DEFERRED_HINT = '[chunker-bump] Not re-embedding without your consent. When ready: `foresights reindex --markdown` '
+  + '(re-embeds), or `foresights repair safe-chunks --apply --no-embed` to re-chunk without provider calls, then `foresights embed --stale`.';
 
 /** interaction.readLine: EOF, a 5-minute silence or no human at the terminal read as "no". */
 async function askYesNo(question: string): Promise<boolean> {
@@ -121,7 +121,7 @@ async function askYesNo(question: string): Promise<boolean> {
 
 /**
  * Run the post-upgrade chunker-bump prompt. Returns whether the caller should
- * proceed to invoke `gbrain reindex --markdown`, which calls the embedding
+ * proceed to invoke `foresights reindex --markdown`, which calls the embedding
  * provider. It proceeds only when a TTY operator answers yes; the default,
  * a non-TTY run and an unanswered prompt all decline and print
  * REEMBED_DEFERRED_HINT. `GBRAIN_NO_REEMBED=1` skips the prompt entirely.
@@ -149,7 +149,7 @@ export async function runPostUpgradeReembedPrompt(
   }
 
   if (env.GBRAIN_NO_REEMBED === '1') {
-    writeFn(`[chunker-bump] GBRAIN_NO_REEMBED=1 set; skipping re-embed sweep. Pending: ${estimate.pendingCount} pages. Re-run \`gbrain reindex --markdown\` when ready.`);
+    writeFn(`[chunker-bump] GBRAIN_NO_REEMBED=1 set; skipping re-embed sweep. Pending: ${estimate.pendingCount} pages. Re-run \`foresights reindex --markdown\` when ready.`);
     return { proceeded: false, reason: 'bypassed_no_reembed', estimate };
   }
 

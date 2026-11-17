@@ -63,11 +63,11 @@ extractable rules, different link verbs, different rubric).
 
 Add the type:
 ```
-gbrain schema add-type meeting \
+foresights schema add-type meeting \
   --primitive temporal \
   --prefix meetings/ \
   --extractable
-gbrain schema sync --apply
+foresights schema sync --apply
 ```
 
 The `sync --apply` backfills all 4000 pages. From here forward,
@@ -123,8 +123,8 @@ pointing at the `unify-types` PROTECTED Minion handler.
 
 v0.41.22 ships **gbrain-base-v2** as the declared successor to
 gbrain-base@1.x — collapses 94 noisy types to 15 canonical via
-declarative mapping_rules. Run via `gbrain onboard --check --explain`
-(preview) → `gbrain jobs submit unify-types --params
+declarative mapping_rules. Run via `foresights onboard --check --explain`
+(preview) → `foresights jobs submit unify-types --params
 '{"target_pack":"gbrain-base-v2","apply":true}'` (apply — `apply`
 defaults to false, so a bare submit is a dry run). See
 `skills/schema-unify/SKILL.md` for the full playbook.
@@ -139,7 +139,7 @@ codex D9 — third-party packs cannot inject `title` / `slug` / `type`.
 
 When NOT to upgrade:
 - Custom types not covered by the successor's mapping_rules → fork the
-  successor first (`gbrain schema fork gbrain-base-v2 my-pack`), edit
+  successor first (`foresights schema fork gbrain-base-v2 my-pack`), edit
   rules, then target your fork.
 - Mid-ingest or autopilot maintenance → wait. Unify holds the
   `gbrain-unify` db-lock for ~10 min on big brains.

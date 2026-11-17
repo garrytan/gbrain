@@ -6,7 +6,7 @@
  * and pattern unset converge the same way and repeated identical settings are
  * no-ops. A moved generation makes every page's links stale; managed link
  * extraction (dream cycle, managed sync, the serve owner) or
- * `gbrain extract --stale` re-derives them.
+ * `foresights extract --stale` re-derives them.
  */
 import type { BrainEngine } from './engine.ts';
 import {
@@ -18,13 +18,13 @@ import { linkExtractorWatermarkFor } from './link-extraction-watermark.ts';
 export const isLineGrammarKey = (key: string): key is (typeof LINE_GRAMMAR_KEYS)[number] =>
   (LINE_GRAMMAR_KEYS as readonly string[]).includes(key);
 
-/** Keys `gbrain config` never sets or unsets on a user's behalf. */
+/** Keys `foresights config` never sets or unsets on a user's behalf. */
 export const isInternalConfigKey = (key: string) => key.startsWith('_internal.');
 
 /** A refusal message for a value that is not a grammar boolean, or null when the value is valid. */
 export function invalidLineGrammarValue(key: string, value: string): string | null {
   return parseGrammarBoolean(value) === 'invalid'
-    ? `${key} takes true or false (also accepted: 1/0, yes/no, on/off); "${value}" was not saved. Run: gbrain config set ${key} true`
+    ? `${key} takes true or false (also accepted: 1/0, yes/no, on/off); "${value}" was not saved. Run: foresights config set ${key} true`
     : null;
 }
 
@@ -61,8 +61,8 @@ export async function describeLineGrammarChange(engine: BrainEngine, change: Lin
   const queued = await engine.countStalePagesForExtraction({ versionTs: linkExtractorWatermarkFor(change.generation) }).catch(() => null);
   const lines = [
     `Line grammar is now ${state(change.after)} (was ${state(change.before)}).`,
-    `${queued ?? 'All'} page(s) are queued for link re-extraction (zero model calls). Managed extraction (dream cycle, managed sync, a running \`gbrain serve\`) finishes it in the background; run \`gbrain extract --stale\` to finish now.`,
-    'Verify: `gbrain doctor --json` reports links_extraction_lag 0 when done. A gbrain process started before this change keeps the old setting until it restarts.',
+    `${queued ?? 'All'} page(s) are queued for link re-extraction (zero model calls). Managed extraction (dream cycle, managed sync, a running \`foresights serve\`) finishes it in the background; run \`foresights extract --stale\` to finish now.`,
+    'Verify: `foresights doctor --json` reports links_extraction_lag 0 when done. A foresights process started before this change keeps the old setting until it restarts.',
   ];
   return { lines, json: { effective: change.after, previous: change.before, changed: true, pages_queued: queued,
     next: { argv: ['gbrain', 'extract', '--stale'] }, verify: { argv: ['gbrain', 'doctor', '--json'] } } };

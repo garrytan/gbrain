@@ -18,7 +18,7 @@
  * never volunteer — they need an explicit lower min_confidence.
  *
  * Consumed by three channels: the volunteer_context op, the retrieval-reflex
- * window path, and `gbrain watch`. Event logging lives in
+ * window path, and `foresights watch`. Event logging lives in
  * volunteer-events.ts; usage stats here derive "used" from
  * pages.last_retrieved_at — APPROXIMATE by design (the 5-min last-retrieved
  * throttle causes false negatives; unrelated reads cause false positives).
@@ -68,7 +68,7 @@ export interface VolunteerOpts {
   priorContext?: string;
   /**
    * Slugs to skip BEFORE the confidence gate and the maxPages cap (O(1)
-   * membership). `gbrain watch` passes its session-dedupe set here — a
+   * membership). `foresights watch` passes its session-dedupe set here — a
    * post-call filter would let a recurring already-pushed entity consume cap
    * slots every turn and starve new pages behind it (red-team finding).
    */
@@ -319,7 +319,7 @@ export async function volunteerContext(
 
 /**
  * Canonical human rendering of one volunteered page — shared by
- * `gbrain volunteer-context` (cli.ts formatResult) and `gbrain watch` so the
+ * `foresights volunteer-context` (cli.ts formatResult) and `foresights watch` so the
  * two surfaces can't drift.
  */
 export function formatVolunteeredPage(p: VolunteeredPage): string {

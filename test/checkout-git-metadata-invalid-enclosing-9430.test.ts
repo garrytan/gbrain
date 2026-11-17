@@ -1,7 +1,7 @@
 /**
  * #9430: a `.git` directory above a root that is not a repository (an empty
  * `$HOME/.git` another tool left behind) was kept as the root's checkout:
- * `git rev-parse` exits 128 there, and only exit 1 meant "not tracked". gbrain
+ * `git rev-parse` exits 128 there, and only exit 1 meant "not tracked". foresights
  * then wrote its managed-root marker into that directory, and every path under
  * `$HOME` (connector clones included) refused `writer_coordinator_required`.
  * An enclosing `.git` that is not a repository is no checkout: the root is

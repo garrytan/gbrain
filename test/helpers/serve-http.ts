@@ -1,5 +1,5 @@
 /**
- * Starting a real `gbrain serve --http` from a test without a port race.
+ * Starting a real `foresights serve --http` from a test without a port race.
  *
  * A port picked at random (`43000 + Math.random() * 2000`) sits inside the
  * kernel's ephemeral range (Linux 32768-60999). Any socket on the machine may
@@ -40,7 +40,7 @@ export interface ServeHttp {
 }
 
 /**
- * `gbrain serve --http --bind 127.0.0.1 --port <free port> [...args]`, resolved once
+ * `foresights serve --http --bind 127.0.0.1 --port <free port> [...args]`, resolved once
  * GET /health answers ok. If serve exits first (a taken port, a held lock, a bad
  * config) this throws at once with serve's output; a deadline failure carries it too.
  */
@@ -64,13 +64,13 @@ export async function startServeHttp(opts: { cwd: string; env: Record<string, st
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (!running()) {
-      throw new Error(`gbrain serve --http on ${base} exited (code ${child.exitCode}, signal ${child.signalCode}) before /health answered ok. Its output:\n${await settledOutput()}`);
+      throw new Error(`foresights serve --http on ${base} exited (code ${child.exitCode}, signal ${child.signalCode}) before /health answered ok. Its output:\n${await settledOutput()}`);
     }
     if ((await fetch(`${base}/health`).catch(() => null))?.ok) return { port, base, child, output: () => output, stop };
     if (Date.now() >= deadline) {
       child.kill('SIGKILL');
       await exited;
-      throw new Error(`gbrain serve --http on ${base} did not answer /health ok within ${timeoutMs}ms. Its output:\n${await settledOutput()}`);
+      throw new Error(`foresights serve --http on ${base} did not answer /health ok within ${timeoutMs}ms. Its output:\n${await settledOutput()}`);
     }
     await Bun.sleep(250);
   }

@@ -3,26 +3,26 @@
  * migration (#3856).
  *
  * A pglite -> postgres migration leaves `brain.pglite/` (the old engine's
- * store) under the gbrain home, untouched, forever. It weighs roughly as much
+ * store) under the foresights home, untouched, forever. It weighs roughly as much
  * as the live DB, nothing ever surfaces it, and it silently rides along in any
- * backup that archives the gbrain home — the reporting brain paid to
+ * backup that archives the foresights home — the reporting brain paid to
  * permanently archive a dead engine's corpse on Arweave for 2.5 months
  * (~half the monthly cost, once excluded by hand).
  *
  * Pure assessment helpers (filesystem-only, no network, no shelling out) so
- * `gbrain doctor` can warn with receipts, in the same shape as
+ * `foresights doctor` can warn with receipts, in the same shape as
  * npm-squat-check.ts (#505). The caller supplies the engine kind — which MUST
  * come from the DURABLE file config, not the resolved/env-overridden one: a
  * transient `DATABASE_URL` (#427) can make a live PGLite brain look like
  * postgres for one process, and deletion advice must never rest on that.
  *
  * Scope is deliberately `brain.pglite` alone — the one directory the engines
- * themselves create. gbrain does NOT create pre-migrate safety copies or any
+ * themselves create. foresights does NOT create pre-migrate safety copies or any
  * other `brain.pglite.*` sibling (hand-made `.bak` copies, operator scripts,
  * etc.); every such sibling has unknown provenance and is NOT claimed.
  *
- * Migration-in-flight gate: `gbrain migrate` banks resume progress in
- * `migrate-manifest.json` at the gbrain home root and clears it only on clean
+ * Migration-in-flight gate: `foresights migrate` banks resume progress in
+ * `migrate-manifest.json` at the foresights home root and clears it only on clean
  * completion — the same completion that flips the durable engine (#3194). So
  * while the manifest exists, the durable engine can still read `postgres`
  * even though `brain.pglite/` is the LIVE TARGET of an interrupted
@@ -65,7 +65,7 @@ export const GRADUATED_COPY_RE = /\.graduated-[A-Za-z0-9_-]+$/;
 export interface GraduationLeftoverContext {
   /** The manifest state is non-terminal: a move is in flight or interrupted. */
   inFlight: boolean;
-  /** The retained copy path the manifest records (it can live outside the gbrain home). */
+  /** The retained copy path the manifest records (it can live outside the foresights home). */
   retainedPath?: string;
 }
 
@@ -77,13 +77,13 @@ export interface GraduationLeftoverContext {
  */
 export const SIZE_WALK_MAX_ENTRIES = 20_000;
 
-/** The resume manifest `gbrain migrate` writes at the gbrain home root; it
+/** The resume manifest `foresights migrate` writes at the foresights home root; it
  *  survives an interrupted run and is cleared only on clean completion. */
 export const MIGRATE_MANIFEST_NAME = 'migrate-manifest.json';
 
 /** True only for the one directory the legacy copier leaves: the old
  *  store `brain.pglite` (engine graduation's `<path>.graduated-<run_id>`
- *  copies are matched separately by GRADUATED_COPY_RE). gbrain never creates `brain.pglite.*` siblings
+ *  copies are matched separately by GRADUATED_COPY_RE). foresights never creates `brain.pglite.*` siblings
  *  (no pre-migrate copies, no backups) — those all have unknown provenance
  *  and are out of scope. */
 export function isMigrationLeftoverName(name: string): boolean {
@@ -161,7 +161,7 @@ function humanBytes(n: number, floor: boolean): string {
 }
 
 /**
- * Assess a gbrain home for abandoned PGLite migration leftovers.
+ * Assess a foresights home for abandoned PGLite migration leftovers.
  *
  * - engine `postgres` is the ONLY value that can warn: that is the migration
  *   target #3856 documents, and the one case where `brain.pglite` is known
@@ -262,7 +262,7 @@ export function assessPgliteLeftovers(
   if (leftovers.length === 0) {
     return {
       status: 'ok',
-      message: 'No abandoned PGLite store under the gbrain home (engine: postgres).',
+      message: 'No abandoned PGLite store under the foresights home (engine: postgres).',
       leftovers,
     };
   }
@@ -280,9 +280,9 @@ export function assessPgliteLeftovers(
     message:
       `Engine is postgres, but the old PGLite store remains: ${listing} — ` +
       `${anyIncomplete ? 'at least ' : ''}${humanBytes(total, anyIncomplete)} of reclaimable disk. ` +
-      `It also inflates any backup that archives the gbrain home. Your live data is in the postgres ` +
+      `It also inflates any backup that archives the foresights home. Your live data is in the postgres ` +
       `engine; once you have verified that (a recent restore or backup of it), the dir is safe to ` +
-      `delete by hand — gbrain never deletes it for you. Preview: du -sh ${leftovers[0]!.path}; then, after the user agrees: ` +
+      `delete by hand — foresights never deletes it for you. Preview: du -sh ${leftovers[0]!.path}; then, after the user agrees: ` +
       `${leftovers.map((l) => `rm -rf ${l.path}`).join('; ')}.`,
     leftovers,
   };

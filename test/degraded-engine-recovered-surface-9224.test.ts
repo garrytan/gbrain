@@ -1,5 +1,5 @@
 /**
- * #9224: a status-only `gbrain serve` over PGLite runs on the degraded stand-in, and once the brain opens it
+ * #9224: a status-only `foresights serve` over PGLite runs on the degraded stand-in, and once the brain opens it
  * becomes the persistence owner. Every delegated sync that had pages to write then failed with
  * "Unknown engine kind for db-lock: pglite": recovery re-aligned the stand-in's methods with the live engine
  * but not its getters or fields, so `engine.db` stayed missing and tryAcquireDbLock fell through.
@@ -46,7 +46,7 @@ for (const kind of testBackends()) {
       if (kind === 'postgres') ({ engine: live, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
       else { live = new PGLiteEngine(); await live.connect({ engine: 'pglite' } as never); await live.initSchema(); close = () => live.disconnect(); }
       engine = createDegradedEngine({
-        initialError: new Error('This brain is open in another gbrain serve.'),
+        initialError: new Error('This brain is open in another foresights serve.'),
         reconnect: async () => live,
         minIntervalMs: 0,
         kind,

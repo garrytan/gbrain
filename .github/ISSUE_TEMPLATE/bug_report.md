@@ -16,12 +16,12 @@ labels: bug
 3.
 
 **Environment**
-- gbrain version: (`gbrain version`)
+- foresights version: (`foresights version`)
 - OS:
 - Bun version: (`bun --version`)
 - Database: Supabase / self-hosted Postgres
 
-**`gbrain doctor --json` output**
+**`foresights doctor --json` output**
 ```json
 (paste output here)
 ```

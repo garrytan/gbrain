@@ -6,7 +6,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 //
 // #8859 follow-up: a page purge and the retention expiry of a deleted page also take the facts extracted from the page
 // and filed on none, matched by the head of their context (contextHeadSql, facts/gone-page-facts.ts). Unindexed, each
-// purged page scanned every fact of its source, and `gbrain repair purged-page-facts` and its doctor check scan them
+// purged page scanned every fact of its source, and `foresights repair purged-page-facts` and its doctor check scan them
 // too. idx_facts_context_head indexes the md5 of that expression for the rows filed on no page, the only rows the
 // match reads; the md5 keeps the key bounded, since a context is unbounded text and need not hold a separator.
 // Postgres builds it CONCURRENTLY outside the migration transaction (a handler); PGLite builds inline. Nothing is

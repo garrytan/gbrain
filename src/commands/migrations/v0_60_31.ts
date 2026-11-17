@@ -3,22 +3,22 @@
  *   1. credential-safe re-chunk of existing pages (ENG-2), below;
  *   2. the one-time notice for Google sources outside `~/.gbrain`, whose files
  *      written before this version keep their old permissions until
- *      `gbrain repair google-file-modes` (opt-in) or a rewrite tightens them
+ *      `foresights repair google-file-modes` (opt-in) or a rewrite tightens them
  *      (v0_60_31-google-file-modes.ts; detection only).
  *
  * Schema migration v189 already withheld the old chunks of every page whose
  * canonical body carries a private-key marker. This orchestrator re-chunks
  * those pages through the credential-safe projection, provider-free (see
  * src/core/page-state/credential-reseal.ts). It never embeds: re-chunked key
- * chunks wait for the consent-gated `gbrain embed --stale`.
+ * chunks wait for the consent-gated `foresights embed --stale`.
  *
  * Idempotent: each page re-seals in its own transaction and a re-sealed page
  * is no longer pending, so a rerun after an interruption resumes with the
  * pages still withheld. A page whose re-chunk fails item-scoped is held (its
- * chunks stay withheld, doctor lists it, `gbrain repair safe-chunks --source
+ * chunks stay withheld, doctor lists it, `foresights repair safe-chunks --source
  * <id> --apply` retries it) and the phase completes with `held: N` in its
  * detail. A run-scoped failure, or most pages failing, fails the phase so the
- * next `gbrain apply-migrations --yes` retries it.
+ * next `foresights apply-migrations --yes` retries it.
  */
 import type { Migration, OrchestratorOpts, OrchestratorPhaseResult, OrchestratorResult } from './types.ts';
 import type { BrainEngine } from '../../core/engine.ts';
@@ -49,14 +49,14 @@ async function credentialProjectionPhase(engine: BrainEngine, opts: Orchestrator
     // A run-scoped failure (connection, schema, abort) or a systemic one: the phase fails and the next run resumes; no page was held.
     const failure = classifyItemFailure(error);
     return { name, status: 'failed', detail: `The credential-safe re-chunk stopped (${failure.code}): ${redactConnectionInfo(failure.message).slice(0, 500)} `
-      + 'Pages it did not reach stay withheld; fix the cause, and the next gbrain apply-migrations run resumes the re-chunk.' };
+      + 'Pages it did not reach stay withheld; fix the cause, and the next foresights apply-migrations run resumes the re-chunk.' };
   }
   const kept = result.kept ? `; ${result.kept} code page(s) without a recorded source path stay withheld until re-imported` : '';
   const codes = [...new Set(result.held.map(hold => hold.code))].join(', ');
-  const held = result.held.length ? `; held: ${result.held.length} page(s) whose re-chunk failed (${codes}) stay withheld; gbrain doctor --only text_projection_readiness lists them `
-    + 'and gbrain repair safe-chunks --source <id> --apply retries them' : '';
+  const held = result.held.length ? `; held: ${result.held.length} page(s) whose re-chunk failed (${codes}) stay withheld; foresights doctor --only text_projection_readiness lists them `
+    + 'and foresights repair safe-chunks --source <id> --apply retries them' : '';
   return { name, status: 'complete', detail: `${result.resealed} page(s) re-chunked without provider calls, ${result.superseded} superseded by newer writes${kept}${held}. `
-    + 'Embed the re-chunked text when ready: gbrain embed --stale' };
+    + 'Embed the re-chunked text when ready: foresights embed --stale' };
 }
 
 async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult> {
@@ -87,9 +87,9 @@ export const v0_60_31: Migration = {
   fresh_install_noop: true,
   featurePitch: {
     headline: 'Stored private keys no longer reach search chunks or delivered evidence, and Google connector files are written private.',
-    description: 'Pages whose body holds a private key are withheld from search until they are re-chunked with the key replaced by a <REDACTED:private_key_pem> token. This migration re-chunks them with no provider calls; run `gbrain embed --stale` afterwards to embed the new chunks. Stored page bodies are unchanged. '
+    description: 'Pages whose body holds a private key are withheld from search until they are re-chunked with the key replaced by a <REDACTED:private_key_pem> token. This migration re-chunks them with no provider calls; run `foresights embed --stale` afterwards to embed the new chunks. Stored page bodies are unchanged. '
       + 'Google connector files are now written 0600 (directories 0700); files written before this version under a Google source directory outside ~/.gbrain keep their old permissions. '
-      + 'gbrain doctor lists them; preview the opt-in fix with gbrain repair google-file-modes and apply it with --apply.',
+      + 'foresights doctor lists them; preview the opt-in fix with foresights repair google-file-modes and apply it with --apply.',
   },
   orchestrator,
 };

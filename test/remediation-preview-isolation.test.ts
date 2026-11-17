@@ -135,7 +135,7 @@ describe('repair preview isolation (#6000)', () => {
     expect(plan.repair_steps).toEqual([]);
     const text = renderRemediationPlanLines(plan, 0).join('\n');
     expect(text).toContain('Repair kinds whose preview failed');
-    expect(text).toContain('attribution-backfill [timeout]: canceling statement due to statement timeout; to see it again run: gbrain repair attribution-backfill');
+    expect(text).toContain('attribution-backfill [timeout]: canceling statement due to statement timeout; to see it again run: foresights repair attribution-backfill');
     expect(text).not.toContain('Brain is at target');
   });
 

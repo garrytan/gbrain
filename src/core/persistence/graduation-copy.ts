@@ -334,7 +334,7 @@ export async function deferIndexes(target: BrainEngine, opts: { runId?: string }
 /**
  * Builds the deferred indexes one at a time, removing each from the pending
  * row once valid, so a killed run resumes where it stopped. HNSW indexes go
- * through the deferred-ANN build of `gbrain migrate embeddings` (invalid
+ * through the deferred-ANN build of `foresights migrate embeddings` (invalid
  * remnant cleanup, CONCURRENTLY on Postgres, per-type dimension caps); GIN
  * indexes build plainly without a statement timeout.
  */

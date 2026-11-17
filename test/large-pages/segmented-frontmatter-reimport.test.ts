@@ -1,5 +1,5 @@
 /**
- * Wave B PR 2 fix lane P (decision #1): `gbrain repair frontmatter` re-imports a page stored in segments.
+ * Wave B PR 2 fix lane P (decision #1): `foresights repair frontmatter` re-imports a page stored in segments.
  *
  * 1. Protects: a page whose stored title was derived from its slug while its file names one is re-imported by
  *    `--include-ambiguous` when the page is stored in segments just over 1 MiB, with the inline twin's result: the

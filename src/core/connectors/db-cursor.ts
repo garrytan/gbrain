@@ -1,7 +1,7 @@
 /**
  * Cursor state of an unmanaged connector source that keeps no state file
  * (the meetings kind, whose `database` record mode has no directory and whose
- * `git` mode keeps the checkout free of gbrain bookkeeping). One
+ * `git` mode keeps the checkout free of foresights bookkeeping). One
  * `op_checkpoints` row (`op='connector-db-cursor'`) per source incarnation and
  * connector identity, so a content-config change starts fresh exactly like the
  * managed checkpoint key. The row also records the last finished run (id,

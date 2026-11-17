@@ -106,7 +106,7 @@ function chatStub(facts: Array<{ fact: string; entity: string | null }>) {
   }));
 }
 
-/** Bank a segment + ledger entry the way `gbrain hook compact` does. */
+/** Bank a segment + ledger entry the way `foresights hook compact` does. */
 function bankSegment(sessionId: string, text: string): { file: string; hash: string } {
   const w = writeSegment(corpusDir, sessionId, text);
   appendSegmentLedger(corpusDir, sessionId, w.hash);

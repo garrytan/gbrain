@@ -177,7 +177,7 @@ const writerStatusFix = (why: string): Action => readFix(why, { argv: ['gbrain',
 const ownerVersionsFix = (): Action => writerStatusFix(
   'Shows the running owner, this host and the latest admitter and consumer versions per host, read-only, to spot a CLI and owner on different releases.');
 const clientBug = (message: string): OperationError => opError('invalid_params', message,
-  'This gbrain build produced a malformed local persistence request, so nothing was sent to the owner. It is a client fault, not a caller mistake: run gbrain doctor --json on this host and report it to the user with the command that failed.',
+  'This foresights build produced a malformed local persistence request, so nothing was sent to the owner. It is a client fault, not a caller mistake: run foresights doctor --json on this host and report it to the user with the command that failed.',
   { fix: readFix('Checks this installation and its persistence owner without changing anything.', { argv: ['gbrain', 'doctor', '--json'] }) });
 
 /**
@@ -189,20 +189,20 @@ function publicError(error: unknown, requestId?: string): Record<string, unknown
   const incident = randomUUID();
   // Never reflect driver errors, SQL, credentials, or private payloads: the cause stays on this host's owner log.
   try {
-    process.stderr.write(`[gbrain persistence] request failed in this owner (incident ${incident}):${redactConnectionInfo(ownerExceptionLogText(ownerExceptionFailure(error).detail))}\n`);
+    process.stderr.write(`[foresights persistence] request failed in this owner (incident ${incident}):${redactConnectionInfo(ownerExceptionLogText(ownerExceptionFailure(error).detail))}\n`);
   } catch { /* stderr gone */ }
   return opError('internal_error', `The persistence owner failed while running this request (incident ${incident}); the request itself was not at fault.`,
     `The process that holds this brain (the command in fix names it) hit an internal fault and wrote the cause to its own stderr under incident ${incident}; nothing about it crosses the local socket. ${requestId
-      ? `The write may have partly run: inspect request ${requestId} with gbrain write-request ${requestId} before resubmitting it. `
-      : ''}Restart that owner (for a gbrain serve an agent app launched, restart its MCP server or the agent session), then run the same command again; with no owner running, the CLI opens the brain itself. If it fails again after a restart, tell the user and give them the incident ID.`,
-    { detail: 'owner_internal', fix: writerStatusFix('Names the process that owns this brain (its PID, lane and gbrain version), read-only, so it can be restarted.') }).toJSON();
+      ? `The write may have partly run: inspect request ${requestId} with foresights write-request ${requestId} before resubmitting it. `
+      : ''}Restart that owner (for a foresights serve an agent app launched, restart its MCP server or the agent session), then run the same command again; with no owner running, the CLI opens the brain itself. If it fails again after a restart, tell the user and give them the incident ID.`,
+    { detail: 'owner_internal', fix: writerStatusFix('Names the process that owns this brain (its PID, lane and foresights version), read-only, so it can be restarted.') }).toJSON();
 }
 
 function responseFrame(value: unknown): string {
   const frame = JSON.stringify(value) + '\n';
   if (Buffer.byteLength(frame) > PERSISTENCE_IPC_MAX_BYTES) {
     throw opError('response_too_large', 'Persistence response exceeds the local transport limit.',
-      `Nothing larger than ${PERSISTENCE_IPC_MAX_BYTES} bytes crosses the local persistence socket, so this frame was not delivered. A write may still have committed on the owner: inspect it by its request_id (get_write_request, or gbrain write-request on the CLI) before resubmitting; for a read, ask for less (a smaller page, limit or selection).`);
+      `Nothing larger than ${PERSISTENCE_IPC_MAX_BYTES} bytes crosses the local persistence socket, so this frame was not delivered. A write may still have committed on the owner: inspect it by its request_id (get_write_request, or foresights write-request on the CLI) before resubmitting; for a read, ask for less (a smaller page, limit or selection).`);
   }
   return frame;
 }
@@ -271,7 +271,7 @@ export async function startPersistenceIpcServer(
           }
           if (record(request) && exactKeys(request, ['version', 'kind']) && request.version === 1 && request.kind === 'projection_status') {
             if (!provider.projectionStatus) throw opError('unavailable', 'This owner does not report projection status.',
-              'The running persistence owner predates projection status reporting, so the status could not be read; nothing changed. Restart the owner on this gbrain release, or read the owner state with the command in fix instead.',
+              'The running persistence owner predates projection status reporting, so the status could not be read; nothing changed. Restart the owner on this foresights release, or read the owner state with the command in fix instead.',
               { fix: ownerVersionsFix() });
             if (active >= PERSISTENCE_IPC_MAX_CONNECTIONS) throw opError('queue_capacity', 'The persistence listener is at capacity; retry shortly.',
               `All ${PERSISTENCE_IPC_MAX_CONNECTIONS} local persistence connections are busy. This status read changed nothing, so read it again in a few seconds.`);
@@ -282,7 +282,7 @@ export async function startPersistenceIpcServer(
             return;
           }
           if (!operationRequest(request) && !administrationRequest(request)) throw opError('invalid_params', 'Invalid persistence request envelope.',
-            'The owner rejected the request frame as malformed, so nothing was admitted. This usually means the CLI and the running owner are different gbrain releases: compare them with the command in fix, restart the owner on the CLI\'s release, then submit the request again.',
+            'The owner rejected the request frame as malformed, so nothing was admitted. This usually means the CLI and the running owner are different foresights releases: compare them with the command in fix, restart the owner on the CLI\'s release, then submit the request again.',
             { fix: ownerVersionsFix() });
           if (request.brain_id !== provider.brainId) throw opError('source_changed', 'The persistence listener now serves a different brain.',
             `This socket's owner serves brain ${provider.brainId}, not the brain ${request.brain_id} the request was built for, so nothing was admitted. Check which brain the command targets (its brain selection) against the owner in fix, then submit the request again.`,
@@ -292,7 +292,7 @@ export async function startPersistenceIpcServer(
           active++;
           admitted = true;
           if (request.kind === 'administration' && !provider.administer) throw opError('unavailable', 'This owner does not support local administration.',
-            'The running persistence owner was started without local administration (an older release or a non-CLI owner), so nothing ran. Restart the owner on this gbrain release, or stop it and run the administration command from the gbrain CLI on this host.',
+            'The running persistence owner was started without local administration (an older release or a non-CLI owner), so nothing ran. Restart the owner on this foresights release, or stop it and run the administration command from the foresights CLI on this host.',
             { fix: ownerVersionsFix() });
           if (request.kind === 'operation' && isPersistenceIpcMutation(request.operation)) mutation = { requestId: request.params.request_id as string };
           const result = request.kind === 'administration' ? await provider.administer!(request) : await provider.dispatch(request);

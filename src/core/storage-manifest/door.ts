@@ -26,7 +26,7 @@ export function isStorageDoor(ctx: OperationContext): boolean {
 export function assertStorageSourceWriter(ctx: OperationContext, sourceId: string, role: string | null, opts: { managedFileImport?: boolean }): void {
   if (role !== STORAGE_ROLE || isStorageDoor(ctx) || opts.managedFileImport === true) return;
   throw opError('storage_source_managed', `Source ${sourceId} is the storage manifest; only the storage verbs write it, so nothing was written.`,
-    'Register a card with gbrain storage-register, or change one with gbrain storage-update and the card\'s current revision from storage_get.',
+    'Register a card with foresights storage-register, or change one with foresights storage-update and the card\'s current revision from storage_get.',
     { fix: readFix('Lists the cards on the storage shelf, read-only.', { argv: ['gbrain', 'storage-list', '--json'], mcp: { tool: 'storage_list', arguments: {} } }) });
 }
 

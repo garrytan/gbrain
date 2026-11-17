@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain skillpack scrub-legacy-fence-rows` (TODO-2 folded).
+ * Tests for `foresights skillpack scrub-legacy-fence-rows` (TODO-2 folded).
  *
  * Pins:
  *   - removes legacy rows only when skill present AND triggers declared

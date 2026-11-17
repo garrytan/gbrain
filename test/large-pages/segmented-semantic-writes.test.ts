@@ -5,7 +5,7 @@
  *    segment text, manifest row or chunk is written, the generation stays, content_hash and the version move as the
  *    inline tag write moves them, search and get_page see the tag, and a file-backed page's file gets the new
  *    frontmatter with its body bytes unchanged. add_timeline_entry, the takes_* writes, extract_facts' fence write,
- *    gbrain core add / remove / diff and sources reconcile read a segmented page just over 1 MiB back whole and give
+ *    foresights core add / remove / diff and sources reconcile read a segmented page just over 1 MiB back whole and give
  *    the result its inline twin gets (body bytes, frontmatter, tags, content_hash, timeline rows, takes, facts,
  *    canonical file, search hits); above 24 MiB they refuse with page_body_segmented, naming the 24 MiB limit, and
  *    change nothing. The page near 24 MiB is segmented-semantic-writes-near-ceiling.slow.test.ts.
@@ -107,7 +107,7 @@ for (const kind of testBackends()) {
       expect(got.tags).toEqual(['lane-l-kept']);
     }, 600_000);
 
-    test('gbrain core add, diff and remove on a segmented page give the inline twin\'s result', async () => {
+    test('foresights core add, diff and remove on a segmented page give the inline twin\'s result', async () => {
       const out: string[] = [];
       const log = console.log, err = console.error;
       console.log = (...a: unknown[]) => { out.push(a.join(' ')); };

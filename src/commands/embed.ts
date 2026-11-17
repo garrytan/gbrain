@@ -94,7 +94,7 @@ export type { EmbedBatchWithBackoffOpts } from '../core/embed-retry.ts';
 /** #3037: cap failure samples so a corpus-wide outage doesn't bloat --json. */
 const FAILURE_SAMPLE_CAP = 10;
 const DEFAULT_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS = 30_000;
-const EMBED_UNAVAILABLE_MESSAGE = 'Page or source is unavailable or changed; no embeddings were installed. An archived source requires deliberate gbrain sources restore <id>; inspect the page and source before retrying.';
+const EMBED_UNAVAILABLE_MESSAGE = 'Page or source is unavailable or changed; no embeddings were installed. An archived source requires deliberate foresights sources restore <id>; inspect the page and source before retrying.';
 
 /**
  * #3037: record embed failures on the run result. `chunkCount` is the number
@@ -172,7 +172,7 @@ export interface EmbedOpts {
    * Optional progress callback. Called after each page. CLI wrappers
    * supply a reporter.tick()-backed implementation; Minion handlers
    * supply a job.updateProgress()-backed one so per-job progress lives
-   * in the DB where `gbrain jobs get` can read it.
+   * in the DB where `foresights jobs get` can read it.
    */
   onProgress?: (done: number, total: number, embedded: number) => void;
   /**
@@ -193,7 +193,7 @@ export interface EmbedOpts {
   priority?: 'recent';
   /**
    * v0.41.18.0 (A13): catch-up mode removes the wall-clock cap and loops
-   * until countStaleChunks() returns 0. Used by `gbrain embed --stale
+   * until countStaleChunks() returns 0. Used by `foresights embed --stale
    * --catch-up` and by the embed-catch-up Minion handler that the onboard
    * remediation submits on big stale backlogs.
    */
@@ -248,8 +248,8 @@ export interface EmbedOpts {
    * (never invalidated) so a routine upgrade doesn't surprise-re-embed a
    * whole corpus — but after a provider/model swap the grandfather clause
    * silently leaves them in the OLD embedding space, mixing two vector
-   * spaces in one index. `gbrain migrate embeddings` and
-   * `gbrain embed --stale --include-null-signature` set this.
+   * spaces in one index. `foresights migrate embeddings` and
+   * `foresights embed --stale --include-null-signature` set this.
    */
   includeNullSignature?: boolean;
   /**
@@ -865,7 +865,7 @@ export function parsePaceArgs(
 /**
  * Keyless brains: does this invocation qualify for the stale-mode CLEAN
  * refusal (zero-failure result → exit 0)? The documented always-current chain
- * for external agent schedulers is `gbrain sync ... && gbrain embed --stale`
+ * for external agent schedulers is `foresights sync ... && foresights embed --stale`
  * (docs/guides/live-sync.md, INSTALL_FOR_AGENTS.md Step 7) — a hard exit 1
  * here broke that chain on every brain installed keyless (init's no-embedding
  * mode), which docs/operations/headless-install.md calls a first-class
@@ -908,7 +908,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   if (isKeylessStaleRefusal(args, keylessConfig?.embedding_disabled)) {
     const enable = (await import('../core/readiness.ts')).embeddingEnablement(keylessConfig!).argv ?? ['gbrain', 'init', '--force', '--embedding-model', '<provider:model>'];
     process.stderr.write('[embed] Embeddings are disabled on this brain (keyless install), so there are no vectors to compute. Keyword search covers every chunked page; '
-      + 'pages an older version skipped for size become keyword-searchable with gbrain reindex --oversized (free). '
+      + 'pages an older version skipped for size become keyword-searchable with foresights reindex --oversized (free). '
       + `Turn on semantic search (pages and facts are kept): ${(await import('../core/agent-output.ts')).shellQuote(enable)}\n`);
     return {
       embedded: 0, skipped: 0, would_embed: 0, total_chunks: 0,
@@ -995,7 +995,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   } else {
     const slug = (await import('./embed-slug-args.ts')).embedSlugTarget(args);
     if (!slug) {
-      serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--yes | --max-usd N] | --stale --images (gbrain embed --help: paid runs need the user\'s approval)');
+      serr('Usage: foresights embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--yes | --max-usd N] | --stale --images (foresights embed --help: paid runs need the user\'s approval)');
       process.exit(1);
     }
     opts = { slug, dryRun, sourceId, batchSize, priority, catchUp };
@@ -1331,7 +1331,7 @@ async function embedAll(
   // chunks that already have embeddings.
   // ─────────────────────────────────────────────────────────────
   if (staleOnly) {
-    // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
+    // D7: thread sourceId so `foresights embed --stale --source X` actually scopes.
     // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
     // #1737: thread the external abort signal so the cycle embed phase bails.
     return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, signal);
@@ -1344,7 +1344,7 @@ async function embedAll(
   // v0.31.12: when sourceId is set, scope listPages to that source.
   // v0.41 (D8 + Codex r2 #11): apply embed-skip filter via the shared
   // helper so the `--all` path honors `frontmatter.embed_skip` the same
-  // way the `--stale` path does. Without this filter, `gbrain embed --all`
+  // way the `--stale` path does. Without this filter, `foresights embed --all`
   // (common after model swaps) re-embeds every soft-blocked page,
   // defeating the soft-block. Filtering JS-side here mirrors the SQL-side
   // filter that listStaleChunks/countStaleChunks apply on --stale.
@@ -1718,7 +1718,7 @@ async function embedAllStale(
     if (blocked <= reportedArchived) return;
     result.failures += blocked - reportedArchived;
     reportedArchived = blocked;
-    result.failure_samples.push(`${blocked} archived page(s) have blocked embedding work; active pages can progress, but this run is incomplete. Use gbrain sources restore <id> deliberately before retrying archived work.`);
+    result.failure_samples.push(`${blocked} archived page(s) have blocked embedding work; active pages can progress, but this run is incomplete. Use foresights sources restore <id> deliberately before retrying archived work.`);
   };
   await reportArchived();
   const readinessOptions = { sourceId, existingChunksOnly: true, activeSourcesOnly: true, stale: { signature, includeNullSignature: includeNullSig }, signal: externalSignal,
@@ -1834,7 +1834,7 @@ async function embedAllStale(
               `  [embed] WARNING: ${leftBehind} embedded chunk(s) sit on pages with no recorded ` +
               `embedding signature and were NOT invalidated — they remain in the previous model's ` +
               `embedding space. Re-run with --include-null-signature (or use ` +
-              `\`gbrain migrate embeddings\`) to re-embed them.`,
+              `\`foresights migrate embeddings\`) to re-embed them.`,
             );
           }
         }
@@ -2217,7 +2217,7 @@ async function embedAllStale(
     if (unavailablePages.size > 0) {
       const slugs = [...unavailablePages.values()];
       const more = slugs.length > 5 ? ` and ${slugs.length - 5} more` : '';
-      result.failure_samples.push(`${slugs.length} page(s) not embedded: the page changed, was deleted or lost its projection during this run, so no embeddings were installed (${slugs.slice(0, 5).join(', ')}${more}). Their stale chunks are kept; rerun gbrain embed --stale, and inspect any page that keeps failing with gbrain get <slug>.`);
+      result.failure_samples.push(`${slugs.length} page(s) not embedded: the page changed, was deleted or lost its projection during this run, so no embeddings were installed (${slugs.slice(0, 5).join(', ')}${more}). Their stale chunks are kept; rerun foresights embed --stale, and inspect any page that keeps failing with foresights get <slug>.`);
     }
   }
 

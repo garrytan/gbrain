@@ -11,7 +11,7 @@ const pending = (index: number, total = 10): SyncResult => ({ ...base, status: '
     write_request: { request_id: '00000000-0000-0000-0000-000000000001', state: 'queued', retry_after_ms: 0 } as never } });
 const yielded = (index: number, total = 10): SyncResult => ({ ...base, status: 'partial', reason: 'writer_yield', managedCursor: { index, total } });
 const done = (total = 10): SyncResult => ({ ...base, managedCursor: { index: total, total } });
-const RESUME = 'gbrain sync --source s --no-pull';
+const RESUME = 'foresights sync --source s --no-pull';
 
 function scripted(results: Array<SyncResult | Error>) {
   let i = 0;
@@ -98,7 +98,7 @@ describe('runDrain', () => {
     const probe: StallProbe = { blockedHead: async () => ({ reason: 'recovery_required', stall }), fingerprint: async () => null };
     const result = await runDrain({ pass: async () => pending(2), probe, pauseMs: 1 });
     expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'recovery_required', stall: { head_request_id: 'h' } });
-    expect(drainNext(result, RESUME, 's')).toMatchObject({ command: 'gbrain sources writer status s', safe_to_loop: false });
+    expect(drainNext(result, RESUME, 's')).toMatchObject({ command: 'foresights sources writer status s', safe_to_loop: false });
   });
 
   test('no change in the awaited request across the stall window stops the drain as drain_stalled', async () => {
@@ -168,7 +168,7 @@ describe('managed sync backlog', () => {
     const [b] = await readManagedSyncBacklog(engineWith([{ sourceId: 'notes', index: 300, total: 1300,
       progress: { startedAt: now - 120_000, startIndex: 100, lastAt: now, lastIndex: 300 }, processingOptions: { noEmbed: true } }]));
     expect(b).toMatchObject({ source_id: 'notes', remaining: 1000, rate_pages_per_min: 100, eta_seconds: 600,
-      resume_command: 'gbrain sync --source notes --no-pull --no-embed' });
+      resume_command: 'foresights sync --source notes --no-pull --no-embed' });
     expect(formatManagedSyncBacklog(b!)).toContain('indexing ETA 10m00s');
   });
 
@@ -191,7 +191,7 @@ describe('managed sync backlog', () => {
 
 describe('classified write waits', () => {
   test('a blocked wait stops the drain with its cause; a repeated read failure stops it as database_contention', async () => {
-    const blocked = { ...pending(2), writeWait: { status: 'blocked' as const, request_id: 'r', cause: 'owner_unavailable', command: 'gbrain sources writer status s --json' } };
+    const blocked = { ...pending(2), writeWait: { status: 'blocked' as const, request_id: 'r', cause: 'owner_unavailable', command: 'foresights sources writer status s --json' } };
     expect((await runDrain({ pass: async () => blocked, pauseMs: 1 })).drain).toMatchObject({ outcome: 'blocked', stop_reason: 'owner_unavailable' });
     const failing = { ...pending(2), writeWait: { status: 'read_failed' as const, request_id: 'r', reason: 'conn_dropped', transient: true, attempts: 1, message: 'm', why: 'retry' } };
     const s = scripted([failing, failing, failing, done()]);

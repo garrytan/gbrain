@@ -1,5 +1,5 @@
 /**
- * v0.32 — `gbrain recall` extensions: --since-last-run + --pending + --rollup
+ * v0.32 — `foresights recall` extensions: --since-last-run + --pending + --rollup
  * + --watch + thin-client routing. PGLite-backed unit tests (no DATABASE_URL,
  * no API keys). Canonical block pattern from CLAUDE.md.
  *
@@ -271,7 +271,7 @@ describe('recall MCP op include_pending output field (round-trip)', () => {
 
 describe('briefing skill invocation surface', () => {
   // The briefing skill calls:
-  //   gbrain recall --since-last-run --supersessions --pending --rollup --json
+  //   foresights recall --since-last-run --supersessions --pending --rollup --json
   //
   // The engine surfaces this combo exercises are:
   //   listSupersessions (with since cutoff)

@@ -9,7 +9,7 @@ export const PHYSICAL_ROOT_MARKER = '.gbrain-owner.json';
  */
 export const OWNERSHIP_MARKER_GLOBS: readonly string[] = ['.gbrain-owner.json', '.gbrain-owner-*.json', '.gbrain-owner.json.*.tmp'];
 
-/** Ownership metadata gbrain writes inside or beside a managed canonical root; never brain content. */
+/** Ownership metadata foresights writes inside or beside a managed canonical root; never brain content. */
 export function isPhysicalRootMetadata(name: string): boolean {
   return name === PHYSICAL_ROOT_MARKER || /^\.gbrain-owner-[a-f0-9]{64}\.json$/.test(name)
     || /^\.gbrain-owner\.json\.[a-f0-9-]{36}\.tmp$/.test(name);
@@ -17,7 +17,7 @@ export function isPhysicalRootMetadata(name: string): boolean {
 
 /**
  * `git status --porcelain` (v1) output without entries whose every path is
- * physical-root metadata, so the stamp gbrain writes does not make a managed
+ * physical-root metadata, so the stamp foresights writes does not make a managed
  * tree look dirty. A rename or copy keeps its line unless both sides are
  * metadata, a quoted path never matches an exact metadata name, and an
  * untracked directory (porcelain's trailing `/`) is never metadata.

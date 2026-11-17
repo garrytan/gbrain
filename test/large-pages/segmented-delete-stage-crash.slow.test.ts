@@ -8,7 +8,7 @@
  *    removes the temporary copy and requeues the request with the exact prior bytes and no recovery bytes held. A copy
  *    torn at the stage's own name (what a crash mid-copy left before the temporary name) while the file still holds
  *    its prior bytes is dropped the same way. When recovery truly cannot proceed (the file was removed and its copy is
- *    torn) the pass records `unexpected_staging_bytes` instead of throwing, and the `gbrain repair stuck-recovery`
+ *    torn) the pass records `unexpected_staging_bytes` instead of throwing, and the `foresights repair stuck-recovery`
  *    preview still runs: it counts that record, and lists a large-file record blocked on an edited file as a resolvable
  *    item (stuck-recovery-large.slow.test.ts resolves one) instead of aborting.
  * 2. Fails when: a torn copy at the stage name throws `unexpected_staging_bytes` on every pass without recording it (the

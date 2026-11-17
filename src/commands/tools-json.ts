@@ -3,7 +3,7 @@ import { buildToolDefs } from '../mcp/tool-defs.ts';
 import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 
 /**
- * `gbrain --tools-json` — the public CLI tool-catalog contract.
+ * `foresights --tools-json` — the public CLI tool-catalog contract.
  *
  * The legacy keys (`name`, `description`, `parameters` with the compact
  * `"type"` / `"type?"` strings) are preserved VERBATIM — downstream scripts

@@ -75,7 +75,7 @@ export async function mcpRequestLogRetentionResult(
   if (stale) {
     return { status: 'warn', details,
       message: `Request-log retention is ${days} days, but no prune has run in the last 48 hours (last run: ${last?.at ?? 'never'}), so the log keeps growing. ` +
-        'The prune runs in the cycle purge phase (autopilot or gbrain dream) and, on a PGLite brain, hourly inside a live gbrain serve.',
+        'The prune runs in the cycle purge phase (autopilot or foresights dream) and, on a PGLite brain, hourly inside a live foresights serve.',
       fix: { argv: ['gbrain', 'dream', '--phase', 'purge'], consent: ['destructive'], actor: 'agent', ask_user: true, requires_exclusive: false, docs: DOCS,
         verify: doctorVerify('mcp_request_log_retention'),
         why: 'Runs the cycle purge phase now, which applies the retention the user already turned on.',

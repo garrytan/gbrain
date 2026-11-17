@@ -36,7 +36,7 @@ function noteForcedNonInteractive(cause: string): void {
   if (forcedNoticePrinted) return;
   forcedNoticePrinted = true;
   process.stderr.write(
-    `[gbrain] prompts are off: ${cause} is set, so confirmations decline by default. ` +
+    `[foresights] prompts are off: ${cause} is set, so confirmations decline by default. ` +
     `A human at this terminal can set GBRAIN_INTERACTIVE=1 to answer prompts.\n`,
   );
 }
@@ -289,7 +289,7 @@ export async function readStdinBounded(opts: StdinReadOptions = {}): Promise<Std
       notice = setTimeout(() => {
         notice = null;
         process.stderr.write(
-          `[gbrain] waiting for stdin: no input after ${FIRST_BYTE_NOTICE_MS / 1000}s; giving up after ${Math.round(firstByteMs / 1000)}s. ` +
+          `[foresights] waiting for stdin: no input after ${FIRST_BYTE_NOTICE_MS / 1000}s; giving up after ${Math.round(firstByteMs / 1000)}s. ` +
           `Pipe the payload or close stdin; set GBRAIN_STDIN_TIMEOUT_MS=<ms> to wait longer for the first byte.\n`,
         );
       }, FIRST_BYTE_NOTICE_MS);

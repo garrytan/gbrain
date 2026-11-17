@@ -269,7 +269,7 @@ test('full backup restores DB-only facts/files, rebases sources, quarantines all
   expect((created.manifest.omitted as string[]).some(line => line.includes('instructions/.env.local'))).toBe(true);
   expect((created.manifest.omitted as string[]).some(line => line.includes('memory/browser-profile'))).toBe(true);
   for (const path of ['memory/prior.gbrain-backup', 'memory/renamed-prior-snapshot']) {
-    expect(created.manifest.omitted).toContain(`Excluded managed path ${path}: previous GBrain backup archive.`);
+    expect(created.manifest.omitted).toContain(`Excluded managed path ${path}: previous Foresights backup archive.`);
   }
   const restored = join(temporary, 'restored');
   const result = await restorePgliteBackup({ archive, into: restored });

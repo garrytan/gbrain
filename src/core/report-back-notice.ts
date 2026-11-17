@@ -1,11 +1,11 @@
 /**
  * The `wakeshift_report_back` coaching notice (Wakeshift plan D9). A remote caller that submits a job
  * (`submit_job`, `submit_agent`) holds an id it would otherwise poll, so the submit result tells it once that
- * gbrain can report back instead: with reporting back published (`mcp.publish_wakeshift`), the watch_job call that
- * wakes this conversation; without it, the owner's switch. Every remote submit qualifies: gbrain cannot tell a job's
+ * foresights can report back instead: with reporting back published (`mcp.publish_wakeshift`), the watch_job call that
+ * wakes this conversation; without it, the owner's switch. Every remote submit qualifies: foresights cannot tell a job's
  * runtime at submit (a sync of one file or ten thousand), remote submit_job only takes sync, import, lint and
  * lint-fix, and submit_agent is a model loop. The notice ledger keeps it to once per session (HTTP: per principal),
- * inside the coaching budget, and `mute_notice` / `gbrain notices mute wakeshift_report_back` silence it.
+ * inside the coaching budget, and `mute_notice` / `foresights notices mute wakeshift_report_back` silence it.
  * A trusted local CLI submit gets none: it has no conversation to wake.
  */
 import type { Notice } from './agent-output.ts';
@@ -21,7 +21,7 @@ export function reportBackNotice(jobId: number, published: boolean): Notice {
     kind: 'coaching',
     why: published
       ? `Want this conversation woken when it's done? Call watch_job with id ${jobId}.`
-      : 'gbrain can report back when this finishes, through Wakeshift: ask the brain owner to run gbrain wakeshift enable.',
+      : 'foresights can report back when this finishes, through Wakeshift: ask the brain owner to run foresights wakeshift enable.',
   };
 }
 

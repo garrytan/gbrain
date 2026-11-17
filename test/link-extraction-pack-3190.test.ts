@@ -11,7 +11,7 @@
  *  3. extractFrontmatterLinks ignored pack `frontmatter_links` — a pack
  *     field like `parents:` produced 0 candidates.
  *  4. PGLite e2e: an ACTIVE custom pack (engine config `schema_pack` +
- *     locator seam) types edges through `gbrain extract --stale` end to end.
+ *     locator seam) types edges through `foresights extract --stale` end to end.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';

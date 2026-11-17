@@ -106,17 +106,17 @@ A failed `engine.reconnect()` leaves the failure counter at 3 or more, so each l
 | New unit files plus gateway-sensitive neighbors in one `bun test` process | 110 pass / 0 fail |
 | `bash scripts/run-e2e.sh test/e2e/sync-lock-recovery.test.ts` (local pgvector) | 8 pass / 0 fail |
 | `bun run verify` | 55/55 checks green (19 s) |
-| `scripts/check-privacy.sh` on the committed lane reports, plus a manual real-name review | clean; only public names (repo owner in `garrytan/gbrain`, the public Hermes harness, and a `users/garry` string quoted from an existing test) |
+| `scripts/check-privacy.sh` on the committed lane reports, plus a manual real-name review | clean; only public names (repo owner in `aimonk2025/gbrain`, the public Hermes harness, and a `users/garry` string quoted from an existing test) |
 | `bun run ci:ubicloud` | all checks passed in 5m35s: gitleaks 1, verify 1, unit 1995, serial 331, slow 21, e2e 314, 0 failed (7 of 10 VMs became ready; the queue drained on those) |
 
 New test timings: `features.test.ts` about 4 s (one PGLite boot), `ocr-run-budget.test.ts` about 4 s (one PGLite boot), `embed-default-concurrency.test.ts` about 1 s, `supervisor-health-reconnect.test.ts` under 0.5 s, the `check-resolvable` and `schema-cli-contract` additions a few ms each, `sync-lock-recovery.test.ts` about 11 s (both boundary cases use a 1,000-file repo).
 
 ### Contributor note (for the CHANGELOG "For contributors" section)
 
-- `gbrain features` now has behavioral tests (`test/features.test.ts`): each feature check fires in a fixture brain with the gap and stays silent in a healthy one; recipe names in the integrations pitch follow env and heartbeat configuration; declined offers are suppressed; offers persist only under the temporary home.
+- `foresights features` now has behavioral tests (`test/features.test.ts`): each feature check fires in a fixture brain with the gap and stays silent in a healthy one; recipe names in the integrations pitch follow env and heartbeat configuration; declined offers are suppressed; offers persist only under the temporary home.
 - New `test/supervisor-health-reconnect.test.ts` drives the supervisor's DB health branch (3-strike degrade + reconnect, reset, failed reconnect, stopping and configuration-blocked suppression) through the real health check.
 - New `test/embed-default-concurrency.test.ts` pins the default of 20 embed workers on both `--all` and `--stale` through the real gateway path.
-- `test/schema-cli-contract.test.ts` checks `gbrain schema usage` output instead of grepping for verb names; `test/check-resolvable.test.ts` adds fixture trees for the unreachable-skill fix and the overlap whitelist.
+- `test/schema-cli-contract.test.ts` checks `foresights schema usage` output instead of grepping for verb names; `test/check-resolvable.test.ts` adds fixture trees for the unreachable-skill fix and the overlap whitelist.
 - `test/ocr-run-budget.test.ts` now drives `importImageFile` (opt-in on and off, hash-unchanged retry, budget caps); the `_maybeOcrGatedForTests` export is gone.
 - `scripts/e2e-test-map.ts` routes `src/core/postgres-engine.ts` to its three shared-singleton E2E owners (removed from `test/fixtures/e2e-unmapped-baseline.txt`).
 - `test/e2e/sync-lock-recovery.test.ts`: the skipped `| head -5` case is replaced by a real closed-pipe test, and the SIGTERM case no longer passes when it misses the lock; both wait for the held lock first and fail if they never see it.

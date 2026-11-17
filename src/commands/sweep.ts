@@ -1,5 +1,5 @@
 /**
- * `gbrain sweep --once` [CX2-5] — trusted local entry for the maintenance
+ * `foresights sweep --once` [CX2-5] — trusted local entry for the maintenance
  * sweep.
  *
  * CLI_ONLY — never exposed over MCP. The sweep normally lives inside the
@@ -21,18 +21,18 @@ import { jsonRequested, setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
 import { writeCliRefusal } from '../cli/cli-error.ts';
 
-export const SWEEP_HELP = `gbrain sweep — run the serve-resident maintenance sweep once, locally
+export const SWEEP_HELP = `foresights sweep — run the serve-resident maintenance sweep once, locally
 
 Usage:
-  gbrain sweep --once [--source <id>] [--budget-ms <n>] [--batch-limit <n>] [--json]
-  gbrain sweep --assign-corpus <source> [--session <id>] [--apply] [--json]
-  gbrain sweep --retry-failed [--apply] [--json]
+  foresights sweep --once [--source <id>] [--budget-ms <n>] [--batch-limit <n>] [--json]
+  foresights sweep --assign-corpus <source> [--session <id>] [--apply] [--json]
+  foresights sweep --retry-failed [--apply] [--json]
 
 Runs the three bounded sweep passes against the connected brain:
   1. facts-fence reconciliation (zero-LLM): recently-modified pages with a
      "## Facts" fence get their facts DB index reconciled.
   2. link/timeline extraction (zero-LLM): the same deterministic extraction
-     "gbrain extract" runs, over recently-modified pages.
+     "foresights extract" runs, over recently-modified pages.
   3. corpus ingest (spend-gated): unprocessed transcript .txt files run
      through facts extraction in turn-boundary windows (8 per file and 32
      total per sweep; GBRAIN_CORPUS_WINDOWS_PER_SWEEP overrides the total);
@@ -103,8 +103,8 @@ export async function runSweep(engine: BrainEngine, args: string[]): Promise<voi
     return;
   }
   if (!args.includes('--once')) {
-    console.error('gbrain sweep: --once is required (one bounded sweep, then exit).');
-    console.error('Run `gbrain sweep --help` for usage.');
+    console.error('foresights sweep: --once is required (one bounded sweep, then exit).');
+    console.error('Run `foresights sweep --help` for usage.');
     setCliExitVerdict(2);
     return;
   }
@@ -120,7 +120,7 @@ export async function runSweep(engine: BrainEngine, args: string[]): Promise<voi
     budgetMs = parseIntFlag(args, '--budget-ms');
     batchLimit = parseIntFlag(args, '--batch-limit');
   } catch (e) {
-    console.error(`gbrain sweep: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`foresights sweep: ${e instanceof Error ? e.message : String(e)}`);
     setCliExitVerdict(2);
     return;
   }
@@ -156,7 +156,7 @@ export async function runSweep(engine: BrainEngine, args: string[]): Promise<voi
   }
 
   if (isTotalFailure(report)) {
-    console.error('gbrain sweep: total failure — every pass errored. See skipped reasons above.');
+    console.error('foresights sweep: total failure — every pass errored. See skipped reasons above.');
     setCliExitVerdict(1);
   }
 }
@@ -197,12 +197,12 @@ async function runRetryFailed(engine: BrainEngine, args: string[]): Promise<void
     return;
   }
   console.log(apply
-    ? `Cleared the failure counts of ${rows.length} corpus file(s); the next sweep pays to extract their windows again (gbrain sweep --once).`
+    ? `Cleared the failure counts of ${rows.length} corpus file(s); the next sweep pays to extract their windows again (foresights sweep --once).`
     : `${rows.length} corpus file(s) have a window that failed after the model call:`);
   for (const r of rows) {
     console.log(`  ${r.file}: ${r.attempts} failed attempt(s), last ${r.last_code} at ${r.last_failed_at}${r.stopped ? ' (stopped)' : ' (retrying with backoff)'}`);
   }
-  if (!apply) console.log('Fix the cause first (the last code names it), then retry them (paid): gbrain sweep --retry-failed --apply');
+  if (!apply) console.log('Fix the cause first (the last code names it), then retry them (paid): foresights sweep --retry-failed --apply');
 }
 
 /** #6268: preview (default) or apply the operator's source mapping for held session files. */
@@ -217,8 +217,8 @@ async function runAssignCorpus(engine: BrainEngine, args: string[]): Promise<voi
     : [];
   if (!rows.length || rows[0].archived) {
     setCliExitVerdict(writeCliRefusal(opError('invalid_source',
-      `gbrain sweep --assign-corpus: ${JSON.stringify(sourceId ?? '')} is not an active source of this brain`,
-      'Ask the user which source the held session files belong to; `gbrain sources list` shows the active sources.',
+      `foresights sweep --assign-corpus: ${JSON.stringify(sourceId ?? '')} is not an active source of this brain`,
+      'Ask the user which source the held session files belong to; `foresights sources list` shows the active sources.',
       { why: 'Held session files are mapped only to a source that exists and is not archived.',
         fix: { argv: ['gbrain', 'sources', 'list'], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Lists the active sources to choose from.', verify: { argv: ['gbrain', 'doctor', '--only', 'memory_writeback', '--json'] } } }),
@@ -238,8 +238,8 @@ async function runAssignCorpus(engine: BrainEngine, args: string[]): Promise<voi
   } else if (!apply) {
     console.log(`${sessions.length} held session(s) would be mapped to source ${sourceId}:`);
     for (const s of sessions) console.log(`  ${s}`);
-    if (sessions.length) console.log(`Apply: gbrain sweep --assign-corpus ${sourceId}${onlySession ? ` --session ${onlySession}` : ''} --apply`);
+    if (sessions.length) console.log(`Apply: foresights sweep --assign-corpus ${sourceId}${onlySession ? ` --session ${onlySession}` : ''} --apply`);
   } else {
-    console.log(`Mapped ${assigned.length} held session(s) to source ${sourceId}; the next sweep extracts them (gbrain sweep --once) and dream synthesis and extract_atoms write them there.`);
+    console.log(`Mapped ${assigned.length} held session(s) to source ${sourceId}; the next sweep extracts them (foresights sweep --once) and dream synthesis and extract_atoms write them there.`);
   }
 }

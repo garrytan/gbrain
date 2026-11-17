@@ -366,8 +366,8 @@ for (const kind of testBackends()) {
     test('stdio: unbound reads world pages with a notice in the grace (never a member-restricted page) and is refused after it; the fix is the per-harness --stdio-member binding or a per-person HTTP key, on either engine, never config set; a server started with --stdio-member reads plainly', async () => {
       const setupFix = ['gbrain', 'setup', '<HARNESS>', '--stdio-member', '<MEMBER>'];
       const route = (text: string) => {
-        expect(text).toContain('gbrain setup claude-code|codex --stdio-member');
-        expect(text).toContain('gbrain serve --http');
+        expect(text).toContain('foresights setup claude-code|codex --stdio-member');
+        expect(text).toContain('foresights serve --http');
         expect(text).not.toContain('PGLite');
       };
       await importFromContent(engine, 'notes/alice-only', '---\ntype: note\ntitle: alice only\nreadable_by: [alice-example]\n---\n# alice only\n\nHarbor ledger notes canaryalice.\n', { sourceId: 'default', noEmbed: true });
@@ -496,8 +496,8 @@ describe('the access owner hint names the per-harness binding', () => {
   const view = { owner: 'alice-example', bound_credentials: [], inactive: null } as unknown as Parameters<typeof ownerLines>[0];
   test('it names --stdio-member for one harness and the per-person HTTP key, never a bare config set', () => {
     const text = ownerLines(view).join('\n');
-    expect(text).toContain('gbrain setup claude-code|codex --stdio-member alice-example');
-    expect(text).toContain('gbrain serve --http');
+    expect(text).toContain('foresights setup claude-code|codex --stdio-member alice-example');
+    expect(text).toContain('foresights serve --http');
     expect(text).toContain('--member alice-example');
     expect(text).not.toContain('config set mcp.stdio_member');
   });
@@ -536,7 +536,7 @@ describe('doctor unscoped_shared_reads and the post-upgrade list (pglite, repo-l
     console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
     try { await printUnscopedReadsUpgradeNotice(engine); } finally { console.log = log; }
     expect(lines.join('\n')).toContain('token old-bot: grace until');
-    expect(lines.join('\n')).toContain('Fix: gbrain auth rescope --token fresh-bot --member <MEMBER>');
+    expect(lines.join('\n')).toContain('Fix: foresights auth rescope --token fresh-bot --member <MEMBER>');
     expect(lines.join('\n')).not.toContain('team-bot');
     await engine.setConfig('access.requester_scope_enforce', 'false');
     expect((await doctor()).status).toBe('warn');
@@ -616,7 +616,7 @@ describe('the CLI refuses an unbound credential and records the opt-out (pglite,
     expect(JSON.parse(marked.stdout).explanation).toContain('--reads-unscoped');
     expect(JSON.parse((await run(['access', 'check', '--token', 'alice-bot', '--json'])).stdout)).toMatchObject({ verdict: 'reads_as_member', reads_unscoped: false });
     await withEnv({ GBRAIN_AUDIT_DIR: join(home, 'audit') }, () => {
-      expect(readReadsUnscopedChanges()).toEqual([expect.objectContaining({ credential: 'token shared-bot', reads_unscoped: true, by: 'gbrain auth' })]);
+      expect(readReadsUnscopedChanges()).toEqual([expect.objectContaining({ credential: 'token shared-bot', reads_unscoped: true, by: 'foresights auth' })]);
     });
   }, 180_000);
 
@@ -643,7 +643,7 @@ describe('the CLI refuses an unbound credential and records the opt-out (pglite,
   test('auth --help names --reads-unscoped --yes on auth create and register-client, the flags the credential_scope_required refusal asks for', async () => {
     const help = await runCli(['auth', '--help'], { timeoutMs: 60_000 });
     const text = help.stdout + help.stderr;
-    expect(text).toMatch(/gbrain auth create <name> [^\n]*\[--reads-unscoped --yes\]/);
-    expect(text).toMatch(/gbrain auth register-client <name>[\s\S]*--reads-unscoped --yes/);
+    expect(text).toMatch(/(?:foresights|gbrain) auth create <name> [^\n]*\[--reads-unscoped --yes\]/);
+    expect(text).toMatch(/(?:foresights|gbrain) auth register-client <name>[\s\S]*--reads-unscoped --yes/);
   }, 120_000);
 });

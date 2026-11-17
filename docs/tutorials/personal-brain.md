@@ -2,13 +2,13 @@
 
 By the end of this tutorial you'll have your own AI agent running on a server you control, talking to you over Telegram, with a brain that remembers everything you tell it. About two hours end-to-end, $100 to $150 a month sustained.
 
-> **Want the result without the two hours?** [gbrain.io](https://gbrain.io/?ref=personal-brain) is hosted GBrain: nothing to deploy, always on, and connected to ChatGPT, Claude and Cursor. Prefer a hand? Email support@gbrain.io and a person will set up your first skill with you. Read on if you want to own every piece of the stack.
+> **Want the result without the two hours?** [gbrain.io](https://gbrain.io/?ref=personal-brain) is hosted Foresights: nothing to deploy, always on, and connected to ChatGPT, Claude and Cursor. Prefer a hand? Email support@gbrain.io and a person will set up your first skill with you. Read on if you want to own every piece of the stack.
 
 This is the install I'd run if I were setting up the whole stack from scratch today. I documented it live during a setup session with a collaborator (we used Granola to capture the screen because "this is already too complicated for an archetypical person"). The tutorial is the cleaned-up version of that session.
 
 > "This is the Apple I, we're just soldering breadboards over here."
 
-If you only want the **brain layer** (no agent, no Telegram, just gbrain as memory for an MCP client you already use), skip to the [CLI standalone install](../INSTALL.md#2-cli-standalone) in INSTALL.md. If your daily driver is a **coding agent** (Claude Code / Codex) and you want it to bootstrap its own full agent — identity, per-turn context, schedules, a private repo as its durable body — that's `gbrain bootstrap`: see the paste blocks in the README and [docs/guides/bootstrap.md](../guides/bootstrap.md). If you want the whole agent **shared with a team**, read the [company brain tutorial](company-brain.md) instead. This tutorial is the solo, full-stack, talk-to-it-on-Telegram path.
+If you only want the **brain layer** (no agent, no Telegram, just foresights as memory for an MCP client you already use), skip to the [CLI standalone install](../INSTALL.md#2-cli-standalone) in INSTALL.md. If your daily driver is a **coding agent** (Claude Code / Codex) and you want it to bootstrap its own full agent — identity, per-turn context, schedules, a private repo as its durable body — that's `foresights bootstrap`: see the paste blocks in the README and [docs/guides/bootstrap.md](../guides/bootstrap.md). If you want the whole agent **shared with a team**, read the [company brain tutorial](company-brain.md) instead. This tutorial is the solo, full-stack, talk-to-it-on-Telegram path.
 
 ---
 
@@ -19,12 +19,12 @@ A personal AI agent with four pieces:
 - **A brain** (git repo). Your knowledge base, constantly ingesting and growing.
 - **A harness** (OpenClaw via AlphaClaw). The runtime that gives the LLM tools, memory, and integrations.
 - **A chat interface** (Telegram). How you talk to it.
-- **Skills** (50+ installed via GBrain). Reusable capabilities the agent can invoke.
+- **Skills** (50+ installed via Foresights). Reusable capabilities the agent can invoke.
 
 Architecture:
 
 ```
-Telegram → AlphaClaw (harness) → OpenClaw (agent) → GBrain (knowledge/skills) → Supabase (embeddings/search)
+Telegram → AlphaClaw (harness) → OpenClaw (agent) → Foresights (knowledge/skills) → Supabase (embeddings/search)
 ```
 
 Git repo is the system of record. The whole thing is multiplayer by default: any agent that hooks into the repo works. Conflicts resolve through git.
@@ -55,7 +55,7 @@ GitHub → New Repository → your-org/myagent           (workspace)
 GitHub → New Repository → your-org/myagent-brain     (brain)
 ```
 
-Both repos start empty. GBrain will populate the brain repo with its default structure on first install.
+Both repos start empty. Foresights will populate the brain repo with its default structure on first install.
 
 ---
 
@@ -99,7 +99,7 @@ Render will build a Docker container with the harness. First deploy takes about 
 
 **Known issue (October 2026).** On a fresh deploy with AlphaClaw 0.9.37 and OpenClaw 2026.10.x, onboarding can loop on `AUTH_PROFILE_MIGRATION_REQUIRED` and the gateway never starts. The fix is on OpenClaw's main branch ([openclaw/openclaw#187903](https://github.com/openclaw/openclaw/issues/187903)) and ships in its next release; until then, follow that issue.
 
-**Memory matters.** If the instance runs out of memory during install, upgrade to Render Pro. The base tier is too small for GBrain + OpenClaw together. My production instance runs 48 cores and 64GB RAM (about $1,500 a month) but that's overkill for a new setup. Pro tier ($85 a month) is the minimum viable.
+**Memory matters.** If the instance runs out of memory during install, upgrade to Render Pro. The base tier is too small for Foresights + OpenClaw together. My production instance runs 48 cores and 64GB RAM (about $1,500 a month) but that's overkill for a new setup. Pro tier ($85 a month) is the minimum viable.
 
 ---
 
@@ -110,27 +110,27 @@ In the AlphaClaw UI (Providers tab):
 - **OpenAI API Key.** Required for embeddings if you use the OpenAI provider.
 - **Anthropic API Key.** Required for Claude (the main model the agent talks through).
 - **Perplexity API Key.** Optional, for web search.
-- **Voyage API Key.** Recommended. GBrain ships with Voyage as the default embedder + reranker (`voyage-4` + `rerank-3-lite`) — one key covers both, at about half OpenAI's embedding price.
+- **Voyage API Key.** Recommended. Foresights ships with Voyage as the default embedder + reranker (`voyage-4` + `rerank-3-lite`) — one key covers both, at about half OpenAI's embedding price.
 
 You can use the same keys across multiple agents.
 
 ---
 
-## Step 6: Install GBrain
+## Step 6: Install Foresights
 
 Once OpenClaw is running, installation is two commands — one in the brain repo, one in the agent workspace:
 
 ```bash
 # In the BRAIN repo (the git repo that holds your markdown pages):
-gbrain init --supabase
+foresights init --supabase
 
 # In the AGENT WORKSPACE repo (where OpenClaw runs):
-gbrain skillpack scaffold --harness openclaw --workspace .
+foresights skillpack scaffold --harness openclaw --workspace .
 ```
 
-`gbrain init --supabase` walks a short wizard that asks for your Supabase connection string and creates the schema. You'll get that connection string in Step 7 — read 7a and 7b first so you paste the right one (the transaction pooler, not the direct connection). If you'd rather try things locally before paying for a database, `gbrain init --pglite` gives you a zero-config embedded engine instead; you can move it to Supabase later with `gbrain migrate --to postgres` ([guide](../guides/move-to-postgres.md)).
+`foresights init --supabase` walks a short wizard that asks for your Supabase connection string and creates the schema. You'll get that connection string in Step 7 — read 7a and 7b first so you paste the right one (the transaction pooler, not the direct connection). If you'd rather try things locally before paying for a database, `foresights init --pglite` gives you a zero-config embedded engine instead; you can move it to Supabase later with `foresights migrate --to postgres` ([guide](../guides/move-to-postgres.md)).
 
-`gbrain skillpack scaffold --harness openclaw` copies the five brain-first skills (`query`, `brain-ops`, `capture`, `data-loss-gate`, `resolve-before-asking`) into your agent workspace as first-class files you can edit freely. OpenClaw lists every workspace skill in every prompt, so add the others by name as the agent needs them (`--skill meeting-ingestion`), or all 50+ with `--all`.
+`foresights skillpack scaffold --harness openclaw` copies the five brain-first skills (`query`, `brain-ops`, `capture`, `data-loss-gate`, `resolve-before-asking`) into your agent workspace as first-class files you can edit freely. OpenClaw lists every workspace skill in every prompt, so add the others by name as the agent needs them (`--skill meeting-ingestion`), or all 50+ with `--all`.
 
 From this point, the agent has working memory and the core skills.
 
@@ -138,7 +138,7 @@ From this point, the agent has working memory and the core skills.
 
 ## Step 7: Set up Supabase (embeddings and search)
 
-GBrain uses Supabase for vector embeddings and full-text search at scale. There are three setup gotchas I hit the hard way. Walk through them in this order.
+Foresights uses Supabase for vector embeddings and full-text search at scale. There are three setup gotchas I hit the hard way. Walk through them in this order.
 
 ### 7a. Create the project and turn on pgvector
 
@@ -146,14 +146,14 @@ GBrain uses Supabase for vector embeddings and full-text search at scale. There 
 2. In the Supabase dashboard, go to **Database → Extensions**.
 3. Find `vector` (the pgvector extension) and toggle it on.
 
-Skip this and every embed write fails with "type vector does not exist" the moment GBrain tries to create its schema. pgvector is what stores the embeddings; the schema migrations refuse to run without it. Five seconds in the UI; an hour of debugging if you forget.
+Skip this and every embed write fails with "type vector does not exist" the moment Foresights tries to create its schema. pgvector is what stores the embeddings; the schema migrations refuse to run without it. Five seconds in the UI; an hour of debugging if you forget.
 
 ### 7b. Get the TRANSACTION POOLER connection string, not the direct one
 
 In the Supabase dashboard, click **Connect** in the top navigation bar, then **Connection String**. Supabase shows three options. They look almost identical. Use the right one.
 
 - **Direct connection** (port 5432, host `db.YOUR-PROJECT.supabase.co`). Talks straight to the Postgres instance. IPv6-only. Will fail if your Render host doesn't have IPv6 outbound (most don't by default).
-- **Transaction pooler** (port 6543, host `aws-0-...pooler.supabase.com`). Talks through Supabase's pooler (Supavisor) in transaction mode. Works over IPv4. Survives connection storms from parallel workers. GBrain is tuned for this one: it auto-disables prepared statements on port 6543 and routes migrations, DDL, and worker locks to a separate direct connection (see 7c).
+- **Transaction pooler** (port 6543, host `aws-0-...pooler.supabase.com`). Talks through Supabase's pooler (Supavisor) in transaction mode. Works over IPv4. Survives connection storms from parallel workers. Foresights is tuned for this one: it auto-disables prepared statements on port 6543 and routes migrations, DDL, and worker locks to a separate direct connection (see 7c).
 - **Session pooler** (port 5432, host `aws-0-...pooler.supabase.com`). Also works over IPv4, with full session features. You don't need it as your main URL, but it's the free way to fix the IPv4 gotcha in 7c.
 
 You want the **Transaction pooler** string. Format looks like:
@@ -162,12 +162,12 @@ You want the **Transaction pooler** string. Format looks like:
 postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require
 ```
 
-Keep the `?sslmode=require` on the end. It makes the connection encrypted, which gbrain requires for any database that isn't on your own machine (it adds it for you if you leave it off). It does not check the server's certificate, though. To check it too, download Supabase's CA certificate (**Project Settings → Database → SSL Configuration**), set `NODE_EXTRA_CA_CERTS` to its path in `~/.gbrain/env`, and use `?sslmode=verify-full` instead ([details](../ENGINES.md#tls-for-postgres-connections)).
+Keep the `?sslmode=require` on the end. It makes the connection encrypted, which foresights requires for any database that isn't on your own machine (it adds it for you if you leave it off). It does not check the server's certificate, though. To check it too, download Supabase's CA certificate (**Project Settings → Database → SSL Configuration**), set `NODE_EXTRA_CA_CERTS` to its path in `~/.gbrain/env`, and use `?sslmode=verify-full` instead ([details](../ENGINES.md#tls-for-postgres-connections)).
 
 Configure it via:
 
 ```bash
-gbrain config set database_url "postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require"
+foresights config set database_url "postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require"
 ```
 
 This writes `~/.gbrain/config.json` (file-plane routed) and infers
@@ -176,11 +176,11 @@ also use it later to point an existing brain at a new URL.
 
 ### 7c. Fix the IPv4 gotcha for migrations, DDL, and worker locks
 
-The transaction pooler (7b) carries your normal reads and writes over IPv4. But GBrain runs schema migrations, DDL, and background-worker locks on a *direct* connection, which it derives from your pooler URL by swapping the host to `db.YOUR-PROJECT.supabase.co:5432`. That direct host is **IPv6-only**. On an IPv4-only host (most Render plans), reads work but migrations hang and worker locks orphan, often silently.
+The transaction pooler (7b) carries your normal reads and writes over IPv4. But Foresights runs schema migrations, DDL, and background-worker locks on a *direct* connection, which it derives from your pooler URL by swapping the host to `db.YOUR-PROJECT.supabase.co:5432`. That direct host is **IPv6-only**. On an IPv4-only host (most Render plans), reads work but migrations hang and worker locks orphan, often silently.
 
 Two ways to fix it. The free one first:
 
-**Free: point GBrain's direct connection at the Session pooler.** The session pooler is the same Supavisor host on port 5432, and it's IPv4. Copy the **Session pooler** string from the same **Connect → Connection String** panel and set it as the direct-connection override:
+**Free: point Foresights's direct connection at the Session pooler.** The session pooler is the same Supavisor host on port 5432, and it's IPv4. Copy the **Session pooler** string from the same **Connect → Connection String** panel and set it as the direct-connection override:
 
 ```bash
 export GBRAIN_DIRECT_DATABASE_URL="postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=require"
@@ -190,12 +190,12 @@ Now both pools — reads on the transaction pooler (6543), DDL and locks on the 
 
 **Paid: buy Supabase's IPv4 add-on.** About $4 a month, Pro tier or higher. It makes the direct `db.*.supabase.co` host reachable over IPv4, so the derived direct connection just works with no extra config. In the Supabase dashboard, **Project Settings → Add-ons → IPv4 address**. Toggle on, wait a minute, retry.
 
-Either fixes it. If `gbrain doctor` still shows connection failures that mention "network unreachable" or hangs forever on connect, you haven't done one of these yet.
+Either fixes it. If `foresights doctor` still shows connection failures that mention "network unreachable" or hangs forever on connect, you haven't done one of these yet.
 
 ### 7d. Verify the connection
 
 ```bash
-gbrain doctor
+foresights doctor
 ```
 
 Green checks on schema, connectivity, pgvector extension, embedding provider. If any of those are yellow, the message will tell you which gotcha you hit (and which of 7a / 7b / 7c to revisit).
@@ -210,7 +210,7 @@ Supabase is usually the scaling bottleneck, not CPU or LLM calls. If you're doin
 
 1. Open Telegram
 2. Message your bot
-3. It should respond using OpenClaw + GBrain
+3. It should respond using OpenClaw + Foresights
 
 Send a test message. If it responds with context-awareness and can search the brain, you're live.
 
@@ -224,14 +224,14 @@ The brain repo IS the brain. Any agent that can read and write to the git repo c
 
 ### Thin client vs fat client
 
-- **Fat client** (my production setup). OpenClaw + AlphaClaw + GBrain + 200 crons + email processing + Slack + calendar. About $1,500 a month. Processes everything in real time.
-- **Thin client** (what this tutorial builds). OpenClaw + GBrain + Telegram. About $85 a month. Chat-driven, on-demand.
+- **Fat client** (my production setup). OpenClaw + AlphaClaw + Foresights + 200 crons + email processing + Slack + calendar. About $1,500 a month. Processes everything in real time.
+- **Thin client** (what this tutorial builds). OpenClaw + Foresights + Telegram. About $85 a month. Chat-driven, on-demand.
 
-The goal for GBrain is to make the thin client as awesome as the fat client. Most users will start thin and grow.
+The goal for Foresights is to make the thin client as awesome as the fat client. Most users will start thin and grow.
 
 ### MCP server
 
-GBrain exposes a Model Context Protocol server that enables inter-agent communication and integration with external systems. This is how you add read and write access to your product's API, databases, or other services.
+Foresights exposes a Model Context Protocol server that enables inter-agent communication and integration with external systems. This is how you add read and write access to your product's API, databases, or other services.
 
 ### Brain sharing
 
@@ -276,4 +276,4 @@ Where to go next:
 - **Set up the dream cycle** properly. The autopilot daemon runs overnight enrichment by default but you can tune what it does. See [`docs/architecture/`](../architecture/) for the full cycle reference.
 - **Add a teammate to your brain**, or stand the whole thing up as a company brain. See the [company brain tutorial](company-brain.md) for the multi-user walkthrough.
 
-Questions, gotchas, or wins worth sharing? Open an issue at [github.com/garrytan/gbrain](https://github.com/garrytan/gbrain/issues).
+Questions, gotchas, or wins worth sharing? Open an issue at [github.com/aimonk2025/gbrain](https://github.com/aimonk2025/gbrain/issues).

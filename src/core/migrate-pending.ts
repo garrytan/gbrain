@@ -32,7 +32,7 @@ export function schemaVersionSeen(engine: object): number | undefined {
  * re-exports this). Used by `connectEngine` to gate `initSchema()` so
  * short-lived CLI invocations on already-migrated brains don't pay the
  * full bootstrap-probe + SCHEMA_SQL replay + ledger-check cost on every
- * `gbrain stats` / `gbrain query` / `gbrain doctor`.
+ * `foresights stats` / `foresights query` / `foresights doctor`.
  *
  * Defensive: treats a getConfig failure (config table missing, query error)
  * as "yes pending" so the caller falls through to the full initSchema path.

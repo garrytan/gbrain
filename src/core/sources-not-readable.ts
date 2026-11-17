@@ -63,13 +63,13 @@ export async function assertUnscopedReadReachesPages(op: string, params: Record<
   throw opError('sources_not_readable',
     `This connection reads only the default source and federated sources, and none of them holds a page, so this ${op} could only come back empty.`,
     'Other sources on this brain hold pages, but they are not federated and this connection has no source grant. Ask the user which source these connections should read; '
-      + 'the brain host\'s operator federates it (command in fix) or grants this connection its sources (`gbrain auth rescope --token <name> --sources <ids>`).',
+      + 'the brain host\'s operator federates it (command in fix) or grants this connection its sources (`foresights auth rescope --token <name> --sources <ids>`).',
     {
       why: 'A connection with no source grant reads the default source plus federated sources, and a new source is not federated unless `sources add --federated` or `sources federate` made it so.',
       fix: {
         ...hostFix(ctx, ['gbrain', 'sources', 'federate', '<source>'],
           'Makes the source readable by every connection without a source grant; only the trusted CLI on the brain host changes federation.'),
-        inputs: [{ name: 'source', how: 'Ask the user which source these connections should read (`gbrain sources list` on the brain host shows them).' }],
+        inputs: [{ name: 'source', how: 'Ask the user which source these connections should read (`foresights sources list` on the brain host shows them).' }],
       },
     });
 }

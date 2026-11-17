@@ -1,9 +1,9 @@
 /**
- * #8002: Tier 2 (e2e.yml) must wire gbrain's MCP server into the file
+ * #8002: Tier 2 (e2e.yml) must wire foresights's MCP server into the file
  * OpenClaw 2026.4.9 reads, and every Tier 2 test must prove the agent called
- * a gbrain tool. The job used to write `mcpServers` into
+ * a foresights tool. The job used to write `mcpServers` into
  * ~/.openclaw/config.json, which OpenClaw never reads (it reads
- * `mcp.servers` in ~/.openclaw/openclaw.json), so the agent ran with no gbrain
+ * `mcp.servers` in ~/.openclaw/openclaw.json), so the agent ran with no foresights
  * tools while every test checked only exit code and non-empty output.
  */
 import { describe, expect, test } from 'bun:test';
@@ -39,7 +39,7 @@ function configure(env: Record<string, string | undefined>) {
 }
 
 describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
-  test('e2e.yml registers gbrain through scripts/ci-openclaw-mcp.sh, never through config.json', () => {
+  test('e2e.yml registers foresights through scripts/ci-openclaw-mcp.sh, never through config.json', () => {
     const cfg = tier2.steps.find(s => s.name === 'Configure OpenClaw MCP')!;
     expect(cfg.run).toBe('bash scripts/ci-openclaw-mcp.sh');
     expect(cfg.env!.DATABASE_URL).toBe('postgresql://postgres:postgres@localhost:5432/gbrain_test');
@@ -54,7 +54,7 @@ describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
     expect(names.indexOf('Configure OpenClaw MCP')).toBeLessThan(names.indexOf('Run Tier 2 skill tests'));
   });
 
-  test('the script saves gbrain behind the tap with openclaw mcp set and checks it reads back', () => {
+  test('the script saves foresights behind the tap with openclaw mcp set and checks it reads back', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-oc-mcp-'));
     try {
       const tap = join(dir, 'tap.jsonl');
@@ -78,7 +78,7 @@ describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
       const base = { OPENCLAW: fakeOpenclaw(dir), DATABASE_URL: 'postgresql://u@localhost/db', GBRAIN_TEST_TIER2_MCP_TAP_LOG: join(dir, 't') };
       const dropped = configure({ ...base, DROP: '1' });
       expect(dropped.status).not.toBe(0);
-      expect(dropped.stderr).toContain('OpenClaw does not report the gbrain MCP server');
+      expect(dropped.stderr).toContain('OpenClaw does not report the foresights MCP server');
       expect(configure({ ...base, DATABASE_URL: undefined }).status).not.toBe(0);
       expect(configure({ ...base, GBRAIN_TEST_TIER2_MCP_TAP_LOG: undefined }).status).not.toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -87,7 +87,7 @@ describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
   test('the server stays under the model API tool cap: it serves the starter surface', () => {
     // OpenClaw's default agent model is openai/gpt-5.4, and OpenAI refuses a
     // request with more than 128 tools. OpenClaw adds about 31 of its own;
-    // gbrain's full surface is 158 tools, the starter surface 31.
+    // foresights's full surface is 158 tools, the starter surface 31.
     const script = readFileSync(join(REPO, 'scripts/ci-openclaw-mcp.sh'), 'utf8');
     expect(script).toContain('"serve", "--surface", "starter"');
     expect(STARTER_OPS.size).toBeLessThanOrEqual(64);
@@ -113,7 +113,7 @@ describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  test('the tap logs what the server answered, and a tool call gbrain answered with an error does not count (#8011)', () => {
+  test('the tap logs what the server answered, and a tool call foresights answered with an error does not count (#8011)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-mcp-tap-'));
     try {
       const log = join(dir, 'tap.jsonl');
@@ -164,7 +164,7 @@ done
     expect(tapToolCalls('[{"method":"tools/call","params":{"name":"put_page"}},{"method":"ping"}]\n{"method":"tools/call","params":{"name":"get_health"}}')).toEqual(['put_page', 'get_health']);
   });
 
-  test('every Tier 2 test requires a gbrain tool call that succeeded, and the file needs the tap log to run', () => {
+  test('every Tier 2 test requires a foresights tool call that succeeded, and the file needs the tap log to run', () => {
     const src = readFileSync(join(REPO, 'test/e2e/skills.test.ts'), 'utf8');
     const runs = src.match(/runOpenClaw\(\n/g) ?? [];
     expect(runs.length).toBe(3);

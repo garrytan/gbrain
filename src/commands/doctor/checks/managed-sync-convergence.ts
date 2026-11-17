@@ -3,7 +3,7 @@
  * every managed source this host owns it reads the level (sync-pass.ts) and reports the per-class counts, the predicted
  * decisions, `legacy_unverified`, `would_hold` and the delete valve's verdict (sync-convergence.ts). It is
  * informational in PR 4a: always `ok`, never a warning, and it writes nothing. A full level read is heavy, so the
- * check runs in the `deep` tier (`gbrain doctor --tier deep --json`, or `--only managed_sync_convergence`).
+ * check runs in the `deep` tier (`foresights doctor --tier deep --json`, or `--only managed_sync_convergence`).
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
@@ -35,7 +35,7 @@ async function runManagedSyncConvergenceCheck(ctx: DoctorContext): Promise<Check
     checks.push({ name: 'managed_sync_convergence', status: 'ok', severity: 'info', details: { dry_run: true, sources: rows },
       message: rows.length
         ? `Convergence shadow (read-only): ${read.map(row => `${row.source_id} ${row.candidates} unsettled, ${row.would_hold} would hold`).join('; ') || 'no source could be read'}`
-          + `${rows.length > read.length ? `; ${rows.length - read.length} source(s) not readable on this host` : ''}. Detail per source: gbrain sync --dry-run --json --source <id>.`
+          + `${rows.length > read.length ? `; ${rows.length - read.length} source(s) not readable on this host` : ''}. Detail per source: foresights sync --dry-run --json --source <id>.`
         : 'No managed source is owned here.' });
   } catch (error) {
     checks.push(checkError('managed_sync_convergence', 'read the convergence shadow', error, { details: { dry_run: true } }));

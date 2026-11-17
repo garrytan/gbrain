@@ -2,7 +2,7 @@
  * GST-2676: an owner release of a held fact whose entity has no page refuses on a strict source when no holding page can
  * carry the entity, instead of writing the fact to the database with no row in Git.
  *
- * 1. Protects: on a source whose pages are canonical in Git (`canonical: git`), `gbrain trust release hN` of a fact held
+ * 1. Protects: on a source whose pages are canonical in Git (`canonical: git`), `foresights trust release hN` of a fact held
  *    for an entity with no page (a quarantined `remember`) publishes it as a holding-page row in Git, or refuses with
  *    nothing written: an exact page rule on the entity refuses `git_home_required` naming the entity's page to create,
  *    and an access state this database role cannot read refuses `access_policy_pending`. The hold stays held. Creating

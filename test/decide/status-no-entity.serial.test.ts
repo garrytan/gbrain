@@ -1,8 +1,8 @@
 /**
- * #5836 `gbrain decide status`: the conflict slot reports the 7-day share of
+ * #5836 `foresights decide status`: the conflict slot reports the 7-day share of
  * conflict receipts skipped with reason `no_entity` (facts the sweep cannot
  * judge until they are linked) as JSON (`no_entity_7d`) and, when non-zero,
- * as a human line with the `gbrain facts relink --dry-run` hint. Receipts of
+ * as a human line with the `foresights facts relink --dry-run` hint. Receipts of
  * other slots and older than 7 days do not count.
  * Serial: captures console.log.
  */
@@ -54,7 +54,7 @@ describe('decide status: conflict no_entity share', () => {
     expect(conflict.no_entity_7d).toEqual({ skipped: 3, receipts: 5, share: 0.6 });
     expect(json.slots.filter((s: Record<string, unknown>) => 'no_entity_7d' in s).map((s: { slot: string }) => s.slot)).toEqual(['conflict']);
     const human = await status([]);
-    expect(human).toContain('60.0% of conflict receipts in 7 days (3 of 5) skipped a fact with no entity (no_entity); link them: gbrain facts relink --dry-run');
+    expect(human).toContain('60.0% of conflict receipts in 7 days (3 of 5) skipped a fact with no entity (no_entity); link them: foresights facts relink --dry-run');
   });
 
   test('zero no_entity skips: JSON reports zero and no hint line is printed', async () => {

@@ -5,7 +5,7 @@ export const v095: Migration = {
   name: 'links_link_source_check_includes_mentions',
   // v0.41.18.0 Part B (migration #1 of #1409): widen the link_source
   // CHECK constraint to admit 'mentions' for auto-linked body-text
-  // mentions from `gbrain extract links --by-mention`. Backlink-count
+  // mentions from `foresights extract links --by-mention`. Backlink-count
   // SQL in postgres-engine.ts + pglite-engine.ts excludes link_source =
   // 'mentions' so mention-derived edges don't pollute search ranking
   // (D12 from /plan-eng-review). Mentions still count toward

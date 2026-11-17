@@ -1,5 +1,5 @@
 /**
- * `--decide` eval plumbing shared by `gbrain eval longmemeval`, `eval
+ * `--decide` eval plumbing shared by `foresights eval longmemeval`, `eval
  * brainbench` and `eval retrieval-quality` (System One matched runs: arms
  * differ only in the slot under test).
  *
@@ -64,12 +64,12 @@ export const DECIDE_EVAL_FLAGS: ReadonlyArray<{ name: string; arg: string; help:
     'flags win over an inherited GBRAIN_DECIDE_SLOTS). Slots: ' + DECIDE_SLOTS.join(', ') + '.'] },
   { name: '--decide-provider', arg: 'ID', help: [`Decide provider for the run (default ${DEFAULT_TYPESAFE_PROVIDER}).`] },
   { name: '--decide-calibration', arg: 'FILE|ref:ID', help: [
-    'Calibration(s) for on slots: `gbrain decide calibrate --slot X --json` output',
+    'Calibration(s) for on slots: `foresights decide calibrate --slot X --json` output',
     '(object, array or JSONL) or a reference id (repeatable).'] },
   { name: '--decide-threshold', arg: 'SLOT=X', help: ['Operator threshold override (the action-precision gate still applies).'] },
   { name: '--decide-force-on', arg: 'SLOT', help: ['Bypass the action-precision gate for SLOT (recorded in run_config).'] },
   { name: '--decide-dataset', arg: 'JSONL', help: [
-    'Frozen labelled dataset (gbrain decide dataset): calibrations must match its',
+    'Frozen labelled dataset (foresights decide dataset): calibrations must match its',
     'split_hash and be calibrate-only (else split_mismatch, exit 1).'] },
 ];
 
@@ -205,7 +205,7 @@ function calibrationFromJson(raw: Record<string, unknown>, id: string): EvalCali
   const threshold = numOrNull(raw.threshold);
   const need = { call_site: str(raw.call_site), provider: str(raw.provider), model_resolved: str(raw.model_resolved), pack_shape: str(raw.pack_shape) };
   if (!slot || !isSlot(slot)) throw new Error(`calibration ${id}: slot must be one of ${DECIDE_SLOTS.join(', ')}`);
-  for (const [k, v] of Object.entries(need)) if (!v) throw new Error(`calibration ${id}: ${k} is required (use gbrain decide calibrate --json output)`);
+  for (const [k, v] of Object.entries(need)) if (!v) throw new Error(`calibration ${id}: ${k} is required (use foresights decide calibrate --json output)`);
   if (threshold === null || threshold < 0 || threshold > 1) throw new Error(`calibration ${id}: threshold must be a number from 0 to 1`);
   const row: EvalCalibration['row'] = {
     slot, call_site: need.call_site!, provider: need.provider!, model_resolved: need.model_resolved!, threshold,
@@ -248,7 +248,7 @@ export function prepareDecideEval(o: DecideEvalOptions, opts: { command: string;
     return null;
   }
   if (!opts.throwaway && (o.calibrations.length > 0 || Object.keys(o.thresholds).length > 0 || o.forceOn.length > 0)) {
-    throw new Error(`${opts.command} runs on your connected brain and never writes its config: --decide-calibration, --decide-threshold and --decide-force-on are for benchmark brains (calibrate/adopt with gbrain decide instead)`);
+    throw new Error(`${opts.command} runs on your connected brain and never writes its config: --decide-calibration, --decide-threshold and --decide-force-on are for benchmark brains (calibrate/adopt with foresights decide instead)`);
   }
   const provider = o.provider ?? DEFAULT_TYPESAFE_PROVIDER;
   const calibrations = loadCalibrations(o.calibrations);

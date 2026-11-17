@@ -130,7 +130,7 @@ async function heldCoverage(ctx: OperationContext, sources: GoogleSourceFreshnes
         const at = record.meta.upstream_at ? Date.parse(record.meta.upstream_at) : NaN;
         if (Number.isFinite(at) && now - at > HELD_WINDOW_MS) continue;
         held.push({ source_id: entry.sourceId, key: record.key, sender: record.meta.sender, ...(trusted ? { subject: record.meta.subject } : {}),
-          retry_command: `gbrain sources retry-held ${entry.sourceId}` });
+          retry_command: `foresights sources retry-held ${entry.sourceId}` });
       }
     }
     return { completeness: held.length ? 'partial' : 'complete', held };
@@ -168,7 +168,7 @@ async function withheldNoise(ctx: OperationContext, sources: GoogleSourceFreshne
           GROUP BY counterparty_email`, [row.id, emails.join('\n')]);
       for (const c of counts) {
         senders.push({ source_id: row.id, email: c.email, open_loops: Number(c.n), reason: record[c.email]?.reason ?? 'automated_mail',
-          preview_command: `gbrain loops drop sender ${c.email} --source ${row.id} --dry-run` });
+          preview_command: `foresights loops drop sender ${c.email} --source ${row.id} --dry-run` });
       }
     }
     if (!senders.length) return null;
@@ -374,8 +374,8 @@ function renderText(groups: CounterpartyGroup[], none: NoCounterpartyLoops | nul
       // confident lie — the engine has nothing to read.
       lines.push(
         'No google source is connected in this scope — the open-loop engine has nothing to read, ' +
-          'so this is NOT "inbox clean". Connect one with: gbrain google setup ' +
-          '(existing gateway/CLI access works too: gbrain sources add <id> --kind google --access command|env — see docs/guides/google-connect.md).',
+          'so this is NOT "inbox clean". Connect one with: foresights google setup ' +
+          '(existing gateway/CLI access works too: foresights sources add <id> --kind google --access command|env — see docs/guides/google-connect.md).',
       );
       return lines.join('\n');
     }
@@ -591,7 +591,7 @@ const open_loops: Operation = {
         try {
           // The card resolves in the COUNTERPARTY PAGE's source (where the
           // person page + alias rows live), never the caller's scope — an
-          // unqualified `gbrain waiting` would otherwise look in 'default'
+          // unqualified `foresights waiting` would otherwise look in 'default'
           // and silently never attach context (same bug class as
           // deepLinksFor's fix); since #5504 that source can differ from the
           // loop's.
@@ -773,7 +773,7 @@ const loops_close: Operation = {
 
 /** #5012: the CLI command that reverses a mute or unmute. */
 function undoCommand(verb: 'mute' | 'unmute', kind: unknown, value: string, sourceId: string): string {
-  return `gbrain loops ${verb} ${String(kind)} ${value} --source ${sourceId}`;
+  return `foresights loops ${verb} ${String(kind)} ${value} --source ${sourceId}`;
 }
 
 const loops_mute: Operation = {
@@ -887,7 +887,7 @@ const loops_unmute: Operation = {
       requeued,
       unverifiable,
       count: requeued.length,
-      ...(stale ? { stale_source: true, recheck_command: `gbrain sync --source ${sourceId}` } : {}),
+      ...(stale ? { stale_source: true, recheck_command: `foresights sync --source ${sourceId}` } : {}),
       undo_command: undo,
       ...(removed > 0 ? {} : { reason: 'no matching suppression' }),
     };

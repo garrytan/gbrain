@@ -3,8 +3,8 @@ import type { Migration } from './types.ts';
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
-// GST-2521: the per-page label guard. The owner's label door (`gbrain repair visibility`, its `--readers` setter,
-// `gbrain repair private-labels`) keeps a page's trust tier, so labels the owner set on an agent-written page were
+// GST-2521: the per-page label guard. The owner's label door (`foresights repair visibility`, its `--readers` setter,
+// `foresights repair private-labels`) keeps a page's trust tier, so labels the owner set on an agent-written page were
 // guarded only at the agent tier, and a later agent write at that tier could drop them. The door now records
 // operator_curated here, and the GST-2518 label guard (trust/page-write.ts privacyLabelGuard) reads it as a floor. One
 // row per page, removed with the page. A separate table, not a pages column, so writing it fires none of the page

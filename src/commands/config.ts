@@ -209,20 +209,20 @@ async function effectiveEmbeddingDisabled(engine: BrainEngine): Promise<{ value:
   const agree = db === null || file === undefined || String(file === true) === db;
   return { value, note: agree
     ? `effective value (${planes}); either plane's true turns embedding off`
-    : `planes disagree (${planes}); embedding stays off while either says true. Re-sync: gbrain config set ${EMBEDDING_DISABLED_KEY} <true|false>` };
+    : `planes disagree (${planes}); embedding stays off while either says true. Re-sync: foresights config set ${EMBEDDING_DISABLED_KEY} <true|false>` };
 }
 
 const SCHEMA_PACK_SOURCE_LABEL: Record<string, string> = {
-  env: 'GBRAIN_SCHEMA_PACK env', 'db-config': 'db plane (gbrain config set schema_pack)', 'gbrain-yml': 'gbrain.yml',
+  env: 'GBRAIN_SCHEMA_PACK env', 'db-config': 'db plane (foresights config set schema_pack)', 'gbrain-yml': 'gbrain.yml',
   'home-config': 'file plane (~/.gbrain/config.json)', default: 'built-in default',
 };
 
-/** The brain-wide schema pack the runtime resolves (the same tiers `gbrain schema active` uses). */
+/** The brain-wide schema pack the runtime resolves (the same tiers `foresights schema active` uses). */
 async function effectiveSchemaPack(engine: BrainEngine): Promise<{ value: string; note: string }> {
   const { readDbSchemaPack } = await import('../core/schema-pack/engine-resolution.ts');
   const { resolveActivePackNameOnly } = await import('../core/schema-pack/load-active.ts');
   const resolution = resolveActivePackNameOnly({ cfg: loadConfig(), remote: false, dbConfig: await readDbSchemaPack(engine) });
-  return { value: resolution.pack_name, note: `${SCHEMA_PACK_SOURCE_LABEL[resolution.source] ?? resolution.source}; the tier gbrain schema active resolves` };
+  return { value: resolution.pack_name, note: `${SCHEMA_PACK_SOURCE_LABEL[resolution.source] ?? resolution.source}; the tier foresights schema active resolves` };
 }
 
 /** Ambient-writeback posture re-stamp (red-team review, this wave): the
@@ -323,8 +323,8 @@ const CONFIG_SET_KNOWN_FLAGS = ['--force', '--coverage-override', '--yes'];
 export async function handleDbPlaneRoutedKeys(key: string, value: string): Promise<boolean> {
   if (key === 'engine') {
     console.error('[config] engine is INFERRED from database_url / database_path — it is never set directly.');
-    console.error('[config] To move your data between engines:  gbrain migrate --to <postgres|pglite>');
-    console.error('[config] To point at a different database:   gbrain config set database_url <conn>  (or gbrain init --url <conn>)');
+    console.error('[config] To move your data between engines:  foresights migrate --to <postgres|pglite>');
+    console.error('[config] To point at a different database:   foresights config set database_url <conn>  (or foresights init --url <conn>)');
     console.error('[config] No --force escape: an engine flip without a data migration splits the brain across two stores.');
     process.exit(1);
   }
@@ -340,7 +340,7 @@ export async function handleDbPlaneRoutedKeys(key: string, value: string): Promi
   // hybrid local/remote state init explicitly refuses to create.
   if (isThinClient(cfg as Parameters<typeof isThinClient>[0])) {
     console.error('[config] this machine is a thin client (remote MCP) — a local database_url would conflict with the remote setup.');
-    console.error('[config] To convert it to a local brain deliberately: gbrain init --url <conn> --force');
+    console.error('[config] To convert it to a local brain deliberately: foresights init --url <conn> --force');
     process.exit(1);
   }
   const priorEngine = cfg.engine;
@@ -360,13 +360,13 @@ export async function handleDbPlaneRoutedKeys(key: string, value: string): Promi
   const { inspectGraduationPath } = await import('../core/persistence/graduation-custody.ts');
   const graduated = priorEngine === 'pglite' && key === 'database_url' && inspectGraduationPath(priorPath ?? gbrainPath('brain.pglite')).state === 'graduated';
   if (graduated) {
-    console.error('[config] note: this brain was moved to Postgres by engine graduation; this config now points at it. Restart any MCP client that runs gbrain serve from this config.');
+    console.error('[config] note: this brain was moved to Postgres by engine graduation; this config now points at it. Restart any MCP client that runs foresights serve from this config.');
   } else if (priorEngine && priorEngine !== cfg.engine) {
     // Pointing at the other engine's plane is a legitimate re-point, but it
     // does NOT move data — say so, or the flip reads as a lossless switch.
     console.error(
       `[config] note: engine flipped ${priorEngine} → ${cfg.engine}. Existing ${priorEngine} data was NOT moved — ` +
-        `to move it, use: gbrain migrate --to ${cfg.engine === 'postgres' ? 'supabase' : 'pglite'}`,
+        `to move it, use: foresights migrate --to ${cfg.engine === 'postgres' ? 'supabase' : 'pglite'}`,
     );
   }
   return true;
@@ -414,7 +414,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   const searchRefusal = key.startsWith('search.') ? (await import('../core/search/config-values.ts')).searchConfigValueRefusal(key, value) : null;
   if (searchRefusal) {
     const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-    exitCliError(usageError(searchRefusal.message, `Re-run with a valid value, e.g. gbrain config set ${key} ${searchRefusal.example}.`,
+    exitCliError(usageError(searchRefusal.message, `Re-run with a valid value, e.g. foresights config set ${key} ${searchRefusal.example}.`,
       { fix: { argv: ['gbrain', 'config', 'get', key], consent: [], actor: 'agent', why: 'Shows the value in effect; nothing was written.', requires_exclusive: false } }), 'config');
   }
   if (key === 'auto_chronicle' || key.startsWith('chronicle.')) await refuseInvalidChronicleValue(key, value, force);
@@ -449,7 +449,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
 }
 
 const AUTO_CHRONICLE_UNSET_NOTE = '\nauto_chronicle now uses its default, which is ON: eligible new or changed meeting, conversation and calendar pages each get one paid extraction call.' +
-  '\nTo turn automatic extraction off, run: gbrain config set auto_chronicle false';
+  '\nTo turn automatic extraction off, run: foresights config set auto_chronicle false';
 
 /** #5876: refuse unknown chronicle.* leaves (unless forced) and out-of-range values; nothing is written. */
 async function refuseInvalidChronicleValue(key: string, value: string, force: boolean): Promise<void> {
@@ -474,9 +474,9 @@ async function acknowledgeAutoChronicle(engine: BrainEngine, value: string): Pro
   try { await engine.setConfig(CHRONICLE_ACK_KEY, new Date().toISOString()); } catch { /* the notice stays; harmless */ }
   if (autoChronicleSetting(value) === 'on') {
     console.log('Automatic event extraction is on: each eligible new or changed meeting, conversation or calendar page gets one paid chat call, bounded by chronicle.job_budget_usd per page and chronicle.auto_daily_limit per day.');
-    console.log('To turn it off: gbrain config set auto_chronicle false');
+    console.log('To turn it off: foresights config set auto_chronicle false');
   } else {
-    console.log('Automatic event extraction is off. To extract history on request (paid; ask the user first): gbrain chronicle-backfill --dry-run');
+    console.log('Automatic event extraction is off. To extract history on request (paid; ask the user first): foresights chronicle-backfill --dry-run');
   }
 }
 
@@ -532,11 +532,11 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
           // egresses), and advertising the non-interactive bypass here
           // hands a prompt-injected agent the exact string that flips the
           // gate. Operators find --yes in the docs.
-          console.error('[AGENT] Relay this to your operator: run `gbrain config set integrations.memorable.enabled true` in a terminal and answer the prompt. If the user has no terminal on this machine, this can\'t be enabled from this session.');
+          console.error('[AGENT] Relay this to your operator: run `foresights config set integrations.memorable.enabled true` in a terminal and answer the prompt. If the user has no terminal on this machine, this can\'t be enabled from this session.');
           process.exit(1);
         }
         const { promptYesNo } = await import('../core/confirm-prompt.ts');
-        const accepted = await promptYesNo('[gbrain] Enable the Memorable session-end relay? [y/N] ');
+        const accepted = await promptYesNo('[foresights] Enable the Memorable session-end relay? [y/N] ');
         if (!accepted) {
           console.log('Declined. Nothing was written.');
           return;
@@ -551,7 +551,7 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     console.log(
       'Session-end traces will now be offered to the locally-installed `memorable` CLI, ' +
         'which sends redacted tool calls off-machine to its extraction API. ' +
-        'Turn off: gbrain config set integrations.memorable.enabled false (or GBRAIN_MEMORABLE=0)',
+        'Turn off: foresights config set integrations.memorable.enabled false (or GBRAIN_MEMORABLE=0)',
     );
   } else if (isConsentConfigKey(key)) {
     // A4 user preapprovals: host file plane only, written by this trusted local CLI.
@@ -571,7 +571,7 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
       console.log(
         'WARNING: workspace pushes now SKIP repo-visibility verification. ' +
           'This trusts the remote on your word — unset it once verification works: ' +
-          'gbrain config set push.allow_unverified_remote false',
+          'foresights config set push.allow_unverified_remote false',
       );
     }
   } else if (key === 'backup.check_enabled') {
@@ -587,7 +587,7 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     cfg.migrate = { ...(cfg.migrate ?? {}), graduation: on };
     saveConfig(cfg);
     console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
-    if (!on) console.log('PGLite -> Postgres moves now use the legacy copier, which refuses brains with write history. Turn graduation back on: gbrain config unset migrate.graduation');
+    if (!on) console.log('PGLite -> Postgres moves now use the legacy copier, which refuses brains with write history. Turn graduation back on: foresights config unset migrate.graduation');
   } else if (key === 'backup.check_interval_days') {
     const n = Number.parseInt(value, 10);
     if (!Number.isFinite(n) || n < 1) {
@@ -599,11 +599,11 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
   } else if (key === 'mcp.instructions') {
     // #4748: deployment identity appended to the MCP initialize contract.
-    // Takes effect on the next `gbrain serve` start (the response is
+    // Takes effect on the next `foresights serve` start (the response is
     // built once per process from loadConfig()).
     cfg.mcp = { ...(cfg.mcp ?? {}), instructions: value };
     saveConfig(cfg);
-    console.log(`Set ${key} (file plane: ~/.gbrain/config.json) — restart \`gbrain serve\` to apply`);
+    console.log(`Set ${key} (file plane: ~/.gbrain/config.json) — restart \`foresights serve\` to apply`);
   } else if (key.startsWith(SELF_UPGRADE_KEY_PREFIX)) {
     const leaf = key.slice(SELF_UPGRADE_KEY_PREFIX.length);
     if (!isSelfUpgradeConfigLeaf(leaf)) {
@@ -677,10 +677,10 @@ export async function tryRunConfigThinClient(args: string[]): Promise<boolean> {
 async function showConfig(engine: BrainEngine): Promise<void> {
   const config = loadConfig();
   if (!config) {
-    console.error('No config found. Run: gbrain init');
+    console.error('No config found. Run: foresights init');
     process.exit(1);
   }
-  console.log('GBrain config:');
+  console.log('Foresights config:');
   const effective: Record<string, { value: unknown; note: string }> = {};
   try {
     effective.schema_pack = await effectiveSchemaPack(engine);
@@ -705,8 +705,8 @@ async function showConfig(engine: BrainEngine): Promise<void> {
 
 export { CONFIG_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
 
-const USAGE = `Usage: gbrain config [show|get|set|unset] <key> [value]
-       gbrain config unset --pattern <prefix>
+const USAGE = `Usage: foresights config [show|get|set|unset] <key> [value]
+       foresights config unset --pattern <prefix>
 
 Subcommands:
   show                         Print the effective configuration
@@ -726,12 +726,12 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   if (subcommandHelpRequested(args, ROUTERS.config)) { printUsage(); return; }
   const action = args[0] as (typeof CONFIG_SUBCOMMANDS)[number] | undefined;
 
-  // The writer admin lock is reserved for `gbrain sources writer lock|unlock`; --force is no escape.
+  // The writer admin lock is reserved for `foresights sources writer lock|unlock`; --force is no escape.
   if (action === 'set' || action === 'unset') {
     const patternAt = action === 'unset' ? args.indexOf('--pattern') : -1;
     const target = patternAt >= 0 ? args[patternAt + 1] : args.filter(a => a !== '--raw')[1];
     if (target && (patternAt >= 0 ? WRITER_ADMIN_LOCK_KEY.startsWith(target) : target === WRITER_ADMIN_LOCK_KEY)) {
-      console.error(`[config] ${WRITER_ADMIN_LOCK_KEY} is reserved: only \`gbrain sources writer lock\` and \`gbrain sources writer unlock\` on the brain host change it.`);
+      console.error(`[config] ${WRITER_ADMIN_LOCK_KEY} is reserved: only \`foresights sources writer lock\` and \`foresights sources writer unlock\` on the brain host change it.`);
       console.error(`[config] ${patternAt >= 0 ? `The pattern "${target}" covers that key. Nothing was deleted.` : 'Nothing was written.'}`);
       process.exit(1);
     }
@@ -742,16 +742,16 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  // v0.32.3 [CDX-7+8]: `unset` is required before `gbrain search modes
+  // v0.32.3 [CDX-7+8]: `unset` is required before `foresights search modes
   // --reset` can implement its contract. Two shapes:
-  //   gbrain config unset <key>             — single-key delete
-  //   gbrain config unset --pattern <pfx>   — prefix-bulk delete
+  //   foresights config unset <key>             — single-key delete
+  //   foresights config unset --pattern <pfx>   — prefix-bulk delete
   if (action === 'unset') {
     const flagIdx = args.indexOf('--pattern');
     if (flagIdx !== -1) {
       const prefix = args[flagIdx + 1];
       if (!prefix || prefix.length === 0) {
-        console.error('Usage: gbrain config unset --pattern <prefix>');
+        console.error('Usage: foresights config unset --pattern <prefix>');
         process.exit(1);
       }
       const keys = (await engine.listConfigKeys(prefix)).filter(k => !k.startsWith('_internal.'));
@@ -796,7 +796,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
 
     const key = args[1];
     if (!key) {
-      console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
+      console.error('Usage: foresights config unset <key> | --pattern <prefix>');
       process.exit(1);
     }
     if (key === EMBEDDING_DISABLED_KEY) {
@@ -976,11 +976,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       if (dbAuthoritative) {
         console.error(`[config] source: ${dbVal !== null && dbVal !== undefined ? 'db plane (authoritative for this key)' : 'file mirror (no DB row)'}${await writebackLanesNote(engine, key)}`);
         if (dbVal !== null && dbVal !== undefined && fileVal !== undefined && fileVal !== null && String(fileVal) !== String(dbVal)) {
-          console.error(`[config] WARN: file mirror disagrees ('${String(fileVal)}') — planes diverged; re-run: gbrain config set ${key} ${String(dbVal)}`);
+          console.error(`[config] WARN: file mirror disagrees ('${String(fileVal)}') — planes diverged; re-run: foresights config set ${key} ${String(dbVal)}`);
         }
       } else if (fileVal !== undefined && fileVal !== null) {
         const shadow = hasStaleDbRow
-          ? ` — a stale DB-plane row also exists and nothing reads it (gbrain config unset ${key} removes it)`
+          ? ` — a stale DB-plane row also exists and nothing reads it (foresights config unset ${key} removes it)`
           : dbVal !== null && dbVal !== undefined
             ? ' — a DB-plane value also exists and is shadowed at runtime'
             : '';
@@ -990,7 +990,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     } else {
       if (hasStaleDbRow) {
-        console.error(`[config] a stale DB-plane row holds '${redactConfigValue(key, String(dbVal))}', but nothing reads it; the runtime default applies. Remove it: gbrain config unset ${key}`);
+        console.error(`[config] a stale DB-plane row holds '${redactConfigValue(key, String(dbVal))}', but nothing reads it; the runtime default applies. Remove it: foresights config unset ${key}`);
       }
       console.error(`Config key not found: ${key}`);
       process.exit(1);
@@ -1013,7 +1013,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       for (const flag of unknownFlags) {
         console.error(`[config] unknown flag: ${flag}`);
       }
-      console.error(`[config] \`gbrain config set\` accepts: ${CONFIG_SET_KNOWN_FLAGS.join(', ')}.`);
+      console.error(`[config] \`foresights config set\` accepts: ${CONFIG_SET_KNOWN_FLAGS.join(', ')}.`);
       console.error(`[config] Nothing was written.`);
       process.exit(1);
     }
@@ -1022,7 +1022,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // Bootstrap hook-lane keys are FILE-plane canonical: they are read by
     // engine-free processes (the harness hook children and the detached
     // `sources push` child) via loadConfigFileOnly, which never sees the DB
-    // plane — and the DB plane is unreadable anyway while a `gbrain serve`
+    // plane — and the DB plane is unreadable anyway while a `foresights serve`
     // holds the single-writer lock. Route them to ~/.gbrain/config.json.
     // `integrations.memorable.enabled` is deliberately NOT in
     // FILE_PLANE_DOTTED_KEYS: that set is shared with the UNSET lane, where
@@ -1144,7 +1144,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.log(`Set ${key} = ${normalized} (${hostPlane ? 'file + db planes' : 'db plane only — mounted brain'})`);
       if (key === 'memory.auto_writeback' && normalized !== 'off') {
         console.log('Ambient writeback enabled. Running stdio serves pick it up on restart; HTTP serves on the next request.');
-        console.log('To install the managed harness instruction blocks: gbrain bootstrap harness --yes');
+        console.log('To install the managed harness instruction blocks: foresights bootstrap harness --yes');
       }
       if (key === 'memory.auto_writeback' && normalized === 'off') {
         // The off switch gates instructions + extraction immediately, but
@@ -1181,7 +1181,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
 
     // v0.37.11.0 fix wave (Lane C.2 + CDX2-13): refuse writes to schema-sizing
     // fields unconditionally. These fields size the `content_chunks.embedding`
-    // column at init time and are file-plane canonical. `gbrain config set
+    // column at init time and are file-plane canonical. `foresights config set
     // embedding_model X` writes the DB plane, which the embed pipeline
     // never reads — silent lie that took users hours to diagnose.
     //
@@ -1208,15 +1208,15 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         // spend control is worse than a rejection. Route the operator to the
         // controls that actually exist.
         if (key === 'budget' || key.startsWith('budget.')) {
-          console.error(`[config] budget.* keys are not live controls — nothing in gbrain reads them, so a cap written here caps nothing.`);
-          console.error(`[config] The live spend controls are \`gbrain config set spend.posture <gated|tokenmax>\` and the per-command gates in docs/operations/spend-controls.md.`);
+          console.error(`[config] budget.* keys are not live controls — nothing in foresights reads them, so a cap written here caps nothing.`);
+          console.error(`[config] The live spend controls are \`foresights config set spend.posture <gated|tokenmax>\` and the per-command gates in docs/operations/spend-controls.md.`);
         } else {
           const { suggestNearest } = await import('../core/levenshtein.ts');
           const suggestion = suggestNearest(key, KNOWN_CONFIG_KEYS, 3);
           if (suggestion) {
             console.error(`[config] Did you mean "${suggestion}"?`);
           } else {
-            console.error(`[config] No similar known key. Run \`gbrain config show\` to see currently-set keys.`);
+            console.error(`[config] No similar known key. Run \`foresights config show\` to see currently-set keys.`);
           }
         }
         console.error(`[config] If this is intentional (downstream tooling, forward-compat), re-run with --force.`);
@@ -1228,7 +1228,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       const isKnown = KNOWN_CONFIG_KEYS.includes(key);
       const matchesPrefix = KNOWN_CONFIG_KEY_PREFIXES.some(p => key.startsWith(p));
       if (!isKnown && !matchesPrefix) {
-        console.error(`[config] WARN: writing unknown key "${key}" with --force. Nothing in gbrain reads this.`);
+        console.error(`[config] WARN: writing unknown key "${key}" with --force. Nothing in foresights reads this.`);
         if (key === 'budget' || key.startsWith('budget.')) {
           // #3748: an operator who believes this caps spend has NO cap at all.
           console.error(`[config] WARN: budget.* is NOT a spend cap — the live controls are spend.posture + docs/operations/spend-controls.md.`);
@@ -1315,7 +1315,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // source-resolver.ts tier 5 on EVERY unqualified call, and tier 5 calls
     // assertSourceExists — so a syntactically valid but non-existent id set
     // here would make every later unqualified command throw, far from the
-    // typo that caused it. `gbrain sources default <id>` already validates;
+    // typo that caused it. `foresights sources default <id>` already validates;
     // config set is the lower-level door to the same key and must not be a
     // way around that check.
     if (key === 'sources.default') {
@@ -1324,7 +1324,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         console.error(
           `[config] sources.default must be 1-32 lowercase alphanumerics with ` +
           `optional interior hyphens (got '${value}').\n` +
-          `[config]   gbrain sources default <id>   # preferred — validates and reports`,
+          `[config]   foresights sources default <id>   # preferred — validates and reports`,
         );
         process.exit(1);
       }
@@ -1337,11 +1337,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       if (!src) {
         // NOTE: keep flag literals out of this message. The generated flag
         // registry (#2185) scans command sources for flag tokens, so naming a
-        // flag in prose would silently grant it to `gbrain config`.
+        // flag in prose would silently grant it to `foresights config`.
         console.error(
           `[config] source "${value}" is not registered; refusing to set sources.default.\n` +
-          `[config]   gbrain sources list      # see registered sources\n` +
-          `[config]   gbrain sources add       # register one first`,
+          `[config]   foresights sources list      # see registered sources\n` +
+          `[config]   foresights sources add       # register one first`,
         );
         process.exit(1);
       }
@@ -1354,8 +1354,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       if (!isValidSpendPosture(value)) {
         console.error(
           `[config] spend.posture must be 'gated' or 'tokenmax' (got '${value}').\n` +
-          `[config]   gbrain config set spend.posture tokenmax   # cost gates become informational\n` +
-          `[config]   gbrain config set spend.posture gated       # default — gates enforce`,
+          `[config]   foresights config set spend.posture tokenmax   # cost gates become informational\n` +
+          `[config]   foresights config set spend.posture gated       # default — gates enforce`,
         );
         process.exit(1);
       }
@@ -1389,7 +1389,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
 
     if (key === 'search_embedding_column') {
       // Validate against the merged registry (file + DB plane + builtins).
-      // We re-read merged config so a prior `gbrain config set
+      // We re-read merged config so a prior `foresights config set
       // embedding_columns ...` is visible.
       const fileCfg = loadConfig();
       const mergedCfg = fileCfg
@@ -1413,7 +1413,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           console.error(
             `[config] Unknown embedding column "${value}". ` +
               `Declared columns: ${known}. ` +
-              `Add it via: gbrain config set embedding_columns '<JSON>'`,
+              `Add it via: foresights config set embedding_columns '<JSON>'`,
           );
           process.exit(1);
         }
@@ -1443,7 +1443,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
               `[config] Ask the user first; to switch anyway, pass --coverage-override:`,
             );
             console.error(
-              `[config]   gbrain config set search_embedding_column ${value} --coverage-override`,
+              `[config]   foresights config set search_embedding_column ${value} --coverage-override`,
             );
             process.exit(1);
           }

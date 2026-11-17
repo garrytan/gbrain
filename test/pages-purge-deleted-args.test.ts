@@ -1,5 +1,5 @@
 /**
- * `gbrain pages purge-deleted` argument safety (#6114, D6).
+ * `foresights pages purge-deleted` argument safety (#6114, D6).
  *
  * The purge is a brain-wide hard delete. Before this fix the handler read
  * only the flags it knew and ignored everything else: a positional `help`,
@@ -150,7 +150,7 @@ describe('the purge_deleted_pages op is not a consent-free side door (security r
     op.handler({ engine, config: { engine: 'pglite' }, remote: false, dryRun: false, sourceId: 'default',
       logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext, p));
 
-  test('gbrain call without yes refuses with the D6 consent payload and purges nothing', async () => {
+  test('foresights call without yes refuses with the D6 consent payload and purges nothing', async () => {
     const refused = await local({ older_than_hours: 72 }).then(() => null, (e: unknown) => e as OperationError);
     expect(refused?.code).toBe('confirmation_required');
     expect(await slugs()).toEqual(['notes/live', 'notes/old-deleted']);
@@ -162,7 +162,7 @@ describe('the purge_deleted_pages op is not a consent-free side door (security r
     expect(await slugs()).toEqual(['notes/live']);
   });
 
-  test('no top-level `gbrain purge-deleted`, and the stdio MCP pipe gets the trusted-CLI refusal', async () => {
+  test('no top-level `foresights purge-deleted`, and the stdio MCP pipe gets the trusted-CLI refusal', async () => {
     expect(op.cliHints?.hidden).toBe(true);
     const res = await dispatchToolCall(engine, 'purge_deleted_pages', { older_than_hours: 72, yes: true }, { remote: true, transport: 'stdio', sourceId: 'default' });
     expect(res.isError).toBe(true);

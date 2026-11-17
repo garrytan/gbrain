@@ -538,8 +538,8 @@ Sorted by area, then newest commit first. `pr` is the last `(#N)` in the subject
 | `ff53a4c9b` | #776 | 2026-05-09 | DOCTOR | `doctor-check-logic` | 1 | high | - | doctor skills-dir auto-detect differed from check-resolvable; missed the workspace env var fallback |
 | `1d78013c0` | #697 | 2026-05-06 | DOCTOR | `doctor-new-check` | 1 | high | - | new embedding_provider live smoke-test check |
 | `e2961c04b` | #447 | 2026-04-26 | DOCTOR | `doctor-check-logic` | 1 | high | - | old partial migration record flagged 'MINIONS HALF-INSTALLED' forever after newer complete migrations |
-| `08b3698e9` | #356 | 2026-04-23 | DOCTOR | `doctor-other` | 1 | medium | - | migrate error message referenced gbrain doctor --locks which did not exist; flag added |
-| `275158137` | #343 | 2026-04-23 | DOCTOR | `doctor-check-logic` | 1 | high | - | RLS check hardcoded 10 gbrain tables; other public tables invisible |
+| `08b3698e9` | #356 | 2026-04-23 | DOCTOR | `doctor-other` | 1 | medium | - | migrate error message referenced foresights doctor --locks which did not exist; flag added |
+| `275158137` | #343 | 2026-04-23 | DOCTOR | `doctor-check-logic` | 1 | high | - | RLS check hardcoded 10 foresights tables; other public tables invisible |
 | `fcf40a12f` | #301 | 2026-04-21 | DOCTOR | `doctor-new-check` | 1 | high | - | new pgbouncer_prepare check |
 | `ff10796a0` | #248 | 2026-04-21 | DOCTOR | `doctor-check-logic` | 1 | high | - | schema_version check did not flag migrations-never-ran (#218 postinstall) |
 | `ff10796a0` | #248 | 2026-04-21 | DOCTOR | `feature-not-fix` | 1 | medium | - | new opt-in --index-audit |

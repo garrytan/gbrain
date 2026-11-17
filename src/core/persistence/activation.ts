@@ -30,7 +30,7 @@ export interface ActivationReport {
    * #5182: each filesystem source's recorded Git-durability setting on this host
    * (`off` = disabled, `unknown` = not recorded: the legacy hook decides). A
    * source listed `off` or `unknown` without a hook has its Git effects skipped
-   * until `gbrain sources writer git-durability <source> --enable` runs.
+   * until `foresights sources writer git-durability <source> --enable` runs.
    */
   git_durability?: Array<{ source_id: string; state: 'on' | 'off' | 'unknown'; enable_command: string | null }>;
   /**
@@ -45,7 +45,7 @@ export interface ActivationReport {
    * database-only (page writes publish to the database with `databaseOnlyReason: disabled_by_config`, `writer status`
    * reports `database_only`), so activation lists them instead of refusing and records the list in
    * `persistence.database_only_sources` (a PGLite write to one never runs the automatic first-write claim); claiming one
-   * later is a deliberate `writer claim`, and `gbrain sync` on one refuses `owner_unavailable` naming that claim.
+   * later is a deliberate `writer claim`, and `foresights sync` on one refuses `owner_unavailable` naming that claim.
    */
   database_only_sources?: string[];
   /** #5514: `activated: false` with `enabled: true` says why, so a no-op is not read as a silent failure. */
@@ -56,11 +56,11 @@ export interface ActivationReport {
 /** #5514: the brain was managed before the command ran; activation changes nothing and cannot start an owner process. */
 const ALREADY_ENABLED = { reason: 'already_enabled', why: 'Managed persistence was already enabled before this command, so nothing changed. '
   + 'If writes are accepted but never published (writer status shows ingress not_running or a null heartbeat), no owner process is running: '
-  + 'start the owner process (`gbrain serve`, or the autopilot) on the owner host, then check writer status again.',
+  + 'start the owner process (`foresights serve`, or the autopilot) on the owner host, then check writer status again.',
   fix: readFix('Shows the owner process, its ingress and heartbeat, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'] }) } as const;
 const gitDurabilityListing = (bindings: WorktreeBinding[]): NonNullable<ActivationReport['git_durability']> => bindings.map(binding => {
   const state = gitDurabilityState(binding);
-  return { source_id: binding.source_id, state, enable_command: state === 'on' ? null : `gbrain sources writer git-durability ${binding.source_id} --enable --dry-run` };
+  return { source_id: binding.source_id, state, enable_command: state === 'on' ? null : `foresights sources writer git-durability ${binding.source_id} --enable --dry-run` };
 });
 export interface ActivationWarning {
   code: 'git_durability_not_enabled';
@@ -87,7 +87,7 @@ async function gitDurabilityWarnings(bindings: WorktreeBinding[]): Promise<{ war
       if (policy?.durable) continue;
     }
     const id = binding.source_id;
-    const enableCommand = `gbrain sources writer git-durability ${id} --enable --dry-run`;
+    const enableCommand = `foresights sources writer git-durability ${id} --enable --dry-run`;
     const why = state === 'off' ? 'Git durability is disabled on its binding'
       : probeError ? `Git durability is not recorded and the post-commit hook probe failed (${probeError})`
       : 'Git durability is not recorded and no harden post-commit hook is installed';
@@ -118,8 +118,8 @@ async function configuredSources(engine: BrainEngine, lock = false): Promise<Sou
 /** #5206: a recorded source directory that vanished is a named blocker with its exits, never a bare ENOENT. */
 function sourcePathMissing(source: SourceRoot, claimedRoot: string | null): OperationError {
   const error = catalogueError('activation_source_path_missing',
-    `Source '${source.id}' records the ${source.root && !isAbsolute(source.root) ? `relative local path ${source.root}, which names whatever directory gbrain runs from (#7630)` : `local path ${source.root}, which does not exist on this host`}, so activation cannot verify its canonical directory.`,
-    `Point it at its checkout with gbrain sources set-path ${source.id} ${claimedRoot ? JSON.stringify(claimedRoot) : '<directory>'}, or remove it with gbrain sources remove ${source.id} --confirm-destructive; then rerun gbrain sources writer activate --confirm-quiesced --dry-run.`);
+    `Source '${source.id}' records the ${source.root && !isAbsolute(source.root) ? `relative local path ${source.root}, which names whatever directory foresights runs from (#7630)` : `local path ${source.root}, which does not exist on this host`}, so activation cannot verify its canonical directory.`,
+    `Point it at its checkout with foresights sources set-path ${source.id} ${claimedRoot ? JSON.stringify(claimedRoot) : '<directory>'}, or remove it with foresights sources remove ${source.id} --confirm-destructive; then rerun foresights sources writer activate --confirm-quiesced --dry-run.`);
   error.detail = 'source_path_missing';
   return error;
 }
@@ -128,8 +128,8 @@ interface ValidatedSources { bindings: WorktreeBinding[]; databaseOnly: string[]
 function unboundRootedSource(source: SourceRoot): OperationError {
   return opError('writer_registration_required', `Source '${source.id}' needs an active canonical owner before activation.`,
     `Source '${source.id}' has a checkout path (${source.root}) but no canonical owner, and sync.write_through is on, so activation stopped and nothing changed. `
-    + `Either bind it on the brain host (ask the user first; preview with gbrain sources writer claim ${source.id} --path ${source.root} --dry-run --json, then ${unboundBindCommand(source.id, source.root)}), `
-    + `or make the brain database-only with gbrain config set sync.write_through false, after which activation lists the source under database_only_sources and page writes publish to the database only. ${WRITER_INSPECTION_HINT}`,
+    + `Either bind it on the brain host (ask the user first; preview with foresights sources writer claim ${source.id} --path ${source.root} --dry-run --json, then ${unboundBindCommand(source.id, source.root)}), `
+    + `or make the brain database-only with foresights config set sync.write_through false, after which activation lists the source under database_only_sources and page writes publish to the database only. ${WRITER_INSPECTION_HINT}`,
     { fix: writerStatusFix(`Shows source ${source.id}'s binding state (database_only, claim_required) and admin_state, read-only.`, source.id) });
 }
 async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hostId: string | null, writeThrough: boolean, lock = false): Promise<ValidatedSources> {
@@ -176,7 +176,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
   if (opts.confirmQuiesced !== true) throw quiescence();
   if (Number(await engine.getConfig('version')) < 157) {
     throw opError('writer_upgrade_required', 'Apply the canonical writer guard, outbox, and source lifecycle migrations before activation.',
-      'This brain\'s schema predates managed persistence. List the pending migrations, ask the user to approve applying them, then rerun gbrain sources writer activate --confirm-quiesced --dry-run.',
+      'This brain\'s schema predates managed persistence. List the pending migrations, ask the user to approve applying them, then rerun foresights sources writer activate --confirm-quiesced --dry-run.',
       { fix: { argv: ['gbrain', 'apply-migrations', '--dry-run', '--json'], consent: [], actor: 'agent', why: 'Lists the pending migrations without applying them.', requires_exclusive: false } });
   }
   const native = await nativeLockCapability();
@@ -234,7 +234,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
         String(row.owner_epoch),String(row.topology_generation),row.relative_path,row.local_path,row.coordination_path]));
       if (identity(bindings) !== identity(initial) || JSON.stringify(currentSources) !== JSON.stringify(sources) || JSON.stringify(currentDatabaseOnly) !== JSON.stringify(databaseOnly)) {
         throw opError('source_changed', 'Source ownership changed during activation; inspect writer status and retry.',
-          'Sources or their owners changed while activation ran, so it rolled back and nothing was activated. Inspect the writer status, then rerun gbrain sources writer activate --confirm-quiesced --dry-run before activating again.',
+          'Sources or their owners changed while activation ran, so it rolled back and nothing was activated. Inspect the writer status, then rerun foresights sources writer activate --confirm-quiesced --dry-run before activating again.',
           { fix: writerStatusFix('Shows the current sources, owners and registrations, read-only.') });
       }
       // Block fresh legacy lease admission for the duration of this commit.

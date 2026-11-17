@@ -207,9 +207,9 @@ export async function applyReranker(
     }
     warnOncePerProcess(
       `rerank-passthrough:${reason}`,
-      `[gbrain] reranker returned ${reason === 'empty_result_set' ? 'an empty result set' : 'a malformed shape'} — ` +
+      `[foresights] reranker returned ${reason === 'empty_result_set' ? 'an empty result set' : 'a malformed shape'} — ` +
         'results passed through in RRF order unscored (audited to rerank-failures; further occurrences this process are silent). ' +
-        'Check the rerank endpoint and `gbrain doctor`.',
+        'Check the rerank endpoint and `foresights doctor`.',
     );
     try {
       opts.onPassThrough?.(reason);

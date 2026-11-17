@@ -7,8 +7,8 @@
  * and can shadow the real binary on PATH.
  *
  * Pure classification helpers (filesystem-only, no network, no shelling out)
- * so `gbrain doctor` can warn with receipts. The caller supplies the candidate
- * paths (typically the output of `which -a gbrain`) and the `gbrain` package
+ * so `foresights doctor` can warn with receipts. The caller supplies the candidate
+ * paths (typically the output of `which -a foresights`) and the `gbrain` package
  * directories under the global install roots (`npm root -g`, Bun's global
  * dir), so an unrelated global install is found even when its bin is not on
  * PATH.
@@ -36,7 +36,7 @@ export interface NpmSquatAssessment {
   status: 'ok' | 'warn' | 'skip';
   message: string;
   binaries: ClassifiedGbrainBinary[];
-  /** On a warn caused by an unrelated package: remove it, then reinstall when no real gbrain remains on PATH. */
+  /** On a warn caused by an unrelated package: remove it, then reinstall when no real foresights remains on PATH. */
   fix?: Action;
 }
 
@@ -47,7 +47,7 @@ export interface AssessGbrainBinariesOptions {
   bunGlobalRoot?: string;
   /** `npm root -g`: only a package under it is removed with npm, which uninstalls from its own prefix alone. */
   npmRoot?: string;
-  /** Directory of the running gbrain's code; when it is this project, a real gbrain exists even if PATH shows none. */
+  /** Directory of the running foresights's code; when it is this project, a real foresights exists even if PATH shows none. */
   selfDir?: string;
 }
 
@@ -57,7 +57,7 @@ export interface ClassifyGbrainBinaryOptions {
 }
 
 /** Repository marker identifying this project's package.json. */
-const REAL_REPO_MARKER = 'garrytan/gbrain';
+const REAL_REPO_MARKER = 'aimonk2025/gbrain';
 
 /** The documented install command (INSTALL_PIN, the one install ref in core/install-ref.ts). */
 const INSTALL_ARGV = ['bun', 'install', '-g', INSTALL_PIN];
@@ -73,7 +73,7 @@ export const NPM_SQUAT_REMEDIATION =
   `If the schema is then behind (#218), run \`${SCHEMA_RECOVERY_ARGV.join(' ')}\`.`;
 
 /**
- * A `bun build --compile` gbrain binary is a native executable, not a script.
+ * A `bun build --compile` foresights binary is a native executable, not a script.
  * Sniff the magic bytes: ELF, Mach-O (thin + fat), PE.
  */
 function isNativeExecutable(path: string): boolean {
@@ -116,7 +116,7 @@ function nearestPackageJson(start: string): { dir: string; pkg: Record<string, a
 
 /**
  * Is this package.json THIS project? Two markers, either suffices:
- *  - repository field pointing at garrytan/gbrain (string or { url }), or
+ *  - repository field pointing at aimonk2025/gbrain (string or { url }), or
  *  - this repo's known bin shape (`"bin": { "gbrain": "src/cli.ts" }` — a
  *    git checkout / `bun install -g github:...` install carries it verbatim;
  *    a registry-published package ships built JS, not a bare .ts bin).
@@ -150,12 +150,12 @@ function executableCandidates(path: string, platform: typeof process.platform): 
 /**
  * Classify one candidate `gbrain` path:
  *  - 'broken'  : symlink that doesn't resolve / unreadable path.
- *  - 'real'    : compiled gbrain binary, or a script whose nearest
+ *  - 'real'    : compiled foresights binary, or a script whose nearest
  *                package.json is this project's (repo checkout / bun link /
- *                `bun install -g github:garrytan/gbrain`).
+ *                `bun install -g github:aimonk2025/gbrain`).
  *  - 'foreign' : nearest package.json is named "gbrain" but is NOT this
  *                project — an unrelated registry install.
- *  - 'unknown' : can't tell (no gbrain package.json above the resolved file).
+ *  - 'unknown' : can't tell (no foresights package.json above the resolved file).
  */
 export function classifyGbrainBinary(
   path: string,
@@ -176,11 +176,11 @@ export function classifyGbrainBinary(
     return { path, kind: 'broken', detail: 'broken symlink or unreadable path' };
   }
   if (isNativeExecutable(resolved)) {
-    return { path, kind: 'real', detail: `compiled gbrain binary at ${resolved}` };
+    return { path, kind: 'real', detail: `compiled foresights binary at ${resolved}` };
   }
   const found = nearestPackageJson(dirname(resolved));
   if (!found || found.pkg.name !== 'gbrain') {
-    return { path, kind: 'unknown', detail: `no gbrain package.json found above ${resolved}` };
+    return { path, kind: 'unknown', detail: `no foresights package.json found above ${resolved}` };
   }
   if (isRealGbrainPackage(found.pkg)) {
     return { path, kind: 'real', detail: `this project's install at ${found.dir}`, packageDir: found.dir };
@@ -232,27 +232,27 @@ function squatFix(foreign: ClassifiedGbrainBinary, realElsewhere: boolean, opts:
   const viaBun = under(opts.bunGlobalRoot) || /[\\/]\.bun[\\/]install[\\/]global[\\/]/.test(dir);
   const remove = viaBun ? ['bun', 'remove', '-g', 'gbrain'] : under(opts.npmRoot) ? ['npm', 'uninstall', '-g', 'gbrain'] : undefined;
   const verify = { argv: ['gbrain', 'doctor', '--only', 'npm_squat', '--json'] };
-  const effect = realElsewhere ? 'can take over the gbrain command' : foreign.global ? 'is installed globally' : 'is what runs as gbrain';
+  const effect = realElsewhere ? 'can take over the foresights command' : foreign.global ? 'is installed globally' : 'is what runs as foresights';
   const why = `The npm registry name "gbrain" belongs to an unrelated package (${dir}); this project is not distributed on npm, and that package ${effect}.`;
   if (!remove) {
     return {
       consent: ['persistent_install'], actor: 'user', requires_exclusive: false, verify, docs: 'README.md#install', why,
-      user_message: `An unrelated npm package named "gbrain" is installed at ${dir}. It is not GBrain. Remove it with the package manager that installed it (pnpm, yarn, volta or another npm prefix); npm and bun only remove packages from their own global directories.`,
+      user_message: `An unrelated npm package named "gbrain" is installed at ${dir}. It is not Foresights. Remove it with the package manager that installed it (pnpm, yarn, volta or another npm prefix); npm and bun only remove packages from their own global directories.`,
     };
   }
   const reinstall: Action = {
     argv: INSTALL_ARGV, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify,
-    why: 'No real gbrain is left on PATH. This installs it from the stable release ref, the only supported source.',
+    why: 'No real foresights is left on PATH. This installs it from the stable release ref, the only supported source.',
     then: {
       argv: SCHEMA_RECOVERY_ARGV, consent: [], actor: 'agent', requires_exclusive: false,
       verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: 'README.md#install',
-      why: 'The install itself runs no migrations (#218). This applies them and exits 0 only when the schema is at head; exit 1 with migrations_pending means run gbrain doctor --json and relay what it reports.',
+      why: 'The install itself runs no migrations (#218). This applies them and exits 0 only when the schema is at head; exit 1 with migrations_pending means run foresights doctor --json and relay what it reports.',
     },
   };
   return {
     argv: remove,
     consent: ['persistent_install'], actor: 'agent', ask_user: true, requires_exclusive: false, verify, docs: 'README.md#install', why,
-    user_message: `An unrelated npm package named "gbrain" is installed at ${dir}. It is not GBrain${realElsewhere ? ' and can take over the gbrain command' : ''}. Should I uninstall it${realElsewhere ? '' : ' and install GBrain from its GitHub release'}?`,
+    user_message: `An unrelated npm package named "gbrain" is installed at ${dir}. It is not Foresights${realElsewhere ? ' and can take over the foresights command' : ''}. Should I uninstall it${realElsewhere ? '' : ' and install Foresights from its GitHub release'}?`,
     ...(realElsewhere ? {} : { then: reinstall }),
   };
 }
@@ -282,7 +282,7 @@ export function assessGbrainBinaries(candidates: string[], opts: AssessGbrainBin
     binaries.push(pkg);
   }
   if (binaries.length === 0) {
-    return { status: 'skip', message: 'gbrain not found on PATH', binaries: [] };
+    return { status: 'skip', message: 'foresights not found on PATH', binaries: [] };
   }
   const first = binaries[0]!;
   const realIdx = binaries.findIndex((b) => b.kind === 'real');
@@ -292,8 +292,8 @@ export function assessGbrainBinaries(candidates: string[], opts: AssessGbrainBin
     return {
       status: 'warn',
       message:
-        `\`gbrain\` on PATH is a broken link (${first.path}). ` +
-        `Note: gbrain is NOT distributed on npm — the npm package named "gbrain" is unrelated. ` +
+        `\`foresights\` on PATH is a broken link (${first.path}). ` +
+        `Note: foresights is NOT distributed on npm — the npm package named "gbrain" is unrelated. ` +
         NPM_SQUAT_REMEDIATION,
       binaries,
     };
@@ -305,11 +305,11 @@ export function assessGbrainBinaries(candidates: string[], opts: AssessGbrainBin
       || binaries.slice(0, foreignIdx).some((b) => b.kind === 'unknown')
       || (self !== null && self.pkg.name === 'gbrain' && isRealGbrainPackage(self.pkg));
     const where = foreign.global
-      ? `An unrelated npm package named "gbrain" is installed globally at ${foreign.packageDir}${realElsewhere ? '' : ', and no real gbrain is on PATH'}. `
-      : `\`gbrain\` on PATH resolves to an unrelated npm package, not this project (${foreign.path} — ${foreign.detail}). `;
+      ? `An unrelated npm package named "gbrain" is installed globally at ${foreign.packageDir}${realElsewhere ? '' : ', and no real foresights is on PATH'}. `
+      : `\`foresights\` on PATH resolves to an unrelated npm package, not this project (${foreign.path} — ${foreign.detail}). `;
     return {
       status: 'warn',
-      message: `${where}gbrain is NOT distributed on npm. ${NPM_SQUAT_REMEDIATION}`,
+      message: `${where}foresights is NOT distributed on npm. ${NPM_SQUAT_REMEDIATION}`,
       binaries,
       fix: squatFix(foreign, realElsewhere, opts),
     };
@@ -318,7 +318,7 @@ export function assessGbrainBinaries(candidates: string[], opts: AssessGbrainBin
     return {
       status: 'ok',
       message:
-        `real gbrain wins on PATH (${first.path}), but an unrelated npm package named ` +
+        `real foresights wins on PATH (${first.path}), but an unrelated npm package named ` +
         `"gbrain" is also installed (${binaries[foreignIdx]!.path}). Consider removing it: ` +
         `\`bun remove -g gbrain\` / \`npm uninstall -g gbrain\`.`,
       binaries,
@@ -328,7 +328,7 @@ export function assessGbrainBinaries(candidates: string[], opts: AssessGbrainBin
     status: 'ok',
     message:
       first.kind === 'real'
-        ? `gbrain on PATH is the real binary (${first.path}).`
+        ? `foresights on PATH is the real binary (${first.path}).`
         : `no unrelated npm "gbrain" install detected on PATH (${first.path}).`,
     binaries,
   };

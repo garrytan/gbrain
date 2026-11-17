@@ -6,10 +6,10 @@ schedules"), written so a later wave can build it without redoing the survey.
 ## Problem
 
 An agent running long work on a large deployment keeps its own cron entries
-for recurring gbrain work: sync wrappers, embed batches, enrichment fan-outs,
+for recurring foresights work: sync wrappers, embed batches, enrichment fan-outs,
 landing watchers, progress gates. Each entry brings its own overlap control,
-spend control and run history, none of which gbrain can see. About a third of
-those entries exist only to watch or prod gbrain's own jobs.
+spend control and run history, none of which foresights can see. About a third of
+those entries exist only to watch or prod foresights's own jobs.
 
 The ask is a built-in primitive: a cron spec, an overlap policy
 (`skip` | `queue` | `replace`), a `max_usd` per schedule and per run,
@@ -17,10 +17,10 @@ and run history readable over the CLI and MCP.
 
 ## What autopilot already schedules
 
-`gbrain autopilot` is already a scheduler, but only for gbrain's own
+`foresights autopilot` is already a scheduler, but only for foresights's own
 maintenance, and its cadence is fixed in code rather than declared per job:
 
-- **Host install.** `gbrain autopilot --install` writes one long-running
+- **Host install.** `foresights autopilot --install` writes one long-running
   daemon per brain: a launchd agent with `KeepAlive` on macOS, a systemd user
   unit on Linux, a start script for ephemeral containers, or a crontab line that
   runs the wrapper every 5 minutes (`src/commands/autopilot.ts`,
@@ -108,10 +108,10 @@ by the cycle's `purge` phase after a retention window. Job outcomes stay on
    retried tick coalesces instead of double-submitting, and records
    `submitted` in the same transaction as the `next_run_at` update.
 
-Where the ticker runs: inside `gbrain jobs work` (every worker, gated by the
+Where the ticker runs: inside `foresights jobs work` (every worker, gated by the
 row lock) and inside the autopilot tick. PGLite has no resident worker, so a
 PGLite brain ticks from autopilot's inline loop or from an explicit
-`gbrain schedules tick` a host cron can run.
+`foresights schedules tick` a host cron can run.
 
 ### Spend
 
@@ -135,10 +135,10 @@ fired it and `jobs list --schedule <name>` filters on it.
 
 CLI (trusted local, `remote = false`):
 
-- `gbrain schedules add <name> --job <job-name> --cron '<spec>' [--tz <zone>] [--overlap skip|queue|replace] [--max-usd <n>] [--max-usd-per-day <n>] [--params <json>] [--queue <q>]`
-- `gbrain schedules list [--json]`, `gbrain schedules get <name> [--runs N] [--json]`
-- `gbrain schedules pause|resume|remove <name>`, `gbrain schedules run <name>` (fire now, same policy)
-- `gbrain schedules tick` (for PGLite and host cron)
+- `foresights schedules add <name> --job <job-name> --cron '<spec>' [--tz <zone>] [--overlap skip|queue|replace] [--max-usd <n>] [--max-usd-per-day <n>] [--params <json>] [--queue <q>]`
+- `foresights schedules list [--json]`, `foresights schedules get <name> [--runs N] [--json]`
+- `foresights schedules pause|resume|remove <name>`, `foresights schedules run <name>` (fire now, same policy)
+- `foresights schedules tick` (for PGLite and host cron)
 
 MCP: `list_schedules` and `get_schedule` (with recent runs) at `admin` scope,
 read-only. Creating, changing or removing a schedule stays on the trusted local
@@ -162,7 +162,7 @@ review. Shell jobs keep their worker-side `--allow-shell-jobs` gate.
 - Unattended spend needs the consent and meter design above reviewed as a
   trust change, not added as a flag.
 - The parts of #7241 and #7242 that remove most polling today are smaller and
-  land first: `gbrain jobs wait`, the terminal-state hook, job progress and
+  land first: `foresights jobs wait`, the terminal-state hook, job progress and
   lineage. With those, an external scheduler can at least wait and be notified
   instead of polling.
 

@@ -18,17 +18,17 @@ export function exclusiveFix(action: Action, lockOwner: LockOwner | null): Actio
   if (!action.requires_exclusive || !lockOwner) return action;
   if (action.argv?.[0] === 'gbrain' && OWNER_DELEGATED_COMMANDS.has(action.argv[1] ?? '')) return action;
   const who = lockOwner.transport === 'http'
-    ? `the shared \`gbrain serve --http\` (PID ${lockOwner.pid})`
-    : `the stdio \`gbrain serve\` an agent session started (PID ${lockOwner.pid})`;
+    ? `the shared \`foresights serve --http\` (PID ${lockOwner.pid})`
+    : `the stdio \`foresights serve\` an agent session started (PID ${lockOwner.pid})`;
   const restart = lockOwner.transport === 'http'
-    ? 'Start `gbrain serve --http` again afterwards.'
-    : 'Reopen the agent session afterwards so it restarts its gbrain server.';
+    ? 'Start `foresights serve --http` again afterwards.'
+    : 'Reopen the agent session afterwards so it restarts its foresights server.';
   return {
     argv: ['kill', String(lockOwner.pid)],
     consent: [],
     actor: 'user',
     why: `${who} holds this brain's single-writer lock and the next command needs it exclusively. Stop that server first (quit the session or run this), then run the next step. ${restart}`,
-    user_message: `This needs gbrain's database to itself. Please stop ${who}, then I'll run the next step. ${restart}`,
+    user_message: `This needs foresights's database to itself. Please stop ${who}, then I'll run the next step. ${restart}`,
     requires_exclusive: false,
     then: action,
   };

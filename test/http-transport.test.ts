@@ -580,7 +580,7 @@ describe('http-transport: body cap', () => {
       const body = await r.json() as { error: string; suggestion: string };
       expect(body.error).toBe('payload_too_large');
       expect(body.suggestion).toBe('Nothing was processed: this transport reads at most 100 bytes per request (GBRAIN_HTTP_MAX_BODY_BYTES on the brain host). Send put_pages as smaller batches, a new request_id per call. '
-        + 'Do not split a page: one page over this limit goes by file instead, so ask the user to write it into the brain repository and run gbrain sync, or to run gbrain import <file> or gbrain put <slug> < file on the brain host.');
+        + 'Do not split a page: one page over this limit goes by file instead, so ask the user to write it into the brain repository and run foresights sync, or to run foresights import <file> or foresights put <slug> < file on the brain host.');
     } finally { srv.stop(); }
   });
 

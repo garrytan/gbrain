@@ -140,7 +140,7 @@ export function unmeasuredCheck(stale: readonly EntryOutcome[], cache: ReadonlyM
   const names = [...new Set(stale.flatMap(o => o.entry.emits))].sort();
   const old = stale.filter(o => cache.has(o.entry.name)).length;
   const argv = ['gbrain', 'doctor', '--tier', 'standard', '--budget-ms', '0', '--json'];
-  const queued = refreshJob ? ` A background refresh is queued (job #${refreshJob.id}); it needs a running jobs worker${engineKind === 'pglite' ? ' (gbrain jobs work)' : ''}.` : '';
+  const queued = refreshJob ? ` A background refresh is queued (job #${refreshJob.id}); it needs a running jobs worker${engineKind === 'pglite' ? ' (foresights jobs work)' : ''}.` : '';
   return {
     name: 'doctor_last_known', status: 'warn',
     message: `${names.length} check(s) have no result from the last ${LAST_KNOWN_MAX_AGE_MS / 3_600_000} h (${old === stale.length ? 'their last results are too old' : old ? `${old} of ${stale.length} entries have only an older result, the rest were never measured` : 'never measured'}); their health is unknown, not clear.${queued} Measure them now with: ${argv.join(' ')}`,

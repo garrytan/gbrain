@@ -1,7 +1,7 @@
 /**
  * #6712 PR 4 (design v3.2 §2.3): the level classifier of a managed source. Pure (no I/O, no engine), total, ordered and
  * first-match: every path of a pass's domain gets exactly one class, which says whether the path is settled and what the
- * pass would do about it. PR 4a runs it read-only (`gbrain sync --dry-run --json`, `sync status --detail`'s
+ * pass would do about it. PR 4a runs it read-only (`foresights sync --dry-run --json`, `sync status --detail`'s
  * `convergence`); nothing it returns is acted on yet.
  *
  * The inputs are facts the pass read (sync-pass.ts): the level `L` (committed mode `T[p]`; working mode the physical
@@ -61,7 +61,7 @@ export interface SyncPathState {
   published: boolean;
   /**
    * An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. #7199 `unscreened`:
-   * a side-`unknown` drift hold an older gbrain wrote before the drift screen compared the page with the file at the baseline commit.
+   * a side-`unknown` drift hold an older foresights wrote before the drift screen compared the page with the file at the baseline commit.
    * GST-2201 `deletionSide`: a `file_drift` hold on the deletion side (`tombstone_edited`, `purged_differs`, `file_gone`).
    */
   hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean; deletionSide?: boolean } | null;

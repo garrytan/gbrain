@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * gbrain repair private-labels apply throughput on a managed Git source, with a second consumer running beside it.
+ * foresights repair private-labels apply throughput on a managed Git source, with a second consumer running beside it.
  * Opt-in, never run in CI.
  *
  *   bun scripts/bench/private-labels-apply.ts [--pages 1000] [--rtt 0] [--cli <path to src/cli.ts>] [--no-worker]
@@ -8,9 +8,9 @@
  *
  * Builds a synthetic brain on Postgres (Docker pgvector behind a toxiproxy with --rtt ms of round trip, the
  * managed-sync-catchup harness): one managed Git source whose --pages pages each carry an over-stamped access: private,
- * committed and synced. A `gbrain jobs work` process runs beside the apply, so its persistence consumer competes to
+ * committed and synced. A `foresights jobs work` process runs beside the apply, so its persistence consumer competes to
  * claim the apply's requests as a resident worker would. Then one preview of a window of every page and one
- * `--apply --expect`, timed. --cli runs another checkout's gbrain (the same binary runs the worker), so the same script
+ * `--apply --expect`, timed. --cli runs another checkout's foresights (the same binary runs the worker), so the same script
  * measures a branch before and after a change. The report has the apply's wall time and pages per minute, the gaps
  * between consecutive requests' admission, each request's admission-to-completion time, how many distinct
  * publication transactions and Git commits carried the pages, and the apply's own result counts.
@@ -58,7 +58,7 @@ async function cli(home: string, args: string[], okExits = [0]): Promise<{ json:
   const child = Bun.spawn([process.execPath, CLI, ...args], { cwd: home, env: childEnv(home), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   const ms = performance.now() - start;
-  if (!okExits.includes(code)) throw new Error('gbrain ' + args.join(' ') + ' exited ' + code + '\nstdout: ' + stdout.slice(-1500) + '\nstderr: ' + stderr.slice(-1500));
+  if (!okExits.includes(code)) throw new Error('foresights ' + args.join(' ') + ' exited ' + code + '\nstdout: ' + stdout.slice(-1500) + '\nstderr: ' + stderr.slice(-1500));
   let json: any = null;
   try { json = JSON.parse(stdout); } catch { /* not JSON */ }
   return { json, code, ms };
@@ -115,7 +115,7 @@ async function setup(): Promise<{ home: string; db: string; root: string }> {
 harness = await startHarness({ pgPort: Number(flag('pg-port', '55432')), proxyPort: Number(flag('proxy-port', '55433')), apiPort: Number(flag('api-port', '58474')),
   adminUrl: process.argv.includes('--database-url') ? flag('database-url', '') : undefined, keep: KEEP });
 const report: Record<string, unknown> = { schema: 'gbrain.bench.private-labels-apply/v1', label: LABEL, cli: CLI, cli_commit: CLI_COMMIT, started_at: new Date().toISOString(),
-  params: { pages: PAGES, rtt_ms: RTT, second_consumer: WORKER ? 'gbrain jobs work' : null }, rerun: 'bun scripts/bench/private-labels-apply.ts ' + process.argv.slice(2).join(' ') };
+  params: { pages: PAGES, rtt_ms: RTT, second_consumer: WORKER ? 'foresights jobs work' : null }, rerun: 'bun scripts/bench/private-labels-apply.ts ' + process.argv.slice(2).join(' ') };
 let worker: ReturnType<typeof Bun.spawn> | null = null;
 try {
   log('building a managed source with ' + PAGES + ' labelled pages');
@@ -125,7 +125,7 @@ try {
   if (WORKER) {
     worker = Bun.spawn([process.execPath, CLI, 'jobs', 'work'], { cwd: brain.home, env: childEnv(brain.home), stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
     await Bun.sleep(5000);
-    if (worker.exitCode !== null) throw new Error('the second consumer (gbrain jobs work) exited ' + worker.exitCode);
+    if (worker.exitCode !== null) throw new Error('the second consumer (foresights jobs work) exited ' + worker.exitCode);
   }
   const preview = await cli(brain.home, ['repair', 'private-labels', '--source', SOURCE, '--limit', String(PAGES), '--json']);
   const planned = preview.json.results[0];

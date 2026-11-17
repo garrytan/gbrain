@@ -1,5 +1,5 @@
 <!-- schema-version: 0.5.0 -->
-<!-- source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md -->
+<!-- source: https://raw.githubusercontent.com/aimonk2025/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md -->
 # Brain: The LLM-Maintained Knowledge Base
 
 A system prompt for any AI agent that wants to build and maintain a personal knowledge base. This describes the pattern, the architecture, and the operational discipline that makes it work.
@@ -7,8 +7,8 @@ A system prompt for any AI agent that wants to build and maintain a personal kno
 Drop this into your agent's workspace as a skill or system prompt. Your agent will build the rest.
 
 > **Relationship to schema packs:** this document is the prose, paste-in
-> version of the schema pattern. gbrain also ships a machine-enforced
-> counterpart — schema packs (`gbrain schema`, typed pages, extraction,
+> version of the schema pattern. foresights also ships a machine-enforced
+> counterpart — schema packs (`foresights schema`, typed pages, extraction,
 > aliases, lint) — documented in `docs/architecture/schema-packs.md` and
 > `docs/schema-author-tutorial.md`. The prose schema here and the active
 > schema pack should describe the same brain; when you evolve one, evolve
@@ -106,7 +106,7 @@ The markdown wiki is the human-facing layer — the primary interface for humans
 
 The markdown layer uses conventions that map directly to the database primitives:
 
-1. **Use frontmatter for structured metadata** — anything you'd want to filter on (role, company, stage, score, tags) goes in YAML frontmatter, not buried in prose. Frontmatter is metadata for filters and schema-pack rules: it is not written to the fact store, and `gbrain search` / `query` do not index scalar frontmatter values (only the page body is chunked). If a value must be findable by search, also state it in the body, for example `Stage: negotiation` (#5335).
+1. **Use frontmatter for structured metadata** — anything you'd want to filter on (role, company, stage, score, tags) goes in YAML frontmatter, not buried in prose. Frontmatter is metadata for filters and schema-pack rules: it is not written to the fact store, and `foresights search` / `query` do not index scalar frontmatter values (only the page body is chunked). If a value must be findable by search, also state it in the body, for example `Stage: negotiation` (#5335).
 2. **Use `.raw/` for provenance** — save every API response with source and timestamp. These map to provenance records in the fact store.
 3. **Treat the timeline as an event stream** — dated, sourced, append-only. These map to the event ledger.
 4. **Keep compiled truth conceptually separate from evidence** — above the line is synthesis; below the line is evidence. The synthesis is a generated view; the evidence is queryable records.
@@ -303,10 +303,10 @@ house style that never types an em dash writes
 A colon is not a delimiter: `- **2026-01-02** | Meeting: Agreed on the Q2 plan`
 still parses as a dated entry, but its source is recorded as `markdown` and the
 whole `Meeting: Agreed on the Q2 plan` text is the summary, because `Note: …`
-and `TODO: …` are ordinary prose. gbrain's own writers (`add_timeline_entry`,
+and `TODO: …` are ordinary prose. foresights's own writers (`add_timeline_entry`,
 the extractors) keep writing the em dash.
 
-All sections are optional — include what you have and omit a section until there is something to put under it (`gbrain lint` flags an empty section, `[No data yet]` included). **The template itself is a prompt for future enrichment.** A section the page lacks tells the agent what to look for next time it encounters this person.
+All sections are optional — include what you have and omit a section until there is something to put under it (`foresights lint` flags an empty section, `[No data yet]` included). **The template itself is a prompt for future enrichment.** A section the page lacks tells the agent what to look for next time it encounters this person.
 
 The principle: facts are table stakes. Context is the value.
 
@@ -909,17 +909,17 @@ When you mention someone or something in conversation:
 
 **log.md** — chronological record of ingests and updates. Append-only.
 
-At scale (500+ pages), add search tooling (embeddings, BM25, or tools like gbrain). At moderate scale, grep works well.
+At scale (500+ pages), add search tooling (embeddings, BM25, or tools like foresights). At moderate scale, grep works well.
 
 ### Write hotspots and concurrency
 
 Once you have cron jobs, ingest jobs, and sub-agents all touching the brain repo, **index.md and log.md become merge-conflict magnets.** Every workflow wants to append to log.md and update index.md on every commit.
 
 Practical mitigations:
-- **Treat index.md as derived, not hand-maintained.** Instead of updating it in every ingest workflow, rebuild it periodically (daily or on-demand) by scanning the directory tree. This eliminates it as a write hotspot. `gbrain nav` does this for `index.md`, `log.md` and a short `hot.md`, rebuilding only a marked block so your own notes in those files stay ([nav files](guides/nav-files.md)).
+- **Treat index.md as derived, not hand-maintained.** Instead of updating it in every ingest workflow, rebuild it periodically (daily or on-demand) by scanning the directory tree. This eliminates it as a write hotspot. `foresights nav` does this for `index.md`, `log.md` and a short `hot.md`, rebuilding only a marked block so your own notes in those files stay ([nav files](guides/nav-files.md)).
 - **Make log.md append-safe.** Each entry is a self-contained line with a timestamp prefix. Two machines that append to the end of the file at the same time do conflict; both sides are correct, so keep both lines (resolve with a merged copy: [conflicts](guides/shared-checkout-git.md#conflicts)).
 - **Commit in batches, not per-page.** When an ingest job updates 10 entity pages, commit once at the end, not 10 times. This reduces conflict surface.
-- **Commit and push through the shared-checkout helper.** Every workflow commits with `scripts/brain-commit-push.sh "<msg>" <paths>` (or `gbrain git commit-push`), and pulls with its `--pull` mode. It takes one writer lock per checkout, commits only the named paths and merges remote commits in memory, so it never stashes or rebases files other workflows are writing. With an append-only log and independent entity pages, those merges almost always succeed ([shared-checkout git](guides/shared-checkout-git.md)).
+- **Commit and push through the shared-checkout helper.** Every workflow commits with `scripts/brain-commit-push.sh "<msg>" <paths>` (or `foresights git commit-push`), and pulls with its `--pull` mode. It takes one writer lock per checkout, commits only the named paths and merges remote commits in memory, so it never stashes or rebases files other workflows are writing. With an append-only log and independent entity pages, those merges almost always succeed ([shared-checkout git](guides/shared-checkout-git.md)).
 - **Entity pages rarely conflict.** Two workflows updating `people/jane-doe.md` at the same time is rare because they're triggered by different signals about different people. The real conflict hotspots are the shared files (index.md, log.md), which is why those should be append-only or derived.
 
 ## Maintenance (Lint)

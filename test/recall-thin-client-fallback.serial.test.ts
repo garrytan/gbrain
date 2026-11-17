@@ -1,7 +1,7 @@
 /**
  * #4720 — thin-client mirror of the recall entity→text fallback.
  *
- * On a `gbrain init --mcp-only` install, `gbrain recall <term>` calls the
+ * On a `foresights init --mcp-only` install, `foresights recall <term>` calls the
  * remote `recall` tool. When the entity arm comes back empty for a bare
  * positional, the CLI retries ONCE as a fact-text grep over the wire:
  *   - the second call carries `grep: <term lowercased>` and NO `entity`;

@@ -1,5 +1,5 @@
 /**
- * Interview engine for `gbrain bootstrap interview` (library module — no CLI
+ * Interview engine for `foresights bootstrap interview` (library module — no CLI
  * parsing; the dispatcher in src/commands/bootstrap/ calls these functions).
  *
  * State lives at `<workspace>/state/interview.json` (COMMITTED — identity
@@ -165,7 +165,7 @@ export function readInterviewState(
     return {
       ok: false,
       code: 'newer_version',
-      message: `${path} has version ${s.version}, written by a newer gbrain — upgrade this binary before continuing.`,
+      message: `${path} has version ${s.version}, written by a newer foresights — upgrade this binary before continuing.`,
     };
   }
   if (typeof s.answers !== 'object' || s.answers === null || Array.isArray(s.answers)) {
@@ -547,7 +547,7 @@ export function routeProviderKeyToConfig(
     return {
       ok: false,
       code: 'config_missing',
-      message: `no gbrain config found at ${configPath()} — run \`gbrain init\` first, then set the provider key again.`,
+      message: `no foresights config found at ${configPath()} — run \`foresights init\` first, then set the provider key again.`,
     };
   }
   const next: GBrainConfig = { ...config, [shape.configKey]: value };

@@ -50,7 +50,7 @@ export function largePageBodyFilter(alias: string): string {
  * The budget meters large pages only, so a row left on a page edited down to
  * the inline threshold or under no longer applies, except a conversation-archive
  * hold (archive_backfill, archive_open_day; GST-2768) or an imported call's hold (call_import; GST-2731), which apply at any size. The one rule the embedding
- * queue, the held list (`gbrain embed --held`) and the held count (doctor
+ * queue, the held list (`foresights embed --held`) and the held count (doctor
  * `partial_embedding`) share.
  */
 export function budgetRowAppliesFilter(budget: string, page: string): string {

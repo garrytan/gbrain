@@ -1,5 +1,5 @@
 /**
- * GST-2462: a privacy label gbrain does not recognize (`access: personal`, a confidentiality value naming a health
+ * GST-2462: a privacy label foresights does not recognize (`access: personal`, a confidentiality value naming a health
  * record, free text starting "PRIVATE") is ignored with no word: the page reads like an unlabelled page to remote
  * callers and is not kept out of git by the label. Each write path (put_page, import, sync) now says so with one
  * `privacy_label_ignored` notice, and the doctor check counts such pages by value. Nothing reads differently.

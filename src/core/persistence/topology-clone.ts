@@ -42,10 +42,10 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
     'SELECT incarnation,config,last_commit,local_path FROM sources WHERE id=$1',[input.sourceId]);
   if(source)source.config=parseSourceConfig(source.config);
   if(input.operation==='add'&&source)throw opError('source_id_taken','Source ID is already registered.',
-    `Source ${input.sourceId} already exists, so nothing was cloned. Choose a different source id, or use gbrain sources reclone ${input.sourceId} to replace its managed checkout.`,
+    `Source ${input.sourceId} already exists, so nothing was cloned. Choose a different source id, or use foresights sources reclone ${input.sourceId} to replace its managed checkout.`,
     {fix:sourcesListFix()});
   if(input.operation==='reclone'&&!source)throw opError('not_found','Source not found.',
-    `No source ${input.sourceId} is registered, so there is nothing to reclone. Check the registered sources; a new clone is created with gbrain sources add and --url.`,
+    `No source ${input.sourceId} is registered, so there is nothing to reclone. Check the registered sources; a new clone is created with foresights sources add and --url.`,
     {fix:sourcesListFix()});
   if(input.expectedIncarnation&&input.expectedIncarnation!==source?.incarnation)throw opError('source_changed','The source was replaced.',
     `Source ${input.sourceId} is ${source?`now incarnation ${source.incarnation}`:'no longer registered'}, not the expected ${input.expectedIncarnation}; nothing was cloned. Re-read the source and confirm the ${input.operation} still applies before passing the current incarnation.`,
@@ -55,8 +55,8 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
     throw opError('owner_unavailable','Reclone must run on the owner of the complete canonical worktree.',
     `This host does not own source ${input.sourceId}'s whole canonical worktree (it is unclaimed, owned elsewhere, or a subdirectory of a shared root), so nothing was recloned. Check the owner and run the reclone on that host.`,
     {fix:writerStatusFix(input.sourceId)});
-  if(input.operation==='reclone'&&(!source||!isOwnedClone({id:input.sourceId,local_path:source.local_path,config:source.config})))throw opError('unmanaged_path','Reclone only replaces a checkout created and managed by GBrain.',
-    `Source ${input.sourceId}'s checkout was not cloned by gbrain, so reclone will not replace it; nothing changed. Update that checkout with git directly, or ask the user before converting it into a managed clone.`,
+  if(input.operation==='reclone'&&(!source||!isOwnedClone({id:input.sourceId,local_path:source.local_path,config:source.config})))throw opError('unmanaged_path','Reclone only replaces a checkout created and managed by Foresights.',
+    `Source ${input.sourceId}'s checkout was not cloned by foresights, so reclone will not replace it; nothing changed. Update that checkout with git directly, or ask the user before converting it into a managed clone.`,
     {fix:sourcesListFix()});
   const url=input.remoteUrl??source?.config.remote_url;
   if(typeof url!=='string')throw opError('invalid_params','A configured HTTPS clone URL is required.',
@@ -65,7 +65,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
   parseRemoteUrl(url);
   if(input.operation==='reclone'&&input.remoteUrl!==undefined&&input.remoteUrl!==source?.config.remote_url)
     throw opError('source_changed',"Reclone must use the source's configured remote URL.",
-    `Run gbrain sources reclone ${input.sourceId} without --url; reclone always uses the remote URL recorded for the source. Nothing was recloned.`);
+    `Run foresights sources reclone ${input.sourceId} without --url; reclone always uses the remote URL recorded for the source. Nothing was recloned.`);
   const requested=binding?.local_path??input.path;
   if(typeof requested!=='string'||!isAbsolute(requested)||requested.includes('\0'))throw opError('invalid_params','Clone destination must be an absolute path on the owner.',
     `Pass --path as an absolute directory on this host for source ${input.sourceId} (for example under the home directory); nothing was cloned.`);
@@ -89,7 +89,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
     const coordination=resolveCoordinationLock(target,worktreeId,{reservation:reservedIdentity?.coordinationPath,binding:currentBinding?.coordination_path},hostIdFor(engine)).path;
     let newLock:NativeLockHandle|null=null;
     if(!bindings.some(binding=>binding.worktree_id===worktreeId)){newLock=await acquireNativeLock(coordination!,{timeoutMs:5000});if(!newLock)throw opError('writer_lock_unavailable','The new clone coordination lock is busy.',
-      `Another gbrain process holds the coordination lock for ${target}, so source ${input.sourceId} was not cloned. Run the command again once that process has finished.`,
+      `Another foresights process holds the coordination lock for ${target}, so source ${input.sourceId} was not cloned. Run the command again once that process has finished.`,
       {fix:writerStatusFix()});}
     let accepted:TopologyChange|undefined;
     let lockedConfig:unknown=input.config;
@@ -172,7 +172,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         const stageBytes=await topologyDirectoryBytes(recovery.stage,recovery.cloneBudget);
         const candidate=worktreeManifest(recovery.stage,{progress:humanManifestProgress(),scope:recovery.hashScope});
         if(recovery.manifest&&candidate.digest!==recovery.manifest.digest)throw opError('writer_manifest_mismatch','The cloned checkout differs from the verified canonical manifest, including deletions.',
-          `A fresh clone from the remote does not match source ${input.sourceId}'s canonical content exactly (including deletions), so the clone is rolled back and the original kept. Make sure every canonical commit is pushed to the remote, then run gbrain sources reclone ${input.sourceId} again under a new request id.`,
+          `A fresh clone from the remote does not match source ${input.sourceId}'s canonical content exactly (including deletions), so the clone is rolled back and the original kept. Make sure every canonical commit is pushed to the remote, then run foresights sources reclone ${input.sourceId} again under a new request id.`,
           {fix:writerStatusFix(input.sourceId)});
         flushTopologyTree(recovery.stage);flushTopologyDirectory(dirname(recovery.stage));
         recovery.afterHash=candidate.digest;recovery.hashScope=candidate.scope??'tree';recovery.phase='prepared';recovery.manifest={...candidate,canonical_stamp:recovery.canonicalStamp};

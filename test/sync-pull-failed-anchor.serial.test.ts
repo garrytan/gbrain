@@ -31,7 +31,7 @@ describe('#3068: failed git pull + zero imports must not report up_to_date', () 
   let engine: PGLiteEngine;
   const dirs: string[] = [];
   // Hermetic GBRAIN_HOME: performFullSync (first sync) reads/writes the
-  // sync-failure ledger under the gbrain home — never touch the real one.
+  // sync-failure ledger under the foresights home — never touch the real one.
   let isolatedHome: string;
   let origGbrainHome: string | undefined;
 

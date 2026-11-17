@@ -37,7 +37,7 @@ describe('buildRetrievalReflexCheck', () => {
       const dir = mkdtempSync(join(tmpdir(), 'rr-doctor-2-'));
       const c = buildRetrievalReflexCheck(dir);
       expect((c.details as any)?.policy_skill_installed).toBe(false);
-      expect(c.message).toContain('gbrain integrations install retrieval-reflex');
+      expect(c.message).toContain('foresights integrations install retrieval-reflex');
       rmSync(dir, { recursive: true, force: true });
     });
   });

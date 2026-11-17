@@ -72,7 +72,7 @@ describe('writeCodexHooks', () => {
     expect(res2.replacedPrior).toBe(true);
     expect(readHooks().hooks!.SessionEnd!).toHaveLength(1);
     const cfg = readFileSync(configPath, 'utf8');
-    expect(cfg.match(/gbrain:codex-hooks-trust \(managed/g)).toHaveLength(1);
+    expect(cfg.match(/(?:foresights|gbrain):codex-hooks-trust \(managed/g)).toHaveLength(1);
     expect(cfg.match(/trusted_hash/g)).toHaveLength(1);
   });
 

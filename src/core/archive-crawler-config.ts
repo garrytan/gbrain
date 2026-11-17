@@ -277,7 +277,7 @@ export function loadArchiveCrawlerConfig(
 ): ArchiveCrawlerConfig {
   if (!repoPath) {
     throw new ArchiveCrawlerConfigError(
-      'No brain repo path provided. archive-crawler requires a brain repo with gbrain.yml. Run `gbrain init` or set sync.repo_path in gbrain config.',
+      'No brain repo path provided. archive-crawler requires a brain repo with gbrain.yml. Run `foresights init` or set sync.repo_path in foresights config.',
       'missing_section',
     );
   }

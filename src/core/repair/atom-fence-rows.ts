@@ -1,5 +1,5 @@
 /**
- * `gbrain repair atom-fence-rows`: world atoms that carry text of a fence row
+ * `foresights repair atom-fence-rows`: world atoms that carry text of a fence row
  * their source page shows only to the owner.
  *
  * Atoms extracted before the extraction input was the page as a world reader
@@ -114,7 +114,7 @@ export async function findAtomFenceRows(engine: BrainEngine, sourceIds: string[]
 }
 
 export function atomFenceRowsPreviewCommand(sourceIds: string[]): string {
-  return `gbrain repair atom-fence-rows${sourceIds.length === 1 ? ` --source ${sourceIds[0]}` : ''}`;
+  return `foresights repair atom-fence-rows${sourceIds.length === 1 ? ` --source ${sourceIds[0]}` : ''}`;
 }
 
 interface AtomFenceRowItem extends RepairItem { atom: AtomFenceRow; hash: string; last: boolean }
@@ -152,7 +152,7 @@ export const atomFenceRowsRepair: RepairHandler = {
           detail: `source page ${atom.origin_slug}: ${rowLabel(atom)}` })) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair atom-fence-rows --apply narrows only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair atom-fence-rows --apply narrows only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#atom-fence-rows');
     }

@@ -2,7 +2,7 @@
  * guest_source doctor check (GBRA-504 slice 4).
  *
  * Protects: not_applicable without a guest source; ok for a guest source with its flags, ceiling and a live writer
- * whose grant is exactly the guest source, read by every owner credential; fail, naming gbrain guests init as the
+ * whose grant is exactly the guest source, read by every owner credential; fail, naming foresights guests init as the
  * repair, when the two guest records disagree (a guest_sources row whose config lost guest: true, or a config that says
  * guest with no guest_sources row), when a writer names a removed client, or when a writer's grant reaches another
  * source; warn, with
@@ -72,7 +72,7 @@ describe('guest_source doctor check', () => {
     const check = await guestSourceCheck(engine);
     expect(check.status).toBe('fail');
     expect(check.message).toContain('source ' + SRC + ' has a guest_sources row but its config does not say guest: true');
-    expect(check.message).toContain('repair: gbrain guests init --source ' + SRC + ' --yes');
+    expect(check.message).toContain('repair: foresights guests init --source ' + SRC + ' --yes');
     expect(check.fix?.argv).toEqual(['gbrain', 'guests', 'init', '--source', SRC, '--yes']);
   }, 60_000);
 
@@ -82,7 +82,7 @@ describe('guest_source doctor check', () => {
     const check = await guestSourceCheck(engine);
     expect(check.status).toBe('fail');
     expect(check.message).toContain('source ' + PLAIN + ' says guest: true in its config but has no guest_sources row');
-    expect(check.message).toContain('repair: gbrain guests init --source ' + PLAIN + ' --yes');
+    expect(check.message).toContain('repair: foresights guests init --source ' + PLAIN + ' --yes');
     expect(check.fix?.argv).toEqual(['gbrain', 'guests', 'init', '--source', PLAIN, '--yes']);
   }, 60_000);
 
@@ -104,8 +104,8 @@ describe('guest_source doctor check', () => {
     const [rev] = await engine.executeRaw<{ grant_revision: number }>('SELECT grant_revision FROM oauth_clients WHERE client_id = $1', [ownerClient]);
     const check = await guestSourceCheck(engine);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain auth rescope --client ' + ownerClient + ' --read-sources ' + PLAIN + ',' + SRC + ' --if-version ' + rev!.grant_revision);
-    expect(check.message).toContain('gbrain guests grant-owner-clients');
+    expect(check.message).toContain('foresights auth rescope --client ' + ownerClient + ' --read-sources ' + PLAIN + ',' + SRC + ' --if-version ' + rev!.grant_revision);
+    expect(check.message).toContain('foresights guests grant-owner-clients');
     expect(await federated(ownerClient)).toEqual([PLAIN]);
   }, 60_000);
 
@@ -115,7 +115,7 @@ describe('guest_source doctor check', () => {
     const check = await guestSourceCheck(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain('min_trust');
-    expect(check.message).toContain('gbrain auth set-min-trust ' + ownerClient + ' external_untrusted');
+    expect(check.message).toContain('foresights auth set-min-trust ' + ownerClient + ' external_untrusted');
   }, 60_000);
 });
 

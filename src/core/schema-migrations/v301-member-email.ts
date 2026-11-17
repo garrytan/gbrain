@@ -5,7 +5,7 @@ import type { Migration } from './types.ts';
 //
 // GST-1158 (F10a): an operator-declared email on a member, so the operator can
 // find the member when linking a trusted system's canonical id
-// (gbrain access member link --qm <id> --email <addr>). The operator still makes
+// (foresights access member link --qm <id> --email <addr>). The operator still makes
 // every link; nothing links or changes an email from an attested call. Stored
 // case-folded (trimmed, lower-case ASCII) by src/core/access/members.ts, unique
 // per brain when set, NULL for every existing member, and cleared when a member

@@ -1,6 +1,6 @@
 /**
- * GBRA-199: a harness or bot grant a gbrain install path mints (`gbrain mcp
- * provision` profiles, `gbrain agent register` presets) calls the full
+ * GBRA-199: a harness or bot grant a foresights install path mints (`foresights mcp
+ * provision` profiles, `foresights agent register` presets) calls the full
  * surface but lists only the memory verbs and request_tools over HTTP, like a
  * stdio registration with `--advertise verbs`. An operator's explicit surface
  * lists that surface in full, and a grant that was operator-pinned before

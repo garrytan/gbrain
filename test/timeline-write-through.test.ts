@@ -3,7 +3,7 @@
  *
  * Pre-fix, the op wrote ONLY the timeline_entries table: on a brain where
  * markdown on disk is the committable source of truth (`sync.repo_path` set),
- * every manual entry stranded — invisible to git and `gbrain get`, and
+ * every manual entry stranded — invisible to git and `foresights get`, and
  * silently lost on any FS→DB rebuild. These tests pin the fix: the entry
  * reaches the canonical markdown through the same write-through seam pages
  * and facts use (resolvePageWriteTarget → writePageThrough), the stored DB
@@ -125,7 +125,7 @@ describe('add_timeline_entry on an FS-canonical brain (#1856)', () => {
     expect(timeline[0].summary).toBe('Manual milestone added via timeline-add');
     expect(timeline[0].source).toBe('meetings/2026-07-15');
 
-    // The page row's timeline text gained the bullet (`gbrain get` shows it).
+    // The page row's timeline text gained the bullet (`foresights get` shows it).
     const page = await engine.getPage(slug, { sourceId: 'default' });
     expect(page?.timeline ?? '').toContain('Manual milestone added via timeline-add');
   });

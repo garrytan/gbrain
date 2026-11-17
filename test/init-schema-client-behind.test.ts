@@ -1,6 +1,6 @@
 /**
  * #7776: initSchema replays the binary's whole schema (CREATE OR REPLACE FUNCTION ...) before runMigrations. On a
- * database a newer gbrain migrated, an older binary's replay reinstalled its own superseded function bodies (the
+ * database a newer foresights migrated, an older binary's replay reinstalled its own superseded function bodies (the
  * writer-fence guards among them) and then applied nothing. initSchema now refuses with client_behind before anything
  * in the schema runs; apply-migrations refuses the same way before any orchestrator and before a forced schema run
  * (whose drift repairs would otherwise rewrite the newer schema's links_link_source_check). PGLite (the default keyless, repo-less brain); a cold on-disk engine, because a loaded test

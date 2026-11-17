@@ -9,7 +9,7 @@
 //      (incremental + full/runImport) through one shared policy.
 //   2. Give a visible, per-(source,path) record of what failed, with the
 //      commit hash to re-attempt after fixing the source file.
-//   3. `gbrain sync --skip-failed` acknowledges a known-bad set.
+//   3. `foresights sync --skip-failed` acknowledges a known-bad set.
 //   4. BOUNDED AUTO-SKIP: a file that fails N consecutive syncs is
 //      auto-skipped so a single poison file can't wedge ALL indexing
 //      forever — without ever silently dropping a FRESH failure, and
@@ -132,7 +132,7 @@ export function renameSentinelPath(to: string): string {
  * self-delimiting for ANY path bytes. The stale slug slot is always
  * present (`?` when the resolve itself failed before it was known) so the
  * prefix parses unambiguously, and so the blocked-run message can tell the
- * operator exactly which row `gbrain delete` should remove.
+ * operator exactly which row `foresights delete` should remove.
  */
 export function renameReconcileErrorMessage(
   from: string,
@@ -256,7 +256,7 @@ export const STRICT_REQUIRES_MANAGED = 'strict_requires_managed';
  */
 export function strictRequiresManagedAdvice(sourceId: string | undefined): string {
   const source = sourceId ?? 'default';
-  return `Source ${source} is git-canonical (canonical: git) and this brain does not have managed persistence, so gbrain imported none of these files; `
+  return `Source ${source} is git-canonical (canonical: git) and this brain does not have managed persistence, so foresights imported none of these files; `
     + 'the files themselves are fine. Ask the user whether to turn managed persistence on for this brain (docs/guides/concurrent-writes.md#local-registrations-and-canonical-ownership) and sync again, '
     + `or, to rebuild a strict source's database from a clone, to follow docs/guides/git-canonical.md#rebuilding-a-strict-sources-database-from-a-clone. `
     + 'Do not use --skip-failed: it would move the checkpoint past files whose content is not in the database.';
@@ -396,7 +396,7 @@ export function formatCodeBreakdown(
  * control-char scrubbed (terminal-escape safety, same policy as
  * sanitizePathForDisplay) and the list is capped so one pathological run
  * can't flood stderr. Callers pair this with the
- * `gbrain frontmatter validate <path>` hint for parse-class failures.
+ * `foresights frontmatter validate <path>` hint for parse-class failures.
  */
 export function formatFailedFileList(
   failures: Array<{ path: string; error: string; code?: string }>,
@@ -417,12 +417,12 @@ export function formatFailedFileList(
 }
 
 /**
- * Where `sync-failures.jsonl` lives. Defaults to the gbrain home.
+ * Where `sync-failures.jsonl` lives. Defaults to the foresights home.
  *
  * `GBRAIN_SYNC_FAILURES_DIR` exists for the same reason `GBRAIN_AUDIT_DIR` does
  * (#2823): the test suite exercises import/sync failure paths with deliberately
  * broken fixtures, and without an override those fixture rows append into the
- * operator's REAL ledger — the one `gbrain doctor` reads and warns on until it
+ * operator's REAL ledger — the one `foresights doctor` reads and warns on until it
  * is cleaned up. A stray `srcE / notes/bad.md SLUG_MISMATCH` row in a live
  * brain came from exactly this.
  *
@@ -735,7 +735,7 @@ function _recordAndClear(
 
 /**
  * Public single-purpose recorder (no clear). Used by callers outside the
- * sync gate (e.g. `gbrain import`). Increments attempts like the gate.
+ * sync gate (e.g. `foresights import`). Increments attempts like the gate.
  */
 export function recordFailures(
   sourceId: string,

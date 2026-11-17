@@ -94,7 +94,7 @@ describe('schema_pack_consistency', () => {
     const check = await checkSchemaPackConsistency(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain('Source `src-x`: 1 of 10 pages (10.0%)');
-    expect(check.message).toContain('gbrain schema detect --source src-x');
+    expect(check.message).toContain('foresights schema detect --source src-x');
   });
 
   test('9.9% untyped -> stays ok, names the worst source and the threshold', async () => {
@@ -167,7 +167,7 @@ describe('schema_pack_source_drift', () => {
     expect(check.message).toContain(
       'Per-source pack divergence detected: 2 distinct packs across 2 sources.',
     );
-    expect(check.message).toContain('gbrain sources list');
+    expect(check.message).toContain('foresights sources list');
   });
 
   test('engine.executeRaw throwing -> warn not verified (#5432), never throws', async () => {

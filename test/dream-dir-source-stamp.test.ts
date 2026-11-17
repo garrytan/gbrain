@@ -1,5 +1,5 @@
 /**
- * #1869 — `gbrain dream --dir <path>` stamps cycle freshness when the path
+ * #1869 — `foresights dream --dir <path>` stamps cycle freshness when the path
  * matches a registered source's local_path.
  *
  * Pre-fix, only `--source <id>` runs wrote last_source_cycle_at /
@@ -68,7 +68,7 @@ async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
   return typeof raw === 'string' ? raw : null;
 }
 
-describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
+describe('foresights dream --dir <path> freshness stamp (#1869)', () => {
   test('--dir matching a source local_path stamps last_full_cycle_at', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('path-scoped');
@@ -139,7 +139,7 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
  * host's own tmpdir layout) so the test is deterministic on macOS and
  * Linux CI alike.
  */
-describe('gbrain dream --dir <path> freshness stamp across a symlink (#2540)', () => {
+describe('foresights dream --dir <path> freshness stamp across a symlink (#2540)', () => {
   test('local_path stored as the REAL path, --dir given the SYMLINKED path still stamps', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       const realTarget = mkdtempSync(join(tmpdir(), 'gbrain-2540-real-'));

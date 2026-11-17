@@ -1,19 +1,19 @@
 # Warm CLI socket (Postgres)
 
-Agents usually call gbrain by running the CLI once per question. On a Postgres
+Agents usually call foresights by running the CLI once per question. On a Postgres
 brain each of those calls opens its own database connection, reads config and
 runs schema checks before it answers, and behind a transaction-mode pooler
 every one of those steps is a network round trip. A long-running
-`gbrain serve` already has all of that warm. The warm CLI socket lets that
-serve answer this user's CLI reads directly, so `gbrain search` costs about
+`foresights serve` already has all of that warm. The warm CLI socket lets that
+serve answer this user's CLI reads directly, so `foresights search` costs about
 what the same search costs over MCP.
 
 It is **off by default**. Nothing listens until you turn it on.
 
-**Say to your agent:** *"Turn on gbrain's warm CLI socket for my running
+**Say to your agent:** *"Turn on foresights's warm CLI socket for my running
 serve so CLI searches stop paying a cold database connection each time."*
 
-**Say to your agent:** *"Check whether my gbrain CLI reads are going through
+**Say to your agent:** *"Check whether my foresights CLI reads are going through
 the warm serve socket or the cold path."*
 
 ## Turn it on
@@ -21,22 +21,22 @@ the warm serve socket or the cold path."*
 Start the serve with the flag:
 
 ```bash
-gbrain serve --cli-socket
+foresights serve --cli-socket
 ```
 
 or set the config key once and restart the serve:
 
 ```bash
-gbrain config set serve.cli_socket true
+foresights config set serve.cli_socket true
 ```
 
 The serve logs one line on stderr: `cli-socket: listening on …/run/cli.sock`,
 or `cli-socket: not started: <reason>` when it cannot open the socket safely.
-A serve on a mount brain (`gbrain serve --brain <mount>`, `GBRAIN_BRAIN_ID`, a
+A serve on a mount brain (`foresights serve --brain <mount>`, `GBRAIN_BRAIN_ID`, a
 `.gbrain-mount` file or a mount path) never opens it: the socket serves the
 host brain only.
 Turn it off by removing the flag or running
-`gbrain config set serve.cli_socket false`, then restarting the serve.
+`foresights config set serve.cli_socket false`, then restarting the serve.
 The serve reads the key from the config it already loaded when it connected,
 so a serve with the socket off does no work for it: it loads none of the
 socket's code and sends the database nothing extra. A serve that started
@@ -45,8 +45,8 @@ degraded (database unreachable at boot) does not see the key; pass
 
 ## What goes through it
 
-Only reads: `gbrain search`, `gbrain query` (and `ask`), `gbrain get`, and the
-`gbrain recall` forms that run the recall operation (`--query`,
+Only reads: `foresights search`, `foresights query` (and `ask`), `foresights get`, and the
+`foresights recall` forms that run the recall operation (`--query`,
 `--budget-tokens`, `--question`, `--budget-policy`). The serve runs them
 through the same operation handlers with the same trusted local-CLI context,
 using your CLI's working directory and `GBRAIN_SOURCE` for source resolution,
@@ -74,7 +74,7 @@ refusal, which always prints a notice):
   is printed from it);
 - the serve was started for a different brain or environment. The CLI sends
   its identity and the serve compares it part by part with its own: the brain
-  (host or mount), the gbrain version, the config home, the config file (path
+  (host or mount), the foresights version, the config home, the config file (path
   and content), the database target and the read-behavior environment. The
   database target is the host, database, user and `options` parameter, never
   the password or driver-only parameters such as `prepare=`, `sslmode` or
@@ -101,14 +101,14 @@ refusal, which always prints a notice):
   resolves for that call) may differ. `GBRAIN_HOME` and `GBRAIN_BRAIN_ID`
   count by the config home and brain they resolve to, so a serve that exports
   `GBRAIN_HOME` matches a CLI that reaches the same home through `HOME`. Editing `config.json`, changing a listed
-  variable or upgrading gbrain while a serve runs sends CLI calls to the normal
+  variable or upgrading foresights while a serve runs sends CLI calls to the normal
   path until the serve restarts with the same settings. The refusal names the
   part that differed, never its value: `refused (identity_mismatch): database
   port`, `env GBRAIN_MODEL`, `provider key VOYAGE_API_KEY`, `config
   contents`, and the serve logs each distinct one once. Every refused call
   also prints a `socket_identity_mismatch` notice naming the part (an
   `[AGENT]` block on a non-TTY stdout, stderr under `--json` or on a TTY),
-  and the serve counts refusals by part for `gbrain doctor --only
+  and the serve counts refusals by part for `foresights doctor --only
   cli_socket_refusals`, which warns while any happened in the last 24 hours;
 - the CLI targets a mount brain (`--brain <mount>` and the other mount tiers).
 
@@ -137,7 +137,7 @@ socket entirely, for comparisons and benchmarks.
 ## Caller timeouts
 
 A call that falls back to the cold path pays the full start (3–6 s on a
-pooled Postgres brain) before it reads anything. Give gbrain calls from scripts
+pooled Postgres brain) before it reads anything. Give foresights calls from scripts
 and agent runtimes a timeout of at least 10 s, and set it in every layer that
 has one: a language runtime's exec timeout (Node's `child_process`, Python's
 `subprocess`, a harness tool timeout) can end the call before a longer shell
@@ -178,4 +178,4 @@ A warm call skips the cold path's connect-time work, so one-time startup
 notices (pending-migration warnings, upgrade disclosures) appear only on cold
 calls. Each warm request reads the DB-plane config once, in one statement, and
 answers every later config read in that request from it; nothing carries over
-to the next request, so a `gbrain config set` reaches the next warm call.
+to the next request, so a `foresights config set` reaches the next warm call.

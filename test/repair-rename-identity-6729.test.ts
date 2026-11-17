@@ -1,5 +1,5 @@
 /**
- * #6729 remedy: `gbrain repair rename-identity`, the deferred true rename for an inexact Git rename that sync split into a
+ * #6729 remedy: `foresights repair rename-identity`, the deferred true rename for an inexact Git rename that sync split into a
  * delete plus an add. The operator names the pair (--slug, --from); the preview binds both page ids, both revisions and
  * the disposition into its hash; the apply (destructive consent) carries the old page id onto the new slug with its
  * version history, timeline, links and facts, imports the new file onto it as an edit and retires the provisional page,
@@ -51,7 +51,7 @@ async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
   throw new Error('expected a refusal');
 }
 
-for (const kind of testBackends()) describe(`gbrain repair rename-identity (#6729, ${kind})`, () => {
+for (const kind of testBackends()) describe(`foresights repair rename-identity (#6729, ${kind})`, () => {
   let engine: BrainEngine, close: (() => Promise<void>) | undefined;
   const home = mkdtempSync(join(tmpdir(), 'gbrain-6729-remedy-'));
   const env = { GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_INTERACTIVE: '0', CI: '1' };
@@ -130,7 +130,7 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
     const preview = await repairJson(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap']);
     expect(structuredClone(preview)).toMatchObject({ kind: 'rename-identity', mode: 'dry_run', affected: 1, preview_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
       details: { disposition: 'carry', old: { page_id: s.old.id, slug: 'notes/plan', deleted: true }, new: { page_id: s.fresh.id, slug: 'notes/roadmap', deleted: false } } });
-    expect(preview.apply_command).toBe(`gbrain repair rename-identity --source ${s.id} --slug notes/roadmap --apply --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights repair rename-identity --source ${s.id} --slug notes/roadmap --apply --expect ${preview.preview_hash} --yes`);
     const [record] = await openRecords(s.id);
     const { identityRemedy } = await import('../src/core/sync-identity-downgrades.ts');
     expect((await identityRemedy(engine, record!)).plan_hash).toBe(preview.preview_hash);
@@ -195,7 +195,7 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
     const s = await classicDowngrade([]);
     expect((await purgeDeletedPagesCoordinated(engine, 0)).slugs).not.toContain('notes/plan');
     const preview = await repairJson(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap', '--close']);
-    expect(preview.apply_command).toBe(`gbrain repair rename-identity --source ${s.id} --slug notes/roadmap --close --apply --expect ${preview.preview_hash} --yes`);
+    expect(preview.apply_command).toBe(`foresights repair rename-identity --source ${s.id} --slug notes/roadmap --close --apply --expect ${preview.preview_hash} --yes`);
     const carryHash = (await repairJson(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap'])).preview_hash;
     expect(carryHash).not.toBe(preview.preview_hash);
     const applied = await repairJson(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap', '--close', '--apply', '--expect', preview.preview_hash, '--yes']);
@@ -214,7 +214,7 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
     expect(listed).toMatchObject({ affected: 0, residuals: { open_pairs: 1 } });
     expect(listed.preview_hash).toBeUndefined();
     expect(listed.listing).toEqual([{ item: `${s.id}:notes/plan -> notes/roadmap`, class: 'no_identity_signal',
-      detail: expect.stringContaining(`preview: gbrain repair rename-identity --source ${s.id} --slug notes/roadmap;`) }]);
+      detail: expect.stringContaining(`preview: foresights repair rename-identity --source ${s.id} --slug notes/roadmap;`) }]);
     expect((await refusal(() => repair(['rename-identity', '--source', s.id, '--apply', '--yes']))).code).toBe('invalid_params');
     expect((await refusal(() => repair(['rename-identity', '--slug', 'notes/roadmap']))).code).toBe('invalid_params');
   }), 240_000);
@@ -249,10 +249,10 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
       actor: 'agent', ask_user: true, user_message: expect.stringContaining('notes/plan'), verify: { argv: ['gbrain', 'doctor', '--only', 'rename_identity_downgrades', '--json'] } });
     // An unbound classic Postgres source refuses a restore (owner_unavailable), so only PGLite names the alternative.
     if (restoreOffered) {
-      expect(finding!.fix!.why).toContain(`gbrain restore notes/plan --source-id ${s.id} --force`);
-      expect(finding!.message).toContain(`gbrain restore notes/plan --source-id ${s.id} --force`);
+      expect(finding!.fix!.why).toContain(`foresights restore notes/plan --source-id ${s.id} --force`);
+      expect(finding!.message).toContain(`foresights restore notes/plan --source-id ${s.id} --force`);
     } else {
-      for (const said of [finding!.fix!.why, finding!.message, String(finding!.fix!.user_message)]) expect(said).not.toContain('gbrain restore');
+      for (const said of [finding!.fix!.why, finding!.message, String(finding!.fix!.user_message)]) expect(said).not.toContain('foresights restore');
       expect((finding!.details as unknown as { restore_unavailable_sources: string[] }).restore_unavailable_sources).toContain(s.id);
     }
     expect(structuredClone(finding!.details.samples[0]!.remedy)).toMatchObject({ plan_hash: finding!.fix!.plan_hash, consent: ['destructive'], hold_releases: 'the remedy carries or closes the pair, or the old page is restored or purged' });
@@ -278,10 +278,10 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
     expect(entry!.remedy.hold_releases).toBe('the remedy carries or closes the pair, or the old page is restored or purged');
     const { identityDowngradeLines, withIdentityRemedies } = await import('../src/core/sync-identity-downgrades.ts');
     const text = identityDowngradeLines(await withIdentityRemedies(engine, await openRecords(s.id))).join('\n');
-    expect(text).toContain(`preview gbrain repair rename-identity --source ${s.id} --slug notes/roadmap, then apply gbrain repair rename-identity --source ${s.id} --slug notes/roadmap --apply --expect ${entry!.remedy.plan_hash} --yes`);
+    expect(text).toContain(`preview foresights repair rename-identity --source ${s.id} --slug notes/roadmap, then apply foresights repair rename-identity --source ${s.id} --slug notes/roadmap --apply --expect ${entry!.remedy.plan_hash} --yes`);
     expect(text).toContain('asks the user first: destructive');
-    if (restoreOffered) expect(text).toContain(`or keep notes/plan as its own page: gbrain restore notes/plan --source-id ${s.id} --force`);
-    else expect(text).not.toContain('gbrain restore');
+    if (restoreOffered) expect(text).toContain(`or keep notes/plan as its own page: foresights restore notes/plan --source-id ${s.id} --force`);
+    else expect(text).not.toContain('foresights restore');
     expect(text).toContain('The purge holds notes/plan until the remedy carries or closes the pair, or the old page is restored or purged.');
     expect(text).not.toMatch(/72 h|72-hour|expires/);
   }), 240_000);
@@ -295,13 +295,13 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
     process.exitCode = priorExitCode ?? 0;
     const all = JSON.parse(allOut) as { results: Array<{ kind: string }>; explicit_kinds: Array<{ kind: string; code: string; preview_command: string; docs: string }> };
     expect(all.results.map(r => r.kind)).not.toContain('rename-identity');
-    expect(all.explicit_kinds).toContainEqual({ kind: 'rename-identity', code: 'explicit_kind_required', preview_command: 'gbrain repair rename-identity', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' });
+    expect(all.explicit_kinds).toContainEqual({ kind: 'rename-identity', code: 'explicit_kind_required', preview_command: 'foresights repair rename-identity', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' });
     const { computeRemediationPlan } = await import('../src/core/remediation/index.ts');
     const plan = await computeRemediationPlan(engine, { repairs: {} });
     expect(plan.repair_steps!.map(step => step.kind)).not.toContain('rename-identity');
     expect(plan.explicit_repairs!.map(n => [n.kind, n.code])).toContainEqual(['rename-identity', 'explicit_kind_required']);
     const { runRepairSteps } = await import('../src/core/remediation/repairs.ts');
-    const supplied = await refusal(() => runRepairSteps(engine, [{ step: 1, id: 'repair:rename-identity', kind: 'rename-identity' as never, affected: 1, command: 'gbrain repair rename-identity --apply',
+    const supplied = await refusal(() => runRepairSteps(engine, [{ step: 1, id: 'repair:rename-identity', kind: 'rename-identity' as never, affected: 1, command: 'foresights repair rename-identity --apply',
       requires_user_agreement: true, protected: true, paid: false, embeds: 'none', est_usd_cost: 0, lifetime_ids: 0, checks: [], rationale: 'supplied' }], { remote: false, remainingUsd: () => undefined }));
     expect(supplied.code).toBe('explicit_kind_required');
     const { contentRepairPhaseKinds, runContentRepairPhase } = await import('../src/core/cycle/content-repair.ts');
@@ -351,7 +351,7 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
       expect(entries[0]!.remedy.argv).toEqual([...close, '--apply', '--expect', entries[0]!.remedy.plan_hash, '--yes']);
       lines.push(...identityDowngradeLines(entries));
       const text = lines.join('\n');
-      expect(text).toContain(`Carrying notes/plan's identity onto notes/roadmap is unavailable on a managed source (managed_remedy_unavailable); release the purge hold without carrying it (asks the user first: destructive): preview ${close.join(' ')}, then apply ${entries[0]!.remedy.argv.join(' ')}; or keep notes/plan as its own page: gbrain restore notes/plan --source-id ${id} --force`);
+      expect(text).toContain(`Carrying notes/plan's identity onto notes/roadmap is unavailable on a managed source (managed_remedy_unavailable); release the purge hold without carrying it (asks the user first: destructive): preview ${close.join(' ')}, then apply ${entries[0]!.remedy.argv.join(' ')}; or keep notes/plan as its own page: foresights restore notes/plan --source-id ${id} --force`);
       const { readSyncStatus } = await import('../src/core/persistence/sync-status.ts');
       const status = (await readSyncStatus(engine, id, { detail: false })).identity_downgrades.find(entry => entry.old_slug === 'notes/plan')!;
       expect(status.remedy).toMatchObject({ disposition: 'close', carry_unavailable: 'managed_remedy_unavailable', preview_argv: close, plan_hash: entries[0]!.remedy.plan_hash });
@@ -360,14 +360,14 @@ for (const kind of testBackends()) describe(`gbrain repair rename-identity (#672
       const [finding] = (await renameIdentityDowngradesEntry.run({ engine } as unknown as DoctorContext)) as unknown as Array<{ message: string; fix: Record<string, unknown> & { why: string } }>;
       expect(structuredClone(finding!.fix)).toMatchObject({ argv: entries[0]!.remedy.argv, preview_argv: close, consent: ['destructive'], ask_user: true, plan_hash: entries[0]!.remedy.plan_hash });
       expect(finding!.message).toContain('Carrying identity is unavailable on a managed source (managed_remedy_unavailable); to release the purge hold without carrying it, preview');
-      expect(finding!.message).toContain(`gbrain restore notes/plan --source-id ${id} --force`);
+      expect(finding!.message).toContain(`foresights restore notes/plan --source-id ${id} --force`);
       // The last report line is the general tip for future moves (S1), not a route for this pair.
       for (const said of [lines.slice(0, -1).join('\n'), finding!.message, finding!.fix.why, String(finding!.fix.user_message)]) expect(said).not.toMatch(/\bedit\b|git restore|move (it )?back/);
 
       // The carry preview states the code and writes nothing; its --apply refuses with it and moves no identity.
       const preview = await repairJson(['rename-identity', '--source', id, '--slug', 'notes/roadmap']);
       expect(structuredClone(preview)).toMatchObject({ mode: 'dry_run', affected: 0, residuals: { carry_unavailable: 1 },
-        details: { code: 'managed_remedy_unavailable', close_preview: close.join(' '), restore: `gbrain restore notes/plan --source-id ${id} --force` },
+        details: { code: 'managed_remedy_unavailable', close_preview: close.join(' '), restore: `foresights restore notes/plan --source-id ${id} --force` },
         listing: [{ item: `${id}:notes/plan -> notes/roadmap`, class: 'managed_remedy_unavailable' }] });
       expect(preview.preview_hash).toBeUndefined();
       const carry = await refusal(() => repair(['rename-identity', '--source', id, '--slug', 'notes/roadmap', '--apply', '--expect', 'f'.repeat(64), '--yes']));

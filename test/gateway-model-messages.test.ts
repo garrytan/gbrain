@@ -1,9 +1,9 @@
 /**
- * Pins `toModelMessages` — the gbrain ChatMessage[] → AI SDK v6 ModelMessage[]
+ * Pins `toModelMessages` — the foresights ChatMessage[] → AI SDK v6 ModelMessage[]
  * converter. v6 tightened ModelMessage validation: tool results must ride on a
  * dedicated `role:'tool'` message with a structured `{type,value}` output part,
  * not a `role:'user'` message with a bare-value tool-result block (which is how
- * gbrain's toolLoop pushes them). Without this conversion every multi-turn tool
+ * foresights's toolLoop pushes them). Without this conversion every multi-turn tool
  * loop — skillopt rollouts AND production subagent jobs — throws "messages do
  * not match the ModelMessage[] schema" the moment the model calls a tool.
  *

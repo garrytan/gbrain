@@ -14,13 +14,13 @@ model provider.
 Enable it for the current brain:
 
 ```bash
-gbrain config set conversation_parser.llm_fallback_enabled true
+foresights config set conversation_parser.llm_fallback_enabled true
 ```
 
 Disable it:
 
 ```bash
-gbrain config set conversation_parser.llm_fallback_enabled false
+foresights config set conversation_parser.llm_fallback_enabled false
 ```
 
 The key is registered explicitly, so neither command needs `--force`.
@@ -34,20 +34,20 @@ synchronous `conversation-parser scan` command call a model.
 Inspect the model routing before enabling a production run:
 
 ```bash
-gbrain models
+foresights models
 ```
 
 The fallback uses the resolved `utility` tier. Override that tier when the
 brain should use a different configured provider or model:
 
 ```bash
-gbrain config set models.tier.utility <provider:model>
+foresights config set models.tier.utility <provider:model>
 ```
 
 Start with one known unmatched page and an explicit cost cap:
 
 ```bash
-gbrain extract-conversation-facts \
+foresights extract-conversation-facts \
   --source-id <source-id> \
   --slug <conversation-slug> \
   --max-cost-usd 1

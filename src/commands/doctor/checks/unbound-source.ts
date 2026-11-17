@@ -35,7 +35,7 @@ export async function checkUnboundSource(engine: BrainEngine): Promise<Check> {
       message: `${counts(bound)} page(s) written database-only while the source was unbound now sit outside canonical files: `
         + 'binding does not materialize them, so they are not in the checkout, its Git history or file backups. '
         + 'There is no bulk materialization command; when a canonical file already exists at a page\'s slug path, preview both sides with '
-        + 'gbrain sources reconcile <source> <slug> --brain <brain> --preview and apply the agreed resolution. Otherwise save its content under a new slug and delete the database-only page.'
+        + 'foresights sources reconcile <source> <slug> --brain <brain> --preview and apply the agreed resolution. Otherwise save its content under a new slug and delete the database-only page.'
         + (unboundText ? ` ${unboundText}` : '') };
   } catch (error) {
     return { name: 'unbound_source', status: 'warn', details: { total: null, sources: [] },

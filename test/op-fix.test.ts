@@ -30,7 +30,7 @@ describe('op-fix builders', () => {
     expect(hostFix(stdio, argv, 'why').actor).toBe('user');
     expect(hostFix(http, argv, 'why')).toMatchObject({ actor: 'host_admin', user_message: expect.stringContaining('server') });
     const rendered = renderAction(hostFix(http, argv, 'why'), mcpRender('http'));
-    expect(rendered).toMatchObject({ next: 'tell_user_to_run', command: 'gbrain migrate embeddings --source docs' });
+    expect(rendered).toMatchObject({ next: 'tell_user_to_run', command: 'foresights migrate embeddings --source docs' });
   });
 
   test('hostOnlyError carries code, suggestion and a rendered fix', () => {
@@ -38,7 +38,7 @@ describe('op-fix builders', () => {
     expect(e.code).toBe('permission_denied');
     expect(e.suggestion).toContain('trusted local CLI');
     const env = toAgentError(e, { transport: 'stdio', op: 'x', render: mcpRender('stdio') });
-    expect(env.fix).toMatchObject({ actor: 'user', next: 'tell_user_to_run', command: 'gbrain doctor --json' });
+    expect(env.fix).toMatchObject({ actor: 'user', next: 'tell_user_to_run', command: 'foresights doctor --json' });
   });
 
   test('invalidParam lists choices and an example on each surface', () => {
@@ -58,13 +58,13 @@ describe('op-fix builders', () => {
 
   test('readFix is a no-consent agent step', () => {
     const f = readFix('Lists jobs.', { argv: ['gbrain', 'jobs', 'list'], mcp: { tool: 'list_jobs', arguments: {} } });
-    expect(renderAction(f, cliRenderContext())).toMatchObject({ next: 'run', command: 'gbrain jobs list' });
+    expect(renderAction(f, cliRenderContext())).toMatchObject({ next: 'run', command: 'foresights jobs list' });
     expect(renderAction(f, mcpRender('stdio', ['list_jobs']))).toMatchObject({ next: 'run', mcp: { tool: 'list_jobs' } });
   });
 
   test('trustedCliRequired reads the registration first and never re-registers', () => {
     const e = trustedCliRequired('Sync requires a current trusted CLI registration.');
     expect(e).toMatchObject({ code: 'permission_denied', reason: 'trusted_cli_required', message: 'Sync requires a current trusted CLI registration.' });
-    expect(renderAction(e.fix!, cliRenderContext())).toMatchObject({ command: 'gbrain auth local-writer list --json', actor: 'user', next: 'tell_user_to_run' });
+    expect(renderAction(e.fix!, cliRenderContext())).toMatchObject({ command: 'foresights auth local-writer list --json', actor: 'user', next: 'tell_user_to_run' });
   });
 });

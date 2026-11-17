@@ -15,7 +15,7 @@
  * honors `GBRAIN_AUDIT_DIR` via the shared `resolveAuditDir()` helper).
  *
  * Pruning (codex H-8): `pruneOldBatchRetryAuditFiles(30)` deletes files
- * older than 30 days. Called from `gbrain dream --phase purge` (the cycle's
+ * older than 30 days. Called from `foresights dream --phase purge` (the cycle's
  * 9th GC phase that already prunes op_checkpoints).
  */
 

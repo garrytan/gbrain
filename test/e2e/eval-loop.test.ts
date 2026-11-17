@@ -41,7 +41,7 @@ function basisEmbedding(idx: number, dim = 1536): Float32Array {
 }
 
 // Capture a search via the real engine.searchKeyword + build an
-// EvalCandidateInput row that mirrors what `gbrain eval export` would write.
+// EvalCandidateInput row that mirrors what `foresights eval export` would write.
 async function captureSearch(query: string, latency_ms = 100): Promise<EvalCandidateInput> {
   const t0 = Date.now();
   const results = await engine.searchKeyword(query);

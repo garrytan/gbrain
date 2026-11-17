@@ -36,7 +36,7 @@ export async function runInit(args: string[]) {
 async function runInitBranches(args: string[]) {
   // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
   // commands; CLI_ONLY commands (init, embed, etc.) fall through to their
-  // handler with --help in argv. Without this guard, `gbrain init --help`
+  // handler with --help in argv. Without this guard, `foresights init --help`
   // proceeds into the smart-detection branch below, scans cwd for .md files,
   // and on a directory with 1000+ files (e.g. $HOME for someone whose brain
   // and notes share a root) silently overwrites the existing Supabase config
@@ -60,7 +60,7 @@ async function runInitBranches(args: string[]) {
   const isMigrateOnly = args.includes('--migrate-only');
   const jsonOutput = args.includes('--json');
   const fileState = readInitConfigState(jsonOutput, jsonOutput ? message => process.exit(initJsonError({ status: 'error', reason: 'invalid_existing_config', message },
-    'config_error', message, `Repair or move ${configPath()} aside, then re-run gbrain init.`)) : undefined);
+    'config_error', message, `Repair or move ${configPath()} aside, then re-run foresights init.`)) : undefined);
   const urlIndex = args.indexOf('--url');
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
   const keyIndex = args.indexOf('--key');
@@ -99,16 +99,16 @@ async function runInitBranches(args: string[]) {
     const url = existing!.remote_mcp!.mcp_url;
     const msg = `Thin-client config already present at ${configPath()} (remote_mcp.mcp_url=${url}).\n` +
       `Re-init would create a local engine and conflict with the remote MCP setup.\n` +
-      `Use --force to overwrite, or \`gbrain init --mcp-only --force\` to refresh thin-client config.`;
+      `Use --force to overwrite, or \`foresights init --mcp-only --force\` to refresh thin-client config.`;
     if (jsonOutput) process.exit(initJsonError({ status: 'error', reason: 'thin_client_config_present', mcp_url: url, message: msg }, 'config_error', msg,
-      'Pass --force to overwrite, or run `gbrain init --mcp-only --force` to refresh the thin-client config.'));
+      'Pass --force to overwrite, or run `foresights init --mcp-only --force` to refresh the thin-client config.'));
     console.error(msg);
     process.exit(1);
   }
 
   // Schema-only path: apply initSchema against the already-configured engine
   // without ever calling saveConfig. Used by apply-migrations, the stopgap
-  // script, and older releases' postinstall hook. Bare `gbrain init` defaults to PGLite
+  // script, and older releases' postinstall hook. Bare `foresights init` defaults to PGLite
   // and overwrites any existing Postgres config — we must never take that
   // branch from a migration orchestrator.
   //
@@ -144,7 +144,7 @@ async function runInitBranches(args: string[]) {
   });
 
   // db-availability loop (5a): Postgres-first ladder for agent-harness
-  // installs. Explicit opt-in flag — the zero-config `gbrain init` default
+  // installs. Explicit opt-in flag — the zero-config `foresights init` default
   // stays PGLite (owner decision; the preference lives in the plugin lane).
   if (args.includes('--prefer-postgres')) {
     const { runPreferPostgresLadder } = await import('./init-prefer-postgres.ts');
@@ -166,7 +166,7 @@ async function runInitBranches(args: string[]) {
   // configured engine — the D5 persisted-config-wins rule extended to the
   // engine field. Pre-fix, the PGLite default branch below swallowed a
   // postgres config: following the deferred-setup hint verbatim
-  // (`gbrain init --force --embedding-model ...`) silently rewrote
+  // (`foresights init --force --embedding-model ...`) silently rewrote
   // config.json to engine=pglite, orphaning the postgres data behind a
   // config that no longer pointed at it. Switching engines stays available
   // by saying so (--pglite / --supabase / --url). loadConfigFileOnly, NOT
@@ -191,8 +191,8 @@ async function runInitBranches(args: string[]) {
         console.log(`Found ~${fileCount} .md files. For a brain this size, Supabase gives faster`);
         console.log('search and remote access ($25/mo). PGLite works too but search will be slower at scale.');
         console.log('');
-        console.log('  gbrain init --supabase   Set up with Supabase (recommended for large brains)');
-        console.log('  gbrain init --pglite     Use local PGLite anyway');
+        console.log('  foresights init --supabase   Set up with Supabase (recommended for large brains)');
+        console.log('  foresights init --pglite     Use local PGLite anyway');
         console.log('');
         // Default to PGLite, let the user choose Supabase if they want
       }
@@ -276,22 +276,22 @@ function validateInitFlags(args: string[]) {
 
     if (INIT_VALUE_FLAGS.has(arg)) {
       if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
-        failInitFlag(`gbrain init: ${arg} requires a value`, args.includes('--json'));
+        failInitFlag(`foresights init: ${arg} requires a value`, args.includes('--json'));
       }
       i += 1;
       continue;
     }
 
     if (arg.startsWith('--')) {
-      failInitFlag(`gbrain init: unknown flag ${arg}`, args.includes('--json'));
+      failInitFlag(`foresights init: unknown flag ${arg}`, args.includes('--json'));
     }
   }
 }
 
 function failInitFlag(message: string, jsonOutput: boolean): never {
-  if (jsonOutput) process.exit(initJsonError({ status: 'error', reason: 'invalid_flag', message }, 'invalid_params', message, 'Run `gbrain init --help` for supported flags.'));
+  if (jsonOutput) process.exit(initJsonError({ status: 'error', reason: 'invalid_flag', message }, 'invalid_params', message, 'Run `foresights init --help` for supported flags.'));
   console.error(message);
-  console.error('Run `gbrain init --help` for supported flags.');
+  console.error('Run `foresights init --help` for supported flags.');
   process.exit(exitCodeForCode('invalid_params'));
 }
 
@@ -352,7 +352,7 @@ export function seedAIOptionsFromConfig(
 }
 
 /**
- * Resolve AI provider options for `gbrain init`.
+ * Resolve AI provider options for `foresights init`.
  *
  * Precedence (per touchpoint, top wins):
  *   1. Explicit flag (--embedding-model / --expansion-model / --chat-model)
@@ -398,7 +398,7 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
   if (verbose) {
     out.embedding_model = verbose;
     // v0.46.3: an EXPLICIT --embedding-model wins over a seeded deferred-setup
-    // sentinel — without this, `gbrain init --force --embedding-model
+    // sentinel — without this, `foresights init --force --embedding-model
     // voyage:voyage-4` on a keyless brain (embedding_disabled persisted) would
     // silently re-persist embedding_disabled and the documented recovery
     // command would be a no-op. (--no-embedding is parsed later and still
@@ -408,7 +408,7 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const recipe = getRecipe(shorthand);
     if (!recipe) {
-      console.error(`Unknown provider: ${shorthand}. Run \`gbrain providers list\` to see known providers.`);
+      console.error(`Unknown provider: ${shorthand}. Run \`foresights providers list\` to see known providers.`);
       process.exit(1);
     }
     // v0.32 D8=A: recipes flagged user_provided_models (litellm, llama-server)
@@ -418,7 +418,7 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     if (recipe.touchpoints.embedding?.user_provided_models === true) {
       console.error(
         `Provider ${shorthand} requires you to specify the model + dimensions explicitly:\n` +
-        `  gbrain init --embedding-model ${shorthand}:<your-model-id> --embedding-dimensions <N>\n` +
+        `  foresights init --embedding-model ${shorthand}:<your-model-id> --embedding-dimensions <N>\n` +
         (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
       );
       process.exit(1);
@@ -595,18 +595,18 @@ export async function findEnvKeyTypos(
 function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested: string }>): void {
   console.error('\nNo embedding provider configured.');
   console.error('Continue without one (keyless — keyword search + memory your agent writes):');
-  console.error('  gbrain init --pglite --no-embedding');
+  console.error('  foresights init --pglite --no-embedding');
   console.error('  (enable semantic search later by re-running with a key:');
-  console.error('   gbrain init --force --pglite --embedding-model <id>)');
+  console.error('   foresights init --force --pglite --embedding-model <id>)');
   console.error('');
   console.error('Or set a key to upgrade capabilities:');
   console.error('  export VOYAGE_API_KEY=pa-…        # semantic search (voyage:voyage-4, 1024d) — default');
   console.error('  export OPENAI_API_KEY=sk-…        # semantic search (1536d) + automatic fact extraction');
   console.error('  export ANTHROPIC_API_KEY=sk-ant-… # automatic fact extraction (no embeddings API)');
-  console.error('Then re-run: gbrain init --pglite');
+  console.error('Then re-run: foresights init --pglite');
   console.error('');
   console.error('Or pick explicitly:');
-  console.error('  gbrain init --pglite --embedding-model voyage:voyage-4');
+  console.error('  foresights init --pglite --embedding-model voyage:voyage-4');
   // D13: surface near-miss env vars (e.g. OPENAPI_API_KEY → OPENAI_API_KEY).
   if (typos.length > 0) {
     console.error('');
@@ -654,7 +654,7 @@ async function writeNewInstallRerankerDefault(
       await engine.setConfig('search.reranker.enabled', 'false');
       console.log(
         `  Reranker: disabled (no ${key} — enable later: export ${key}=… && ` +
-        'gbrain config set search.reranker.enabled true)',
+        'foresights config set search.reranker.enabled true)',
       );
     }
   } catch {
@@ -664,7 +664,7 @@ async function writeNewInstallRerankerDefault(
 
 /** Loud keyless-continue notice for the no-keys default path. The upgrade
  *  command is `init --force` re-init, NOT `config set embedding_model` — that
- *  key is a schema-sizing file-plane field that `gbrain config set` refuses
+ *  key is a schema-sizing file-plane field that `foresights config set` refuses
  *  (it would be a silent no-op), so pointing users there is a dead end. */
 function printKeylessContinueNotice(): void {
   console.error(
@@ -674,7 +674,7 @@ function printKeylessContinueNotice(): void {
     '  fact extraction; Voyage: semantic search; Anthropic: fact extraction.\n' +
     '  Fact extraction activates as soon as the key is set (no re-init); semantic\n' +
     '  search needs a re-run:\n' +
-    '  `gbrain init --force --pglite --embedding-model <id>` (re-imports via `gbrain sync`).',
+    '  `foresights init --force --pglite --embedding-model <id>` (re-imports via `foresights sync`).',
   );
 }
 
@@ -865,14 +865,14 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
     const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
     const msg = e instanceof Error ? e.message : String(e);
     if (opts.jsonOutput) process.exit(initJsonError({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg },
-      isNoConfig ? 'no_brain' : 'database_error', msg, isNoConfig ? 'Run `gbrain init --pglite --no-embedding` first.' : 'Run `gbrain doctor --json` to see what blocks the schema bring-up.'));
+      isNoConfig ? 'no_brain' : 'database_error', msg, isNoConfig ? 'Run `foresights init --pglite --no-embedding` first.' : 'Run `foresights doctor --json` to see what blocks the schema bring-up.'));
     console.error(msg);
     process.exit(1);
   }
 }
 
 /**
- * `gbrain init --mcp-only` — thin-client setup. Writes a `remote_mcp` config
+ * `foresights init --mcp-only` — thin-client setup. Writes a `remote_mcp` config
  * field, runs three pre-flight smokes (OAuth discovery, token round-trip,
  * MCP initialize), and never creates a local engine.
  *
@@ -905,15 +905,15 @@ async function initRemoteMcp(opts: {
     const code = reason.startsWith('missing_') ? 'invalid_params' : reason.startsWith('token_') ? 'invalid_token'
       : reason.startsWith('discovery_') || reason.startsWith('mcp_smoke_') ? 'unavailable' : 'config_error';
     if (jsonOutput) process.exit(initJsonError({ status: 'error', reason, message, ...extra }, code, message.split('\n')[0],
-      message.split('\n').slice(1).join(' ') || 'Run `gbrain init --help` for the thin-client flags.'));
+      message.split('\n').slice(1).join(' ') || 'Run `foresights init --help` for the thin-client flags.'));
     console.error(message);
     process.exit(code === 'invalid_params' ? exitCodeForCode(code) : 1);
   }
 
   if (!issuerUrl) fail('missing_issuer_url', '--issuer-url is required (or set GBRAIN_REMOTE_ISSUER_URL). Example: --issuer-url https://brain-host.local:3001');
   if (!mcpUrl) fail('missing_mcp_url', '--mcp-url is required (or set GBRAIN_REMOTE_MCP_URL). Example: --mcp-url https://brain-host.local:3001/mcp');
-  if (!clientId) fail('missing_client_id', '--oauth-client-id is required (or set GBRAIN_REMOTE_CLIENT_ID). Get it from `gbrain auth register-client` on the host.');
-  if (!clientSecret) fail('missing_client_secret', '--oauth-client-secret is required (or set GBRAIN_REMOTE_CLIENT_SECRET). Get it from `gbrain auth register-client` on the host.');
+  if (!clientId) fail('missing_client_id', '--oauth-client-id is required (or set GBRAIN_REMOTE_CLIENT_ID). Get it from `foresights auth register-client` on the host.');
+  if (!clientSecret) fail('missing_client_secret', '--oauth-client-secret is required (or set GBRAIN_REMOTE_CLIENT_SECRET). Get it from `foresights auth register-client` on the host.');
 
   const existing = inspectRemoteInitState(isForce, fail);
 
@@ -929,7 +929,7 @@ async function initRemoteMcp(opts: {
     fail(
       `discovery_${disco.reason}`,
       `Pre-flight failed: OAuth discovery on ${issuerUrl} — ${disco.message}\n` +
-      `Hint: confirm the issuer_url, that the host is reachable, and that \`gbrain serve --http\` is running there.`,
+      `Hint: confirm the issuer_url, that the host is reachable, and that \`foresights serve --http\` is running there.`,
       { detail: disco.message, ...(disco.status ? { status: disco.status } : {}) },
     );
   }
@@ -942,7 +942,7 @@ async function initRemoteMcp(opts: {
       `token_${tokenRes.reason}`,
       `Pre-flight failed: OAuth /token — ${tokenRes.message}\n` + (tokenRes.reason === 'rate_limited'
         ? `Hint: the host's /token mint budget is spent; rerun after the wait, or the host operator can raise GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX.`
-        : `Hint: the host operator can run \`gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin\` to mint fresh credentials.`),
+        : `Hint: the host operator can run \`foresights auth register-client <name> --grant-types client_credentials --scopes read,write,admin\` to mint fresh credentials.`),
       { detail: tokenRes.message, ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.retry_after_s !== undefined ? { retry_after_s: tokenRes.retry_after_s } : {}) },
     );
   }
@@ -1010,8 +1010,8 @@ async function initRemoteMcp(opts: {
     console.log('');
     console.log('Next steps:');
     console.log(`  1. Configure your agent's MCP client to point at ${config.remote_mcp!.mcp_url} (Claude Desktop / Hermes / openclaw).`);
-    console.log('  2. Run `gbrain doctor` to re-verify connectivity at any time.');
-    console.log('  3. Run `gbrain remote ping` after writing markdown if you want the host to re-index immediately (Tier B).');
+    console.log('  2. Run `foresights doctor` to re-verify connectivity at any time.');
+    console.log('  3. Run `foresights remote ping` after writing markdown if you want the host to re-index immediately (Tier B).');
   }
 }
 
@@ -1072,7 +1072,7 @@ async function assertInitEmbeddingIdentity(engine: BrainEngine, model: string | 
       `SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL) AS present`,
     );
     if (rows[0]?.present) {
-      throw new Error('Existing vectors belong to a different or unrecorded embedding model. Re-initialization cannot change their identity, even at the same width. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.');
+      throw new Error('Existing vectors belong to a different or unrecorded embedding model. Re-initialization cannot change their identity, even at the same width. Run foresights migrate embeddings --status and preview an explicit migration with --dry-run.');
     }
   }
 }
@@ -1195,7 +1195,7 @@ export async function initPGLite(opts: {
       const after = await readContentChunksEmbeddingDim(engine);
       if (after.exists && after.dims !== null && after.dims !== resolvedDim) {
         console.error('\nUNEXPECTED: post-initSchema invariant assertion failed.');
-        console.error('  This is a bug. Please file an issue with the output of `gbrain doctor`.\n');
+        console.error('  This is a bug. Please file an issue with the output of `foresights doctor`.\n');
         console.error(embeddingMismatchMessage({
           currentDims: after.dims,
           requestedDims: resolvedDim,
@@ -1243,10 +1243,10 @@ export async function initPGLite(opts: {
     // (existing config wins on re-init, so a prior opt-out is preserved).
     config.mcp = { ...(freshContentDatabase && !existingFile.engine ? { publish_skills: true } : {}), ...(config.mcp ?? {}) };
     // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
-    // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
-    // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
+    // foresights invocation). mode_prompted=true so the upgrade-time banner doesn't
+    // also fire on a fresh install. Hands-off: foresights config set self_upgrade.mode auto
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(freshContentDatabase && !existingFile.engine ? { channel: 'stable' as const } : {}), ...(config.self_upgrade ?? {}) };
-    // MEMORY_VERBS v1 [D6C]: TTHW stamp — `gbrain protocol stats` derives
+    // MEMORY_VERBS v1 [D6C]: TTHW stamp — `foresights protocol stats` derives
     // install→first-verb-call from this. Idempotent on re-init.
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
     preserveConversionConfig(false);
@@ -1294,9 +1294,9 @@ export async function initPGLite(opts: {
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. Wire up the knowledge graph:');
-        console.log('  gbrain extract links --source db        (typed link backfill)');
-        console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
-        console.log('  gbrain stats                            (verify links > 0)');
+        console.log('  foresights extract links --source db        (typed link backfill)');
+        console.log('  foresights extract timeline --source db     (structured timeline backfill)');
+        console.log('  foresights stats                            (verify links > 0)');
       }
       reportModStatus();
 
@@ -1317,7 +1317,7 @@ export async function initPGLite(opts: {
   }
 }
 
-const INIT_EMBEDDING_HINT = 'Pick an embedding model whose dimensions match (`gbrain init --help`), or pass --no-embedding for a keyless brain.';
+const INIT_EMBEDDING_HINT = 'Pick an embedding model whose dimensions match (`foresights init --help`), or pass --no-embedding for a keyless brain.';
 
 /**
  * MEMORY_VERBS v1 quickstart funnel (E3 + D4B + T1 consent). Printed LAST in
@@ -1335,10 +1335,10 @@ function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boo
   console.log('');
   console.log(`→ Do this next — give your agent memory (copy these ${register ? 'three' : 'two'} commands):`);
   if (register) console.log(`  ${register}`);
-  else console.log('  (register gbrain with your agent app first: install gbrain globally so the registration can use its absolute path, then follow docs/protocol/MEMORY_VERBS_v1.md)');
-  console.log('  gbrain remember "gbrain install check" --provenance install-check');
-  console.log('  gbrain recall --query "gbrain install check"');
-  console.log('Then ask your agent in a NEW session to recall "gbrain install check" — it remembers. Ask it to forget that fact afterwards.');
+  else console.log('  (register foresights with your agent app first: install foresights globally so the registration can use its absolute path, then follow docs/protocol/MEMORY_VERBS_v1.md)');
+  console.log('  foresights remember "foresights install check" --provenance install-check');
+  console.log('  foresights recall --query "foresights install check"');
+  console.log('Then ask your agent in a NEW session to recall "foresights install check" — it remembers. Ask it to forget that fact afterwards.');
   console.log('');
   console.log('Note: memories agents save are readable by every agent connected to');
   console.log('this brain; use visibility:"private" for local-only facts.');
@@ -1348,9 +1348,9 @@ function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boo
   console.log('');
   console.log(
     'More: ' +
-      (opts.emptyBrain ? `bulk-load notes \`gbrain import <dir>${opts.keyless ? ' --no-embed' : ''}\` · ` : '') +
-      (opts.onPglite ? 'scale up `gbrain migrate --to postgres --plan` · ' : '') +
-      'health `gbrain doctor`',
+      (opts.emptyBrain ? `bulk-load notes \`foresights import <dir>${opts.keyless ? ' --no-embed' : ''}\` · ` : '') +
+      (opts.onPglite ? 'scale up `foresights migrate --to postgres --plan` · ' : '') +
+      'health `foresights doctor`',
   );
 }
 
@@ -1435,7 +1435,7 @@ export async function initPostgresCore(opts: {
     console.warn('  Direct connections are IPv6 only and fail in many environments.');
     console.warn('  Use the Transaction pooler connection string instead (port 6543):');
     console.warn('  Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler');
-    console.warn('  (With a pooler URL, gbrain derives a direct connection for DDL and falls back');
+    console.warn('  (With a pooler URL, foresights derives a direct connection for DDL and falls back');
     console.warn('  to the pooler automatically if that host is unreachable. Power users:');
     console.warn('  GBRAIN_DIRECT_DATABASE_URL overrides the derived URL; GBRAIN_DISABLE_DIRECT_POOL=1 disables it.)');
     console.warn('');
@@ -1451,7 +1451,7 @@ export async function initPostgresCore(opts: {
       if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
         console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
         console.error('Use the Transaction pooler connection string instead (port 6543).');
-        console.error('(gbrain derives its own direct connection from pooler URLs for DDL; if that host is');
+        console.error('(foresights derives its own direct connection from pooler URLs for DDL; if that host is');
         console.error('unreachable it falls back to the pooler. GBRAIN_DIRECT_DATABASE_URL overrides the');
         console.error('derived URL; GBRAIN_DISABLE_DIRECT_POOL=1 disables the direct pool entirely.)');
       }
@@ -1537,7 +1537,7 @@ export async function initPostgresCore(opts: {
       const after = await readContentChunksEmbeddingDim(engine);
       if (after.exists && after.dims !== null && after.dims !== resolvedDim) {
         console.error('\nUNEXPECTED: post-initSchema invariant assertion failed.');
-        console.error('  This is a bug. Please file an issue with the output of `gbrain doctor`.\n');
+        console.error('  This is a bug. Please file an issue with the output of `foresights doctor`.\n');
         console.error(embeddingMismatchMessage({
           currentDims: after.dims,
           requestedDims: resolvedDim,
@@ -1585,8 +1585,8 @@ export async function initPostgresCore(opts: {
     // (existing config wins on re-init, so a prior opt-out is preserved).
     config.mcp = { ...(freshContentDatabase && !existingFile.engine ? { publish_skills: true } : {}), ...(config.mcp ?? {}) };
     // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
-    // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
-    // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
+    // foresights invocation). mode_prompted=true so the upgrade-time banner doesn't
+    // also fire on a fresh install. Hands-off: foresights config set self_upgrade.mode auto
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(freshContentDatabase && !existingFile.engine ? { channel: 'stable' as const } : {}), ...(config.self_upgrade ?? {}) };
     // MEMORY_VERBS v1 [D6C]: TTHW stamp (see the PGLite path).
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
@@ -1624,9 +1624,9 @@ export async function initPostgresCore(opts: {
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. Wire up the knowledge graph:');
-        console.log('  gbrain extract links --source db        (typed link backfill)');
-        console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
-        console.log('  gbrain stats                            (verify links > 0)');
+        console.log('  foresights extract links --source db        (typed link backfill)');
+        console.log('  foresights extract timeline --source db     (structured timeline backfill)');
+        console.log('  foresights stats                            (verify links > 0)');
       }
       reportModStatus();
 
@@ -1680,7 +1680,7 @@ async function supabaseWizard(): Promise<string> {
   // readLine never resolved data → process ended with NO config written), the
   // worst failure shape for a scripted/agent caller. Fail loud with the fix.
   if (!process.stdin.isTTY) {
-    console.error('gbrain init --supabase needs an interactive terminal to prompt for the connection URL.');
+    console.error('foresights init --supabase needs an interactive terminal to prompt for the connection URL.');
     console.error('Non-interactive: pass --url <connection_string>, or set GBRAIN_DATABASE_URL and use --non-interactive.');
     process.exit(1);
   }
@@ -1688,7 +1688,7 @@ async function supabaseWizard(): Promise<string> {
     execSync('bunx supabase --version', { stdio: 'pipe' });
     console.log('Supabase CLI detected.');
     console.log('To auto-provision, run: bunx supabase login && bunx supabase projects create');
-    console.log('Then use: gbrain init --url <your-connection-string>');
+    console.log('Then use: foresights init --url <your-connection-string>');
   } catch {
     console.log('Supabase CLI not found.');
   }
@@ -1822,28 +1822,28 @@ export function reportModStatus(): void {
   // the memory-verbs funnel (the one action that matters). Krug: one screen,
   // one primary action.
   console.log('');
-  console.log('--- GBrain Mod Status ---');
+  console.log('--- Foresights Mod Status ---');
   console.log(`Skills: ${skillCount} loaded (router: skills/RESOLVER.md)`);
   console.log(`GStack: ${gstack.found ? `found (${gstack.host})` : 'not found (coding skills — see github.com/garrytan/gstack)'}`);
   // Retrieval Reflex (#1981): the deterministic pointer layer is ON by default
   // (no action needed). The policy skill is installed into the HOST repo on
   // request — we PRINT the pointer rather than silently mutating the host repo.
-  console.log('Retrieval reflex: on by default. More: `gbrain integrations` (policy skill), skills/soul-audit (identity).');
+  console.log('Retrieval reflex: on by default. More: `foresights integrations` (policy skill), skills/soul-audit (identity).');
   console.log('');
 }
 
 function printInitHelp() {
   console.log(`
-gbrain init — initialize a brain (PGLite or Supabase Postgres)
+foresights init — initialize a brain (PGLite or Supabase Postgres)
 
 USAGE
-  gbrain init [flags]
+  foresights init [flags]
 
 ENGINE SELECTION (mutually exclusive)
   --pglite              Use embedded PGLite (zero-config, the default)
   --supabase            Use Supabase Postgres (recommended for 1000+ files)
   --url <URL>           Use a manual Postgres connection string
-  --mcp-only            Thin-client mode: connect to a remote gbrain MCP, no local engine
+  --mcp-only            Thin-client mode: connect to a remote foresights MCP, no local engine
 
 OPTIONS
   --force               Overwrite an existing config (gated by default)
@@ -1874,15 +1874,15 @@ OPTIONS
                         live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1
 
 EXAMPLES
-  gbrain init --pglite                      # Local-only, no API keys
-  gbrain init --supabase                    # Interactive Supabase setup
-  gbrain init --url postgresql://...        # Use a custom Postgres
-  gbrain init --mcp-only --issuer-url https://host:3001 --mcp-url https://host:3001/mcp --oauth-client-id <id> --oauth-client-secret <secret>  # Thin-client mode
+  foresights init --pglite                      # Local-only, no API keys
+  foresights init --supabase                    # Interactive Supabase setup
+  foresights init --url postgresql://...        # Use a custom Postgres
+  foresights init --mcp-only --issuer-url https://host:3001 --mcp-url https://host:3001/mcp --oauth-client-id <id> --oauth-client-secret <secret>  # Thin-client mode
 
 NOTES
-  - Bare \`gbrain init\` always defaults to PGLite at ~/.gbrain/brain.pglite.
+  - Bare \`foresights init\` always defaults to PGLite at ~/.gbrain/brain.pglite.
     In a directory with 1000+ .md files it prints a suggestion to use
-    \`gbrain init --supabase\` (faster search at scale) but still proceeds
+    \`foresights init --supabase\` (faster search at scale) but still proceeds
     with PGLite.
   - Existing config is preserved unless --force is passed.
 `.trim());

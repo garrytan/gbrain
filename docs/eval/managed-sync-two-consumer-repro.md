@@ -6,8 +6,8 @@ comments of 2026-10-08 15:15Z and 15:25Z on #6278: sixteen
 `claim_phase.phase='preparing'` for 25+ minutes on 0.60.110.0 while the
 lease renewed, `pg_stat_activity` showed no statement older than about 3 s,
 the same rows prepared in 2.6–3.4 s from a scratch process, and every wedge
-had two persistence consumers on the host (`gbrain serve --http` plus the
-one inside `gbrain sync`). The brief was to build that two-process shape on
+had two persistence consumers on the host (`foresights serve --http` plus the
+one inside `foresights sync`). The brief was to build that two-process shape on
 Ubicloud, name the await, test the candidate causes and record what this
 branch's preparation budget does to it. Halfway through, the reporter's
 17:09Z comment reframed the cause: the wedge reproduces with one process,
@@ -22,11 +22,11 @@ mechanism.
 
 The harness is the #6278 one extended, not a new script:
 `scripts/bench/managed-sync-stall-repro.ts` gained `--scenario two-consumer`
-(a seeding lane drain killed mid-run, a `gbrain serve --http` consumer, a
-`gbrain sync` consumer `--gap-seconds` later, CLI SIGTERM/restart on a
+(a seeding lane drain killed mid-run, a `foresights serve --http` consumer, a
+`foresights sync` consumer `--gap-seconds` later, CLI SIGTERM/restart on a
 cadence, a wedge rule with dumps on detection, `--direct-pool` for the
 dual-pool topology, `--inspect`) and `--chaos-kind partition` (iptables
-drops the client→pooler half of every gbrain connection, never closes it,
+drops the client→pooler half of every foresights connection, never closes it,
 and lifts it after `--chaos-for`). `scripts/bench/stall-debug-instrument.py`
 (debug only, applied on the VM, never committed) now also records every raw
 statement, transaction checkout and reserve between its send in JS and its
@@ -127,7 +127,7 @@ Docker, PgBouncer 1.26 transaction mode (`statement_timeout` dropped at the
 pooler: `SHOW statement_timeout` = `0` via the pooler, `5min` direct),
 toxiproxy with 57 ms round trip in front of the pooler, `GBRAIN_PREPARE=false`,
 `GBRAIN_POOL_SIZE=10`, `GBRAIN_SYNC_LANES=1`, a 3,000-page backlog on a
-300-page history source, one non-TTY `timeout 3600 gbrain sync --source
+300-page history source, one non-TTY `timeout 3600 foresights sync --source
 bench --no-pull --no-embed`, 10 s samples, `--stall-minutes 2`, SIGUSR2 dumps
 on the stall.
 
@@ -160,7 +160,7 @@ pool `max 10: open 0, busy 0, full 2, reserved 1`; consumer phase
 still current 134 s later; stderr: 12 × `phase=refresh_roots
 reason=deadline_exceeded`, 11 × `reason=storage_error message="aborted"`;
 `claim_phase.phase = publishing` on all three rows with `claim_lapsed:
-true`, `since_update_ms` 138,641; the sampler's own `gbrain sources writer
+true`, `since_update_ms` 138,641; the sampler's own `foresights sources writer
 status --probe --json` hung through the same pooler and was killed at
 120 s (exit 143), so during the wedge the one command meant to explain it
 cannot run; 3.6 % CPU. After the lift the three members
@@ -224,8 +224,8 @@ what name the await; the inspector adds nothing for this class.
 15,000-page backlog on a 1,500-page history source, PgBouncer transaction
 mode, 57 ms, pool 10, `GBRAIN_SYNC_LANES=6` (effective 6), seed drain run
 7–8 min then SIGTERM (the reporter's watchdog kill), 40 s for its claims to
-lapse, `gbrain serve --http` boots alone and claims the dead run's FIFO head
-within one tick, `gbrain sync --source bench --no-pull --no-embed` 75 s
+lapse, `foresights serve --http` boots alone and claims the dead run's FIFO head
+within one tick, `foresights sync --source bench --no-pull --no-embed` 75 s
 later; 15 s samples with `writer status --probe --json` every other sample;
 wedge rule: a `preparing` stamp older than 5 min with nothing older than
 10 s in `pg_stat_activity`.
@@ -279,7 +279,7 @@ change and should land first. Then route the consumer's own round trips
 (claims, renewals, the tick's reads, the publication transaction) over the
 session-mode / direct URL when the dual pool is active
 (`postgres-engine.ts:608`, `connection-manager.ts` `isDualPoolActive`), and
-make `gbrain sources writer status` print the owner's current statement,
+make `foresights sources writer status` print the owner's current statement,
 its age and `wait_event` from `pg_stat_activity` for the owner's backends,
 so a `ClientRead` wedge is visible in one command; leave
 `persistence.single_consumer` off.

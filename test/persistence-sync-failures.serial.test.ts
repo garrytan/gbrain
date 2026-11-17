@@ -119,7 +119,7 @@ test('failed managed receipt stays diagnostic across replay and restart, and the
     expect((await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBeNull();
     expect(buildSingleSyncJsonEnvelope(f.id, failed)).toMatchObject({ failures: (failed as any).failures, failure_codes: failed.failureCodes });
     let output = ''; printSyncResult(failed, { write: (text: string) => { output += text; } } as any);
-    expect(output).toContain('bad.md'); expect(output).toContain(`After repair, run gbrain sync --source ${f.id} --no-pull to retry it under a new request.`);
+    expect(output).toContain('bad.md'); expect(output).toContain(`After repair, run foresights sync --source ${f.id} --no-pull to retry it under a new request.`);
     expect(output).not.toContain('--retry-failed'); expect(output).not.toContain('--skip-failed');
     writeFileSync(join(f.root, 'bad.md'), 'Repaired useful second observation.\n');
     const repairedHead = commit(f.root);
@@ -268,7 +268,7 @@ test('managed failure retry hints name the failed cursor options locally, shell-
     const recorded = { full: true, workingTree: false, srcSubpath: null, exclude: [QUOTED_EXCLUDE], includeHidden: [], strategy: null };
     expect(blocked.failures).toEqual([expect.objectContaining({ syncOptions: recorded, processingOptions: expect.objectContaining({ noEmbed: true }) })]);
     expect(await readManagedSyncFailures(engine, [f.id])).toEqual([expect.objectContaining({ syncOptions: recorded })]);
-    const retry = `gbrain sync --source ${f.id} --no-pull --no-embed --full --exclude 'it'\\''s a dir/**'`;
+    const retry = `foresights sync --source ${f.id} --no-pull --no-embed --full --exclude 'it'\\''s a dir/**'`;
 
     const local = await checkSyncFailures(engine, { sourceIds: [f.id], remote: false });
     expect(local?.message).toContain(`Fix the cause, then run ${retry}.`);
@@ -286,7 +286,7 @@ test('managed failure retry hints name the failed cursor options locally, shell-
     const legacy = { ...blocked.failures![0] };
     delete legacy.syncOptions; delete legacy.processingOptions;
     const printedLegacy = await captureCli(() => printSyncResult({ ...bare, failures: [legacy] }));
-    expect(printedLegacy).toContain(`Fix the cause, then run: gbrain sync --source ${f.id} --no-pull with the same options as the failed run (this receipt no longer records them)`);
+    expect(printedLegacy).toContain(`Fix the cause, then run: foresights sync --source ${f.id} --no-pull with the same options as the failed run (this receipt no longer records them)`);
 
     const d = await fixture(engine, { 'note.md': 'A stable discovery observation.\n' });
     const execute = engine.executeRaw;
@@ -299,7 +299,7 @@ test('managed failure retry hints name the failed cursor options locally, shell-
     try { await performManagedSync(engine, { sourceId: d.id, noPull: true, exclude: [QUOTED_EXCLUDE] }); }
     catch (error) { thrown = error as Error; }
     finally { engine.executeRaw = execute; }
-    expect(thrown?.message).toContain(`Fix the cause, then run: gbrain sync --source ${d.id} --no-pull --exclude 'it'\\''s a dir/**'`);
+    expect(thrown?.message).toContain(`Fix the cause, then run: foresights sync --source ${d.id} --no-pull --exclude 'it'\\''s a dir/**'`);
   }
 }), 120_000);
 
@@ -380,7 +380,7 @@ test('local single and all-source CLI JSON carry durable diagnostics and fail th
       // #6712 PR 4b: the pass has no cursor run, so the envelope carries no run-cumulative counts (no run_id, no counts_scope).
       expect(single).toEqual(expect.objectContaining({ sync_status: 'blocked_by_failures', outcome: 'blocked', failures: [expect.objectContaining({ path: 'bad.md', source_id: f.id, request_id: expect.any(String), phase: 'receipt' })] }));
       expect(single).not.toHaveProperty('counts_scope');
-      expect(currentExitCode()).toBe(1); expect(stderr).toContain(`After repair, run gbrain sync --source ${f.id} --no-pull --no-embed --no-extract --no-schema-pack to retry it under a new request.`);
+      expect(currentExitCode()).toBe(1); expect(stderr).toContain(`After repair, run foresights sync --source ${f.id} --no-pull --no-embed --no-extract --no-schema-pack to retry it under a new request.`);
       expect(stderr).not.toContain('--retry-failed'); expect(stderr).not.toContain('--skip-failed');
       stdout = ''; stderr = '';
       try { await runSync(engine, [...flags, '--all', '--serial']); } catch (error) { if ((error as Error).message !== 'fixture-cli-exit') throw error; }

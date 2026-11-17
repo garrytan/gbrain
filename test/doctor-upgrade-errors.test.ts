@@ -56,7 +56,7 @@ describe('checkUpgradeErrors', () => {
         phase: 'post-upgrade',
         from_version: '0.1.0.0',
         to_version: '999.999.999.999',
-        hint: 'gbrain apply-migrations --yes',
+        hint: 'foresights apply-migrations --yes',
       });
       const check = await checkUpgradeErrors(schemaCurrentEngine);
       expect(check).not.toBeNull();
@@ -65,7 +65,7 @@ describe('checkUpgradeErrors', () => {
       expect(check?.message).toContain('2026-08-22');
       expect(check?.message).toContain('0.1.0.0 → 999.999.999.999');
       expect(check?.message).toContain('post-upgrade');
-      expect(check?.message).toContain('gbrain apply-migrations --yes');
+      expect(check?.message).toContain('foresights apply-migrations --yes');
     });
   });
 
@@ -79,7 +79,7 @@ describe('checkUpgradeErrors', () => {
         phase: 'post-upgrade',
         from_version: '0.1.0.0',
         to_version: VERSION,
-        hint: 'gbrain apply-migrations --yes',
+        hint: 'foresights apply-migrations --yes',
       });
       const check = await checkUpgradeErrors(schemaCurrentEngine);
       expect(check).not.toBeNull();
@@ -97,7 +97,7 @@ describe('checkUpgradeErrors', () => {
         phase: 'post-upgrade',
         from_version: '0.1.0.0',
         to_version: VERSION,
-        hint: 'gbrain apply-migrations --yes',
+        hint: 'foresights apply-migrations --yes',
       });
       const check = await checkUpgradeErrors(null);
       expect(check?.status).toBe('warn');
@@ -111,7 +111,7 @@ describe('checkUpgradeErrors', () => {
         phase: 'post-upgrade',
         from_version: '0.1.0.0',
         to_version: VERSION,
-        hint: 'gbrain apply-migrations --yes',
+        hint: 'foresights apply-migrations --yes',
       });
       const check = await checkUpgradeErrors(schemaBehindEngine);
       expect(check?.status).toBe('warn');
@@ -125,7 +125,7 @@ describe('checkUpgradeErrors', () => {
         phase: 'post-upgrade',
         from_version: '0.1.0.0',
         to_version: VERSION,
-        hint: 'gbrain apply-migrations --yes',
+        hint: 'foresights apply-migrations --yes',
       });
       const throwingEngine = {
         getConfig: async (): Promise<string | null> => { throw new Error('connection lost'); },
@@ -139,7 +139,7 @@ describe('checkUpgradeErrors', () => {
     await withHome(async (home) => {
       const lines = [
         { ts: '2026-08-20T10:00:00Z', phase: 'post-upgrade', from_version: '0.1.0.0', to_version: '0.2.0.0', hint: 'old, irrelevant' },
-        { ts: '2026-08-22T10:00:00Z', phase: 'post-upgrade', from_version: '0.2.0.0', to_version: '999.999.999.999', hint: 'gbrain apply-migrations --yes' },
+        { ts: '2026-08-22T10:00:00Z', phase: 'post-upgrade', from_version: '0.2.0.0', to_version: '999.999.999.999', hint: 'foresights apply-migrations --yes' },
       ];
       writeFileSync(join(home, '.gbrain', 'upgrade-errors.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
       const check = await checkUpgradeErrors(null);

@@ -1,6 +1,6 @@
 /**
  * #6188: a malformed facts or takes fence never blocks a managed sync; the
- * file is held, and every surface routes it to `gbrain repair fences` (that
+ * file is held, and every surface routes it to `foresights repair fences` (that
  * file's preview for one hold, the source's for a source). A fence the screen refuses is held at freeze; a fence refused
  * only while being prepared against the stored page (a stored-row collision)
  * is held in the same invocation from its failed receipt; a cursor an older
@@ -123,22 +123,22 @@ test('a malformed fence among clean files: the sync finishes, holds that file wi
   for (const text of [JSON.stringify(result.held), result.holds_fix!.why]) expect(text).not.toContain('repair frontmatter');
   const text = printed(result);
   expect(text).toContain('Held people/malformed.md: invalid_fence (holder_unresolved) in the takes fence (body), row 1, column who, at line 9');
-  expect(text).toContain(`gbrain repair fences --source ${s.id} --only people/malformed.md`);
+  expect(text).toContain(`foresights repair fences --source ${s.id} --only people/malformed.md`);
   const status = (await readGitHoldStatuses(engine, [s.id])).get(s.id)!;
   const lines = gitHoldStatusLines(s.id, status).join('\n');
   expect(lines).toContain('people/malformed.md: invalid_fence (holder_unresolved) in the takes fence (body)');
   // Privacy sentinel: no claim, holder or kind text in holds, results, printed output or status.
   const rows = await engine.executeRaw<{ completed_keys: unknown }>("SELECT completed_keys FROM op_checkpoints WHERE op LIKE 'sync-hold%' AND fingerprint LIKE $1", [`${s.id}:%`]);
   for (const blob of [JSON.stringify(rows), JSON.stringify(result), text, lines, JSON.stringify(status)]) expectNoSecrets(blob);
-  expect(lines).toContain(`gbrain repair fences --source ${s.id} --only people/malformed.md`);
+  expect(lines).toContain(`foresights repair fences --source ${s.id} --only people/malformed.md`);
   // Doctor routes a fence-only source to the content lane's preview (#6377), never to frontmatter repair.
   const doctor = await gitHeldFilesCheck(engine, [s.id]);
   expect(doctor).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'repair', 'content', '--source', s.id] }, details: { fences: 1, auto_repair: { active: false } } });
-  expect(doctor.message).toContain(`gbrain repair content --source ${s.id}`);
+  expect(doctor.message).toContain(`foresights repair content --source ${s.id}`);
   expect(doctor.message).not.toContain('repair frontmatter');
   // retry-held names the content lane's preview for what still refuses.
   const retry = (await retryHeld(engine, s.id, { dryRun: false })).next_action;
-  expect(retry).toContain(`gbrain repair content --source ${s.id}`);
+  expect(retry).toContain(`foresights repair content --source ${s.id}`);
   expect(retry).not.toContain('repair frontmatter');
 
   s.write('people/malformed.md', takesPage('Malformed', take(1, 'Synthetic take', 'world'))); commit(s.root, 'fix the holder');
@@ -195,15 +195,15 @@ test('sync.holds=fail blocks with the typed refusal; the next sync after the upg
   await engine.executeRaw('UPDATE persistence_requests SET error_message=$2,error_detail=NULL WHERE request_id=$1::uuid',
     [failed!.request_id, 'A canonical facts or takes fence cannot be parsed losslessly.']);
   const fenceNote = (await fenceHoldsBannerNote(engine)) ?? '';
-  for (const part of [`gbrain sync --source ${s.id} --no-pull`, 'recovers each with no command', 'malformed fence(s) are known so far',
-    'nothing repairs them by itself until a maintenance run is active', 'Preview (read-only, no model call): gbrain repair fences',
-    'gbrain config set fences.repair.enabled false']) expect(fenceNote).toContain(part);
+  for (const part of [`foresights sync --source ${s.id} --no-pull`, 'recovers each with no command', 'malformed fence(s) are known so far',
+    'nothing repairs them by itself until a maintenance run is active', 'Preview (read-only, no model call): foresights repair fences',
+    'foresights config set fences.repair.enabled false']) expect(fenceNote).toContain(part);
   expect(fenceNote).not.toMatch(/--apply|repairable after the user agrees/);
   expectNoSecrets(fenceNote);
   // The whole banner: the fence_holds note, the fence_integrity finding (no maintenance run is active here) and no applying command.
   const banner = (await postUpgradeRecoveryBanner(engine, 'host')).join('\n');
   expect(banner).toContain('[AGENT]   fence_holds: ');
-  expect(banner).toMatch(/\[AGENT\] {3}fence_integrity: \d+ \(not repaired automatically \(no maintenance run is active\); preview with: gbrain repair fences\)/);
+  expect(banner).toMatch(/\[AGENT\] {3}fence_integrity: \d+ \(not repaired automatically \(no maintenance run is active\); preview with: (?:foresights|gbrain) repair fences\)/);
   expect(banner).not.toMatch(/--apply|--yes/);
   expectNoSecrets(banner);
   // The remote doctor's host-action line names no path and no claim.
@@ -348,7 +348,7 @@ test('a manifest with one fixable fence, one unfixable fence and clean files: th
   for (const blob of [JSON.stringify(result), text]) { expectNoSecrets(blob); expect(blob).not.toContain('Sentinelfixzq8'); expect(blob).not.toContain('partnership'); }
   const receipts = await engine.executeRaw<{ outcome: unknown }>("SELECT outcome FROM persistence_requests WHERE source_id=$1 AND state='committed'", [s.id]);
   for (const blob of [JSON.stringify(receipts)]) { expect(blob).not.toContain('Sentinelfixzq8'); expect(blob).not.toContain('partnership'); }
-  // Fixed point: the next sync reads gbrain's own commit as a no-op and normalizes nothing; the one after is up to date.
+  // Fixed point: the next sync reads foresights's own commit as a no-op and normalizes nothing; the one after is up to date.
   const again = await s.sync();
   expect(again).toMatchObject({ added: 0, modified: 0 });
   expect(again.fences_normalized).toBeUndefined();
@@ -370,7 +370,7 @@ test('forced probe: the Git effect commits the normalized file before it records
   expect(result).toMatchObject({ status: 'first_sync', added: 2 });
   expect(git(s.root, 'log', '-1', '--format=%s')).toBe('gbrain: persist canonical memory update');
   expect(await s.lastCommit()).toBe(head);
-  // As without the race: the next sync reads gbrain's own commit as a no-op; the one after is up to date.
+  // As without the race: the next sync reads foresights's own commit as a no-op; the one after is up to date.
   const again = await s.sync();
   expect(again).toMatchObject({ added: 0, modified: 0 });
   expect(again.fences_normalized).toBeUndefined();

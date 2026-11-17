@@ -8,7 +8,7 @@ import type { Migration } from './types.ts';
 // own transaction (or, on a managed brain, right after the door commits). A
 // later run of the same key returns the stored result instead of writing the
 // body again, so a stalled attempt re-run or a POST /ingest replayed after
-// `gbrain jobs prune` no longer reverts a newer edit. The dream cycle's purge
+// `foresights jobs prune` no longer reverts a newer edit. The dream cycle's purge
 // phase drops rows past 90 days (purgeStaleAppliedCaptures). Operational
 // state, not brain content: a repo-less brain gets it unchanged. The new table
 // is seeded from the completed ingest_capture jobs still in minion_jobs, so a

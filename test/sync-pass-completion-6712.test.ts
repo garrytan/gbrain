@@ -89,7 +89,7 @@ async function record(engine: BrainEngine, slug: string) {
     LEFT JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint='default:'||(SELECT incarnation::text FROM sources WHERE id='default')||':'||p.id::text WHERE p.source_id='default' AND p.slug=$2`, [SYNC_IMPORT_PROVENANCE_OP, slug]);
   return row?.record ?? null;
 }
-/** Rows as an older gbrain left them: managed persistence off around the write. */
+/** Rows as an older foresights left them: managed persistence off around the write. */
 async function raw<T>(engine: BrainEngine, fn: () => Promise<T>): Promise<T> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try { return await fn(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
@@ -173,7 +173,7 @@ describe('#6712 PR 4b lane B: adoption and the legacy sweep (row 13, §2.7)', ()
 
   test('property (k): the first full round sweeps equal legacy pages into records, and a later edit of a swept page imports with no Decision', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
-    // Pages an older gbrain imported: the same rows with no import record and no sync request behind the revision.
+    // Pages an older foresights imported: the same rows with no import record and no sync request behind the revision.
     await raw(engine, async () => {
       const cols = 'source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, source_path';
       const rows = await engine.executeRaw<Record<string, unknown>>(`SELECT ${cols} FROM pages WHERE source_id='default'`);

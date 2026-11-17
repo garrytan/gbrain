@@ -4,7 +4,7 @@
  * call, so an agent making dozens of read calls a day saw the same stderr
  * paragraph on every one of them.
  *
- * Protects: the banner is shown the first time this gbrain home connects to a
+ * Protects: the banner is shown the first time this foresights home connects to a
  * database with prepared statements off, never again for that database, and
  * again for a different database. The state it keeps never holds the URL's
  * credentials. Regression it catches: a connect that warns unconditionally (the
@@ -38,7 +38,7 @@ afterEach(() => {
 
 const banners = () => warn.mock.calls.filter((call: unknown[]) => String(call[0]).includes(BANNER)).length;
 
-/** Connects to a refused port with this test's gbrain home; the connect fails after its banner decision. */
+/** Connects to a refused port with this test's foresights home; the connect fails after its banner decision. */
 async function connectRefused(databaseUrl: string): Promise<void> {
   await withEnv({ GBRAIN_HOME: home }, async () => {
     await expect(connect({ engine: 'postgres', database_url: databaseUrl })).rejects.toThrow();

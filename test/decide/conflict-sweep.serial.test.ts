@@ -366,7 +366,7 @@ describe('extract_facts cycle phase tail', () => {
   });
 });
 
-describe('gbrain decide sweep --json (golden)', () => {
+describe('foresights decide sweep --json (golden)', () => {
   test('prints the counts', async () => {
     await remember('[g1][v1] Alice leads research');
     await remember('[g1][v2] Alice leads design');

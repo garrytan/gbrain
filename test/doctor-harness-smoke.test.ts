@@ -1,20 +1,20 @@
 /**
- * `gbrain doctor --only harness_wiring --json` (agent-first operator wave G5
+ * `foresights doctor --only harness_wiring --json` (agent-first operator wave G5
  * step 2, Lane E): engine-free, read-only smoke of the harness registration.
  *
  * Hermetic HOME + GBRAIN_HOME on a keyless PGLite brain:
  * - no harness and no registration → ok + severity:info with the install fix;
  * - a Claude Code registration (~/.claude.json) whose argv starts a real
- *   `gbrain serve --surface verbs` → the smoke spawns it and runs initialize +
+ *   `foresights serve --surface verbs` → the smoke spawns it and runs initialize +
  *   tools/list + recall → ok, reason wired_running / smoke_passed;
- * - a live `gbrain serve` already holding the brain lock → ok without spawning
+ * - a live `foresights serve` already holding the brain lock → ok without spawning
  *   (doctor runs only after that serve answers the MCP handshake, which it does
  *   after taking the lock; polling earlier let doctor's own smoke serve win the
  *   lock and leave the live serve in status-only mode);
  * - a registration whose binary does not exist → warn with a fix or reason;
  * - doctor seeds nothing: the brain holds no pages afterwards.
  *
- * Serial: spawns `gbrain serve` subprocesses against one PGLite brain.
+ * Serial: spawns `foresights serve` subprocesses against one PGLite brain.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,7 +38,7 @@ function register(command: string, args: string[]): void {
   writeFileSync(join(h.home, '.claude', 'CLAUDE.md'), renderBrainFirstSnippet('claude-code', { kind: 'mcp', server: 'gbrain' }));
 }
 
-/** The entry gbrain setup writes: serve starts through the hook launcher, never in the session's directory (#8426). */
+/** The entry foresights setup writes: serve starts through the hook launcher, never in the session's directory (#8426). */
 function registerThroughLauncher(args: string[]): void {
   const launcher = hookLauncherPath(join(h.home, '.gbrain'));
   ensureHookLauncher(launcher);
@@ -55,7 +55,7 @@ function harnessCheck(run: { json: unknown; stdout: string }): Record<string, un
 beforeAll(async () => {
   h = makeDoctorHome('doctor-harness-smoke');
   const init = await runGbrain(h, ['init', '--pglite', '--no-embedding']);
-  if (init.exitCode !== 0) throw new Error(`gbrain init failed (${init.exitCode}): ${init.stderr}`);
+  if (init.exitCode !== 0) throw new Error(`foresights init failed (${init.exitCode}): ${init.stderr}`);
 }, 120_000);
 
 afterAll(() => h?.cleanup());
@@ -83,8 +83,8 @@ describe('doctor --only harness_wiring', () => {
     const run = await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']);
     const check = harnessCheck(run);
     expect(check, run.stderr).toMatchObject({ status: 'warn', details: { code: 'hook_session_cwd', hook_launcher_reason: 'session_cwd', smoke: 'smoke_passed' }, fix: { actor: 'user' } });
-    expect(String((check.fix as Record<string, unknown>).user_message)).toContain(`the 'gbrain' MCP server in ${join(h.home, '.claude.json')} starts gbrain in the session's directory`);
-    expect(String((check.fix as Record<string, unknown>).user_message)).toContain('run: gbrain setup claude-code');
+    expect(String((check.fix as Record<string, unknown>).user_message)).toContain(`the 'gbrain' MCP server in ${join(h.home, '.claude.json')} starts foresights in the session's directory`);
+    expect(String((check.fix as Record<string, unknown>).user_message)).toContain('run: foresights setup claude-code');
   }, 60_000);
 
   test('a live serve holding the brain lock passes without spawning a second one', async () => {

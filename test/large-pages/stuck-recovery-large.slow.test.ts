@@ -1,5 +1,5 @@
 /**
- * `gbrain repair stuck-recovery` on a page recovery whose prior file is over the single-string ceiling (audit C-22).
+ * `foresights repair stuck-recovery` on a page recovery whose prior file is over the single-string ceiling (audit C-22).
  *
  * 1. Protects: a write replacing or removing a canonical file over 24 MiB (here a soft delete) keeps the prior file as a staged copy (`staging.before`)
  *    instead of embedding it. When the file is edited while that write publishes, recovery parks the request with
@@ -213,8 +213,8 @@ test('the preview lists a stuck large-file recovery with both fingerprints and a
     expect(fileSha(priorCopy!)).toBe(s.prior.sha);
     expect(fileSha(diskCopy!)).toBe(s.edited.sha);
     const hash = /--expect ([0-9a-f]{64})/.exec(out)![1]!;
-    expect(out).toContain(`gbrain repair stuck-recovery --source ${s.sourceId} --keep prior --apply --expect ${hash} --yes`);
-    expect(out).toContain(`gbrain repair stuck-recovery --source ${s.sourceId} --keep disk --apply --expect ${hash} --yes`);
+    expect(out).toContain(`foresights repair stuck-recovery --source ${s.sourceId} --keep prior --apply --expect ${hash} --yes`);
+    expect(out).toContain(`foresights repair stuck-recovery --source ${s.sourceId} --keep disk --apply --expect ${hash} --yes`);
     expect(fileSha(s.file)).toBe(s.edited.sha);
     expect(await getWriteRequestById(engine, s.id)).toMatchObject({ state: 'recovering', blocked_reason: 'unexpected_file_bytes' });
   }

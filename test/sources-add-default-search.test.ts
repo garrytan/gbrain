@@ -59,7 +59,7 @@ describe('a new source on a single-user brain joins default search', () => {
     const { stdout, stderr } = await add(['personal-a']);
     expect(await federated('personal-a')).toBe(true);
     expect(stdout).toContain('federated: true');
-    expect(stdout).toContain('gbrain sources unfederate personal-a');
+    expect(stdout).toContain('foresights sources unfederate personal-a');
     expect(stderr).not.toContain('source_not_in_default_search');
   });
 
@@ -117,7 +117,7 @@ describe('a brain that is shared or serves several people keeps new sources out,
 });
 
 describe('federating a source on a keyless PGLite brain', () => {
-  test('says embedding is off instead of telling the user to run gbrain embed --stale', async () => {
+  test('says embedding is off instead of telling the user to run foresights embed --stale', async () => {
     await add(['keyless-a', '--no-federated']);
     await engine.putPage('notes/keyless', { type: 'note', title: 'K', compiled_truth: 'A page with a chunk to embed.', timeline: '' }, { sourceId: 'keyless-a' });
     await engine.upsertChunks('notes/keyless', [{ chunk_index: 0, chunk_text: 'A page with a chunk to embed.', chunk_source: 'compiled_truth' }], { sourceId: 'keyless-a' });
@@ -134,7 +134,7 @@ describe('federating a source on a keyless PGLite brain', () => {
     }
     const text = out.join('\n');
     expect(text).toContain('embedding is disabled on this brain');
-    expect(text).not.toContain('gbrain embed --stale');
+    expect(text).not.toContain('foresights embed --stale');
   });
 });
 

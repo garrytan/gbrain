@@ -51,7 +51,7 @@ export function parseContextWindow(raw: string | null | undefined): number | nul
   return Number.isInteger(n) && n >= 8_000 && n <= 10_000_000 ? n : null;
 }
 
-/** Validation for `gbrain config set` on the pressure keys; null when valid. */
+/** Validation for `foresights config set` on the pressure keys; null when valid. */
 export function validatePressureConfigValue(key: string, value: string): string | null {
   if (key === PRESSURE_CONFIG_KEYS.enabled && parseBool(value) === null) return `${key} must be true or false (default true).`;
   if (key === PRESSURE_CONFIG_KEYS.warnRatio && parseWarnRatio(value) === null) return `${key} must be a number from 0.5 to 0.95 (default ${PRESSURE_DEFAULT_WARN_RATIO}).`;
@@ -138,7 +138,7 @@ export function resolveContextWindow(opts: { configured: number | null; model: s
 }
 
 export function pressureNotice(percent: number): string {
-  return `[gbrain] This conversation's context is about ${percent}% full and will be compacted soon; details that exist only in this conversation will be lost. ` +
+  return `[foresights] This conversation's context is about ${percent}% full and will be compacted soon; details that exist only in this conversation will be lost. ` +
     'Before continuing, call remember once with items: [...] (up to 20 facts, each with a short provenance) for decisions, preferences, commitments and open threads worth keeping. ' +
     'Skip anything already saved, secrets, and anything the user asked not to keep. This notice appears once per compaction.';
 }

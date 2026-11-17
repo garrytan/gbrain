@@ -22,9 +22,9 @@ Check the stored capture choice before every pass. With an opt-in and authorized
 delegation, a lightweight sub-agent can run in parallel. Otherwise, perform
 authorized capture inline or skip it; never assume native background routing.
 
-This pattern is harness-side by design, but gbrain ships help on both ends:
+This pattern is harness-side by design, but foresights ships help on both ends:
 the `signal-detector` skill (`skills/signal-detector/`) is the bundled
-version of this detection loop, and `gbrain extract` runs gbrain's own
+version of this detection loop, and `foresights extract` runs foresights's own
 extraction machinery (entities, facts) over already-synced content.
 
 ```
@@ -71,7 +71,7 @@ STEP 2 — ENTITIES:
 Extract all person names, company names, media titles.
 
 For each entity:
-  a. Run: gbrain search "{name}"
+  a. Run: foresights search "{name}"
   b. If page exists AND new info: append timeline entry
      Format: - YYYY-MM-DD | {what happened} [Source: {who}, {context}, {date}]
   c. If no page AND entity is notable: save supplied facts with provenance
@@ -83,7 +83,7 @@ An unlinked mention is a broken brain.
 Format: - **YYYY-MM-DD** | Referenced in [{page title}]({path}) — {context}
 
 STEP 4 — SYNC:
-Run: gbrain sync --no-pull --no-embed
+Run: foresights sync --no-pull --no-embed
 
 If nothing to capture, reply "No signals detected" and exit.
 `
@@ -179,19 +179,19 @@ to Alice" only works if Alice's page links back to every mention.
 4. **Preserve uncertainty.** Save supported facts with provenance. Do not
    invent details to fill a thin page or perform unrequested web enrichment.
 
-5. **Dedup before creating.** Always `gbrain search` before creating a page.
+5. **Dedup before creating.** Always `foresights search` before creating a page.
    Variant spellings, nicknames, and company abbreviations cause duplicates.
    "Alice Example" and "Alice" might be the same person.
 
 6. **Review near names, never auto-merge them.** A misheard name ("ACMX" for
-   "ACME") becomes a new page beside the real one. `gbrain extraction-pending
+   "ACME") becomes a new page beside the real one. `foresights extraction-pending
    --include possible_duplicates` (MCP `extraction_pending` with `include:
    ["possible_duplicates"]`) lists entity pages created in the last 30 days
    whose name is one edit, or one acronym letter, away from another entity's
    name or alias, whoever wrote them. It only flags: link the pair with
    `entity-identity-link` (owner, manual), or add the name to the other
    page's `aliases` frontmatter, which silences the pair. If they are
-   different entities, `gbrain extraction-review distinct --slugs <new>
+   different entities, `foresights extraction-review distinct --slugs <new>
    --of <existing>` (owner, on the brain host) records it in the new page's
    `distinct_from` frontmatter, committed to Git on a repository source, and
    the pair is never flagged again. The
@@ -229,4 +229,4 @@ skill file alone does not prove the harness runs this loop.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

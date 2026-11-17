@@ -2,7 +2,7 @@
  * Tests for `reference --apply-clean-hunks` (D15, TODO-3 folded).
  *
  * Pins:
- *   - clean apply: user's local file gets gbrain's upstream changes
+ *   - clean apply: user's local file gets foresights's upstream changes
  *     where context is unchanged
  *   - conflict reporting: conflicting hunks listed with file:line+kind
  *   - identical / missing / binary files reported, not touched
@@ -63,12 +63,12 @@ function scratchWorkspace(): string {
 }
 
 describe('runReferenceApply — happy paths', () => {
-  it('applies upstream gbrain changes to a file the user has not edited', () => {
+  it('applies upstream foresights changes to a file the user has not edited', () => {
     const gbrainRoot = scratchGbrain();
     const ws = scratchWorkspace();
     runScaffold({ gbrainRoot, targetWorkspace: ws, skillSlug: 'demo' });
 
-    // gbrain ships a new version with line 15 updated. User has not
+    // foresights ships a new version with line 15 updated. User has not
     // touched the file locally.
     const gbrainSkill = join(gbrainRoot, 'skills', 'demo', 'SKILL.md');
     writeFileSync(
@@ -85,17 +85,17 @@ describe('runReferenceApply — happy paths', () => {
     expect(readFileSync(userSkill, 'utf-8')).toContain('Line 15 UPDATED');
   });
 
-  it('two-way limitation: user edits in differing area DO get replaced by gbrain content', () => {
-    // D15 contract: this is a TWO-WAY diff against gbrain's current
+  it('two-way limitation: user edits in differing area DO get replaced by foresights content', () => {
+    // D15 contract: this is a TWO-WAY diff against foresights's current
     // bundle. Without scaffold-time base tracking, we cannot tell
-    // whether a difference came from gbrain or from the user. Applied
-    // hunks therefore align everything to gbrain. The agent uses
+    // whether a difference came from foresights or from the user. Applied
+    // hunks therefore align everything to foresights. The agent uses
     // --dry-run / reference (read-only) BEFORE applying to decide.
     const gbrainRoot = scratchGbrain();
     const ws = scratchWorkspace();
     runScaffold({ gbrainRoot, targetWorkspace: ws, skillSlug: 'demo' });
 
-    // gbrain changes line 25. User changes line 5 (independent areas).
+    // foresights changes line 25. User changes line 5 (independent areas).
     const gbrainSkill = join(gbrainRoot, 'skills', 'demo', 'SKILL.md');
     writeFileSync(
       gbrainSkill,
@@ -109,7 +109,7 @@ describe('runReferenceApply — happy paths', () => {
 
     const result = runReferenceApply({ gbrainRoot, targetWorkspace: ws, skillSlug: 'demo' });
     expect(result.summary.totalHunksApplied).toBeGreaterThanOrEqual(1);
-    // gbrain's change lands…
+    // foresights's change lands…
     expect(readFileSync(userSkill, 'utf-8')).toContain('Line 25 GBRAIN');
     // …AND the user's edit gets overwritten (the two-way limitation).
     expect(readFileSync(userSkill, 'utf-8')).not.toContain('Line 5 USER');
@@ -141,7 +141,7 @@ describe('runReferenceApply — happy paths', () => {
 
 describe('runReferenceApply — applied-status surface', () => {
   it('applied_clean status set when every hunk lands without conflict', () => {
-    // runReferenceApply uses just-in-time diff (user→gbrain), so its
+    // runReferenceApply uses just-in-time diff (user→foresights), so its
     // own before-blocks are by construction always found in the user
     // file. The conflict path is exercised structurally by the
     // underlying applyHunks tests (apply-hunks.test.ts) — see those
@@ -168,7 +168,7 @@ describe('runReferenceApply — dry-run', () => {
     const ws = scratchWorkspace();
     runScaffold({ gbrainRoot, targetWorkspace: ws, skillSlug: 'demo' });
 
-    // gbrain ships an upstream change.
+    // foresights ships an upstream change.
     const gbrainSkill = join(gbrainRoot, 'skills', 'demo', 'SKILL.md');
     writeFileSync(
       gbrainSkill,

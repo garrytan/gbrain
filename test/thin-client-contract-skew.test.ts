@@ -49,7 +49,7 @@ describe('new client', () => {
     const json = new RemoteMcpError('tool_error', 'x', d).toJSON() as Record<string, unknown>;
     expect(json).toMatchObject({ error: 'unavailable', code: 'unavailable', reason: 'embeddings_disabled', contract_version: 1 });
     expect(json.notices).toHaveLength(1);
-    expect(json.fix).toMatchObject({ command: 'gbrain doctor --json --brain host' });
+    expect(json.fix).toMatchObject({ command: 'foresights doctor --json --brain host' });
   });
 
   test('× new server: frozen error value and canonical code both survive', () => {
@@ -77,7 +77,7 @@ describe('new client', () => {
     expect(unpackToolResult<unknown[]>(res)).toEqual([]);
     expect(extractNotices(res)[0]).toMatchObject({ code: 'empty_retrieval', kind: 'info' });
     const noMeta = { content: res.content };
-    expect(extractNotices(noMeta)[0]).toMatchObject({ code: 'empty_retrieval', kind: 'info', fix: 'gbrain doctor --json --brain host' });
+    expect(extractNotices(noMeta)[0]).toMatchObject({ code: 'empty_retrieval', kind: 'info', fix: 'foresights doctor --json --brain host' });
     expect(extractNotices(golden('object-result.json')).length).toBe(0);
   });
 });

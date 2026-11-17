@@ -34,7 +34,7 @@ const ANSWER_DELAY_MS = 25;
 interface Arrival { conn: number; sql: string; unanswered: number }
 
 /**
- * A server that speaks just enough of the protocol for gbrain's pool: trust auth, empty results, a transaction status
+ * A server that speaks just enough of the protocol for foresights's pool: trust auth, empty results, a transaction status
  * that follows BEGIN / COMMIT / ROLLBACK, and every answer held ANSWER_DELAY_MS so a pipelining client is seen sending
  * its next statement before the previous answer.
  */

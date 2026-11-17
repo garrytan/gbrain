@@ -1,5 +1,5 @@
 /**
- * gbrain routing-eval — Standalone CLI verb for Check 5 (W2).
+ * foresights routing-eval — Standalone CLI verb for Check 5 (W2).
  *
  * Runs the structural routing eval against every `routing-eval.jsonl`
  * fixture in the skills tree. Exits:
@@ -50,7 +50,7 @@ export interface RoutingEvalEnvelope {
   message: string | null;
 }
 
-const HELP = `gbrain routing-eval [options]
+const HELP = `foresights routing-eval [options]
 
 Run the structural routing eval (Check 5) against every skills/<name>/
 routing-eval.jsonl fixture. Reports top-1 accuracy, ambiguity, and
@@ -149,7 +149,7 @@ export async function runRoutingEvalCli(args: string[]): Promise<void> {
   // declarations into RESOLVER.md / AGENTS.md rows with UNION semantics.
   // Before this fix, this CLI built its own resolver-content string from
   // RESOLVER.md files only — closing the v0.41 drift bug class where
-  // doctor said "fine" but `gbrain routing-eval --strict` still failed.
+  // doctor said "fine" but `foresights routing-eval --strict` still failed.
   const triggerEntries = loadSkillTriggerIndex(skillsDir);
   const resolverFile = findPrimaryResolverPath(skillsDir);
   // Allow operation when frontmatter triggers populate the index even

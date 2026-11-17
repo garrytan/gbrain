@@ -34,7 +34,7 @@ writes remain refused until a coordinator callback exists. Links authored in
 Markdown are reconciled by the coordinated import transaction.
 
 Managed Markdown sync runs on the registered filesystem owner with
-`gbrain sync --source <source-id> --no-pull`. Discovery freezes the target Git
+`foresights sync --source <source-id> --no-pull`. Discovery freezes the target Git
 commit, source incarnation, owner epoch, topology generation and page
 identities/revisions. Attached repositories import committed Git content;
 `--working-tree` opts into uncommitted files and detached repositories include
@@ -69,7 +69,7 @@ guard before authentication/request/page locks and checks the original anchor,
 source incarnation, topology and owner epoch. Code/image importers and ignored-file
 walks remain explicitly refused in managed mode until their own prepared
 publication and recovery paths exist. Git pull/rebase stays refused inside sync
-and cycles; the one sanctioned Git writer is `gbrain sources refresh <source>`
+and cycles; the one sanctioned Git writer is `foresights sources refresh <source>`
 (`src/core/persistence/worktree-refresh.ts`). It refuses new checkout writes for
 every source bound to the worktree at admission (`worktree_refreshing`), waits
 until queued requests and Git effects on the worktree finish, then, holding the

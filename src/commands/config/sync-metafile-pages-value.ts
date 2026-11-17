@@ -12,7 +12,7 @@ export async function setMetafilePagesValue(engine: BrainEngine, value: string):
   const normalized = value.trim().toLowerCase();
   if (!(METAFILE_PAGES_MODES as readonly string[]).includes(normalized)) {
     exitCliError(usageError(`${SYNC_METAFILE_PAGES_KEY} is one of ${METAFILE_PAGES_MODES.join(', ')}; "${inertText(value, 40)}" is not. Nothing was written.`,
-      `Re-run with one of them: gbrain config set ${SYNC_METAFILE_PAGES_KEY} off keeps every folder-scaffolding file out of the brain; ${DEFAULT_METAFILE_PAGES_MODE} (the default) imports a nested one whose frontmatter has type: or title:.`, {
+      `Re-run with one of them: foresights config set ${SYNC_METAFILE_PAGES_KEY} off keeps every folder-scaffolding file out of the brain; ${DEFAULT_METAFILE_PAGES_MODE} (the default) imports a nested one whose frontmatter has type: or title:.`, {
         why: `Sync reads any other stored value as ${DEFAULT_METAFILE_PAGES_MODE}.`,
         fix: { argv: ['gbrain', 'config', 'get', SYNC_METAFILE_PAGES_KEY], consent: [], actor: 'agent', why: 'Shows the value in effect; nothing was written.', requires_exclusive: false },
       }), 'config');

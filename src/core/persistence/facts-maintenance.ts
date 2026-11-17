@@ -170,7 +170,7 @@ export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: 
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   if (values.embedding_disabled !== undefined && values.embedding_disabled !== 'true' && values.embedding_disabled !== 'false') {
     throw opError('embedding_configuration', 'Selected brain embedding_disabled must be true or false.',
-      'The brain\'s embedding_disabled setting is neither true nor false, so fact extraction stopped before admission. Read it, then have the user set it to true or false with gbrain config set embedding_disabled.',
+      'The brain\'s embedding_disabled setting is neither true nor false, so fact extraction stopped before admission. Read it, then have the user set it to true or false with foresights config set embedding_disabled.',
       { fix: readFix('Shows the stored embedding_disabled value and the plane it comes from, read-only.', { argv: ['gbrain', 'config', 'get', 'embedding_disabled'] }) });
   }
   if (config.embedding_disabled || values.embedding_disabled === 'true') return null;
@@ -183,8 +183,8 @@ export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: 
     const gateway = signature ? signature.slice(0, signature.lastIndexOf(':')) : null;
     const target = gateway?.endsWith(`:${model}`) ? gateway : null;
     throw opError('embedding_configuration', 'The selected brain records its embedding model without a provider, so facts cannot be embedded.',
-      `The brain's embedding_model row is ${JSON.stringify(model)} with no provider prefix (a row from an older install), so fact extraction stopped before admission; gbrain config set cannot change it. `
-      + `Preview the supported rewrite with gbrain migrate embeddings --to ${target ?? `<provider>:${model}`} --dry-run and show the user its cost: it re-embeds active facts, so applying it needs the user's paid authorization.`,
+      `The brain's embedding_model row is ${JSON.stringify(model)} with no provider prefix (a row from an older install), so fact extraction stopped before admission; foresights config set cannot change it. `
+      + `Preview the supported rewrite with foresights migrate embeddings --to ${target ?? `<provider>:${model}`} --dry-run and show the user its cost: it re-embeds active facts, so applying it needs the user's paid authorization.`,
       { fix: target ? readFix(`Previews rewriting the brain's embedding identity to ${target}, read-only.`, { argv: ['gbrain', 'migrate', 'embeddings', '--to', target, '--dry-run'] }) : embeddingsFix() });
   }
   if (!/^[^\s:]+:[^\s]+$/.test(model) || !dimensions || !Number.isSafeInteger(dimensions)) {
@@ -239,7 +239,7 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
       const job = currentSubmissionAuthority();
       if (job && job.kind !== 'application' || ctx.remote !== false && !verified && job?.kind !== 'application') {
         throw opError('writer_coordinator_required', 'Managed facts require the original operation or durable job authority before extraction.',
-          `Fact extraction for source ${ctx.sourceId} ran outside an operation or durable job, so it has no authority to publish; nothing was extracted. Submit it as the extract_facts operation (an MCP tool call, or gbrain call extract_facts on the brain host).`);
+          `Fact extraction for source ${ctx.sourceId} ran outside an operation or durable job, so it has no authority to publish; nothing was extracted. Submit it as the extract_facts operation (an MCP tool call, or foresights call extract_facts on the brain host).`);
       }
       operation = { engine, remote: verified?.remote ?? false, sourceId: ctx.sourceId, config: { engine: engine.kind } } as OperationContext;
     }

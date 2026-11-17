@@ -1,5 +1,5 @@
 /**
- * Shared batch-insert row builders (gbrain#1861).
+ * Shared batch-insert row builders (foresights#1861).
  *
  * WHY THIS FILE EXISTS
  * --------------------

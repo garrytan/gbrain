@@ -1,7 +1,9 @@
+import { ALIAS_ENV_ADOPTED } from '../../cli/legacy-env.ts'; // first: FORESIGHTS_* settings answer to their GBRAIN_* names
 import { setupInAgent, type AgentSetupOptions } from './setup.ts';
 import { AgentInstallError } from './state.ts';
 import { BootstrapError } from '../bootstrap/lock.ts';
 import { PgliteBusyError } from '../pglite-lock.ts';
+void ALIAS_ENV_ADOPTED;
 
 export async function runAgentSetupCli(args: string[]): Promise<number> {
   const json = args.includes('--json');

@@ -1,7 +1,7 @@
 /**
  * #6948: the database invariant behind origin twins: one live page per recorded origin, a partial unique index
  * `pages_live_origin_key` on (source_id, source_path) over live pages that record a file. It is built online only
- * when the brain holds no live twins (the migration, or `gbrain repair origin-twins --apply` once the last group is
+ * when the brain holds no live twins (the migration, or `foresights repair origin-twins --apply` once the last group is
  * resolved); with twins it is left pending and doctor names the repair, so no upgrade fails or rewrites data.
  * The index covers the stored spelling; the legacy `<scope>/<origin>` spelling of a scoped source-root source is
  * refused by the writer guard and reported by doctor and the repair.
@@ -34,7 +34,7 @@ export async function originIndexState(engine: Pick<BrainEngine, 'executeRaw' | 
   return !row ? 'missing' : row.valid ? 'present' : 'invalid';
 }
 
-export const originTwinsRepairCommand = (sourceId: string) => `gbrain repair origin-twins --source ${sourceId}`;
+export const originTwinsRepairCommand = (sourceId: string) => `foresights repair origin-twins --source ${sourceId}`;
 
 export type OriginIndexOutcome = { state: Exclude<OnlineIndexOutcome, 'building'> | 'building' } | { state: 'pending'; sources: Array<{ source_id: string; groups: number; twins: number }> };
 
@@ -48,7 +48,7 @@ export async function buildOriginIndexIfClean(engine: BrainEngine, version: numb
   const sources = await originTwinCounts(engine);
   if (sources.length) return { state: 'pending', sources };
   try {
-    return { state: await buildIndexOnline(engine, version, ORIGIN_INDEX, { notice, rebuild: 'gbrain repair origin-twins --source <id> --apply' }) };
+    return { state: await buildIndexOnline(engine, version, ORIGIN_INDEX, { notice, rebuild: 'foresights repair origin-twins --source <id> --apply' }) };
   } catch (error) {
     const again = await originTwinCounts(engine);
     if (!again.length) throw error;

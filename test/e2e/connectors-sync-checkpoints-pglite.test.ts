@@ -435,7 +435,7 @@ describe('#6387 Claude retries use the organization that listed the conversation
     expect(hits).toEqual([]);
     expect(held.held).toEqual(['old-b']);
     expect(held.status).toBe('partial');
-    expect(held.hint).toContain('gbrain connectors sync claude --full');
+    expect(held.hint).toContain('foresights connectors sync claude --full');
 
     const full = await runClaude(convs, hits, { full: true });
     expect(hits).toContain('org-b/old-b');

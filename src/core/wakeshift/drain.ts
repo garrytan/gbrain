@@ -10,8 +10,8 @@
  *     `<state>:<settled_us>`, or `gone`);
  *   - gbrain.cron.finished: the first `wake_cron_runs` row for the name after
  *     the watch began (marker `<run id>:<status>`).
- * It runs on a 5 s timer inside `gbrain serve` (stdio and HTTP) and the job
- * worker, once more at the end of `gbrain jobs work`, and inside a watch call
+ * It runs on a 5 s timer inside `foresights serve` (stdio and HTTP) and the job
+ * worker, once more at the end of `foresights jobs work`, and inside a watch call
  * whose target already settled.
  *
  * Bounded: at most 20 watches a tick; a lease (conditional UPDATE) so two
@@ -303,7 +303,7 @@ export async function drainWakes(engine: BrainEngine, opts: { ids?: number[]; ru
   return report;
 }
 
-/** Passes until one has nothing left to settle (at most 10): the final pass of a process about to exit (`gbrain jobs work`). */
+/** Passes until one has nothing left to settle (at most 10): the final pass of a process about to exit (`foresights jobs work`). */
 export async function drainWakesUntilIdle(engine: BrainEngine): Promise<DrainReport> {
   const total: DrainReport = { delivered: 0, retried: 0, dead: 0, ended: 0 };
   let failure: unknown = null;

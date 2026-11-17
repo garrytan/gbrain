@@ -71,7 +71,7 @@ export function resumableStop(row: WriteRequest): boolean {
 export async function stopRecorded(engine: BrainEngine, key: string, runId: string): Promise<boolean> {
   return (await recordedStop(engine, key, runId)) !== null;
 }
-/** #6712 PR 3 (L7): this run's recorded stop with the gbrain version that recorded it (null on a row from before versions were kept), or null when none is. */
+/** #6712 PR 3 (L7): this run's recorded stop with the foresights version that recorded it (null on a row from before versions were kept), or null when none is. */
 export async function recordedStop(engine: BrainEngine, key: string, runId: string): Promise<RecordedStop | null> {
   const [row] = await engine.executeRaw<RecordedStop>(
     "SELECT completed_keys->0->>'gbrain_version' AS gbrain_version FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'run_id'=$2", [key, runId]);
@@ -81,7 +81,7 @@ export interface RecordedStop { gbrain_version: string | null }
 
 /**
  * #6712 PR 3 (L7): a content refusal is a function of the file's bytes and the parser that read them, so while both are the
- * ones that refused it (the file is unchanged and this gbrain version recorded the failure) the sync replays the recorded
+ * ones that refused it (the file is unchanged and this foresights version recorded the failure) the sync replays the recorded
  * failure without a new request. A changed file, an upgrade, or a failure an older build recorded is retried.
  */
 export function replaysContentRefusal(failed: WriteRequest, recorded: { gbrain_version: string | null }, unchanged: () => boolean): boolean {
@@ -90,12 +90,12 @@ export function replaysContentRefusal(failed: WriteRequest, recorded: { gbrain_v
 
 /**
  * #6712 PR 3 (L7): whether the next sync replays a page's recorded refusal instead of retrying it, because what decides it
- * has not changed since this gbrain version recorded it: a content refusal while the file has its frozen bytes, and a pinned
+ * has not changed since this foresights version recorded it: a content refusal while the file has its frozen bytes, and a pinned
  * import refused for newer working-tree bytes (`source_changed`) while HEAD is still the run's target and the file still
  * holds the working-tree bytes that refused (the frozen `rawHash`). Bytes decide, never the
  * file's mtime against the stop's database timestamp: those are two clocks, and a correction written within their skew
  * (a filesystem timestamp lags the wall clock by up to a scheduler tick) read as unwritten and replayed the refusal.
- * Committing the file, editing it or upgrading gbrain retries it. #6712 PR 4b: the pass replays what its last blocked pass
+ * Committing the file, editing it or upgrading foresights retries it. #6712 PR 4b: the pass replays what its last blocked pass
  * stopped on (sync-pass-run.ts, under sync.holds=fail).
  */
 export function replaysUnchangedRefusal(failed: WriteRequest, recorded: RecordedStop,

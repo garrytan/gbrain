@@ -1,7 +1,7 @@
 /**
  * #6607 (Cat 41 consent-negative): OpenAI latest-model discovery
  * (`GET /v1/models`, unbilled) ran on every engine connect whenever
- * OPENAI_API_KEY was set, so `gbrain doctor` on an existing keyless brain that
+ * OPENAI_API_KEY was set, so `foresights doctor` on an existing keyless brain that
  * never ran setup sent it with the user's key. Discovery now runs only before
  * an OpenAI-routed gateway call. A request counter stands in for the OpenAI
  * endpoint (OPENAI_BASE_URL): a keyless brain's doctor and search send

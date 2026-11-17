@@ -1,7 +1,7 @@
 /**
  * v0.40.3.0 — per-source console line-prefixing via AsyncLocalStorage.
  *
- * Under `gbrain sync --all --parallel > 1`, multiple per-source syncs run
+ * Under `foresights sync --all --parallel > 1`, multiple per-source syncs run
  * concurrently. Without prefixing, every `console.log` from `performSync`
  * (git pull lines, embed progress, drift gates, ~30+ call sites total)
  * interleaves on the terminal — operators can't tell which source emitted

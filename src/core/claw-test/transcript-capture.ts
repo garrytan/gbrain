@@ -1,7 +1,7 @@
 /**
  * Transcript capture for live-mode agent runs (D8 + D14, D17 backpressure).
  *
- * The existing minions/audit infrastructure is for INTERNAL gbrain subagents
+ * The existing minions/audit infrastructure is for INTERNAL foresights subagents
  * only. External openclaw/hermes subprocesses don't write to those tables —
  * v1 builds its own capture channel here.
  *
@@ -119,7 +119,7 @@ export async function spawnWithCapture(bin: string, args: string[], opts: SpawnO
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: false,
         // Own process group so timeout kills reach grandchildren too — agents
-        // spawn MCP servers and gbrain children; signalling only the direct
+        // spawn MCP servers and foresights children; signalling only the direct
         // PID leaves those orphaned holding the stdout/stderr pipes open.
         detached: true,
       });

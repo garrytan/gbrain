@@ -1,5 +1,5 @@
 /**
- * `gbrain skills index build|status|remove`: the only writer of a catalog's
+ * `foresights skills index build|status|remove`: the only writer of a catalog's
  * index. A build reads the source, picks the ranker variant, encodes the
  * index and publishes it under the catalog's build lease: index.bin first,
  * receipt.json last, each a durable rename. A remove renames the catalog
@@ -124,7 +124,7 @@ function validateBuild(input: BuildInput): void {
   assertCatalogName(input.catalog);
   const json = input.fromJson !== undefined;
   const kinds = [input.dirs?.length && !json ? 1 : 0, input.bundled ? 1 : 0, json ? 1 : 0, input.claudePlugins !== undefined ? 1 : 0].reduce((a, b) => a + b, 0);
-  if (kinds !== 1) throw new ResolverError('skill_resolve_invalid_input', 'Pass exactly one source: --dir <d> (repeatable), --bundled, --from-json <file|-> (optionally with --dir folders to take bodies from) or --claude-plugins <dir>.', { suggestion: 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills' });
+  if (kinds !== 1) throw new ResolverError('skill_resolve_invalid_input', 'Pass exactly one source: --dir <d> (repeatable), --bundled, --from-json <file|-> (optionally with --dir folders to take bodies from) or --claude-plugins <dir>.', { suggestion: 'Example: foresights skills index build --catalog claude-user --dir ~/.claude/skills' });
   if (input.harness !== undefined && !(HARNESSES as readonly string[]).includes(input.harness)) {
     throw new ResolverError('skill_resolve_invalid_input', `Unknown harness "${input.harness}".`, { suggestion: `Use one of: ${HARNESSES.join(', ')}.` });
   }

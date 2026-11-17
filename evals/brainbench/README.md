@@ -15,16 +15,16 @@ plus four memory-trust suites (#5575):
 | `deletion` | Does `forget --purge` remove a claim from every live store, account for each in its receipt, and keep it from coming back? | `residual_after_purge`, `receipt_completeness`, `resurrection_after_resync` |
 
 Plus cross-cutting: `source_isolation_violations` (gates at zero — a cross-source
-injection is gbrain's data-leak invariant) and `avg_injected_tokens` (intrusion
+injection is foresights's data-leak invariant) and `avg_injected_tokens` (intrusion
 diagnostics, non-gating).
 
 Run it:
 
 ```bash
-gbrain eval brainbench --harness all --suite all              # scoreboard
-gbrain eval brainbench --json --out /tmp/bb.json              # machine-readable
-gbrain eval brainbench --compare evals/brainbench/baselines/main.json
-gbrain eval brainbench --update-baseline                      # bless intentional movement
+foresights eval brainbench --harness all --suite all              # scoreboard
+foresights eval brainbench --json --out /tmp/bb.json              # machine-readable
+foresights eval brainbench --compare evals/brainbench/baselines/main.json
+foresights eval brainbench --update-baseline                      # bless intentional movement
 ```
 
 Hermetic by default: in-memory PGLite, `noEmbed` seeding, zero API keys, zero
@@ -134,7 +134,7 @@ teambrain-only page, and a default-only leak canary, replayed with
 The full foreign-runner surface is the subprocess CLI contract:
 
 ```bash
-gbrain eval brainbench --fixtures <DIR> --gold <DIR> --json --out result.json
+foresights eval brainbench --fixtures <DIR> --gold <DIR> --json --out result.json
 ```
 
 Point it at any conforming corpus; parse `result.json` against

@@ -1,5 +1,5 @@
 /**
- * #7245: the build a long-running gbrain process runs, next to the build its
+ * #7245: the build a long-running foresights process runs, next to the build its
  * install holds on disk now. A process keeps the code it loaded at start, so
  * after a checkout reset or an upgrade on disk its `VERSION` (in memory) and
  * the `package.json` beside the code it loaded (on disk) differ until it
@@ -24,7 +24,7 @@ export function runtimeInstallRoot(): string | null {
   }
 }
 
-/** The gbrain version installed at `root` now, read from disk; null when unknown or unreadable. */
+/** The foresights version installed at `root` now, read from disk; null when unknown or unreadable. */
 export function installedVersion(root: string | null | undefined): string | null {
   if (!root) return null;
   try {

@@ -1,6 +1,6 @@
 /**
  * #4116 regression: bun-global installs hoist @electric-sql/pglite OUT of
- * gbrain's own node_modules on upgrade, and the old eager static
+ * foresights's own node_modules on upgrade, and the old eager static
  * `../../node_modules/...` file imports then rejected at MODULE LOAD, killing
  * every command with "Cannot find module ... pglite.wasm".
  *

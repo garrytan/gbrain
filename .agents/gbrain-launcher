@@ -1,9 +1,9 @@
 #!/bin/sh
-# .agents/gbrain-launcher — MCP-server launcher for the gbrain Codex and
+# .agents/gbrain-launcher — MCP-server launcher for the foresights Codex and
 # Claude Code plugins. Unix-only (macOS/Linux): needs /bin/sh, executable
 # bits, and `command -v`. Windows support is a filed follow-up.
 #
-# Resolves the gbrain binary (the plugin snapshot cannot ship it — the CLI
+# Resolves the foresights binary (the plugin snapshot cannot ship it — the CLI
 # installs separately), then execs it with the argv the plugin manifest
 # pinned. Resolution order:
 #   1. $GBRAIN_BIN         explicit override (must be executable)
@@ -36,9 +36,9 @@ PLUGIN_LANE_MIN=0.60.547.0
 HOOK=0
 [ "${1:-}" = "hook" ] && HOOK=1
 
-# Hooks start in the session's directory, where a script-mode gbrain (and
+# Hooks start in the session's directory, where a script-mode foresights (and
 # the version probe below) would load that directory's bunfig.toml and .env
-# (#8428). Record it in GBRAIN_HOOK_CWD, which `gbrain hook` reads as the
+# (#8428). Record it in GBRAIN_HOOK_CWD, which `foresights hook` reads as the
 # session directory, and run from this launcher's own directory instead.
 if [ "$HOOK" = 1 ]; then
   GBRAIN_HOOK_CWD=$PWD
@@ -62,7 +62,7 @@ resolve_bin() {
   # ~/.bun/bin (the sanctioned global-install location) is preferred OVER a
   # bare PATH lookup: a hostile repo that prepends node_modules/.bin with a
   # fake `gbrain` must not win over the real install. GBRAIN_BIN (above) is
-  # the explicit escape hatch for a gbrain living elsewhere.
+  # the explicit escape hatch for a foresights living elsewhere.
   if [ -x "${HOME:-}/.bun/bin/gbrain" ]; then
     printf '%s' "$HOME/.bun/bin/gbrain"
     return

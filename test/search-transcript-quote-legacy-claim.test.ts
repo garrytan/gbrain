@@ -67,7 +67,7 @@ for (const backend of testBackends()) {
       }
       const tiers = (await trustTiersEntry.run({ engine } as unknown as DoctorContext) as Check[])[0]!;
       expect(tiers.message).toContain('Remote MCP readers see the 2 unverified-origin page(s) quoted as source material');
-      expect(tiers.message).toContain('gbrain trust claim-sources');
+      expect(tiers.message).toContain('foresights trust claim-sources');
       const unclaimed = (await trustSourcesUnclaimedEntry.run({ engine } as unknown as DoctorContext) as Check[])[0]!;
       expect(unclaimed.status).toBe('warn');
       expect(unclaimed.message).toContain('remote MCP readers see them quoted as source material');

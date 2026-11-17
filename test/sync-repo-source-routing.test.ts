@@ -2,7 +2,7 @@
  * #3765 — `--repo` / the sync_brain `repo` param must anchor SOURCE resolution
  * at the repo dir, not the caller's cwd.
  *
- * Pre-fix: `gbrain sync --repo <dir>` parsed the path but resolved the source
+ * Pre-fix: `foresights sync --repo <dir>` parsed the path but resolved the source
  * from cwd, and the sync_brain op threaded only ctx.sourceId — so a repo
  * pointing at source B's checkout synced under the WRONG source (wrong
  * anchors, wrong page source_id, wrong `syncLockId(sourceId)` lock key).

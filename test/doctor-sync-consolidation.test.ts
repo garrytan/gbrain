@@ -1,7 +1,7 @@
 // v0.41.19.0 — T6 of ops-fix-wave.
 //
 // Pins the sync_consolidation doctor check (Issue 5 — surface the
-// `gbrain sync --all --parallel` recommendation to operators with
+// `foresights sync --all --parallel` recommendation to operators with
 // multi-source brains).
 //
 // Coverage:
@@ -73,7 +73,7 @@ describe('checkSyncConsolidation (Issue 5)', () => {
     expect(result.status).toBe('ok');
     expect(result.message).toMatch(/3 active sources/);
     // Paste-ready command embedded in message
-    expect(result.message).toMatch(/gbrain sync --all --parallel 4 --workers 4 --skip-failed/);
+    expect(result.message).toMatch(/(?:foresights|gbrain) sync --all --parallel 4 --workers 4 --skip-failed/);
   });
 
   test('2 sources both archived → "not applicable" (archived excluded)', async () => {
@@ -111,8 +111,8 @@ describe('checkSyncConsolidation (Issue 5)', () => {
       const result = await checkSyncConsolidation(engine);
       expect(result.status).toBe('ok');
       expect(result.message).toContain('2 active sources on a managed brain');
-      expect(result.message).toContain('every 15 minutes: `gbrain sync --all --no-pull --hard-deadline 13m`');
-      expect(result.message).toContain('`gbrain sources refresh <id>;`');
+      expect(result.message).toContain('every 15 minutes: `foresights sync --all --no-pull --hard-deadline 13m`');
+      expect(result.message).toContain('`foresights sources refresh <id>;`');
       expect(result.message).not.toContain('--skip-failed');
       expect(result.message).not.toContain('--parallel');
     } finally {
@@ -125,7 +125,7 @@ describe('checkSyncConsolidation (Issue 5)', () => {
     await addSource('notes');
     const result = await checkSyncConsolidation(engine);
     expect(result.message).toBe(
-      '2 active sources detected. Recommended cron: `gbrain sync --all --parallel 4 --workers 4 --skip-failed`. ' +
+      '2 active sources detected. Recommended cron: `foresights sync --all --parallel 4 --workers 4 --skip-failed`. ' +
       'If your crontab has separate per-source entries, replace them with one --all line — future sources auto-pick-up without a crontab edit.');
   });
 
@@ -138,6 +138,6 @@ describe('checkSyncConsolidation (Issue 5)', () => {
     } as unknown as PGLiteEngine;
     const result = await checkSyncConsolidation(prePersistence);
     expect(result.status).toBe('ok');
-    expect(result.message).toMatch(/gbrain sync --all --parallel 4 --workers 4 --skip-failed/);
+    expect(result.message).toMatch(/(?:foresights|gbrain) sync --all --parallel 4 --workers 4 --skip-failed/);
   });
 });

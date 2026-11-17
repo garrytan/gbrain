@@ -95,7 +95,7 @@ const directoryCases: Array<{
     stderr: root => [
       'source filesystem lock admission failed.',
       `Error [writer_coordinator_required]: This path belongs to the managed canonical worktree ${root}.`,
-      'Fix: Submit the change through the persistence coordinator; check the root with gbrain sources writer status.',
+      'Fix: Submit the change through the persistence coordinator; check the root with foresights sources writer status.',
       `Marker: ${join(root, '.gbrain-managed')}`,
     ],
   },
@@ -104,7 +104,7 @@ const directoryCases: Array<{
     setup: root => join(root, 'notes'),
     engine: answering("local_path <> ''", new Error('synthetic sources lookup failure')),
     reason: 'synthetic sources lookup failure',
-    stderr: () => ['Error: synthetic sources lookup failure', 'Fix: gbrain doctor --json'],
+    stderr: () => ['Error: synthetic sources lookup failure', 'Fix: foresights doctor --json'],
     cause: 'synthetic sources lookup failure',
   },
   {
@@ -116,7 +116,7 @@ const directoryCases: Array<{
     engine: answering('FROM persistence_brain', [{ enabled: true }]),
     reason: 'symlinked input root',
     stderr: root => [`Managed import refuses a symlinked input root: ${join(root, 'notes-link')} resolves to ${join(root, 'notes')}.`,
-      `Fix: gbrain import ${join(root, 'notes')}`],
+      `Fix: foresights import ${join(root, 'notes')}`],
   },
 ];
 

@@ -1,5 +1,5 @@
 /**
- * `gbrain decide probe --query <q>`: the magical moment. Runs today's search
+ * `foresights decide probe --query <q>`: the magical moment. Runs today's search
  * (every slot off), then asks Jev, in ONE request, for each result's rerank
  * score and evidence probability, and prints them next to today's order.
  * Changes nothing: no config write, no receipt, results untouched. Egress is
@@ -60,7 +60,7 @@ export async function runProbeQuery(engine: BrainEngine, cfg: DecideConfig, prov
     for (const x of out.rows) {
       console.log(`${String(x.today).padStart(5)}  ${x.jev_rank === null ? '  -' : String(x.jev_rank).padStart(3)}  ${x.p_evidence === null ? (x.withheld ? '  private' : '        -') : x.p_evidence.toFixed(2).padStart(9)}  ${x.slug}`);
     }
-    console.log('Next: gbrain decide status   (with a key, the slots with a measured win are on by default)');
+    console.log('Next: foresights decide status   (with a key, the slots with a measured win are on by default)');
     return 0;
   } catch (err) {
     console.error(`probe failed: ${refusalLine(err instanceof DecideError ? err.reason : 'provider_error')}`);

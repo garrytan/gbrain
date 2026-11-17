@@ -13,7 +13,7 @@
  * #6020): the page's filename/slug date,
  * frontmatter `date`, `published` or a created key, in effective-date
  * precedence with `event_date` removed. An event date is when something
- * happened, not when the note was written, and row timestamps are when GBrain
+ * happened, not when the note was written, and row timestamps are when Foresights
  * stored it, so neither is ever shown as observed. Facts carry no observation
  * date on master, so a fact's `observed` is `unknown` and its validity window
  * (`valid_from` to `valid_until`, an open end shown as `unknown`) follows.

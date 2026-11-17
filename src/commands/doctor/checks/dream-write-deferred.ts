@@ -26,7 +26,7 @@ export async function dreamWriteDeferredCheck(engine: BrainEngine, sourceIds?: s
     message: `${escalated.length} dream write(s) still pending after ${DREAM_WRITE_DEFERRAL_MAX_REPLAYS} passes: `
       + escalated.slice(0, 3).map(item => `${item.phase} in ${item.source_id} (request_id ${item.request_id})`).join('; ')
       + `. The phase submits nothing more for that source until the receipt ends. Read it with ${first.status_command}; `
-      + `if the writer is stuck, gbrain sources writer status --source ${first.source_id} --json names why. `
+      + `if the writer is stuck, foresights sources writer status --source ${first.source_id} --json names why. `
       + `(${DREAM_WRITE_DEFERRAL_ENABLED_KEY}=false turns deferral off.)`,
     details, fix: agentFix(['gbrain', 'write-request', '--', first.request_id], 'Read-only: the deferred write\'s receipt and why it has not committed.', 'dream_write_deferred') };
 }

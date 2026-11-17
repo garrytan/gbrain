@@ -11,7 +11,7 @@ import { parseGlobalFlags } from '../src/core/cli-options.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const MODEL = 'openai:text-embedding-3-small';
-const DOCS = 'https://github.com/garrytan/gbrain/blob/master/docs/guides/embedding-migration.md#recovery';
+const DOCS = 'https://github.com/aimonk2025/gbrain/blob/master/docs/guides/embedding-migration.md#recovery';
 const SECRET = 'synthetic-credential-never-print';
 const PRIVATE_BODY = 'SYNTHETIC_PRIVATE_BODY_NEVER_PRINT';
 const cliPath = join(import.meta.dir, '../src/cli.ts');
@@ -57,7 +57,7 @@ test.each(invalidControls.map(args => [args.join(' '), args] as const))('direct 
 });
 
 test.each(routes.flatMap(route => invalidControls.map(narrowing => [`${route.join(' ')} ${narrowing.join(' ')}`, route, narrowing] as const)))(
-  'the CLI entry rejects gbrain %s from its argv before dispatch', (_label, route, narrowing) => {
+  'the CLI entry rejects foresights %s from its argv before dispatch', (_label, route, narrowing) => {
     const { flag, argv } = invalidInvocation(route, narrowing);
     const error = cliRejection(argv);
     expect(error?.flag).toBe(flag);
@@ -106,7 +106,7 @@ test.each(['apply_failed', 'probe_failed', 'incomplete', 'locked', 'refused', 'r
       appendFileSync(${JSON.stringify(calls)}, 'call\\n');
       if (${JSON.stringify(status)} === 'probe_failed') throw new Error(${JSON.stringify(`${SECRET} ${PRIVATE_BODY}`)});
       return { embeddings: values.map(value => Array(8).fill(
-        ${JSON.stringify(status)} === 'incomplete' && value !== 'gbrain embedding migration probe' ? NaN : 0.1
+        ${JSON.stringify(status)} === 'incomplete' && value !== 'foresights embedding migration probe' ? NaN : 0.1
       )), usage: { tokens: 8 } };
     });
   `);
@@ -150,7 +150,7 @@ test.each(['apply_failed', 'probe_failed', 'incomplete', 'locked', 'refused', 'r
     expect(envelope.status).toBe(status === 'retarget_refused' ? 'refused' : status);
     expect(envelope.plan).toBeDefined();
     expect(envelope.recovery).toEqual({
-      status_command: 'gbrain migrate embeddings --status --json', docs: DOCS,
+      status_command: 'foresights migrate embeddings --status --json', docs: DOCS,
       partial_state: 'Previously committed progress and authorization debits may remain.',
       action: 'Inspect the selected brain using the same --brain selection before retrying. Do not blindly retry or reset the migration marker.',
       authorization: 'Increasing --max-cost-usd renews authorization for a larger total cap; it does not reset prior debits.',
@@ -172,7 +172,7 @@ test.each(['apply_failed', 'probe_failed', 'incomplete', 'locked', 'refused', 'r
     const help = await run(['--help']);
     expect(help.code).toBe(0);
     expect(help.stdout).toContain(DOCS);
-    expect(help.stdout).toContain('gbrain migrate embeddings --status --json');
+    expect(help.stdout).toContain('foresights migrate embeddings --status --json');
     expect(help.stderr).not.toContain('Recovery:');
   } finally {
     await engine.disconnect();
@@ -260,7 +260,7 @@ test('both actual migration CLI routes reject unsupported or malformed controls 
           expect({ code, stderr: code !== 0 ? stderr : '' }).toEqual({ code: 0, stderr: '' });
           if (supported.includes('--help')) {
             expect(stdout).toContain('without --no-embed using the same cap; prior debits remain');
-            expect(stdout).not.toContain('gbrain embed --stale');
+            expect(stdout).not.toContain('foresights embed --stale');
             expect(stdout).toContain(DOCS);
           } else expect(JSON.parse(stdout).status).toBe(supported.includes('--status') ? 'status' : 'planned');
           expect(existsSync(calls)).toBe(false);

@@ -1,5 +1,5 @@
 /**
- * #6529: `gbrain embed --stale --images` on a managed brain. The sweep called
+ * #6529: `foresights embed --stale --images` on a managed brain. The sweep called
  * the legacy importer, which a managed brain refuses
  * (`assertUnmanagedCanonicalWriter`); it treated a NULL `pages.source_path` as
  * a missing file although an image slug is the repo-relative path; and a sweep

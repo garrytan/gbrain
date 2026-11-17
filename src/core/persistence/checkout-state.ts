@@ -1,8 +1,8 @@
 /**
  * Q1 (GBRA-153 shape A): what a managed canonical checkout holds that its upstream does not, read without fetching.
  *
- * A commit made in the checkout outside gbrain (a cron's bare `git commit`, a hand edit) is not on the upstream until
- * the owner's next Git publish, and once the upstream moves on the checkout has diverged: `gbrain sources refresh`
+ * A commit made in the checkout outside foresights (a cron's bare `git commit`, a hand edit) is not on the upstream until
+ * the owner's next Git publish, and once the upstream moves on the checkout has diverged: `foresights sources refresh`
  * refuses `refresh_diverged`. `sources writer status` and doctor `git_convergence` report each such commit (sha,
  * author, date, subject, paths) and the porcelain counts, so an operator sees who wrote what before anything is pushed.
  * Every git call is time-bounded and read-only; the comparison is with the last fetched upstream.

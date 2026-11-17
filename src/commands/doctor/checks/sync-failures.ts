@@ -16,7 +16,7 @@ import { readUpstreamDivergences } from '../../../core/sync-upstream-rewrite.ts'
 
 /** #6518 [R18 vi]: the fast check cannot verify a mirror row; a warning there is uncertainty, never recovery. */
 const MIRROR_UNVERIFIED = (count: number) => `${count} mirrored managed sync failure(s) could not be verified without a database connection: `
-  + 'a better fast score means less certainty, not that sync recovered. Run gbrain doctor --only sync_failures with the brain reachable.';
+  + 'a better fast score means less certainty, not that sync recovered. Run foresights doctor --only sync_failures with the brain reachable.';
 
 export async function checkSyncFailures(engine: BrainEngine | null, opts: { sourceIds?: string[]; remote?: boolean } = {}): Promise<Check | null> {
   const check = await checkRecordedSyncFailures(engine, opts);
@@ -24,7 +24,7 @@ export async function checkSyncFailures(engine: BrainEngine | null, opts: { sour
   if (!upstream.length) return check;
   const local = opts.remote === false;
   const note = local ? upstream.map(report => `${report.message} Next${report.fix.ask_user ? ' (ask the user first)' : ''}: ${report.fix.argv!.join(' ')}.`).join(' ')
-    : `${upstream.length} source(s) cannot pull because the checkout and its upstream diverged (${[...new Set(upstream.map(report => report.code))].join(', ')}); local HEAD keeps syncing. Ask the host operator to run gbrain doctor --only sync_failures.`;
+    : `${upstream.length} source(s) cannot pull because the checkout and its upstream diverged (${[...new Set(upstream.map(report => report.code))].join(', ')}); local HEAD keeps syncing. Ask the host operator to run foresights doctor --only sync_failures.`;
   return { ...check, name: 'sync_failures', status: check?.status === 'fail' ? 'fail' : 'warn', message: check && check.status !== 'ok' ? `${check.message} ${note}` : note,
     ...(local ? { details: { ...check?.details, upstream } } : {}),
     ...(check?.fix ? {} : local ? { fix: upstream[0]!.fix } : { fix_unavailable_reason: 'operator_judgement' as const }) };
@@ -63,12 +63,12 @@ async function checkRecordedSyncFailures(engine: BrainEngine | null, opts: { sou
   const repairArgv = ['gbrain', 'repair', 'managed-sync-orphans', ...(orphanSources.size === 1 ? ['--source', orphans[0]!.source_id] : [])];
   const repairPreview = repairArgv.join(' ');
   const orphanNoteFor = (lead: string) => orphans.length ? ` ${lead} (${orphans.map(orphan => `${orphan.source_id}:${orphan.cursor_key.slice(0, 12)} ${orphan.reason}`).join(', ')}) cannot be resumed or cleared by any sync: `
-    + `preview ${repairPreview} and apply with the hash it prints (docs/guides/repair.md#managed-sync-orphans). Retiring them says nothing about whether the current source's files are imported; gbrain sync status --source <id> --json does.` : '';
+    + `preview ${repairPreview} and apply with the hash it prints (docs/guides/repair.md#managed-sync-orphans). Retiring them says nothing about whether the current source's files are imported; foresights sync status --source <id> --json does.` : '';
   const orphanNote = orphanNoteFor(`${orphans.length} of these`);
   const orphanFix = orphans.length && opts.remote === false ? { fix: agentFix(repairArgv, 'Previews the sync bookkeeping no sync can resume or clear (with each row\'s class) and prints the apply command with its hash; writes nothing.', 'sync_failures',
     { docs: 'docs/guides/repair.md#managed-sync-orphans' }) } : {};
-  const remoteOrphanNote = orphans.length ? ` ${orphans.length} managed sync bookkeeping row(s) cannot be resumed or cleared by any sync; ask the host operator to preview gbrain repair managed-sync-orphans.` : '';
-  const unreadNote = orphanReadError ? ` The managed sync bookkeeping could not be classified (${orphanReadError}); this is not proof that none is orphaned. Run gbrain doctor --only sync_failures again with the brain reachable.` : '';
+  const remoteOrphanNote = orphans.length ? ` ${orphans.length} managed sync bookkeeping row(s) cannot be resumed or cleared by any sync; ask the host operator to preview foresights repair managed-sync-orphans.` : '';
+  const unreadNote = orphanReadError ? ` The managed sync bookkeeping could not be classified (${orphanReadError}); this is not proof that none is orphaned. Run foresights doctor --only sync_failures again with the brain reachable.` : '';
   if (!severity.unresolved) {
     if (orphans.length || orphanReadError) {
       const base = `${entries.length ? 'All historical sync failures are acknowledged.' : 'No current sync failures on active sources.'}`;
@@ -96,8 +96,8 @@ async function checkRecordedSyncFailures(engine: BrainEngine | null, opts: { sou
   const resumable = managed.filter(row => !orphanKeys.has(row.cursor_key));
   const retries = [...new Set(resumable.map(row => managedSyncRetryCommand(row)))];
   const recovery = requiresManagedRetry
-    ? `${resumable.length || !orphans.length ? `Fix the cause, then run ${retries.length ? retries.join(' ; ') : 'gbrain sync --no-pull with the same source and options (it retries the recorded failure)'}. Completed full runs do not resolve a different unfinished cursor.` : ''}${orphanNote}${unreadNote}`.trim()
-    : `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge legacy file failures.${orphanNote}${unreadNote}`;
+    ? `${resumable.length || !orphans.length ? `Fix the cause, then run ${retries.length ? retries.join(' ; ') : 'foresights sync --no-pull with the same source and options (it retries the recorded failure)'}. Completed full runs do not resolve a different unfinished cursor.` : ''}${orphanNote}${unreadNote}`.trim()
+    : `Fix the file(s) and re-run 'foresights sync', or use 'foresights sync --skip-failed' to acknowledge legacy file failures.${orphanNote}${unreadNote}`;
   const legacyNote = managedBrain ? legacyLedgerNote(unresolvedLegacy) : '';
   // #6712 PR 2 (L5): each managed failure with the classifier's category and the public category beside it.
   const failures = managed.map(row => {

@@ -1,5 +1,5 @@
 /**
- * gbrain integrations — standalone CLI command for recipe discovery and health.
+ * foresights integrations — standalone CLI command for recipe discovery and health.
  *
  * NOT an operation (no database connection needed).
  * Reads embedded recipe files and heartbeat JSONL from ~/.gbrain/integrations/.
@@ -40,7 +40,7 @@ interface RecipeSecret {
  * Install mode discriminator. New recipes default to 'local-managed' (the
  * legacy path that writes to ~/.gbrain/skills/). 'copy-into-host-repo'
  * recipes write their bundle into the operator's host agent repo via the
- * `gbrain integrations install` subcommand.
+ * `foresights integrations install` subcommand.
  */
 type InstallKind = 'local-managed' | 'copy-into-host-repo';
 
@@ -151,7 +151,7 @@ export function isUnsafeHealthCheck(check: string): boolean {
  * integration — is not reported [missing] by show/status. process.env still
  * wins for non-empty values (buildGatewayConfig spreads it last, dropping
  * only ''/undefined entries). Falls back to bare process.env before
- * `gbrain init` (no config file yet). Mirrors the #2728 fix on the
+ * `foresights init` (no config file yet). Mirrors the #2728 fix on the
  * providers command.
  */
 export function secretEnv(): Record<string, string | undefined> {
@@ -406,7 +406,7 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
 // --- Embedded Recipes ---
 
 // Recipes are loaded from multiple tiers with an explicit trust boundary:
-//   TRUSTED (embedded=true):  package-bundled recipes shipped with gbrain
+//   TRUSTED (embedded=true):  package-bundled recipes shipped with foresights
 //     - source install: ../../recipes relative to this file
 //     - global install: ~/.bun/install/global/node_modules/gbrain/recipes
 //   UNTRUSTED (embedded=false): user-provided recipes discovered at runtime
@@ -738,14 +738,14 @@ function cmdList(args: string[]): void {
     console.log(`\n  This week: ${weekEvents.length} events logged.`);
   }
 
-  console.log("\n  Run 'gbrain integrations show <id>' for setup details.");
+  console.log("\n  Run 'foresights integrations show <id>' for setup details.");
   console.log('');
 }
 
 function cmdShow(args: string[]): void {
   const id = args.find(a => !a.startsWith('-'));
   if (!id) {
-    console.error('Usage: gbrain integrations show <recipe-id>');
+    console.error('Usage: foresights integrations show <recipe-id>');
     return;
   }
 
@@ -781,7 +781,7 @@ function cmdStatus(args: string[]): void {
   const jsonMode = args.includes('--json');
   const id = args.find(a => !a.startsWith('-'));
   if (!id) {
-    console.error('Usage: gbrain integrations status <recipe-id>');
+    console.error('Usage: foresights integrations status <recipe-id>');
     return;
   }
 
@@ -831,7 +831,7 @@ function cmdStatus(args: string[]): void {
     if (ageMs > 24 * 60 * 60 * 1000) {
       console.log(`  WARNING: no events in ${Math.floor(ageMs / (24 * 60 * 60 * 1000))} days`);
       console.log('  Check: is ngrok running? Is the voice server alive?');
-      console.log('  Run: gbrain integrations doctor');
+      console.log('  Run: foresights integrations doctor');
     }
   } else {
     console.log('\nNo heartbeat data yet.');
@@ -937,7 +937,7 @@ function cmdStats(args: string[]): void {
 function cmdTest(args: string[]): void {
   const filePath = args.find(a => !a.startsWith('-'));
   if (!filePath) {
-    console.error('Usage: gbrain integrations test <recipe-file.md>');
+    console.error('Usage: foresights integrations test <recipe-file.md>');
     return;
   }
 
@@ -1003,23 +1003,23 @@ function cmdTest(args: string[]): void {
 }
 
 function printHelp(): void {
-  console.log(`gbrain integrations — manage integration recipes
+  console.log(`foresights integrations — manage integration recipes
 
 USAGE
-  gbrain integrations                  Show integration dashboard
-  gbrain integrations list [--json]    List available integrations
-  gbrain integrations show <id>        Show recipe details
-  gbrain integrations status <id>      Check secrets + health
-  gbrain integrations doctor [--json]  Run health checks
-  gbrain integrations stats [--json]   Show signal statistics
-  gbrain integrations test <file>      Validate a recipe file
+  foresights integrations                  Show integration dashboard
+  foresights integrations list [--json]    List available integrations
+  foresights integrations show <id>        Show recipe details
+  foresights integrations status <id>      Check secrets + health
+  foresights integrations doctor [--json]  Run health checks
+  foresights integrations stats [--json]   Show signal statistics
+  foresights integrations test <file>      Validate a recipe file
 `);
 }
 
 // --- Main Entry ---
 
 // =============================================================================
-// `gbrain integrations install <recipe-id>` — copy-into-host-repo path.
+// `foresights integrations install <recipe-id>` — copy-into-host-repo path.
 //
 // Reads the recipe's `install/manifest.json` (sibling to `recipes/<id>.md`),
 // validates the target host repo, copies each manifest entry to the target,
@@ -1030,7 +1030,7 @@ USAGE
 //
 // Target validation (path-traversal + privacy hardening):
 //   - Must be an existing directory.
-//   - Must NOT be gbrain itself OR a parent of gbrain.
+//   - Must NOT be foresights itself OR a parent of foresights.
 //   - Must contain a `.git` directory (refuses missing-git-root).
 //   - Must NOT contain existing files at any target path (unless --overwrite).
 //   - All manifest target paths must be relative; rejects `..` and absolute.
@@ -1105,7 +1105,7 @@ function validateManifestTarget(target: string): string | null {
  * Validate the host target repo.
  *   - Exists + is a directory
  *   - Has a `.git` (refuses missing-git-root)
- *   - Not gbrain itself; not a parent of gbrain
+ *   - Not foresights itself; not a parent of foresights
  *   - Refuses if any manifest target already exists (unless --overwrite)
  */
 function validateTargetRepo(
@@ -1128,7 +1128,7 @@ function validateTargetRepo(
   }
   if (!stat.isDirectory()) return `target is not a directory: ${resolvedTarget}`;
 
-  // Refuse if target is gbrain itself or contains gbrain.
+  // Refuse if target is foresights itself or contains foresights.
   let gbrainRoot: string | null = null;
   try {
     gbrainRoot = realpathSync(pathResolve(__dirname, '..', '..'));
@@ -1136,7 +1136,7 @@ function validateTargetRepo(
     // ignore — non-fatal
   }
   if (gbrainRoot && (resolvedTarget === gbrainRoot || gbrainRoot.startsWith(resolvedTarget + '/'))) {
-    return `refusing to install into gbrain itself (or a parent dir): ${resolvedTarget}`;
+    return `refusing to install into foresights itself (or a parent dir): ${resolvedTarget}`;
   }
 
   // Must have a .git
@@ -1232,7 +1232,7 @@ function classifyForRefresh(
     try {
       currentSrcSha = sha256OfBuffer(readFileSync(srcPath));
     } catch {
-      // src missing? Skip — this would mean a manifest pointing at a missing file in gbrain.
+      // src missing? Skip — this would mean a manifest pointing at a missing file in foresights.
       continue;
     }
 
@@ -1425,7 +1425,7 @@ async function refreshRecipeIntoHostRepo(
         break;
       }
       case 'source-deleted': {
-        // gbrain reference removed this file; offer cleanup with --auto take-theirs.
+        // foresights reference removed this file; offer cleanup with --auto take-theirs.
         const decision = opts.autoMode === 'take-theirs' ? 'cleanup' : 'leave-orphan';
         if (decision === 'cleanup') {
           try {
@@ -1638,8 +1638,8 @@ async function cmdInstall(args: string[]): Promise<void> {
       opts.autoMode = mode;
     } else if (arg === '--help' || arg === '-h') {
       console.log('Usage:');
-      console.log('  gbrain integrations install <recipe-id> --target <host-repo-path> [--overwrite] [--dry-run]');
-      console.log('  gbrain integrations install <recipe-id> --target <host-repo-path> --refresh [--auto keep-mine|take-theirs] [--dry-run]');
+      console.log('  foresights integrations install <recipe-id> --target <host-repo-path> [--overwrite] [--dry-run]');
+      console.log('  foresights integrations install <recipe-id> --target <host-repo-path> --refresh [--auto keep-mine|take-theirs] [--dry-run]');
       return;
     } else if (!recipeId && !arg.startsWith('-')) {
       recipeId = arg;
@@ -1647,7 +1647,7 @@ async function cmdInstall(args: string[]): Promise<void> {
   }
 
   if (!recipeId) {
-    console.error('Usage: gbrain integrations install <recipe-id> --target <host-repo-path>');
+    console.error('Usage: foresights integrations install <recipe-id> --target <host-repo-path>');
     process.exit(2);
   }
   if (!opts.target) {
@@ -1672,7 +1672,7 @@ async function cmdInstall(args: string[]): Promise<void> {
       console.log(`[install] manifest: ${manifestPath}`);
       // Gate the pointer on the hint actually existing (#4292) — a recipe
       // without a post-install-hint.md must not send the operator to a 404.
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- manifestPath derives from a findRecipe()-validated bundle root (embedded recipes/ tree or the operator-set GBRAIN_RECIPES_DIR) joined with a literal filename; used only as an existsSync gate on printing a hint line, and `gbrain integrations` is wired only from cli.ts (trusted local, never MCP)
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- manifestPath derives from a findRecipe()-validated bundle root (embedded recipes/ tree or the operator-set GBRAIN_RECIPES_DIR) joined with a literal filename; used only as an existsSync gate on printing a hint line, and `foresights integrations` is wired only from cli.ts (trusted local, never MCP)
       if (!opts.dryRun && existsSync(join(pathDirname(manifestPath), 'post-install-hint.md'))) {
         console.log('[install] next steps: see recipes/' + recipeId + '/install/post-install-hint.md');
       }

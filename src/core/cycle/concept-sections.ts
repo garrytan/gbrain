@@ -9,7 +9,7 @@
 import { stripCodeBlocks } from '../markdown-code.ts';
 
 const SECTION_HEADING_RE = /^##[ \t]+(?:Facets|Merged)[ \t]*$/i;
-const SECTION_END_RE = /^(?:#{1,2}[ \t]|<!---? gbrain:)/;
+const SECTION_END_RE = /^(?:#{1,2}[ \t]|<!---? (?:foresights|gbrain):)/;
 
 function sectionRanges(body: string): Array<[number, number]> {
   const masked = stripCodeBlocks(body);

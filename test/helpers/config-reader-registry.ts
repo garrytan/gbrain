@@ -2,10 +2,10 @@
  * Typed registry for test/config-reader-keys-registered.test.ts (#6780).
  *
  * The guard requires every `getConfig(<key>)` under src/ to name a key
- * `gbrain config set` accepts (KNOWN_CONFIG_KEYS or KNOWN_CONFIG_KEY_PREFIXES).
+ * `foresights config set` accepts (KNOWN_CONFIG_KEYS or KNOWN_CONFIG_KEY_PREFIXES).
  * This file holds the two exceptions, each with a reason a reviewer can check:
  *
- * - INTERNAL_CONFIG_STATE: keys and key prefixes gbrain writes itself
+ * - INTERNAL_CONFIG_STATE: keys and key prefixes foresights writes itself
  *   (markers, cursors, caches, receipts, counters). Operators do not set them
  *   with `config set`; registering them would advertise a knob that is not one.
  * - UNRESOLVED_CONFIG_READS: call sites whose key is not statically resolvable.
@@ -32,7 +32,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'transcripts.archive.backfill_state', reason: 'whether the maintenance pass has finished backfilling older conversation days (transcripts/archive-maintenance.ts); a hand edit would stop or restart the backfill' },
   { key: 'transcripts.archive.last_read.', prefix: true, reason: 'what the last conversation archive run read from each reader per source (transcripts/archive.ts): status and doctor report it as of that run instead of reading every session again' },
   { key: 'transcripts.archive.index_pending.', prefix: true, reason: 'days whose conversation archive day index still has to be written (transcripts/archive.ts); the next run retries them' },
-  { key: 'maintenance.last_run', reason: 'the free-upkeep run record (steps, cursor, parked items, next due time) that maintenance/run.ts writes after each gbrain maintain --unattended run; maintain --status and doctor read it, so a hand edit would misreport upkeep' },
+  { key: 'maintenance.last_run', reason: 'the free-upkeep run record (steps, cursor, parked items, next due time) that maintenance/run.ts writes after each foresights maintain --unattended run; maintain --status and doctor read it, so a hand edit would misreport upkeep' },
   { key: 'maintenance.embed_spend', reason: 'the per-day dollar total the capped upkeep embed step has spent (maintenance/run.ts); the daily cap reads it, so a hand edit would let upkeep spend past maintenance.embed_daily_usd' },
   { key: 'heal.audit', reason: 'the bounded self-heal audit log (last 200 rows, 30 days) that heal-audit.ts writes for each heal; doctor reads it to count a heal\'s consecutive failures, so a hand edit would hide an escalation' },
   { key: 'access.serves_derived', reason: 'whether two or more members are enabled, kept by the v309 trigger on access_members (search/private-visibility.ts servesPolicyFrom); a hand edit would lie about whom the brain serves' },
@@ -40,11 +40,11 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'access.restrictions_present', reason: 'sticky member-access marker a v282 trigger sets once a page names readers or a member exists (search/private-visibility.ts); clearing it would send remote reads down the unrestricted fast path' },
   { key: '_internal.link_extraction_generation', reason: 'link-extraction watermark generation (link-extraction-watermark.ts)' },
   { key: 'code.cluster_generation', reason: 'code-intel traversal cache generation counter' },
-  { key: 'embedding_migration.state', reason: 'gbrain migrate-embeddings resume state' },
-  { key: 'embedding_migration.completed', reason: 'gbrain migrate-embeddings completion marker' },
+  { key: 'embedding_migration.state', reason: 'foresights migrate-embeddings resume state' },
+  { key: 'embedding_migration.completed', reason: 'foresights migrate-embeddings completion marker' },
   { key: 'embed.backfill_skip_reported', reason: 'once-only marker for the embed_backfill_skipped notice on a keyless brain (embed-backfill-submit.ts)' },
   { key: 'facts.drain_state', reason: 'facts drain scheduler state (facts/drain.ts)' },
-  { key: 'facts.absorb_retry.state', reason: 'dead facts-absorb re-submit set (facts/dead-absorb-retry.ts); gbrain facts retry-dead edits it' },
+  { key: 'facts.absorb_retry.state', reason: 'dead facts-absorb re-submit set (facts/dead-absorb-retry.ts); foresights facts retry-dead edits it' },
   { key: 'google.file_modes_notice', reason: 'one-time upgrade notice marker (v0.60.31 migration)' },
   { key: 'notices.behavior_changes.http', reason: 'behavior-change notice shown-marker for serve --http' },
   { key: 'ocr_attempted', reason: 'image-OCR run counter (import-file.ts), read by doctor queue_assets' },
@@ -54,15 +54,15 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'ocr_skipped_budget', reason: 'image-OCR run counter (import-file.ts), read by doctor queue_assets' },
   { key: 'page_state.revision_backfill', reason: 'page-state revision backfill progress marker' },
   { key: 'schema_migration_timeout', reason: 'the last schema migration that ran out of its statement budget, written and cleared by migrate.ts (migration-timeout.ts, #7108)' },
-  { key: 'persistence.database_only_sources', reason: 'list maintained by gbrain sources writer activate/deactivate; config unset (which takes any key) is the documented escape hatch' },
+  { key: 'persistence.database_only_sources', reason: 'list maintained by foresights sources writer activate/deactivate; config unset (which takes any key) is the documented escape hatch' },
   { key: 'persistence.maintenance.last_compaction', reason: 'receipt compaction pass cursor (compaction-pass.ts)' },
   { key: 'persistence.true_up.compacted_through', reason: 'receipt true-up cursor (receipt-true-up.ts)' },
   { key: 'sync.metafile_pages.applied.', prefix: true, reason: 'per-source marker of the sync.metafile_pages mode a classic sync last applied, so a flip to typed backfills once (sync-metafile-pages.ts)' },
   { key: 'sync.slug_root_mode', reason: 'legacy unsourced slug-root mode stamped by sync (sync-anchor.ts); sourced brains keep it on the sources row' },
   { key: 'transcripts.secret_audit', reason: 'cached transcript secret-audit result (transcripts/secret-audit.ts)' },
   { key: 'trust.backfill_completed_at', reason: 'memory-trust backfill completion marker' },
-  { key: 'trust.kill_switch', reason: 'receipt written by gbrain trust disable/enable --all' },
-  { key: 'schema_pack.source.', prefix: true, reason: 'per-source schema pack binding written by gbrain schema commands' },
+  { key: 'trust.kill_switch', reason: 'receipt written by foresights trust disable/enable --all' },
+  { key: 'schema_pack.source.', prefix: true, reason: 'per-source schema pack binding written by foresights schema commands' },
   { key: 'backfill.', prefix: true, reason: 'resumable backfill checkpoints (backfill-base.ts checkpointKey)' },
   { key: 'shared_skills.export.v1.', prefix: true, reason: 'shared-skills migration export receipts' },
   { key: 'shared_skills.content.v1.', prefix: true, reason: 'shared-skills content setup state per source incarnation' },
@@ -90,7 +90,7 @@ const P = 'parameter' as const;
 
 export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/commands/autopilot/install-consent.ts', expr: 'k', why: P },
-  { file: 'src/commands/config.ts', expr: 'key', why: 'gbrain config get <key>: the operator names the key' },
+  { file: 'src/commands/config.ts', expr: 'key', why: 'foresights config get <key>: the operator names the key' },
   { file: 'src/core/heal-audit.ts', expr: 'key', why: P },
   { file: 'src/commands/decide/probe-query.ts', expr: 'key', why: P },
   { file: 'src/commands/doctor/checks/keyword-plan.ts', expr: 'key', why: P },

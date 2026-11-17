@@ -33,7 +33,7 @@
  *
  * - Default-on with `search.track_retrieval` config escape hatch (D13).
  *   Operators worried about per-search write amplification can opt out:
- *   `gbrain config set search.track_retrieval false`. `gbrain doctor`'s
+ *   `foresights config set search.track_retrieval false`. `foresights doctor`'s
  *   brainstorm_health check surfaces the setting.
  *
  * - Best-effort. Any error (column missing, network blip, statement
@@ -109,7 +109,7 @@ export async function awaitPendingLastRetrievedWrites(
       `[last-retrieved] drain timed out after ${timeoutMs}ms; ` +
         `${pending} writes still pending`,
     );
-    // Adversarial-review C1: in long-lived daemons (`gbrain serve`), a
+    // Adversarial-review C1: in long-lived daemons (`foresights serve`), a
     // timed-out IIFE stays in the set forever because its `.finally`
     // never fires. Repeated timeouts leak references without bound.
     // Drop this snapshot's tracked promises explicitly so the next

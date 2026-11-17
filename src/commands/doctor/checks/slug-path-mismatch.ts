@@ -8,7 +8,7 @@
  *
  * Read-only and bounded: one read of candidate rows (a slug pattern every non-derivable slug matches, in page id
  * order, at most SLUG_PATH_SCAN_LIMIT), then at most SLUG_PATH_FILE_LIMIT recorded files read on this host to tell a
- * stamped file from an unstamped one. Unstamped files warn and name `gbrain repair frontmatter --source <id>`, whose
+ * stamped file from an unstamped one. Unstamped files warn and name `foresights repair frontmatter --source <id>`, whose
  * preview proposes the stamp as a safe repair; a twin that already forked is `origin_twins`'s to report.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -86,7 +86,7 @@ async function runSlugPathMismatch(ctx: DoctorContext): Promise<Check[]> {
       checks.push({ name: 'slug_path_mismatch', status: 'warn', details: { ...details, sources: [...new Set(unstamped.map(page => page.source_id))], samples: samples(unstamped) },
         message: `${unstamped.length} live page(s) record a file whose path imports as another slug, and the file has no slug: line naming the page `
           + `(e.g. ${unstamped.slice(0, 3).map(page => `${page.source_id}:${page.slug} imports as ${page.imports_as}`).join(', ')}), so the next import or full sync of that file forks a second page. `
-          + `Preview the fix with gbrain repair frontmatter --source ${first} (writes nothing; it proposes the slug: stamp as a safe repair).`,
+          + `Preview the fix with foresights repair frontmatter --source ${first} (writes nothing; it proposes the slug: stamp as a safe repair).`,
         fix: agentFix(['gbrain', 'repair', 'frontmatter', '--source', first, '--json'],
           'Read-only preview: lists each file it would stamp with its page slug and prints the apply command with its hash. Apply only after the user agrees (it rewrites those files).',
           'slug_path_mismatch', { docs: DOCS }) });
@@ -96,7 +96,7 @@ async function runSlugPathMismatch(ctx: DoctorContext): Promise<Check[]> {
     if (truncated || files.not_read) {
       checks.push({ name: 'slug_path_mismatch', status: 'warn', details: { ...details, ...boundUnknownDetails(truncated ? 'rows' : 'files'), samples: samples(mismatches) },
         message: `Unknown: the check reads at most ${SLUG_PATH_SCAN_LIMIT} candidate pages and ${SLUG_PATH_FILE_LIMIT} recorded files (no setting), and ${truncated ? 'more pages were' : `${files.not_read} file(s) were`} not checked. `
-          + `None of the files read lacks its slug: line. Preview gbrain repair frontmatter --source <id> to check every file of a source.` });
+          + `None of the files read lacks its slug: line. Preview foresights repair frontmatter --source <id> to check every file of a source.` });
       return checks;
     }
     checks.push({ name: 'slug_path_mismatch', status: 'ok', details: { ...details, samples: samples(mismatches) },

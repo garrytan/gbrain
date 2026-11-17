@@ -176,7 +176,7 @@ describe('fix descriptors — hardcoded, config-URL-derived, never from error te
     if (d.fix.kind === 'run_command') expect(d.fix.argv[0]).toBe('gbrain');
   }
 
-  it('run_command argv[0] is always gbrain', () => {
+  it('run_command argv[0] is always foresights', () => {
     for (const s of REASON_SAMPLES) {
       everyFix(classifyPgAccessError(s.message));
       if (s.code) everyFix(classifyPgAccessError(s.code));

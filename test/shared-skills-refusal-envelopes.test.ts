@@ -38,12 +38,12 @@ describe('shared-skills refusals name their own next step', () => {
     expect(env.suggestion).toContain(root);
   });
 
-  test('joining into a directory gbrain did not create names the directory and never adopts it', async () => {
+  test('joining into a directory foresights did not create names the directory and never adopts it', async () => {
     const root = temp();
     writeFileSync(join(root, 'notes.md'), 'user file');
     const env = envelopeFor(await caught(() => createSharedSkillsAdapter({ call: unreachable, root, adapter: 'codex' }).join({ approved: true })));
     expect(env.code).toBe('local_conflict');
-    expect(env.suggestion).toContain(`${root} already holds files gbrain did not create`);
+    expect(env.suggestion).toContain(`${root} already holds files foresights did not create`);
   });
 
   test('an unexpected native router body is reported with the version', async () => {
@@ -51,6 +51,6 @@ describe('shared-skills refusals name their own next step', () => {
     const env = envelopeFor(await caught(() => prepareNativeRouter({ brain_id: randomUUID(), installation_id: randomUUID(), adapter: 'codex',
       state_root: join(root, 'state'), skills_dir: join(root, 'skills'), connection_name: 'gbrain', content: '# not a router' })));
     expect(env).toMatchObject({ code: 'local_conflict', docs: expect.stringContaining('docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover') });
-    expect(env.suggestion).toContain('gbrain --version');
+    expect(env.suggestion).toContain('foresights --version');
   });
 });

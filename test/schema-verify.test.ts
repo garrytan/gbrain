@@ -6,7 +6,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
  * Minimal executeRaw-only stub: routes on which information_schema view the
  * SQL targets (schema-verify.ts's two queries never touch anything else).
  * Not a shared test helper — narrow enough that a one-off stub here is
- * clearer than adding a new file for a single caller (gbrain#4421).
+ * clearer than adding a new file for a single caller (foresights#4421).
  */
 function stubEngine(opts: {
   tables: string[];
@@ -79,10 +79,10 @@ describe('parseExpectedColumns', () => {
 });
 
 describe('detectMissingColumns', () => {
-  it('reports missing when the ledger-expected column is absent from the live table (gbrain#4421 repro)', async () => {
+  it('reports missing when the ledger-expected column is absent from the live table (foresights#4421 repro)', async () => {
     // Positive control: content_chunks exists (so it's in-scope) but its
     // actual columns don't include embedded_text_hash — the exact drift
-    // that made `gbrain doctor` report schema_version=ok while `gbrain
+    // that made `foresights doctor` report schema_version=ok while `foresights
     // import` failed on every file with "column ... does not exist".
     const engine = stubEngine({
       tables: ['content_chunks'],

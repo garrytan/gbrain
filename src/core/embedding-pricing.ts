@@ -1,7 +1,7 @@
 /**
  * v0.32.7 CJK wave — embedding model pricing lookup table.
  *
- * Sibling to `anthropic-pricing.ts`. Used by `gbrain upgrade`'s post-upgrade
+ * Sibling to `anthropic-pricing.ts`. Used by `foresights upgrade`'s post-upgrade
  * cost-estimate prompt so users with large brains see a dollar figure
  * before the chunker-version sweep re-embeds.
  *

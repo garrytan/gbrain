@@ -5,7 +5,7 @@
  * sweep, so a brain can search on title-tier vectors for weeks while it
  * reports tokenmax. Warns when the synopsis tier is missing from most eligible
  * chunks, with the coverage and the preview of the explicit sweep
- * (`gbrain reindex --synopsis`). Database reads only: repo-less brains are
+ * (`foresights reindex --synopsis`). Database reads only: repo-less brains are
  * covered the same way.
  */
 import type { BrainEngine } from '../../../core/engine.ts';

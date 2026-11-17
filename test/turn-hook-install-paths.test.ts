@@ -99,11 +99,11 @@ describe('setup --instructions-only after a plain mcp add', () => {
     expect(r.doc.turn_hook_check).toMatchObject({ ok: false, reason: 'no_rule' });
   });
 
-  test('no absolute gbrain binary: nothing is installed, the one-line next step is printed, exit 0', async () => {
+  test('no absolute foresights binary: nothing is installed, the one-line next step is printed, exit 0', async () => {
     const b = box();
     const r = await setup(b, ['claude-code', '--instructions-only', '--json']);
     expect(r.exitCode).toBe(0);
-    expect(r.doc.turn_hook).toMatchObject({ action: 'print', next: 'gbrain setup claude-code --instructions-only' });
+    expect(r.doc.turn_hook).toMatchObject({ action: 'print', next: 'foresights setup claude-code --instructions-only' });
     expect(r.doc.turn_hook_check).toBeUndefined();
     expect(existsSync(join(b.home, '.claude', 'settings.json'))).toBe(false);
   });
@@ -118,7 +118,7 @@ describe('setup --instructions-only after a plain mcp add', () => {
 });
 
 describe('review fixes: repo-committed hooks, the hooks opt-outs, Hermes without a SOUL.md', () => {
-  test('a project whose committed .claude/settings.json carries a bare gbrain marker is never run, and does not count as carrying the rule', async () => {
+  test('a project whose committed .claude/settings.json carries a bare foresights marker is never run, and does not count as carrying the rule', async () => {
     const b = box();
     const ran = join(b.root, 'ran');
     mkdirSync(join(b.project, '.claude'), { recursive: true });
@@ -174,7 +174,7 @@ describe('the rule follows the recorded decision (#7962)', () => {
     const elsewhere = join(b.root, 'elsewhere');
     mkdirSync(elsewhere);
     await withEnv(b.env, async () => {
-      expect(brainFirstTurnRule('claude-code', join(b.project, 'src'))).toContain('GBrain: before answering this turn');
+      expect(brainFirstTurnRule('claude-code', join(b.project, 'src'))).toContain('Foresights: before answering this turn');
       expect(brainFirstTurnRule('claude-code', elsewhere)).toBeNull();
     });
   });
@@ -185,13 +185,13 @@ describe('installer lanes (connect --install, hosted harness install, bootstrap 
     const b = box();
     const paths = { claudeSettings: join(b.root, 'cfg', 'settings.json') };
     await withEnv(b.env, async () => {
-      const wrote = installerTurnHook({ harness: 'claude-code', accepted: true, gbrainBin: b.bin, paths, rerun: 'gbrain setup claude-code --instructions-only' });
+      const wrote = installerTurnHook({ harness: 'claude-code', accepted: true, gbrainBin: b.bin, paths, rerun: 'foresights setup claude-code --instructions-only' });
       expect(wrote.outcome.action).toBe('write');
       expect(readFileSync(paths.claudeSettings, 'utf8')).toContain(TURN_RULE_LANE_TOKEN);
       expect(installerTurnHook({ harness: 'claude-code', accepted: false, gbrainBin: b.bin, paths, rerun: '' }).outcome.action).toBe('remove');
       expect(readFileSync(paths.claudeSettings, 'utf8')).not.toContain(TURN_RULE_LANE_TOKEN);
-      const printed = installerTurnHook({ harness: 'codex', accepted: true, gbrainBin: null, rerun: 'gbrain setup codex --instructions-only' });
-      expect(printed.outcome).toMatchObject({ action: 'print', next: 'gbrain setup codex --instructions-only' });
+      const printed = installerTurnHook({ harness: 'codex', accepted: true, gbrainBin: null, rerun: 'foresights setup codex --instructions-only' });
+      expect(printed.outcome).toMatchObject({ action: 'print', next: 'foresights setup codex --instructions-only' });
       expect(printed.verdict).toBeNull();
       expect(installerTurnHook({ harness: 'opencode', accepted: true, gbrainBin: b.bin, rerun: '' }).outcome.action).toBe('skip');
     });
@@ -201,7 +201,7 @@ describe('installer lanes (connect --install, hosted harness install, bootstrap 
     const b = box();
     const broken = b.script('gbrain-broken', 'exit 3');
     await withEnv(b.env, async () => {
-      const r = installerTurnHook({ harness: 'claude-code', accepted: true, gbrainBin: broken, rerun: 'gbrain setup claude-code --instructions-only' });
+      const r = installerTurnHook({ harness: 'claude-code', accepted: true, gbrainBin: broken, rerun: 'foresights setup claude-code --instructions-only' });
       expect(r.outcome.action).toBe('write');
       expect(r.verdict).toMatchObject({ ok: false, reason: 'hook_failed' });
     });
@@ -248,7 +248,7 @@ describe('OpenClaw and Hermes verify with their own inspect commands', () => {
     await withEnv(env, async () => {
       expect(syncHermesTurnHook({ hermesHome, access, dryRun: false }).action).toBe('write');
       const which = () => '/usr/local/bin/hermes';
-      const doctor = (mark: string) => () => ({ ok: true, output: `Shell hooks\n  [pre_llm_call] /bin/echo '{"context":"GBrain: before answering this turn"}'\n    ${mark}\n  [post_tool_call] /bin/true\n    ✓ allowlisted\n` });
+      const doctor = (mark: string) => () => ({ ok: true, output: `Shell hooks\n  [pre_llm_call] /bin/echo '{"context":"Foresights: before answering this turn"}'\n    ${mark}\n  [post_tool_call] /bin/true\n    ✓ allowlisted\n` });
       expect(verifyTurnHook('hermes', { which, run: doctor('✓ allowlisted, script present') })).toMatchObject({ ok: true, reason: 'ran' });
       expect(verifyTurnHook('hermes', { which, run: doctor('✗ not allowlisted') })).toMatchObject({ ok: false, reason: 'not_loaded' });
       expect(verifyTurnHook('hermes', { which: () => null })).toMatchObject({ ok: true, reason: 'native_unavailable' });

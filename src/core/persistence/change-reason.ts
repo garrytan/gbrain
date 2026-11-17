@@ -148,5 +148,5 @@ export async function settledReasonRecorded(engine: SqlEngine, row: Pick<WriteRe
     "SELECT outcome FROM persistence_effects WHERE request_id = $1::uuid AND kind = 'git' AND state = 'committed'", [row.id]);
   if (git?.outcome?.git !== 'superseded') return null;
   return { recorded: { ...recorded, git: 'superseded' }, notice: { code: 'reason_not_committed', kind: 'degraded',
-    why: 'This write\'s reason is kept in gbrain\'s page history (get_versions replaced_because), but not in a Git commit: a newer write to the same file committed first, carrying only its own reason. Nothing needs fixing; do not retry the write.' } };
+    why: 'This write\'s reason is kept in foresights\'s page history (get_versions replaced_because), but not in a Git commit: a newer write to the same file committed first, carrying only its own reason. Nothing needs fixing; do not retry the write.' } };
 }

@@ -1,5 +1,5 @@
 /**
- * Filing modes (core/filing/modes.ts, gbrain filing): where a NEW page goes.
+ * Filing modes (core/filing/modes.ts, foresights filing): where a NEW page goes.
  *
  * - routeNewPage per mode: generic by type folder, para by project/area/archive,
  *   lyt maps vs notes, zettelkasten by a fixed time id.

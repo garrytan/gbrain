@@ -4,7 +4,7 @@
  * transcript's outputs, run after postprocess and the provenance stamp. New outputs publish as they always did (the
  * children write them); this records them as the transcript's new `synthesis` generation and retires an earlier output
  * only when it is matched (generations/synthesis-coverage.ts). An unmatched earlier output stays live and
- * `gbrain repair generations --kind synthesis --mode cleanup` lists it.
+ * `foresights repair generations --kind synthesis --mode cleanup` lists it.
  *
  * A transcript is complete only when every child job of every chunk completed after reading its whole chunk; otherwise
  * (or with `generations.synthesis.retire_previous` off) its generation is partial: the new outputs are recorded and

@@ -64,13 +64,13 @@ export async function routeThinClientCommand(
   const sub = args[0];
   const rest = args.slice(1);
 
-  // #8543: bare `serve` (or gbrain's own registration flags) is the stdio bridge to the remote brain; every other serve
-  // form refuses here with a fix that keeps its flags, so the caller's generic refusal never renders `Fix: gbrain serve`.
+  // #8543: bare `serve` (or foresights's own registration flags) is the stdio bridge to the remote brain; every other serve
+  // form refuses here with a fix that keeps its flags, so the caller's generic refusal never renders `Fix: foresights serve`.
   if (command === 'serve' && !args.includes('--help') && !args.includes('-h')) {
     const { parseBridgeServeArgs, serveThinClientRefusal } = await import('../mcp/remote-bridge-args.ts');
     const { exitCliError, usageError } = await import('../cli/cli-error.ts');
     const { getCliOptions } = await import('../core/cli-options.ts');
-    if (getCliOptions().brain) exitCliError(usageError('--brain is not supported on a thin-client install: the remote server is a single brain.', 'Remove --brain, or run from a machine with local mounts (`gbrain mounts list`).'), 'serve');
+    if (getCliOptions().brain) exitCliError(usageError('--brain is not supported on a thin-client install: the remote server is a single brain.', 'Remove --brain, or run from a machine with local mounts (`foresights mounts list`).'), 'serve');
     const parsed = (() => { try { return parseBridgeServeArgs(args); } catch (error) { return exitCliError(error, 'serve'); } })();
     if (!parsed.bridge) return exitCliError(serveThinClientRefusal(parsed.refused, cfg.remote_mcp?.mcp_url ?? ''), 'serve');
     const { startRemoteStdioBridge } = await import('../mcp/remote-bridge.ts');
@@ -101,7 +101,7 @@ export async function routeThinClientCommand(
     try {
       const { entities, since } = beliefsChangesArgs(args);
       const result = await call(cfg, 'delta', { since, beliefs: true, ...(entities.length ? { entities: entities.join(',') } : {}) }) as { beliefs?: import('../core/belief/changes.ts').BeliefChanges };
-      if (!result?.beliefs) throw opError('unavailable', 'The remote brain\'s delta does not return belief changes: the brain host runs a gbrain older than the belief ledger weekly diff.', 'Upgrade gbrain on the brain host (gbrain upgrade there).');
+      if (!result?.beliefs) throw opError('unavailable', 'The remote brain\'s delta does not return belief changes: the brain host runs a foresights older than the belief ledger weekly diff.', 'Upgrade foresights on the brain host (foresights upgrade there).');
       if (jsonRequested(args)) printJson(result.beliefs);
       else console.log(renderBeliefChanges(result.beliefs));
     } catch (error) {
@@ -129,7 +129,7 @@ export async function routeThinClientCommand(
       }
       case 'search': {
         if (!rest[0]) {
-          usageExit('Usage: gbrain takes search "<query>" [--who h] [--json]');
+          usageExit('Usage: foresights takes search "<query>" [--who h] [--json]');
         }
         printJson(await call(cfg, 'takes_search', { query: rest[0], ...(num(flagValue(rest, '--limit')) !== undefined ? { limit: num(flagValue(rest, '--limit')) } : {}) }));
         return true;

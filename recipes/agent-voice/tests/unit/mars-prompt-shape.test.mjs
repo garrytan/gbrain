@@ -1,7 +1,7 @@
 /**
  * mars-prompt-shape.test.mjs — privacy + structural regression guard.
  *
- * The Mars persona prompt ships in gbrain's reference bundle and gets
+ * The Mars persona prompt ships in foresights's reference bundle and gets
  * copied into operator host repos. Any future edit (refactor, rebase,
  * cherry-pick from upstream) MUST NOT re-introduce:
  *   - Private names (operator first name, family names, upstream agent

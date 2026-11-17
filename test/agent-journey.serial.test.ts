@@ -61,7 +61,7 @@ async function withBrain<T>(home: string, fn: (engine: PGLiteEngine) => Promise<
 async function brainState(home: string): Promise<BrainSnapshot> {
   const snap = await snapshotBrain(home, brainPath(home));
   for (const key of Object.keys(snap.files)) {
-    if (/(^|\/)\.gbrain\/(agent-contract|audit)(\/|$)/.test(key)) delete snap.files[key];
+    if (/(^|\/)\.(?:foresights|gbrain)\/(agent-contract|audit)(\/|$)/.test(key)) delete snap.files[key];
   }
   return snap;
 }

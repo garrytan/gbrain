@@ -1,14 +1,14 @@
 /**
  * #6803 plan B7: the printed-command guard for held embedding budgets.
  *
- * Protects: every command `sizeStateLines`, `budget_limited` (`gbrain embed
+ * Protects: every command `sizeStateLines`, `budget_limited` (`foresights embed
  * --stale`), doctor `partial_embedding` (message, fix, preview, verify and
- * `details.by_source`), the `meterPageBatch` hold line, `gbrain embed --held`
+ * `details.by_source`), the `meterPageBatch` hold line, `foresights embed --held`
  * and the edited docs print is rendered through `renderAction` with routing set
  * (brain `host`, source `alpha`) and runs in dry form through the real CLI on
  * a two-source brain with exit 0; no literal `<N>`; every approve names
  * `--source`; the every-source listing is not narrowed by the source pin.
- * Fails when: a surface prints `gbrain reindex --held` (which does not exist),
+ * Fails when: a surface prints `foresights reindex --held` (which does not exist),
  * an approve without `--source` (refused on a multi-source brain), or a
  * placeholder.
  * Also guards the projection drain's printed commands (#6803 A9): `PROJECTIONS_HELP`,
@@ -49,7 +49,7 @@ registerPrintedCommandProducer({
   }),
 });
 registerPrintedCommandProducer({
-  name: 'gbrain embed --stale (budget_limited line and JSON)',
+  name: 'foresights embed --stale (budget_limited line and JSON)',
   text: async ({ run }) => {
     const out = await run(['embed', '--stale', '--json']);
     const doc = JSON.parse(out.stdout);
@@ -72,7 +72,7 @@ registerPrintedCommandProducer({
   text: async ({ run }) => (await run(['embed', '--slugs', 'archive/day-b', '--source', 'alpha'])).stderr,
 });
 registerPrintedCommandProducer({
-  name: 'gbrain embed --held (listing and multi-source refusal)',
+  name: 'foresights embed --held (listing and multi-source refusal)',
   text: async ({ run }) => {
     const listing = await run(['embed', '--held', '--dry-run']);
     expect(listing.exitCode, listing.stderr).toBe(0);
@@ -172,8 +172,8 @@ afterAll(() => {
 });
 
 test('the every-source listing opts out of the source pin; a source-scoped preview keeps it', () => {
-  expect(heldPreviewCommand()).toBe('gbrain embed --held --dry-run --brain host');
-  expect(heldPreviewCommand('default')).toBe('gbrain embed --held --dry-run --source default --brain host');
+  expect(heldPreviewCommand()).toBe('foresights embed --held --dry-run --brain host');
+  expect(heldPreviewCommand('default')).toBe('foresights embed --held --dry-run --source default --brain host');
 });
 
 test('every printed command runs in dry form through the real CLI with exit 0', async () => {
@@ -183,7 +183,7 @@ test('every printed command runs in dry form through the real CLI with exit 0', 
     const text = await producer.text(fixture);
     const commands = extractCommands(text).map(c => Object.entries(producer.fill ?? {}).reduce((s, [k, v]) => s.split(k).join(v), c))
       .filter(c => !producer.owns || producer.owns(argvOf(c)));
-    if (commands.length === 0) failures.push(`${producer.name}: printed no gbrain command`);
+    if (commands.length === 0) failures.push(`${producer.name}: printed no foresights command`);
     for (const command of commands) {
       guarded++;
       const argv = argvOf(command);
@@ -191,7 +191,7 @@ test('every printed command runs in dry form through the real CLI with exit 0', 
       if (argv[0] === 'reindex' && argv.includes('--held')) { failures.push(`${producer.name}: ${command} does not exist`); continue; }
       if (argv[0] === 'embed' && argv.includes('--max-usd') && !argv.includes('--source')) { failures.push(`${producer.name}: approve without --source: ${command}`); continue; }
       const out = await fixture.run(dryForm(argv), producer.env);
-      if (out.exitCode !== 0) failures.push(`${producer.name}: gbrain ${dryForm(argv).join(' ')} exited ${out.exitCode}: ${(out.stderr || out.stdout).slice(0, 400)}`);
+      if (out.exitCode !== 0) failures.push(`${producer.name}: foresights ${dryForm(argv).join(' ')} exited ${out.exitCode}: ${(out.stderr || out.stdout).slice(0, 400)}`);
     }
   }
   expect(failures).toEqual([]);

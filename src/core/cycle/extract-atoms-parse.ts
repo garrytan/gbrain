@@ -27,7 +27,7 @@ export interface ExtractedAtom {
 const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /**
- * gbrain#4148 — typed parse outcome. Malformed model output and a legitimate
+ * foresights#4148 — typed parse outcome. Malformed model output and a legitimate
  * zero-yield extraction both used to collapse into `[]`, so malformed output
  * was tombstoned as success (the page never retried, its atoms silently
  * lost). `ok: false` means the response was not parseable as an atoms array

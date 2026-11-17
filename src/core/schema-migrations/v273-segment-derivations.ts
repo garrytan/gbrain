@@ -11,7 +11,7 @@ import { runMigrationStatement } from './helpers.ts';
 //   outcome and a bounded output, with page_derivation_spend and the purge
 //   tables beside it (also in both blobs). This migration enables no RLS: the
 //   blob's page-body RLS block covers them only when a full initSchema replays
-//   it, which `gbrain apply-migrations --yes` does not, and page_derivation_spend
+//   it, which `foresights apply-migrations --yes` does not, and page_derivation_spend
 //   was not in that block's list. v275 enables RLS on all four on Postgres.
 // - facts.source_window: the conversation window a fact was extracted from,
 //   {occurrence_id, window_ordinal, window_text_sha} (page-body/derivations.ts

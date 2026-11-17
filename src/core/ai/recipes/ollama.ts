@@ -80,7 +80,7 @@ export const ollama: Recipe = {
       // Reasoning-by-default local families spend output budget on internal
       // reasoning before emitting answer text, and Ollama bills it against
       // `max_tokens` — so callers that size output caps must grant headroom
-      // (same contract as DeepSeek v4, gbrain#4172). Without this, a 4000-token
+      // (same contract as DeepSeek v4, foresights#4172). Without this, a 4000-token
       // default is consumed entirely by reasoning and the caller gets EMPTY
       // content with finish_reason "length". Verified on qwen38-27b:latest:
       // max_tokens=16 returned "" (16 reasoning tokens), max_tokens=600
@@ -92,7 +92,7 @@ export const ollama: Recipe = {
       // instruct-only Qwen3 variant, no thinking mode) is excluded by
       // lookahead. `phi4-mini-reasoning` is a reasoning model and matches
       // alongside `phi4-reasoning`. GLM-4.5+/5.x (`glm-5.3-flash[:cloud]`,
-      // `glm-4.6`) reuse the zhipu recipe's cutoff (gbrain#4727) — a reporter
+      // `glm-4.6`) reuse the zhipu recipe's cutoff (foresights#4727) — a reporter
       // hit the 4000 cap on GLM-5.3-flash via Ollama cloud; `glm-4:9b` stays out.
       thinking_by_default: (modelId: string) =>
         GLM_THINKING_BY_DEFAULT_RE.test(modelId) ||

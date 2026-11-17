@@ -30,7 +30,7 @@ const SIG = {
   lock1s: /^SELECT set_config\('synchronous_commit','on',true\),set_config\('lock_timeout','1s',true\)/,
   counterLock: /^INSERT INTO persistence_counters\(key\)/,
   counterRowLock: /^SELECT \* FROM persistence_counters WHERE key=ANY\(.*FOR UPDATE$/,
-  attribution: /^SELECT set_config\('gbrain\.write_request',/,
+  attribution: /^SELECT set_config\('(?:foresights|gbrain)\.write_request',/,
   admission: /^(?:WITH reserved AS \(UPDATE persistence_counters .*?\) )?INSERT INTO persistence_requests\b/,
   claim: /^UPDATE persistence_requests (?:r )?SET state='running'/,
   claimAttempt: /^SELECT r\.\* FROM persistence_requests r LEFT JOIN persistence_worktrees w/,

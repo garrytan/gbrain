@@ -55,7 +55,7 @@ function noticeHeader(after: string, withChain = false): string {
   const list = releases.length > 4
     ? `v${[...releases].sort(compareReleases)[0]} through v${[...releases].sort(compareReleases).at(-1)} (${releases.length} releases)`
     : releases.length > 1 ? `${releases.slice(0, -1).map(v => `v${v}`).join(', ')} and v${releases.at(-1)}` : `v${releases[0]}`;
-  return `gbrain ${list} changed ${rows.length} behavior${rows.length === 1 ? '' : 's'}`;
+  return `foresights ${list} changed ${rows.length} behavior${rows.length === 1 ? '' : 's'}`;
 }
 import { NoticeLedger, __resetProcessNoticeLedgerForTests } from '../src/core/notice-ledger.ts';
 import { _resetDbPlaneMergeMemoForTests } from '../src/core/config-db-merge.ts';
@@ -172,7 +172,7 @@ for (const backend of testBackends()) {
         expect(plain.why).toContain('at most 90 days');
         expect(plain.why).toContain('local_process_ingress');
         expect(plain.why).toContain('exits 0 after a SIGTERM drain (was 143) and 17');
-        expect(plain.why).toContain('gbrain sweep --once --budget-ms 600000');
+        expect(plain.why).toContain('foresights sweep --once --budget-ms 600000');
         expect(plain.why).toContain('think.quote_verify false');
         expect(plain.why).toContain('decide.slots.conflict.review_withdraw false');
         expect(plain.why).toContain('no longer send text to an embedding provider');
@@ -365,13 +365,13 @@ describe('concurrent initializations', () => {
   }, 60_000);
 });
 
-describe('upgrades across releases (each step a new process pinned to a gbrain VERSION)', () => {
+describe('upgrades across releases (each step a new process pinned to a foresights VERSION)', () => {
   const modulePath = join(import.meta.dir, '..', 'src', 'core', 'behavior-change-notice.ts');
   const WAVE9 = '`setsid`';
   const OPT_OUT = 'no longer send text to an embedding provider';
   const V68 = 'cycle.lint_fix false';
 
-  /** One gbrain process at `version`: takes the notice on `channel` (`http:<client>` for an HTTP client) for brain `key`. */
+  /** One foresights process at `version`: takes the notice on `channel` (`http:<client>` for an HTTP client) for brain `key`. */
   async function runAt(home: string, version: string, key: string, channel: string, opts: { createdAgoMs?: number } = {}): Promise<string | null> {
     const script = join(home, `step-${++seq}.ts`);
     writeFileSync(script, `
@@ -471,11 +471,11 @@ describe('fence rows (#6188 D25, D26)', () => {
       const why = (await takeLocalBehaviorNotice(freshEngine(new Date().toISOString()), 'cli', { cfg: null, brainKey: 'upgraded' }))?.why ?? '';
       expect(why).toContain(NORMALIZE);
       expect(why).toContain(REPAIR);
-      for (const command of ['gbrain config set fences.normalize false', 'gbrain config set fences.repair.llm false', 'gbrain config set fences.repair.enabled false']) {
+      for (const command of ['foresights config set fences.normalize false', 'foresights config set fences.repair.llm false', 'foresights config set fences.repair.enabled false']) {
         expect(why).toContain(command);
       }
       expect(why).toContain('its first run after upgrading repairs every malformed fence it finds in each source, rewriting and committing those files');
-      expect(why).toContain('gbrain doctor --only fence_integrity');
+      expect(why).toContain('foresights doctor --only fence_integrity');
       expect(why).toContain('`git revert` undoes it');
       expect(why).toContain('turning these settings off stops future repairs and does not undo past ones');
     });
@@ -491,11 +491,11 @@ describe('fence rows (#6188 D25, D26)', () => {
 
 describe('fix wave 11 rows inside the notice length cap', () => {
   const BREAKING = [
-    'gbrain pages purge-deleted --dry-run --json',
+    'foresights pages purge-deleted --dry-run --json',
     'exits 3 with an ask_user payload',
-    'gbrain apply-migrations --yes',
+    'foresights apply-migrations --yes',
     'drop_timeline: true',
-    'gbrain sources list --json',
+    'foresights sources list --json',
     'no_counterparty',
   ];
 
@@ -508,6 +508,6 @@ describe('fix wave 11 rows inside the notice length cap', () => {
     const rendered = renderNotice(notice!, cliRenderContext()).why;
     expect(rendered.length).toBeLessThanOrEqual(2_000);
     for (const command of BREAKING) expect(rendered).toContain(command);
-    expect(notice!.why).toContain('gbrain doctor --only behavior_changes shows this again.');
+    expect(notice!.why).toContain('foresights doctor --only behavior_changes shows this again.');
   });
 });

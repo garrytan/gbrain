@@ -1,5 +1,5 @@
 /**
- * `gbrain repair rename-identity --source <id> --slug <new-slug> [--from <old-slug>] [--close]` (#6729): the remedy for an
+ * `foresights repair rename-identity --source <id> --slug <new-slug> [--from <old-slug>] [--close]` (#6729): the remedy for an
  * inexact Git rename that sync split into a delete plus an add because the files did not confirm it
  * (sync-rename-identity.ts, recorded by sync-identity-downgrades.ts). The operator picks the mapping: the preview names
  * exactly one open pair (its new page is <new-slug>; `--from` disambiguates), binds the brain, the pair, both page ids,
@@ -61,7 +61,7 @@ export const RENAME_IDENTITY_CONSENT_TEXT = {
   what: 'Carry the previewed old page\'s identity onto its new page (or, with --close, release its purge hold)',
   why: 'Sync split an inexact rename into a delete plus an add because the files did not confirm it; the user picked this pair and the preview bound both pages and their revisions.',
   risk: 'Carry: the old page id takes the new slug and the new file is imported onto it as an edit; the provisional page is retired (soft-deleted under a purged slug, its history and edges moved). '
-    + 'Facts of both pages stay; colliding fence rows refuse before anything changes. Close: the old page is purged once its soft-delete window ends. Undo neither from gbrain; where the source admits a restore, keep the old page instead with gbrain restore <old-slug> --source-id <id> --force.',
+    + 'Facts of both pages stay; colliding fence rows refuse before anything changes. Close: the old page is purged once its soft-delete window ends. Undo neither from foresights; where the source admits a restore, keep the old page instead with foresights restore <old-slug> --source-id <id> --force.',
   user_message: 'Carry the old page\'s history, facts and links onto its new page as previewed (or release the hold with --close)? The provisional page is retired',
 };
 
@@ -143,7 +143,7 @@ function selectPair(open: IdentityDowngrade[], sourceId: string, opts: RepairPla
   const matches = open.filter(record => (!slug || record.new_slug === slug) && (!opts.from || record.old_slug === opts.from));
   const named = [slug ? `new page ${slug}` : '', opts.from ? `old page ${opts.from}` : ''].filter(Boolean).join(' and ');
   if (!matches.length) throw refuse('invalid_params', `Source ${sourceId} has no open rename-identity pair with ${named}.`,
-    `A pair already carried or closed, or whose old page was restored or purged, is no longer open, and nothing was written; list the open pairs with gbrain repair rename-identity --source ${sourceId}.`, listFix(sourceId));
+    `A pair already carried or closed, or whose old page was restored or purged, is no longer open, and nothing was written; list the open pairs with foresights repair rename-identity --source ${sourceId}.`, listFix(sourceId));
   if (matches.length > 1) throw refuse('invalid_params', `${matches.length} open pairs of source ${sourceId} match ${named}.`,
     `Name the old page too: ${matches.map(record => renameIdentityPreviewArgv(record, { from: true }).join(' ')).join('; ')}.`, listFix(sourceId));
   const record = matches[0]!;
@@ -153,8 +153,8 @@ function selectPair(open: IdentityDowngrade[], sourceId: string, opts: RepairPla
 }
 
 async function listingPlan(engine: BrainEngine, sourceId: string, open: IdentityDowngrade[], apply: boolean): Promise<RepairPlan> {
-  if (apply) throw refuse('invalid_params', 'gbrain repair rename-identity --apply needs one pair: --slug <new-slug> (and --from <old-slug> when two pairs share it).',
-    `Preview the pair first: gbrain repair rename-identity --source ${sourceId} --slug <new-slug>, then run the apply command it prints after the user agrees.`, listFix(sourceId));
+  if (apply) throw refuse('invalid_params', 'foresights repair rename-identity --apply needs one pair: --slug <new-slug> (and --from <old-slug> when two pairs share it).',
+    `Preview the pair first: foresights repair rename-identity --source ${sourceId} --slug <new-slug>, then run the apply command it prints after the user agrees.`, listFix(sourceId));
   const entries = await withIdentityRemedies(engine, open);
   return { items: [], residuals: { open_pairs: entries.length },
     listing: entries.map(record => ({ item: `${record.source_id}:${record.old_slug} -> ${record.new_slug ?? record.to}`, class: record.reason,
@@ -167,8 +167,8 @@ export const renameIdentityRepair = {
   publication: 'projection' as const,
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (scope.source_ids.length !== 1) throw refuse('invalid_params', 'gbrain repair rename-identity needs --source <id>.',
-      'Each pair belongs to one source; name it, e.g. gbrain repair rename-identity --source default.', readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }));
+    if (scope.source_ids.length !== 1) throw refuse('invalid_params', 'foresights repair rename-identity needs --source <id>.',
+      'Each pair belongs to one source; name it, e.g. foresights repair rename-identity --source default.', readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }));
     const sourceId = scope.source_ids[0]!;
     const options = opts ?? { apply: false };
     const open = await listIdentityDowngrades(engine, [sourceId]);
@@ -194,7 +194,7 @@ export const renameIdentityRepair = {
         details: { disposition, old: parts.old, new: parts.new, hold_releases: IDENTITY_HOLD_RELEASE,
           restore: restoreRoute(record), docs: DOCS } };
     }
-    if (!options.expect) throw refuse('invalid_params', 'gbrain repair rename-identity --apply applies only the pair a preview printed.',
+    if (!options.expect) throw refuse('invalid_params', 'foresights repair rename-identity --apply applies only the pair a preview printed.',
       `Preview first: ${command} — then, after the user agrees, run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, listFix(sourceId));
     const approved = await loadApprovedSet<Approved>(engine, { command: 'rename-identity', hash: options.expect, previewCommand: command });
     if (hash !== options.expect || approved.items.length !== 1 || approved.items[0]!.record.old_page_id !== record.old_page_id) throw previewChangedError(options.expect, command);

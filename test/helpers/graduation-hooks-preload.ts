@@ -1,7 +1,7 @@
 /**
  * Bun `--preload` for graduation crash and pause tests. Registers
  * `GraduationHooks` before the real CLI starts, so the test drives the actual
- * `gbrain migrate` process and still stops it at an exact custody boundary.
+ * `foresights migrate` process and still stops it at an exact custody boundary.
  *
  * Environment (set only by test/helpers/graduation-e2e.ts):
  * - GBRAIN_TEST_GRADUATION_EVENTS: file that receives one JSON line per

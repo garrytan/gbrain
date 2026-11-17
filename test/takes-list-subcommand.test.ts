@@ -1,5 +1,5 @@
 /**
- * #2079 — `gbrain takes list` used to parse "list" as a PAGE SLUG: cmdList
+ * #2079 — `foresights takes list` used to parse "list" as a PAGE SLUG: cmdList
  * looked up a page named "list" and printed "No takes on list." even when the
  * brain held many takes — reading exactly like an empty takes table, so
  * agents concluded there were no takes and moved on.
@@ -52,7 +52,7 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-describe('gbrain takes list (#2079)', () => {
+describe('foresights takes list (#2079)', () => {
   test('`takes list` lists all takes instead of slug-ifying "list"', async () => {
     const out = await captureStdout(() => runTakes(engine, ['list']));
     expect(out).not.toContain('No takes on list.');
@@ -75,7 +75,7 @@ describe('gbrain takes list (#2079)', () => {
   });
 });
 
-describe('gbrain takes list --limit/--offset (#4629)', () => {
+describe('foresights takes list --limit/--offset (#4629)', () => {
   // Runs after the #2079 block (which asserts a single-row brain), so the
   // extra rows are seeded here, not in the file-level beforeAll.
   beforeAll(async () => {
@@ -123,7 +123,7 @@ describe('gbrain takes list --limit/--offset (#4629)', () => {
   });
 });
 
-describe('gbrain takes list — invalid --limit/--offset exit 1 (#4629 negative paths)', () => {
+describe('foresights takes list — invalid --limit/--offset exit 1 (#4629 negative paths)', () => {
   /**
    * Drive runTakes with process.exit stubbed (the real one returns `never`,
    * so the stub throws to stop cmdList before it reaches engine.listTakes)

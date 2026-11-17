@@ -1,5 +1,5 @@
 /**
- * `gbrain repair stale-atoms` (#5770, CEO-A7, ENG-O7, DX-O4): the one-time
+ * `foresights repair stale-atoms` (#5770, CEO-A7, ENG-O7, DX-O4): the one-time
  * cleanup of atoms that drifted before managed re-extraction retired them.
  *
  * Two classes of live, page-bound (`source_slug`) atoms, never one with
@@ -27,7 +27,7 @@
  * transaction, managed as a `managed_generation_activate` request and then a
  * gated `managed_atom_delete` member (version first; no live origin is
  * required). Both stamp `retired_by: stale-atoms`, record the retirement in
- * the ledger (restorable through `gbrain repair generations`), and invalidate
+ * the ledger (restorable through `foresights repair generations`), and invalidate
  * the origin page's earlier completed extractions so a restored page is
  * extracted again. `managed_maintenance_retire_stale_atoms` requests journaled
  * by an earlier version still publish through their preparer below.
@@ -127,7 +127,7 @@ function sameAtom(live: StaleAtom | undefined, approved: StaleAtom): boolean {
 }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair stale-atoms${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair stale-atoms${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 function item(atom: StaleAtom, hash: string, last: boolean): StaleAtomItem {
@@ -158,7 +158,7 @@ export const staleAtomsRepair: RepairHandler = {
             : `source page ${atom.origin_slug} now at ${atom.origin_hash!.slice(0, 16)}` })) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair stale-atoms --apply retires only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair stale-atoms --apply retires only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

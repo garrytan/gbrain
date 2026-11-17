@@ -90,7 +90,7 @@ async function phaseASchema(
       return {
         name: 'schema',
         status: 'failed',
-        detail: `expected schema version >= 51 (facts_fence_columns); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
+        detail: `expected schema version >= 51 (facts_fence_columns); got ${v}. Run \`foresights apply-migrations --yes\` to apply.`,
       };
     }
     // Quick post-condition: row_num + source_markdown_slug exist on facts.
@@ -283,7 +283,7 @@ async function phaseCVerify(
           continue;
         }
         if (snapshot.page.body_storage === 'segmented') {
-          mismatches.push(`${g.source_markdown_slug} (page_body_segmented: verify cannot read its whole body; read it with gbrain get --source ${g.source_id} --body auto -- ${g.source_markdown_slug})`);
+          mismatches.push(`${g.source_markdown_slug} (page_body_segmented: verify cannot read its whole body; read it with foresights get --source ${g.source_id} --body auto -- ${g.source_markdown_slug})`);
           continue;
         }
         body = serializePageToMarkdown(snapshot.page, snapshot.tags);
@@ -383,7 +383,7 @@ export const v0_32_2: Migration = {
       'v0.31 added hot-memory facts but they lived only in the database. v0.32.2 makes the ' +
       'fenced `## Facts` table on each entity page canonical: every new fact writes to markdown ' +
       'first, then stamps the DB index. Existing v0.31 facts are backfilled to fences on this ' +
-      'migration. `gbrain rebuild` (v0.32.3) becomes a one-line disaster-recovery flow because ' +
+      'migration. `foresights rebuild` (v0.32.3) becomes a one-line disaster-recovery flow because ' +
       'the DB is now fully derivable from the repo. Migration is dry-run by default; pass ' +
       '`--write` to apply.',
   },

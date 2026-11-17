@@ -1,7 +1,7 @@
 # Checkpoint compaction + compiled views
 
 Compaction is the worst moment in a long-lived agent's life: the harness
-summarizes the window and the un-extracted detail dies with it. gbrain
+summarizes the window and the un-extracted detail dies with it. foresights
 makes the brain the durable side of that boundary, in two halves:
 
 1. **Checkpoint compaction** — at the compaction boundary the raw
@@ -9,7 +9,7 @@ makes the brain the durable side of that boundary, in two halves:
    content-addressed), facts are harvested from it *promptly and
    asynchronously* inside serve, and the post-compaction context carries
    `brain://slug` links the agent re-pulls on demand.
-2. **Compiled views** — `gbrain compile-context` regenerates warm-file
+2. **Compiled views** — `foresights compile-context` regenerates warm-file
    fragments (CLAUDE.md @import fragment, AGENTS.md managed block, OpenClaw
    workspace file) from brain pages: deterministic, token-budgeted,
    sensitivity-scanned, byte-stable under an unchanged brain.
@@ -19,7 +19,7 @@ makes the brain the durable side of that boundary, in two halves:
 The boundary guarantee is **bytes durable at the boundary; facts moments
 after; links at the next boundary**:
 
-- `gbrain hook compact` (PreCompact, bootstrap-installed) writes the
+- `foresights hook compact` (PreCompact, bootstrap-installed) writes the
   since-last-boundary window to `<corpus>/<session>.seg-<hash24>.txt` INSIDE
   its 3s deadline — before any IPC. The window is read from the newest 2 MiB
   of the transcript, and a too-tight deadline degrades to a typed skip
@@ -55,7 +55,7 @@ happy path exactly-once and every failure path at-least-once (never loss):
 |---|---|---|
 | Checkpoint harvest | PreCompact IPC flush (serve FIFO, cap 8, 60s abort) | the boundary segment |
 | Session-end corpus + sweep pass 3 | SessionEnd hook + serve sweep | the post-last-boundary REMAINDER when segment coverage holds; the FULL transcript otherwise |
-| `gbrain transcripts ingest --facts` | manual | whatever the operator points it at (operator's explicit choice) |
+| `foresights transcripts ingest --facts` | manual | whatever the operator points it at (operator's explicit choice) |
 
 The checkpoint harvest and the session-end lane run while
 `memory.auto_writeback` is unset (installing the harness hooks opted into
@@ -64,7 +64,7 @@ retired, never extracted, and a capture made under `off` stays retired after
 writeback is turned back on. Read errors, plane drift and invalid values hold
 them untouched. The full truth table is in
 [ambient writeback](ambient-writeback.md#capture-lanes-and-the-off-switch).
-`gbrain transcripts ingest --facts` is an explicit choice and is never gated.
+`foresights transcripts ingest --facts` is an explicit choice and is never gated.
 
 Coverage is decided by **exact-set hashes**, not counts: session-end
 recomputes every boundary window's redacted hash from its own full parse and
@@ -74,14 +74,14 @@ to the full-transcript write (bounded by the 10 MiB transcript parse budget —
 beyond it only the newest tail is read); fact-level dedup absorbs the
 overlap. A session where the harness never fires SessionEnd (e.g. `/exit`)
 keeps its banked segments; the post-last-boundary remainder waits for the
-next boundary or a manual `gbrain transcripts ingest`. Degraded
+next boundary or a manual `foresights transcripts ingest`. Degraded
 configs with a chat key but no embedding provider may insert duplicate fence
 rows on that fallback (the 0.95 dedup arm needs embeddings) — segmentation
 makes this the exception path.
 
 ## Harness wirings
 
-- **Claude Code** — zero setup beyond `gbrain bootstrap` (the PreCompact +
+- **Claude Code** — zero setup beyond `foresights bootstrap` (the PreCompact +
   SessionStart hooks are already installed; existing installs pick the
   checkpoint behavior up on upgrade with no re-install). Prompt link
   delivery needs PGLite + a live serve (the IPC flush lane); on a Postgres
@@ -92,13 +92,13 @@ makes this the exception path.
   Postgres) and `assemble()` injects the checkpoint block from the banked
   manifest. No hooks, no recipe.
 - **Codex / opencode** — not wired. The pull protocol
-  (`gbrain context-pack` after compaction, per `docs/guides/ambient-recall.md`)
-  is the supported path; codex has a native SessionEnd capture lane (trust-gated hooks.json entry, `gbrain bootstrap hooks --harness codex`) — per-turn/compaction context on codex stays the pull protocol.
+  (`foresights context-pack` after compaction, per `docs/guides/ambient-recall.md`)
+  is the supported path; codex has a native SessionEnd capture lane (trust-gated hooks.json entry, `foresights bootstrap hooks --harness codex`) — per-turn/compaction context on codex stays the pull protocol.
 
 ## Operational runbook — reason vocabulary
 
 Hook + harvest telemetry rides the hooks heartbeat JSONL
-(`<gbrain home>/integrations/hooks/heartbeat.jsonl`; read it with
+(`<foresights home>/integrations/hooks/heartbeat.jsonl`; read it with
 `readHeartbeatTail` — doctor's hooks check reports only the aggregate
 hard-error rate and deliberately ignores typed degrades). Counts and codes
 only — never content.
@@ -138,10 +138,10 @@ trusted-local lane (CLI, hooks, IPC) sees the full fence.
 ## Compiled views
 
 ```bash
-gbrain compile-context --target claude-code --budget 3000   # .claude/gbrain-context.md
-gbrain compile-context --target codex                        # AGENTS.md managed block (also serves opencode)
-gbrain compile-context --target openclaw                     # .gbrain/compiled-context.md
-gbrain compile-context --target claude-code --check          # exit 1 when the committed file is stale
+foresights compile-context --target claude-code --budget 3000   # .claude/gbrain-context.md
+foresights compile-context --target codex                        # AGENTS.md managed block (also serves opencode)
+foresights compile-context --target openclaw                     # .gbrain/compiled-context.md
+foresights compile-context --target claude-code --check          # exit 1 when the committed file is stale
 ```
 
 Selection is three deterministic arms over ONE source (the command compiles

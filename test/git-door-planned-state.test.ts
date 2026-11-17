@@ -1,5 +1,5 @@
 /**
- * The door commits exactly its planned state (src/core/persistence/git-door.ts, gbrain#7705). Protects:
+ * The door commits exactly its planned state (src/core/persistence/git-door.ts, foresights#7705). Protects:
  *   - D1: a target's change staged before the write is never overwritten: the publication refuses git_index_conflict,
  *     the index still names the staged blob, and HEAD, the row and the file keep the prior revision (red before: the
  *     door's index refresh wrote its own blob over the staged one);
@@ -7,7 +7,7 @@
  *   - D4: a disk edit landing during the publication is never committed: it refuses git_target_changed, HEAD and the
  *     row keep the prior revision, and recovery holds the edited file as it is (red before: HEAD held the edit while the
  *     row recorded the publication's content);
- *   - D4's recovery record pauses every later write of the worktree until `gbrain repair stuck-recovery --keep disk`
+ *   - D4's recovery record pauses every later write of the worktree until `foresights repair stuck-recovery --keep disk`
  *     resolves it: the human's bytes stay on disk, the write ends failed, the queued write publishes, Git and the row
  *     keep the prior revision until the edit is committed, and a sync then imports it;
  *   - a stale entry an interrupted refresh left (the version before the door's last commit) is restored by the next
@@ -81,7 +81,7 @@ async function publishNext(engine: BrainEngine, ctx: OperationContext, hooks: Pu
   return publishMutation(engine, row, await preparePageMutation(engine, row, ctx.config), host, hooks);
 }
 
-/** `gbrain repair <args>` in this process, returning what it printed. */
+/** `foresights repair <args>` in this process, returning what it printed. */
 async function repairCli(engine: BrainEngine, args: string[]): Promise<string> {
   let printed = '';
   const original = console.log;
@@ -225,7 +225,7 @@ for (const backend of testBackends()) describe(`[${backend}] the door commits on
     expect(git(root, 'status', '--porcelain')).toBe('');
   }, { databaseUrl, setup }), 120_000);
   // Value: protects=a disk revert to the version before the write, landing during its publication, ends the write failed git_target_changed
-  //   with nothing committed, nothing held and no head blocker, so the source's later writes still commit (gbrain#7717 item 11);
+  //   with nothing committed, nothing held and no head blocker, so the source's later writes still commit (foresights#7717 item 11);
   //   fails_when=recovery holds a file that already holds its prior bytes, or the door commits the reverted bytes; why_new=D4 covers only an
   //   edit that holds neither version; seam=none; no_claim=a revert landing after the door's second hash
   test('D4 variant: a disk revert to the prior bytes during the publication ends failed git_target_changed, holds nothing, and a later write commits', () => managedBrain(async ({ engine, ctx, root }) => {
@@ -242,7 +242,7 @@ for (const backend of testBackends()) describe(`[${backend}] the door commits on
   }, { databaseUrl, setup }), 120_000);
 
   // Value: protects=a replay after a landed door commit, refused because someone staged the page meanwhile, says HEAD already holds its bytes
-  //   instead of claiming it committed nothing (gbrain#7717 item 9); fails_when=the refusal reads as if Git lacks the write; why_new=only the
+  //   instead of claiming it committed nothing (foresights#7717 item 9); fails_when=the refusal reads as if Git lacks the write; why_new=only the
   //   plumbing half was tested; seam=publication boundary before_commit throws a dropped connection; no_claim=a replay whose blob HEAD lacks
   test('a replay after a landed commit, refused on a change staged meanwhile, says HEAD already holds its bytes', () => managedBrain(async ({ engine, ctx, root }) => {
     await committedPage(engine, ctx);
@@ -350,7 +350,7 @@ describe('door plumbing: the planned state', () => {
   });
 
   // Value: protects=a path committed with a legacy mode (100664) gets no mode-only commit for its own bytes and no new tree entry with that mode,
-  //   which git fsck --strict flags badFilemode (gbrain#7717 item 13); fails_when=the edit skip or the core.fileMode=false fallback reads the raw
+  //   which git fsck --strict flags badFilemode (foresights#7717 item 13); fails_when=the edit skip or the core.fileMode=false fallback reads the raw
   //   tree mode instead of its index form; why_new=the test above covers only the staged check; seam=none; no_claim=modes other than 100664
   for (const fileMode of ['true', 'false']) test(`a legacy-mode (100664) path makes no mode-only commit and keeps no 100664 entry, core.fileMode=${fileMode}`, async () => {
     const root = repo({ 'notes/a.md': 'a\n' });

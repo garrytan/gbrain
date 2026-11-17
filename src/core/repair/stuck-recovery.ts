@@ -1,5 +1,5 @@
 /**
- * `gbrain repair stuck-recovery [--source <id>] [--request-id <uuid>]` (#6650 §1.10; GBRA-130 C-1, C-4): the repair-kind
+ * `foresights repair stuck-recovery [--source <id>] [--request-id <uuid>]` (#6650 §1.10; GBRA-130 C-1, C-4): the repair-kind
  * adapter for `persistence/recovery-resolve.ts`. Explicit-only, preview-bound and destructive-consent: the preview lists
  * each recovery record blocked on unexpected bytes (a page write's, a shared-skill bundle's or a withdrawal-mirror
  * effect's: recorded and disk fingerprints, a private diff, the choices available) and saves the set under its hash;
@@ -90,7 +90,7 @@ export const stuckRecoveryRepair: RepairHandler = {
             .map(keep => ({ keep, what: CHOICE_TEXT[keep], apply_command: apply(keep) })) } };
     }
     if (!opts.expect || !opts.keep) {
-      throw new OperationError('invalid_params', 'gbrain repair stuck-recovery --apply needs the preview hash and the version to keep.',
+      throw new OperationError('invalid_params', 'foresights repair stuck-recovery --apply needs the preview hash and the version to keep.',
         `Preview first: ${command} — show the user the diff it prints, then run the choice they pick from the ones it lists: ${command} --keep prior --apply --expect <preview-hash> --yes, `
         + `${command} --keep disk --apply --expect <preview-hash> --yes, or (a withdrawal-mirror effect) ${command} --keep withdrawn --apply --expect <preview-hash> --yes`, 'docs/guides/repair.md#stuck-recovery');
     }

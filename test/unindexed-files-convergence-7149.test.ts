@@ -52,7 +52,7 @@ afterAll(async () => {
   await closePostgres?.(); rmSync(home, { recursive: true, force: true });
 });
 
-/** Fixture writes the managed writer guard would refuse (the state an older gbrain left), made with persistence briefly off. */
+/** Fixture writes the managed writer guard would refuse (the state an older foresights left), made with persistence briefly off. */
 async function unmanaged<T>(engine: BrainEngine, run: () => Promise<T>): Promise<T> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try { return await run(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
@@ -69,7 +69,7 @@ async function source(engine: BrainEngine, prefix: string, files: Record<string,
   await claimWorktree(engine, id, root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   const sync = (extra: Partial<SyncOpts> = {}) => performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, ...extra });
-  /** Committed files an older gbrain refused without a hold: the source's commit moves past them and no sync imports them. */
+  /** Committed files an older foresights refused without a hold: the source's commit moves past them and no sync imports them. */
   const legacy = async (added: Record<string, string>) => {
     for (const [path, content] of Object.entries(added)) write(path, content);
     const head = commit(root);

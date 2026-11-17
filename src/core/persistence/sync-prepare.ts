@@ -276,9 +276,9 @@ function syncContentRefusal(refusal: ContentRefusal, row: WriteRequest, p: SyncI
     : refusal.code === 'frontmatter_slug_conflict' ? 'Correct the frontmatter `slug:` in the file and commit the change.'
     : refusal.code === 'file_too_large' ? `${p.sourcePath} is over the page size limit; add it to sync.exclude, or split it into files under the limit and commit.`
     : refusal.code === 'content_rejected' ? `The content-sanity gate rejects ${p.sourcePath} under junk_disposition=reject; remove the matched junk and commit.`
-    : refusal.code === 'purged_content' ? `${p.sourcePath} still carries purged content; delete or edit the file and commit, or the owner clears the tombstone with gbrain pages unpurge.`
+    : refusal.code === 'purged_content' ? `${p.sourcePath} still carries purged content; delete or edit the file and commit, or the owner clears the tombstone with foresights pages unpurge.`
     : refusal.code === 'write_gate_rejected' ? `The write gate refuses ${p.sourcePath}: external instruction-like content under write_gate.external_mode=reject. Tell the user; changing that setting or the file is their decision.`
-    : `Fix ${where} (one line per key, the whole value quoted) and commit the change; gbrain repair frontmatter --source ${row.source_id} previews the exact line fix and writes it only after the preview hash is approved.`;
+    : `Fix ${where} (one line per key, the whole value quoted) and commit the change; foresights repair frontmatter --source ${row.source_id} previews the exact line fix and writes it only after the preview hash is approved.`;
   const error = syncPublicationRefusal(refusal.code, refusal.message, row, p, cause, false, {
     ...(!legacy || refusal.code === 'content_rejected' || refusal.code === 'write_gate_rejected' ? {} : { legacy_error: 'invalid_params' }),
     ...(refusal.reason ? { reason: refusal.reason } : {}),
@@ -357,7 +357,7 @@ function companyWritebackRefusal(row: WriteRequest, p: SyncIntent, fenceFixes: r
   const message = fenceFixes.length ? `Canonical preparation would normalize a facts or takes fence (${describeFixes(fenceFixes)}); this profile never writes repository files.`
     : 'Canonical preparation requires a source-content correction; this profile never writes repository files.';
   return syncPublicationRefusal('source_writeback_required', message, row, p,
-    fenceFixes.length ? `${p.sourcePath} has a facts or takes fence gbrain would normalize (${describeFixes(fenceFixes)}), and a company-brain source never rewrites repository files; fix the fence in the repository and commit.`
+    fenceFixes.length ? `${p.sourcePath} has a facts or takes fence foresights would normalize (${describeFixes(fenceFixes)}), and a company-brain source never rewrites repository files; fix the fence in the repository and commit.`
       : `The file of ${row.slug} needs a canonical correction, and a company-brain source never rewrites repository files; correct it in the repository and commit.`);
 }
 
@@ -656,7 +656,7 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
 /**
  * Whether the import must rewrite its file with `canonicalFile` (its sanitized form). Working-tree bytes that are the
  * pinned bytes (or differ only by line endings) take the write; bytes that already are the canonical file need none
- * (#6513: gbrain's own writeback, published before the request that carried it settled); any other newer bytes are
+ * (#6513: foresights's own writeback, published before the request that carried it settled); any other newer bytes are
  * refused, and the run holds the file `worktree_dirty` (sync-page-fault.ts `pinnedWorktreeConflict`).
  */
 function canonicalWritebackNeeded(row: WriteRequest, p: SyncIntent, pinned: string, canonicalFile: string | null): canonicalFile is string {

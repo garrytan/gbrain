@@ -22,14 +22,14 @@ for (const fanOutEligible of [true, false]) {
       { id: 'clean-example', name: 'clean-example', local_path: '/tmp/y', config: {}, last_commit: null, chunker_version: null }];
     const held: SyncResult = { ...base, held: [item], held_count: 1, holds_outstanding: 3,
       holds_fix: { argv: ['gbrain', 'repair', 'frontmatter', '--source', 'notes-example'], consent: [], actor: 'agent', requires_exclusive: false,
-        why: "1 file(s) held this run, 3 held in source notes-example; they do not block sync. Inspect them with 'gbrain sources status notes-example'." } };
+        why: "1 file(s) held this run, 3 held in source notes-example; they do not block sync. Inspect them with 'foresights sources status notes-example'." } };
     const perSourceResults: Parameters<typeof dispatchSyncAll>[0]['perSourceResults'] = [];
     await dispatchSyncAll({ fanOutEligible, effectiveParallel: 2, concurrency: undefined, runnableSources: sources,
       runOne: async src => src.id === 'notes-example' ? held : base, writeHuman: line => sink.write(`${line}\n`), humanSink: sink, perSourceResults, onAllSigint: () => {} });
     const text = lines.join('\n');
     expect(text).toContain('Held notes/broken.md: invalid_frontmatter (needs_interpretation) at line 2, key "title"');
     expect(text).toContain('3 held in source notes-example');
-    expect(text).toContain('gbrain repair frontmatter --source notes-example');
+    expect(text).toContain('foresights repair frontmatter --source notes-example');
     expect(perSourceResults.find(r => r.sourceId === 'notes-example')?.status).toBe('ok');
   });
 }

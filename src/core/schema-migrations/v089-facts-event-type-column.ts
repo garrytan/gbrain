@@ -15,7 +15,7 @@ export const v089: Migration = {
   // alongside metric rows in one chronological stream.
   //
   // Column-only, no index. Existing callers (founder-scorecard,
-  // eval-trajectory, gbrain think) already defensively skip NULL-metric
+  // eval-trajectory, foresights think) already defensively skip NULL-metric
   // rows in their per-metric math, so event-only rows ride through
   // invisibly. Structured event fields (object/actor/location) are
   // deferred to v0.40.3+ once usage shows what fields are needed.

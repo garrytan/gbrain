@@ -1,7 +1,7 @@
 /**
  * #5025 + N2: conversation facts on email and meeting pages.
  *
- * Protects: a Gmail thread page as gbrain renders it parses into one turn
+ * Protects: a Gmail thread page as foresights renders it parses into one turn
  * per message (sender display name, heading time), including a one-message
  * thread, and its facts extract; meeting-note metadata labels
  * (`**Attendees:**`, `**Date:**`) are never speakers; a prose meeting page is

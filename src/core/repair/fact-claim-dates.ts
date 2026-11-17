@@ -1,5 +1,5 @@
 /**
- * `gbrain repair fact-claim-dates --source <id> [--day YYYY-MM-DD]` (#7247): give facts that a bulk load dated with
+ * `foresights repair fact-claim-dates --source <id> [--day YYYY-MM-DD]` (#7247): give facts that a bulk load dated with
  * the day it ran the date their own claim states.
  *
  * A one-time backfill wrote one date, the day it ran, into the valid_from cell of a large share of a source's facts.
@@ -15,7 +15,7 @@
  * cell becomes the claim's date and the page is published through a revision-bound put_page, so the canonical file
  * stays the source of truth and the facts row is re-projected from it. Every other row and cell of the fence is kept;
  * a page is listed and kept when its fence does not parse, it has fences on both sides of the timeline sentinel
- * (`gbrain repair split-facts`), it is stored in segments, or the rewritten fence would not read back as exactly the
+ * (`foresights repair split-facts`), it is stored in segments, or the rewritten fence would not read back as exactly the
  * planned rows. A row whose fence cell no longer reads the bulk day is counted `fence_mismatch`. A database-only fact
  * (no fence row) takes a direct valid_from update on an unmanaged brain; on a managed brain it is counted
  * `database_only_managed` and kept, because a managed write never changes a fact the canonical files do not hold.
@@ -57,7 +57,7 @@ interface FactRow { id: number | string; entity_slug: string | null; fact: strin
 
 interface Plan { hash: string; days: BulkFactDay[]; pages: PagePlan[]; facts: FactsPlan[]; residuals: Record<string, number>; listing: RepairListing[] }
 
-const previewCommand = (sourceId: string, day: string | null) => `gbrain repair fact-claim-dates --source ${sourceId}${day ? ` --day ${day}` : ''}`;
+const previewCommand = (sourceId: string, day: string | null) => `foresights repair fact-claim-dates --source ${sourceId}${day ? ` --day ${day}` : ''}`;
 
 /** The UTC day a fence valid_from cell projects to, read the way the fence projection reads it. */
 function cellDay(cell: string | undefined): string | null {
@@ -86,8 +86,8 @@ function rewriteFence(page: Page, section: Section, rows: PlannedRow[]): string 
 const PAGE_RESIDUALS: Record<string, string> = {
   no_page: 'the page that holds these rows does not exist any more; nothing changed',
   segmented_page: 'the page stores its body in segments and this repair rewrites a fence by publishing the whole body; nothing changed',
-  split_fences: 'the page has a facts fence on both sides of the timeline sentinel; merge them with gbrain repair split-facts, then preview again',
-  unparsed: 'the facts fence does not parse cleanly; gbrain repair fences previews its repair, then preview again',
+  split_fences: 'the page has a facts fence on both sides of the timeline sentinel; merge them with foresights repair split-facts, then preview again',
+  unparsed: 'the facts fence does not parse cleanly; foresights repair fences previews its repair, then preview again',
   not_conserved: 'the rewritten fence would not read back as exactly the planned rows; change these cells by hand',
 };
 
@@ -188,8 +188,8 @@ export const factClaimDatesRepair: RepairHandler = {
   kind: 'fact-claim-dates',
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair fact-claim-dates needs --source <id>.',
-        'A bulk load dates the facts of one source; name it, e.g. gbrain repair fact-claim-dates --source default.',
+      throw opError('invalid_params', 'foresights repair fact-claim-dates needs --source <id>.',
+        'A bulk load dates the facts of one source; name it, e.g. foresights repair fact-claim-dates --source default.',
         { fix: readFix('Reports the bulk-dated days of every source, read-only.', { argv: ['gbrain', 'doctor', '--only', 'fact_bulk_dates', '--json'] }), docs: DOCS });
     }
     const selection: Selection = { source_ids: scope.source_ids, day: opts?.day ?? null };
@@ -202,7 +202,7 @@ export const factClaimDatesRepair: RepairHandler = {
         residuals: plan.residuals, listing: plan.listing, warnings: dayWarnings(plan, selection) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair fact-claim-dates --apply moves only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair fact-claim-dates --apply moves only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, DOCS);
     }
     // A fresh apply recomputes the plan; a resumed one replays the saved set, whose finished items moved their pages.

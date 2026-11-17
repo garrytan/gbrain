@@ -5,7 +5,7 @@ export const v076: Migration = {
   name: 'minion_jobs_doctor_run_id_index',
   // v0.36+ autonomous-remediation wave (renumbered v68→v76 during master
   // merge). Partial GIN on minion_jobs.data for `data ? 'doctor_run_id'`.
-  // Lets `gbrain doctor --remediate` runs be queried by run id for audit
+  // Lets `foresights doctor --remediate` runs be queried by run id for audit
   // trail without sequential-scanning months of cron history. Partial so
   // only doctor-submitted jobs are indexed; ordinary cron submissions
   // don't bloat the index.

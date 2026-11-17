@@ -1,5 +1,5 @@
 /**
- * `gbrain engine status` — the ENGINE-FREE detection primitive of the
+ * `foresights engine status` — the ENGINE-FREE detection primitive of the
  * db-availability loop. Answers "which engine is this brain on, where does
  * its URL come from, and (with --probe) can we reach it?" without requiring
  * a working database — the exact situation the bundled skills call it in.
@@ -13,7 +13,7 @@
  * (bounded by the pool's own connect timer: `connect_timeout` from
  * `database_url`, else 10s; never a custom race) + SELECT 1; failures come
  * back as a classified PgAccessDiagnosis,
- * not a raw error. On PGLite the probe is LOCK-AWARE: a live `gbrain serve`
+ * not a raw error. On PGLite the probe is LOCK-AWARE: a live `foresights serve`
  * holding the single-writer lock reports `locked_by_serve` (healthy-with-
  * note) instead of hanging ~30s on the lock and misreporting a broken brain.
  */
@@ -278,7 +278,7 @@ export async function runEngineStatus(args: string[]): Promise<number> {
         reason: 'no_url',
         transient: false,
         message: `Brain '${brainId}' is not a registered mount.`,
-        remediation: `Unknown brain '${brainId}'. List mounts: gbrain mounts list. Add one: gbrain mounts add.`,
+        remediation: `Unknown brain '${brainId}'. List mounts: foresights mounts list. Add one: foresights mounts add.`,
         brainId,
       };
     } else if (opts.probe && mount.engine) {

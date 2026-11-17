@@ -35,14 +35,14 @@ export const FENCE_REPAIR_PHASE_BUDGET_MS = 300_000;
 export interface FenceRepairPhaseOpts {
   dryRun: boolean;
   signal?: AbortSignal;
-  /** The enclosing maintenance job's absolute deadline (epoch ms); null or unset for a direct `gbrain dream`. */
+  /** The enclosing maintenance job's absolute deadline (epoch ms); null or unset for a direct `foresights dream`. */
   deadlineAtMs?: number | null;
   /** Replaces the registered repair kinds, as `repairRunner` takes it (tests pass stub specs). */
   registry?: readonly RepairKindSpec[];
   now?: () => number;
 }
 
-const PREVIEW = 'gbrain repair fences';
+const PREVIEW = 'foresights repair fences';
 const previewFix = (why: string): Action => ({ argv: ['gbrain', 'repair', 'fences'], consent: [], actor: 'agent', why, requires_exclusive: false,
   docs: 'docs/guides/repair.md#fences' });
 
@@ -52,7 +52,7 @@ export async function runFenceRepairPhase(engine: BrainEngine | null, opts: Fenc
   if (!(await fenceRepairEnabled(engine))) {
     return { ...base, status: 'skipped', details: { reason: 'disabled' },
       summary: `fence repair is paused (${FENCE_REPAIR_ENABLED_KEY} false), so nothing was repaired. Turn it back on with `
-        + `\`gbrain config set ${FENCE_REPAIR_ENABLED_KEY} true\`, or preview and apply by hand with \`${PREVIEW}\`.` };
+        + `\`foresights config set ${FENCE_REPAIR_ENABLED_KEY} true\`, or preview and apply by hand with \`${PREVIEW}\`.` };
   }
   const now = opts.now ?? Date.now;
   const start = now();
@@ -108,7 +108,7 @@ export async function runFenceRepairPhase(engine: BrainEngine | null, opts: Fenc
     failed ? `${failed} item(s) refused and left unchanged (first: ${result.failed[0]!.item}, ${result.failed[0]!.reason}); the next full scan retries them.` : '',
     scanPartial ? 'The fence census scan is still partial; the next run continues it.' : '',
     llmEnabled ? '' : `Model (Tier 3) repair is off (${FENCE_REPAIR_LLM_KEY} false)${llmDisabled ? `: ${llmDisabled} fence(s) wait for it; ask the user before `
-      + `turning it on (\`gbrain config set ${FENCE_REPAIR_LLM_KEY} true\`, paid) or edit them by hand` : ''}.`,
+      + `turning it on (\`foresights config set ${FENCE_REPAIR_LLM_KEY} true\`, paid) or edit them by hand` : ''}.`,
     manual ? `${manual} need a manual edit: run \`${PREVIEW}\` on the brain host for each exact fix.` : '',
   ].filter(Boolean);
   const fix = stopped && stopped.reason !== 'time_budget' ? stopped.fix : manual ? previewFix('Some fences need a manual edit; the preview names each exact fix.') : undefined;

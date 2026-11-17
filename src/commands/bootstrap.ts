@@ -1,9 +1,9 @@
 /**
- * `gbrain bootstrap` — the dispatcher tying the bootstrap lane modules into
+ * `foresights bootstrap` — the dispatcher tying the bootstrap lane modules into
  * one CLI family (agent-bootstrap plan: D3, G9, B1, CX2-5, A7).
  *
  * Engine discipline (plan D5 + ENG-2): every subcommand except `verify` is
- * ENGINE-FREE — a live `gbrain serve` may hold the PGLite single-writer lock
+ * ENGINE-FREE — a live `foresights serve` may hold the PGLite single-writer lock
  * while the human is mid-install, and interview/render/hooks/repo/status/
  * uninstall/attach must keep working. `verify` NEEDS the engine and manages
  * its own connection (the commands/cache.ts pattern: loadConfig →
@@ -113,11 +113,11 @@ import { auditWritebackContract, repairWritebackContract } from '../core/bootstr
 import { INSTALL_PIN } from '../core/install-ref.ts';
 import { OperationError } from '../core/ops/contract.ts';
 
-export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)
+export const BOOTSTRAP_HELP = `foresights bootstrap — paste-in agent install (Claude Code / Codex / opencode)
 
-Usage: gbrain bootstrap <subcommand> [flags]
+Usage: foresights bootstrap <subcommand> [flags]
 
-Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoint):
+Subcommands (run \`foresights bootstrap status\` first — it is the resume entrypoint):
   status [--json]                 Phase list + next action + support blob. The CLI's
                                   phase list is the source of truth the runbook defers to.
   interview --init                Create state/interview.json.
@@ -129,7 +129,7 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   render [--force] [--only F] [--minimal] [--host openclaw|generic|auto]
                                   Render identity files from the confirmed answers.
                                   Never clobbers; --force backs up first. OpenClaw: SCHEDULES.md.
-  contract [--repair]             Audit the same-turn GBrain write-back contract.
+  contract [--repair]             Audit the same-turn Foresights write-back contract.
                                   --repair appends it additively and backs up AGENTS.md.
   hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]
         [--seat <label> | --no-seat]
@@ -152,7 +152,7 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
           [--no-hooks] [--no-capture] [--force] [--status] [--remove [--dry-run]] [--refresh-skills] [--yes] [--json]
           [--seat <label> | --no-seat]
                                   Wire framework-spawned Claude Code / Codex / opencode
-                                  sessions to a RUNNING \`gbrain serve --http\` on this box
+                                  sessions to a RUNNING \`foresights serve --http\` on this box
                                   (#4043): scoped bearer token, user-scope MCP + headless
                                   pre-approval, lifecycle hooks (user scope, or per --project
                                   dir), codex config block, opencode config entry. No
@@ -165,7 +165,7 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
                                   enrollment epoch (no token rotation).
                                   (--local is an accepted no-op alias.)
   cloud-setup-script              Print the paste-ready cloud environment setup
-                                  script (installs the gbrain binary into the
+                                  script (installs the foresights binary into the
                                   environment snapshot; npm-based — bun fetching
                                   is proxy-incompatible in cloud sandboxes).
   uninstall [--delete-brain] [--home <dir>] [--yes]
@@ -179,7 +179,7 @@ Env: GBRAIN_BOOTSTRAP_ABORT_AFTER=<phase> (test seam — abort after that phase'
 `;
 
 const SUPPORT_HINT =
-  'If you are stuck: run `gbrain bootstrap status --json` and relay the "support" block verbatim.';
+  'If you are stuck: run `foresights bootstrap status --json` and relay the "support" block verbatim.';
 
 /**
  * Per-subcommand `--help`/`-h`/`help` usage text for the subcommands that
@@ -187,7 +187,7 @@ const SUPPORT_HINT =
  * adopt a workspace, remove receipt-tracked paths, record an interview
  * answer). `runBootstrap`'s dispatch checks `args[0]` for top-level help
  * (`--help`/`-h`/`help`/no args), but a help token AFTER the subcommand name
- * (e.g. `gbrain bootstrap repo --help`, `gbrain bootstrap uninstall help`)
+ * (e.g. `foresights bootstrap repo --help`, `foresights bootstrap uninstall help`)
  * previously fell straight into the subcommand's own arg parsing, which had
  * no help handling of its own — so it ran the real mutation instead of
  * printing help. `status`/`cloud-setup-script` are pure reads, so they don't
@@ -195,46 +195,46 @@ const SUPPORT_HINT =
  */
 const SUBCOMMAND_HELP: Record<string, string> = {
   render:
-    'gbrain bootstrap render [--force] [--only F] [--minimal]\n' +
+    'foresights bootstrap render [--force] [--only F] [--minimal]\n' +
     '  Render identity files from the confirmed interview answers. Never clobbers; --force backs up first.',
   contract:
-    'gbrain bootstrap contract [--repair]\n' +
-    '  Audit AGENTS.md for the same-turn GBrain write-back contract. --repair appends a marker-owned block and backs up the original.',
+    'foresights bootstrap contract [--repair]\n' +
+    '  Audit AGENTS.md for the same-turn Foresights write-back contract. --repair appends a marker-owned block and backs up the original.',
   repo:
-    'gbrain bootstrap repo [--scan-timeout <seconds>]\n' +
+    'foresights bootstrap repo [--scan-timeout <seconds>]\n' +
     '  Create the dedicated PRIVATE GitHub repo (or adopt an EMPTY private repo you created\n' +
     '  under your own account), verify the privacy bit via the API, push. The push scans the\n' +
     '  whole history for secrets first; --scan-timeout gives a long history more time (default 300).',
   hooks:
-    'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
+    'foresights bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
     '                       [--seat <label> | --no-seat] [--surface verbs|starter|full] [--adopt [--name <server>]]\n' +
     `  Register MCP (--surface ${REGISTRATION_SURFACE} --advertise ${REGISTRATION_ADVERTISE} unless given; a replaced entry keeps its surface, full when unreadable) (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).\n` +
     '  --seat credits captured sessions to this agent seat (kept on re-install; --no-seat clears it; --seat off records none).\n' +
     '  --adopt (Codex): record the project .codex/config.toml server you manage yourself as the wire evidence after a passing verify; writes no config.',
   verify:
-    'gbrain bootstrap verify [--json]\n' +
+    'foresights bootstrap verify [--json]\n' +
     '  The whole install contract (round-trip, graph floor, magic moment, scans, hooks smoke). Exit 0 or not done.',
   attach:
-    'gbrain bootstrap attach [--harness H]\n' +
+    'foresights bootstrap attach [--harness H]\n' +
     '  Machine two: adopt a cloned agent workspace.',
   uninstall:
-    'gbrain bootstrap uninstall [--delete-brain] [--home <dir>] [--yes]\n' +
+    'foresights bootstrap uninstall [--delete-brain] [--home <dir>] [--yes]\n' +
     '  Receipt-keyed removal. The repo stays yours.',
   interview:
-    'gbrain bootstrap interview --init | --set KEY "value" | --skip KEY | --status | --show | --confirm <hash>\n' +
-    '  Create/record/read interview state. See `gbrain bootstrap --help` for the per-flag description.',
-  // #5488: `gbrain bootstrap harness --help` previously fell through into the
+    'foresights bootstrap interview --init | --set KEY "value" | --skip KEY | --status | --show | --confirm <hash>\n' +
+    '  Create/record/read interview state. See `foresights bootstrap --help` for the per-flag description.',
+  // #5488: `foresights bootstrap harness --help` previously fell through into the
   // real apply because harness was missing from SUBCOMMAND_HELP. Without this
   // entry the dispatch's `Object.hasOwn(SUBCOMMAND_HELP, sub)` guard was
   // false, so `--help` after the subcommand name ran the harness apply path.
   harness:
-    'gbrain bootstrap harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]\n' +
+    'foresights bootstrap harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]\n' +
     '                       [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...\n' +
     '                       [--no-hooks] [--no-capture] [--force] [--status] [--remove [--dry-run]] [--yes] [--json]\n' +
     '                       [--seat <label> | --no-seat]\n' +
-    '  Wire framework-spawned Claude Code / Codex / opencode sessions to a RUNNING `gbrain serve --http`\n' +
+    '  Wire framework-spawned Claude Code / Codex / opencode sessions to a RUNNING `foresights serve --http`\n' +
     '  on this box (#4043). Idempotent; --remove tears it down. (--local is an accepted no-op alias.)\n' +
-    '  See `gbrain bootstrap --help` for the per-flag description.',
+    '  See `foresights bootstrap --help` for the per-flag description.',
 };
 
 /**
@@ -257,7 +257,7 @@ function hasHelpToken(args: string[], allowBareWord: boolean): boolean {
 /** Thrown by the A7 abort seam; mapped to exit 130 (simulated kill). */
 export class BootstrapAbortInjected extends Error {
   constructor(phase: string) {
-    super(`bootstrap aborted after phase '${phase}' (GBRAIN_BOOTSTRAP_ABORT_AFTER) — re-run and \`gbrain bootstrap status\` resumes from the artifacts`);
+    super(`bootstrap aborted after phase '${phase}' (GBRAIN_BOOTSTRAP_ABORT_AFTER) — re-run and \`foresights bootstrap status\` resumes from the artifacts`);
     this.name = 'BootstrapAbortInjected';
   }
 }
@@ -290,7 +290,7 @@ function flagValues(args: string[], flag: string): string[] {
 /**
  * SSH sessions frequently land in `$HOME` before the operator `cd`s into a
  * project, and `--workspace` defaults to `process.cwd()` — so an unqualified
- * `gbrain bootstrap` run can silently target the home directory. Bootstrap's
+ * `foresights bootstrap` run can silently target the home directory. Bootstrap's
  * later phases stage `git add -A` over the resolved workspace, which is both
  * slow (a home-directory-scale scan has run 50+ minutes in practice) and
  * unsafe (the generated `.gitignore` is not a guaranteed superset of every
@@ -336,7 +336,7 @@ function resolveWorkspace(args: string[], sub: string): string {
     throw new BootstrapError(
       'HOME_WORKSPACE',
       `refusing to bootstrap directly into your home directory (${resolved}) — SSH sessions often land here by default. ` +
-        'If you already bootstrapped here, `gbrain bootstrap status` and `gbrain bootstrap uninstall` still work ' +
+        'If you already bootstrapped here, `foresights bootstrap status` and `foresights bootstrap uninstall` still work ' +
         'directly at $HOME to inspect and remove it; otherwise re-run with `--workspace <dir>` pointing at the ' +
         'project directory you actually want to bootstrap.',
       { details: { candidate: resolved } },
@@ -388,7 +388,7 @@ export function detectHarness(env: Record<string, string | undefined> = process.
  * workspace's serve? An "already exists/registered" error is NOT proof the
  * registration is ours — it could point at a different workspace's binary or
  * a stale/foreign install. Verify via `<host> mcp get <name>` that the command
- * carries both the expected absolute gbrain binary AND GBRAIN_SOURCE=<sourceId>.
+ * carries both the expected absolute foresights binary AND GBRAIN_SOURCE=<sourceId>.
  *
  * Returns 'match' (ours), 'mismatch' (points elsewhere — caller re-registers or
  * warns), or 'unknown' (the host has no `mcp get` / empty output — inconclusive,
@@ -438,7 +438,7 @@ const OPENCODE_PROBE_TIMEOUT_MS = 20_000;
  * env and fake the child). The default holds the REAL process handle via
  * Bun.spawn — a Promise.race that merely abandons a hung `opencode mcp list`
  * leaves its spawned MCP servers running (including the just-registered
- * `gbrain serve`, which then squats the PGLite single-writer lock) and keeps
+ * `foresights serve`, which then squats the PGLite single-writer lock) and keeps
  * the CLI's event loop alive past flushThenExit. */
 export interface OpencodeProbeHandle {
   exited: Promise<number>;
@@ -589,7 +589,7 @@ function consentAnswer(ws: string, key: string): string | undefined {
     if (a) {
       console.error(
         `note: the recorded ${key} answer in state/interview.json is unusable (invalid shape) — ` +
-          'treating it as declined (fail-closed). Re-record it with `gbrain bootstrap interview` ' +
+          'treating it as declined (fail-closed). Re-record it with `foresights bootstrap interview` ' +
           'if that is not what you want.',
       );
       return 'no';
@@ -605,7 +605,7 @@ function consentAnswer(ws: string, key: string): string | undefined {
  * fallback and the harness advisory gates on it). 'shared' → declare
  * shared; the 'single-principal' default declares nothing (personal is the
  * classifier's own default posture, and staying silent keeps a later
- * explicit `gbrain config set brain.audience` the stronger signal).
+ * explicit `foresights config set brain.audience` the stronger signal).
  * SET-IF-UNSET only; never throws (bootstrap must not die on a config
  * write). Exported for tests.
  */
@@ -705,13 +705,13 @@ async function runStatus(ws: string, rest: string[], home: string): Promise<numb
     if (gate?.verdict === 'public') {
       console.error(
         `STOP: this template clone's origin (${gate.origin}) is PUBLIC. Make the repository private first ` +
-          `(gh repo edit --visibility private --accept-visibility-change-consequences, or the GitHub settings page), then re-run \`gbrain bootstrap status\`.`,
+          `(gh repo edit --visibility private --accept-visibility-change-consequences, or the GitHub settings page), then re-run \`foresights bootstrap status\`.`,
       );
       return 1;
     }
     return 0;
   }
-  console.log(`gbrain bootstrap status — ${ws}`);
+  console.log(`foresights bootstrap status — ${ws}`);
   for (const p of report.phases) {
     const mark = p.state === 'done' ? 'done   ' : p.state === 'partial' ? 'partial' : p.state === 'skipped' ? 'skipped' : 'pending';
     console.log(`  [${mark}] ${p.id.padEnd(9)} ${p.title}${p.detail ? ` — ${p.detail}` : ''}`);
@@ -719,7 +719,7 @@ async function runStatus(ws: string, rest: string[], home: string): Promise<numb
   if (report.next) {
     console.log(`\nNext: ${report.next}`);
   } else {
-    console.log('\nAll phases done. Weekly self-check: `gbrain bootstrap verify` (close agent sessions first — PGLite is single-writer).');
+    console.log('\nAll phases done. Weekly self-check: `foresights bootstrap verify` (close agent sessions first — PGLite is single-writer).');
   }
   if (report.runbookSkew) {
     console.log(
@@ -733,7 +733,7 @@ async function runStatus(ws: string, rest: string[], home: string): Promise<numb
     console.error(
       `\nSTOP: this template clone's origin (${gate.origin}) is PUBLIC. Identity files must never land in a ` +
         `public repository. Make it private first (gh repo edit --visibility private ` +
-        `--accept-visibility-change-consequences, or the GitHub settings page), then re-run \`gbrain bootstrap status\`.`,
+        `--accept-visibility-change-consequences, or the GitHub settings page), then re-run \`foresights bootstrap status\`.`,
     );
     return 1;
   }
@@ -765,7 +765,7 @@ async function runContract(ws: string, rest: string[]): Promise<number> {
 function warnInvalidatedConfirmation(): void {
   console.error(
     'note: this change voided the prior confirmation — read the full answer set back ' +
-    'to the human, then `gbrain bootstrap interview --confirm <hash>` again before render.',
+    'to the human, then `foresights bootstrap interview --confirm <hash>` again before render.',
   );
 }
 
@@ -791,7 +791,7 @@ async function runInterview(ws: string, rest: string[]): Promise<number> {
     const key = rest[setIdx + 1];
     const value = rest[setIdx + 2];
     if (!key || value === undefined) {
-      console.error('usage: gbrain bootstrap interview --set KEY "value"');
+      console.error('usage: foresights bootstrap interview --set KEY "value"');
       return 2;
     }
     const r = setAnswer(ws, key, value);
@@ -813,7 +813,7 @@ async function runInterview(ws: string, rest: string[]): Promise<number> {
     if (r.invalidatedConfirmation) warnInvalidatedConfirmation();
     console.log(`${key} recorded.`);
     // Apply the audience declaration the moment the answer lands (red-team
-    // review, this wave): the agent runs `gbrain init` (the engine phase)
+    // review, this wave): the agent runs `foresights init` (the engine phase)
     // BETWEEN interview and wire, and init's writeback consent nudge
     // classifies the fresh brain — a shared declaration applied only at
     // runHooks time would arrive too late, so a team-brain bootstrap would
@@ -826,7 +826,7 @@ async function runInterview(ws: string, rest: string[]): Promise<number> {
   if (skipIdx >= 0) {
     const key = rest[skipIdx + 1];
     if (!key) {
-      console.error('usage: gbrain bootstrap interview --skip KEY');
+      console.error('usage: foresights bootstrap interview --skip KEY');
       return 2;
     }
     const r = skipAnswer(ws, key);
@@ -874,7 +874,7 @@ async function runInterview(ws: string, rest: string[]): Promise<number> {
   if (confirmIdx >= 0) {
     const hash = rest[confirmIdx + 1];
     if (!hash) {
-      console.error('usage: gbrain bootstrap interview --confirm <hash from --status/--show>');
+      console.error('usage: foresights bootstrap interview --confirm <hash from --status/--show>');
       return 2;
     }
     const r = interviewConfirm(ws, hash);
@@ -885,7 +885,7 @@ async function runInterview(ws: string, rest: string[]): Promise<number> {
     console.log(`confirmed at ${r.at}.`);
     return 0;
   }
-  console.error('usage: gbrain bootstrap interview --init | --set K V | --skip K | --status | --show | --confirm <hash>');
+  console.error('usage: foresights bootstrap interview --init | --set K V | --skip K | --status | --show | --confirm <hash>');
   return 2;
 }
 
@@ -907,7 +907,7 @@ async function runRender(ws: string, rest: string[], home: string): Promise<numb
       console.error(
         `render refused: this workspace's origin (${origin}) is PUBLIC. Identity files must never land in a ` +
           `public repository. Make it private first (gh repo edit --visibility private ` +
-          `--accept-visibility-change-consequences, or the GitHub settings page), then re-run \`gbrain bootstrap render\`.`,
+          `--accept-visibility-change-consequences, or the GitHub settings page), then re-run \`foresights bootstrap render\`.`,
       );
       console.error(SUPPORT_HINT);
       return 1;
@@ -935,7 +935,7 @@ async function runRender(ws: string, rest: string[], home: string): Promise<numb
       console.error(
         'render refused: the interview is ' +
           (!st.complete ? `incomplete (missing: ${st.missingRequired.join(', ')})` : 'complete but NOT confirmed') +
-          '. Read the answers back to the human, then `gbrain bootstrap interview --confirm <hash>`.',
+          '. Read the answers back to the human, then `foresights bootstrap interview --confirm <hash>`.',
       );
       return 1;
     }
@@ -984,7 +984,7 @@ async function runRender(ws: string, rest: string[], home: string): Promise<numb
 async function runRepo(ws: string, rest: string[], home: string, runner: ExecRunner): Promise<number> {
   const scanTimeout = rest.includes('--scan-timeout') ? flagValue(rest, '--scan-timeout') ?? '' : undefined;
   if (scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(scanTimeout)) {
-    console.error('Usage: gbrain bootstrap repo [--scan-timeout <seconds>]');
+    console.error('Usage: foresights bootstrap repo [--scan-timeout <seconds>]');
     return 2;
   }
   return withLock(ws, async () => {
@@ -1045,13 +1045,13 @@ async function runRepo(ws: string, rest: string[], home: string, runner: ExecRun
             `background persistence enabled for this ${envKind === 'cloud-sandbox' ? 'cloud sandbox' : 'container'}: ` +
               'post-commit auto-push installed; per-turn and session-end pushes are already on. ' +
               'No scheduler exists in this environment, so the 30-min pull is skipped — run ' +
-              '`gbrain sources harden` on a persistent machine to add it.',
+              '`foresights sources harden` on a persistent machine to add it.',
           );
         }
       } catch (e) {
         console.error(
           `note: background-persistence install failed (${(e as Error).message}). ` +
-            'Per-turn and session-end pushes still persist your work; re-try later with `gbrain sources harden`.',
+            'Per-turn and session-end pushes still persist your work; re-try later with `foresights sources harden`.',
         );
       }
     } else {
@@ -1068,7 +1068,7 @@ async function runAdoptHooks(ws: string, rest: string[], home: string): Promise<
   const harnessFlag = flagValue(rest, '--harness');
   const harness = isHarness(harnessFlag) ? harnessFlag : harnessFlag ? null : detectHarness();
   if (!harness) { console.error('--adopt needs the harness — pass --harness codex'); return 2; }
-  if (readManifest(ws).state !== 'initialized') { console.error('not an initialized agent workspace — run `gbrain bootstrap render` first'); return 1; }
+  if (readManifest(ws).state !== 'initialized') { console.error('not an initialized agent workspace — run `foresights bootstrap render` first'); return 1; }
   const { adoptConnection } = await import('../core/bootstrap/adopt-connection.ts');
   const adopted = adoptConnection(ws, home, harness, flagValue(rest, '--name') ?? undefined);
   for (const line of adopted.lines) (adopted.code === 0 ? console.log : console.error)(line);
@@ -1105,7 +1105,7 @@ async function runHooks(
   if (seatFlags.error) return 2;
   // Plugin-lane override: detection reads the plugin-ENABLE config entry,
   // which is not a health signal — a plugin whose launcher can't find the
-  // gbrain binary still matches. This flag forces the hand-wired MCP
+  // foresights binary still matches. This flag forces the hand-wired MCP
   // registration through anyway.
   const mcpEvenIfPlugin = rest.includes('--mcp-even-if-plugin');
   const surfaceArg = rest.includes('--surface') ? flagValue(rest, '--surface') ?? '' : undefined;
@@ -1116,8 +1116,8 @@ async function runHooks(
   if (state.state !== 'initialized') {
     console.error(
       state.state === 'template'
-        ? 'this is an uninitialized template — run `gbrain bootstrap render` first'
-        : `not an agent workspace (agent.json ${state.state}) — run \`gbrain bootstrap render\` first`,
+        ? 'this is an uninitialized template — run `foresights bootstrap render` first'
+        : `not an agent workspace (agent.json ${state.state}) — run \`foresights bootstrap render\` first`,
     );
     return 1;
   }
@@ -1125,7 +1125,7 @@ async function runHooks(
 
   // WP8: the interview's declared audience becomes the machine-local
   // brain.audience declaration (file mirror; the classifier and the harness
-  // advisory both honor it, and a later `gbrain config set brain.audience`
+  // advisory both honor it, and a later `foresights config set brain.audience`
   // dual-writes the DB row too). Set-if-unset only — an operator's explicit
   // declaration is never overwritten by a re-run.
   applyDeclaredAudienceFromInterview(ws);
@@ -1133,8 +1133,8 @@ async function runHooks(
   const gbrainBin = flagValue(rest, '--gbrain-bin') ?? resolveGbrainBin();
   if (!gbrainBin) {
     console.error(
-      'cannot resolve an absolute gbrain binary path (GUI hosts inherit no PATH) — ' +
-        `install gbrain globally (\`bun install -g ${INSTALL_PIN}\`) or pass --gbrain-bin <abs path>`,
+      'cannot resolve an absolute foresights binary path (GUI hosts inherit no PATH) — ' +
+        `install foresights globally (\`bun install -g ${INSTALL_PIN}\`) or pass --gbrain-bin <abs path>`,
     );
     return 2;
   }
@@ -1181,11 +1181,11 @@ async function runHooks(
         "note: the recorded MCP_SCOPE answer 'project' has no effect on Codex — " +
           '`codex mcp add` has no scope flag; the registration is user-global (any repo ' +
           'opened on this machine can reach the brain, read and write, through its MCP tools). ' +
-          'To clear this note safely, drop the answer with `gbrain bootstrap interview --skip MCP_SCOPE`, ' +
+          'To clear this note safely, drop the answer with `foresights bootstrap interview --skip MCP_SCOPE`, ' +
           'then re-confirm the read-back (`--show`, then `--confirm <hash>` — any answer change ' +
           'invalidates the prior confirmation). Do NOT flip it to user: the answer syncs to paired ' +
           'Claude Code machines and would widen their scope. Registration off-ramps: ' +
-          '`codex mcp remove gbrain`, or `gbrain bootstrap uninstall` (full teardown).',
+          '`codex mcp remove foresights`, or `foresights bootstrap uninstall` (full teardown).',
       );
     }
   }
@@ -1200,8 +1200,8 @@ async function runHooks(
   // strand orphan marker comments (#4043 ownership rule).
   if (harness === 'codex' && codexBlockOwnsName(codexConfigPath(), 'gbrain')) {
     console.log(
-      "the 'gbrain' codex MCP server is managed by `gbrain bootstrap harness` (marker block in the codex " +
-        'config) — skipping the stdio registration. Run `gbrain bootstrap harness --remove` first if you ' +
+      "the 'gbrain' codex MCP server is managed by `foresights bootstrap harness` (marker block in the codex " +
+        'config) — skipping the stdio registration. Run `foresights bootstrap harness --remove` first if you ' +
         'want this workspace-lane stdio registration instead.',
     );
     return 0;
@@ -1221,8 +1221,8 @@ async function runHooks(
   ) {
     console.log(
       "the 'gbrain' opencode MCP entry in the user-global config is a remote server (managed by " +
-        '`gbrain bootstrap harness`, or foreign) — skipping the stdio registration. Run ' +
-        '`gbrain bootstrap harness --remove` first (or remove the entry) if you want this ' +
+        '`foresights bootstrap harness`, or foreign) — skipping the stdio registration. Run ' +
+        '`foresights bootstrap harness --remove` first (or remove the entry) if you want this ' +
         'workspace-lane stdio registration instead.',
     );
     return 0;
@@ -1245,7 +1245,7 @@ async function runHooks(
     mkdirSync(brainDir, { recursive: true });
     // --force: brain/ was just created empty — `sources add` fail-fasts on a
     // --path that exists but isn't a git repo with committed, tracked
-    // content (#2707), and gbrain deliberately never auto-git-inits a --path
+    // content (#2707), and foresights deliberately never auto-git-inits a --path
     // source itself (a --path source is the user's own directory — the
     // consent boundary #2967 established for sync-time self-heal applies
     // here too). --force is the sanctioned opt-in for exactly this "register
@@ -1257,9 +1257,9 @@ async function runHooks(
     const quoted = shellQuoteForDisplay(brainDir);
     console.log(
       `brain source: register this workspace's brain/ now if you haven't — ` +
-        `\`gbrain sources add ${sourceId} --path ${quoted} --force\` (brain/ is freshly created and empty; ` +
+        `\`foresights sources add ${sourceId} --path ${quoted} --force\` (brain/ is freshly created and empty; ` +
         `--force is the documented opt-in for registering before git-init exists). If '${sourceId}' is ` +
-        `already claimed by a different checkout on this brain, \`gbrain bootstrap verify\` will detect the ` +
+        `already claimed by a different checkout on this brain, \`foresights bootstrap verify\` will detect the ` +
         `collision and switch this workspace to '${deriveWorkspaceSourceId(ws)}' — re-run the same command ` +
         `with that id instead.`,
     );
@@ -1271,7 +1271,7 @@ async function runHooks(
     // binary. The old early-return silently dropped hooks while the copy said
     // only "MCP registration skipped".
     let mcpSkipped = false;
-    // Plugin-lane ownership: when the harness's gbrain PLUGIN provides the
+    // Plugin-lane ownership: when the harness's foresights PLUGIN provides the
     // MCP server, a hand-wired registration would double-register the name.
     // DISTINCT from mcpSkipped (host failure → exit 2, failure-owned
     // receipt): a plugin-owned skip is HEALTHY — exit 0, hooks still
@@ -1303,7 +1303,7 @@ async function runHooks(
       };
       try {
         // [X11] config-dir lock parity with the harness lane: the user-global
-        // config is shared across workspaces AND homes, so gbrain writers
+        // config is shared across workspaces AND homes, so foresights writers
         // serialize on ITS directory. The project-scope file lives in the
         // workspace root, which withLock(ws) already holds — the lock is
         // non-reentrant, so the same-dir case skips the nested acquire.
@@ -1331,7 +1331,7 @@ async function runHooks(
             console.error(`existing 'gbrain' opencode entry targets a DIFFERENT workspace — replacing it.`);
           }
           // Two-filename merge blind spot: opencode merges BOTH user-global
-          // filenames, so a same-name gbrain entry in the SIBLING file would
+          // filenames, so a same-name foresights entry in the SIBLING file would
           // survive this write as a shadow registration. Reconcile it under
           // the same config-dir lock (ours → removed with a note; foreign →
           // refuse loudly naming both files). User scope only — the project
@@ -1349,16 +1349,16 @@ async function runHooks(
         }
         console.log(
           `MCP registered with opencode (scope: ${mcpScope === 'project' ? 'project (explicit opt-in)' : 'user-global'}) — ` +
-            `wrote ${w.configPath}${w.replacedPrior ? ' (replaced prior gbrain entry)' : ''}; ` +
+            `wrote ${w.configPath}${w.replacedPrior ? ' (replaced prior foresights entry)' : ''}; ` +
             'restart opencode (config is read at session start).',
         );
         for (const note of w.notes) console.error(note);
         if (mcpScope === 'project') {
           console.error(
             'SHARING WARNING: opencode spawns project-config-defined MCP servers with NO trust prompt — ' +
-              'if this opencode.json is committed, every collaborator machine will spawn gbrain (teammates ' +
-              'without gbrain see a failing spawn each session; teammates WITH gbrain attach THEIR host ' +
-              'brain to this repo). The command is PATH-resolved ("gbrain" — requires gbrain on PATH); ' +
+              'if this opencode.json is committed, every collaborator machine will spawn foresights (teammates ' +
+              'without foresights see a failing spawn each session; teammates WITH foresights attach THEIR host ' +
+              'brain to this repo). The command is PATH-resolved ("gbrain" — requires foresights on PATH); ' +
               'the teammate opt-out is `"enabled": false` on the entry. The user-global default avoids all of this.' +
               (gbrainHome
                 ? ` Also: the entry embeds this machine's GBRAIN_HOME path (${gbrainHome}) — it won't be portable to other machines.`
@@ -1419,12 +1419,12 @@ async function runHooks(
           const plain = probe.stdout.replace(/\u001b\[[0-9;]*m/g, '');
           if (probe.code === 127) {
             console.log('`opencode` is not on PATH — registration written; the config activates when opencode next starts here.');
-          } else if (probe.code === 0 && /✓\s+gbrain(\s|$)/.test(plain)) {
-            console.log('`opencode mcp list` handshake: ✓ gbrain connected.');
-          } else if (probe.code === 0 && /✗\s+gbrain(\s|$)/.test(plain)) {
+          } else if (probe.code === 0 && /✓\s+(?:foresights|gbrain)(\s|$)/.test(plain)) {
+            console.log('`opencode mcp list` handshake: ✓ foresights connected.');
+          } else if (probe.code === 0 && /✗\s+(?:foresights|gbrain)(\s|$)/.test(plain)) {
             console.error(
-              'WARNING: `opencode mcp list` reports ✗ gbrain failed — the spawn did not handshake ' +
-                '(is the gbrain binary path valid on this machine?). The exit code of `mcp list` is 0 even ' +
+              'WARNING: `opencode mcp list` reports ✗ foresights failed — the spawn did not handshake ' +
+                '(is the foresights binary path valid on this machine?). The exit code of `mcp list` is 0 even ' +
                 'on failure; this warning is from parsing its output.',
             );
           } else {
@@ -1437,13 +1437,13 @@ async function runHooks(
     } else {
     if (mcpPluginOwned) {
       console.log(
-        `the '${mcpPluginOwned}' plugin already provides the gbrain MCP server on ${harness} — ` +
+        `the '${mcpPluginOwned}' plugin already provides the foresights MCP server on ${harness} — ` +
           'skipping the hand-wired MCP registration (one owner per name). The plugin serve is ' +
           `user-global: route this workspace's writes with GBRAIN_SOURCE=${sourceId} (and ` +
           'GBRAIN_BRAIN_ID for mounted brains) in the environment that launches the harness. ' +
           'Note: the plugin being ENABLED is a config signal, not a health signal — if its MCP ' +
-          'server is not actually working, either fix the plugin (is the gbrain binary installed?), ' +
-          `remove it (\`codex plugin remove gbrain\` / disable it in Claude Code), or force this ` +
+          'server is not actually working, either fix the plugin (is the foresights binary installed?), ' +
+          `remove it (\`codex plugin remove foresights\` / disable it in Claude Code), or force this ` +
           'workspace-bound registration with `--mcp-even-if-plugin`.',
       );
     }
@@ -1460,7 +1460,7 @@ async function runHooks(
         console.error(
           `\`${argv[0]}\` is not on PATH — is ${harness} installed? MCP registration skipped ` +
             `(per-turn hooks still install below); re-run ` +
-            `\`gbrain bootstrap hooks --harness ${harness}\` once it is.`,
+            `\`foresights bootstrap hooks --harness ${harness}\` once it is.`,
         );
         mcpSkipped = true;
         break;
@@ -1496,7 +1496,7 @@ async function runHooks(
             console.error(
               `\`${rmArgv.join(' ')}\` failed (${rm.stderr.trim() || `exit ${rm.code}`}) — remove the stale ` +
                 `registration by hand (\`${argv[0]} mcp get ${mcpName}\` shows where it lives), then re-run ` +
-                `\`gbrain bootstrap hooks --harness ${harness} --repair\`.`,
+                `\`foresights bootstrap hooks --harness ${harness} --repair\`.`,
             );
             return 1;
           }
@@ -1516,7 +1516,7 @@ async function runHooks(
               `after replacing '${mcpName}', it STILL targets a different workspace/binary — ` +
                 `refusing to continue (a racing registration may have re-claimed the name). ` +
                 `Inspect \`${argv[0]} mcp get ${mcpName}\`, remove it by hand, then re-run ` +
-                `\`gbrain bootstrap hooks --harness ${harness} --repair\`.`,
+                `\`foresights bootstrap hooks --harness ${harness} --repair\`.`,
             );
             return 1;
           }
@@ -1542,15 +1542,15 @@ async function runHooks(
         console.log(`MCP registered with ${harness} (scope: ${scopeLabel}) — verified targeting this workspace.`);
       } else if (verdict === 'mismatch') {
         console.error(
-          `WARNING: \`${listBin} mcp get gbrain\` does not show this workspace's serve ` +
-            `(binary/source mismatch) — re-run \`gbrain bootstrap hooks --harness ${harness} --repair\`.`,
+          `WARNING: \`${listBin} mcp get foresights\` does not show this workspace's serve ` +
+            `(binary/source mismatch) — re-run \`foresights bootstrap hooks --harness ${harness} --repair\`.`,
         );
       } else {
         const probe = await runner([listBin, 'mcp', 'list']);
-        if (probe.code === 0 && /\bgbrain\b/.test(probe.stdout)) {
+        if (probe.code === 0 && /\b(?:foresights|gbrain)\b/.test(probe.stdout)) {
           console.log(
             `MCP registration submitted (server 'gbrain' present; full target unverified — ` +
-              `\`${listBin} mcp get gbrain\` to inspect).`,
+              `\`${listBin} mcp get foresights\` to inspect).`,
           );
         } else {
           console.log(`MCP registration submitted; could not confirm via \`${listBin} mcp list\` (best-effort probe).`);
@@ -1603,8 +1603,8 @@ async function runHooks(
       } else {
         console.log(
           noHooks
-            ? 'hooks skipped (--no-hooks) — the AGENTS.md pull protocol covers per-turn context instead; re-enable with `gbrain bootstrap hooks --harness claude-code`.'
-            : 'hooks declined (HOOKS_CONSENT set to no) — the AGENTS.md pull protocol covers per-turn context instead; re-enable with `gbrain bootstrap hooks --harness claude-code`.',
+            ? 'hooks skipped (--no-hooks) — the AGENTS.md pull protocol covers per-turn context instead; re-enable with `foresights bootstrap hooks --harness claude-code`.'
+            : 'hooks declined (HOOKS_CONSENT set to no) — the AGENTS.md pull protocol covers per-turn context instead; re-enable with `foresights bootstrap hooks --harness claude-code`.',
         );
       }
     } else if (harness === 'codex') {
@@ -1619,7 +1619,7 @@ async function runHooks(
         if (r.ok) {
           hooksWritten = true;
           console.log(
-            `codex SessionEnd hook installed in ${r.hooksPath} (+ trust entry in ${r.configPath}) — session capture is live for the WHOLE machine's codex sessions. Turn off any time with GBRAIN_HOOKS=0, or remove with \`gbrain bootstrap uninstall\`.`,
+            `codex SessionEnd hook installed in ${r.hooksPath} (+ trust entry in ${r.configPath}) — session capture is live for the WHOLE machine's codex sessions. Turn off any time with GBRAIN_HOOKS=0, or remove with \`foresights bootstrap uninstall\`.`,
           );
           console.log('note: per-turn context on codex stays the AGENTS.md pull protocol — this hook is session-END capture only (v1).');
           for (const note of r.notes) console.error(note);
@@ -1633,13 +1633,13 @@ async function runHooks(
       } else {
         console.log(
           noHooks
-            ? 'codex hooks skipped (--no-hooks) — per-turn context is the AGENTS.md pull protocol; re-enable with `gbrain bootstrap hooks --harness codex`.'
-            : 'codex hooks declined (HOOKS_CONSENT set to no) — per-turn context is the AGENTS.md pull protocol; re-enable with `gbrain bootstrap hooks --harness codex`.',
+            ? 'codex hooks skipped (--no-hooks) — per-turn context is the AGENTS.md pull protocol; re-enable with `foresights bootstrap hooks --harness codex`.'
+            : 'codex hooks declined (HOOKS_CONSENT set to no) — per-turn context is the AGENTS.md pull protocol; re-enable with `foresights bootstrap hooks --harness codex`.',
         );
       }
     } else {
       console.log(
-        'gbrain does not wire opencode\'s plugin/event system yet — per-turn context is the AGENTS.md ' +
+        'foresights does not wire opencode\'s plugin/event system yet — per-turn context is the AGENTS.md ' +
           'pull protocol, which opencode loads natively (the opencode plugin lane is a filed follow-up).',
       );
     }
@@ -1683,7 +1683,7 @@ async function runVerify(ws: string, rest: string[], home: string): Promise<numb
   const jsonMode = rest.includes('--json');
   const cfg = loadConfig();
   if (!cfg) {
-    console.error('no brain configured — run `gbrain init --pglite` first (the engine phase).');
+    console.error('no brain configured — run `foresights init --pglite` first (the engine phase).');
     console.error(SUPPORT_HINT);
     return 1;
   }
@@ -1721,10 +1721,10 @@ async function runAttach(ws: string, rest: string[], home: string): Promise<numb
     console.log('\nRemaining steps (attach validates + records; run these next):');
     const brainDir = join(ws, 'brain');
     const commands: Record<string, string> = {
-      register_source: `gbrain sources add ${res.manifest.source_id} --path ${brainDir}`,
-      hooks_repair: `gbrain bootstrap hooks --harness ${harness} --repair`,
+      register_source: `foresights sources add ${res.manifest.source_id} --path ${brainDir}`,
+      hooks_repair: `foresights bootstrap hooks --harness ${harness} --repair`,
       mcp_add: `(covered by the hooks step — MCP registration rides it)`,
-      verify: 'gbrain bootstrap verify',
+      verify: 'foresights bootstrap verify',
     };
     res.steps.forEach((s, i) => {
       console.log(`  ${i + 1}. ${s.description}`);
@@ -1761,8 +1761,8 @@ export function workspaceBrainStats(ws: string): { sources: string[]; pages: num
   return { sources, pages };
 }
 
-/** `gbrain bootstrap harness` (#4043) — machine-level, no workspace, no
- * agent.json. Locks on the gbrain HOME (there is no workspace to lock). */
+/** `foresights bootstrap harness` (#4043) — machine-level, no workspace, no
+ * agent.json. Locks on the foresights HOME (there is no workspace to lock). */
 async function runHarness(rest: string[], home: string, runner: ExecRunner, detect?: HarnessDetectOverrides): Promise<number> {
   const flags = parseHarnessArgs(rest);
   if (flags.error) {
@@ -1837,7 +1837,7 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
       // Facts-export offer BEFORE any deletion can run — facts are user
       // knowledge, not derived state; after the rm there is nothing to export.
       console.log(
-        'offered: export facts before deletion (`gbrain facts export`) — the brain DB is about to be removed and facts are not derived state',
+        'offered: export facts before deletion (`foresights facts export`) — the brain DB is about to be removed and facts are not derived state',
       );
     }
     // Read the source id BEFORE uninstallWorkspace removes rendered files —
@@ -1874,35 +1874,35 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
     for (const reg of result.registration_removals) {
       // Plugin-owned registrations were NEVER created by us (the plugin
       // provides the MCP server; bootstrap only recorded a hooks-only
-      // receipt). Running `mcp remove gbrain` here would delete whatever
+      // receipt). Running `mcp remove foresights` here would delete whatever
       // registration DOES own the name — e.g. a hand-wired `codex mcp add`
-      // or `gbrain connect --install` the user added later. Remove only the
+      // or `foresights connect --install` the user added later. Remove only the
       // hooks half for these; leave the MCP owner alone. (No opencode plugin
       // lane exists, so the guard is inert for that host.)
       const pluginOwned = typeof reg.detail === 'string' && reg.detail.endsWith('plugin-mcp');
       switch (reg.host) {
         case 'claude-code': {
           const r = removeClaudeHooks(ws);
-          if (r.removed > 0) console.log(`removed ${r.removed} gbrain hook entr${r.removed === 1 ? 'y' : 'ies'} from ${r.settingsPath}`);
+          if (r.removed > 0) console.log(`removed ${r.removed} foresights hook entr${r.removed === 1 ? 'y' : 'ies'} from ${r.settingsPath}`);
           for (const note of r.notes) console.error(note);
           if (pluginOwned) {
-            console.log('MCP server was provided by the gbrain plugin (not registered by bootstrap) — leaving it; `claude plugin uninstall gbrain@gbrain` removes the plugin.');
+            console.log('MCP server was provided by the foresights plugin (not registered by bootstrap) — leaving it; `claude plugin uninstall gbrain@gbrain` removes the plugin.');
             break;
           }
           const rm = await runner(['claude', 'mcp', 'remove', 'gbrain']);
-          if (rm.code !== 0) console.error('note: `claude mcp remove gbrain` did not succeed — remove it by hand if it lingers.');
+          if (rm.code !== 0) console.error('note: `claude mcp remove foresights` did not succeed — remove it by hand if it lingers.');
           break;
         }
         case 'codex': {
           const rh = removeCodexHooks();
-          if (rh.removed) console.log(`removed gbrain's codex SessionEnd hook (${rh.hooksPath}) + its trust entry (${rh.configPath})`);
+          if (rh.removed) console.log(`removed foresights's codex SessionEnd hook (${rh.hooksPath}) + its trust entry (${rh.configPath})`);
           for (const note of rh.notes) console.error(note);
           if (pluginOwned) {
-            console.log('MCP server was provided by the gbrain plugin (not registered by bootstrap) — leaving it; `codex plugin remove gbrain@gbrain` removes the plugin.');
+            console.log('MCP server was provided by the foresights plugin (not registered by bootstrap) — leaving it; `codex plugin remove gbrain@gbrain` removes the plugin.');
             break;
           }
           const rm = await runner(['codex', 'mcp', 'remove', 'gbrain']);
-          if (rm.code !== 0) console.error('note: `codex mcp remove gbrain` did not succeed — remove it by hand if it lingers.');
+          if (rm.code !== 0) console.error('note: `codex mcp remove foresights` did not succeed — remove it by hand if it lingers.');
           break;
         }
         case 'opencode': {
@@ -1912,17 +1912,17 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
           // entry in another file costs nothing to sweep. BOTH global
           // filenames are swept: opencode merges opencode.json AND
           // opencode.jsonc when both exist, so sweeping only the resolver's
-          // pick would strand a gbrain entry in the other file. The removal
-          // is expectation-keyed on THIS workspace's source id — a gbrain
+          // pick would strand a foresights entry in the other file. The removal
+          // is expectation-keyed on THIS workspace's source id — a foresights
           // entry from a DIFFERENT workspace is skipped with a note, never
           // silently deleted (it is not this uninstall's to remove).
           const sweep = (p: string): void => {
             try {
               const r = removeOpencodeMcpEntry(p, 'gbrain', { sourceId: durabilitySourceId }, { skipOtherSource: true });
-              if (r.removed) console.log(`removed the gbrain opencode MCP entry from ${p}`);
+              if (r.removed) console.log(`removed the foresights opencode MCP entry from ${p}`);
               for (const note of r.notes) console.error(note);
             } catch (e) {
-              console.error(`note: could not remove the gbrain opencode entry from ${p}: ${(e as Error).message}`);
+              console.error(`note: could not remove the foresights opencode entry from ${p}: ${(e as Error).message}`);
             }
           };
           // Global files run under the config-dir bootstrap lock (the writer
@@ -1983,7 +1983,7 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
         console.log(`durability wiring removed: ${acted.map((s) => s.step).join(', ')} (committed helper + AGENTS rules stay — repo content is yours)`);
       }
     } catch (e) {
-      console.error(`note: durability teardown incomplete (${(e as Error).message}) — run \`gbrain sources unharden ${durabilitySourceId}\` by hand if a scheduled job lingers.`);
+      console.error(`note: durability teardown incomplete (${(e as Error).message}) — run \`foresights sources unharden ${durabilitySourceId}\` by hand if a scheduled job lingers.`);
     }
 
     // The facts-export offer already printed BEFORE deletion (above); don't

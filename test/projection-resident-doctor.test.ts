@@ -98,7 +98,7 @@ test('doctor reports the resident backlog, its pid and the stop-drain-restart pa
   expect(draining[0]).toMatchObject({ name: 'text_projection_readiness', status: 'warn',
     details: { readiness: 'projection_pending', ready: false, pending: 3, failed: 0, owner_pid: process.pid } });
   expect(draining[0].message).toContain(`(pid ${process.pid}) holds this PGLite brain and is draining 3 queued text projections`);
-  expect(draining[0].message).toContain('systemctl --user stop gbrain-serve.service && { gbrain projections drain; systemctl --user start gbrain-serve.service; }');
+  expect(draining[0].message).toContain('systemctl --user stop gbrain-serve.service && { foresights projections drain; systemctl --user start gbrain-serve.service; }');
   expect(draining[0].message).toContain(`kill ${process.pid}`);
 
   const silent = await runEntry(doctorContext());

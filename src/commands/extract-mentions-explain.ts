@@ -1,5 +1,5 @@
 /**
- * `gbrain extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]`
+ * `foresights extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]`
  *
  * Says why a name does or does not link: the gazetteer entry it matches (with
  * its origin: title, frontmatter, declared, subject) or the guard that dropped
@@ -54,7 +54,7 @@ const MESSAGES: Record<ExplainReason, string> = {
   generic_token: 'This is a generic word (role, document or placeholder), so it never links as a single-word name.',
   alias_collision: 'Another page in this source claims the same name (or it is another page\'s exact title), so the alias is dropped as ambiguous.',
   case_mismatch: 'This alias is case-sensitive (a single-word declared code) and the text uses a different case.',
-  type_not_linkable: 'This page type is not a linkable entity type; add it with `gbrain config set mentions.entity_types +<type>`.',
+  type_not_linkable: 'This page type is not a linkable entity type; add it with `foresights config set mentions.entity_types +<type>`.',
   linking_disabled: 'Mention linking is off (auto_link or mentions.auto_link is false).',
   pending: 'The page changed or was never scanned since the last mention pass.',
   ignored_by_page: 'The page lists this name in its frontmatter `mention_ignore`.',
@@ -119,11 +119,11 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
       WHERE l.from_page_id = $1 AND l.link_source = 'mentions' AND t.source_id = $2 AND t.slug = ANY($3::text[])`, [page.id, sourceId, [...targets]]);
   const linked = Number(link?.n ?? 0) > 0;
   const withPage = (r: ExplainReason | null, message?: string) => ({ ...done(base, r, message), page: { slug: page.slug, linked } });
-  if (found && !linked) return { ...withPage('pending'), next: 'gbrain extract --stale' };
+  if (found && !linked) return { ...withPage('pending'), next: 'foresights extract --stale' };
   if (found) return withPage(null, 'The page names this entity with this name and links to it.');
   const cased = entries.find(e => e.caseTokens);
   if (cased && text.toLowerCase().includes(cased.caseTokens!.join(' ').toLowerCase())) return withPage('case_mismatch');
-  if (page.due && linked) return { ...withPage('pending'), next: 'gbrain extract --stale' };
+  if (page.due && linked) return { ...withPage('pending'), next: 'foresights extract --stale' };
   return withPage('not_a_known_name', linked ? 'The page links to this entity through another of its names, not this one.'
     : 'The page text does not contain this name.');
 }
@@ -164,7 +164,7 @@ export async function runExtractMentionsExplain(engine: BrainEngine, args: strin
   const explainAt = args.indexOf('--explain');
   const query = explainAt >= 0 ? args[explainAt + 1] : undefined;
   if (!query || query.startsWith('--')) {
-    console.error('Usage: gbrain extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]');
+    console.error('Usage: foresights extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]');
     process.exit(2);
   }
   const r = await explainMention(engine, query, { sourceId: value('--source-id'), page: value('--page') });

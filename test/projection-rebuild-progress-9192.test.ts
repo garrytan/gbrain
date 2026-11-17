@@ -41,7 +41,7 @@ for (const backend of testBackends()) {
         const text = await answer(engine, tool);
         expect(text).toContain('the search index rebuild an upgrade started is 1 of 2 page(s) done, at about ');
         expect(text).toContain('page(s) per second measured since it started');
-        expect(text).toContain('gbrain doctor --only text_projection_readiness');
+        expect(text).toContain('foresights doctor --only text_projection_readiness');
       }
     }, url), 120_000);
 
@@ -56,7 +56,7 @@ for (const backend of testBackends()) {
       try { await v153.handler!(engine); } finally { spy.mockRestore(); }
       const lines = writes.filter(w => w.includes('[153]'));
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toMatch(/^ {2}\[153\] 2 page\(s\) queued for a keyless search index rebuild \(no embedding calls\)\. Search keeps answering from the index 0 of them already had; 2 \(images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker\) stay out of search until rebuilt\. At the [\d.]+ ms round trip measured to this database the rebuild takes about 1 minute\(s\): gbrain projections drain\. Progress: gbrain doctor --only text_projection_readiness\n$/);
+      expect(lines[0]).toMatch(/^ {2}\[153\] 2 page\(s\) queued for a keyless search index rebuild \(no embedding calls\)\. Search keeps answering from the index 0 of them already had; 2 \(images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker\) stay out of search until rebuilt\. At the [\d.]+ ms round trip measured to this database the rebuild takes about 1 minute\(s\): (?:foresights|gbrain) projections drain\. Progress: (?:foresights|gbrain) doctor --only text_projection_readiness\n$/);
     }, url), 120_000);
   });
 }

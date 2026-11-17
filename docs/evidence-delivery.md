@@ -27,7 +27,7 @@ With `return_unit` omitted the unit is `auto`: hits on conversation pages
 (see [Conversation detection](#conversation-detection)) come back as the whole
 page, every other hit stays the ranked chunk it was. A response with no
 conversation hit is byte-identical to earlier releases. `return_unit: "chunk"`
-(or `gbrain config set search.return_unit chunk`) turns the stage off
+(or `foresights config set search.return_unit chunk`) turns the stage off
 entirely.
 
 A budget you pass under `auto` is a hard cap: everything delivered (titles,
@@ -48,9 +48,9 @@ evidence under 8,000 tokens."*
 
 ```bash
 # CLI
-gbrain query "when did we move the launch?" --return-unit page --token-budget 6000
-gbrain search "acme-example renewal" --return-unit window --return-window 2
-gbrain recall --query "renewal terms" --return-unit section --budget-tokens 4000
+foresights query "when did we move the launch?" --return-unit page --token-budget 6000
+foresights search "acme-example renewal" --return-unit window --return-window 2
+foresights recall --query "renewal terms" --return-unit section --budget-tokens 4000
 ```
 
 ```jsonc
@@ -99,7 +99,7 @@ Per-call params on `search`, `query`, `recall`:
   `delivery.budget_clamped` and `delivery.fallbacks`, never raised per call.
   A trusted brain that needs more over stdio MCP (an eval cell's hermetic
   brain, for example) raises the ceiling once with
-  `gbrain config set search.return_budget_max_remote 200000` and asserts that
+  `foresights config set search.return_budget_max_remote 200000` and asserts that
   `delivery.budget_clamped` is absent; trusted local CLI calls are never
   clamped.
 - An explicit budget under `auto` (`return_unit: "auto"`, or `auto` from config
@@ -130,7 +130,7 @@ Per-call params on `search`, `query`, `recall`:
   reports `mode`, `factor`, `caller_budget`, `target`, `applied_cost` (the
   kept pages' whole cost), `candidates` and `kept`. A page call without a
   budget and every other unit are unchanged.
-  `gbrain config set search.page_rank_cut off` restores the old path.
+  `foresights config set search.page_rank_cut off` restores the old path.
   Evidence: on 72 BEAM conversations the cut at 1.5 was non-inferior to the
   cut off (−0.25 points, lower bound −1.00 against a −3 margin) with
   delivered context at budget. Those conversations are regression evidence,
@@ -145,7 +145,7 @@ excerpts for every other page.
 ### Query budgets (GBRA-205)
 
 `query`'s `token_budget` without a `return_unit` keeps its chunk-mode
-meaning by default. `gbrain config set search.query_budget_unit auto` makes
+meaning by default. `foresights config set search.query_budget_unit auto` makes
 it the same hard cap `search` uses: conversations come back whole or cut,
 packed by `search.auto_packing`. A budget below 32 is then refused.
 `search.evidence_titles` (default off) appends each page block's title to
@@ -203,8 +203,8 @@ Config keys: `search.return_unit`, `search.return_window`,
 `search.return_budget_default`, `search.return_budget_conversation`,
 `search.return_budget_max_remote`, `search.evidence_date_header`, `search.evidence_titles`, `search.evidence_tail_trim`, `search.auto_packing`, `search.query_budget_unit`,
 `search.page_rank_cut`, `search.page_rank_cut_factor`, `think.return_unit`. Kill switch:
-`gbrain config set search.return_unit chunk` and
-`gbrain config set think.return_unit chunk` (or pass `return_unit: "chunk"`
+`foresights config set search.return_unit chunk` and
+`foresights config set think.return_unit chunk` (or pass `return_unit: "chunk"`
 per call).
 
 ### Conversation detection
@@ -212,7 +212,7 @@ per call).
 `auto` decides per hit from fields every search row already carries, with no
 extra query and no model call:
 
-1. **Page type** is one of `conversation` (what `gbrain transcripts ingest` and
+1. **Page type** is one of `conversation` (what `foresights transcripts ingest` and
    the chat connectors write), `transcript`, `chat`, `meeting`, `slack`,
    `slack-dm-day`, `slack-thread`, `imessage` or `imessage-daily`
    (case-insensitive). Reason: `conversation_type`.
@@ -238,7 +238,7 @@ changes this; see the next section.
 
 ### Long pages (`search.long_page_unit`)
 
-Off by default. `gbrain config set search.long_page_unit section` (or `window`,
+Off by default. `foresights config set search.long_page_unit section` (or `window`,
 `page`; `off` turns it back off) makes `search` and `query` deliver a **long
 non-conversation hit** in that unit under the implied `auto`, the way `auto`
 already delivers conversations whole. Every other hit keeps its ranked chunk
@@ -272,7 +272,7 @@ The subagent default snippet cap already keeps the implied `auto` on `chunk`.
 **What is long.** A page whose rendered body (compiled truth plus timeline;
 compiled truth only under `detail: "low"`) holds at least
 `search.long_page_min_chars` characters (default **20,000**;
-`gbrain config set` refuses anything but a positive whole number, and an
+`foresights config set` refuses anything but a positive whole number, and an
 unusable stored value reads as the default). The size preflight compares the
 stored body's character count; delivery confirms the threshold on the rendered
 text (`pageEvidenceText`), and a page under it keeps its ranked chunk with no
@@ -347,7 +347,7 @@ How conversations share what is left is `search.auto_packing`:
 | `depth_first` | Takes conversations in rank order, each whole if it fits what is left, else as much around its matching span as fits; one whose matching span no longer fits is skipped, and later ones are still tried. |
 | `off` | The no-budget behavior, even with an explicit budget (unchanged chunks paid first, conversations that do not fit spill as chunks, no minimum). |
 
-`gbrain config set search.auto_packing <value>` refuses any other value.
+`foresights config set search.auto_packing <value>` refuses any other value.
 `delivery.auto_packing` names the packing that ran; it is present only when
 the cap engaged. The packing reads nothing but the plan, so `think` (which
 passes no budget) and every call without a budget are byte-identical whatever
@@ -410,7 +410,7 @@ Under `auto`, a `not_conversation` or `conversation_over_budget` result is the
 ranked row unchanged (same `chunk_text`, including a code chunk's header line)
 with `delivered: { unit: "chunk", chunk_ids: [its chunk_id], match_spans: [the
 whole text], tokens, truncated: false, reason }`. Those rows are not grouped
-by page. `gbrain search --explain` prints each result's unit and reason
+by page. `foresights search --explain` prints each result's unit and reason
 (`evidence: page (conversation_type)`).
 
 `match_spans` are **UTF-16 code-unit offsets** (JavaScript string indices) into
@@ -479,7 +479,7 @@ delivered text and each result gains `delivered`.
 | Code | Meaning | What the caller gets |
 |---|---|---|
 | `fetch_failed` / `fetch_timeout` | The neighbor fetch errored or exceeded 5 s. | The hit chunk (from this request's live retrieval), `fallback_reason` set. |
-| `unsealed_page` | The page's chunks predate the protected-body index (`gbrain repair safe-chunks`). | The hit chunk, `fallback_reason` set. |
+| `unsealed_page` | The page's chunks predate the protected-body index (`foresights repair safe-chunks`). | The hit chunk, `fallback_reason` set. |
 | `row_limit` | The request hit the budget-derived row cap before this page's rows. | The hit chunk, `fallback_reason` set. |
 | `no_section_structure` | `section` found no headings or speaker turns. | A `window` block (`delivered.unit: "window"`). |
 | `no_text_chunks` / `anchor_not_located` | No hit could be placed in the page text: no text chunk was in reach and the hit text itself was not found, or none of the located chunks overlap a hit. | The hit chunk (a code chunk without its synthesized header line), `fallback_reason` set. |

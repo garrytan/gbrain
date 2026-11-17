@@ -74,7 +74,7 @@ test('#5635 a real local title edit is still refused', async () => {
   const { snapshot, row, file } = await seed('raw/title-edit', { type: 'note', title: 'Original Title ' });
   writeFileSync(file, readFileSync(file, 'utf8').replace(/^title:.*$/m, 'title: Renamed Title'));
   await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed', detail: 'file_database_drift',
-    suggestion: expect.stringContaining(`gbrain sources reconcile ${sourceId} raw/title-edit --brain`) });
+    suggestion: expect.stringContaining(`foresights sources reconcile ${sourceId} raw/title-edit --brain`) });
 });
 
 test('#5635 a title humanized from a slug with edge separators is stored trimmed', () => {
@@ -151,7 +151,7 @@ test('a BOM in front of an inferred heading title does not make an untouched fil
   expect((await prepareFileTarget(engine, row, snapshot, 'Replacement'))?.path).toBe(file);
 });
 
-// #6605 review: `gbrain reindex` on an unmanaged brain imports with `inferFrontmatter: false`, so its row carries no
+// #6605 review: `foresights reindex` on an unmanaged brain imports with `inferFrontmatter: false`, so its row carries no
 // inferred keys. The raw reading of the untouched file still matches it after the brain is managed.
 test('a row imported without inference (unmanaged reindex) still matches its untouched frontmatter-less file', async () => {
   const rel = 'Apple Notes/Ideas/2021-06-24 Reindexed.md';

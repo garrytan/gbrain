@@ -1,5 +1,5 @@
 /**
- * Request metrics and health probes for `gbrain serve --http` (#3893,
+ * Request metrics and health probes for `foresights serve --http` (#3893,
  * reimplemented from @y2688's community PR).
  *
  * In-process counters plus a Prometheus text exposition (format 0.0.4).
@@ -93,7 +93,7 @@ export function renderTerminalFailureMetrics(summary: TerminalSummary): string {
     ['unresolved', `Unresolved terminal write receipts in the last ${summary.window_days} days (not superseded, not historical, not blocking).`, s => s.unresolved.rows],
     ['historical', `Non-blocking terminal write receipts in the last ${summary.window_days} days that a later write superseded or a fixed release explains.`, s => s.historical_rows],
     ['new_24h', 'Terminal write receipts that ended in the last 24 hours.', s => s.new_last_24h],
-    ['defects', 'Unresolved terminal write receipts of a gbrain defect class.', s => s.defects.reduce((n, d) => n + d.rows, 0)],
+    ['defects', 'Unresolved terminal write receipts of a foresights defect class.', s => s.defects.reduce((n, d) => n + d.rows, 0)],
   ];
   const label = (id: string) => id.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n');
   for (const [name, help, value] of series) {
@@ -337,7 +337,7 @@ export async function probeDeepHealth(
   if (consumerRestartRequired(engine, consumerStatus)) {
     const result = unavailable('persistence_restart_required', 'The persistence consumer of this serve reports restart_required: it claims no write until the process restarts');
     if (result.ok || !selfExitSuppressed(engine)) return result;
-    return { ...result, body: { ...result.body, self_exit_suppressed: true, fix: `self_exit_suppressed: this serve already exited on its own 3 times within the hour, so it is not exiting again; restart it by hand and investigate (gbrain sources writer status --json). ${result.body.fix}` } };
+    return { ...result, body: { ...result.body, self_exit_suppressed: true, fix: `self_exit_suppressed: this serve already exited on its own 3 times within the hour, so it is not exiting again; restart it by hand and investigate (foresights sources writer status --json). ${result.body.fix}` } };
   }
   if (pendingDeepProbes.has(engine)) return unavailable('deep_health_probe_failed', 'Deep health probe still pending from an earlier request (a pooled SELECT 1 has not answered)', 'pending');
   const started = Date.now();

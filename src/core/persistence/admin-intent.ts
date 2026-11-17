@@ -3,7 +3,7 @@ import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import { PAGE_EMBEDDING_LEASE_PREFIX } from '../page-embedding-lease.ts';
 
-export const WRITER_INSPECTION_HINT = 'Inspect gbrain sources writer status --json on the selected brain host first to identify the designated owner and any recovery. Routine repair must not claim, activate, or transfer ownership. Ask the operator to review docs/architecture/topologies.md before a deliberate topology change.';
+export const WRITER_INSPECTION_HINT = 'Inspect foresights sources writer status --json on the selected brain host first to identify the designated owner and any recovery. Routine repair must not claim, activate, or transfer ownership. Ask the operator to review docs/architecture/topologies.md before a deliberate topology change.';
 
 /** A page embedding lease is per-page vector work, not writer topology, so it never invalidates a reviewed state. */
 export async function writerAdminState(engine: SqlEngine): Promise<string> {

@@ -173,7 +173,7 @@ describe('synthesize verb: additive evidence_truncated and citations[] (#5461)',
   });
 });
 
-describe('gbrain config set refuses an out-of-range budget up front (#5461)', () => {
+describe('foresights config set refuses an out-of-range budget up front (#5461)', () => {
   async function configSet(args: string[]) {
     const errs: string[] = [];
     let exit: number | null = null;

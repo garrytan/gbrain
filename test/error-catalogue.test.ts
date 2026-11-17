@@ -55,16 +55,16 @@ describe('error catalogue docs anchors', () => {
 
 describe('catalogue refusals on the wire', () => {
   test('OperationError.toJSON carries code, message, hint as suggestion and the anchor as docs', () => {
-    const error = catalogueError('projection_owner_resident', 'A resident owner holds this PGLite brain.', 'Stop it first: gbrain serve --stop');
+    const error = catalogueError('projection_owner_resident', 'A resident owner holds this PGLite brain.', 'Stop it first: foresights serve --stop');
     expect(error.toJSON()).toMatchObject({ error: 'projection_owner_resident', message: 'A resident owner holds this PGLite brain.',
-      suggestion: 'Stop it first: gbrain serve --stop', docs: 'docs/guides/repair.md#projection-owner-resident' });
+      suggestion: 'Stop it first: foresights serve --stop', docs: 'docs/guides/repair.md#projection-owner-resident' });
     expect(JSON.parse(JSON.stringify(catalogueError('legacy_job_authority', 'm.', 'h')))).toMatchObject({ error: 'permission_denied', docs: 'docs/guides/repair.md#legacy-job-authority' });
   });
 
   test('the StructuredError envelope names them hint and docs_url', () => {
-    const error = catalogueStructuredError('legacy_job_selection_invalid', 'SelectionInvalid', 'Unknown --select key "state".', 'gbrain jobs authorize-legacy --select "status=waiting"');
+    const error = catalogueStructuredError('legacy_job_selection_invalid', 'SelectionInvalid', 'Unknown --select key "state".', 'foresights jobs authorize-legacy --select "status=waiting"');
     expect(serializeError(error)).toEqual({ class: 'SelectionInvalid', code: 'legacy_job_selection_invalid', message: 'Unknown --select key "state".',
-      hint: 'gbrain jobs authorize-legacy --select "status=waiting"', docs_url: 'docs/guides/repair.md#legacy-job-selection-invalid' });
+      hint: 'foresights jobs authorize-legacy --select "status=waiting"', docs_url: 'docs/guides/repair.md#legacy-job-selection-invalid' });
   });
 });
 

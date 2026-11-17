@@ -6,7 +6,7 @@ The point of ingesting your email is not "search my email." It is:
 > context needed to respond.**
 
 ```bash
-gbrain waiting
+foresights waiting
 ```
 
 The open-loop engine maintains a structured record (`open_loops` table) of
@@ -33,7 +33,7 @@ zero LLM, free, always on). For every synced Gmail thread:
   last turn flip (the first one addressed to you, or your first question),
   so a nudge or follow-up never restarts the clock — a request that waited
   40h and got a "bumping this" 5h ago opens on the first sync. The loop's
-  `opened_at` is that message's time, not the time gbrain noticed it, so a
+  `opened_at` is that message's time, not the time foresights noticed it, so a
   first sync of an old inbox ranks a 30-day wait as older than yesterday's.
 
 Precision rules (pinned by a labeled fixture corpus in
@@ -93,7 +93,7 @@ the exact email address as an alias of one page in one other source, or an
 name alone never crosses a source and a tie stays unresolved, so a loop is
 either attached to a real page or carries no counterparty page at all. The
 loop row records which source that page is in (`counterparty_source_id`),
-the typed edge points there, and the entity card, `gbrain waiting` and
+the typed edge points there, and the entity card, `foresights waiting` and
 `open_loops` read the loop from that page, never from a namesake in another
 source. The commitment fact itself stays in the mail's source.
 
@@ -101,11 +101,11 @@ Guardrails: injection-hardened input (the model sees the NEWEST 12k of the
 thread, so the latest reply is always visible to the judge), ALL-or-nothing
 parse barrier (a malformed model response writes nothing), only the last 30
 days of mail (the deep backfill is never extracted), kill switch
-`gbrain config set loops.extraction_enabled false`. With no chat provider
+`foresights config set loops.extraction_enabled false`. With no chat provider
 configured (a keyless install, or an outage) the sweep enqueues no
 extraction jobs and logs one line saying so — the email pages still import,
 and the threads are extracted on their next touch or by
-`gbrain sync --source <id> --full` once a provider exists; a job that hits
+`foresights sync --source <id> --full` once a provider exists; a job that hits
 the outage mid-flight retries and, if it dies, frees its slot rather than
 completing empty. Sender/thread
 suppressions are shared by both detectors: `loops mute` also stops the LLM
@@ -148,9 +148,9 @@ no thread under them enters paid extraction or opens a deterministic
 loop:
 
 ```bash
-gbrain sources add <id> --kind google --account you@example.com \
+foresights sources add <id> --kind google --account you@example.com \
   --loops-exclude-labels "Newsletters, Recruiting/Agencies"      # per source (g_loops_exclude_labels)
-gbrain config set loops.extraction_exclude_labels "Label_7"      # brain-wide, for every source without its own list
+foresights config set loops.extraction_exclude_labels "Label_7"      # brain-wide, for every source without its own list
 ```
 
 Names or Gmail label ids both work (a source's own list wins over the
@@ -188,10 +188,10 @@ job dies, and the thread is queued again on a later day when the sweep next
 touches it (the managed catch-up re-queues it once by itself). A sweep that
 finds the day already at its cap queues nothing and reports
 `loops_enqueue.skipped_reason: daily_spend_cap` with the amounts and the key
-to raise. `gbrain config set loops.extraction_max_usd_per_day 5` raises it;
+to raise. `foresights config set loops.extraction_max_usd_per_day 5` raises it;
 `0` queues no paid extraction at all (`spend_cap_zero`); a stored value makes
 the cap yours, so a model with no known price is refused instead of running
-unmetered. `gbrain jobs list --group <id>` shows a day's jobs and amounts
+unmetered. `foresights jobs list --group <id>` shows a day's jobs and amounts
 (the group id is printed in the refusal). The deterministic detector is free
 and unaffected.
 
@@ -228,14 +228,14 @@ upgrading seeds holds for email pages active in the last 14 days from stored
 pages only, with no Gmail calls.
 
 Grace holds are kept apart from [held items](google-connect.md#held-items):
-they never appear in `connector_held_items`, never make `gbrain waiting`
+they never appear in `connector_held_items`, never make `foresights waiting`
 report partial coverage, and are capped at 2,000 per source (the oldest is
 dropped and logged).
 
 ## The surfaces
 
 ```bash
-gbrain waiting [--top N] [--json] [--stale-ok]
+foresights waiting [--top N] [--json] [--stale-ok]
     Ranked counterparties: what you owe them / they owe you, evidence
     quotes, Gmail deep links, entity-card context, a paste-ready digest.
     REFUSES when every google source has gone >24h without a successful
@@ -246,29 +246,29 @@ gbrain waiting [--top N] [--json] [--stale-ok]
     When a Gmail thread from the last 14 days is held
     after repeated import failures, the answer carries
     completeness: "partial" and names each held thread with its retry
-    command (gbrain sources retry-held <id>); an empty partial answer says
+    command (foresights sources retry-held <id>); an empty partial answer says
     coverage is partial instead of "You are clean".
 
-gbrain loops list|show <id>          inspect
-gbrain loops done <id> | drop <id>   close (a closed commitment retires its
+foresights loops list|show <id>          inspect
+foresights loops done <id> | drop <id>   close (a closed commitment retires its
                                      projected fact too; see Close semantics)
-gbrain loops mute sender <email>     never open loops for this sender again
-gbrain loops mute thread <id>        ...or this thread; both also close its
+foresights loops mute sender <email>     never open loops for this sender again
+foresights loops mute thread <id>        ...or this thread; both also close its
                                      open reply-owed loops (--dry-run lists them)
-gbrain loops unmute sender <email>   undo a mute: new loops can open again, and
-gbrain loops unmute thread <id>      the loops it closed are re-checked on the
+foresights loops unmute sender <email>   undo a mute: new loops can open again, and
+foresights loops unmute thread <id>      the loops it closed are re-checked on the
                                      next sync (--dry-run lists them)
-gbrain loops drop sender <email>     close every open reply-owed loop from one
+foresights loops drop sender <email>     close every open reply-owed loop from one
                                      sender (--dry-run first; cannot be undone)
 ```
 
 **Say to your agent:** *"Who is waiting on me?"* / *"open loops"* — routes to
 the google-loops skill, whose daily-operation runbook covers muting: your
-agent runs `gbrain loops mute sender <email>` to stop tracking a sender and
-`gbrain loops unmute sender <email>` to undo it (unmute has no trigger of its
+agent runs `foresights loops mute sender <email>` to stop tracking a sender and
+`foresights loops unmute sender <email>` to undo it (unmute has no trigger of its
 own; the agent reaches for the command directly).
 
-`gbrain waiting` and `gbrain loops list` read across **every source in the
+`foresights waiting` and `foresights loops list` read across **every source in the
 brain** by default (loops live in google sources, not `default` — a
 default-scoped read would say "all clean" while people wait); `--source <id>`
 narrows explicitly. An unqualified `loops mute` resolves to the brain's
@@ -299,7 +299,7 @@ re-check. A repeated unmute
 is a no-op that reports `removed: false` and exits 0, so a script may call it
 unconditionally without special-casing "was not muted".
 
-**Dropping a noisy sender's backlog.** `gbrain loops drop sender <email>
+**Dropping a noisy sender's backlog.** `foresights loops drop sender <email>
 --dry-run` lists the ids and count of that sender's open reply-owed loops and
 changes nothing; that preview is the consent step. Running it without
 `--dry-run` closes them as `dropped`, one `loops_close` per loop. A drop
@@ -312,15 +312,15 @@ source's connector state (not in any page), the senders whose threads the
 rule withheld (`loop_withheld_senders`: reason, count, last time; at most
 2,000 senders). The first sync after upgrading also re-checks the newest
 thread of up to 500 senders with open reply-owed loops, so the record covers
-older loops. `gbrain waiting` then prints how many open reply-owed loops come
-from those senders and the exact `gbrain loops drop sender <email> --source
+older loops. `foresights waiting` then prints how many open reply-owed loops come
+from those senders and the exact `foresights loops drop sender <email> --source
 <id> --dry-run` to preview for each: the 10 senders with the most loops,
-then a count of the rest. `gbrain waiting --json` and the `open_loops` grouped
+then a count of the rest. `foresights waiting --json` and the `open_loops` grouped
 view list every sender in `withheld_noise`. Nothing is closed automatically. The sync log prints
 `[google] reply-owed loops withheld: automated_mail=N`.
 
 **Opt-in: Updates mail needs reciprocity.** With
-`gbrain config set loops.updates_require_reciprocity true` (key
+`foresights config set loops.updates_require_reciprocity true` (key
 `loops.updates_require_reciprocity`, default `false`, unit boolean, off value
 `false`), a thread whose newest message Gmail filed under `CATEGORY_UPDATES`
 opens a reply-owed loop only when you have written to the sender (they appear
@@ -370,7 +370,7 @@ When the scope holds **no google source at all**, the result carries
 `no_google_sources: true` and the digest says so explicitly instead of "You
 are clean" — a brain whose email arrives through a gateway or agent-authored
 collector has nothing for the loop engine to read, which is not the same as
-an empty inbox. Any Google access path works to fix it: `gbrain google setup`
+an empty inbox. Any Google access path works to fix it: `foresights google setup`
 (BYO OAuth) or `--access command|env` on `sources add` (an existing Google
 CLI or token-minting gateway; see
 [google-connect.md](google-connect.md#other-ways-to-reach-google-no-gbrain-oauth)).
@@ -396,7 +396,7 @@ loops inside their grant with `open_loops`.
 
 - Thread loops close deterministically when a reply lands (an
   acknowledgement-only reply to a question does not count).
-- Commitment loops close manually (`gbrain loops done`) or by staleness
+- Commitment loops close manually (`foresights loops done`) or by staleness
   (overdue >14 days AND no activity in 14 days — an actively-discussed
   overdue commitment stays open — or >90 days without any activity →
   `stale`, aligned with the commitment fact decay halflife).
@@ -405,7 +405,7 @@ loops inside their grant with `open_loops`.
   same thread never resurrects a loop you closed by hand.
 - Fulfillment-by-reply detection for commitments is future work, not
   pretended at.
-- **Closing a commitment retires its fact.** `gbrain loops done`/`drop` and
+- **Closing a commitment retires its fact.** `foresights loops done`/`drop` and
   the `loops_close` tool expire the commitment fact and strike its row in the
   entity page's `## Facts` fence in one coordinated write, so entity cards
   and recall stop showing the finished promise. A fact that another open loop
@@ -416,15 +416,15 @@ loops inside their grant with `open_loops`.
   refusal); closing the same loop again retries it. `reason:
   "shared_with_open_loop"` comes with `retryable: false`. No withdrawal is
   recorded, so the same promise made again is stored normally.
-- **Loops closed before the fact was retired.** `gbrain doctor` reports them
-  as `loop_facts_drift`. Preview with `gbrain repair loop-facts`, then apply
-  the printed `gbrain repair loop-facts --apply --expect <hash>` after you
+- **Loops closed before the fact was retired.** `foresights doctor` reports them
+  as `loop_facts_drift`. Preview with `foresights repair loop-facts`, then apply
+  the printed `foresights repair loop-facts --apply --expect <hash>` after you
   agree ([repair guide](repair.md#loop-facts)).
 
 **Say to your agent:** *"I finished the deck for Alice Example; close that
-loop."* (the agent runs `gbrain loops done <id>` and checks `fact_expired`) or
+loop."* (the agent runs `foresights loops done <id>` and checks `fact_expired`) or
 *"Doctor says closed loops still have active commitments. Preview the fix."*
-(the agent runs `gbrain repair loop-facts`).
+(the agent runs `foresights repair loop-facts`).
 
 ## Ranking
 
@@ -432,5 +432,5 @@ Counterparties rank by open-loop count, due-date proximity, age of the
 oldest loop, and how connected the person is in your brain (backlink
 count). Deterministic — same data and same reference time, same order. Due
 dates and ages are relative to the reference time, which defaults to now;
-pin it with `gbrain waiting --as-of <iso>` (MCP: `open_loops` `as_of`) to
+pin it with `foresights waiting --as-of <iso>` (MCP: `open_loops` `as_of`) to
 reproduce a ranking. The result echoes it as `as_of`.

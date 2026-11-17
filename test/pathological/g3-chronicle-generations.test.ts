@@ -1,7 +1,7 @@
 /**
  * GBRA-161 PR 3 (C-2, C-3, C-6): Life Chronicle events publish through the generation primitive. A re-judged depth page
  * publishes a new event generation: the events it dropped retire (versioned, `retired_by: life-chronicle`) together
- * with their timeline projection rows, in the activation, and `gbrain repair generations --kind chronicle-event` brings
+ * with their timeline projection rows, in the activation, and `foresights repair generations --kind chronicle-event` brings
  * both back. A model `[]` or a shrink below the floor retires nothing; a deleted depth page retires its events only
  * through `originGone`. Managed (database-only, coordinated) and unmanaged brains end in the same state. PGLite;
  * Postgres when DATABASE_URL is set.

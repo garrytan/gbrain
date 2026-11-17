@@ -1,5 +1,5 @@
 /**
- * `gbrain repair rows-behind --source <id> [--include-ambiguous] [--apply --expect <hash>]` (#8071): re-import the rows a
+ * `foresights repair rows-behind --source <id> [--include-ambiguous] [--apply --expect <hash>]` (#8071): re-import the rows a
  * managed sync's checkpoint moved past (`persistence/rows-behind.ts`: the row holds an older version of its file than
  * `sources.last_commit`, with no hold), from the file as committed at the checkpoint.
  *
@@ -32,7 +32,7 @@ import { SYNC_READ_BOUND } from '../persistence/sync-blobs.ts';
 import { readGitHold, writeGitHold, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
-export const rowsBehindPreviewCommand = (sourceId: string) => `gbrain repair rows-behind --source ${sourceId}`;
+export const rowsBehindPreviewCommand = (sourceId: string) => `foresights repair rows-behind --source ${sourceId}`;
 const previewFix = (sourceId: string) => readFix('Previews the rows behind the sync checkpoint again; writes nothing.', { argv: ['gbrain', 'repair', 'rows-behind', '--source', sourceId, '--json'] });
 
 type Action = 'reimport' | 'hold';
@@ -72,8 +72,8 @@ export const rowsBehindRepair: RepairHandler = {
   outcomeItemsLimit: 1000,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     if (scope.source_ids.length !== 1) {
-      throw opError('invalid_params', 'gbrain repair rows-behind needs --source <id>.',
-        'Rows are compared with the checkpoint commit in each source\'s own checkout on its canonical owner host; name one source, e.g. gbrain repair rows-behind --source default.',
+      throw opError('invalid_params', 'foresights repair rows-behind needs --source <id>.',
+        'Rows are compared with the checkpoint commit in each source\'s own checkout on its canonical owner host; name one source, e.g. foresights repair rows-behind --source default.',
         { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }), docs: ROWS_BEHIND_DOCS });
     }
     const sourceId = scope.source_ids[0]!;
@@ -84,7 +84,7 @@ export const rowsBehindRepair: RepairHandler = {
     const owner = context.ok ? context.owner : null;
     if (opts?.apply) {
       if (!opts.expect) {
-        throw opError('invalid_params', 'gbrain repair rows-behind --apply re-imports only the set a preview printed.',
+        throw opError('invalid_params', 'foresights repair rows-behind --apply re-imports only the set a preview printed.',
           `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`, { fix: previewFix(sourceId), docs: ROWS_BEHIND_DOCS });
       }
       const approved = await loadApprovedSet<ApprovedRow>(engine, { command: 'rows-behind', hash: opts.expect, previewCommand: command,
@@ -110,17 +110,17 @@ export const rowsBehindRepair: RepairHandler = {
       // only the database moved (an older version of the page equals the committed file), re-importing would replace that
       // edit, so it never joins, flag or not.
       const evidence = row.record === 'none' ? row.evidence?.kind ?? 'no_evidence' : null;
-      if (evidence === 'adopt_db_moved') { listing.push({ item: entry, class: 'excluded:database_moved', detail: `${describe(row)}; an older version of the page equals its committed file, so the database moved since and re-importing would replace that edit; gbrain repair file-drift --source ${sourceId} --slug ${row.slug} --prefer database keeps it` }); continue; }
-      if (evidence === 'both_moved') { listing.push({ item: entry, class: 'excluded:both_moved', detail: `${describe(row)}; the page and its file both moved since the last state they shared, so re-importing would replace a database edit; gbrain repair file-drift --source ${sourceId} --slug ${row.slug} decides it per page` }); continue; }
+      if (evidence === 'adopt_db_moved') { listing.push({ item: entry, class: 'excluded:database_moved', detail: `${describe(row)}; an older version of the page equals its committed file, so the database moved since and re-importing would replace that edit; foresights repair file-drift --source ${sourceId} --slug ${row.slug} --prefer database keeps it` }); continue; }
+      if (evidence === 'both_moved') { listing.push({ item: entry, class: 'excluded:both_moved', detail: `${describe(row)}; the page and its file both moved since the last state they shared, so re-importing would replace a database edit; foresights repair file-drift --source ${sourceId} --slug ${row.slug} decides it per page` }); continue; }
       if (evidence !== null && !selection.include_ambiguous) { listing.push({ item: entry, class: 'excluded:unproven', detail: `${describe(row)}; no import record proves the database did not move since (content evidence: ${evidence}), so it joins only with --include-ambiguous` }); continue; }
-      if (row.overlay) { listing.push({ item: entry, class: 'excluded:import_overlay', detail: `${describe(row)}; importing it would keep page data the file does not carry (tags, a withdrawal or sanitized text), so it is not re-imported here; gbrain repair file-drift --source ${sourceId} --slug ${row.slug} --prefer file resolves it` }); continue; }
+      if (row.overlay) { listing.push({ item: entry, class: 'excluded:import_overlay', detail: `${describe(row)}; importing it would keep page data the file does not carry (tags, a withdrawal or sanitized text), so it is not re-imported here; foresights repair file-drift --source ${sourceId} --slug ${row.slug} --prefer file resolves it` }); continue; }
       if (row.refusal) {
         selected.push({ ...row, source_id: sourceId, checkpoint: scan.checkpoint!, action: 'hold', owner: context.owner, selection });
         listing.push({ item: entry, class: `hold:${row.refusal.code}`, detail: `${describe(row)}; its import is refused (${row.refusal.code}: ${row.refusal.message}), so the apply holds the file as sync would` });
         continue;
       }
       const bytes = await blobBytes(context.root, row);
-      if (!bytes || !worktreeMatches(context.root, row.path, bytes)) { listing.push({ item: entry, class: 'excluded:worktree_differs', detail: `${describe(row)}; the working-tree file differs from the committed one (an uncommitted edit): commit it and run gbrain sync --source ${sourceId}` }); continue; }
+      if (!bytes || !worktreeMatches(context.root, row.path, bytes)) { listing.push({ item: entry, class: 'excluded:worktree_differs', detail: `${describe(row)}; the working-tree file differs from the committed one (an uncommitted edit): commit it and run foresights sync --source ${sourceId}` }); continue; }
       selected.push({ ...row, source_id: sourceId, checkpoint: scan.checkpoint!, action: 'reimport', owner: context.owner, selection });
       listing.push({ item: entry, class: 'reimport', detail: `${describe(row)}; the apply imports the committed file through the managed import` });
     }
@@ -143,7 +143,7 @@ export const rowsBehindRepair: RepairHandler = {
 };
 
 const changed = (reason: string, detail: Record<string, unknown> = {}): RepairItemOutcome =>
-  ({ applied: false, outcome: 'changed_since_preview', reason, detail: { ...detail, next: 'run gbrain repair rows-behind again for a new preview' } });
+  ({ applied: false, outcome: 'changed_since_preview', reason, detail: { ...detail, next: 'run foresights repair rows-behind again for a new preview' } });
 
 async function applyRow(ctx: OperationContext, row: ApprovedRow, embed: boolean): Promise<RepairItemOutcome> {
   const engine: BrainEngine = ctx.engine;

@@ -1,5 +1,5 @@
 /**
- * GBRA-161: the generation primitive's settings, their bounds and the one reader. `gbrain config set` refuses a value
+ * GBRA-161: the generation primitive's settings, their bounds and the one reader. `foresights config set` refuses a value
  * out of range with the shared bound-refusal shape; a stored value that fails the bound (written before validation, or
  * by hand) reads as the default here, so a typo never widens a limit.
  */

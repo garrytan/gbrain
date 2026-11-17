@@ -31,7 +31,7 @@ export async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, mana
   if (signal?.aborted) throw signal.reason ?? new Error('Sync job cancelled');
   const options = signal ? { ...opts, signal } : opts;
   const fallbackDir = source.local_path ?? (managed ? '' : (await import('../../core/sources-ops.ts')).defaultCloneDir(`${sourceId}-${config.kind}`));
-  serr(`[gbrain phase] sync.${config.kind}_materialize`);
+  serr(`[foresights phase] sync.${config.kind}_materialize`);
   return withConnectorPartialReason(await runConnectorKind(engine, sourceId, config, fallbackDir, options), signal);
 }
 

@@ -16,9 +16,9 @@
  * the run):
  *
  *   help            First-touch comprehension surfaces: bare `gbrain`,
- *                   `gbrain --help`, `gbrain init --help`, `gbrain bootstrap
- *                   --help`, `gbrain bootstrap` bare. Cheap, no keys.
- *   init            Interactive `gbrain init` (keyless) with a naive-user
+ *                   `foresights --help`, `foresights init --help`, `foresights bootstrap
+ *                   --help`, `foresights bootstrap` bare. Cheap, no keys.
+ *   init            Interactive `foresights init` (keyless) with a naive-user
  *                   autopilot: wait for each screen to settle, snapshot it,
  *                   press Enter (accept the default), repeat. What a user who
  *                   "just hits Enter" experiences, with stall timing.
@@ -48,9 +48,9 @@
  *   bun run scripts/dx-explore.ts claude-install
  *   bun run scripts/dx-explore.ts codex-install
  *   bun run scripts/dx-explore.ts opencode-install [--keyless]
- *   bun run scripts/dx-explore.ts drive [--no-hermetic-home] -- gbrain init
+ *   bun run scripts/dx-explore.ts drive [--no-hermetic-home] -- foresights init
  *   Options: --dir <out>   transcript dir (default .context/dx-runs/<scenario>-<ts>)
- *            --gbrain <bin> use an existing gbrain binary (default: compile+cache)
+ *            --gbrain <bin> use an existing foresights binary (default: compile+cache)
  *            --rebuild      force recompile of the cached binary
  *            --keep         keep hermetic temp homes for forensics
  *
@@ -168,9 +168,9 @@ function parseArgs(argv: string[]): CliArgs {
   return out;
 }
 
-// ── compiled gbrain binary (what a real user runs) ───────────────────────────
+// ── compiled foresights binary (what a real user runs) ───────────────────────────
 
-/** Compile (or reuse) a standalone gbrain binary. `bun run src/cli.ts` adds a
+/** Compile (or reuse) a standalone foresights binary. `bun run src/cli.ts` adds a
  *  multi-second transpile stall to EVERY invocation that a real install never
  *  has — a compiled binary keeps the timing honest. Cached under
  *  .context/dx-runs/bin/ keyed on nothing (use --rebuild after code changes). */
@@ -182,11 +182,11 @@ function ensureGbrainBinary(explicit: string | undefined, rebuild: boolean): str
   const binDir = path.join(REPO_ROOT, '.context', 'dx-runs', 'bin');
   const binPath = path.join(binDir, 'gbrain');
   if (!rebuild && fs.existsSync(binPath)) {
-    log(`reusing compiled gbrain at ${binPath} (--rebuild to refresh)`);
+    log(`reusing compiled foresights at ${binPath} (--rebuild to refresh)`);
     return binPath;
   }
   fs.mkdirSync(binDir, { recursive: true });
-  log('compiling gbrain (bun build --compile)…');
+  log('compiling foresights (bun build --compile)…');
   const res = spawnSync('bun', ['build', '--compile', '--no-compile-autoload-bunfig', '--outfile', binPath, 'src/cli.ts'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
@@ -451,7 +451,7 @@ async function scenarioInit(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
   const home = tmp(ctx, 'gb-dx-home-');
   const ws = tmp(ctx, 'gb-dx-ws-');
   log(
-    `interactive \`gbrain init\` (${args.keyless ? 'TRUE keyless — provider keys stripped' : 'ambient keys allowed'}), ` +
+    `interactive \`foresights init\` (${args.keyless ? 'TRUE keyless — provider keys stripped' : 'ambient keys allowed'}), ` +
       'naive-user autopilot: Enter accepts every default',
   );
   const session = launchTty([ctx.gbrainBin, 'init'], {
@@ -500,7 +500,7 @@ async function scenarioInit(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
  * Handle the harness's own first-run chrome dialogs (Claude Code: workspace
  * trust, bypass-permissions warning) so an unattended run reaches the input
  * prompt. Each handled dialog is recorded as a note — the dialogs ARE part of
- * the real first-run friction, just not gbrain's copy. Returns once the
+ * the real first-run friction, just not foresights's copy. Returns once the
  * screen has been quiet with no dialog visible, or at the deadline.
  */
 async function settlePastBootDialogs(
@@ -560,7 +560,7 @@ async function settlePastBootDialogs(
   }
 }
 
-/** Stage the compiled gbrain into a fresh bin dir (PATH-prepend target) so
+/** Stage the compiled foresights into a fresh bin dir (PATH-prepend target) so
  *  the agent's bare `gbrain` runs this checkout. */
 function stageBinDir(ctx: ScenarioCtx): string {
   const binDir = tmp(ctx, 'gb-dx-bin-');
@@ -664,16 +664,16 @@ function installPrompt(): string {
   const runbook = path.join(REPO_ROOT, 'BOOTSTRAP_FOR_AGENTS.md');
   return (
     `Read and follow every step of: ${runbook}\n` +
-    `Goal: set yourself up as my persistent personal agent in this folder, with gbrain ` +
+    `Goal: set yourself up as my persistent personal agent in this folder, with foresights ` +
     `as your memory. Interview me before writing any identity file — never invent ` +
     `answers. Ask before anything destructive. You are not done until ` +
-    `\`gbrain bootstrap verify\` exits 0.\n\n` +
+    `\`foresights bootstrap verify\` exits 0.\n\n` +
     `[Unattended-run appendix — I am stepping away; use these interview answers instead ` +
     `of asking me, and do not wait for my input: ` +
     `agent name: ${PERSONA.AGENT_NAME}; my name: ${PERSONA.PRINCIPAL_NAME}; ` +
     `purpose: ${PERSONA.AGENT_PURPOSE}; top jobs: ${PERSONA.AGENT_TOP_JOBS}; ` +
     `about me: ${PERSONA.PRINCIPAL_CONTEXT}; voice: ${PERSONA.VOICE_REGISTER}. ` +
-    `gbrain is already installed and on PATH. If a step needs GitHub auth or an API key ` +
+    `foresights is already installed and on PATH. If a step needs GitHub auth or an API key ` +
     `that is unavailable, take the documented keyless/local fallback and continue.]`
   );
 }
@@ -700,7 +700,7 @@ async function scenarioClaudeInstall(ctx: ScenarioCtx, args: CliArgs): Promise<v
     // dangerously-skip-permissions (spelled dash-free here): v1 measures flow
     // + copy + stalls without permission-dialog babysitting. Permission-prompt
     // COUNT is a separate drive-mode pass (the dialogs are Claude Code's
-    // chrome, not gbrain copy).
+    // chrome, not foresights copy).
     argv: ['claude', '--dangerously-skip-permissions'],
     cwd: ws,
     env: {
@@ -812,7 +812,7 @@ async function scenarioCodexPluginInstall(ctx: ScenarioCtx, args: CliArgs): Prom
     cwd: ws,
     encoding: 'utf8',
   });
-  if (initR.status !== 0) throw new Error(`gbrain init failed: ${(initR.stderr ?? '').slice(0, 300)}`);
+  if (initR.status !== 0) throw new Error(`foresights init failed: ${(initR.stderr ?? '').slice(0, 300)}`);
   const seedR = spawnSync(ctx.gbrainBin, ['call', 'remember', JSON.stringify({
     content: 'The dx-explore plugin probe codeword is heliograph.',
     provenance: 'dx-explore codex-plugin-install scenario',
@@ -823,7 +823,7 @@ async function scenarioCodexPluginInstall(ctx: ScenarioCtx, args: CliArgs): Prom
     throw new Error(`seed remember failed: ${(seedR.stderr ?? '').slice(0, 300)}`);
   }
 
-  log('REAL interactive codex with the gbrain PLUGIN installed (minutes, real API cost)');
+  log('REAL interactive codex with the foresights PLUGIN installed (minutes, real API cost)');
   await runInstallSession(ctx, {
     argv: ['codex', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
     cwd: ws,
@@ -837,11 +837,11 @@ async function scenarioCodexPluginInstall(ctx: ScenarioCtx, args: CliArgs): Prom
     extraAllow: ['OPENAI_API_KEY', 'CODEX_*'],
     dropEnv: args.keyless ? PROVIDER_KEY_NAMES : undefined,
     prompt:
-      'The gbrain plugin is installed. Using ONLY the gbrain MCP tools (do not guess), ' +
+      'The foresights plugin is installed. Using ONLY the foresights MCP tools (do not guess), ' +
       'answer: what is the dx-explore plugin probe codeword? Then reply with one line: ' +
       'the codeword and which tool you used.\n\n' +
       '[Unattended-run appendix — I am stepping away; do not wait for my input. ' +
-      'If no gbrain MCP tool is available, note the exact error and stop.]',
+      'If no foresights MCP tool is available, note the exact error and stop.]',
     meta: {
       promptDeviation: 'plugin lane (marketplace add + plugin add pre-run); brain question via plugin MCP',
       runbook: 'docs/mcp/CODEX.md (plugin install section)',
@@ -860,22 +860,22 @@ const GROK_INSTALL_SUCCESS_PATTERNS: Array<RegExp | string> = [
 ];
 
 /** GROK.md-driven brain-only prompt — deliberately NOT the bootstrap paste
- *  block: the docs classify grok as brain-only install (no `gbrain bootstrap`
+ *  block: the docs classify grok as brain-only install (no `foresights bootstrap`
  *  support), so the scenario must not test an unsupported flow. */
 function grokInstallPrompt(): string {
   const guide = path.join(REPO_ROOT, 'docs', 'mcp', 'GROK.md');
   return (
     `Read and follow: ${guide}\n` +
-    `Goal: wire the gbrain memory brain into you (Grok Build) over stdio MCP — ` +
+    `Goal: wire the foresights memory brain into you (Grok Build) over stdio MCP — ` +
     `brain-only install, no bootstrap. Steps: ` +
-    `1) run \`gbrain init --pglite --no-embedding --non-interactive\`; ` +
-    `2) register gbrain exactly as the guide's Register section shows; ` +
-    `3) verify with \`grok mcp doctor gbrain\` — you are not done until it reports ` +
+    `1) run \`foresights init --pglite --no-embedding --non-interactive\`; ` +
+    `2) register foresights exactly as the guide's Register section shows; ` +
+    `3) verify with \`grok mcp doctor foresights\` — you are not done until it reports ` +
     `the tools-discovered check passing; ` +
-    `4) one recall round-trip: use the gbrain remember tool to store ` +
+    `4) one recall round-trip: use the foresights remember tool to store ` +
     `"${PERSONA.AGENT_NAME} prefers ${PERSONA.VOICE_REGISTER}" and then recall it.\n\n` +
     `[Unattended-run appendix — I am stepping away; do not wait for my input. ` +
-    `gbrain is already installed and on PATH. If a step needs auth that is ` +
+    `foresights is already installed and on PATH. If a step needs auth that is ` +
     `unavailable, note the exact error and stop.]`
   );
 }
@@ -983,7 +983,7 @@ async function scenarioOpencodeInstall(ctx: ScenarioCtx, args: CliArgs): Promise
 
 async function scenarioDrive(ctx: ScenarioCtx, args: CliArgs): Promise<void> {
   if (args.driveArgv.length === 0) {
-    log('drive mode needs a command: dx-explore.ts drive -- gbrain init');
+    log('drive mode needs a command: dx-explore.ts drive -- foresights init');
     process.exit(2);
   }
   // `gbrain` as argv[0] resolves to the compiled binary.

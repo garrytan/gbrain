@@ -1,7 +1,7 @@
 /**
  * GST-2768 PR 3: when a brain archived while personal becomes shared, the archive keeps the earlier pages to the owner
  * with owner-only rules. When it cannot (the shared brain names no owner, or the source's access rules live in git),
- * `gbrain transcripts archive status` and the transcript_archive_freshness doctor check each say so in one line, with
+ * `foresights transcripts archive status` and the transcript_archive_freshness doctor check each say so in one line, with
  * what the owner does next. Repo-less PGLite; synthetic values only.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -41,10 +41,10 @@ describe('a skipped re-scope is reported', () => {
     await runTranscriptArchive(engine, { mode: 'run', readers: [reader()], now: NOW });
     const status = await archiveStatus(engine, { readers: [] });
     expect(status.rescope).toMatchObject({ code: 'archive_rescope_owner_unset' });
-    expect(status.rescope!.message).toContain('gbrain access owner set');
+    expect(status.rescope!.message).toContain('foresights access owner set');
     const check = await doctor();
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('gbrain access owner set');
+    expect(check.message).toContain('foresights access owner set');
   }, 120_000);
 
   test('a source whose access rules live in git: status and doctor name it and give the access.yml rule to add', async () => {

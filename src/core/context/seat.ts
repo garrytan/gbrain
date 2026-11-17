@@ -37,8 +37,8 @@ export type SeatReason = 'seat_label_invalid' | 'seat_conflict' | 'seat_write_fa
 const SEAT_REASON_HINTS: Record<SeatReason, string> = {
   seat_label_invalid:
     'GBRAIN_SEAT is not a valid seat label (1-64 chars of a-z 0-9 . _ -, starting with a letter or digit); ' +
-    'sessions are credited to the harness-home seat until you re-run `gbrain bootstrap hooks --seat <label>` ' +
-    'or `gbrain bootstrap harness --seat <label>` with a valid label',
+    'sessions are credited to the harness-home seat until you re-run `foresights bootstrap hooks --seat <label>` ' +
+    'or `foresights bootstrap harness --seat <label>` with a valid label',
   seat_conflict:
     'this session was first captured under a different seat; the first seat is kept for the whole session. ' +
     'No action needed unless the session was resumed from another agent home on purpose',

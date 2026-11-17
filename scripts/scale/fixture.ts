@@ -167,7 +167,7 @@ const CORPUS_LAYOUT = 1;
 
 /**
  * Write the fixture as Markdown under `<dir>/<source>/<slug>.md` for the real
- * `gbrain import` path, once: a corpus whose manifest matches seed, page
+ * `foresights import` path, once: a corpus whose manifest matches seed, page
  * count and content digest is reused (CI caches only this directory).
  * Returns whether the corpus was (re)written.
  */

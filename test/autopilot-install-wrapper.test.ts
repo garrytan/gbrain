@@ -32,7 +32,7 @@ const NO_GBRAIN_PATH = '/usr/bin:/bin';
 interface Rig {
   /** HOME the wrapper runs under (holds the repo and any .bashrc). */
   home: string;
-  /** The `which gbrain` hit baked into the wrapper at install time. */
+  /** The `which foresights` hit baked into the wrapper at install time. */
   bakedBinDir: string;
   repoDir: string;
   wrapperPath: string;
@@ -85,7 +85,7 @@ describe('#4728 wrapper falls back when the baked CLI path is gone', () => {
     });
   });
 
-  test('baked path gone, gbrain on PATH: logs the substitution to stdout and execs the PATH one', async () => {
+  test('baked path gone, foresights on PATH: logs the substitution to stdout and execs the PATH one', async () => {
     await withRig(rig => {
       rmSync(join(rig.bakedBinDir, 'gbrain')); // the container-layer wipe
       const fallbackDir = mkdtempSync(join(tmpdir(), 'gbrain-4728-fallback-'));
@@ -110,20 +110,20 @@ describe('#4728 wrapper falls back when the baked CLI path is gone', () => {
       rmSync(join(rig.bakedBinDir, 'gbrain'));
       const r = rig.run(NO_GBRAIN_PATH);
       expect(r.status).toBe(1);
-      expect(r.stdout).toContain('gbrain autopilot --install');
+      expect(r.stdout).toContain('foresights autopilot --install');
       expect(r.stderr).not.toContain('No such file or directory');
     });
   });
 
-  test('a shell function named gbrain (from a sourced rc file) does not satisfy the fallback', async () => {
+  test('a shell function named foresights (from a sourced rc file) does not satisfy the fallback', async () => {
     await withRig(rig => {
       rmSync(join(rig.bakedBinDir, 'gbrain'));
       // The wrapper sources ~/.bashrc under HOME=rig.home before the guard runs.
-      writeFileSync(join(rig.home, '.bashrc'), 'gbrain() { echo "FUNCTION_RAN $@"; }\n');
+      writeFileSync(join(rig.home, '.bashrc'), 'foresights() { echo "FUNCTION_RAN $@"; }\n');
       const r = rig.run(NO_GBRAIN_PATH);
       expect(r.status).toBe(1);
       expect(r.stdout).not.toContain('FUNCTION_RAN');
-      expect(r.stdout).toContain('gbrain autopilot --install');
+      expect(r.stdout).toContain('foresights autopilot --install');
     });
   });
 

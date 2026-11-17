@@ -1,5 +1,5 @@
 /**
- * #6743: shared-skills cleanup convergence for `gbrain bootstrap harness`.
+ * #6743: shared-skills cleanup convergence for `foresights bootstrap harness`.
  *
  * A rotation leaves each old shared-skills enrollment with that enrollment's
  * own credential, then revokes the credential (leave before revoke:
@@ -65,7 +65,7 @@ export async function defaultTokenStates(ids: string[]): Promise<Record<string, 
   const cfg = loadConfig();
   if (!cfg) throw new Error('no brain configured');
   // A live serve holds the PGLite single-writer lock (the normal state for --status): the states read unknown.
-  if (cfg.database_path && probeLivePgliteHolder(cfg.database_path) !== null) throw new Error('a live gbrain serve holds this PGLite brain');
+  if (cfg.database_path && probeLivePgliteHolder(cfg.database_path) !== null) throw new Error('a live foresights serve holds this PGLite brain');
   const engineConfig = toEngineConfig(cfg);
   const engine = await createEngine(engineConfig);
   await engine.connect(engineConfig);
@@ -139,18 +139,18 @@ export function harnessCleanupItems(receipt: HarnessReceipt, states: Record<stri
     if (entry.reason === 'cleanup_unavailable' && token !== 'revoked') {
       return { ...base, state: 'credential_unreadable', converges: false,
         user_message: `The cleanup credential of the old ${entry.host} enrollment (${join(entry.root, 'credentials.json')}) is unreadable, so it cannot leave. ` +
-          `Restore that file, or revoke token ${id} by id (\`gbrain auth revoke\`): an enrollment whose credential is revoked counts as inert ` +
+          `Restore that file, or revoke token ${id} by id (\`foresights auth revoke\`): an enrollment whose credential is revoked counts as inert ` +
           'and the next re-run finishes its local cleanup.' };
     }
     if (entry.reason === 'remote_membership_pending' || entry.reason === 'cleanup_unavailable') {
       if (token !== 'missing') return { ...base, state: 'leave_pending', converges: true };
       return { ...base, state: 'leave_pending', converges: false,
         user_message: `Token ${id} is not in this brain's token table, so its ${entry.host} enrollment cannot leave. ` +
-          'Check that this machine\'s brain config names the brain the harness serves (`gbrain auth list` shows its tokens).' };
+          'Check that this machine\'s brain config names the brain the harness serves (`foresights auth list` shows its tokens).' };
     }
     return { ...base, state: 'enrollment_retained', converges: false,
       user_message: `The old ${entry.host} enrollment (token ${id}) is kept working because the current shared-skills enrollment is not ready ` +
-        '(`gbrain bootstrap harness --status` shows why). Resolve that; the next re-run leaves the old enrollment, then revokes its token.' };
+        '(`foresights bootstrap harness --status` shows why). Resolve that; the next re-run leaves the old enrollment, then revokes its token.' };
   });
   const held = heldIds(receipt);
   for (const id of receipt.token.previous_ids ?? []) {
@@ -222,7 +222,7 @@ const TOKEN_WORDS: Record<TokenState, string> = {
 function describeItem(item: CleanupItem): string {
   const who = item.token_id ?? `${item.host} (supplied credential)`;
   const what = item.state === 'revoke_pending'
-    ? item.token === 'revoked' ? 'no enrollment holds it; a re-run clears it from the receipt' : 'no enrollment holds it; a re-run revokes it (or `gbrain auth revoke` by id)'
+    ? item.token === 'revoked' ? 'no enrollment holds it; a re-run clears it from the receipt' : 'no enrollment holds it; a re-run revokes it (or `foresights auth revoke` by id)'
     : item.state === 'leave_pending'
       ? item.token === 'revoked' ? 'enrollment cleanup pending; a re-run finishes it locally' : 'enrollment leave pending'
       : item.state === 'credential_unreadable' ? 'its cleanup credential is unreadable' : 'kept for the previous enrollment until the current one is ready';
@@ -236,7 +236,7 @@ export function cleanupLines(items: CleanupItem[]): string[] {
 /** Doctor's wording: per id, a revoked credential awaiting cleanup reads apart from an active one. */
 export function cleanupDoctorMessage(items: CleanupItem[]): string {
   return `shared-skills cleanup pending for ${items.length} previous harness credential(s): ${items.map(describeItem).join('; ')}. ` +
-    'Leave before revoke: re-run `gbrain bootstrap harness`, which leaves each old enrollment and then revokes its token. ' +
+    'Leave before revoke: re-run `foresights bootstrap harness`, which leaves each old enrollment and then revokes its token. ' +
     'Revoke a token by hand only after its enrollment has left, or when its cleanup credential is lost.';
 }
 

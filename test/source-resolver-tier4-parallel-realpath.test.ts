@@ -2,7 +2,7 @@
  * #4091-class root-cause fix — tier-4 registered-source realpath resolution
  * must overlap I/O across sources, not serialize behind each other.
  *
- * Discovered while investigating why `gbrain takes-list` (and any other
+ * Discovered while investigating why `foresights takes-list` (and any other
  * CLI command reaching tier 4 of source resolution with no --source/env/
  * dotfile match) took ~40s on a brain with 9 registered sources whose
  * local_path all lived under a directory macOS's on-access security scan

@@ -1,5 +1,5 @@
 /**
- * `gbrain repair atoms-restore` (#7013): bring back atoms a managed re-extraction retired when its model
+ * `foresights repair atoms-restore` (#7013): bring back atoms a managed re-extraction retired when its model
  * returned no atoms for their origin. An empty extraction retired every earlier atom of the origin by soft delete
  * stamped `retired_by: managed-reextract`, and the purge then removed them for good.
  *
@@ -93,7 +93,7 @@ function sameAtom(live: RestorableAtom | undefined, approved: RestorableAtom): b
 }
 
 function previewCommand(scope: RepairScope): string {
-  return `gbrain repair atoms-restore${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
+  return `foresights repair atoms-restore${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
 function item(atom: RestorableAtom, hash: string, last: boolean): RestoreItem {
@@ -123,7 +123,7 @@ export const atomsRestoreRepair: RepairHandler = {
           detail: `origin ${atom.origin_kind} ${atom.origin}, hash ${atom.hash}, retired ${atom.retired_at ?? 'at an unrecorded time'}` })) };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair atoms-restore --apply restores only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair atoms-restore --apply restores only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }

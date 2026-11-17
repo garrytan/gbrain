@@ -9,7 +9,7 @@
  *     atomically with the composite UNIQUE.
  *
  * Phase structure (per /plan-ceo-review + /plan-eng-review):
- *   A. Schema — gbrain init --migrate-only runs the migration chain up
+ *   A. Schema — foresights init --migrate-only runs the migration chain up
  *      to whichever v-prefix has shipped (v16 today, v17 next).
  *   B. Storage backfill (Step 7, future) — ledger-driven object rewrite.
  *   C. Verify — assert sources('default') exists today. Composite UNIQUE,
@@ -219,11 +219,11 @@ export const v0_18_0: Migration = {
   featurePitch: {
     headline: 'Multi-source brains: one database, many knowledge repos. Federation flag keeps them from polluting each other.',
     description:
-      'v0.18.0 introduces sources — a first-class primitive that lets one gbrain backend hold ' +
+      'v0.18.0 introduces sources — a first-class primitive that lets one foresights backend hold ' +
       'multiple repos (wiki, gstack, yc-media, etc.) with clean scoping. Every page, file, and ' +
       'ingest_log row is now scoped to a source. Cross-source search is opt-in per source ' +
       '(federated=true) so isolated content (yc-media, garrys-list) never bleeds into your main ' +
-      'brain. New commands: `gbrain sources add/attach/import-from-github`. Per-directory ' +
+      'brain. New commands: `foresights sources add/attach/import-from-github`. Per-directory ' +
       'default via .gbrain-source dotfile + GBRAIN_SOURCE env var. See docs/guides/' +
       'multi-source-brains.md.',
   },

@@ -17,7 +17,7 @@ import { connectorCheckpointKey, connectorIdentity } from '../core/persistence/c
 import type { GoogleSourceState } from '../core/google/types.ts';
 import { isCredentialError } from '../core/creds/errors.ts';
 
-export const GOOGLE_ATTACHMENTS_HELP = `Usage: gbrain google attachments backfill --source <id> [--brain <id>] [--yes] [--limit 1-25] [--retry-failed] [--json]
+export const GOOGLE_ATTACHMENTS_HELP = `Usage: foresights google attachments backfill --source <id> [--brain <id>] [--yes] [--limit 1-25] [--retry-failed] [--json]
 
 Without --yes, inspect the selected source without contacting Google or changing metadata.
 With --yes, repair attachment receipts on at most 25 already-imported thread pages.
@@ -34,7 +34,7 @@ See docs/guides/google-connect.md#attachment-receipts-and-historical-repair`;
 export function parseGoogleAttachmentsArgs(args: string[]) {
   if (args[0] !== 'backfill') {
     throw opError('invalid_params', 'Select the attachment backfill subcommand.',
-      'Use gbrain google attachments backfill with --source naming the Google source; it previews without --yes.');
+      'Use foresights google attachments backfill with --source naming the Google source; it previews without --yes.');
   }
   const flags = new Map<string, string | true>();
   for (let i = 1; i < args.length; i++) {

@@ -1,6 +1,6 @@
 /**
  * #6122(a): a source claimed on a brain whose managed persistence was never activated fences classic sync,
- * and `gbrain sources writer deactivate` used to report `source_bindings: 0` and change nothing, leaving no
+ * and `foresights sources writer deactivate` used to report `source_bindings: 0` and change nothing, leaving no
  * supported exit. The dry run now lists the claim, the state-bound deactivate releases it (bindings removed,
  * worktree retired, topology change recorded, brain still classic), the sync refusal names both choices behind
  * ask_user, and the unbound-source hint on a classic brain no longer sends the agent into the claim.
@@ -50,7 +50,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
   test('the dry run reports the claim, deactivate releases it and classic sync resumes', () => classicBrainWithClaim(databaseUrl, async (engine, root) => {
     const refusal = await resolveSyncPersistenceMode(engine, { sourceId: 'default' } as never).then(() => null, error => error);
     expect(refusal).toMatchObject({ code: 'writer_coordinator_required' });
-    expect(refusal.suggestion).toContain('gbrain sources writer activate --confirm-quiesced');
+    expect(refusal.suggestion).toContain('foresights sources writer activate --confirm-quiesced');
     const state = await writerAdminState(engine);
     expect(refusal.fix).toMatchObject({ argv: ['gbrain', 'sources', 'writer', 'deactivate', '--admin-intent', 'writer_deactivate', '--expected-state', state],
       preview_argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'], consent: ['destructive'] });
@@ -59,7 +59,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     const dry = await admin(engine, 'writer_deactivate', { dry_run: true });
     expect(dry).toMatchObject({ mode: 'classic', deactivated: false, source_bindings: 1, blockers: [],
       pre_activation_claims: [{ source_id: 'default', roots: [expect.any(String)] }],
-      apply_command: `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` });
+      apply_command: `foresights sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` });
     expect(await writerAdminState(engine)).toBe(state);
     expect(await bindings(engine)).toBe(1);
 
@@ -91,11 +91,11 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
 
 test('the unbound-source hint on a classic brain names the file and classic sync, and what a claim would block', () => {
   const classic = unboundSourceError('notes-example', '/srv/notes', 'file_backed', true).suggestion!;
-  expect(classic).toContain('gbrain sync --source notes-example');
-  expect(classic).toContain('gbrain sources writer deactivate');
+  expect(classic).toContain('foresights sync --source notes-example');
+  expect(classic).toContain('foresights sources writer deactivate');
   // A claim is offered only together with activation, never alone, and after the classic edit-and-sync path.
-  expect(classic).toContain('gbrain sources writer activate --confirm-quiesced --dry-run --json');
-  expect(classic.indexOf('gbrain sync --source notes-example')).toBeLessThan(classic.indexOf('gbrain sources writer claim notes-example'));
+  expect(classic).toContain('foresights sources writer activate --confirm-quiesced --dry-run --json');
+  expect(classic.indexOf('foresights sync --source notes-example')).toBeLessThan(classic.indexOf('foresights sources writer claim notes-example'));
   const managed = unboundSourceError('notes-example', '/srv/notes', 'file_backed').suggestion!;
-  expect(managed).toContain('gbrain sources writer claim notes-example --path /srv/notes');
+  expect(managed).toContain('foresights sources writer claim notes-example --path /srv/notes');
 });

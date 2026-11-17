@@ -17,7 +17,7 @@
  * `invalid_fence` hold, the two reads that say whether the maintenance run
  * repairs it). Remote callers get codes, counts and flags, never paths, and a
  * fix addressed to the brain host operator; the repair commands come from the
- * hold router (D6): `gbrain repair fences` for fence holds, `gbrain repair
+ * hold router (D6): `foresights repair fences` for fence holds, `foresights repair
  * frontmatter` for the rest.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -34,14 +34,14 @@ export interface HeldPage { record: GitHoldRecord; revision: string | null; fenc
 
 /**
  * Held files of the sources in a read scope: new files with no page (`missing`) and pages whose newer file is held (`stale`);
- * `fences` (present only when some are) counts the #6188 `invalid_fence` holds among them, which route to `gbrain repair fences` instead of frontmatter repair.
+ * `fences` (present only when some are) counts the #6188 `invalid_fence` holds among them, which route to `foresights repair fences` instead of frontmatter repair.
  */
 export interface HeldCoverage { source_id: string; missing: number; stale: number; fences?: number; concurrent?: number;
   /** #6278 `preparation_stalled` holds: the writer stalled, not the file; they route to writer status and a re-screen. */
   stalled?: number;
   /** #6340 `worktree_dirty` holds: an uncommitted local edit; they clear once the file is committed and re-screened. */
   dirty?: number;
-  /** #6712 `file_drift` holds: a database edit sync would have overwritten; they route to `gbrain repair file-drift`. */
+  /** #6712 `file_drift` holds: a database edit sync would have overwritten; they route to `foresights repair file-drift`. */
   drift?: number }
 
 /** `get_page.file_held`. */
@@ -136,7 +136,7 @@ export function coverageRoute(source: HeldCoverage): HoldRepairRoute {
  * itself when it runs. No path.
  */
 export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; route?: HoldRepairRoute }>, why: string): Action {
-  const frontmatter = sources.filter(source => !source.route || source.route.others > 0).map(source => `'gbrain repair frontmatter --source ${source.source_id}'`);
+  const frontmatter = sources.filter(source => !source.route || source.route.others > 0).map(source => `'foresights repair frontmatter --source ${source.source_id}'`);
   const fences = sources.filter(source => source.route && (source.route.fences > 0 || (source.route.slug_conflicts ?? 0) > 0)).map(source => `'${contentRepairArgv(source.source_id).join(' ')}'`);
   const concurrent = sources.filter(source => source.route?.concurrent).map(source => source.source_id);
   const stalled = sources.filter(source => source.route?.stalled).map(source => source.source_id);
@@ -145,12 +145,12 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
   const first = sources[0]!;
   const parts = [
     ...(frontmatter.length ? [`Please run ${frontmatter.join(', ')} on the brain host to preview the fixes, then apply them.`] : []),
-    ...(fences.length ? [`Some held files have a facts or takes table, or a slug line naming another page, that gbrain could not import. The brain host's maintenance run repairs most of these by itself when it is running; `
+    ...(fences.length ? [`Some held files have a facts or takes table, or a slug line naming another page, that foresights could not import. The brain host's maintenance run repairs most of these by itself when it is running; `
       + `to see each one's state and repair the rest now, run ${fences.join(', ')} on the brain host (a read-only preview that prints the apply command).`] : []),
-    ...(concurrent.length ? [`Some notes changed in their files while an agent saved a different version to the brain, so both were kept: on the brain host run ${concurrent.map(id => `'gbrain sources status ${id}'`).join(', ')} and reconcile each named note with 'gbrain sources reconcile <source> <slug> --preview'.`] : []),
-    ...(stalled.length ? [`Some files are held because the brain's write owner could not finish preparing them (the files themselves are fine): on the brain host run ${stalled.map(id => `'gbrain sources writer status --source ${id} --json'`).join(', ')} to see what the owner was stuck on, fix that or upgrade gbrain, then 'gbrain sources retry-held <source>' and the same sync.`] : []),
-    ...(drift.length ? [`Some notes were edited in the brain after their files were last imported, so sync kept the brain's version instead of overwriting it: on the brain host run ${drift.map(id => `'gbrain sources status ${id}'`).join(', ')} and preview each named note with 'gbrain repair file-drift --source <source> --slug <slug> --prefer database' (or '--prefer file'), which names what it would overwrite; the apply asks for the user's consent.`] : []),
-    ...(dirty.length ? [`Some files have uncommitted edits in the brain's checkout that sync would not overwrite: on the brain host commit them, then run ${dirty.map(id => `'gbrain sync unblock --source ${id} --apply'`).join(', ')} (or 'gbrain sources retry-held <source>') and the same sync.`] : []),
+    ...(concurrent.length ? [`Some notes changed in their files while an agent saved a different version to the brain, so both were kept: on the brain host run ${concurrent.map(id => `'foresights sources status ${id}'`).join(', ')} and reconcile each named note with 'foresights sources reconcile <source> <slug> --preview'.`] : []),
+    ...(stalled.length ? [`Some files are held because the brain's write owner could not finish preparing them (the files themselves are fine): on the brain host run ${stalled.map(id => `'foresights sources writer status --source ${id} --json'`).join(', ')} to see what the owner was stuck on, fix that or upgrade foresights, then 'foresights sources retry-held <source>' and the same sync.`] : []),
+    ...(drift.length ? [`Some notes were edited in the brain after their files were last imported, so sync kept the brain's version instead of overwriting it: on the brain host run ${drift.map(id => `'foresights sources status ${id}'`).join(', ')} and preview each named note with 'foresights repair file-drift --source <source> --slug <slug> --prefer database' (or '--prefer file'), which names what it would overwrite; the apply asks for the user's consent.`] : []),
+    ...(dirty.length ? [`Some files have uncommitted edits in the brain's checkout that sync would not overwrite: on the brain host commit them, then run ${dirty.map(id => `'foresights sync unblock --source ${id} --apply'`).join(', ')} (or 'foresights sources retry-held <source>') and the same sync.`] : []),
   ];
   return { argv: holdRepairSteps(first.source_id, first.route ?? { fences: 0, others: 1 }).argv, consent: [], actor: 'host_admin', requires_exclusive: false, why,
     user_message: `Some files in your brain could not be imported, so answers from it can miss or show outdated notes. ${parts.join(' ')}` };
@@ -265,8 +265,8 @@ export function heldFilesNotice(coverage: HeldCoverage[], remote: boolean, could
   const fix: Action = single
     ? { argv: single.argv, consent: [], actor: 'agent', requires_exclusive: false, verify: { argv: ['gbrain', 'sources', 'status', ids[0]!, '--json'] },
       why: coverageRoute(coverage[0]!).fences
-        ? `gbrain sources status ${ids[0]} lists each held file; ${single.text}.`
-        : `Previews the fix for each held file in source ${ids[0]} (gbrain sources status ${ids[0]} lists them); nothing is written until a hash-bound apply.` }
+        ? `foresights sources status ${ids[0]} lists each held file; ${single.text}.`
+        : `Previews the fix for each held file in source ${ids[0]} (foresights sources status ${ids[0]} lists them); nothing is written until a hash-bound apply.` }
     : { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: `Doctor lists the held files of each source with its next step (${coverage.map(source => holdRepairSteps(source.source_id, coverageRoute(source)).commands.join(', ')).join('; ')}).` };
   return { code: 'held_files', kind: 'degraded', why, fix, ...escalation };

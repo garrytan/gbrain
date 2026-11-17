@@ -10,7 +10,7 @@ import type { OptimizerMode } from './types.ts';
 export const SKILLOPT_LOOP_REMOVAL_DATE = '2026-12-03';
 
 export const SKILLOPT_LOOP_DEPRECATED = `SkillOpt's iterative loop (--loop, optimizer_mode "reflect") is deprecated and will be removed on or after ${SKILLOPT_LOOP_REMOVAL_DATE}; this run continues unchanged. `
-  + 'Nothing replaces it: edit the skill directly, or run the default one-shot rewrite (gbrain skillopt <skill> without --loop), '
+  + 'Nothing replaces it: edit the skill directly, or run the default one-shot rewrite (foresights skillopt <skill> without --loop), '
   + "which matched the loop's held-out score on gbrain-evals' benchmarks at about half the cost.";
 
 export function skillOptLoopDeprecatedNotice(): Notice {

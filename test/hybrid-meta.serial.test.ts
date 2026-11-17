@@ -120,6 +120,6 @@ describe('#3808 — keyword-only degradation is visible on stderr (once per proc
     // searches run — pre-#3808 this was silent (meta-only).
     expect(hits.length).toBe(1);
     expect(hits[0]).toContain('keyword-only');
-    expect(hits[0]).toContain('gbrain doctor');
+    expect(hits[0]).toContain('foresights doctor');
   });
 });

@@ -5,16 +5,16 @@
  * the JSONB-only grant shape. Schema migration v202 converts every
  * well-formed one; an older binary's `auth create` can add more, which
  * convert on their next authorization read or with
- * `gbrain auth rescope --migrate-legacy`. A malformed one denies every axis
+ * `foresights auth rescope --migrate-legacy`. A malformed one denies every axis
  * until the user picks its grant. Reports the grant-mirror window end date.
  *
  * `legacy_token_grant_drift` (warn): migrated tokens whose `permissions`
- * mirror disagrees with the grant columns (an older gbrain edited the JSONB).
+ * mirror disagrees with the grant columns (an older foresights edited the JSONB).
  * Each drifted axis denies every request until the operator picks a side.
  *
  * `legacy_token_null_scope` (warn): active tokens minted without scopes
  * (`scopes IS NULL`), which grandfather to read+write+admin. Each token gets
- * its own `gbrain auth rescope --id <id> --scopes read,write` command; the
+ * its own `foresights auth rescope --id <id> --scopes read,write` command; the
  * check's `fix` asks the user before narrowing the first one.
  */
 import type { Action } from '../../../core/agent-output.ts';
@@ -56,10 +56,10 @@ async function runLegacyTokenGrants(ctx: DoctorContext): Promise<Check[]> {
     status: legacy.length ? 'warn' : 'ok',
     message: (legacy.length === 0
       ? 'Every active legacy token uses the unified grant columns.'
-      : (convertible ? `${convertible} active legacy token(s) still use the permissions-JSON grant shape (an older gbrain created them); each converts on its next request, or now with gbrain auth rescope --migrate-legacy (no grant changes, no user decision needed). ` : '')
-        + (malformed.length ? `${malformed.length} have malformed permissions and deny every request; ask the user which grant each should hold, then run the command in details.malformed (or gbrain auth rescope --id <id> with explicit --sources/--takes-holders/--operations). ` : '')
+      : (convertible ? `${convertible} active legacy token(s) still use the permissions-JSON grant shape (an older foresights created them); each converts on its next request, or now with foresights auth rescope --migrate-legacy (no grant changes, no user decision needed). ` : '')
+        + (malformed.length ? `${malformed.length} have malformed permissions and deny every request; ask the user which grant each should hold, then run the command in details.malformed (or foresights auth rescope --id <id> with explicit --sources/--takes-holders/--operations). ` : '')
         + `See ${DOCS}.`)
-      + ` The permissions mirror for older gbrain binaries is kept until ${GRANT_MIRROR_WINDOW_ENDS}.`,
+      + ` The permissions mirror for older foresights binaries is kept until ${GRANT_MIRROR_WINDOW_ENDS}.`,
     details: { legacy_shape_count: legacy.length, convertible_count: convertible, malformed, mirror_window_ends: GRANT_MIRROR_WINDOW_ENDS, docs: DOCS },
     ...(shapeFix ? { fix: shapeFix } : {}),
   });
@@ -68,9 +68,9 @@ async function runLegacyTokenGrants(ctx: DoctorContext): Promise<Check[]> {
     status: drift.length ? 'warn' : 'ok',
     message: drift.length === 0
       ? 'No legacy token grant has drifted from its permissions mirror.'
-      : `${drift.length} legacy token(s) have grant drift: an older gbrain edited the permissions JSON after migration, so the drifted axes deny every request (fail-closed). `
-        + 'Ask the user which grant is intended, then for each token run gbrain auth rescope --token <name> --adopt-permissions (keep the JSON edit) or --adopt-columns (restore the columns): '
-        + drift.slice(0, 5).map(t => `${t.name} (${t.axes.join(', ')}): gbrain auth rescope --token ${t.name} --adopt-permissions|--adopt-columns`).join('; ')
+      : `${drift.length} legacy token(s) have grant drift: an older foresights edited the permissions JSON after migration, so the drifted axes deny every request (fail-closed). `
+        + 'Ask the user which grant is intended, then for each token run foresights auth rescope --token <name> --adopt-permissions (keep the JSON edit) or --adopt-columns (restore the columns): '
+        + drift.slice(0, 5).map(t => `${t.name} (${t.axes.join(', ')}): foresights auth rescope --token ${t.name} --adopt-permissions|--adopt-columns`).join('; ')
         + `${drift.length > 5 ? `; and ${drift.length - 5} more in details.drift` : ''}. Drift is enforced while the mirror is kept (until ${GRANT_MIRROR_WINDOW_ENDS}). See ${DOCS}.`,
     details: { drift, mirror_window_ends: GRANT_MIRROR_WINDOW_ENDS, docs: DOCS },
   });

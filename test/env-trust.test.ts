@@ -3,7 +3,7 @@
  *
  * Bun auto-loads `.env` from the process cwd (compiled binaries included), so
  * a `.env` committed into a cloned repository lands in process.env before any
- * gbrain code runs. The #427 DATABASE_URL guard matches VALUES, but Bun also
+ * foresights code runs. The #427 DATABASE_URL guard matches VALUES, but Bun also
  * expands `${VAR}` inside .env values, so a value-match guard can never
  * recognise `KEY=${PWD}/x` — the quarantine therefore works on KEY PRESENCE:
  * a protected key that any cwd .env file assigns is dropped from the env,
@@ -353,7 +353,7 @@ describe('non-GBRAIN hijack families (A2)', () => {
 
 // ── Review cycle 4 (E4-1): shell-startup files + interpreter homes ───────────
 //
-// Every non-interactive shell gbrain's children start (git hooks gbrain writes,
+// Every non-interactive shell foresights's children start (git hooks foresights writes,
 // `sh -c` in workspace-push and shell jobs) sources $BASH_ENV first; an
 // imported SHELLOPTS=xtrace with a `$(…)` PS4 runs on every traced command;
 // PYTHONHOME / PERLLIB / GCONV_PATH relocate code the interpreters and glibc

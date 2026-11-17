@@ -104,7 +104,7 @@ describe('exportBundle / importBundle', () => {
   it('a non-bundle object is refused before any key derivation', () => {
     const bundle = exportBundle({ credentials: [ENTRY], clients: [CLIENT] }, PASSPHRASE);
     expect(() => importBundle({ ...bundle, kind: 'something-else' as never }, PASSPHRASE)).toThrow(
-      'Not a gbrain credential bundle',
+      'Not a foresights credential bundle',
     );
   });
 
@@ -116,7 +116,7 @@ describe('exportBundle / importBundle', () => {
     const bundle = exportBundle({ credentials: [ENTRY], clients: [CLIENT] }, PASSPHRASE);
     const shortTag = Buffer.from(bundle.tag, 'base64').subarray(0, 12).toString('base64');
     expect(() => importBundle({ ...bundle, tag: shortTag }, PASSPHRASE)).toThrow(
-      'Not a gbrain credential bundle',
+      'Not a foresights credential bundle',
     );
   });
 });

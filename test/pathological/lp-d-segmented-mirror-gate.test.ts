@@ -1,10 +1,10 @@
 /**
- * LPH (d) part 2: no version 2 withdrawal-mirror record while a gbrain that cannot read one may claim it.
+ * LPH (d) part 2: no version 2 withdrawal-mirror record while a foresights that cannot read one may claim it.
  *
  * 1. Protects: while the segmented-storage writer gate sees a live writer below SEGMENTED_WRITER_FLOOR in its 7-day window
  *    (an import run of v0.60.290.0 on another host, which reads a version 2 record's `after: null` as a version 1 record
  *    and wedges the worktree), a withdrawal on a segmented, file-backed page commits but its mirror writes no recovery
- *    record and stages nothing: it refuses `segmented_mirror_writer_gate` (fix.next `tell_user_to_run` `gbrain upgrade`,
+ *    record and stages nothing: it refuses `segmented_mirror_writer_gate` (fix.next `tell_user_to_run` `foresights upgrade`,
  *    naming the host), retries, and parks after PARK_AFTER_FAILURES attempts like any failed mirror, so writes on the
  *    worktree are not held; the canonical file keeps the withdrawn row meanwhile. The gate is read from its TTL cache, not
  *    once per attempt. Once the older writer is outside the window, the parked mirror runs again by itself and the file
@@ -47,7 +47,7 @@ const OLDER = '0.60.290.0';
 const json = (value: unknown) => typeof value === 'string' ? JSON.parse(value) : value;
 
 for (const kind of testBackends()) {
-  describe(kind + ': a segmented mirror holds while an older gbrain could claim its recovery record', () => {
+  describe(kind + ': a segmented mirror holds while an older foresights could claim its recovery record', () => {
     let brain: TwinBrain;
     let self = '';
     const oldHost = randomUUID();

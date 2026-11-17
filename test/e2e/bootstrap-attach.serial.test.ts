@@ -207,9 +207,9 @@ describe('bootstrap attach (machine-2 adoption, serial e2e)', () => {
     expect(out).toContain('attached workspace for agent "Beacon"');
     expect(out).toContain("source 'workspace'");
     // The ordered todo-list the dispatcher relays.
-    expect(out).toContain('gbrain sources add');
+    expect(out).toContain('foresights sources add');
     expect(out).toContain('bootstrap hooks --harness claude-code --repair');
-    expect(out).toContain('gbrain bootstrap verify');
+    expect(out).toContain('foresights bootstrap verify');
 
     const receipt = readReceipt(join(machine2Home, '.gbrain'));
     expect(receipt).not.toBeNull();
@@ -242,7 +242,7 @@ describe('bootstrap attach (machine-2 adoption, serial e2e)', () => {
   }, 30_000);
 
   test('hooks repair on machine 2: MCP argv recorded via the fake runner, settings.local.json carries the marker entries, receipt updated', async () => {
-    // Absolute fake gbrain binary for registration/hook command strings —
+    // Absolute fake foresights binary for registration/hook command strings —
     // never executed by this test.
     const fakeBin = join(machine2Home, 'gbrain');
     writeFileSync(fakeBin, '#!/bin/sh\nexit 0\n');
@@ -260,7 +260,7 @@ describe('bootstrap attach (machine-2 adoption, serial e2e)', () => {
     // MCP registration went through the env-pinned fake runner with the
     // source binding [G1].
     const flat = recorded.map((argv) => argv.join(' '));
-    expect(flat.some((c) => c.startsWith('claude mcp add gbrain') && c.includes('GBRAIN_SOURCE=workspace'))).toBe(true);
+    expect(flat.some((c) => c.startsWith('claude mcp add foresights') && c.includes('GBRAIN_SOURCE=workspace'))).toBe(true);
     expect(flat).toContain('claude mcp list');
 
     // Machine-local hook wiring re-rendered with the marker entries.
@@ -289,7 +289,7 @@ describe('bootstrap attach (machine-2 adoption, serial e2e)', () => {
     await engine.initSchema();
     try {
       // Register the cloned brain/ as the workspace source (what `bootstrap
-      // attach` → `gbrain sources add` does on machine 2).
+      // attach` → `foresights sources add` does on machine 2).
       await addSource(engine, { id: 'workspace', localPath: join(ws2, 'brain'), force: true });
 
       // Precondition: the machine-1-authored page is NOT in the fresh DB — it
@@ -299,7 +299,7 @@ describe('bootstrap attach (machine-2 adoption, serial e2e)', () => {
       expect(existsSync(clonedFile)).toBe(true);
       expect(readFileSync(clonedFile, 'utf8')).toContain(MACHINE1_MARKER);
 
-      // Re-ingest through the REAL per-file import path (the primitive `gbrain
+      // Re-ingest through the REAL per-file import path (the primitive `foresights
       // sync` runs on each changed file), scoped to the workspace source.
       const rel = join('companies', 'summit-robotics.md');
       const imp = await importFromFile(engine, clonedFile, rel, { sourceId: 'workspace', noEmbed: true });
@@ -367,7 +367,7 @@ describe('bootstrap attach (machine-2 adoption, serial e2e)', () => {
       const { result: code, err } = await captureStd(() => runBootstrap(['attach', '--workspace', ws3]));
       expect(code).toBe(1);
       expect(err).toContain('uninitialized template');
-      expect(err).toContain('gbrain bootstrap render');
+      expect(err).toContain('foresights bootstrap render');
       // No receipt overwrite from the refused attach: the machine-2 receipt
       // still points at ws2.
       expect(readReceipt(join(machine2Home, '.gbrain'))!.workspace_dir).toBe(realpathOrResolve(ws2));

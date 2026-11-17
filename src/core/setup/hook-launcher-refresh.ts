@@ -1,13 +1,13 @@
 /**
- * hook-launcher-refresh.ts — \`gbrain post-upgrade\` moves hooks written before
+ * hook-launcher-refresh.ts — \`foresights post-upgrade\` moves hooks written before
  * the hook launcher existed onto it (#8424), so an upgrade alone closes the
- * hole: a hook that starts gbrain in the session's directory lets that
+ * hole: a hook that starts foresights in the session's directory lets that
  * directory's bunfig.toml or .env run code on every prompt.
  *
- * Only gbrain's own entries move, through the writers that own them:
+ * Only foresights's own entries move, through the writers that own them:
  *   - the turn-rule lane (Claude Code user settings, Codex hooks.json):
  *     syncTurnRuleHook with the binary and GBRAIN_HOME its old command names;
- *   - each installed Claude Code \`gbrain setup\` receipt of this install: the
+ *   - each installed Claude Code \`foresights setup\` receipt of this install: the
  *     same apply setup runs, with the plan the receipt records, and only when
  *     the MCP entry is still exactly setup's (so the apply rewrites hooks and
  *     the receipt, nothing else). Codex setup installs, and anything else, get
@@ -30,7 +30,7 @@ import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { launcherLaneFindings, setupRerunArgv } from './launcher-lanes.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
 
-/** True when this command starts gbrain somewhere other than a current launcher. */
+/** True when this command starts foresights somewhere other than a current launcher. */
 function needsLauncher(command: string): boolean {
   const launcher = hookLauncherInCommand(command);
   return !launcher || hookLauncherState(launcher).state !== 'current';
@@ -52,20 +52,20 @@ function refreshTurnRule(log: (line: string) => void): void {
   const claude = claudeHookEntries(claudeUserSettingsPath()).filter(isTurnRuleEntry).map((e) => e.command as string).find(needsLauncher);
   const claudeParsed = claude ? parseClaudeHookCommand(claude) : null;
   if (claude && claudeParsed) {
-    const o = syncTurnRuleHook({ harness: 'claude-code', gbrainBin: claudeParsed.gbrainBin, gbrainHome: claudeParsed.env.GBRAIN_HOME, paths: launcherFor(claudeParsed.env.GBRAIN_HOME), rerun: 'gbrain setup claude-code --instructions-only' });
-    log(`Hook launcher: claude-code turn-rule hook ${o.action === 'write' ? 'now starts gbrain from its own directory' : `left as is (${o.detail}${o.next ? `; run ${o.next}` : ''})`}.`);
-  } else if (claude) log('Hook launcher: the claude-code turn-rule hook was edited, so it is left as is; run `gbrain setup claude-code --instructions-only` to rewrite it.');
+    const o = syncTurnRuleHook({ harness: 'claude-code', gbrainBin: claudeParsed.gbrainBin, gbrainHome: claudeParsed.env.GBRAIN_HOME, paths: launcherFor(claudeParsed.env.GBRAIN_HOME), rerun: 'foresights setup claude-code --instructions-only' });
+    log(`Hook launcher: claude-code turn-rule hook ${o.action === 'write' ? 'now starts foresights from its own directory' : `left as is (${o.detail}${o.next ? `; run ${o.next}` : ''})`}.`);
+  } else if (claude) log('Hook launcher: the claude-code turn-rule hook was edited, so it is left as is; run `foresights setup claude-code --instructions-only` to rewrite it.');
   if (!hasTurnRuleHook('codex')) return;
   let stale = false;
   try { stale = codexHookCensus(codexHooksPath()).some((g) => g.lane === 'turn-rule' && g.commands.some((c) => c.includes(TURN_RULE_LANE_TOKEN) && needsLauncher(c))); } catch { return; }
   // Every install shares one hooks.json and a rewrite recomputes every turn-rule group's trust, so the codex hook is only named here.
-  if (stale) log('Hook launcher: the codex turn-rule hook starts gbrain in the session\'s directory, so it is left as is (a rewrite moves Codex trust); run `gbrain setup codex --instructions-only` to rewrite it.');
+  if (stale) log('Hook launcher: the codex turn-rule hook starts foresights in the session\'s directory, so it is left as is (a rewrite moves Codex trust); run `foresights setup codex --instructions-only` to rewrite it.');
 }
 
 async function refreshSetup(log: (line: string) => void): Promise<void> {
   const home = configDir();
   for (const record of localSetupRecords(home).filter((r) => r.status === 'installed')) {
-    let rerun = `gbrain setup ${record.harness}${record.name === 'gbrain' ? '' : ` --name ${record.name}`}`;
+    let rerun = `foresights setup ${record.harness}${record.name === 'gbrain' ? '' : ` --name ${record.name}`}`;
     try {
       if (record.harness === 'claude-code') {
         const receipt = readSetupReceipt(record.path).setup;
@@ -85,14 +85,14 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         // An MCP entry still exactly what setup last wrote predates the launcher (#8426): setup's own rewrite moves it.
         const mcp = receipt.mcp_plugin ? 'plugin' : inspectClaudeSetup(plan).mcp.state;
         if (!ours.some(needsLauncher) && mcp !== 'owned') continue;
-        if (receipt.scope === 'project') { log(`Hook launcher: gbrain setup's entries for ${receipt.project_dir} start gbrain in the session's directory; from ${receipt.project_dir}, run ${rerun} --scope project.`); continue; }
-        if (mcp !== 'plugin' && mcp !== 'current' && mcp !== 'owned') { log(`Hook launcher: gbrain's claude-code hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
+        if (receipt.scope === 'project') { log(`Hook launcher: foresights setup's entries for ${receipt.project_dir} start foresights in the session's directory; from ${receipt.project_dir}, run ${rerun} --scope project.`); continue; }
+        if (mcp !== 'plugin' && mcp !== 'current' && mcp !== 'owned') { log(`Hook launcher: foresights's claude-code hooks start foresights in the session's directory; run ${rerun} to rewrite them.`); continue; }
         const applied = await applyClaudeSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false, refreshOf: receipt });
         const left = new Set(claudeHookEntries(paths.settingsPath).filter((e) => needsLauncher(e.command as string)).map((e) => hookEntryHash(e) ?? ''));
         const kept = Object.entries(applied.edited).filter(([, hash]) => left.has(hash)).map(([event]) => event);
         log(kept.length > 0
-          ? `Hook launcher: gbrain setup's claude-code ${kept.join(', ')} hook in ${paths.settingsPath} was edited after setup wrote it, so it is kept as is and still starts gbrain in the session's directory; remove or rewrite it, then run ${rerun}.`
-          : `Hook launcher: gbrain setup's claude-code ${mcp === 'owned' ? 'MCP server and hooks' : 'hooks'} now start gbrain from its own directory.`);
+          ? `Hook launcher: foresights setup's claude-code ${kept.join(', ')} hook in ${paths.settingsPath} was edited after setup wrote it, so it is kept as is and still starts foresights in the session's directory; remove or rewrite it, then run ${rerun}.`
+          : `Hook launcher: foresights setup's claude-code ${mcp === 'owned' ? 'MCP server and hooks' : 'hooks'} now start foresights from its own directory.`);
       } else if (record.harness === 'codex') {
         const receipt = readCodexSetupReceipt(record.path).setup;
         if (!receipt) continue;
@@ -102,10 +102,10 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         const mcp = !receipt.mcp_plugin && launcherLaneFindings().some((f) => f.harness === 'codex' && f.lane === 'mcp' && f.owner === 'setup' && f.detail.startsWith(`[mcp_servers.${receipt.name}]`));
         if (!hooks && !mcp) continue;
         // Rewriting re-trusts setup's groups, and a hooks.json every install shares cannot show which install's group Codex runs, so the rewrite stays with setup, where the user approves it; the MCP table moves in the same run.
-        log(`Hook launcher: gbrain setup's codex ${[...(mcp ? [`MCP server in ${paths.configPath}`] : []), ...(hooks ? [`hooks in ${paths.hooksPath}`] : [])].join(' and ')} start gbrain in the session's directory; run ${rerun} to rewrite them.`);
+        log(`Hook launcher: foresights setup's codex ${[...(mcp ? [`MCP server in ${paths.configPath}`] : []), ...(hooks ? [`hooks in ${paths.hooksPath}`] : [])].join(' and ')} start foresights in the session's directory; run ${rerun} to rewrite them.`);
       }
     } catch (e) {
-      log(`Hook launcher: gbrain's ${record.harness} hooks were not refreshed (${(e as Error).message}); run ${rerun}.`);
+      log(`Hook launcher: foresights's ${record.harness} hooks were not refreshed (${(e as Error).message}); run ${rerun}.`);
     }
   }
 }
@@ -117,13 +117,13 @@ export async function refreshHookLaunchers(log: (line: string) => void = console
     const launcher = hookLauncherPath();
     const before = hookLauncherState(launcher);
     if (before.state === 'stale') { ensureHookLauncher(launcher); log(`Hook launcher: rewrote ${launcher} (${before.detail}).`); }
-  } catch (e) { log(`Hook launcher: ${hookLauncherPath()} was not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
-  try { refreshTurnRule(log); } catch (e) { log(`Hook launcher: the turn-rule hooks were not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
-  try { await refreshSetup(log); } catch (e) { log(`Hook launcher: setup's hooks were not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
+  } catch (e) { log(`Hook launcher: ${hookLauncherPath()} was not refreshed (${(e as Error).message}); run foresights doctor --only harness_wiring.`); }
+  try { refreshTurnRule(log); } catch (e) { log(`Hook launcher: the turn-rule hooks were not refreshed (${(e as Error).message}); run foresights doctor --only harness_wiring.`); }
+  try { await refreshSetup(log); } catch (e) { log(`Hook launcher: setup's hooks were not refreshed (${(e as Error).message}); run foresights doctor --only harness_wiring.`); }
   // The other lanes are named, never rewritten here: bootstrap's writers run from the workspace, and their Codex entries move trust.
   try {
-    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'gbrain does not rewrite it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
-  } catch (e) { log(`Hook launcher: the bootstrap lanes were not checked (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
+    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'foresights does not rewrite it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto foresights's launcher.`);
+  } catch (e) { log(`Hook launcher: the bootstrap lanes were not checked (${(e as Error).message}); run foresights doctor --only harness_wiring.`); }
 }
 
 /** GBRAIN_HOME from setup's own MCP entry, for an install with no hooks to read it from. */

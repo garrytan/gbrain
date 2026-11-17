@@ -14,7 +14,7 @@ export const v069: Migration = {
   //     at proposal time so we can audit "did the LLM see the existing
   //     fence rows when it proposed?" Prevents duplicate proposals.
   //   - proposal_run_id (CDX-4 fix): groups proposals from a single
-  //     `gbrain dream --phase propose_takes` run so --rollback <run_id>
+  //     `foresights dream --phase propose_takes` run so --rollback <run_id>
   //     can bulk-reject a bad-prompt run.
   //   - predicted_brier + predicted_brier_bucket_n (E5): forecast computed
   //     at proposal time so the queue UX shows "your historical Brier in

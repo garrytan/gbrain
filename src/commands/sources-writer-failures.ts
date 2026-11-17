@@ -1,5 +1,5 @@
 /**
- * #6650 (L3): output of `gbrain sources writer failures <source>` (`terminal-failures.ts` reads, `administration.ts`
+ * #6650 (L3): output of `foresights sources writer failures <source>` (`terminal-failures.ts` reads, `administration.ts`
  * dispatches, locally or through the resident owner). A person gets a table; `--json` gets one document. Fixes and
  * inspect actions are rendered for the CLI in both, so `fix.next` and `fix.command` follow the agent operator contract.
  */
@@ -47,7 +47,7 @@ export function renderWriterFailures(listing: TerminalFailureListing, json: bool
     }
     if (rows.some(r => r.blocking)) lines.push('  * holds a publication recovery record: it blocks its root now.');
     const first = rows[0];
-    if (first) lines.push(`  Next for the newest: ${first.fix.command ?? first.fix.why}`, `  Inspect one: gbrain write-request <request> --json`);
+    if (first) lines.push(`  Next for the newest: ${first.fix.command ?? first.fix.why}`, `  Inspect one: foresights write-request <request> --json`);
   }
   if (rendered.truncated && rendered.next) lines.push(`  More: ${rendered.next.join(' ')}`);
   if (!rendered.groups?.length && !rendered.rows?.length) lines.push('  Nothing to show: no receipt in the window ended without committing.');

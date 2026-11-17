@@ -43,7 +43,7 @@ const SEARCH_SIDE_TABLES = ['config', 'timeline_entries'];
 /** The SQL between the recipe markers in docs/ENGINES.md, for `role`. */
 function docsRecipe(role: string): string {
   const doc = readFileSync(join(import.meta.dir, '../../docs/ENGINES.md'), 'utf8');
-  const block = /<!-- gbrain:segmented-rls-recipe:begin[^>]*-->\s*\`\`\`sql\n([\s\S]*?)\`\`\`\s*<!-- gbrain:segmented-rls-recipe:end -->/.exec(doc);
+  const block = /<!-- (?:foresights|gbrain):segmented-rls-recipe:begin[^>]*-->\s*\`\`\`sql\n([\s\S]*?)\`\`\`\s*<!-- (?:foresights|gbrain):segmented-rls-recipe:end -->/.exec(doc);
   if (!block) throw new Error('docs/ENGINES.md has no segmented-rls-recipe block');
   return block[1]!.replaceAll('<reader-role>', role);
 }

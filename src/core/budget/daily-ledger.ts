@@ -241,7 +241,7 @@ export function chatCallUsd(model: string, tokens: { inputTokens: number; output
  * The most one chat call can cost: input estimate plus the full output
  * ceiling. An unpriced model runs under a default cap at the ceiling rate
  * (`estimated: true`); under a cap the user set it refuses with the
- * `gbrain pricing set` guidance, because that cap cannot be enforced.
+ * `foresights pricing set` guidance, because that cap cannot be enforced.
  */
 export function estimateChatCallUsd(input: { model: string; inputTokens: number; maxOutputTokens: number; overrides?: PricingOverrides; capSource: CapSource }):
   { ok: true; quote: ChatCostQuote } | { ok: false; reason: 'no_pricing'; guidance: NoPricingGuidance } {

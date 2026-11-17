@@ -7,7 +7,7 @@
  *    (base_url_default already ends in /v1 — no /v1/v1 doubling), request
  *    top-N key `top_k` via `top_param`.
  *  - #4938: rerank-3 / rerank-3-lite are in the allowlist (both the gateway's
- *    runtime check and `gbrain models doctor`'s reranker_config probe read
+ *    runtime check and `foresights models doctor`'s reranker_config probe read
  *    this same array); default_model is rerank-3-lite (gbrain-evals #148),
  *    reaching only brains with no explicit search.reranker.model.
  *  - `default_model: 'voyage-4'` on the embedding touchpoint — array order is
@@ -50,9 +50,9 @@ describe('voyage reranker touchpoint (v0.46.3)', () => {
 
 describe('voyage rerank-3 allowlist (#4938)', () => {
   // Both enforcement points — gateway.rerank()'s `tp.models.includes(...)`
-  // guard and `gbrain models doctor`'s reranker_config probe — read this one
+  // guard and `foresights models doctor`'s reranker_config probe — read this one
   // array, so listing the model here is what unblocks
-  // `gbrain config set search.reranker.model voyage:rerank-3`.
+  // `foresights config set search.reranker.model voyage:rerank-3`.
   test('rerank-3 and rerank-3-lite are in the reranker allowlist', () => {
     const models = voyage.touchpoints.reranker!.models;
     expect(models).toContain('rerank-3');

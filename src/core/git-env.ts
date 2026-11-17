@@ -3,8 +3,8 @@
  * repository-locating variables are dropped so `git -C <root>` always works on
  * `<root>`. Every Git spawn under
  * `src/core` builds its env here (guarded by `test/git-env-guard.test.ts`).
- * #7759: Git's global pathspec switches are dropped too, so a pathspec gbrain
- * builds means what it says and a hook or helper Git starts for gbrain sees none.
+ * #7759: Git's global pathspec switches are dropped too, so a pathspec foresights
+ * builds means what it says and a hook or helper Git starts for foresights sees none.
  * Transport and credential variables (`GIT_SSH_COMMAND`, `GIT_ASKPASS`,
  * `SSH_AUTH_SOCK`, proxies) pass through, and so do the operator's environment
  * `safe.directory` entries (#7584); `extra` wins over all of them.

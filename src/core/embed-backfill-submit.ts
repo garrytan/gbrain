@@ -7,7 +7,7 @@
  *   - Extended `sync` handler (D22, auto_embed_backfill)
  *   - POST /webhooks/github
  *   - `sources federate` / `unfederate` flip hook
- *   - `gbrain sync trigger`
+ *   - `foresights sync trigger`
  *   - autopilot per-source dispatch (when source is stale and degraded)
  * Explicit `jobs submit` / MCP submissions route through MinionQueue's public
  * admission gate instead, with explicit CLI follow mode as the inline-worker exception.
@@ -39,7 +39,7 @@
  *   - `embed.backfill_max_usd_per_source_24h`  (default 25)
  *
  * Returns a tagged-union status so callers can render the right user signal
- * (`gbrain sources status`, webhook response body, sync completion banner).
+ * (`foresights sources status`, webhook response body, sync completion banner).
  */
 import type { BrainEngine } from './engine.ts';
 import { cliRenderContext, noticeBlock, renderNotice, type Notice, type RenderedNotice } from './agent-output.ts';

@@ -1,9 +1,9 @@
 /**
  * #6803 (D1, D3): the extraction backlog as doctor's `links_extraction_lag`, the end-of-sync nudge and
- * `gbrain extract --stale` all report it. One statement reads the live page count, the actionable stale count
+ * `foresights extract --stale` all report it. One statement reads the live page count, the actionable stale count
  * (attendance-blocked pages excluded: extraction cannot clear them) and the attendance-blocked count under a short
  * statement deadline; the mention-due read runs only when the mention pass is enabled. One verdict decides whether
- * doctor warns and the nudge prints, and one builder renders the default fix (plain `gbrain extract --stale`, the
+ * doctor warns and the nudge prints, and one builder renders the default fix (plain `foresights extract --stale`, the
  * cron default) plus the decision between both routes, with an estimate stated at its basis.
  */
 import type { BrainEngine } from './engine.ts';
@@ -25,7 +25,7 @@ export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
 /** Below this many live pages a brain-wide (unscoped) read is too small to grade. */
 export const EXTRACTION_LAG_MIN_PAGES = 100;
 /**
- * Wall-clock budget of one plain `gbrain extract --stale` run (default 30 min); `--catch-up` removes it.
+ * Wall-clock budget of one plain `foresights extract --stale` run (default 30 min); `--catch-up` removes it.
  * The deferred-sweep submitters derive their job timeout from it.
  */
 export const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
@@ -87,7 +87,7 @@ async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeou
 /**
  * GBRA-130 A-1: doctor's note for pages whose managed link extraction is held (failed
  * `LINK_HOLD_THRESHOLD_RUNS` runs in a row), naming the first five with their codes, and the fix that retries them
- * (`gbrain extract --stale [--source-id <id>] --retry-held`). Empty note and no fix when nothing is held.
+ * (`foresights extract --stale [--source-id <id>] --retry-held`). Empty note and no fix when nothing is held.
  */
 export async function heldExtractionReport(engine: BrainEngine, held: number, sourceId?: string): Promise<{ note: string; fix?: Action }> {
   if (!held) return { note: '' };
@@ -110,7 +110,7 @@ export function extractionLagVerdict(lag: Pick<ExtractionLag, 'total' | 'actiona
   if (failRaw !== undefined && failRaw !== '') {
     const n = Number(failRaw);
     if (Number.isFinite(n) && n > 0) failPct = n;
-    else warnOnceForEnv('GBRAIN_EXTRACTION_LAG_FAIL_PCT', `[gbrain] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`);
+    else warnOnceForEnv('GBRAIN_EXTRACTION_LAG_FAIL_PCT', `[foresights] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`);
   }
   const skipped = lag.total === 0 || (lag.total < EXTRACTION_LAG_MIN_PAGES && !sourceId);
   const pct = lag.total ? (lag.actionable / lag.total) * 100 : 0;
@@ -127,7 +127,7 @@ function duration(seconds: number): string {
 export interface ExtractionRoute { id: 'plain' | 'catch_up'; argv: string[]; label: string; estimate_seconds: number; runs: number }
 
 /**
- * The default fix (plain `gbrain extract --stale`: 30 minutes per run, resumes; the cron default), verified by the
+ * The default fix (plain `foresights extract --stale`: 30 minutes per run, resumes; the cron default), verified by the
  * scoped dry run, and one decision between both routes. A fix expected to outlast an agent tool call
  * (`AGENT_TOOL_LIMIT_MS`) is the user's (`host_admin` on a remote brain): `tell_user_to_run`. Option argv are pinned to
  * the selected brain (the CLI's routing unless given; none on a remote brain); a brain-wide run never gets a source
@@ -187,7 +187,7 @@ export async function staleExtractionCounts(engine: BrainEngine, sourceId?: stri
 export function formatStaleCounts(c: StaleExtractionCounts): string {
   return `Actionable: ${c.actionable} page(s) still need link/timeline extraction` +
     (c.attendance_blocked ? `; ${c.attendance_blocked} attendance-blocked page(s) wait on unresolved attendees (extraction cannot clear them)` : '') +
-    (c.held ? `; ${c.held} held page(s) failed extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row (gbrain extract --stale --retry-held retries them)` : '') +
+    (c.held ? `; ${c.held} held page(s) failed extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row (foresights extract --stale --retry-held retries them)` : '') +
     (c.mention_due === null ? '' : `; ${c.mention_due} page(s) due for the mention pass`) +
     (c.complete ? '. Extraction is complete (raw stale totals are not a completion signal).' : '. Raw stale totals include blocked pages; done when actionable is 0' + (c.mention_due === null ? '.' : ' and mention-due is 0.'));
 }

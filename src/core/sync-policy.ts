@@ -7,7 +7,7 @@
  * the sources status report (sync-status-report.ts, fed RAW `SELECT config`
  * rows) all read it here so they cannot drift apart. It deliberately does
  * NOT gate performSync() itself — an
- * explicit `gbrain sync --source <id>` naming a disabled source still runs.
+ * explicit `foresights sync --source <id>` naming a disabled source still runs.
  * (sync-cost-gate.ts keeps its own inline check: it also feeds the explicit
  * single-source cost preview.)
  */
@@ -33,7 +33,7 @@ export function isSyncDisabledConfig(config: unknown): boolean {
  * (resolveSyncPersistenceMode in persistence/sync-authority.ts), so automatic
  * dispatchers skip their sync instead of queueing a job that fails the same
  * way on every tick. The refusal contract itself is unchanged: an explicit
- * `gbrain sync --source <id>` still reaches performSync and still refuses.
+ * `foresights sync --source <id>` still reaches performSync and still refuses.
  *
  * Mirrors resolveSyncPersistenceMode through the shared `readManagedMode`
  * (#6482). Fail-open by design, as a dispatch filter: when the persistence
@@ -89,7 +89,7 @@ export function skipActivationPendingSync(
 
 export function activationPendingSkipMessage(sourceId: string): string {
   return `[sync] skipping automatic sync for source=${sourceId}: it is claimed but persistence is not activated, ` +
-    'so sync refuses with writer_coordinator_required. Review `gbrain sources writer status`; ' +
+    'so sync refuses with writer_coordinator_required. Review `foresights sources writer status`; ' +
     'automatic sync resumes after activation.';
 }
 
@@ -106,7 +106,7 @@ const processSkipLatch: AutomaticSyncSkipLatch = new Map();
  * refusal performSync would raise. The freshness dispatcher, the full-cycle fan-out and `sync --all` all ask here,
  * so a source where sync does not apply is skipped before a job is queued instead of failing a job every tick.
  * Path usability (relative or absent `local_path`) stays with each caller: it is a per-machine condition with its own
- * `--missing-path` modes and events. An explicit `gbrain sync --source <id>` never consults this.
+ * `--missing-path` modes and events. An explicit `foresights sync --source <id>` never consults this.
  */
 export async function automaticSyncSkip(
   engine: BrainEngine,
@@ -118,7 +118,7 @@ export async function automaticSyncSkip(
   const dir = await syncContentDirectory(engine, { sourceId: src.id, repoPath: src.local_path ?? undefined });
   if (dir) {
     return { reason: 'sync_not_applicable', message: `[sync] skipping automatic sync for source=${src.id}: ${dir.root} is a gbrain-owned content directory, not a Git checkout. ` +
-      `Add markdown files with \`gbrain import <dir>${dir.keyless ? ' --no-embed' : ''} --source ${src.id}\`; automatic sync applies once the directory is a Git checkout.` };
+      `Add markdown files with \`foresights import <dir>${dir.keyless ? ' --no-embed' : ''} --source ${src.id}\`; automatic sync applies once the directory is a Git checkout.` };
   }
   return null;
 }

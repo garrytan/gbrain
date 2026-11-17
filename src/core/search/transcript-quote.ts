@@ -382,8 +382,8 @@ function mapThrough(edits: Edit[], pos: number, isEnd: boolean): number {
 }
 
 /**
- * Whether a leading date header line on this row is gbrain's: the delivery wrote one (DeliveryMeta.date_header), or the row is a
- * fact, whose text gbrain composes whole (facts-arm.ts factRow and the fact reserve, evidence-date.ts), so a first line that
+ * Whether a leading date header line on this row is foresights's: the delivery wrote one (DeliveryMeta.date_header), or the row is a
+ * fact, whose text foresights composes whole (facts-arm.ts factRow and the fact reserve, evidence-date.ts), so a first line that
  * matches is its date header and never the fact's own words.
  */
 function rowHeader(row: Row, header: boolean): boolean {

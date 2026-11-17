@@ -135,7 +135,7 @@ describe('#5879 doctor schema_pack_consistency', () => {
     expect(check.status).toBe('warn');
     expect(check.details?.code).toBe('page_type_undeclared');
     expect(check.message).toContain("'report' (2)");
-    expect(check.message).toContain('gbrain schema review-orphans --source default');
+    expect(check.message).toContain('foresights schema review-orphans --source default');
     expect(check.message).not.toContain('All pages match');
   });
 

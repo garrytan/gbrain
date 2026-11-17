@@ -1,6 +1,6 @@
 # Temporal edges: relationships with dates
 
-GBrain records when a relationship between two pages started and ended, and
+Foresights records when a relationship between two pages started and ended, and
 graph reads return what is true today unless you ask for history. "Who works at
 acme-example?" lists current employees; former employees stay one parameter
 away.
@@ -38,7 +38,7 @@ link_types:
 
 The table above is the default; a pack declaration wins for its relation. The brain
 uses the union of its active pack and every per-source pack, and `state` wins if two
-packs disagree. `mentions` never carries a date. `gbrain schema lint` reports a
+packs disagree. `mentions` never carries a date. `foresights schema lint` reports a
 `temporal` on `mentions` (error), a built-in relation redeclared with different
 semantics, and an inverse pair that disagrees (warnings). Natural-language cues
 ("left", "joined") date the built-in relations only; a pack relation takes its dates
@@ -229,7 +229,7 @@ its closures are applied as timeline lines, each undoable. Set
 The closure date is the newer relationship's start. When someone left one job and
 started the next later, and only the "joined" lines are written, the earlier job closes
 on the later start date: late, not wrong. So a closure only the check dated is shown as
-an upper bound, `ended: works_at acme-example (by 2025-03-01)`, and `gbrain beliefs
+an upper bound, `ended: works_at acme-example (by 2025-03-01)`, and `foresights beliefs
 changes` marks it `end by 2025-03-01`. An explicit end line
 (`Ended works_at [[companies/x]]`) or a "left" line dates it exactly and replaces the
 inferred end, whether its date is earlier or later.
@@ -244,21 +244,21 @@ inferred end, whether its date is earlier or later.
 Proposals:
 
 ```
-gbrain edge-proposals list            # open proposals and undated pairs
-gbrain edge-proposals accept 12       # writes the closure line, re-derives the page
-gbrain edge-proposals reject 12
-gbrain edge-proposals undo 12         # removes the line it wrote
-gbrain edge-proposals undo --all-applied
-gbrain edge-proposals date 14 2024-05-01   # record when the newer relationship started
-gbrain edge-proposals list --status error  # pairs the judge failed on
-gbrain edge-proposals retry --all-held     # judge held pairs again on the next cycle
+foresights edge-proposals list            # open proposals and undated pairs
+foresights edge-proposals accept 12       # writes the closure line, re-derives the page
+foresights edge-proposals reject 12
+foresights edge-proposals undo 12         # removes the line it wrote
+foresights edge-proposals undo --all-applied
+foresights edge-proposals date 14 2024-05-01   # record when the newer relationship started
+foresights edge-proposals list --status error  # pairs the judge failed on
+foresights edge-proposals retry --all-held     # judge held pairs again on the next cycle
 ```
 
 When the judge call fails or its answer is unreadable, the pair gets an `error` row
 with the error class and a redacted message (at most 200 characters). The next cycle
 skips it for 24 hours, then judges it again; the first readable verdict replaces the
 error row. After 3 failed attempts on the same evidence the pair is held: no cycle
-pays for it again until `gbrain edge-proposals retry <id>` (or `--all-held`), or until
+pays for it again until `foresights edge-proposals retry <id>` (or `--all-held`), or until
 its evidence changes.
 
 An applied proposal is one timeline line on the subject page:
@@ -287,27 +287,27 @@ relationships by their latest dated start and ends each one on the date the next
 started, so an out-of-order import (Acme from January, Widget from March, then Gadget
 from February) ends Acme in February and Gadget in March. Relationships without a dated
 start, and two that start on the same date, stay open and appear in
-`gbrain edge-proposals list`. Closures are recorded as proposals with model
-`schema-pack:cardinality`; `gbrain edge-proposals accept <id>` writes one as the same
+`foresights edge-proposals list`. Closures are recorded as proposals with model
+`schema-pack:cardinality`; `foresights edge-proposals accept <id>` writes one as the same
 reversible timeline line.
 
 - Only state relations take `cardinality`: the built-in ones (`works_at`, `advises`, `yc_partner`) and any type the
-  pack declares `temporal: state`. `gbrain schema lint` rejects it elsewhere, because only state relations end.
+  pack declares `temporal: state`. `foresights schema lint` rejects it elsewhere, because only state relations end.
 - The declaration comes from the source's resolved pack. A child pack that redeclares
   the type replaces the whole entry, so it must restate `cardinality`.
-- `gbrain schema cardinality-preview [--source <id>] [--json]` lists every page with
+- `foresights schema cardinality-preview [--source <id>] [--json]` lists every page with
   more than one live relationship of a declared type and what the next dream cycle
   closes or leaves open. It writes nothing; run it before activating a pack that adds a
   declaration.
 - `dream.single_value.mode` is `propose` by default: closures wait for review in
-  `gbrain edge-proposals list`. `gbrain config set dream.single_value.mode apply` writes them
+  `foresights edge-proposals list`. `foresights config set dream.single_value.mode apply` writes them
   automatically; `off` hands declared types back to the model judge. Held-out testing found
   wrong closures when an advisory timeline line ("Took an advisory role with X") counted as
   the start of a new job at X, so review proposals before accepting them.
-- To stop further closures, remove the declaration. `gbrain edge-proposals undo <id>`
+- To stop further closures, remove the declaration. `foresights edge-proposals undo <id>`
   (or deleting the line) reopens a relationship it closed.
 
-Older gbrain releases reject a pack that uses `cardinality`, so set the pack's
+Older foresights releases reject a pack that uses `cardinality`, so set the pack's
 `gbrain_min_version` to the release that adds it.
 
 ## Amendments: the amends link
@@ -365,23 +365,23 @@ Pages written before the mapping was active get their amends links when you
 re-extract them:
 
 ```bash
-gbrain extract links --source db --include-frontmatter
+foresights extract links --source db --include-frontmatter
 ```
 
-Older gbrain releases load the same pack, but they rank amends edges like any
+Older foresights releases load the same pack, but they rank amends edges like any
 typed link and hide future-dated ones, so set the pack's `gbrain_min_version` to
 the release that adds this policy (the example does).
 
 ## Turning it off
 
-- `gbrain config set graph.edge_validity off`: graph reads return every edge, as
+- `foresights config set graph.edge_validity off`: graph reads return every edge, as
   before. Dated evidence keeps being recorded, so turning it back on loses nothing.
-- `gbrain config set dream.edge_contradictions.mode off`: no model-judged relationship checks
+- `foresights config set dream.edge_contradictions.mode off`: no model-judged relationship checks
   (declared single-value relations follow `dream.single_value.mode`).
-  Lines it already wrote stay until `gbrain edge-proposals undo --all-applied`.
+  Lines it already wrote stay until `foresights edge-proposals undo --all-applied`.
 
 ## Health
 
-`gbrain doctor --only edge_validity` reports relationships by status, relationships
+`foresights doctor --only edge_validity` reports relationships by status, relationships
 whose state lags their evidence (the extract cycle sweeps them), pages that still
 state a relationship their own timeline ended, and open proposals.

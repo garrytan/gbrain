@@ -195,8 +195,8 @@ describe('runSkillOpt models plan', () => {
       await reconfigureGatewayWithEngine(engine);
       const msg = await strictCode(runSkillOpt(await baseOpts()));
       expect(chatCalls).toBe(0);
-      expect(msg).toContain(`gbrain config set models.tier.deep ${SONNET}`);
-      expect(msg).toContain(`gbrain config set models.tier.utility ${SONNET}`);
+      expect(msg).toContain(`foresights config set models.tier.deep ${SONNET}`);
+      expect(msg).toContain(`foresights config set models.tier.utility ${SONNET}`);
       expect(fs.existsSync(path.join(skillsDir, currentAuditFilename()))).toBe(false);
     });
   });
@@ -340,7 +340,7 @@ describe('guarded bootstrap', () => {
       expect(preview.models_plan.map((e) => e.touchpoint)).toEqual(['optimizer']);
       expect(chatCalls).toBe(0);
       const msg = await strictCode(bootstrap({ modelsStrict: true }));
-      expect(msg).toContain('gbrain config set models.tier.deep');
+      expect(msg).toContain('foresights config set models.tier.deep');
       expect(chatCalls).toBe(0);
     });
   });

@@ -64,5 +64,5 @@ export const typesafe: Recipe = {
   },
   setup_hint:
     'Get an API key at https://console.typesafe.ai, set TYPESAFE_API_KEY, then run ' +
-    '`gbrain decide probe`. For reranking: `gbrain decide enable rerank`.',
+    '`foresights decide probe`. For reranking: `foresights decide enable rerank`.',
 };

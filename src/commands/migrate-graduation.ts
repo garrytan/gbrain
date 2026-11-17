@@ -1,16 +1,16 @@
 /**
- * `gbrain migrate` engine graduation (PGLite -> Postgres): the CLI over the
+ * `foresights migrate` engine graduation (PGLite -> Postgres): the CLI over the
  * orchestrator in src/core/persistence/engine-graduation.ts.
  *
  * Dispatched before connectEngine() (src/cli.ts routeEngineFreeSubcommands):
  * the orchestrator owns both connections, so `--plan` and `--status` migrate
  * neither schema, and the run holds the source's kernel lock itself.
  *
- *   gbrain migrate --to postgres|supabase [--url <url> | --url - | --url-env <VAR>]
+ *   foresights migrate --to postgres|supabase [--url <url> | --url - | --url-env <VAR>]
  *     (no --yes)            the plan as a confirmation_required payload, exit 3
  *     --plan | --dry-run    the read-only plan, exit 0
  *     --yes --expect <hash> the run; ends with the target doctor result
- *   gbrain migrate --status | --resume | --rollback-to-source   (the run in the manifest)
+ *   foresights migrate --status | --resume | --rollback-to-source   (the run in the manifest)
  *
  * Exit codes: 0 graduated / plan shown; 3 confirmation_required; 1 refusals;
  * 2 usage; 11 resumable drain stop; 75 graduation_in_progress; 130 SIGINT.
@@ -77,11 +77,11 @@ export interface GraduationCliDeps {
 }
 
 export const GRADUATION_USAGE = [
-  'Usage: gbrain migrate --to postgres|supabase [--url <url> | --url - | --url-env <VAR>] [--plan | --dry-run] [--yes --expect <plan_hash>]',
+  'Usage: foresights migrate --to postgres|supabase [--url <url> | --url - | --url-env <VAR>] [--plan | --dry-run] [--yes --expect <plan_hash>]',
   '         [--drain-timeout <seconds>] [--trigger-bypass replica|disable-trigger] [--batch-size <n>] [--force] [--json]',
-  '       gbrain migrate --status [--json]',
-  '       gbrain migrate --resume [--drain-timeout <seconds>] [--url-env <VAR>] [--json]',
-  '       gbrain migrate --rollback-to-source [--yes --expect <hash>] [--json]',
+  '       foresights migrate --status [--json]',
+  '       foresights migrate --resume [--drain-timeout <seconds>] [--url-env <VAR>] [--json]',
+  '       foresights migrate --rollback-to-source [--yes --expect <hash>] [--json]',
 ].join('\n');
 
 const MODE_FLAGS: ReadonlyArray<[string, GraduationMode]> = [
@@ -122,16 +122,16 @@ export function parseGraduationArgs(args: readonly string[]): GraduationArgs {
   if (toRaw !== undefined && toRaw !== 'postgres' && toRaw !== 'supabase') {
     throw usage(`Engine graduation moves a PGLite brain to Postgres; --to ${toRaw} is not a graduation target.`,
       toRaw === 'pglite'
-        ? 'A Postgres -> PGLite move uses the legacy copier and has no plan, status, resume or rollback: run `gbrain migrate --to pglite` without them.'
+        ? 'A Postgres -> PGLite move uses the legacy copier and has no plan, status, resume or rollback: run `foresights migrate --to pglite` without them.'
         : 'Use --to postgres (alias supabase).');
   }
   if ((mode === 'plan' || mode === 'run') && toRaw === undefined) throw usage('Name the target engine: --to postgres (alias supabase).',
-    `Preview first with gbrain migrate --to postgres --url-env ${DEFAULT_TARGET_URL_ENV} --plan.`);
+    `Preview first with foresights migrate --to postgres --url-env ${DEFAULT_TARGET_URL_ENV} --plan.`);
   const urlRaw = flagValue(args, '--url');
   const urlEnv = flagValue(args, '--url-env');
   if (urlRaw !== undefined && urlEnv !== undefined) throw usage('--url and --url-env cannot be combined; prefer --url-env so the URL never appears in a command line.',
     `Keep --url-env (e.g. --url-env ${DEFAULT_TARGET_URL_ENV}) and drop --url.`);
-  if (mode === 'status' && (args.includes('--yes') || args.includes('--force'))) throw usage('--status is read-only; it takes no --yes or --force.', 'Run gbrain migrate --status (add --json for the machine form) without --yes or --force.');
+  if (mode === 'status' && (args.includes('--yes') || args.includes('--force'))) throw usage('--status is read-only; it takes no --yes or --force.', 'Run foresights migrate --status (add --json for the machine form) without --yes or --force.');
   const bypass = flagValue(args, '--trigger-bypass');
   if (bypass !== undefined && bypass !== 'replica' && bypass !== 'disable-trigger') throw usage(`--trigger-bypass takes replica or disable-trigger (got "${bypass}").`,
     'Pass --trigger-bypass replica or --trigger-bypass disable-trigger, or omit the flag.');
@@ -160,7 +160,7 @@ export function graduationOptedOut(cfg: GBrainConfig | null): boolean {
 }
 
 /**
- * Whether this `gbrain migrate` invocation is graduation's. Run-scoped verbs
+ * Whether this `foresights migrate` invocation is graduation's. Run-scoped verbs
  * and the plan always are; a bare `--to postgres|supabase` is when the
  * durable (file) config is PGLite, graduation is not opted out, and the host
  * is not Windows (history-free Windows brains keep the legacy copier).
@@ -187,7 +187,7 @@ export const WHAT_STAYS: readonly string[] = [
 ];
 
 const CREDENTIALS_NOTE = 'Existing access tokens, OAuth clients and local writer credentials stay valid on Postgres.';
-const MCP_RESTART_NOTE = 'A gbrain serve handed the brain over during the move: restart your MCP client (or its gbrain server entry) so it reconnects to Postgres.';
+const MCP_RESTART_NOTE = 'A foresights serve handed the brain over during the move: restart your MCP client (or its foresights server entry) so it reconnects to Postgres.';
 
 function spellingOf(a: GraduationArgs): { to: GraduationTargetSpelling; urlEnv: string } {
   return { to: a.to ?? 'postgres', urlEnv: a.urlEnv ?? DEFAULT_TARGET_URL_ENV };
@@ -287,7 +287,7 @@ function successDoc(receipt: GraduationReceipt) {
     doctor: receipt.doctor ?? null,
     receipt,
     credentials: CREDENTIALS_NOTE,
-    next_steps: [{ argv: ['gbrain', 'mcp', 'expose'], command: 'gbrain mcp expose', why: 'Share this brain with agents on other machines (multi-machine use).' }],
+    next_steps: [{ argv: ['gbrain', 'mcp', 'expose'], command: 'foresights mcp expose', why: 'Share this brain with agents on other machines (multi-machine use).' }],
     ...(receipt.serveHandoff ? { mcp_client_restart: MCP_RESTART_NOTE } : {}),
   };
 }
@@ -300,9 +300,9 @@ function successLines(receipt: GraduationReceipt): string {
     `Graduated to Postgres${receipt.targetDisplayUrl ? ` at ${receipt.targetDisplayUrl}` : ''} (run ${receipt.runId}${seconds ? `, ${seconds.toFixed(0)}s` : ''}).`,
     `  Copied ${receipt.tables.length} tables, ${rows} rows; verify passed; replay probe: ${receipt.replay.status}.`,
     `  Target doctor: ${failing.length ? `failing checks: ${failing.join(', ')}` : 'no failing checks'}.`,
-    ...(receipt.retainedPath ? [`  Retained PGLite copy: ${receipt.retainedPath} (still holds private memory and token hashes; deleting it is your call; gbrain doctor reports it).`] : []),
+    ...(receipt.retainedPath ? [`  Retained PGLite copy: ${receipt.retainedPath} (still holds private memory and token hashes; deleting it is your call; foresights doctor reports it).`] : []),
     `  ${CREDENTIALS_NOTE}`,
-    '  Next: share this brain with other machines: gbrain mcp expose',
+    '  Next: share this brain with other machines: foresights mcp expose',
     ...(receipt.serveHandoff ? [`  ${MCP_RESTART_NOTE}`] : []),
   ].join('\n') + '\n';
 }
@@ -356,7 +356,7 @@ export async function runMigrateGraduation(args: readonly string[], deps: Gradua
     const a = parseGraduationArgs(args);
     if ((a.mode === 'plan' || a.mode === 'run') && graduationOptedOut(loadConfigFileOnly())) {
       throw usage('Engine graduation is turned off on this machine (migrate.graduation = false), so there is no plan to show.',
-        'Turn it back on with `gbrain config unset migrate.graduation`, or run the legacy copier with `gbrain migrate --to postgres --url <url>` (it refuses brains with write history).');
+        'Turn it back on with `foresights config unset migrate.graduation`, or run the legacy copier with `foresights migrate --to postgres --url <url>` (it refuses brains with write history).');
     }
     const api = deps.api ?? await import('../core/persistence/engine-graduation.ts');
     if (a.mode === 'status') {
@@ -413,7 +413,7 @@ function writeGraduationError(e: unknown, aborted: boolean, json: boolean,
   write: (e: unknown, opts: { json: boolean; legacy?: Record<string, unknown> }) => number): number {
   if (aborted && !(e instanceof OperationError && e.code === 'interrupted')) {
     const err = opError('interrupted', 'The move stopped at a batch boundary after an interrupt; it is resumable.',
-      'Ask the user whether to continue; `gbrain migrate --resume` picks up where it stopped.',
+      'Ask the user whether to continue; `foresights migrate --resume` picks up where it stopped.',
       { why: 'SIGINT stops the copy between batches and records the checkpoint, so nothing is half-written.',
         fix: { argv: resumeArgv(), consent: [], actor: 'agent', requires_exclusive: true, verify: { argv: statusArgv() },
           why: 'Continues from the recorded checkpoint.', user_message: 'The move to Postgres was paused. Should I continue it?' } });

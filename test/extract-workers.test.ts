@@ -1,5 +1,5 @@
 /**
- * `gbrain extract --workers N` (v0.41.15.0, T7): the flag is validated at the
+ * `foresights extract --workers N` (v0.41.15.0, T7): the flag is validated at the
  * CLI, threads into runExtractCore, and fans the per-page work out over N
  * concurrent workers on engines that allow parallel writes.
  *

@@ -68,7 +68,7 @@ describe('defaults', () => {
     _resetFeedbackSettingsCacheForTests();
     expect(await recordAnswer(localCtx(), { op: 'query', pages: [{ slug: 'people/alice-example' }] })).toBeNull();
     const notice = await retrievalFeedbackUpgradeNotice(engine);
-    expect(notice?.join('\n')).toContain('gbrain config set feedback.enabled true');
+    expect(notice?.join('\n')).toContain('foresights config set feedback.enabled true');
     await engine.setConfig('feedback.enabled', 'false');
     expect(await retrievalFeedbackUpgradeNotice(engine)).toBeNull();
   });

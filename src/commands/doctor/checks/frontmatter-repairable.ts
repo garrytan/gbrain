@@ -10,7 +10,7 @@ export function frontmatterScanTimeoutMs(): number {
 }
 
 /**
- * #5988 `frontmatter_repairable`: files `gbrain repair frontmatter` can fix
+ * #5988 `frontmatter_repairable`: files `foresights repair frontmatter` can fix
  * (recoverable YAML, `needs_interpretation` holds, a `#`-leading title read as
  * a comment, nested quotes, NUL bytes, a missing closing fence, a conflicting
  * slug line). Codes no repair fixes (MISSING_OPEN, EMPTY_FRONTMATTER,
@@ -21,7 +21,7 @@ export function frontmatterScanTimeoutMs(): number {
 export function frontmatterRepairableFromReport(report: AuditReport, timeoutMs: number): Check {
   const sources = report.per_source.filter(src => (src.repairable?.files ?? 0) > 0).map(src => ({
     source_id: src.source_id, files: src.repairable!.files, by_code: src.repairable!.by_code, sample_paths: src.repairable!.sample.slice(0, 5),
-    status: src.status, preview: `gbrain repair frontmatter --source ${src.source_id}`,
+    status: src.status, preview: `foresights repair frontmatter --source ${src.source_id}`,
   }));
   const files = sources.reduce((sum, src) => sum + src.files, 0);
   const unscanned = report.per_source.filter(src => src.status !== 'scanned').map(src => src.source_id);
@@ -34,20 +34,20 @@ export function frontmatterRepairableFromReport(report: AuditReport, timeoutMs: 
     'Previews the minimal line fix per file (safe quoting first; interpretations only with --include-ambiguous) and prints the hash-bound apply command; it writes nothing.',
     'frontmatter_repairable', { docs: 'docs/guides/repair.md#frontmatter' });
   const partial = report.partial
-    ? ` PARTIAL SCAN: the walk stopped after ${timeoutMs / 1000}s, so ${timedOut.join(', ')} ${timedOut.length === 1 ? 'was' : 'were'} not fully checked; raise GBRAIN_DOCTOR_FM_TIMEOUT_MS and run gbrain doctor --only frontmatter_repairable again.`
+    ? ` PARTIAL SCAN: the walk stopped after ${timeoutMs / 1000}s, so ${timedOut.join(', ')} ${timedOut.length === 1 ? 'was' : 'were'} not fully checked; raise GBRAIN_DOCTOR_FM_TIMEOUT_MS and run foresights doctor --only frontmatter_repairable again.`
     : '';
   const notScanned = missing.length
-    ? ` NOT SCANNED: the directory of ${missing.map(src => `${src.source_id} (${src.source_path})`).join(', ')} is missing; restore it, or point the source at its checkout with gbrain sources set-path <id> <path>, then run gbrain doctor --only frontmatter_repairable again.`
+    ? ` NOT SCANNED: the directory of ${missing.map(src => `${src.source_id} (${src.source_path})`).join(', ')} is missing; restore it, or point the source at its checkout with foresights sources set-path <id> <path>, then run foresights doctor --only frontmatter_repairable again.`
     : '';
   if (!files && !report.partial && !missing.length) {
     return { name: 'frontmatter_repairable', status: 'ok', details,
-      message: report.per_source.length ? 'No file has frontmatter gbrain repair frontmatter would fix.' : 'No registered sources to scan.' };
+      message: report.per_source.length ? 'No file has frontmatter foresights repair frontmatter would fix.' : 'No registered sources to scan.' };
   }
   if (!files) return { name: 'frontmatter_repairable', status: 'warn', details, fix_unavailable_reason: report.partial ? 'check_errored' : 'operator_judgement',
     message: `No repairable frontmatter found so far.${partial}${notScanned}` };
   return {
     name: 'frontmatter_repairable', status: 'warn', details, fix,
-    message: `${files} file(s) have frontmatter gbrain repair frontmatter can fix: `
+    message: `${files} file(s) have frontmatter foresights repair frontmatter can fix: `
       + `${sources.map(src => `${src.source_id}: ${src.files} (${Object.entries(src.by_code).map(([code, n]) => `${code}=${n}`).join(', ')})`).join('; ')}. `
       + `Preview with ${sources.map(src => src.preview).join('; ')} (writes nothing; add --include-ambiguous for interpretations after the safe pass).${partial}${notScanned}`,
   };

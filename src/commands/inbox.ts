@@ -1,15 +1,15 @@
 /**
- * gbrain inbox — the drop folder that turns files into pages.
+ * foresights inbox — the drop folder that turns files into pages.
  *
- *   gbrain inbox [status]        where the inbox is, what is waiting, what was archived today
- *   gbrain inbox run --once      capture every file waiting now, then exit
- *   gbrain inbox run             keep watching; capture each file as it lands (Ctrl-C stops)
+ *   foresights inbox [status]        where the inbox is, what is waiting, what was archived today
+ *   foresights inbox run --once      capture every file waiting now, then exit
+ *   foresights inbox run             keep watching; capture each file as it lands (Ctrl-C stops)
  *
  * Options: --dir <path> (default ~/.gbrain/inbox), --source <id> (the source the
  * pages land in; default: the brain's default source), --json.
  *
  * Each text, markdown, HTML or JSON file becomes an `ingest_capture`: on a
- * Postgres brain it is queued for the job worker (`gbrain jobs work`, which
+ * Postgres brain it is queued for the job worker (`foresights jobs work`, which
  * autopilot runs); on a PGLite brain, which has no worker, it is captured right
  * away. The file then moves to .archived/YYYY-MM-DD/, so the original is kept.
  * `--once` archives a file only after its capture was queued or written, so a
@@ -30,7 +30,7 @@ import {
 import type { IngestionEvent, IngestionSourceContext } from '../core/ingestion/types.ts';
 import type { Logger } from '../core/operations.ts';
 
-const USAGE = `Usage: gbrain inbox [status|run] [--once] [--dir <path>] [--source <id>] [--json]
+const USAGE = `Usage: foresights inbox [status|run] [--once] [--dir <path>] [--source <id>] [--json]
   status          where the inbox is, what is waiting, what was archived today (default)
   run --once      capture every file waiting now, then exit
   run             keep watching and capture each file as it lands (Ctrl-C stops)
@@ -107,16 +107,16 @@ export async function runInbox(engine: BrainEngine, args: string[]): Promise<voi
     const waiting = listInboxFiles(inboxDir).map(f => relative(inboxDir, f));
     const report = { inbox: inboxDir, exists: existsSync(inboxDir), waiting, archived_today: archivedToday(inboxDir) };
     if (json) { console.log(JSON.stringify(report, null, 2)); return; }
-    console.log(`Inbox: ${inboxDir}${report.exists ? '' : ' (not created yet; gbrain inbox run creates it)'}`);
+    console.log(`Inbox: ${inboxDir}${report.exists ? '' : ' (not created yet; foresights inbox run creates it)'}`);
     console.log(`Waiting: ${waiting.length}${waiting.length ? `\n${waiting.slice(0, 20).map(f => `  ${f}`).join('\n')}${waiting.length > 20 ? '\n  ...' : ''}` : ''}`);
     console.log(`Archived today: ${report.archived_today}`);
-    if (waiting.length) console.log('Capture them with: gbrain inbox run --once');
+    if (waiting.length) console.log('Capture them with: foresights inbox run --once');
     return;
   }
 
   if (sub !== 'run') { console.error(USAGE); process.exitCode = 1; return; }
   const deliver = makeInboxDelivery(engine, sourceId, logger);
-  const where = engine.kind === 'pglite' ? 'written as pages' : 'queued for the job worker (gbrain jobs work; autopilot runs one)';
+  const where = engine.kind === 'pglite' ? 'written as pages' : 'queued for the job worker (foresights jobs work; autopilot runs one)';
 
   if (args.includes('--once')) {
     const { mkdirSync } = await import('fs');

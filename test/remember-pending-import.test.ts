@@ -151,14 +151,14 @@ describe('#6693 remember onto a page whose file awaits import', () => {
     expect(readFileSync(file(root), 'utf8')).toContain('Committed by another agent.');
     expect(readFileSync(file(root), 'utf8')).not.toContain('Replaced body.');
   }, { setup }), 120_000);
-  // GBRA-133: an agent followed a refusal that named `gbrain sync --source <source> --no-pull` while serve was running and put a
+  // GBRA-133: an agent followed a refusal that named `foresights sync --source <source> --no-pull` while serve was running and put a
   // second sync owner beside it. With a serve holding the source's drain lease, no pending-import surface names a sync to start.
   test('while a serve owns the source, no pending-import refusal tells the caller to start a sync', () => managedBrain(async ({ engine, ctx, root }) => {
     await seed(ctx);
     edit(root, 'The cron writer committed this line.');
     git(root, 'add', '--', `${slug}.md`); git(root, 'commit', '-q', '-m', 'cron writer commit');
     const revision = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
-    const startsSync = (surface: unknown) => JSON.stringify(surface).match(/gbrain sync(?! status)\b|"gbrain","sync","(?!status")/g) ?? [];
+    const startsSync = (surface: unknown) => JSON.stringify(surface).match(/(?:foresights|gbrain) sync(?! status)\b|"(?:foresights|gbrain)","sync","(?!status")/g) ?? [];
     const view = (error: unknown) => { const e = error as { message?: string; suggestion?: string; why?: string; fix?: unknown; reason?: string; detail?: string };
       return { message: e.message, suggestion: e.suggestion, why: e.why, fix: e.fix }; };
     await withDrainLease(engine, 'default', { holder: { kind: 'serve', id: 'serve-example' } }, async () => {

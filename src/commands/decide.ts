@@ -1,5 +1,5 @@
 /**
- * `gbrain decide`: System One operator surface (local CLI only; thin clients
+ * `foresights decide`: System One operator surface (local CLI only; thin clients
  * refuse). Every slot is `off` or `on`; `--shadow` is advanced diagnostics.
  *
  *   status [--json] [--egress]        provider, consent, budget, per-slot readiness
@@ -37,7 +37,7 @@ import { evidenceCoPackedSlots, resetDecideSearchCache } from '../core/search/de
 import { currentExitCode } from '../core/cli-force-exit.ts';
 import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
 
-export const DECIDE_HELP = `Usage: gbrain decide <subcommand> [options]
+export const DECIDE_HELP = `Usage: foresights decide <subcommand> [options]
 
 System One decision support (TypeSafe Jev or an llm: provider). Each slot is off
 or on. Without a TypeSafe key every slot is off; with one, the slots with a measured
@@ -145,11 +145,11 @@ export function effectiveModeLine(p: SlotPolicy): string | null {
   if (p.requested === p.effective && !p.inactive) return null;
   const entry = REFUSAL_CATALOG[p.inactive ?? ''];
   const cause = entry ? `${p.inactive} (${entry.cause})` : p.inactive ?? 'unknown';
-  const fix = entry ? entry.fix.replaceAll('<slot>', p.slot) : 'gbrain decide status';
+  const fix = entry ? entry.fix.replaceAll('<slot>', p.slot) : 'foresights decide status';
   return `${p.slot}: requested: ${p.requested} / effective: ${p.effective} / cause: ${cause} / fix: ${fix} / docs: docs/guides/system-one.md${entry?.anchor ?? ''}`;
 }
 
-/** Post-set hook for `gbrain config set decide.slots.<slot>.*`. */
+/** Post-set hook for `foresights config set decide.slots.<slot>.*`. */
 export async function printEffectiveModeLines(engine: BrainEngine, slot?: string): Promise<void> {
   if (!slot || !(DECIDE_SLOTS as readonly string[]).includes(slot)) return;
   const state = await loadDecideState(engine);
@@ -239,7 +239,7 @@ async function cmdStatus(engine: BrainEngine, args: string[]): Promise<number> {
     console.log(JSON.stringify(status, null, 2));
     return 0;
   }
-  console.log(`System One (decide): provider ${status.provider}${status.provider !== 'none' && !status.provider_pinned ? ' (alias: pin with gbrain decide enable <slot>)' : ''}; key: ${state.key.from ?? 'not set'}`);
+  console.log(`System One (decide): provider ${status.provider}${status.provider !== 'none' && !status.provider_pinned ? ' (alias: pin with foresights decide enable <slot>)' : ''}; key: ${state.key.from ?? 'not set'}`);
   const keyDefaults = status.slots.filter((s) => s.key_default).map((s) => `${s.slot} (${SLOT_SPECS[s.slot].egressClasses.join(', ')})`);
   console.log(`egress: private=${status.egress.private}; consent ${EVIDENCE_CLASSES.map((c) => `${c}=${status.egress.consent[c]}`).join(' ')}; deny_sources: ${status.egress.deny_sources.join(',') || 'none'}; fallback: ${status.egress.fallback}${keyDefaults.length ? `; key default allows: ${keyDefaults.join(', ')}` : ''}`);
   console.log(`budget: $${status.budget.spent_today_usd.toFixed(4)} of $${status.budget.daily_usd.toFixed(2)} today (remote $${status.budget.remote_today_usd.toFixed(4)}, cap ${Math.round(status.budget.remote_share * 100)}%); not covered: ${status.budget.excluded.join('; ')}`);
@@ -251,13 +251,13 @@ async function cmdStatus(engine: BrainEngine, args: string[]): Promise<number> {
     const activity = s.receipts_24h > 0 ? ` 24h: ${s.decisions_24h} decisions, ${(s.error_rate_24h * 100).toFixed(1)}% errors` : '';
     console.log(`  ${s.slot.padEnd(14)} ${s.readiness}${threshold}${cost}${activity}${s.wired ? '' : ' (not available in this build)'}`);
     if (s.force_on) console.log(`    WARN: decide.slots.${s.slot}.force_on bypasses the action-precision gate`);
-    if (s.newer_reference) console.log(`    newer reference available: ${s.newer_reference} (gbrain decide calibrations adopt ${s.newer_reference})`);
+    if (s.newer_reference) console.log(`    newer reference available: ${s.newer_reference} (foresights decide calibrations adopt ${s.newer_reference})`);
     if (s.no_entity_7d && s.no_entity_7d.skipped > 0) {
-      console.log(`    ${(s.no_entity_7d.share * 100).toFixed(1)}% of conflict receipts in 7 days (${s.no_entity_7d.skipped} of ${s.no_entity_7d.receipts}) skipped a fact with no entity (no_entity); link them: gbrain facts relink --dry-run`);
+      console.log(`    ${(s.no_entity_7d.share * 100).toFixed(1)}% of conflict receipts in 7 days (${s.no_entity_7d.skipped} of ${s.no_entity_7d.receipts}) skipped a fact with no entity (no_entity); link them: foresights facts relink --dry-run`);
     }
     for (const r of s.proposal_review ?? []) {
       if (!r.enabled && r.pending === 0) continue;
-      console.log(`    ${r.kind} proposals: ${r.pending} pending${r.oldest_pending_days !== null ? ` (oldest ${r.oldest_pending_days} days)` : ''}; last 30 days: ${r.accepted_30d} accepted, ${r.rejected_30d} rejected${r.pending > 0 ? ' (review: gbrain decide proposals list)' : ''}`);
+      console.log(`    ${r.kind} proposals: ${r.pending} pending${r.oldest_pending_days !== null ? ` (oldest ${r.oldest_pending_days} days)` : ''}; last 30 days: ${r.accepted_30d} accepted, ${r.rejected_30d} rejected${r.pending > 0 ? ' (review: foresights decide proposals list)' : ''}`);
     }
     if (s.opt_out) console.log(`    on by default because a TypeSafe key is present (sends ${SLOT_SPECS[s.slot].egressClasses.map((c) => CLASS_TEXT[c]).join(', ')} to TypeSafe); opt out: ${s.opt_out}`);
   }
@@ -307,7 +307,7 @@ export async function cmdProbe(engine: BrainEngine | null, args: string[]): Prom
     const out = {
       requested: provider, model_resolved: r.model_resolved, latency_ms: r.latency_ms, input_tokens: r.usage.input_tokens,
       cost_usd: Number(r.cost_usd.toFixed(8)), key_from: key.from, brain_content_sent: false,
-      answers: r.answers, next: 'gbrain decide probe --query "<a question your brain can answer>"',
+      answers: r.answers, next: 'foresights decide probe --query "<a question your brain can answer>"',
     };
     if (json) console.log(JSON.stringify(out, null, 2));
     else {
@@ -356,8 +356,8 @@ async function enableConsent(engine: BrainEngine, args: string[], req: { slots: 
     what,
     why: 'System One answers these routing and ranking questions with a hosted model instead of local heuristics; each slot is a measured win on the eval sets.',
     risk: `From now on, brain text named in the summary leaves this machine on every affected call, and the provider bills per call up to decide.budget.daily_usd ($${req.dailyUsd.toFixed(2)}/day). `
-      + 'Undo any time: gbrain decide disable --all.',
-    user_message: `${what}? Some of your brain's text (${req.summary.find(l => l.startsWith('Data that leaves')) ?? 'see the summary'}) will be sent to the provider on each call, capped at $${req.dailyUsd.toFixed(2)} a day; gbrain decide disable --all turns it off.`,
+      + 'Undo any time: foresights decide disable --all.',
+    user_message: `${what}? Some of your brain's text (${req.summary.find(l => l.startsWith('Data that leaves')) ?? 'see the summary'}) will be sent to the provider on each call, capped at $${req.dailyUsd.toFixed(2)} a day; foresights decide disable --all turns it off.`,
     argv: req.argv,
     preview_argv: ['gbrain', 'decide', 'status', '--json'],
     est_usd: null,
@@ -395,7 +395,7 @@ async function cmdEnable(engine: BrainEngine, args: string[]): Promise<number> {
   const state = await loadDecideState(engine);
   if (has(args, '--recommended')) return enableRecommended(engine, state, args);
   const slot = args.find((a) => !a.startsWith('--') && a !== 'enable' && a !== flagValue(args, '--provider')) as DecideSlot | undefined;
-  if (!slot || !(DECIDE_SLOTS as readonly string[]).includes(slot)) { console.error(`Usage: gbrain decide enable <slot>. Slots: ${DECIDE_SLOTS.join(', ')}`); return 1; }
+  if (!slot || !(DECIDE_SLOTS as readonly string[]).includes(slot)) { console.error(`Usage: foresights decide enable <slot>. Slots: ${DECIDE_SLOTS.join(', ')}`); return 1; }
   if (!SLOT_SPECS[slot].wired) { console.error(refusalLine('slot_unavailable', slot)); return 1; }
   const mode = has(args, '--shadow') ? 'shadow' : 'on';
   if (mode === 'on' && (flagValue(args, '--provider') ?? state.cfg.slots[slot].provider) === state.cfg.slots[slot].provider && state.cfg.slots[slot].keyDefault && !policyFor(state, slot).inactive) {
@@ -480,7 +480,7 @@ async function enableRecommended(engine: BrainEngine, state: DecideState, args: 
 async function cmdDisable(engine: BrainEngine, args: string[]): Promise<number> {
   const all = has(args, '--all');
   const slot = args.find((a) => !a.startsWith('--') && a !== 'disable') as DecideSlot | undefined;
-  if (!all && (!slot || !(DECIDE_SLOTS as readonly string[]).includes(slot))) { console.error(`Usage: gbrain decide disable <slot>|--all. Slots: ${DECIDE_SLOTS.join(', ')}`); return 1; }
+  if (!all && (!slot || !(DECIDE_SLOTS as readonly string[]).includes(slot))) { console.error(`Usage: foresights decide disable <slot>|--all. Slots: ${DECIDE_SLOTS.join(', ')}`); return 1; }
   const slots = all ? [...DECIDE_SLOTS] : [slot!];
   const writes: Array<[string, string]> = slots.map((s) => [`decide.slots.${s}.mode`, 'off']);
   const restored: string[] = [];
@@ -529,7 +529,7 @@ export async function runDecideCommand(engine: BrainEngine, args: string[]): Pro
         const extra = sub ? extraSubcommands.get(sub) : undefined;
         if (extra) return await extra.run(engine, args.slice(1));
         if (sub === 'proposals' || sub === 'sweep') {
-          console.error(`gbrain decide ${sub} is not available in this build (its slot is not wired yet). See gbrain decide status.`);
+          console.error(`foresights decide ${sub} is not available in this build (its slot is not wired yet). See foresights decide status.`);
           return 1;
         }
         console.error(decideHelpText());

@@ -4,7 +4,7 @@
  * requests for an unmanaged source with a remote URL. Default on; an explicit
  * falsy value turns the pull off at the single policy point
  * (`automaticSyncPull`) without touching the rest of the cycle, and the
- * daemon tick says so once. Explicit `gbrain sync --pull` is unaffected.
+ * daemon tick says so once. Explicit `foresights sync --pull` is unaffected.
  *
  * Protects: the `pull` flag on queued `sync` / `autopilot-cycle` jobs and the
  * tick's status line. Fails when: the key is ignored (pull stays true), when
@@ -25,7 +25,7 @@ import { dispatchPerSource } from '../src/commands/autopilot-fanout.ts';
 import { automaticSyncPull } from '../src/core/persistence/automatic-sync-policy.ts';
 import type { SqlEngine } from '../src/core/persistence/model.ts';
 
-// The key name is part of the contract (`gbrain config set autopilot.git_pull false`), so it is spelled here, not imported.
+// The key name is part of the contract (`foresights config set autopilot.git_pull false`), so it is spelled here, not imported.
 const AUTOPILOT_GIT_PULL_KEY = 'autopilot.git_pull';
 const REMOTE = { remote_url: 'https://example.invalid/acme-example.git' };
 const source = { id: 'example', config: REMOTE };

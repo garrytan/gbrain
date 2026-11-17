@@ -10,7 +10,7 @@
  * so callers degrade to "no opinion" rather than a wrong comparison.
  *
  * `newerAnthropicModel` answers "does the anthropic recipe ship a newer priced
- * model in this id's family?" — advisory only (the `gbrain models` hint); it
+ * model in this id's family?" — advisory only (the `foresights models` hint); it
  * never changes a default.
  */
 

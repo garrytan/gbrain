@@ -115,7 +115,7 @@ when the row is tool-only). No per-message timestamps in the JSONL.
 - Scope: `-s user` (default) → `~/.grok/config.toml`; `-s project` →
   `./.grok/config.toml` (committable; reference secrets as `${VAR}`).
 - **Bare command names resolve via the CALLER'S PATH** (verified): registering
-  `-- gbrain serve --surface verbs` with a PATH-prefixed bin dir works — doctor
+  `-- foresights serve --surface verbs` with a PATH-prefixed bin dir works — doctor
   resolved bare `gbrain` to the staged wrapper and completed the handshake. The
   bun-run wrapper shim (`#!/bin/sh\nexec bun run <abs>/src/cli.ts "$@"`) works as the
   staged binary (the fallback lane when a compiled binary is unavailable).
@@ -200,7 +200,7 @@ the sign-in copy (or a persistently textless screen) with the friction
 recorded — that IS the keyless measurement.
 
 ## Supported-version policy
-gbrain's grok integration is verified against **Grok Build v1.0.4** (this pin). The
+foresights's grok integration is verified against **Grok Build v1.0.4** (this pin). The
 canary CI leg (enabled with the secret) tracks latest and is continue-on-error; the
 pinned lane is the deterministic gate. **Pending auth** (requires `XAI_API_KEY`):
 paid one-shot smoke, authed model list + per-turn cost pins, credential-file

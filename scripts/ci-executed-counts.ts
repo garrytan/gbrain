@@ -681,7 +681,7 @@ export function downloadRun(repo: string, runId: string, into: string): { receip
 interface Args { baseRuns: string[]; headRuns: string[]; baseDirs: string[]; headDirs: string[]; deltas?: string; summary?: string; json?: string; reportOnly: boolean; failOnAdditions: boolean; expect: Map<string, number>; missingKeys?: string[]; repo: string }
 
 export function parseArgs(argv: string[]): Args {
-  const args: Args = { baseRuns: [], headRuns: [], baseDirs: [], headDirs: [], reportOnly: false, failOnAdditions: false, expect: new Map(), repo: process.env.GITHUB_REPOSITORY || 'garrytan/gbrain' };
+  const args: Args = { baseRuns: [], headRuns: [], baseDirs: [], headDirs: [], reportOnly: false, failOnAdditions: false, expect: new Map(), repo: process.env.GITHUB_REPOSITORY || 'aimonk2025/gbrain' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     const value = () => {

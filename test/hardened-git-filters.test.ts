@@ -1,5 +1,5 @@
 /**
- * Wave 12 W4.3: Git run in a checkout gbrain does not trust must never execute
+ * Wave 12 W4.3: Git run in a checkout foresights does not trust must never execute
  * the checkout's own `filter.<driver>.clean|process` config. `git status` runs
  * a clean filter whenever it re-hashes a stat-dirty file, so the reconcile
  * preview's "is the canonical file changed in Git" check uses filter-free

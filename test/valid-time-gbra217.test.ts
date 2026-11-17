@@ -10,7 +10,7 @@
  * 2. Fails when: any of those picks another edition, drops the uncertain flag, puts expired or future text at the top
  *    level, shows a hidden reason, or a window cursor follows the page instead of its edition.
  * 3. Real handlers (put_page, get_page, get_versions) on a keyless repo-less brain: PGLite always, Postgres when
- *    DATABASE_URL is set (test/postgres-unit-arms.txt). Seeding writes SQL only where the case is history gbrain no
+ *    DATABASE_URL is set (test/postgres-unit-arms.txt). Seeding writes SQL only where the case is history foresights no
  *    longer writes (an unmarked pre-upgrade page) or volume (500 versions).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -113,8 +113,8 @@ describe('valid-time normaliser and verdict (pure)', () => {
       expect(formatGetPage(plain)).toContain('Future text.');
       expect(asOfExitCode(plain)).toBe(0);
     } finally { (process.stderr as { write: unknown }).write = orig; }
-    expect(writes.join('')).toContain('[gbrain] valid_time as_of 2027-02-01: not_in_force; edition current page (valid_from 2026-07-01, valid_until 2027-01-01); history retained.');
-    expect(writes.join('')).toContain('[gbrain] valid_time: not_yet_in_force as of 2026-10-27 (valid_from 2027-01-01, valid_until -).');
+    expect(writes.join('')).toContain('[foresights] valid_time as_of 2027-02-01: not_in_force; edition current page (valid_from 2026-07-01, valid_until 2027-01-01); history retained.');
+    expect(writes.join('')).toContain('[foresights] valid_time: not_yet_in_force as of 2026-10-27 (valid_from 2027-01-01, valid_until -).');
     expect(validTimeLine({ as_of: 'd', status: 'in_force', chosen_version_id: 7, history: 'incomplete', uncertain: true, why: 'history_gap', valid_from: '2026-01-01' })).toContain('uncertain: history_gap');
   });
 });

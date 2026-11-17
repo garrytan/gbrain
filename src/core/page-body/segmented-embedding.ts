@@ -93,7 +93,7 @@ export async function countSegmentedEmbedRows(engine: Pick<BrainEngine, 'execute
 /**
  * Vector-less live rows of a segmented page below `beforeChunkIndex` (null: from the newest), newest first, so a
  * per-page cap spends on the newest rows; `occurrenceIds` limits them to the occurrences a write added,
- * `includeEmbedded` takes rows that already hold a vector too (`gbrain embed --all`).
+ * `includeEmbedded` takes rows that already hold a vector too (`foresights embed --all`).
  */
 export async function listSegmentedStaleRows(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, column: string,
   opts: { beforeChunkIndex: number | null; limit: number; occurrenceIds?: readonly number[]; includeEmbedded?: boolean }): Promise<SegmentedStaleRow[]> {

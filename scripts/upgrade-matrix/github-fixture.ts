@@ -2,14 +2,14 @@
  * Upgrade matrix (GBRA-224 W2): the GitHub an old release's updater sees.
  *
  * An installed release reaches GitHub four ways: Bun fetches the package
- * tarball from the API (GITHUB_API_URL, else https://api.github.com), gbrain
+ * tarball from the API (GITHUB_API_URL, else https://api.github.com), foresights
  * reads files from raw.githubusercontent.com (VERSION, the target's
  * package.json for the Bun floor, CHANGELOG), git ls-remote lists release
- * tags on https://github.com/garrytan/gbrain, and the binary updater reads
+ * tags on https://github.com/aimonk2025/gbrain, and the binary updater reads
  * release metadata from the API. Every one of them is interposed here, so the
  * updater can only see the refs this fixture names:
  *
- * - git: url.<bare mirror>.insteadOf https://github.com/garrytan/gbrain in
+ * - git: url.<bare mirror>.insteadOf https://github.com/aimonk2025/gbrain in
  *   the cell's own global git config; the mirror holds exactly the fixture's
  *   refs (refs/heads/master, refs/tags/<name>).
  * - HTTP(S): an HTTPS_PROXY that tunnels the GitHub hosts to a local TLS
@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { createServer, connect, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 
-export const REPO = 'garrytan/gbrain';
+export const REPO = 'aimonk2025/gbrain';
 export const GITHUB_HOSTS = ['api.github.com', 'codeload.github.com', 'raw.githubusercontent.com', 'github.com', 'objects.githubusercontent.com'] as const;
 export const DEFAULT_ALLOW_HOSTS = ['registry.npmjs.org'];
 export const FORWARDABLE_HOSTS = ['api.voyageai.com'] as const;
@@ -76,7 +76,7 @@ export function createCertificates(dir: string): { ca: string; cert: string; key
   const ssl = (args: string[]) => execFileSync('openssl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   const validForADay = (pem: string) => { try { ssl(['x509', '-checkend', '86400', '-noout', '-in', pem]); return true; } catch { return false; } };
   if (existsSync(cert) && existsSync(ca) && validForADay(cert) && validForADay(ca)) return { ca, cert, key };
-  ssl(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', caKey, '-out', ca, '-days', '2', '-subj', '/CN=gbrain upgrade matrix fixture CA',
+  ssl(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', caKey, '-out', ca, '-days', '2', '-subj', '/CN=foresights upgrade matrix fixture CA',
     '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign']);
   ssl(['req', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', csr, '-subj', '/CN=github fixture']);
   writeFileSync(ext, 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=' + [...GITHUB_HOSTS, ...FORWARDABLE_HOSTS].map(h => 'DNS:' + h).join(',') + '\n');

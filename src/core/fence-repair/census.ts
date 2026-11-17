@@ -1,6 +1,6 @@
 /**
  * #6188 fence census: the source-scoped candidate finder for malformed facts
- * and takes fences, and the per-source counts `gbrain doctor`
+ * and takes fences, and the per-source counts `foresights doctor`
  * (`fence_integrity`) reports. Discovery only; nothing here repairs.
  *
  * Three origins, deduplicated by page slug into one candidate:

@@ -55,7 +55,7 @@ export interface ExtractAtomsDrainFailure {
   source: string;
   /** Bounded, sanitized failure reason (secrets/connection info redacted). */
   reason: string;
-  /** #7514: a write that did not commit: its request id (`gbrain write-request` explains it) and the refusal's own code. */
+  /** #7514: a write that did not commit: its request id (`foresights write-request` explains it) and the refusal's own code. */
   request_id?: string;
   code?: string;
 }
@@ -478,7 +478,7 @@ export function batchProviderFailureClass(halted: unknown, failures: ReadonlyArr
 
 // ─── Shared wiring helper (v0.42.x #1685 DECISION 5A) ──────────────────────
 //
-// ONE drain path, three callers: `gbrain dream --phase extract_atoms --drain`
+// ONE drain path, three callers: `foresights dream --phase extract_atoms --drain`
 // (dream.ts), the `extract-atoms-drain` Minion handler (jobs.ts), and the
 // autopilot auto-drain submission (which routes through the handler). Before
 // this helper the lock/batch/count wiring lived inline in dream.ts:482; a second

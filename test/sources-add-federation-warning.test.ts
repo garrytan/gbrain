@@ -1,5 +1,5 @@
 /**
- * GBRA-156: `gbrain sources add` warns when the new source is not federated.
+ * GBRA-156: `foresights sources add` warns when the new source is not federated.
  *
  * 1. Protects: a new source is not federated unless --federated is passed, so
  *    a remote token with no source grant (and an unbound agent connection)
@@ -70,8 +70,8 @@ describe('sources add federation warning', () => {
     expect(stdout).toContain('federated: false');
     expect(stderr).toContain('source "source-a" is not federated');
     expect(stderr).toContain('no source grant');
-    expect(stderr).toContain('gbrain sources federate source-a');
-    expect(stderr).toContain('gbrain auth rescope --token <name> --sources source-a');
+    expect(stderr).toContain('foresights sources federate source-a');
+    expect(stderr).toContain('foresights auth rescope --token <name> --sources source-a');
     expect(stderr).toContain('source_not_in_default_search');
     expect(stderr).toContain('not in default search');
     expect(await federated('source-a')).not.toBe(true);
@@ -102,13 +102,13 @@ describe('sources add federation warning', () => {
 describe('sources add next step when the no-grant floor holds no page', () => {
   test('a default add on a brain whose default and federated sources hold no page prints the federate command on stdout', async () => {
     const { stdout } = await add(['source-d']);
-    expect(stdout).toContain('next: gbrain sources federate source-d');
+    expect(stdout).toContain('next: foresights sources federate source-d');
   });
 
   test('--json carries the same step as next, with the human lines on stderr', async () => {
     const { stdout, stderr } = await add(['source-e', '--json']);
     const out = JSON.parse(stdout);
-    expect(out).toMatchObject({ id: 'source-e', federated: false, next: { command: 'gbrain sources federate source-e', argv: ['gbrain', 'sources', 'federate', 'source-e'] } });
+    expect(out).toMatchObject({ id: 'source-e', federated: false, next: { command: 'foresights sources federate source-e', argv: ['gbrain', 'sources', 'federate', 'source-e'] } });
     expect(stderr).toContain('Created source "source-e"');
   });
 
@@ -154,7 +154,7 @@ describe('sources add next step when the no-grant floor holds no page', () => {
   test('a floor holding only a private page still prints the next step', async () => {
     await engine.putPage('notes/private-floor', { type: 'note', title: 'Private', compiled_truth: 'A private page in the default source.', timeline: '', frontmatter: { visibility: 'private' } } as never);
     try {
-      expect((await add(['source-k'])).stdout).toContain('next: gbrain sources federate source-k');
+      expect((await add(['source-k'])).stdout).toContain('next: foresights sources federate source-k');
     } finally {
       await engine.executeRaw("DELETE FROM pages WHERE source_id = 'default' AND slug = 'notes/private-floor'");
     }
@@ -171,7 +171,7 @@ describe('sources add next step when the no-grant floor holds no page', () => {
   });
 });
 
-describe('gbrain sync --source names a source that default search leaves out', () => {
+describe('foresights sync --source names a source that default search leaves out', () => {
   test('a synced source with pages and no federated setting gets the notice; a federated one, the default source and status do not', async () => {
     await add(['source-m']);
     expect(await syncOutOfSearchNotice(engine, ['--source', 'source-m'])).toBeNull();

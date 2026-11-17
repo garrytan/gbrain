@@ -1,5 +1,5 @@
 /**
- * advisor/apply.ts — pure resolution + validation for `gbrain advisor --apply`.
+ * advisor/apply.ts — pure resolution + validation for `foresights advisor --apply`.
  *
  * Kept separate from the CLI command so the allowlist + injection guard are
  * unit-testable without spawning a process. The CLI confirms + executes; this
@@ -31,7 +31,7 @@ export function resolveApplyTarget(report: AdvisorReport, id: string): ApplyReso
     return { ok: false, error: `Finding "${id}" has no runnable command.`, runnable };
   }
   if (argv[0] !== 'gbrain') {
-    return { ok: false, error: `Refusing to run: fix does not invoke gbrain.`, runnable };
+    return { ok: false, error: `Refusing to run: fix does not invoke foresights.`, runnable };
   }
   if (!argv.every((a) => typeof a === 'string' && !SHELL_META.test(a))) {
     return { ok: false, error: `Refusing to run: fix command contains unexpected characters.`, runnable };

@@ -1,6 +1,6 @@
-# `gbrain eval takes-quality` — reproducible cross-modal quality eval
+# `foresights eval takes-quality` — reproducible cross-modal quality eval
 
-`gbrain eval takes-quality` is a CI-able quality gate for the takes layer. Three frontier models
+`foresights eval takes-quality` is a CI-able quality gate for the takes layer. Three frontier models
 score a sample of takes against a 5-dimension rubric, the runner aggregates to
 PASS / FAIL / INCONCLUSIVE, and the receipt persists to `eval_takes_quality_runs`
 so a follow-up `trend` or `regress` can compare against history.
@@ -14,10 +14,10 @@ bumps the version.
 
 | Command | Brain required? | Exit codes |
 |---|---|---|
-| `gbrain eval takes-quality run [flags]` | yes (samples takes) | 0 PASS, 1 FAIL, 2 INCONCLUSIVE |
-| `gbrain eval takes-quality replay <receipt>` | **no** (disk-only) | 0 PASS, 1 FAIL, 2 INCONCLUSIVE |
-| `gbrain eval takes-quality trend [flags]` | yes (reads runs table) | 0 |
-| `gbrain eval takes-quality regress --against <receipt>` | yes | 0 OK, 1 regression |
+| `foresights eval takes-quality run [flags]` | yes (samples takes) | 0 PASS, 1 FAIL, 2 INCONCLUSIVE |
+| `foresights eval takes-quality replay <receipt>` | **no** (disk-only) | 0 PASS, 1 FAIL, 2 INCONCLUSIVE |
+| `foresights eval takes-quality trend [flags]` | yes (reads runs table) | 0 |
+| `foresights eval takes-quality regress --against <receipt>` | yes | 0 OK, 1 regression |
 
 `replay` is the only mode that runs without `DATABASE_URL` — it reads the
 receipt file from disk and re-renders it. The other modes need the brain.
@@ -107,9 +107,9 @@ receipt file from disk and re-renders it. The other modes need the brain.
   it validates. Provider errors and valid low scores are never re-asked.
   Correction calls count toward `cost_usd` and the budget cap.
 - `cost_usd` — sum of per-call cost via `pricing.ts` (a rate registered with
-  `gbrain pricing set`, else the canonical table). An unpriced model with
+  `foresights pricing set`, else the canonical table). An unpriced model with
   `--budget-usd` set refuses with `no_pricing` before any call fires; its fix
-  is `gbrain pricing set <model> --input <usd/1M> --output <usd/1M> --source
+  is `foresights pricing set <model> --input <usd/1M> --output <usd/1M> --source
   <url>`. Without a cap it runs with a warning and its spend is not counted.
 
 ## Receipt persistence
@@ -150,11 +150,11 @@ JSON shape (`--json`):
 
 ```bash
 # Capture a baseline.
-gbrain eval takes-quality run --limit 100 --json \
+foresights eval takes-quality run --limit 100 --json \
   > .ci/takes-quality-baseline.json
 
 # Later, after changing the extraction prompt:
-gbrain eval takes-quality regress --against .ci/takes-quality-baseline.json \
+foresights eval takes-quality regress --against .ci/takes-quality-baseline.json \
   --threshold 0.5
 # exit 0 → no regression past threshold
 # exit 1 → some dim dropped > 0.5; CI fails

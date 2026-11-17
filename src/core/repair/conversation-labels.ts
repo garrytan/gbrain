@@ -1,5 +1,5 @@
 /**
- * `gbrain repair conversation-labels` (wave 9 follow-ups, item 2): retire
+ * `foresights repair conversation-labels` (wave 9 follow-ups, item 2): retire
  * conversation facts the pre-v0.60.69 parser misattributed to meeting-note
  * labels. That parser read `**Date:**`, `**Attendees:**`, `**Summary:**` and
  * the other metadata labels as speakers and, on a page without a date,
@@ -30,7 +30,7 @@
  * finds not extractable (prose, undated, a single email) writes that
  * durable outcome at no cost. Every other page drops back into the ordinary
  * extraction backlog; the preview and the apply print the hand-off commands
- * (`gbrain extract-conversation-facts --slugs … --dry-run`, then with
+ * (`foresights extract-conversation-facts --slugs … --dry-run`, then with
  * `--max-cost-usd`). A managed brain publishes one database-only
  * `managed_maintenance_conversation_label_retire` request per page; an
  * unmanaged brain writes under the page lock. Never automatic.
@@ -184,7 +184,7 @@ function requestIdFor(hash: string, pages: Array<Pick<LabelPage, 'source_id' | '
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
   const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
-  return `gbrain repair conversation-labels${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
+  return `foresights repair conversation-labels${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
 /**
@@ -198,7 +198,7 @@ export function handoffCommands(pages: Array<Pick<LabelPage, 'source_id' | 'slug
   const commands: string[] = [];
   for (const [sourceId, slugs] of bySource) {
     for (let i = 0; i < slugs.length; i += HANDOFF_SLUGS_PER_COMMAND) {
-      const base = `gbrain extract-conversation-facts --source-id ${sourceId} --slugs ${slugs.slice(i, i + HANDOFF_SLUGS_PER_COMMAND).join(',')}`;
+      const base = `foresights extract-conversation-facts --source-id ${sourceId} --slugs ${slugs.slice(i, i + HANDOFF_SLUGS_PER_COMMAND).join(',')}`;
       commands.push(`${base} --dry-run`, `${base} --max-cost-usd <n>`);
     }
   }
@@ -235,7 +235,7 @@ export const conversationLabelsRepair: RepairHandler = {
     const command = await previewCommand(engine, scope, includeAmbiguous);
     if (opts?.apply) {
       if (!opts.expect) {
-        throw new OperationError('invalid_params', 'gbrain repair conversation-labels --apply retires only the set a preview printed.',
+        throw new OperationError('invalid_params', 'foresights repair conversation-labels --apply retires only the set a preview printed.',
           `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
           'docs/guides/repair.md#conversation-labels');
       }

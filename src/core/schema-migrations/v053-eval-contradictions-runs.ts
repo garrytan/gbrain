@@ -5,9 +5,9 @@ export const v053: Migration = {
   name: 'eval_contradictions_runs',
   // v0.32.6 — M5 time-series tracking for the contradiction probe.
   //
-  // One row per `gbrain eval suspected-contradictions` run. The headline
+  // One row per `foresights eval suspected-contradictions` run. The headline
   // numbers (queries_evaluated, with_contradiction, total_flagged) plus
-  // Wilson 95% CI bounds enable `gbrain eval suspected-contradictions
+  // Wilson 95% CI bounds enable `foresights eval suspected-contradictions
   // trend [--days N]` to plot brain consistency over time.
   //
   // report_json carries the full ProbeReport for replay/inspection.

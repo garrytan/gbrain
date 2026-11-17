@@ -1,4 +1,4 @@
-# GBrain Knowledge Runtime — Design Doc
+# Foresights Knowledge Runtime — Design Doc
 
 **Status:** DRAFT for CEO review.
 **Date:** 2026-04-18.
@@ -9,9 +9,9 @@
 
 ## 0. Context
 
-During a CEO review of a narrow two-feature plan (bare-tweet citation repair + completeness score, borrowed from Feynman), the scope was reframed. The narrow plan duplicated work Garry's OpenClaw already does and missed the real leverage point: **the bespoke abstractions hiding inside OpenClaw — resolvers, enrichment orchestration, scheduling, deterministic output — should live in GBrain as first-class primitives.**
+During a CEO review of a narrow two-feature plan (bare-tweet citation repair + completeness score, borrowed from Feynman), the scope was reframed. The narrow plan duplicated work Garry's OpenClaw already does and missed the real leverage point: **the bespoke abstractions hiding inside OpenClaw — resolvers, enrichment orchestration, scheduling, deterministic output — should live in Foresights as first-class primitives.**
 
-North star: *"When Garry's OpenClaw's Claw upgrades to this version of GBrain, it should immediately recognize brilliance and completeness and say 'It's time to switch to these abstractions.'"*
+North star: *"When Garry's OpenClaw's Claw upgrades to this version of Foresights, it should immediately recognize brilliance and completeness and say 'It's time to switch to these abstractions.'"*
 
 That is the test this document is designed against. Everything else is downstream.
 
@@ -43,7 +43,7 @@ The design is four layered abstractions. Each is independently useful; together 
   └───────────────────────────────────────────────────────────────────┘
           │                                                │
           ▼                                                ▼
-     REUSES (polished primitives already in GBrain)  REPLACES (ad-hoc code)
+     REUSES (polished primitives already in Foresights)  REPLACES (ad-hoc code)
      FailImproveLoop · backoff · storage factory ·   enrichment-service ·
      check-resolvable · operations validators ·      embedding · transcription ·
      engine interface · publish · backlinks          2 recipe formats
@@ -68,13 +68,13 @@ An earlier implementation could ship L1 + L4 first (the two "purest" layers) and
 
 ### 3.1 What's broken today
 
-Garry's OpenClaw has **69 distinct external-lookup patterns** across X API (14 shapes), Perplexity, Mistral OCR, Gmail, Calendar, Slack, GitHub, YouTube, Diarize.io, YC tools, OSINT collectors, and brain-local lookups. Each one is a bespoke script under `scripts/` with its own error handling, retry logic, and output shape. GBrain has 3 ad-hoc wrappers (`embedding.ts`, `transcription.ts`, `enrichment-service.ts`) that don't share an interface.
+Garry's OpenClaw has **69 distinct external-lookup patterns** across X API (14 shapes), Perplexity, Mistral OCR, Gmail, Calendar, Slack, GitHub, YouTube, Diarize.io, YC tools, OSINT collectors, and brain-local lookups. Each one is a bespoke script under `scripts/` with its own error handling, retry logic, and output shape. Foresights has 3 ad-hoc wrappers (`embedding.ts`, `transcription.ts`, `enrichment-service.ts`) that don't share an interface.
 
 Common consequences:
 - No uniform retry/backoff strategy (some scripts retry, most don't)
 - No cost tracking (Perplexity bills eaten silently when calls return no-substance results)
 - No confidence/provenance propagation (callers can't tell if an answer is verified or inferred)
-- Users can't add a resolver without forking GBrain
+- Users can't add a resolver without forking Foresights
 
 ### 3.2 Interface
 
@@ -192,8 +192,8 @@ The OpenClaw survey inventoried 69 resolver shapes. Shipping all of them is wron
 
 | # | Resolver | Purpose | Used by |
 |---|---|---|---|
-| 1 | `x_handle_to_tweet` | Bare-tweet citation repair (original Phase A) | `gbrain integrity` |
-| 2 | `url_reachable` | Dead-link detection | `gbrain integrity` |
+| 1 | `x_handle_to_tweet` | Bare-tweet citation repair (original Phase A) | `foresights integrity` |
+| 2 | `url_reachable` | Dead-link detection | `foresights integrity` |
 | 3 | `brain_slug_lookup` | Name/email → slug (wraps existing `resolveSlugs`) | Output Builder |
 | 4 | `openai_embedding` | Refactor of `src/core/embedding.ts` into Resolver | Import pipeline |
 | 5 | `perplexity_query` | Query → synthesis + citations | Enrichment Orchestrator |
@@ -343,7 +343,7 @@ await writer.transaction(async (tx) => {
 
 ### 5.1 What's broken today
 
-Garry's OpenClaw's cron is **externally-driven JSON** (`cron/jobs.json`) with ~30 jobs manually stagger-offset at different minutes. GBrain has **zero native scheduling** — `src/commands/autopilot.ts` is a single daemon loop, and `docs/guides/cron-schedule.md` is architectural guidance, not code.
+Garry's OpenClaw's cron is **externally-driven JSON** (`cron/jobs.json`) with ~30 jobs manually stagger-offset at different minutes. Foresights has **zero native scheduling** — `src/commands/autopilot.ts` is a single daemon loop, and `docs/guides/cron-schedule.md` is architectural guidance, not code.
 
 Failures observed in Garry's OpenClaw's actual state:
 - `X OAuth2 Token Refresh`: 11 consecutive timeouts (critical-path silent failure)
@@ -394,8 +394,8 @@ export interface ScheduledResolver extends Resolver<void, ScheduledResult> {
 ### 5.4 Native engine + OS cron adapter
 
 The scheduler runs as either:
-1. **Embedded** (default for `gbrain autopilot`): native event loop inside the daemon process. One process, many ScheduledResolvers.
-2. **OS-driven** (for Railway/launchd/systemd): `gbrain schedule run <id>` invoked by OS cron, scheduler state is durable so cross-invocation dedup still works.
+1. **Embedded** (default for `foresights autopilot`): native event loop inside the daemon process. One process, many ScheduledResolvers.
+2. **OS-driven** (for Railway/launchd/systemd): `foresights schedule run <id>` invoked by OS cron, scheduler state is durable so cross-invocation dedup still works.
 
 Both modes share the same `Schedule` config + state.
 
@@ -406,7 +406,7 @@ Every scheduled run emits structured events: `started`, `skipped-quiet-hours`, `
 - `engine.logIngest` (audit trail in brain DB)
 - Optional webhook (Slack/Telegram for the user)
 
-`gbrain doctor` reads the event log and reports: current circuit-breaker state, any resolver with > 3 consecutive failures, any resolver that hasn't fired within 3× its interval (freshness SLA like Garry's OpenClaw's `freshness-check.mjs` but built-in).
+`foresights doctor` reads the event log and reports: current circuit-breaker state, any resolver with > 3 consecutive failures, any resolver that hasn't fired within 3× its interval (freshness SLA like Garry's OpenClaw's `freshness-check.mjs` but built-in).
 
 ---
 
@@ -511,7 +511,7 @@ LLM never sees file paths, never writes files, never emits finished markdown.
 
 ---
 
-## 7. Integration with existing GBrain
+## 7. Integration with existing Foresights
 
 ### 7.1 Reuse (already polished)
 
@@ -566,7 +566,7 @@ Each phase ships independently, passes full E2E, is feature-flagged, and is reve
 - Migrate `src/commands/publish.ts` + `src/commands/backlinks.ts` to route through BrainWriter.
 - **Now** Garry's OpenClaw's "Philip Leung" hallucination is structurally impossible — LLM output passes through JSON-Schema validator before reaching Scaffolder.
 
-### Phase 3 — `gbrain integrity` command (human: ~0.5 wk / CC: ~2 h)
+### Phase 3 — `foresights integrity` command (human: ~0.5 wk / CC: ~2 h)
 - Ship the originally-scoped user-facing feature on top of the new foundation.
 - Uses Resolver SDK: `x_handle_to_tweet` + `url_reachable`.
 - Uses BrainWriter: all auto-repairs go through validated writes.
@@ -581,15 +581,15 @@ Each phase ships independently, passes full E2E, is feature-flagged, and is reve
 ### Phase 5 — Scheduler (human: ~2 wk / CC: ~8 h)
 - L3 core: `Scheduler`, `ScheduledResolver`, `DurableState`, circuit breaker, quiet-hours enforcer.
 - Migrate `src/commands/autopilot.ts` to a ScheduledResolver set.
-- Ship `gbrain schedule list|run|pause|tail` CLI for observability.
+- Ship `foresights schedule list|run|pause|tail` CLI for observability.
 
 ### Phase 6 — Port 5–8 OpenClaw resolvers (human: ~1.5 wk / CC: ~6 h)
 - `perplexity_query`, `text_to_entities`, `mistral_ocr_pdf`, `x_search_all`, `x_user_to_tweets`, `gmail_query_to_threads`, `calendar_date_to_events`.
 - Each ships as YAML + TS module under `resolvers/builtin/` — **proof of the plugin format.**
 
 ### Phase 7 — OpenClaw Adoption Integration (human: ~1 wk / CC: ~4 h)
-- Write `docs/openclaw/ADOPTION.md` showing your OpenClaw how to replace its 69 bespoke scripts with calls to `gbrain registry.resolve(...)`.
-- Ship a `gbrain claw-bridge` subcommand that proxies Garry's OpenClaw's current script invocations to the resolver registry — zero-edit adoption path.
+- Write `docs/openclaw/ADOPTION.md` showing your OpenClaw how to replace its 69 bespoke scripts with calls to `foresights registry.resolve(...)`.
+- Ship a `foresights claw-bridge` subcommand that proxies Garry's OpenClaw's current script invocations to the resolver registry — zero-edit adoption path.
 - **This is the test of the north star.** If your OpenClaw can stand up a 1-line shim and drop `scripts/x-api-client.mjs`, the abstraction succeeded.
 
 Total: human: ~10 weeks / CC: ~42 hours / calendar with single implementer: ~3–4 weeks.
@@ -693,12 +693,12 @@ For each OpenClaw pattern we port (e.g. X-handle → tweet URL), a regression te
 
 ## 11. Open Questions (flagged for CEO re-review)
 
-1. **Scope shape.** Is this the right four-layer decomposition, or are some layers better left to OpenClaw (e.g. Scheduling lives above GBrain, not in it)?
-2. **Phase 3 user-value break.** Does Phase 3 (user-visible `gbrain integrity`) ship early enough, or do we need an even smaller MVP?
+1. **Scope shape.** Is this the right four-layer decomposition, or are some layers better left to OpenClaw (e.g. Scheduling lives above Foresights, not in it)?
+2. **Phase 3 user-value break.** Does Phase 3 (user-visible `foresights integrity`) ship early enough, or do we need an even smaller MVP?
 3. **LLM-as-resolver.** Should `text_to_entities` be a Resolver, or does that blur the "code vs LLM" line the invariant relies on?
 4. **Plugin format.** YAML + TS module (§3.5) vs. pure TS module with decorator-style metadata. Latter is more type-safe; former is more discoverable.
 5. **Cross-resolver transactions.** Do we support "atomic fetch-from-Perplexity + write-to-brain" at the L2 layer? Current design says yes; implementation is tricky (Perplexity call isn't rollbackable).
-6. **OpenClaw bridge scope.** Phase 7 `gbrain claw-bridge` — is that worth a phase of its own, or should adoption be documentation-only?
+6. **OpenClaw bridge scope.** Phase 7 `foresights claw-bridge` — is that worth a phase of its own, or should adoption be documentation-only?
 7. **Completeness rubric coverage.** Do we define rubrics for all 9 PageTypes upfront, or ship people/company/meeting first and extend incrementally?
 8. **Budget config UX.** Hard daily cap is strict; should we also expose a soft-cap warning mode, and how is the cap set (env var? config file? prompt on first use?)
 9. **Backwards compat.** `src/commands/publish.ts` and `src/commands/backlinks.ts` have been running cleanly for weeks. Refactoring through BrainWriter carries migration risk. Acceptable?
@@ -710,9 +710,9 @@ For each OpenClaw pattern we port (e.g. X-handle → tweet URL), a regression te
 
 The design succeeds iff:
 
-- [ ] A user can add a new resolver by dropping a YAML + TS module in `~/.gbrain/resolvers/` without editing GBrain source.
+- [ ] A user can add a new resolver by dropping a YAML + TS module in `~/.gbrain/resolvers/` without editing Foresights source.
 - [ ] Your OpenClaw can delete `scripts/x-api-client.mjs` and replace all callers with 1-line `await registry.resolve('x_handle_to_tweet', ...)`.
 - [ ] No brain page can be written with a bare tweet reference, a missing back-link, or an unverified URL (validators catch it pre-commit).
-- [ ] Running `gbrain integrity --auto --confidence 0.8` over a real brain fixes ≥1,000 of the 1,424 known bare-tweet citations without human review.
+- [ ] Running `foresights integrity --auto --confidence 0.8` over a real brain fixes ≥1,000 of the 1,424 known bare-tweet citations without human review.
 - [ ] Full E2E test suite passes on both PGLite + Postgres engines.
 - [ ] The Knowledge Runtime ships across 7 phases with each phase individually shippable and reversible.

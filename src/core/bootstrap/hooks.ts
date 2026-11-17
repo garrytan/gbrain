@@ -12,7 +12,7 @@
  * never touched. Writes are atomic (tmp + rename) with a `.bak` of the
  * previous file; a parse-broken existing file ABORTS the write with
  * fix-and-re-run instructions (fail-closed, matching removal's stance — a
- * rewrite could drop permissions/allowlist entries gbrain cannot parse) [G5].
+ * rewrite could drop permissions/allowlist entries foresights cannot parse) [G5].
  *
  * MCP registration helpers BUILD ARGV ONLY — the bootstrap dispatcher execs
  * them (and records the registration in the install receipt). Precedent:
@@ -60,7 +60,7 @@ export interface ClaudeHookEnv {
   /** Set only for --isolated installs (PARENT dir; config appends `.gbrain`). */
   GBRAIN_HOME?: string;
   /**
-   * 'harness' on #4043 harness-mode wiring: `gbrain hook` yields when the
+   * 'harness' on #4043 harness-mode wiring: `foresights hook` yields when the
    * lane is harness AND the cwd carries a workspace bootstrap install, so
    * the same event never fires twice (Claude Code merges settings scopes).
    */
@@ -75,9 +75,9 @@ export interface ClaudeHookEnv {
 }
 
 export interface WriteClaudeHooksOpts {
-  /** Absolute path to the gbrain binary (GUI hosts inherit no PATH) [CX-P1.4]. */
+  /** Absolute path to the foresights binary (GUI hosts inherit no PATH) [CX-P1.4]. */
   gbrainBin: string;
-  /** Absolute trusted-directory launcher each command starts gbrain through (src/core/setup/hook-launcher.ts). */
+  /** Absolute trusted-directory launcher each command starts foresights through (src/core/setup/hook-launcher.ts). */
   hookLauncher?: string;
   env: ClaudeHookEnv;
   /** Per-event timeout override (SECONDS — the settings-file unit). */
@@ -104,7 +104,7 @@ export interface WriteClaudeHooksOpts {
    */
   backupStrategy?: 'fixed' | 'timestamped';
   /**
-   * Refuse when a gbrain entry with a DIFFERENT marker already wires one of
+   * Refuse when a foresights entry with a DIFFERENT marker already wires one of
    * our target events in this file (harness lane: a workspace install or a
    * differently-scoped harness install owns it — double-wiring would fire the
    * same hook twice per event) [C6].
@@ -123,7 +123,7 @@ export interface WriteClaudeHooksOpts {
    */
   identity?: HarnessHookIdentity;
   /**
-   * Hash-keyed ownership (`gbrain setup`): when set, an entry is ours only
+   * Hash-keyed ownership (`foresights setup`): when set, an entry is ours only
    * when its `hookEntryHash` is in this set. A marker match alone never
    * replaces or removes an entry, so a user-edited marked hook survives and
    * is listed in `preserved`; an unmarked entry with an owned hash (the host
@@ -224,7 +224,7 @@ function shellQuote(arg: string): string {
 
 /** Render the hook command string: `env K=V… [<launcher>] <bin> hook <subcommand>`.
  * `launcher` is the trusted-directory hook launcher (src/core/setup/hook-launcher.ts)
- * the setup and turn-rule lanes start gbrain through. The harness lane
+ * the setup and turn-rule lanes start foresights through. The harness lane
  * recognizes its unmarked entries by parsing exactly this shape back
  * (parseClaudeHookCommand), so the two change together. */
 export function buildClaudeHookCommand(
@@ -288,9 +288,9 @@ export function parseClaudeHookCommand(command: string): { gbrainBin: string; su
  *    no GBRAIN_HOME: the harness lane never renders one). `'any'` skips the
  *    identity check, for guards that only ask whether a harness hook exists.
  *  - `unowned`: no marker key and it looks like a harness hook (lane token +
- *    `hook`) under an event gbrain wires, but it was edited or belongs to
+ *    `hook`) under an event foresights wires, but it was edited or belongs to
  *    another install. Never deleted.
- * Null for everything else (other markers, foreign hooks, events gbrain does
+ * Null for everything else (other markers, foreign hooks, events foresights does
  * not wire). `why` names the match, never the command text.
  */
 export function classifyHarnessHook(
@@ -306,7 +306,7 @@ export function classifyHarnessHook(
   if (!sub || !/(?:^|[\s'])GBRAIN_HOOK_LANE=harness(?=[\s']|$)/.test(e.command) || !/\shook(?:\s|$)/.test(e.command)) return null;
   const parsed = parseClaudeHookCommand(e.command);
   if (!parsed || (parsed.launcher !== undefined && !isHookLauncherPath(parsed.launcher)) || parsed.env.GBRAIN_HOOK_LANE !== 'harness' || parsed.subcommand !== sub) {
-    return { ownership: 'unowned', why: `not the exact \`hook ${sub}\` command gbrain writes (edited or extended)` };
+    return { ownership: 'unowned', why: `not the exact \`hook ${sub}\` command foresights writes (edited or extended)` };
   }
   if (identity === 'any') return { ownership: 'command', why: 'harness hook command shape' };
   if (parsed.env.GBRAIN_HOME !== undefined) return { ownership: 'unowned', why: 'carries GBRAIN_HOME, which this install never writes' };
@@ -362,7 +362,7 @@ export function parseSeatFlags(rest: string[], harness?: string): { seat?: strin
   if (harness === 'codex') {
     return { seat, note: `note: --seat applies to Claude Code hooks; codex sessions are credited to their CODEX_HOME seat (home-<hash>) unless GBRAIN_SEAT=${seat} is set in the environment codex runs in.` };
   }
-  if (harness === 'opencode') return { seat, note: 'note: --seat has no effect for opencode — gbrain installs no opencode session-capture hooks.' };
+  if (harness === 'opencode') return { seat, note: 'note: --seat has no effect for opencode — foresights installs no opencode session-capture hooks.' };
   if (harness === 'claude-code' && detectExecutionEnvironment() === 'cloud-sandbox') {
     return { seat, note: `note: --seat is not written to the COMMITTED hook carrier (it travels with the repo) — set GBRAIN_SEAT=${seat} in this cloud environment's variables instead.` };
   }
@@ -397,7 +397,7 @@ export function claudeCommittedSettingsPath(workspaceDir: string): string {
 /**
  * The COMMITTED carrier's command [D12]: PATH-resolved and fail-open. No
  * absolute binary path — the committed file travels between machines and
- * cloud sessions; wherever gbrain is not installed the hook exits 0 silently
+ * cloud sessions; wherever foresights is not installed the hook exits 0 silently
  * instead of erroring every turn.
  */
 export function buildPortableClaudeHookCommand(event: ClaudeHookEvent, env: ClaudeHookEnv): string {
@@ -418,7 +418,7 @@ export function buildPortableClaudeHookCommand(event: ClaudeHookEvent, env: Clau
  * exact-match check is agnostic to the (operator-chosen) source id. Returns
  * null when the command isn't shaped like ours. */
 function extractHookSource(command: string): string | null {
-  const m = /command -v gbrain >\/dev\/null 2>&1 && env GBRAIN_SOURCE=('[^']*'|[^ ]+) gbrain hook /.exec(command);
+  const m = /command -v (?:foresights|gbrain) >\/dev\/null 2>&1 && env GBRAIN_SOURCE=('[^']*'|[^ ]+) (?:foresights|gbrain) hook /.exec(command);
   if (!m) return null;
   const raw = m[1]!;
   return raw.startsWith("'") ? raw.slice(1, -1).replace(/'\\''/g, "'") : raw;
@@ -442,10 +442,10 @@ export function committedHookEvents(workspaceDir: string): Set<ClaudeHookEvent> 
             (h) =>
               isOurs(h) &&
               // A committed file is repo-contributor-writable: a marker + a
-              // bare `includes('gbrain hook')` substring is spoofable
+              // bare `includes('foresights hook')` substring is spoofable
               // (`evil; # gbrain hook` suppresses the real local install AND
               // runs attacker code). Require the EXACT portable-command shape
-              // this event would render — the anchored `command -v gbrain …`
+              // this event would render — the anchored `command -v foresights …`
               // guard + `|| exit 0` structure a foreign command can't fake.
               typeof (h as HookCommandEntry).command === 'string' &&
               (h as HookCommandEntry).command === buildPortableClaudeHookCommand(event, {
@@ -469,7 +469,7 @@ function isOurs(entry: unknown, marker: string = GBRAIN_HOOK_MARKER_VALUE): bool
   );
 }
 
-/** True when the entry carries the gbrain marker KEY with any OTHER value (the skill-resolver lane's never double-fires a context hook, so it never counts). */
+/** True when the entry carries the foresights marker KEY with any OTHER value (the skill-resolver lane's never double-fires a context hook, so it never counts). */
 function isForeignGbrainMarked(entry: unknown, marker: string): boolean {
   if (typeof entry !== 'object' || entry === null) return false;
   const v = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
@@ -560,7 +560,7 @@ interface LoadedSettings {
 /**
  * Parse the existing settings file. Absent/empty → `{}`. Parse error →
  * THROW, fail-closed [G5]: the file may carry permissions/allowlist entries
- * gbrain cannot see, so replacing it with a fresh file (the old behavior —
+ * foresights cannot see, so replacing it with a fresh file (the old behavior —
  * backup + start clean) silently dropped the user's live settings. Removal
  * (`removeClaudeHooks`) already refuses to touch what it cannot parse; the
  * write path now matches that stance. The user fixes the JSON, re-runs, and
@@ -589,8 +589,8 @@ function loadSettings(path: string): LoadedSettings {
   } catch (e) {
     throw new Error(
       `${path} is not valid JSON (${(e as Error).message}) — refusing to rewrite a settings file ` +
-        `gbrain cannot parse (it may carry your permissions/allowlist entries). Fix the JSON by ` +
-        `hand, then re-run \`gbrain bootstrap hooks --harness claude-code --repair\` ` +
+        `foresights cannot parse (it may carry your permissions/allowlist entries). Fix the JSON by ` +
+        `hand, then re-run \`foresights bootstrap hooks --harness claude-code --repair\` ` +
         `(the structural merge preserves your settings).`,
     );
   }
@@ -599,11 +599,11 @@ function loadSettings(path: string): LoadedSettings {
 // ── Writers [G5, CX2-17] ────────────────────────────────────────────────────
 
 /**
- * Structural-merge gbrain's hook entries into an EXPLICIT settings file
+ * Structural-merge foresights's hook entries into an EXPLICIT settings file
  * (workspace settings.local.json or user-scope ~/.claude/settings.json).
  * Idempotent: prior same-marker entries are removed before the fresh set is
  * appended (run twice → one entry per event). Foreign hooks, other-marker
- * gbrain entries, permissions, and every other key survive byte-for-byte at
+ * foresights entries, permissions, and every other key survive byte-for-byte at
  * the structural level.
  */
 export function writeClaudeHooksAt(
@@ -638,7 +638,7 @@ export function writeClaudeHooksAt(
 
   const events = opts.events ?? [...CLAUDE_HOOK_EVENTS];
 
-  // [C6] Same command double-fire guard: refuse when a gbrain entry carrying a
+  // [C6] Same command double-fire guard: refuse when a foresights entry carrying a
   // DIFFERENT marker already wires one of our target events in this file —
   // Claude Code would run both.
   if (opts.refuseOnForeignGbrainMarker) {
@@ -652,9 +652,9 @@ export function writeClaudeHooksAt(
           if (isForeignGbrainMarked(entry, marker)) {
             const foreign = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
             throw new Error(
-              `${settingsPath} already wires hooks.${event} under gbrain marker "${String(foreign)}" — ` +
+              `${settingsPath} already wires hooks.${event} under foresights marker "${String(foreign)}" — ` +
                 `refusing to double-wire the same hook (both entries would fire every event). ` +
-                `Remove the other install first (gbrain bootstrap harness --remove, or gbrain bootstrap uninstall).`,
+                `Remove the other install first (foresights bootstrap harness --remove, or foresights bootstrap uninstall).`,
             );
           }
         }
@@ -688,7 +688,7 @@ export function writeClaudeHooksAt(
     removedPrior += removed;
     if (unowned > 0) {
       notes.push(
-        `hooks.${event} in ${settingsPath} holds an entry that looks like gbrain's harness hook but is not this install's ` +
+        `hooks.${event} in ${settingsPath} holds an entry that looks like foresights's harness hook but is not this install's ` +
           `exact command (code harness_hook_unowned); left in place — if it is a leftover it fires next to the new entry, so delete it by hand.`,
       );
     }
@@ -843,7 +843,7 @@ export function writeCommittedClaudeHooks(
  * Remove ONLY entries carrying the given marker [G5]. A parse-broken file is
  * left untouched (removal must never destroy what it cannot read) — the note
  * says so. Event arrays we emptied lose their key; an emptied hooks object
- * loses its key; foreign structure (including other-marker gbrain entries)
+ * loses its key; foreign structure (including other-marker foresights entries)
  * survives.
  */
 export function removeClaudeHooksAt(
@@ -866,7 +866,7 @@ export function removeClaudeHooksAt(
   } catch (e) {
     return nothing(
       `WARNING: ${settingsPath} is not valid JSON (${(e as Error).message}); ` +
-        `left untouched — remove gbrain hook entries by hand or fix the JSON and re-run.`,
+        `left untouched — remove foresights hook entries by hand or fix the JSON and re-run.`,
     );
   }
 
@@ -948,7 +948,7 @@ export function scanHarnessHookCarrier(
   return { state: 'ok', events };
 }
 
-/** True when an event's matcher groups carry any gbrain hook: an entry with a
+/** True when an event's matcher groups carry any foresights hook: an entry with a
  * `_gbrain` marker key, or an unmarked harness hook command (the host may have
  * dropped its marker). hook_carrier_overlap counts carriers with this. */
 export function groupsCarryGbrainHook(groups: unknown, event: string): boolean {
@@ -1119,7 +1119,7 @@ export function removePermissionsAllowEntry(
 export interface ClaudeMcpRegistration {
   /** MCP server name; default 'gbrain'. */
   name?: string;
-  /** Absolute path to the gbrain binary. */
+  /** Absolute path to the foresights binary. */
   gbrainBin: string;
   /** Registration scope — a consent question, never a default the user didn't pick [G16/D1]. */
   scope: 'project' | 'user';

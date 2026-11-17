@@ -3,9 +3,9 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  * Engine migration: transfer brain data between PGLite and Postgres.
  *
  * Usage:
- *   gbrain migrate --to supabase [--url <connection_string>]   (PGLite -> Postgres: graduation, src/commands/migrate-graduation.ts)
- *   gbrain migrate --to pglite [--path <db_path>]
- *   gbrain migrate --to <engine> --force  (overwrite non-empty target)
+ *   foresights migrate --to supabase [--url <connection_string>]   (PGLite -> Postgres: graduation, src/commands/migrate-graduation.ts)
+ *   foresights migrate --to pglite [--path <db_path>]
+ *   foresights migrate --to <engine> --force  (overwrite non-empty target)
  */
 
 import { opError } from '../core/ops/contract.ts';
@@ -41,19 +41,19 @@ interface MigrateOpts {
 function parseArgs(args: string[]): MigrateOpts {
   const toIdx = args.indexOf('--to');
   if (toIdx === -1 || !args[toIdx + 1]) {
-    throw opError('invalid_params', 'gbrain migrate needs --to <postgres|supabase|pglite>.',
-      'Usage: gbrain migrate --to <postgres|supabase|pglite> [--url <url>] [--path <path>] [--force]. Example: gbrain migrate --to pglite --path ~/.gbrain/brain.pglite');
+    throw opError('invalid_params', 'foresights migrate needs --to <postgres|supabase|pglite>.',
+      'Usage: foresights migrate --to <postgres|supabase|pglite> [--url <url>] [--path <path>] [--force]. Example: foresights migrate --to pglite --path ~/.gbrain/brain.pglite');
   }
 
   const targetRaw = args[toIdx + 1];
   const targetEngine = targetRaw === 'supabase' ? 'postgres' : targetRaw as 'postgres' | 'pglite';
   if (targetEngine !== 'postgres' && targetEngine !== 'pglite') {
     throw opError('invalid_params', `Unknown target engine: "${targetRaw}". Use postgres (alias supabase) or pglite.`,
-      'Usage: gbrain migrate --to <postgres|supabase|pglite> [--url <url>] [--path <path>] [--force].',
-      { why: `gbrain migrate moves a brain between its two engines, postgres and pglite; "${targetRaw}" is neither.`,
+      'Usage: foresights migrate --to <postgres|supabase|pglite> [--url <url>] [--path <path>] [--force].',
+      { why: `foresights migrate moves a brain between its two engines, postgres and pglite; "${targetRaw}" is neither.`,
         fix: { argv: ['gbrain', 'migrate', '--to', '<engine>'], inputs: [{ name: 'engine', how: 'postgres (alias supabase) or pglite, whichever engine the user wants to move to.' }],
           consent: [], actor: 'agent', requires_exclusive: true, verify: { argv: ['gbrain', 'engine', 'status', '--json'] },
-          why: 'Names an engine gbrain supports.' } });
+          why: 'Names an engine foresights supports.' } });
   }
 
   const urlIdx = args.indexOf('--url');
@@ -916,7 +916,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   await assertLegacyEngineMigration(sourceEngine, { side: 'source', ...migration });
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init');
+    console.error('No brain configured. Run: foresights init');
     process.exit(1);
   }
 
@@ -1119,7 +1119,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
         const key = f.source_id === 'default' ? f.slug : `${f.source_id}::${f.slug}`;
         console.error(`  - ${key}: ${f.reason}`);
       }
-      console.error('Re-run `gbrain migrate` to retry the failed pages (already-copied pages resume via the manifest).');
+      console.error('Re-run `foresights migrate` to retry the failed pages (already-copied pages resume via the manifest).');
       // Non-fatal so the run still copies links + config for everything that
       // DID land, but the process must exit non-zero — a partial migration
       // must never look identical to a clean one.
@@ -1164,7 +1164,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       if (factsResult.failed.length > 10) {
         console.error(`  ... and ${factsResult.failed.length - 10} more`);
       }
-      console.error('Re-run `gbrain migrate` to retry (facts re-copy from scratch each run).');
+      console.error('Re-run `foresights migrate` to retry (facts re-copy from scratch each run).');
       // Same contract as page failures: the run keeps going so everything
       // else lands, but it must exit non-zero and must not flip the config.
       setCliExitVerdict(1);
@@ -1189,7 +1189,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // leaves the target's data incomplete; auto-switching
     // every subsequent `gbrain` invocation onto that incomplete target would
     // (a) make the failure invisible behind otherwise-normal usage and (b)
-    // break the natural retry — `gbrain migrate --to X` again would hit the
+    // break the natural retry — `foresights migrate --to X` again would hit the
     // "Already using X engine" guard even though the migration never actually
     // finished. Leaving the file-plane config untouched keeps the source the
     // active engine, so a retry (which resumes via the still-intact manifest)
@@ -1205,7 +1205,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       console.log(`Projections: ${drained.rebuilt} rebuilt, ${drained.superseded} superseded, ${drained.failed.length} failed, ${drained.remaining} still queued.`);
       if (projectionsFailed) {
         for (const f of drained.failed.slice(0, 10)) console.error(`  - ${f.source_id}/${f.slug}: ${f.reason}`);
-        console.error('The active engine was NOT switched: the target has pages whose text projection did not rebuild. Fix them (`gbrain projections drain` on the target names each next step), then re-run `gbrain migrate` to resume.');
+        console.error('The active engine was NOT switched: the target has pages whose text projection did not rebuild. Fix them (`foresights projections drain` on the target names each next step), then re-run `foresights migrate` to resume.');
         setCliExitVerdict(1);
       }
     }
@@ -1220,12 +1220,12 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       };
       saveConfig(newConfig);
       // An exported connection-string env var overrides the file config for
-      // every gbrain process (including the relaunched daemon), which would
+      // every foresights process (including the relaunched daemon), which would
       // silently keep the whole brain on the OLD engine after this flip.
       const envUrl = effectiveEnvDatabaseUrl();
       if (envUrl && envUrl !== targetConfig.database_url) {
         console.warn('WARNING: a DATABASE_URL-style env var is exported and does not match the migration target.');
-        console.warn('It overrides config.json for every gbrain process — unset it (shell profile, launchd plist, systemd unit) or the brain stays on the old engine.');
+        console.warn('It overrides config.json for every foresights process — unset it (shell profile, launchd plist, systemd unit) or the brain stays on the old engine.');
       }
       // Clean up the resume manifest — only safe once nothing is left pending.
       clearManifest();
@@ -1276,7 +1276,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       loopRowsFailed > 0 ? `${loopRowsFailed} open-loop row(s) failed` : '',
     ].filter(Boolean).join('; ');
     console.log(`\nMigration completed with errors. ${parts}. See failure list above.`);
-    console.log(`Config NOT switched — still using engine: ${config.engine}. Re-run \`gbrain migrate --to ${opts.targetEngine}\` to retry; already-copied pages resume via the manifest.`);
+    console.log(`Config NOT switched — still using engine: ${config.engine}. Re-run \`foresights migrate --to ${opts.targetEngine}\` to retry; already-copied pages resume via the manifest.`);
   } else {
     console.log(`\nMigration complete. ${migrated} pages transferred.`);
     console.log(`Config updated to engine: ${opts.targetEngine}`);
@@ -1366,7 +1366,7 @@ async function verifyTarget(engine: BrainEngine, expectedPages: number, expected
     if (health.embed_coverage >= 0.9) {
       console.log(`  ok  embeddings: ${pct}% coverage, ${health.missing_embeddings} missing`);
     } else {
-      console.warn(`  WARN embeddings: ${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale`);
+      console.warn(`  WARN embeddings: ${pct}% coverage, ${health.missing_embeddings} missing. Run: foresights embed --stale`);
     }
   } catch (e) {
     console.warn(`  WARN embeddings: could not measure (${e instanceof Error ? e.message : String(e)})`);
@@ -1379,11 +1379,11 @@ async function verifyTarget(engine: BrainEngine, expectedPages: number, expected
     if (schemaVersion >= LATEST_VERSION) {
       console.log(`  ok  schema: version ${schemaVersion}`);
     } else {
-      console.warn(`  WARN schema: version ${schemaVersion} (latest: ${LATEST_VERSION}). Run: gbrain apply-migrations --yes`);
+      console.warn(`  WARN schema: version ${schemaVersion} (latest: ${LATEST_VERSION}). Run: foresights apply-migrations --yes`);
     }
   } catch {
     console.warn('  WARN schema: version could not be read');
   }
 
-  console.log('  Full health check: gbrain doctor');
+  console.log('  Full health check: foresights doctor');
 }

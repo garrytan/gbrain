@@ -9,7 +9,7 @@ import { googleApiAccessFix } from '../../../core/google/api-access.ts';
  * #7073: Google sources whose last sweep could not reach a service because
  * its API is disabled for the OAuth project or its scope was not granted
  * (`api_access` in connector state). Zero-network: it reads the stored
- * result; `gbrain google status` and `gbrain google setup` probe live. One
+ * result; `foresights google status` and `foresights google setup` probe live. One
  * finding names every blocked service with its project and enable link.
  */
 export async function googleApiAccessCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
@@ -33,7 +33,7 @@ export async function googleApiAccessCheck(engine: BrainEngine, sourceIds?: stri
     return {
       name: 'google_api_access', status: 'warn', details,
       message: blocked.map((b) => `Google source ${b.source_id} (${b.account}) could not reach ${b.problems.length} service(s) at its last sync: ${b.problems.map(describe).join('; ')}.`).join(' ')
-        + ' Those services import nothing until this is fixed; gbrain google status re-checks live.',
+        + ' Those services import nothing until this is fixed; foresights google status re-checks live.',
       fix: googleApiAccessFix(first.account, first.problems),
     };
   } catch (error) {

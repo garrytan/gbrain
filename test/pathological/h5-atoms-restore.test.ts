@@ -1,6 +1,6 @@
 /**
  * D-24 (#7013): atoms a managed re-extraction retired when its model returned no atoms (`retired_by: managed-reextract`)
- * are restorable, preview-first, with `gbrain repair atoms-restore`, and the purge holds them meanwhile.
+ * are restorable, preview-first, with `foresights repair atoms-restore`, and the purge holds them meanwhile.
  *
  * Protects: (a) the preview lists exactly the latest retired generation of a live origin that no later extraction
  * replaced, and never an older generation a later non-empty extraction replaced, an atom with a live replacement, a
@@ -177,7 +177,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const doctor = await atomRetirementsRestorableCheck(engine, [sourceId]);
         expect(doctor.status).toBe('warn');
         expect(doctor.details).toMatchObject({ count: 3, origins: 2, source_ids: [sourceId] });
-        expect(doctor.message).toContain(`gbrain repair atoms-restore --source ${sourceId} --json`);
+        expect(doctor.message).toContain(`foresights repair atoms-restore --source ${sourceId} --json`);
         expect((doctor.fix as { argv: string[] }).argv).toEqual(['gbrain', 'repair', 'atoms-restore', '--source', sourceId, '--json']);
 
         const preview = await repair(engine, sourceId);
@@ -253,7 +253,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect(explicitRepairNotices().map(notice => notice.kind)).toContain('atoms-restore');
         const waves = (await runWaveChecks(engine, { sourceIds: [sourceId] })).filter(finding => finding.spec.id === 'atom_retirements_restorable');
         expect(classifyWaveFindings([], waves, { repairs: [], repairs_skipped: [] })).toEqual([expect.objectContaining({
-          check_id: 'atom_retirements_restorable', class: 'explicit_kind_required', repair_kind: 'atoms-restore', command: `gbrain repair atoms-restore --source ${sourceId}` })]);
+          check_id: 'atom_retirements_restorable', class: 'explicit_kind_required', repair_kind: 'atoms-restore', command: `foresights repair atoms-restore --source ${sourceId}` })]);
 
         await engine.putPage('notes/plain-example', { type: 'note', title: 'Plain', compiled_truth: 'A plain page.' }, { sourceId });
         await engine.softDeletePage('notes/plain-example', { sourceId });

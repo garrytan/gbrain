@@ -2,7 +2,7 @@
  * GBRA-467: every path that runs schema migrations takes one lock, and it holds through a transaction-mode
  * PgBouncer (this file is in scripts/e2e-backend-matrix.txt, so it also runs through the pooler).
  *
- * Before the fix, `gbrain apply-migrations` called runMigrations() under its orchestration lease only, while every
+ * Before the fix, `foresights apply-migrations` called runMigrations() under its orchestration lease only, while every
  * process start ran initSchema(), which took session advisory lock 42, so the two never excluded each other, in
  * one process or two. Through a transaction-mode pooler lock 42 did not exclude two initSchema() callers either:
  * a session lock lands on whichever server connection the statement got, and a second caller given the same one

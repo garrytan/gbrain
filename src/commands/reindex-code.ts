@@ -1,5 +1,5 @@
 /**
- * v0.21.0 Cathedral II Layer 13 (E2) — `gbrain reindex-code`.
+ * v0.21.0 Cathedral II Layer 13 (E2) — `foresights reindex-code`.
  *
  * Explicit backfill for v0.19.0 → v0.21.0 brains. Layer 12's
  * `sources.chunker_version` gate forces a re-walk next sync on any source
@@ -84,7 +84,7 @@ export interface ReindexCodeResult {
  * Voyage publishes voyage-code-3, a code-specialized embedding model that
  * outperforms their general flagships on code retrieval. Per-worktree code
  * brains (Topology 3) are pure source-code, so the recommendation is clean.
- * The nudge surfaces this from `gbrain reindex --code` on dry-run AND
+ * The nudge surfaces this from `foresights reindex --code` on dry-run AND
  * execute paths so an agent sees it before spending Anthropic/OpenAI tokens.
  *
  * Allowlist matches against the BARE model name (what getEmbeddingModelName()
@@ -114,8 +114,8 @@ export function shouldNudgeCodeModel(bareModelName: string | undefined | null): 
 function printCodeModelNudge(decision: Extract<NudgeDecision, { shouldNudge: true }>): void {
   process.stderr.write(
     `[reindex-code] Configured embedding model is \`${decision.currentModel}\`. For pure code retrieval, Voyage's code-tuned \`voyage-code-3\` typically outperforms general-purpose models. Switch:\n` +
-      `  gbrain config set embedding_model ${decision.recommendedModel}\n` +
-      `  gbrain config set embedding_dimensions 1024\n` +
+      `  foresights config set embedding_model ${decision.recommendedModel}\n` +
+      `  foresights config set embedding_dimensions 1024\n` +
       `Suppress with GBRAIN_NO_CODE_MODEL_NUDGE=1.\n`,
   );
 }
@@ -447,7 +447,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
       }
       const n = v ? parseFloat(v) : NaN;
       if (!Number.isFinite(n) || n <= 0) {
-        console.error(`gbrain reindex-code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
+        console.error(`foresights reindex-code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
         process.exit(2);
       }
       maxCostUsd = n;

@@ -176,7 +176,7 @@ const takes_scorecard: Operation = {
     const grouped = p.group_by !== undefined || p.min_n !== undefined;
     if (grouped && ctx.remote !== false) {
       throw opError('scorecard_group_by_local_only', 'takes_scorecard: group_by and min_n read the private forecast journal and run only from the trusted local CLI.',
-        'Omit group_by and min_n, or ask the brain owner to run gbrain takes scorecard --group-by on the brain host.');
+        'Omit group_by and min_n, or ask the brain owner to run foresights takes scorecard --group-by on the brain host.');
     }
     if (grouped && p.group_by !== 'holder' && p.group_by !== 'source') {
       throw opError('invalid_params', 'takes_scorecard: group_by must be holder or source.', 'Pass group_by: "holder" or "source".');
@@ -624,8 +624,8 @@ const takes_remove: Operation = {
   description:
     'Remove one take row from a page\'s takes fence and the takes table together. Local-only. ' +
     'Other rows keep their numbers. Refuses a resolved row, a row another row cites as "superseded by" it, ' +
-    'and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). ' +
-    'CLI: `gbrain takes remove <slug> --row N`.',
+    'and a row whose database copy disagrees with the fence (run `foresights takes rebuild <slug>` first). ' +
+    'CLI: `foresights takes remove <slug> --row N`.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
     ...MERGE_PRECONDITION_PARAMS,
@@ -646,8 +646,8 @@ const takes_remove: Operation = {
 };
 
 /**
- * W9F item 8: `gbrain takes rebuild <slug>` as an operation, so the CLI can
- * delegate it to a resident owner (`gbrain serve` holding PGLite) instead of
+ * W9F item 8: `foresights takes rebuild <slug>` as an operation, so the CLI can
+ * delegate it to a resident owner (`foresights serve` holding PGLite) instead of
  * waiting on the owner's lock. Same work as the local rebuild: the page's
  * takes index is rebuilt from its canonical fence (`extractTakes` rebuild;
  * on a managed brain `reextractCoordinated` publishes it, the integration
@@ -660,7 +660,7 @@ const takes_rebuild: Operation = {
   description:
     'Rebuild one page\'s takes index from the takes fence the page holds. Local-only. ' +
     'Rows whose number and claim still match keep their resolution; rows the index and the fence disagree on are re-inserted from the fence. ' +
-    'CLI: `gbrain takes rebuild <slug>`.',
+    'CLI: `foresights takes rebuild <slug>`.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: 'Page slug.' },

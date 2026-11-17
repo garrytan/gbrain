@@ -3,8 +3,8 @@
  *
  * Pure module — no engine I/O, no filesystem access. Consumed by:
  *   - `src/core/import-file.ts` — wires the gate into `importFromContent`
- *     so EVERY ingestion path inherits it (sync, gbrain import, put_page
- *     MCP op, gbrain capture, POST /ingest webhook via ingest_capture).
+ *     so EVERY ingestion path inherits it (sync, foresights import, put_page
+ *     MCP op, foresights capture, POST /ingest webhook via ingest_capture).
  *   - `src/commands/lint.ts` — surfaces matching content as `huge-page`
  *     + `scraper-junk` lint rules so brain-authors see issues in their
  *     source repo before sync.
@@ -280,9 +280,9 @@ export interface ProseAssessment {
 // and excluded from the denominator entirely (Codex #2 — a code-heavy doc
 // must not read as high-markup). The remaining strips count toward markup.
 const FENCED_CODE_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
-// gbrain's own facts/takes fences (#5822): their table cells are the page's
-// structured facts, written by gbrain itself, so they are excluded like code.
-const GBRAIN_FENCE_RE = /<!--- gbrain:([a-z_-]+):begin -->[\s\S]*?<!--- gbrain:\1:end -->/g;
+// foresights's own facts/takes fences (#5822): their table cells are the page's
+// structured facts, written by foresights itself, so they are excluded like code.
+const GBRAIN_FENCE_RE = /<!--- (?:foresights|gbrain):([a-z_-]+):begin -->[\s\S]*?<!--- (?:foresights|gbrain):\1:end -->/g;
 const INLINE_CODE_RE = /`[^`\n]*`/g;
 const HTML_TAG_RE = /<\/?[a-z][^>]*>/gi;
 const MD_IMAGE_RE = /!\[[^\]]*\]\([^)]*\)/g;
@@ -295,7 +295,7 @@ const MD_EMPHASIS_RE = /[*_~]{1,3}/g;
 const TABLE_PIPE_RE = /\|/g;
 
 /**
- * Pure prose-vs-markup assessment. Strips code and gbrain facts/takes fences (excluded from the ratio),
+ * Pure prose-vs-markup assessment. Strips code and foresights facts/takes fences (excluded from the ratio),
  * then measures how much of the REMAINING content is markup syntax vs real
  * sentences. Returns a ratio in [0, 1]; high = boilerplate/nav shape.
  *

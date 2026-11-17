@@ -3,7 +3,7 @@
 This compares `facts.attribution` on (candidate) and off (baseline) on the same build, 5d5375d43, which carries the
 extractor's speaker rule. The storage work that followed (`facts.attributed_to`, migration v204) also adds an
 `attributed_to` field to the extractor schema; that change was not part of this run. Both arms ran on the
-LongMemEval-S development questions through the decision kit's memory-qa facts lane. gbrain's conversation-facts
+LongMemEval-S development questions through the decision kit's memory-qa facts lane. foresights's conversation-facts
 extractor runs on the dated conversation pages, and a fixed reader answers from the saved facts of the top five
 retrieved sessions. This is a `dev` verdict, so it cannot set a default.
 

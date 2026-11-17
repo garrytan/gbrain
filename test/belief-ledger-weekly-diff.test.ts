@@ -1,5 +1,5 @@
 /**
- * W4 weekly change diff (10x plan, wave 4a): `delta {beliefs: true}` and `gbrain beliefs changes` answer "what changed this
+ * W4 weekly change diff (10x plan, wave 4a): `delta {beliefs: true}` and `foresights beliefs changes` answer "what changed this
  * week" as a cited belief diff from the belief ledger: before, after, cause and an evidence pointer per belief, netted over
  * the window. Each cell runs on PGLite and on Postgres when DATABASE_URL is set; forced probes show the cell can fail.
  */
@@ -282,7 +282,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       expect(brief((await changes(b, t0, t1, { remote: true })).changes)).toEqual([['take', 'removed', 'Acme will sell']]);
     }), 120_000);
 
-    test('gbrain beliefs changes prints the same diff for an entity and a --since window, and refuses a bad --since', () => brain(async b => {
+    test('foresights beliefs changes prints the same diff for an entity and a --since window, and refuses a bad --since', () => brain(async b => {
       await b.put(slug, beliefPage({ facts: ['Acme sells widgets'] }));
       const t0 = await at(b);
       await b.put(slug, beliefPage({ facts: ['Acme sells gadgets'] }));

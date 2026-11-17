@@ -1,5 +1,5 @@
 /**
- * `gbrain eval longmemeval --mode tokenmax` builds the per-chunk synopsis
+ * `foresights eval longmemeval --mode tokenmax` builds the per-chunk synopsis
  * vectors production builds for that mode (fake chat + embed transports; no
  * provider is called).
  *

@@ -10,7 +10,7 @@ const DOCS = 'docs/guides/write-refusals.md#owner_marker_missing';
  */
 export function ownerMarkerRestoreFix(sourceId: string, binding?: { root: string; epoch: string }): Action {
   const intent = (phase: string) => ['--admin-intent', `writer_transfer_${phase}`, '--expected-state', '<admin_state>'];
-  const adminState = { name: 'admin_state', how: `admin_state from gbrain sources writer status --source ${sourceId} --json on the owner host (read it again before the accept)` };
+  const adminState = { name: 'admin_state', how: `admin_state from foresights sources writer status --source ${sourceId} --json on the owner host (read it again before the accept)` };
   const prepare = ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--self-transfer'];
   return { argv: [...prepare, ...intent('prepare')], preview_argv: [...prepare, '--dry-run'], inputs: [adminState], consent: [], actor: 'host_admin', requires_exclusive: false, docs: DOCS,
     why: `Source ${sourceId}'s checkout lost its ownership marker (${PHYSICAL_ROOT_MARKER}) while the reservation beside it still names this owner. The self-transfer verifies ownership and re-creates the marker for this same root on this host; never create or copy the marker by hand.`,
@@ -31,8 +31,8 @@ export function ownerMarkerRestoreFix(sourceId: string, binding?: { root: string
 export function ownerMarkerMissingError(sourceId?: string, binding?: { root: string; epoch: string }): OperationError {
   const error = new OperationError('owner_marker_missing',
     `The ownership marker ${PHYSICAL_ROOT_MARKER} is missing from the checkout root, while the reservation beside the checkout still names this owner.`,
-    `On the brain host, read gbrain sources writer status${sourceId ? ` --source ${sourceId}` : ''} --json and note admin_state, then run the verified self-transfer `
-      + `(gbrain sources writer transfer prepare ${sourceId ?? '<source>'} --self-transfer, then transfer accept with the manifest it prints) to re-create the marker. Never create or copy the marker by hand.`, DOCS);
+    `On the brain host, read foresights sources writer status${sourceId ? ` --source ${sourceId}` : ''} --json and note admin_state, then run the verified self-transfer `
+      + `(foresights sources writer transfer prepare ${sourceId ?? '<source>'} --self-transfer, then transfer accept with the manifest it prints) to re-create the marker. Never create or copy the marker by hand.`, DOCS);
   error.fix = ownerMarkerRestoreFix(sourceId ?? '<source>', binding);
   return error;
 }

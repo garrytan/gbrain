@@ -4,7 +4,7 @@
  * Remote callers get lean rows by default (the projection lives in
  * src/core/search/lean-rows.ts). Two host-side escape hatches restore full
  * rows without any change on the client: the `mcp.result_rows: full` host
- * config (every remote caller), and the `X-Gbrain-Client` header gbrain's own
+ * config (every remote caller), and the `X-Gbrain-Client` header foresights's own
  * thin client sends (src/core/mcp-client.ts), so the CLI's renderers and
  * `--explain` keep every field. A caller can also pass `fields: "full"`.
  *
@@ -18,7 +18,7 @@ import type { GBrainConfig } from '../core/config.ts';
 
 export type ResultRowsMode = 'lean' | 'full';
 
-/** HTTP header gbrain's thin client sends on every request: `gbrain-remote-cli/<version>`. */
+/** HTTP header foresights's thin client sends on every request: `gbrain-remote-cli/<version>`. */
 export const GBRAIN_CLIENT_HEADER = 'X-Gbrain-Client';
 export const GBRAIN_THIN_CLIENT_NAME = 'gbrain-remote-cli';
 
@@ -26,7 +26,7 @@ export function parseResultRowsMode(v: unknown): ResultRowsMode | null {
   return v === 'lean' || v === 'full' ? v : null;
 }
 
-/** True when an `X-Gbrain-Client` header value names gbrain's thin client. */
+/** True when an `X-Gbrain-Client` header value names foresights's thin client. */
 export function isGbrainThinClient(header: string | null | undefined): boolean {
   return typeof header === 'string'
     && (header === GBRAIN_THIN_CLIENT_NAME || header.startsWith(`${GBRAIN_THIN_CLIENT_NAME}/`));

@@ -27,8 +27,8 @@ export async function connectorAccountMismatchCheck(engine: BrainEngine): Promis
       status: 'warn',
       message: `${found.length} connector source(s) stopped importing because their credential no longer resolves to the pinned account: ${listed}. `
         + 'Autopilot skips them until they are repinned, so nothing is retried in the background. '
-        + `Restore the credential for the pinned account, then run gbrain sync --source <id> (the sync prints the pinned and resolved accounts). `
-        + 'For a deliberate account change, add a new source for the new account and archive this one with gbrain sources archive <id>; its pages stay. '
+        + `Restore the credential for the pinned account, then run foresights sync --source <id> (the sync prints the pinned and resolved accounts). `
+        + 'For a deliberate account change, add a new source for the new account and archive this one with foresights sources archive <id>; its pages stay. '
         + `Changing the source's connector config also lets autopilot try it once more. See ${DOCS}.`,
       details: { code: 'connector_account_changed', sources: found.map(([id, m]) => ({ source_id: id, detail: m.detail, since: m.at })), docs: DOCS },
       fix: {

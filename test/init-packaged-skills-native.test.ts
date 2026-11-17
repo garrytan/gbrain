@@ -1,5 +1,5 @@
 /**
- * #5475 end to end: a fresh `gbrain init --pglite` publishes the packaged
+ * #5475 end to end: a fresh `foresights init --pglite` publishes the packaged
  * memory skills through the canonical skill-bundle journal. On Windows the
  * unguarded bundle directory flush and the exact POSIX mode compare failed
  * this step ("Skill publication requires bounded regular files ..."), so

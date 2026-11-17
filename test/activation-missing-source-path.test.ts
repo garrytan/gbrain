@@ -26,9 +26,9 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); });
 
-/** O-DX-2: each `gbrain …` command the prose hint names resolves and parses with the real CLI's flags. */
+/** O-DX-2: each `foresights …` command the prose hint names resolves and parses with the real CLI's flags. */
 function expectRunnableFix(fix: string) {
-  const invocations = [...fix.matchAll(/gbrain [^,;]+/g)].flatMap(m => gbrainInvocations(m[0].replace(/\.$/, '')));
+  const invocations = [...fix.matchAll(/(?:foresights|gbrain) [^,;]+/g)].flatMap(m => gbrainInvocations(m[0].replace(/\.$/, '')));
   expect(invocations.length).toBeGreaterThan(1);
   for (const inv of invocations) {
     expect(liveCliVerbs().has(inv.verb)).toBe(true);
@@ -57,8 +57,8 @@ test('an unclaimed source whose recorded directory vanished blocks activation by
     expect(error).toMatchObject({ code: 'source_changed', detail: 'source_path_missing', docs: 'docs/guides/write-refusals.md#activation_source_path_missing' });
     expect(error.message).toContain(`Source 'stale-example' records the local path ${gone}`);
     expect(error.message).not.toContain('ENOENT');
-    expect(error.suggestion).toContain('gbrain sources set-path stale-example <directory>');
-    expect(error.suggestion).toContain('gbrain sources remove stale-example --confirm-destructive');
+    expect(error.suggestion).toContain('foresights sources set-path stale-example <directory>');
+    expect(error.suggestion).toContain('foresights sources remove stale-example --confirm-destructive');
     expectRunnableFix(error.suggestion);
   }
   expect(await managedPersistenceEnabled(engine)).toBe(false);
@@ -74,7 +74,7 @@ test('a claimed source whose recorded local_path vanished names its claimed chec
     const error = await activatePersistence(engine, { confirmQuiesced: true, dryRun }).catch(e => e);
     expect(error).toMatchObject({ code: 'source_changed', detail: 'source_path_missing' });
     expect(error.message).toContain(`Source 'default-example' records the local path ${gone}`);
-    expect(error.suggestion).toContain(`gbrain sources set-path default-example ${JSON.stringify(claimed)}`);
+    expect(error.suggestion).toContain(`foresights sources set-path default-example ${JSON.stringify(claimed)}`);
     expectRunnableFix(error.suggestion);
   }
   const log = console.log; console.log = () => {};
@@ -96,7 +96,7 @@ test('#7630: a claimed source whose recorded local_path is relative names the re
     const error = await activatePersistence(engine, { confirmQuiesced: true, dryRun }).catch(e => e);
     expect(error).toMatchObject({ code: 'source_changed', detail: 'source_path_missing' });
     expect(error.message).toContain("Source 'default-example' records the relative local path .");
-    expect(error.suggestion).toContain(`gbrain sources set-path default-example ${JSON.stringify(claimed)}`);
+    expect(error.suggestion).toContain(`foresights sources set-path default-example ${JSON.stringify(claimed)}`);
   }
   expect(await managedPersistenceEnabled(engine)).toBe(false);
 }), 60_000);

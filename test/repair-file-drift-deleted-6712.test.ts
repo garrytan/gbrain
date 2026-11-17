@@ -1,5 +1,5 @@
 /**
- * #6712 wave: `gbrain repair file-drift` resolves a live page whose canonical file is gone from the last commit.
+ * #6712 wave: `foresights repair file-drift` resolves a live page whose canonical file is gone from the last commit.
  *
  * Before the wave, reconcile refused a missing canonical file ("repair does not restore files"), so the route every
  * missing-file receipt and held deletion named led nowhere. Now, preview-first and bound to the page revision and the
@@ -9,8 +9,8 @@
  *   - a file that reappears, or a page revision that moves, between preview and apply is `changed_since_preview` and
  *     nothing is written;
  *   - a file deleted only in the worktree (still committed at HEAD) is not file-drift's to resolve: the preview and
- *     the reconcile refusal route it to committing the deletion or `gbrain repair ghost-pages`, while a file gone from
- *     HEAD routes to `gbrain repair file-drift`.
+ *     the reconcile refusal route it to committing the deletion or `foresights repair ghost-pages`, while a file gone from
+ *     HEAD routes to `foresights repair file-drift`.
  * Real PGLite (and Postgres when DATABASE_URL is set) with a claimed canonical Git worktree; no seams.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -172,7 +172,7 @@ for (const backend of testBackends()) describe(`#6712 wave: deleted-file repair 
     const listed = (preview.listing ?? []).find(entry => entry.item === `${sourceId}:notes/route`)!;
     expect(listed.class).toBe('deletion_uncommitted');
     expect(listed.detail).toContain('commit the deletion');
-    expect(listed.detail).toContain(`gbrain repair ghost-pages --source ${sourceId}`);
+    expect(listed.detail).toContain(`foresights repair ghost-pages --source ${sourceId}`);
     expect(existsSync(join(root, 'notes/route.md'))).toBe(false);
 
     const refusal = async () => withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'),
@@ -181,13 +181,13 @@ for (const backend of testBackends()) describe(`#6712 wave: deleted-file repair 
     const uncommitted = await refusal();
     expect(uncommitted.code).toBe('source_changed');
     expect(uncommitted.suggestion).toContain('commit the deletion');
-    expect(uncommitted.suggestion).toContain(`gbrain repair ghost-pages --source ${sourceId}`);
+    expect(uncommitted.suggestion).toContain(`foresights repair ghost-pages --source ${sourceId}`);
     expect(uncommitted.suggestion).not.toContain('repair file-drift');
 
     git(root, 'rm', '-q', '--cached', '--', 'notes/route.md'); git(root, 'commit', '-q', '-m', 'commit the deletion');
     const committed = await refusal();
     expect(committed.code).toBe('source_changed');
-    expect(committed.suggestion).toContain(`gbrain repair file-drift --source ${sourceId} --slug notes/route --prefer database`);
+    expect(committed.suggestion).toContain(`foresights repair file-drift --source ${sourceId} --slug notes/route --prefer database`);
     expect(committed.suggestion).toContain('--prefer file');
   }), 240_000);
 

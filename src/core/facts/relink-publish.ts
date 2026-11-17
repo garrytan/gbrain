@@ -1,5 +1,5 @@
 /**
- * `gbrain facts relink` publication (#5836): one coordinator request per
+ * `foresights facts relink` publication (#5836): one coordinator request per
  * entity page moves unlinked facts onto that page's `## Facts` fence by id.
  *
  * The request runs through the same write coordinator remember uses on every
@@ -166,12 +166,12 @@ const classKey = (c: Classified[]) => JSON.stringify(c.map(x => x.action === 'li
 
 export async function prepareRelinkMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const intent = row.intent as unknown as RelinkIntent | null;
-  const rerun = `The next gbrain facts relink --source ${row.source_id} run re-plans from current state; preview it with --dry-run (no model calls, no writes).`;
+  const rerun = `The next foresights facts relink --source ${row.source_id} run re-plans from current state; preview it with --dry-run (no model calls, no writes).`;
   const changed = (message: string) => opError('revision_conflict', message,
     `${row.slug} or one of its facts changed while relink request ${row.request_id} was being prepared, so nothing was written. ${rerun}`);
   if (row.operation !== RELINK_OPERATION || intent?.kind !== 'relink_facts' || !Array.isArray(intent.facts) || row.authority.remote) {
     throw opError('permission_denied', 'Unsupported relink intent.',
-      `Request ${row.request_id} is not a trusted local relink this gbrain version can publish, so nothing was written. Facts relink runs only from gbrain facts relink on the brain host.`);
+      `Request ${row.request_id} is not a trusted local relink this foresights version can publish, so nothing was written. Facts relink runs only from foresights facts relink on the brain host.`);
   }
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || snapshot.page.id !== row.page_id) {
@@ -283,7 +283,7 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation, archived, local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [sourceId]);
   if (!source || source.archived) {
-    throw opError('source_changed', 'The relink source is not active.', `Source ${sourceId} is archived or not registered; run gbrain facts relink with --source set to an active source.`,
+    throw opError('source_changed', 'The relink source is not active.', `Source ${sourceId} is archived or not registered; run foresights facts relink with --source set to an active source.`,
       { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', why: 'Lists the registered sources and whether each is archived.', requires_exclusive: false } });
   }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });

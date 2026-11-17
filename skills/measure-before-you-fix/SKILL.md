@@ -5,7 +5,7 @@ description: |
   Before fixing a slow/stale/timeout alert, measure the step yourself.
   Kill the theory with a stopwatch, not a code change. Measure-first ops
   triage for temporal alerts (stale, timeout, freshness, wedged, N hours
-  behind) from gbrain doctor, autopilot, sync, and cron monitors — runs
+  behind) from foresights doctor, autopilot, sync, and cron monitors — runs
   BEFORE any timeout raise, threshold change, or pipeline rewrite.
 triggers:
   - "keeps timing out"
@@ -36,7 +36,7 @@ than the fix, and it frequently invalidates it. (Routing is a harness
 convention, not a mechanical guarantee — the contract below is the
 discipline that makes it stick.)
 
-On gbrain surfaces this covers: `gbrain doctor` staleness checks (e.g. sync
+On foresights surfaces this covers: `foresights doctor` staleness checks (e.g. sync
 freshness, cycle freshness), autopilot cycle alerts, the sync stall watchdog
 (`reason: 'stall_timeout'`), and any cron monitor built on top of them.
 
@@ -56,7 +56,7 @@ This skill guarantees:
 - The measurement targets the *specific* entity the alert named, not the
   aggregate (`--all` hides which member is slow).
 - The alert's threshold is compared against the authoritative one
-  (`gbrain doctor`'s warn/fail lines) before the system is declared unhealthy.
+  (`foresights doctor`'s warn/fail lines) before the system is declared unhealthy.
 - The verdict explicitly distinguishes "needs more time" from "is wedged" —
   they have opposite fixes.
 - Read-only: this skill changes no timeouts, thresholds, or code. It produces
@@ -72,12 +72,12 @@ This skill guarantees:
    blames, and run it with a clock:
 
    ```bash
-   time gbrain sync --source source-a --no-embed
+   time foresights sync --source source-a --no-embed
    ```
 
    Run it on the *specific* named entity, not the aggregate. A whole-brain run
    hides which member is slow; `--source source-a` answers the question.
-   Cross-check state with `gbrain sources status` (per-source sync lag).
+   Cross-check state with `foresights sources status` (per-source sync lag).
 
 3. **Compare measured vs. budgeted.** Grep every timeout in the wrapper, not
    just the default in the helper signature:
@@ -91,7 +91,7 @@ This skill guarantees:
 
 4. **Check the alert threshold against the authoritative one.** Before
    concluding the system is broken, confirm the alerter and the audit agree on
-   what "bad" means. `gbrain doctor`'s sync-freshness check defaults to
+   what "bad" means. `foresights doctor`'s sync-freshness check defaults to
    24h warn / 72h fail (env-overridable via `GBRAIN_SYNC_FRESHNESS_WARN_HOURS`
    / `GBRAIN_SYNC_FRESHNESS_FAIL_HOURS`); a cron monitor paging at 12h is
    speaking below the authoritative warn line. A monitor that *acts* early is
@@ -126,21 +126,21 @@ directly.
 - You revise the theory twice without taking a new measurement between revisions.
 - The alert says "no recovery in flight" — verify whether recovery is in fact
   running before believing it (`ps` for the worker; check the launch flag;
-  `gbrain jobs list` for queued work).
+  `foresights jobs list` for queued work).
 - "Already up to date" in the step output. That step is not your bottleneck.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain doctor` warns or fails: record the exact check and threshold before declaring the system unhealthy; the doctor's 24h/72h sync-freshness thresholds may differ from a cron monitor's.
-- `gbrain sources status` shows held items or `lock_busy`: that is the measured cause; fix it and re-measure instead of raising timeouts.
+- `foresights doctor` warns or fails: record the exact check and threshold before declaring the system unhealthy; the doctor's 24h/72h sync-freshness thresholds may differ from a cron monitor's.
+- `foresights sources status` shows held items or `lock_busy`: that is the measured cause; fix it and re-measure instead of raising timeouts.
 
 ## Anti-Patterns
 
 - **Raising a timeout to fix a stall.** If the step is genuinely hung, a bigger
   budget just hangs longer. Measure, then decide between "needs more time" and
-  "is wedged" — they have opposite fixes. (gbrain's sync stall watchdog makes
+  "is wedged" — they have opposite fixes. (foresights's sync stall watchdog makes
   the same distinction natively: it keys on forward progress, not elapsed time.)
 - **Rewriting a pipeline on an unmeasured starvation theory.** Splitting steps to
   fix starvation that does not exist adds surface area and fixes nothing.
@@ -155,11 +155,11 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   repeatedly about two sources (`source-a`, `source-b`) reported hours-stale.
   Three successive root causes were asserted and a wrapper rewrite approved —
   before any measurement. The measurement:
-  `time gbrain sync --source source-a --no-embed` finished in single-digit
+  `time foresights sync --source source-a --no-embed` finished in single-digit
   seconds with "Already up to date" (same for `source-b`), and
-  `gbrain sources status` showed every source synced that morning. Every
+  `foresights sources status` showed every source synced that morning. Every
   theory died at once. Actual cause: the monitor alerted at its
-  act-threshold, hours below `gbrain doctor`'s authoritative warn line. The
+  act-threshold, hours below `foresights doctor`'s authoritative warn line. The
   fix was two lines (`ALERT_HOURS = max(ACT_HOURS, WARN_HOURS)`), not a
   rewrite. Lesson: when a page repeats about a system that measures healthy,
   suspect the thresholds before the system.

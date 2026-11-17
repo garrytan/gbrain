@@ -1,6 +1,6 @@
 /**
  * v0.37.0 — domain-bank: prefix-stratified far-page retrieval for
- * `gbrain brainstorm` + `gbrain lsd` (D14).
+ * `foresights brainstorm` + `foresights lsd` (D14).
  *
  * Orthogonal to hybridSearch (codex round 1 #1+#2+#3 fix). Does NOT touch
  * the search cache, SearchOpts, or post-fusion stages. Pulls "far" pages
@@ -297,7 +297,7 @@ function distanceFromClosest(
  * Empty-brain handling (codex round 2 #6 — refuse cleanly): when the brain
  * has <K+M total pages OR zero usable prefixes AND the corpus is empty,
  * we still return an empty result with `short_of_target=true`. The CLI
- * surfaces the paste-ready hint ("Brain has <K+M pages; try gbrain import").
+ * surfaces the paste-ready hint ("Brain has <K+M pages; try foresights import").
  */
 export async function fetchFar(
   engine: BrainEngine,

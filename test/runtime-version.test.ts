@@ -3,7 +3,7 @@
  * message, doctor reports it, and every place that states the floor agrees.
  *
  * Protects: the refusal text users on an old Bun see (found + required
- * versions, `bun upgrade`, restart, `gbrain post-upgrade`), the CLI gate
+ * versions, `bun upgrade`, restart, `foresights post-upgrade`), the CLI gate
  * (exit 1 everywhere, `--version` still answering, autopilot's log copy), the
  * `bun_runtime` doctor row, and the floor stated by package.json and the
  * cloud setup script.
@@ -20,8 +20,8 @@ import { MINIMUM_BUN_VERSION, SECURE_BUN_VERSION, assertSupportedBun, exitOnUnsu
 import { checkBunRuntime } from '../src/commands/doctor/checks/upgrade-health.ts';
 
 const root = join(import.meta.dir, '..');
-const OLD_BUN_REFUSAL = 'GBrain requires Bun 1.4.4 or newer (found Bun 1.3.14).\n'
-  + 'Fix: run `bun upgrade`, then restart GBrain. If a `gbrain upgrade` stopped here, finish it with `gbrain post-upgrade`.';
+const OLD_BUN_REFUSAL = 'Foresights requires Bun 1.4.4 or newer (found Bun 1.3.14).\n'
+  + 'Fix: run `bun upgrade`, then restart Foresights. If a `foresights upgrade` stopped here, finish it with `foresights post-upgrade`.';
 
 describe('Bun runtime floor', () => {
   test('an older Bun is refused with the found version, the floor and the fix', () => {
@@ -38,14 +38,14 @@ describe('Bun runtime floor', () => {
     for (const version of ['1.3.11', '1.3.13', '1.3.14', '1.2.99', '1.4.0-canary.1', '1.4.4-canary.1', '']) {
       expect(unsupportedBunMessage(version)).toContain('Fix: run `bun upgrade`');
     }
-    expect(unsupportedBunMessage('')).toStartWith('GBrain requires Bun 1.4.4 or newer (found no Bun runtime).');
+    expect(unsupportedBunMessage('')).toStartWith('Foresights requires Bun 1.4.4 or newer (found no Bun runtime).');
   });
 
   test('Bun 1.4.0 to 1.4.3 are refused: postgres.js over TLS keeps every chunk it reads on 1.4.0-1.4.2, and 1.4.4 carries the Brotli fix', () => {
     for (const version of ['1.4.0', '1.4.1', '1.4.2', '1.4.2+5a1b2c3', '1.4.3']) {
-      expect(unsupportedBunMessage(version)).toBe(`GBrain requires Bun 1.4.4 or newer (found Bun ${version}).\n`
-        + 'Fix: run `bun upgrade`, then restart GBrain. If a `gbrain upgrade` stopped here, finish it with `gbrain post-upgrade`.');
-      expect(() => assertSupportedBun(version)).toThrow('GBrain requires Bun 1.4.4 or newer');
+      expect(unsupportedBunMessage(version)).toBe(`Foresights requires Bun 1.4.4 or newer (found Bun ${version}).\n`
+        + 'Fix: run `bun upgrade`, then restart Foresights. If a `foresights upgrade` stopped here, finish it with `foresights post-upgrade`.');
+      expect(() => assertSupportedBun(version)).toThrow('Foresights requires Bun 1.4.4 or newer');
     }
   });
 
@@ -60,19 +60,19 @@ describe('Bun runtime floor', () => {
     expect(checkBunRuntime('1.4.4')).toEqual({ name: 'bun_runtime', status: 'ok', message: 'Bun 1.4.4 (minimum 1.4.4)' });
     expect(checkBunRuntime('1.5.0+abc123')).toEqual({ name: 'bun_runtime', status: 'ok', message: 'Bun 1.5.0+abc123 (minimum 1.4.4)' });
     expect(checkBunRuntime('1.3.14')).toEqual({ name: 'bun_runtime', status: 'fail', message: OLD_BUN_REFUSAL.replace('\n', ' ') });
-    expect(checkBunRuntime('1.4.2')).toEqual({ name: 'bun_runtime', status: 'fail', message: 'GBrain requires Bun 1.4.4 or newer (found Bun 1.4.2). '
-      + 'Fix: run `bun upgrade`, then restart GBrain. If a `gbrain upgrade` stopped here, finish it with `gbrain post-upgrade`.' });
+    expect(checkBunRuntime('1.4.2')).toEqual({ name: 'bun_runtime', status: 'fail', message: 'Foresights requires Bun 1.4.4 or newer (found Bun 1.4.2). '
+      + 'Fix: run `bun upgrade`, then restart Foresights. If a `foresights upgrade` stopped here, finish it with `foresights post-upgrade`.' });
     expect(checkBunRuntime().status).toBe(unsupportedBunMessage(Bun.version) === null ? 'ok' : 'fail');
   });
 
-  test('#7373: the floor carries the Brotli fix, so a Bun without it is refused however gbrain is installed', () => {
+  test('#7373: the floor carries the Brotli fix, so a Bun without it is refused however foresights is installed', () => {
     expect(SECURE_BUN_VERSION).toBe('1.4.4');
     expect(Bun.semver.order(MINIMUM_BUN_VERSION, SECURE_BUN_VERSION)).toBeGreaterThanOrEqual(0);
     for (const version of ['1.4.0', '1.4.3', '1.4.4-canary.2']) {
       for (const runtime of ['/usr/local/bin/gbrain', '/home/alice-example/.bun/bin/bun', 'C:\\Users\\alice-example\\.bun\\bin\\bun.exe', '/opt/bun-1.4.3/bun-linux-x64']) {
         const row = checkBunRuntime(version, runtime);
         expect(row.status).toBe('fail');
-        expect(row.message).toStartWith(`GBrain requires Bun 1.4.4 or newer (found Bun ${version}).`);
+        expect(row.message).toStartWith(`Foresights requires Bun 1.4.4 or newer (found Bun ${version}).`);
       }
     }
   });
@@ -98,7 +98,7 @@ describe('CLI entrypoint gate', () => {
 
   test('--version still answers on an older Bun so an older upgrade can verify the swap', () => {
     for (const command of ['--version', 'version']) {
-      expect(runGate(command, '1.3.14')).toEqual({ exitCode: 0, stderr: [OLD_BUN_REFUSAL], stdout: ['gbrain 9.9.9.9'] });
+      expect(runGate(command, '1.3.14')).toEqual({ exitCode: 0, stderr: [OLD_BUN_REFUSAL], stdout: ['foresights 9.9.9.9'] });
     }
   });
 
@@ -115,8 +115,8 @@ describe('CLI entrypoint gate', () => {
   });
 
   test('Bun 1.4.2 exits 1 before any command runs', () => {
-    expect(runGate('sync', '1.4.2')).toEqual({ exitCode: 1, stderr: [`GBrain requires Bun 1.4.4 or newer (found Bun 1.4.2).\n`
-      + 'Fix: run `bun upgrade`, then restart GBrain. If a `gbrain upgrade` stopped here, finish it with `gbrain post-upgrade`.'], stdout: [] });
+    expect(runGate('sync', '1.4.2')).toEqual({ exitCode: 1, stderr: [`Foresights requires Bun 1.4.4 or newer (found Bun 1.4.2).\n`
+      + 'Fix: run `bun upgrade`, then restart Foresights. If a `foresights upgrade` stopped here, finish it with `foresights post-upgrade`.'], stdout: [] });
   });
 });
 

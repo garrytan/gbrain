@@ -1,6 +1,6 @@
 import { authorizeJobExecution, withSubmissionAuthority } from './submission-authority.ts';
 /**
- * `gbrain jobs run-child` core (issue #5 — per-job process isolation).
+ * `foresights jobs run-child` core (issue #5 — per-job process isolation).
  *
  * The child side of the isolation boundary. The PARENT worker owns claim,
  * lock renewal, completeJob/failJob and all attempt accounting; this process

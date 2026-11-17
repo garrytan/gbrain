@@ -1,6 +1,6 @@
 /**
  * W3 (GBRA-224): the dream breaker's per-transcript key for content-hashed
- * synthesize keys (#6753/#6924), and `gbrain dream reset-key` accepting every
+ * synthesize keys (#6753/#6924), and `foresights dream reset-key` accepting every
  * key `--list` prints, `dream:phase:` included (#7505).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -88,7 +88,7 @@ describe('dream reset-key accepts every key --list prints (#7505)', () => {
     const keys = listed.tripped.map(row => row.base_key).sort();
     expect(keys).toEqual(['dream:phase:synthesize_concepts:default', 'dream:synth-v2:@file:default:loop.txt']);
     for (const row of listed.tripped) {
-      const printed = row.reset_command.match(/^gbrain dream reset-key '(.+)'$/)![1]!;
+      const printed = row.reset_command.match(/^(?:foresights|gbrain) dream reset-key '(.+)'$/)![1]!;
       expect(printed).toBe(row.base_key);
       _resetCliExitVerdictForTests();
       const out = await captured(() => runDreamResetKey(engine, [printed]));

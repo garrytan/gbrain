@@ -15,7 +15,7 @@ export const v237: Migration = {
   // (about 450 ms at 100k facts on Postgres). The text search configuration
   // must be a literal for the planner to match an expression index, so the
   // handler builds it under GBRAIN_FTS_LANGUAGE, as v123 does for the trigger
-  // functions, and `gbrain reindex-search-vector` replaces it when the
+  // functions, and `foresights reindex-search-vector` replaces it when the
   // language changes. An expression index, not a stored tsvector column: a
   // column backfill rewrites every fact row and its HNSW entry (about 7
   // minutes at 100k facts); the index build reads the rows once (about 2 s).

@@ -1,6 +1,6 @@
 /**
  * GST-687 (HARN-17 fence matrix after #8066): every placement an agent wrote, or a live ingestion saved, reaches a
- * remote reader inside gbrain's quote fence on every read that returns it, and a conversation page's tool-call block
+ * remote reader inside foresights's quote fence on every read that returns it, and a conversation page's tool-call block
  * comes back summarized on the reads that #8066 left verbatim. The probes mirror the matrix: a conversation page with a
  * tool-call block, a Slack page, a note with the codeword in its first chunk and one with it below its first chunks,
  * a timeline entry on each, a fact saved with remember, and a chat message saved with remember into a member source.

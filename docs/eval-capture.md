@@ -9,9 +9,9 @@ replay captured real-world queries as a BrainBench-Real fixture.
 
 ## The pipeline
 
-HTTP MCP servers (`gbrain serve --http`, both the OAuth and the legacy bearer
+HTTP MCP servers (`foresights serve --http`, both the OAuth and the legacy bearer
 transport) honor DB-plane settings such as `eval.capture` and `eval.scrub_pii`
-from `gbrain config set`, with file and environment settings taking
+from `foresights config set`, with file and environment settings taking
 precedence, as the CLI does. The server reads that effective config once at
 startup, so restart serve after a DB-plane change (#6589). A server whose
 database is degraded at startup uses the file and environment settings only.
@@ -48,10 +48,10 @@ return to caller                                   ▼
                                                                   scrubber_exception | other)
 ```
 
-## `gbrain eval export` — the consumer contract
+## `foresights eval export` — the consumer contract
 
 ```sh
-gbrain eval export [--since DUR] [--limit N] [--tool query|search]
+foresights eval export [--since DUR] [--limit N] [--tool query|search]
 ```
 
 Emits NDJSON to **stdout**. One JSON object per `\n`-terminated line.
@@ -63,12 +63,12 @@ Typical usage from gbrain-evals:
 
 ```sh
 # Snapshot the last week of real traffic for replay
-gbrain eval export --since 7d > brainbench-real.ndjson
+foresights eval export --since 7d > brainbench-real.ndjson
 ```
 
 ```sh
 # Stream through jq for ad-hoc analysis
-gbrain eval export --tool query | jq -c 'select(.latency_ms > 500)'
+foresights eval export --tool query | jq -c 'select(.latency_ms > 500)'
 ```
 
 ## Row schema (v1)
@@ -117,15 +117,15 @@ tiebreaker. Replay tools can consume rows in order and assume:
 
 ## `eval_capture_failures` — companion audit table
 
-Not exported by `gbrain eval export`. Surfaced via `gbrain doctor`:
+Not exported by `foresights eval export`. Surfaced via `foresights doctor`:
 
 ```sh
-gbrain doctor   # warns when failures in last 24h > 0
+foresights doctor   # warns when failures in last 24h > 0
 ```
 
 Reason enum (stable): `db_down` | `rls_reject` | `check_violation` |
 `scrubber_exception` | `other`. Cross-process visibility is the whole
-point — `gbrain doctor` runs in its own process and reads the table
+point — `foresights doctor` runs in its own process and reads the table
 directly, so in-process counters wouldn't work.
 
 ## Config + CONTRIBUTOR_MODE
@@ -162,13 +162,13 @@ Resolution order (most explicit wins):
 `eval.scrub_pii: false` to preserve raw query text (only if you control
 the brain's distribution).
 
-`gbrain config set eval.capture <true|false>` applies to **CLI commands**
-(`gbrain query`, `gbrain recall`, …): the CLI merges the DB plane into the
+`foresights config set eval.capture <true|false>` applies to **CLI commands**
+(`foresights query`, `foresights recall`, …): the CLI merges the DB plane into the
 operation context it hands the capture gate.
 
-It does **not** apply to the **MCP server, `gbrain call`, or background
+It does **not** apply to the **MCP server, `foresights call`, or background
 subagents** — those build their context from the file plane only, so a
-DB-plane value is stored, echoed back by `gbrain config get`, and ignored.
+DB-plane value is stored, echoed back by `foresights config get`, and ignored.
 For those, edit `~/.gbrain/config.json` directly or export
 `GBRAIN_CONTRIBUTOR_MODE=1` in the service environment.
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Privacy blocklist contract for agent-voice. The shipped file lists ONLY structural categories. Specific names live in the $AGENT_VOICE_PII_BLOCKLIST environment variable (pipe-separated) at scan time. This separation keeps gbrain's shipped surface free of personal/private names while still letting CI enforce a project-specific blocklist via secrets.",
+  "description": "Privacy blocklist contract for agent-voice. The shipped file lists ONLY structural categories. Specific names live in the $AGENT_VOICE_PII_BLOCKLIST environment variable (pipe-separated) at scan time. This separation keeps foresights's shipped surface free of personal/private names while still letting CI enforce a project-specific blocklist via secrets.",
   "shapeRegex": [
     "email",
     "phone",

@@ -1,5 +1,5 @@
 /**
- * doctor `cron_gbrain_home` (GBRA-108): cron commands, and scripts they run, that call gbrain without GBRAIN_HOME.
+ * doctor `cron_gbrain_home` (GBRA-108): cron commands, and scripts they run, that call foresights without GBRAIN_HOME.
  */
 import { expect, test } from 'bun:test';
 import { cronGbrainHomeCheck, cronGbrainHomeFindings } from '../src/commands/doctor/checks/cron-gbrain-home.ts';
@@ -26,18 +26,18 @@ test('a direct src/cli.ts call without GBRAIN_HOME is flagged on the line and in
   ]);
 });
 
-test('the gbrain binary without GBRAIN_HOME is flagged only while this brain runs under a GBRAIN_HOME; a crontab env line covers every line', () => {
-  const crontab = '0 * * * * /usr/local/bin/gbrain sync --all\n15 * * * * gbrain doctor --json\n';
+test('the foresights binary without GBRAIN_HOME is flagged only while this brain runs under a GBRAIN_HOME; a crontab env line covers every line', () => {
+  const crontab = '0 * * * * /usr/local/bin/gbrain sync --all\n15 * * * * foresights doctor --json\n';
   expect(cronGbrainHomeFindings(crontab, undefined, read)).toEqual([]);
   expect(cronGbrainHomeFindings(crontab, '/srv/brain-a', read).map(f => [f.where, f.reason])).toEqual([['crontab line 1', 'default_home'], ['crontab line 2', 'default_home']]);
   expect(cronGbrainHomeFindings(`GBRAIN_HOME=/srv/brain-a\n${crontab}0 * * * * /opt/example/run-sync.sh\n`, '/srv/brain-a', read)).toEqual([]);
 });
 
-test('the check: no crontab, or one that never mentions gbrain, emits nothing; a clean one is ok; findings warn with a user fix naming the home', () => {
+test('the check: no crontab, or one that never mentions foresights, emits nothing; a clean one is ok; findings warn with a user fix naming the home', () => {
   expect(cronGbrainHomeCheck(null, undefined, read)).toBeNull();
   expect(cronGbrainHomeCheck('0 3 * * * /usr/bin/backup --nightly\n', '/srv/brain-a', read)).toBeNull();
-  expect(cronGbrainHomeCheck('0 * * * * gbrain sync --all\n', undefined, read)).toMatchObject({ name: 'cron_gbrain_home', status: 'ok' });
-  const check = cronGbrainHomeCheck('0 * * * * gbrain sync --all\n', '/srv/brain-a', read)!;
+  expect(cronGbrainHomeCheck('0 * * * * foresights sync --all\n', undefined, read)).toMatchObject({ name: 'cron_gbrain_home', status: 'ok' });
+  const check = cronGbrainHomeCheck('0 * * * * foresights sync --all\n', '/srv/brain-a', read)!;
   expect(check).toMatchObject({ name: 'cron_gbrain_home', status: 'warn', details: { gbrain_home: '/srv/brain-a' },
     fix: { argv: ['crontab', '-e'], actor: 'user', verify: { argv: ['gbrain', 'doctor', '--only', 'cron_gbrain_home', '--json'] } } });
   expect(check.message).toContain('crontab line 1');

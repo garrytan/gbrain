@@ -8,7 +8,7 @@
  * token reaches the API by listing one connection (#7490): `people/me`
  * needs the `profile` scope, which connect never requests. Every
  * per-service failure stays in the result: the managed sync uses the first
- * address it finds, while `gbrain google setup` and `gbrain google status`
+ * address it finds, while `foresights google setup` and `foresights google status`
  * probe every service and name each disabled API or missing scope at once.
  */
 import { CredentialError } from '../creds/errors.ts';

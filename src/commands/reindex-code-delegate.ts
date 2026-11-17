@@ -13,7 +13,7 @@ import { consentGate } from '../core/consent-cli.ts';
 import type { ReindexCodeOpts, ReindexCodeResult } from './reindex-code.ts';
 
 const invalid = (message: string, suggestion: string) => opError('invalid_params', message, suggestion,
-  { fix: readFix('Prints the gbrain reindex-code flags.', { argv: ['gbrain', 'reindex-code', '--help'] }) });
+  { fix: readFix('Prints the foresights reindex-code flags.', { argv: ['gbrain', 'reindex-code', '--help'] }) });
 
 export function parseReindexCodeDelegateArgs(args: string[]): ReindexCodeOpts {
   const options: ReindexCodeOpts = {};
@@ -22,7 +22,7 @@ export function parseReindexCodeDelegateArgs(args: string[]): ReindexCodeOpts {
     const arg = args[i];
     const key = booleans[arg as keyof typeof booleans];
     if (key) { options[key] = true; continue; }
-    if (!['--source', '--workers', '--concurrency', '--max-cost', '--max-cost-usd'].includes(arg)) throw invalid('Unsupported owner-delegated reindex-code option. Run gbrain reindex-code --help.',
+    if (!['--source', '--workers', '--concurrency', '--max-cost', '--max-cost-usd'].includes(arg)) throw invalid('Unsupported owner-delegated reindex-code option. Run foresights reindex-code --help.',
       `Remove ${arg.split('=')[0]}; while the running serve holds the brain, reindex-code accepts --source, --workers, --max-cost-usd, --force, --no-embed, --dry-run, --yes and --json.`);
     const value = args[++i];
     if (!value || value.startsWith('-')) throw invalid(`${arg} requires a value.`,
@@ -50,7 +50,7 @@ export async function maybeDelegateReindexCode(hostConfig: GBrainConfig | null, 
       // --max-cost when given, else the printed default cap. The owner re-checks `yes`.
       const auth = await consentGate({
         command: 'reindex-code', effects: ['paid'], actor: 'agent',
-        what: 'Re-embed the code pages through the running gbrain serve',
+        what: 'Re-embed the code pages through the running foresights serve',
         why: 'Rebuilds code chunks and their embeddings so code search uses current chunking; the running serve owns the brain, so it does the work.',
         risk: `Spends with the embedding provider, capped at ${options.maxCostUsd !== undefined ? `$${options.maxCostUsd.toFixed(2)}` : `the default $${DEFAULT_PAID_CAP_USD.toFixed(2)}`} (no estimate while the serve holds the brain). --no-embed rebuilds text and symbol metadata for free.`,
         user_message: `Re-embed the brain's code pages (paid embeddings, at most ${options.maxCostUsd !== undefined ? `$${options.maxCostUsd.toFixed(2)}` : `$${DEFAULT_PAID_CAP_USD.toFixed(2)}`})? --no-embed does the free text-only rebuild instead.`,

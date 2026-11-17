@@ -1,5 +1,5 @@
 /**
- * `gbrain mcp expose` — publish `gbrain serve --http` on the user's Tailscale
+ * `foresights mcp expose` — publish `foresights serve --http` on the user's Tailscale
  * tailnet (or, with `--funnel`, on the public internet through Tailscale
  * Funnel) and keep it running as a user service.
  *
@@ -51,20 +51,20 @@ import { registrationAdvertise, shellQuote } from '../core/mcp-registration.ts';
 import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
 import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
 
-export const MCP_EXPOSE_HELP = `gbrain mcp expose — publish the MCP server on your Tailscale tailnet and keep it running
+export const MCP_EXPOSE_HELP = `foresights mcp expose — publish the MCP server on your Tailscale tailnet and keep it running
 
-gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr]
+foresights mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr]
                   [--no-tailscale] [--no-service] [--no-install] [--force]
                   [--dry-run] [--yes] [--json]
-gbrain mcp expose --status [--json]
-gbrain mcp expose --remove [--yes] [--json]
+foresights mcp expose --status [--json]
+foresights mcp expose --remove [--yes] [--json]
 
 Steps (each a named check in --json): plan, consent, tailscale.binary, tailscale.login,
 tailscale.identity, tailscale.publish, admin_token, service, verify.local, verify.tailnet, receipt.
 Nothing is published until Tailscale reports HTTPS certificates (and, with --funnel, the Funnel
 node attribute) enabled — otherwise exit 2 with the admin URL to fix it.
 
---port N          Local port for the gbrain HTTP server (default: 3131)
+--port N          Local port for the foresights HTTP server (default: 3131)
 --funnel          Publish on the public internet via Tailscale Funnel (cloud agents:
                   Grok Bot, Muse, ChatGPT). Default is tailnet-only — your own devices.
 --surface X       MCP tool surface: verbs | starter | full, listed in full (default: full,
@@ -76,7 +76,7 @@ node attribute) enabled — otherwise exit 2 with the admin URL to fix it.
 --no-install      Never install Tailscale; exit 1 with the install plan when it is missing
 --force           Take over a foreign tailscale serve handler on :443; with --remove also
                   delete the admin token file, and (without a receipt) turn off a :443 handler
-                  for --port that no wrapper, unit or service of gbrain's corroborates
+                  for --port that no wrapper, unit or service of foresights's corroborates
 --dry-run         Print the plan and stop (exit 0, no changes)
 --yes             Skip the confirmation prompt (required when not on a TTY)
 --status          Re-probe the published server, the service and both health URLs. Without a
@@ -95,7 +95,7 @@ is published on the tailnet (tailscale_receipt_present): --remove first.
 Exit codes: 0 done · 1 failed · 2 confirmation needed or a step is pending (re-run).
 Env: GBRAIN_TAILSCALE_LOGIN_TIMEOUT_MS bounds the wait for \`tailscale up\` (default 300000).
 
-Next: gbrain mcp grant NAME --harness ID --profile memory-writer --source default --url URL/mcp \\
+Next: foresights mcp grant NAME --harness ID --profile memory-writer --source default --url URL/mcp \\
         --admin-token-file ~/.gbrain/serve/admin-token --credentials-out /private/NAME.json
 `;
 
@@ -426,21 +426,21 @@ function describeHandler(h: ServeHandler): string {
  * through the running server's admin API.
  */
 function localAgentGuidance(engine: ExposeReceipt['engine'], port: number, tokenHint: string): { lines: string[]; nextActions: string[] } {
-  const plain = `gbrain bootstrap harness --yes --port ${port}`;
+  const plain = `foresights bootstrap harness --yes --port ${port}`;
   if (engine !== 'pglite') return { lines: [plain], nextActions: [plain] };
   const localUrl = `http://127.0.0.1:${port}/mcp`;
-  const grant = `gbrain mcp grant local-agents --harness <id> --profile memory-writer --source default --url ${localUrl} --admin-token-file ${tokenHint} --credentials-out /private/local-agents.json`;
-  const connect = `gbrain connect ${localUrl} --harness <id> --credentials-file /private/local-agents.json --install`;
+  const grant = `foresights mcp grant local-agents --harness <id> --profile memory-writer --source default --url ${localUrl} --admin-token-file ${tokenHint} --credentials-out /private/local-agents.json`;
+  const connect = `foresights connect ${localUrl} --harness <id> --credentials-file /private/local-agents.json --install`;
   return {
     lines: [
-      'PGLite is single-writer, so `gbrain bootstrap harness` cannot mint while this server runs. Either:',
-      `(a) mint while the service is stopped — \`gbrain auth create local-agents --scopes read,write\` — then`,
+      'PGLite is single-writer, so `foresights bootstrap harness` cannot mint while this server runs. Either:',
+      `(a) mint while the service is stopped — \`foresights auth create local-agents --scopes read,write\` — then`,
       `    ${plain} --token <value>`,
       `(b) or grant a scoped client through the running server: ${grant}`,
       `    then ${connect}`,
     ],
     nextActions: [
-      'gbrain auth create local-agents --scopes read,write   # PGLite: run while the service is stopped, then pass --token',
+      'foresights auth create local-agents --scopes read,write   # PGLite: run while the service is stopped, then pass --token',
       `${plain} --token <value>`,
       grant,
       connect,
@@ -450,7 +450,7 @@ function localAgentGuidance(engine: ExposeReceipt['engine'], port: number, token
 
 /** Re-run hint: the user's publish flags + `--yes` (+ `extra`, e.g. ` --no-service`). */
 function rerunCommand(opts: ExposeOptions, extra = ''): string {
-  return `gbrain mcp expose${args2(opts)} --yes${extra}`;
+  return `foresights mcp expose${args2(opts)} --yes${extra}`;
 }
 
 interface ConsentExtra {
@@ -480,8 +480,8 @@ function publishConsent(opts: ExposeOptions): ConsentExtra {
     effects: opts.noTailscale ? ['persistent_install'] : ['persistent_install', 'egress'],
     what: 'mcp expose',
     why: `Publishes this brain's MCP server ${where}${opts.noService ? '' : ' and installs a user service that keeps it running'}, so authorized agents on other machines can reach it.`,
-    risk: 'Changes system state (Tailscale serve config, a user service, files under the serve directory); `gbrain mcp expose --remove` undoes it.',
-    user_message: `I'd like to publish your gbrain MCP server ${where}${opts.noService ? '' : ' and install a background service for it'}. OK?`,
+    risk: 'Changes system state (Tailscale serve config, a user service, files under the serve directory); `foresights mcp expose --remove` undoes it.',
+    user_message: `I'd like to publish your foresights MCP server ${where}${opts.noService ? '' : ' and install a background service for it'}. OK?`,
   };
 }
 
@@ -551,9 +551,9 @@ async function rollbackAfterThrow(d: Resolved, s: Session, opts: ExposeOptions, 
   if (receiptWritten) {
     // The early receipt is on disk: the handler and service are findable, so
     // nothing is torn down here — `--remove` is the operator's clean path.
-    s.check('rollback', 'skipped', 'receipt already written; the handler and service stay — run `gbrain mcp expose --remove --yes` to undo, or `--status` to inspect');
-    s.nextActions.push('gbrain mcp expose --status', 'gbrain mcp expose --remove --yes');
-    return new Error(`${message} — the receipt was already written, so the published handler and the service were left in place (gbrain mcp expose --status / --remove --yes)`);
+    s.check('rollback', 'skipped', 'receipt already written; the handler and service stay — run `foresights mcp expose --remove --yes` to undo, or `--status` to inspect');
+    s.nextActions.push('foresights mcp expose --status', 'foresights mcp expose --remove --yes');
+    return new Error(`${message} — the receipt was already written, so the published handler and the service were left in place (foresights mcp expose --status / --remove --yes)`);
   }
   if (!published) return error instanceof Error ? error : new Error(message);
   if (published.hadHandlerBefore) {
@@ -591,8 +591,8 @@ export async function runMcpExpose(args: string[], deps: McpExposeDeps = {}): Pr
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (args.includes('--json')) d.out(JSON.stringify({ status: 'error', reason: 'invalid_arguments', message, checks: [], next_actions: [], receipt: null }));
-    d.err(`gbrain mcp expose: ${message}`);
-    d.err('Run: gbrain mcp expose --help');
+    d.err(`foresights mcp expose: ${message}`);
+    d.err('Run: foresights mcp expose --help');
     return 1;
   }
   if (opts.help) { d.out(MCP_EXPOSE_HELP); return 0; }
@@ -617,8 +617,8 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   let cfg: GBrainConfig | null = null;
   try { cfg = d.loadConfig(); } catch { cfg = null; }
   if (isThinClient(cfg)) {
-    s.check('plan', 'fail', 'this machine is a thin client (remote_mcp configured); run gbrain mcp expose on the brain host');
-    return s.finish('error', 1, { reason: 'thin_client', message: 'This is a thin client. Run `gbrain mcp expose` on the machine that hosts the brain.' });
+    s.check('plan', 'fail', 'this machine is a thin client (remote_mcp configured); run foresights mcp expose on the brain host');
+    return s.finish('error', 1, { reason: 'thin_client', message: 'This is a thin client. Run `foresights mcp expose` on the machine that hosts the brain.' });
   }
   const engine = engineKind(cfg);
   const receiptPath = receiptPathFor(d.serveDir);
@@ -638,13 +638,13 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   // mapping stays live and unfindable. Refused before consent; `--remove` first.
   const tailscaleReceipt = opts.noTailscale && existing?.tailscale.dns_name ? existing : null;
   const plan: string[] = [];
-  plan.push(`Server    gbrain serve (HTTP) on 127.0.0.1:${opts.port} (surface ${opts.surface}${advertise ? `, listing ${advertise === 'verbs' ? 'the memory verbs and request_tools' : advertise}` : ''}${opts.enableDcr ? ', DCR on' : ''}); engine ${engine}`);
-  if (tailscaleReceipt) plan.push(`Tailscale ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'} (--no-tailscale): this brain is already published on your tailnet at ${tailscaleReceipt.public_url} — run \`gbrain mcp expose --remove --yes\` first, or re-run without --no-tailscale`);
+  plan.push(`Server    foresights serve (HTTP) on 127.0.0.1:${opts.port} (surface ${opts.surface}${advertise ? `, listing ${advertise === 'verbs' ? 'the memory verbs and request_tools' : advertise}` : ''}${opts.enableDcr ? ', DCR on' : ''}); engine ${engine}`);
+  if (tailscaleReceipt) plan.push(`Tailscale ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'} (--no-tailscale): this brain is already published on your tailnet at ${tailscaleReceipt.public_url} — run \`foresights mcp expose --remove --yes\` first, or re-run without --no-tailscale`);
   else if (opts.noTailscale) plan.push('Tailscale skipped (--no-tailscale): you publish the port yourself');
   else if (tailscaleBinary) plan.push(`Tailscale ${tailscaleBinary} — sign in if needed, then \`tailscale ${tailscaleServeArgv(opts.port, { funnel: opts.funnel }).join(' ')}\``);
   else if (opts.noInstall) plan.push(`Tailscale NOT installed and --no-install set — would stop with: ${installPlan.command}`);
   else plan.push(`Tailscale not installed — would run: ${installPlan.command}`);
-  plan.push(`Reach     ${mode === 'funnel' ? 'PUBLIC internet via Tailscale Funnel (cloud agents); gbrain OAuth/bearer + grants protect it' : 'tailnet only — your devices; cloud agents need --funnel'}`);
+  plan.push(`Reach     ${mode === 'funnel' ? 'PUBLIC internet via Tailscale Funnel (cloud agents); foresights OAuth/bearer + grants protect it' : 'tailnet only — your devices; cloud agents need --funnel'}`);
   plan.push(`Token     ${tildify(adminTokenPathFor(d.serveDir), d.home)} (0600; created or reused; never printed)`);
   if (keptService) plan.push(`Service   kept as is (--no-service): ${serviceLabel(keptService.target, keptService.state, d)}`);
   else if (opts.noService) plan.push('Service   skipped (--no-service): publish only');
@@ -652,18 +652,18 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   else if (target === 'linux-systemd') plan.push(`Service   systemd user unit ${tildify(d.unitPath, d.home)} (enabled + started, linger)`);
   else plan.push(`Service   manual — no user supervisor in this ${d.executionEnv === 'local' ? 'environment (no user bus)' : d.executionEnv}; you get a foreground command + nohup line`);
   plan.push(`Receipt   ${tildify(receiptPath, d.home)}${existing ? ' (updates the existing receipt)' : ''}`);
-  // No brain config → the service would only crash-loop (`gbrain serve` has
+  // No brain config → the service would only crash-loop (`foresights serve` has
   // nothing to open). Refused here, before consent; `--no-service` publishes a
   // server the operator runs themselves and is still allowed.
   const noBrain = engine === 'unknown' && !opts.noService;
-  if (noBrain) plan.push(`Brain     ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'}: no brain is configured on this host (gbrain init first) — a service would only crash-loop; pass --no-service to publish a server you run yourself`);
+  if (noBrain) plan.push(`Brain     ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'}: no brain is configured on this host (foresights init first) — a service would only crash-loop; pass --no-service to publish a server you run yourself`);
   // PGLite is single-writer: a live holder that is not our own managed service
   // keeps the service from starting. A warning, not a stop — the operator may
   // be about to stop that process.
   const lockHolder = engine === 'pglite' && cfg?.database_path ? d.pgliteHolder(cfg.database_path) : null;
   const ownService = existing !== null && isLiveService(existing.service.state);
   const lockWarning = lockHolder && !ownService
-    ? `a live process holds this PGLite brain (pid ${lockHolder.pid}, ${lockHolder.command ?? (lockHolder.serve ? 'gbrain serve' : 'gbrain')}): the service cannot start until it exits — stop it, or move to Postgres`
+    ? `a live process holds this PGLite brain (pid ${lockHolder.pid}, ${lockHolder.command ?? (lockHolder.serve ? 'foresights serve' : 'gbrain')}): the service cannot start until it exits — stop it, or move to Postgres`
     : null;
   if (lockWarning) plan.push(`Lock      ${lockWarning}`);
   s.check('plan', opts.dryRun ? 'planned' : noBrain || tailscaleReceipt ? 'fail' : 'ok', plan.join(' | '));
@@ -676,12 +676,12 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     return s.finish('planned', 0, { receipt: existing, plan });
   }
   if (noBrain) {
-    s.nextActions.push('gbrain init', rerunCommand(opts, ' --no-service'));
-    return s.finish('error', 1, { receipt: existing, reason: 'no_brain_config', message: 'No brain is configured on this host (gbrain init first), so a service would only crash-loop; pass --no-service to publish a server you run yourself.' });
+    s.nextActions.push('foresights init', rerunCommand(opts, ' --no-service'));
+    return s.finish('error', 1, { receipt: existing, reason: 'no_brain_config', message: 'No brain is configured on this host (foresights init first), so a service would only crash-loop; pass --no-service to publish a server you run yourself.' });
   }
   if (tailscaleReceipt) {
-    s.nextActions.push('gbrain mcp expose --remove --yes', rerunCommand({ ...opts, noTailscale: false }));
-    return s.finish('error', 1, { receipt: existing, reason: 'tailscale_receipt_present', message: `This brain is already published on your tailnet at ${tailscaleReceipt.public_url}; run \`gbrain mcp expose --remove --yes\` first, or re-run without --no-tailscale.` });
+    s.nextActions.push('foresights mcp expose --remove --yes', rerunCommand({ ...opts, noTailscale: false }));
+    return s.finish('error', 1, { receipt: existing, reason: 'tailscale_receipt_present', message: `This brain is already published on your tailnet at ${tailscaleReceipt.public_url}; run \`foresights mcp expose --remove --yes\` first, or re-run without --no-tailscale.` });
   }
   // Probe the local port NOW so a foreign listener is refused before anything
   // is published or installed (never after `tailscale serve --bg`). ANY
@@ -691,10 +691,10 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   const listeningBefore = await probeOccupied(d, opts.port, localHealthUrl);
   if (listeningBefore && !opts.noService && (!existing || existing.port !== opts.port)) {
     s.check('service', 'fail', `something already answers on 127.0.0.1:${opts.port} (a TCP connect was accepted or ${localHealthUrl} answered) and no expose receipt claims it`);
-    s.nextActions.push('gbrain mcp expose --remove --yes', rerunCommand(opts, ' --no-service'));
+    s.nextActions.push('foresights mcp expose --remove --yes', rerunCommand(opts, ' --no-service'));
     return s.finish('error', 1, {
       reason: 'foreign_listener',
-      message: `Something already answers on 127.0.0.1:${opts.port} and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a gbrain server left behind by an interrupted \`gbrain mcp expose\`, run \`gbrain mcp expose --remove --yes\` first.`,
+      message: `Something already answers on 127.0.0.1:${opts.port} and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a foresights server left behind by an interrupted \`foresights mcp expose\`, run \`foresights mcp expose --remove --yes\` first.`,
     });
   }
 
@@ -764,9 +764,9 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
         // outside the system install locations (a user-writable PATH entry).
         const rerun = rerunCommand(opts);
         const manual = tailscaleManualLoginCommand(binary);
-        s.check('tailscale.login', 'pending', `${st.status.backendState}; ${binary} is not a system install, so gbrain will not run it with sudo — sign in yourself if you trust that binary`);
+        s.check('tailscale.login', 'pending', `${st.status.backendState}; ${binary} is not a system install, so foresights will not run it with sudo — sign in yourself if you trust that binary`);
         s.nextActions.push(manual, rerun);
-        return s.finish('pending', 2, { reason: 'tailscale_login_manual', message: `tailscale at ${binary} is not a system install, so gbrain will not run it with sudo. If you trust that binary, sign in yourself (this runs it as root): \`${manual}\`, then re-run: ${rerun}` });
+        return s.finish('pending', 2, { reason: 'tailscale_login_manual', message: `tailscale at ${binary} is not a system install, so foresights will not run it with sudo. If you trust that binary, sign in yourself (this runs it as root): \`${manual}\`, then re-run: ${rerun}` });
       }
       if (login.setOperator) {
         // Set the operator FIRST (so `serve` works without sudo later); a
@@ -878,8 +878,8 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     if (!confirmed) {
       const why = afterRead.view ? `serve status shows no / handler for port ${opts.port}` : describeServeReadFailure(d, afterRead).detail;
       s.check('tailscale.publish', 'fail', `tailscale ${publishArgv.join(' ')} exited 0 but ${why}${await restorePrevious()}`);
-      s.nextActions.push('tailscale serve status', 'gbrain mcp expose --remove --yes');
-      return s.finish('error', 1, { reason: 'tailscale_publish_unconfirmed', message: `Tailscale accepted the command but ${afterRead.view ? 'does not show the handler' : 'its serve status could not be read afterwards'}. Run \`tailscale serve status\` to inspect; \`gbrain mcp expose --remove --yes\` clears a handler for port ${opts.port} without a receipt (add --force when no wrapper or service of gbrain's is on this host yet).` });
+      s.nextActions.push('tailscale serve status', 'foresights mcp expose --remove --yes');
+      return s.finish('error', 1, { reason: 'tailscale_publish_unconfirmed', message: `Tailscale accepted the command but ${afterRead.view ? 'does not show the handler' : 'its serve status could not be read afterwards'}. Run \`tailscale serve status\` to inspect; \`foresights mcp expose --remove --yes\` clears a handler for port ${opts.port} without a receipt (add --force when no wrapper or service of foresights's is on this host yet).` });
     }
     if (confirmed.funnel !== opts.funnel) {
       s.check('tailscale.publish', 'warn', `handler present but funnel=${confirmed.funnel} (wanted ${opts.funnel})`);
@@ -952,7 +952,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
         const partial = buildReceipt();
         writeExposeReceipt(receiptPath, partial);
         s.check('receipt', 'ok', `${receiptPath} (service stopped)`);
-        s.nextActions.push('gbrain mcp expose --status', 'gbrain mcp expose --remove --yes');
+        s.nextActions.push('foresights mcp expose --status', 'foresights mcp expose --remove --yes');
         return s.finish('error', 1, { receipt: partial, reason: 'service_install_failed', message: installed.error });
       }
       if (target === 'none') {
@@ -1012,45 +1012,45 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   // Human summary -----------------------------------------------------------
   const tokenHint = tildify(tokenPath, d.home);
   const ownerCredential = opts.noService && !keptService ? '<existing-server-admin-token-file>' : shellQuote(tokenPath);
-  const ownerLogin = `gbrain mcp admin login-link --url ${receipt.mcp_url} --admin-token-file ${ownerCredential}`;
+  const ownerLogin = `foresights mcp admin login-link --url ${receipt.mcp_url} --admin-token-file ${ownerCredential}`;
   s.say('');
-  s.say(opts.noTailscale ? 'GBrain MCP server configured (not published — --no-tailscale)' : `GBrain MCP server published on ${mode === 'funnel' ? 'the public internet via Tailscale Funnel' : 'your tailnet'}`);
+  s.say(opts.noTailscale ? 'Foresights MCP server configured (not published — --no-tailscale)' : `Foresights MCP server published on ${mode === 'funnel' ? 'the public internet via Tailscale Funnel' : 'your tailnet'}`);
   s.say(`  MCP URL   ${receipt.mcp_url}`);
   s.say(`  Admin     ${receipt.admin_url}   (owner session required)`);
   s.say(opts.noService && !keptService
     ? '  Owner     use the credential configured for your existing server; --no-service does not change it.'
     : `  Owner     ${tokenHint} (protected service credential)`);
-  s.say(`  Reach     ${mode === 'funnel' ? 'public (Funnel) — cloud agents can connect; gbrain OAuth/bearer + scoped grants protect it.' : 'tailnet only — your devices. Cloud agents (Grok Bot, Muse, ChatGPT) need `--funnel`.'}`);
+  s.say(`  Reach     ${mode === 'funnel' ? 'public (Funnel) — cloud agents can connect; foresights OAuth/bearer + scoped grants protect it.' : 'tailnet only — your devices. Cloud agents (Grok Bot, Muse, ChatGPT) need `--funnel`.'}`);
   s.say(`  Service   ${keptService ? `${serviceLabel(keptService.target, keptService.state, d)} (kept, --no-service)` : opts.noService ? 'skipped (--no-service)' : serviceLabel(target, serviceReceipt.state, d)}`);
   if (engine === 'pglite') {
     s.say('  Engine    PGLite (single-writer): host-side commands that open the database fail with `live_serve` —');
-    s.say('            administer through the running server (--admin-token-file; `gbrain sync` delegates to it),');
+    s.say('            administer through the running server (--admin-token-file; `foresights sync` delegates to it),');
     s.say('            or move to Postgres for concurrent local use.');
   } else {
-    s.say(`  Engine    ${engine === 'postgres' ? 'Postgres' : 'unknown (no brain config found — run gbrain init on this host)'}`);
+    s.say(`  Engine    ${engine === 'postgres' ? 'Postgres' : 'unknown (no brain config found — run foresights init on this host)'}`);
   }
   if (localHealth === 'timeout') s.say(`  Health    local ${localHealthUrl} did not answer within ${Math.round(d.localHealthMs / 1000)}s — check ${tildify(serveErrPath(d.serveDir), d.home)}`);
-  if (tailnetHealth === 'pending') s.say(`  Health    ${publicUrl}/health still pending — re-run \`gbrain mcp expose --status\` in a minute.`);
+  if (tailnetHealth === 'pending') s.say(`  Health    ${publicUrl}/health still pending — re-run \`foresights mcp expose --status\` in a minute.`);
   if (tailnetHealth === 'unresolved') s.say(`  Health    ${publicUrl}/health: ${unresolvedDetail(tsStatus!.dnsName!)}`);
   s.say('');
   s.say('Next — choose the connection method supported by the intended client');
   s.say(`  Owner login      ${ownerLogin}`);
-  s.say('  Native OAuth     gbrain mcp admin register --help (public/confidential PKCE; exact client redirect URIs)');
+  s.say('  Native OAuth     foresights mcp admin register --help (public/confidential PKCE; exact client redirect URIs)');
   s.say('                   The native client starts authorization; the owner separately reviews consent.');
-  s.say(`  Machine client   gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
+  s.say(`  Machine client   foresights mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
   s.say(`                     --url ${receipt.mcp_url} \\`);
   s.say(`                     --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`);
-  s.say(`  Machine install  gbrain connect ${receipt.mcp_url} --harness <id> --credentials-file /private/<name>.json --install`);
+  s.say(`  Machine install  foresights connect ${receipt.mcp_url} --harness <id> --credentials-file /private/<name>.json --install`);
   const local = localAgentGuidance(engine, opts.port, ownerCredential);
   s.say(`  Local agents     ${local.lines[0]}`);
   for (const line of local.lines.slice(1)) s.say(`                   ${line}`);
-  s.say('  Check            gbrain mcp expose --status');
+  s.say('  Check            foresights mcp expose --status');
   s.nextActions.push(
-    `gbrain mcp grant <name> --harness <id> --profile memory-writer --source default --url ${receipt.mcp_url} --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`,
+    `foresights mcp grant <name> --harness <id> --profile memory-writer --source default --url ${receipt.mcp_url} --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`,
     ownerLogin,
-    'gbrain mcp admin register --help',
+    'foresights mcp admin register --help',
     ...local.nextActions,
-    'gbrain mcp expose --status',
+    'foresights mcp expose --status',
   );
   const pending = tailnetHealth === 'pending' || localHealth === 'timeout';
   return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
@@ -1133,14 +1133,14 @@ async function runStatus(d: Resolved, s: Session, opts: ExposeOptions): Promise<
   } else {
     s.check('verify.tailnet', 'skipped', 'no https public URL');
   }
-  s.say(`GBrain MCP server (${receipt.mode}) — ${receipt.mcp_url}`);
+  s.say(`Foresights MCP server (${receipt.mode}) — ${receipt.mcp_url}`);
   for (const c of s.checks) s.say(`  ${c.status.padEnd(8)} ${c.name.padEnd(18)} ${c.detail}`);
-  if (!allOk) s.nextActions.push('gbrain mcp expose --yes');
+  if (!allOk) s.nextActions.push('foresights mcp expose --yes');
   if (!allOk) return s.finish('error', 1, { receipt, reason: 'status_unhealthy' });
   // Spec: --status exits 0 only when EVERYTHING verifies. A pending tailnet
   // certificate is reported as `pending` (not `error`) so callers can tell
   // "wait a minute" from "broken", but it is still a non-zero exit.
-  if (pending) { s.nextActions.push('gbrain mcp expose --status'); return s.finish('pending', 1, { receipt, reason: 'tailnet_health_pending', message: 'tailnet health still pending (first certificate issuance can take a minute) — re-run --status shortly.' }); }
+  if (pending) { s.nextActions.push('foresights mcp expose --status'); return s.finish('pending', 1, { receipt, reason: 'tailnet_health_pending', message: 'tailnet health still pending (first certificate issuance can take a minute) — re-run --status shortly.' }); }
   return s.finish('exposed', 0, { receipt });
 }
 
@@ -1156,12 +1156,12 @@ interface Leftovers {
   handler: ServeHandler | null;
   /** The serve-status read that FAILED (null view), for the caveat line. */
   serveUnreadable: ServeRead | null;
-  /** Something of gbrain's besides a handler: the wrapper or the service. */
+  /** Something of foresights's besides a handler: the wrapper or the service. */
   evidence: boolean;
 }
 
 /**
- * What an interrupted `gbrain mcp expose` (no receipt) can leave behind:
+ * What an interrupted `foresights mcp expose` (no receipt) can leave behind:
  * `wrapperPath(serveDir)`, the launchd plist / systemd unit or a live
  * service, and a `/` handler on `:443` proxying `port`. Read-only; shared by
  * `--status` and `--remove` without a receipt. The supervisor chain and the
@@ -1187,7 +1187,7 @@ async function probeLeftovers(d: Resolved, port: number): Promise<Leftovers> {
 
 /** `--remove --yes [--force] [--port N]` for the receipt-less recovery. */
 function recoveryCommand(port: number, force: boolean): string {
-  return `gbrain mcp expose --remove --yes${force ? ' --force' : ''}${port !== DEFAULT_EXPOSE_PORT ? ` --port ${port}` : ''}`;
+  return `foresights mcp expose --remove --yes${force ? ' --force' : ''}${port !== DEFAULT_EXPOSE_PORT ? ` --port ${port}` : ''}`;
 }
 
 /**
@@ -1195,7 +1195,7 @@ function recoveryCommand(port: number, force: boolean): string {
  * may have left the wrapper, the unit / service or a `:443` handler behind.
  * Any of them found → one warn check per artifact, the recovery command in
  * `next_actions` (`--force` when only a handler stands, since nothing else of
- * gbrain's corroborates it), reason `leftovers_without_receipt`, exit 1.
+ * foresights's corroborates it), reason `leftovers_without_receipt`, exit 1.
  */
 async function runStatusWithoutReceipt(d: Resolved, s: Session, opts: ExposeOptions): Promise<number> {
   const lo = await probeLeftovers(d, opts.port);
@@ -1207,12 +1207,12 @@ async function runStatusWithoutReceipt(d: Resolved, s: Session, opts: ExposeOpti
   else if (lo.serveUnreadable) s.check('tailscale.publish', 'warn', `${describeServeReadFailure(d, lo.serveUnreadable).detail}; a handler for port ${opts.port} could not be checked`);
   if (lo.wrapperExists) { s.check('files', 'warn', `wrapper ${tildify(lo.wrapper, d.home)} exists without a receipt`); found.push(`the wrapper ${tildify(lo.wrapper, d.home)}`); }
   if (found.length === 0) {
-    s.say('not exposed — run: gbrain mcp expose');
-    s.nextActions.push('gbrain mcp expose');
+    s.say('not exposed — run: foresights mcp expose');
+    s.nextActions.push('foresights mcp expose');
     return s.finish('not_exposed', s.json ? 2 : 0, { reason: 'not_exposed' });
   }
   const rerun = recoveryCommand(opts.port, !lo.evidence);
-  s.say(`not exposed, but an interrupted \`gbrain mcp expose\` left these behind (port ${opts.port}): ${found.join('; ')}`);
+  s.say(`not exposed, but an interrupted \`foresights mcp expose\` left these behind (port ${opts.port}): ${found.join('; ')}`);
   s.say(`  Clean up: ${rerun}`);
   s.nextActions.push(rerun);
   return s.finish('error', 1, { reason: 'leftovers_without_receipt', message: `leftovers without a receipt: ${found.join('; ')} — run ${rerun}` });
@@ -1343,7 +1343,7 @@ async function runRemove(d: Resolved, s: Session, opts: ExposeOptions): Promise<
     effects: ['persistent_install'], what: 'mcp expose --remove',
     why: 'Stops and removes the published server: the user service, the Tailscale handler and the files listed in the remove plan.',
     risk: 'Agents connected through the published URL lose access until it is published again.',
-    user_message: 'I\'d like to unpublish your gbrain MCP server (stop its service and remove its Tailscale handler). OK?',
+    user_message: 'I\'d like to unpublish your foresights MCP server (stop its service and remove its Tailscale handler). OK?',
   });
   if (consent !== null) return consent;
   const left: string[] = [];
@@ -1387,9 +1387,9 @@ async function runRemove(d: Resolved, s: Session, opts: ExposeOptions): Promise<
         // receipt + wrapper so a re-run can finish the job.
         s.check('tailscale.publish', 'fail', `${describeServeReadFailure(d, read).detail}; handler left as is`);
         s.check('receipt', 'skipped', 'kept (the tailscale serve status could not be read; re-run --remove once it can)');
-        s.nextActions.push('tailscale serve status --json', 'gbrain mcp expose --remove --yes');
+        s.nextActions.push('tailscale serve status --json', 'foresights mcp expose --remove --yes');
         s.say('');
-        s.say('Stopped here: could not read `tailscale serve status`, so the handler, the wrapper and the receipt were left in place. Fix Tailscale, then run the removal again (the user already approved it: `gbrain mcp expose --remove --yes`).');
+        s.say('Stopped here: could not read `tailscale serve status`, so the handler, the wrapper and the receipt were left in place. Fix Tailscale, then run the removal again (the user already approved it: `foresights mcp expose --remove --yes`).');
         return s.finish('error', 1, { receipt, reason: 'tailscale_serve_status_unreadable', message: 'could not read tailscale serve status; handler left as is' });
       }
       const ours = findProxiedHandler(read.view, receipt.port);
@@ -1399,7 +1399,7 @@ async function runRemove(d: Resolved, s: Session, opts: ExposeOptions): Promise<
         const outcome = await turnOffOurHandler(d, binary, receipt.port, ours, receipt.mode === 'funnel');
         recordHandlerOff(s, outcome, left);
         if (outcome.remaining !== null) {
-          return finishHandlerNotRemoved(s, { receipt, port: receipt.port, remaining: outcome.remaining, kept: 'the wrapper and the receipt', rerun: 'gbrain mcp expose --remove --yes', serviceNote });
+          return finishHandlerNotRemoved(s, { receipt, port: receipt.port, remaining: outcome.remaining, kept: 'the wrapper and the receipt', rerun: 'foresights mcp expose --remove --yes', serviceNote });
         }
       }
     }
@@ -1429,12 +1429,12 @@ async function runRemove(d: Resolved, s: Session, opts: ExposeOptions): Promise<
 }
 
 /**
- * `--remove` with NO receipt: an interrupted `gbrain mcp expose` (killed
+ * `--remove` with NO receipt: an interrupted `foresights mcp expose` (killed
  * between `tailscale serve --bg` and the receipt write) can leave the
  * wrapper, a launchd/systemd unit and a `:443` handler behind. Recover from
  * what is on disk: remove exactly those artifacts (for `--port`, default
  * 3131), leave the admin token, and say so. A `:443` handler proxying the
- * port is turned off only when something else of gbrain's corroborates it
+ * port is turned off only when something else of foresights's corroborates it
  * (the wrapper, our unit/plist, or the supervisor reporting our service) —
  * another tool may proxy the same port — or with `--force`. Nothing of ours
  * found → today's "not exposed — nothing to remove", exit 0.
@@ -1448,7 +1448,7 @@ async function runRemoveWithoutReceipt(d: Resolved, s: Session, opts: ExposeOpti
     s.check('receipt', 'skipped', 'no expose receipt; nothing to remove');
     if (serveUnreadable) s.check('tailscale.publish', 'warn', `${describeServeReadFailure(d, serveUnreadable).detail}; a handler for port ${opts.port} could not be checked`);
     if (handler) {
-      const note = `a :443 handler proxies ${handler.proxy} but nothing else of gbrain's is here (no wrapper, unit or service), so it is not proven to be ours; left as is — pass --force to turn it off`;
+      const note = `a :443 handler proxies ${handler.proxy} but nothing else of foresights's is here (no wrapper, unit or service), so it is not proven to be ours; left as is — pass --force to turn it off`;
       s.check('tailscale.publish', 'warn', note);
       s.nextActions.push(forceRerun);
       s.say(`Note: ${note}`);
@@ -1464,16 +1464,16 @@ async function runRemoveWithoutReceipt(d: Resolved, s: Session, opts: ExposeOpti
   ];
   s.check('receipt', 'warn', `no expose receipt — recovering from what is on disk (port ${opts.port})`);
   s.check('plan', 'ok', plan.join(' | '));
-  s.say(`Recovering without a receipt (an interrupted \`gbrain mcp expose\` left these behind; port ${opts.port}):`);
+  s.say(`Recovering without a receipt (an interrupted \`foresights mcp expose\` left these behind; port ${opts.port}):`);
   for (const line of plan) s.say(`  ${line}`);
   const rerun = recoveryCommand(opts.port, opts.force);
   const consent = await confirmOrFinish(d, s, 'Remove these leftovers? [y/N] ', {
     yes: opts.yes, receipt: null, confirmationMessage: 'Pass --yes to confirm the removal.', nextAction: rerun,
     argv: ['gbrain', 'mcp', 'expose', '--remove', ...(opts.force ? ['--force'] : []), ...(opts.port !== DEFAULT_EXPOSE_PORT ? ['--port', String(opts.port)] : [])],
     effects: ['persistent_install'], what: 'mcp expose --remove',
-    why: `Removes what an interrupted \`gbrain mcp expose\` left behind on port ${opts.port} (the service, a Tailscale handler, the wrapper), as listed in the plan.`,
+    why: `Removes what an interrupted \`foresights mcp expose\` left behind on port ${opts.port} (the service, a Tailscale handler, the wrapper), as listed in the plan.`,
     risk: 'Anything still using that server loses it.',
-    user_message: 'An interrupted gbrain publish left a server behind. I\'d like to remove those leftovers. OK?',
+    user_message: 'An interrupted foresights publish left a server behind. I\'d like to remove those leftovers. OK?',
   });
   if (consent !== null) return consent;
   const left: string[] = [];

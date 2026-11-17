@@ -9,7 +9,7 @@ inside the currently selected brain, not to a database or an immutable revision.
 
 The format is `gbrain-page:v1:` followed by unpadded base64url of the UTF-8
 bytes of `JSON.stringify([source_id, slug])`. The array has exactly two
-strings. Source IDs follow GBrain's canonical source-ID validator; slugs
+strings. Source IDs follow Foresights's canonical source-ID validator; slugs
 must already be canonical lowercase valid page slugs. JSON escapes delimiters
 inside fields; the decoder never splits the source and slug on a delimiter.
 

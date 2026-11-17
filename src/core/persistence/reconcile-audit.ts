@@ -127,9 +127,9 @@ async function classifyFinding(engine: BrainEngine, sourceId: string, slug: stri
     const verdict = classification.verdict === 'no_drift' ? 'formatting_only' : classification.verdict;
     counts[verdict]++;
     const updated = Date.parse(String(state.snapshot.page.updated_at ?? ''));
-    const suggestion = verdict === 'formatting_only' ? `Only formatting differs. Preview with gbrain sources reconcile ${sourceId} ${slug} --brain <brain> --preview; the result is the database content.`
-      : verdict === 'review_required' ? `Not structurally additive. Preview gbrain sources reconcile ${sourceId} ${slug} --brain <brain> --preview --out <new file> and ask the user before deciding the review paths.`
-      : `Preview gbrain sources reconcile ${sourceId} ${slug} --brain <brain> --preview --auto-additive --out <new file>${verdict === 'additive_with_suggestions' ? ', read the inserted lines, then add --accept-suggested' : ''}; apply it with a new request ID.`;
+    const suggestion = verdict === 'formatting_only' ? `Only formatting differs. Preview with foresights sources reconcile ${sourceId} ${slug} --brain <brain> --preview; the result is the database content.`
+      : verdict === 'review_required' ? `Not structurally additive. Preview foresights sources reconcile ${sourceId} ${slug} --brain <brain> --preview --out <new file> and ask the user before deciding the review paths.`
+      : `Preview foresights sources reconcile ${sourceId} ${slug} --brain <brain> --preview --auto-additive --out <new file>${verdict === 'additive_with_suggestions' ? ', read the inserted lines, then add --accept-suggested' : ''}; apply it with a new request ID.`;
     return { classification: verdict, suggestion, drift_paths: classification.paths.map(({ path, class: kind, reason }) => ({ path, class: kind, reason })),
       ...(Number.isFinite(updated) ? { file_modified_after_database: statSync(state.path).mtimeMs > updated } : {}) };
   } catch (error) {
@@ -138,7 +138,7 @@ async function classifyFinding(engine: BrainEngine, sourceId: string, slug: stri
     if (slugRule) {
       counts.slug_rule_mismatch++;
       return { classification: 'slug_rule_mismatch',
-        suggestion: `The canonical file carries no slug stamp, so its path derives ${slugifyPath(slug + '.md')} instead of ${slug}. Preview gbrain repair frontmatter --source ${sourceId} (a safe repair stamps slug: ${slug}), apply it, then audit again.` };
+        suggestion: `The canonical file carries no slug stamp, so its path derives ${slugifyPath(slug + '.md')} instead of ${slug}. Preview foresights repair frontmatter --source ${sourceId} (a safe repair stamps slug: ${slug}), apply it, then audit again.` };
     }
     counts.error++;
     return { classification: 'error' };

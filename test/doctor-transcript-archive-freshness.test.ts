@@ -2,7 +2,7 @@
  * GST-2768 PR 3: the transcript_archive_freshness doctor check. Off is ok with no noise; with the archive on it warns
  * when the newest archived day is more than transcripts.archive.stale_days behind the newest session day the last run
  * read (fix: archive run, or backfill --from when the gap is wider than one run); the check itself reads no reader, when no maintenance pass has run
- * the archive in that long (fix: gbrain autopilot --install), and lists held days with their codes; a harness with
+ * the archive in that long (fix: foresights autopilot --install), and lists held days with their codes; a harness with
  * no readable sessions is informational. PGLite, synthetic sessions only.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';

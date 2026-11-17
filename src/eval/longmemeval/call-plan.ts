@@ -1,5 +1,5 @@
 /**
- * call-plan.ts — `gbrain eval longmemeval --call-plan FILE`: writes gstack's
+ * call-plan.ts — `foresights eval longmemeval --call-plan FILE`: writes gstack's
  * eval call plan (wire format GSTACK_EVAL_CALLS v1, gstack docs/eval-calls.md)
  * for the exact run the other flags describe, then exits 0. No provider is
  * called and no brain is opened: the command parses and resolves the run
@@ -100,7 +100,7 @@ export function shellQuote(arg: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
-/** The gate command: `gbrain eval longmemeval` + argv without `--call-plan FILE` / `--call-plan-gate CMD`. */
+/** The gate command: `foresights eval longmemeval` + argv without `--call-plan FILE` / `--call-plan-gate CMD`. */
 export function gateCommand(args: readonly string[]): string {
   const kept: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -222,7 +222,7 @@ export async function buildLmeCallPlan(input: LmeCallPlanInput): Promise<CallPla
   if (opts.viaOp.op) throw new CallPlanRefusal('--call-plan cannot bound --via-operation: the operation\'s own expansion, embed and rerank calls are not inventoried');
   if (!opts.keywordOnly && knobs.cross_modal_llm_intent) throw new CallPlanRefusal('--call-plan cannot bound search.cross_modal.llm_intent=true (an LLM intent tie-break per ambiguous question); plan with it off');
   const root = (() => {
-    try { return git(import.meta.dir, ['rev-parse', '--show-toplevel']).toString().trim(); } catch { throw new CallPlanRefusal('--call-plan needs gbrain running from a git checkout (GSTACK_EVAL_HEAD binds the plan to a commit)'); }
+    try { return git(import.meta.dir, ['rev-parse', '--show-toplevel']).toString().trim(); } catch { throw new CallPlanRefusal('--call-plan needs foresights running from a git checkout (GSTACK_EVAL_HEAD binds the plan to a commit)'); }
   })();
   const plan: CallPlan = {
     gate: opts.callPlanGate ?? gateCommand(input.args),

@@ -1,5 +1,5 @@
 /**
- * gbrain eval gate — fail CI on retrieval regressions OR correctness drops (v0.41).
+ * foresights eval gate — fail CI on retrieval regressions OR correctness drops (v0.41).
  *
  * Two gating paths (per CEO D8 + eng D6/D7):
  *
@@ -166,15 +166,15 @@ function parseArgs(args: string[]): GateOpts {
 }
 
 function printHelp(): void {
-  console.log(`gbrain eval gate — fail CI on retrieval regressions or correctness drops
+  console.log(`foresights eval gate — fail CI on retrieval regressions or correctness drops
 
 Usage:
-  gbrain eval gate --baseline X.baseline.ndjson [flags]      # regression-only
-  gbrain eval gate --qrels Y.qrels.json [flags]              # correctness-only
-  gbrain eval gate --baseline X --qrels Y [flags]            # both required
+  foresights eval gate --baseline X.baseline.ndjson [flags]      # regression-only
+  foresights eval gate --qrels Y.qrels.json [flags]              # correctness-only
+  foresights eval gate --baseline X --qrels Y [flags]            # both required
 
 Required (at least one):
-  --baseline FILE              Baseline NDJSON from \`gbrain bench publish\`
+  --baseline FILE              Baseline NDJSON from \`foresights bench publish\`
   --qrels FILE                 Qrels JSON (\`{schema_version, queries: [...]}\` shape)
 
 Thresholds (override baseline metadata; CLI > embedded > defaults):
@@ -466,10 +466,10 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
   if (!opts.baseline && !opts.qrels) {
     printHelp();
     usage('Error: at least one of --baseline or --qrels must be set',
-      'Pass --qrels with a qrels fixture for the correctness gate (gbrain eval gate --qrels Y.qrels.json --json), --baseline with a published baseline for the regression gate, or both.');
+      'Pass --qrels with a qrels fixture for the correctness gate (foresights eval gate --qrels Y.qrels.json --json), --baseline with a published baseline for the regression gate, or both.');
   }
 
-  if (opts.baseline && !existsSync(opts.baseline)) usage(`Error: baseline file not found: ${opts.baseline}`, 'Pass an existing --baseline file (write one with `gbrain bench publish`).');
+  if (opts.baseline && !existsSync(opts.baseline)) usage(`Error: baseline file not found: ${opts.baseline}`, 'Pass an existing --baseline file (write one with `foresights bench publish`).');
   if (opts.qrels && !existsSync(opts.qrels)) usage(`Error: qrels file not found: ${opts.qrels}`, 'Pass an existing --qrels file.');
 
   // Hermetic embedder validation. Only 'deterministic' is supported; the
@@ -478,14 +478,14 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
   if (opts.embedder !== undefined) {
     if (opts.embedder !== 'deterministic') {
       usage(`Error: unsupported embedder "${opts.embedder}" — the only supported value is "deterministic".`,
-        'Example: gbrain eval gate --qrels Y.qrels.json --embedder deterministic');
+        'Example: foresights eval gate --qrels Y.qrels.json --embedder deterministic');
     }
     if (opts.baseline) {
       usage('Error: the deterministic embedder cannot be combined with the baseline regression gate ' +
         '(replay re-embeds captured queries via the gateway). Use it with the qrels correctness gate only.',
       'Run the deterministic embedder with --qrels only.');
     }
-    if (!opts.qrels) usage('Error: the deterministic embedder requires a qrels file.', 'Example: gbrain eval gate --qrels Y.qrels.json --embedder deterministic');
+    if (!opts.qrels) usage('Error: the deterministic embedder requires a qrels file.', 'Example: foresights eval gate --qrels Y.qrels.json --embedder deterministic');
   }
 
   const result: GateResult = {
@@ -552,7 +552,7 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
   if (jsonGuardActive()) {
     const breached = [...(result.regression_gate.breaches ?? []), ...(result.correctness_gate.breaches ?? [])].map(b => b.metric);
     process.exit(writeCliError(opError('gate_failed', `The eval gate failed: ${breached.join(', ') || 'thresholds breached'}.`,
-      'Read the result line\'s breaches. Fix the retrieval regression, or (if the change is intended) publish a new baseline with `gbrain bench publish`.'),
+      'Read the result line\'s breaches. Fix the retrieval regression, or (if the change is intended) publish a new baseline with `foresights bench publish`.'),
     'eval', { json: true, stderr: false }));
   }
   process.exit(1);

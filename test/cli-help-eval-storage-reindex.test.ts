@@ -2,7 +2,7 @@
  * #3686 (the #578 residue) — `eval` / `storage` / `reindex` --help must print
  * real usage, not the generic one-line CLI_ONLY stub.
  *
- * Pre-fix, all three exited 0 with `gbrain <cmd> - run gbrain --help for the
+ * Pre-fix, all three exited 0 with `foresights <cmd> - run foresights --help for the
  * full command list.` — for eval that hid a 15-subcommand surface whose help
  * block already shipped in the binary and was reachable ONLY via the
  * missing-required-arg error path.
@@ -36,9 +36,9 @@ function runCli(args: string[]): { stdout: string; stderr: string; status: numbe
   };
 }
 
-const GENERIC_STUB = 'run gbrain --help for the full command list';
+const GENERIC_STUB = 'run foresights --help for the full command list';
 
-describe('#3686 — gbrain eval --help prints the real usage block', () => {
+describe('#3686 — foresights eval --help prints the real usage block', () => {
   test('reaches eval.ts printHelp with the subcommand surface, engine-free', () => {
     const { stdout, status } = runCli(['eval', '--help']);
     expect(status).toBe(0);
@@ -57,12 +57,12 @@ describe('#3686 — gbrain eval --help prints the real usage block', () => {
     expect(status).not.toBe(-1);
     const out = stdout + stderr;
     expect(out).not.toContain(GENERIC_STUB);
-    expect(out).toContain('gbrain eval brainbench');
+    expect(out).toContain('foresights eval brainbench');
     expect(out).not.toContain('--qrels');
   }, 60000);
 });
 
-describe('#3686 — gbrain storage --help prints the real usage block', () => {
+describe('#3686 — foresights storage --help prints the real usage block', () => {
   test('names the status subcommand and its flags, engine-free', () => {
     const { stdout, status } = runCli(['storage', '--help']);
     expect(status).toBe(0);
@@ -73,7 +73,7 @@ describe('#3686 — gbrain storage --help prints the real usage block', () => {
   }, 60000);
 });
 
-describe('#3686 — gbrain reindex --help prints the real usage block', () => {
+describe('#3686 — foresights reindex --help prints the real usage block', () => {
   test('names all three targets incl. the dispatcher-parsed --multimodal flags, engine-free', () => {
     const { stdout, status } = runCli(['reindex', '--help']);
     expect(status).toBe(0);

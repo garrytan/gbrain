@@ -16,7 +16,7 @@
  *             lock scope, reranker/provider reachability. The "is the
  *             machinery actually running?" question.
  *   - meta  : schema version, migrations, upgrade trail, eval capture, slug
- *             fallback audit, schema-pack drift. The "is gbrain itself
+ *             fallback audit, schema-pack drift. The "is foresights itself
  *             coherent?" question.
  *
  * Why this matters: the doctor's legacy `health_score` ( 100 − 20×fails −
@@ -263,7 +263,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'dirty_age',
   'commits_outside_source_root',
   'quarantined_changes',
-  // PR B: commits in a source checkout that gbrain's commit ledger does not name, and page files left uncommitted (doctor/checks/foreign-writers.ts).
+  // PR B: commits in a source checkout that foresights's commit ledger does not name, and page files left uncommitted (doctor/checks/foreign-writers.ts).
   'foreign_writers',
   'takes_count',
   'takes_weight_grid',
@@ -342,7 +342,7 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
   'skills_manifest_integrity',
   'skill_currency',
   'skill_preconditions',
-  // Skill size, growth since the last diet, triggers, and drift against this gbrain (gbrain skillpack health).
+  // Skill size, growth since the last diet, triggers, and drift against this foresights (foresights skillpack health).
   'skill_health',
   // Skillpack update journals (crash-pending updates, kept backups).
   'skillpack_update_incomplete',
@@ -360,7 +360,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'harness_wiring',
   // GBRA-377 PR B: the skill-resolver hook lane's hook, catalog freshness and recent error codes; silent when unconfigured (doctor/checks/skill-resolver.ts).
   'skill_resolver',
-  // Cat 41: the provider-use decision gbrain setup recorded; declined = no provider request (discovery, probe).
+  // Cat 41: the provider-use decision foresights setup recorded; declined = no provider request (discovery, probe).
   'provider_consent',
   'frontmatter_hook',
   // URL source clones with no record of who added them (url-source-origin.ts).
@@ -402,7 +402,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'google_api_access',
   'google_oauth',
   'home_dir_in_worktree',
-  // GBRA-108: cron commands that run gbrain without GBRAIN_HOME (doctor/checks/cron-gbrain-home.ts).
+  // GBRA-108: cron commands that run foresights without GBRAIN_HOME (doctor/checks/cron-gbrain-home.ts).
   'cron_gbrain_home',
   'index_audit',
   'npm_squat',
@@ -497,7 +497,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'rls',
   // The session's TLS state on a non-loopback Postgres host (doctor/checks/postgres-tls.ts).
   'postgres_tls',
-  // #7632: every gbrain function that pins a search_path ends it with pg_temp.
+  // #7632: every foresights function that pins a search_path ends it with pg_temp.
   'function_search_path',
   // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
   'database_encoding',
@@ -535,19 +535,19 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'eval_capture',
   'retrieval_feedback_health',
   // #4613 — links_link_source_check CHECK shape: schema coherence healed by
-  // `gbrain apply-migrations` (sibling of pages_upsert_arbiter).
+  // `foresights apply-migrations` (sibling of pages_upsert_arbiter).
   'links_link_source_check',
   'minions_migration',
   'multi_source_drift',
   'pack_upgrade_available',
   // #550 — pages UNIQUE(source_id, slug) upsert arbiter presence: schema
-  // coherence healed by `gbrain apply-migrations` (sibling of
+  // coherence healed by `foresights apply-migrations` (sibling of
   // timeline_dedup_index / schema_version).
   'pages_upsert_arbiter',
   // #5216: the resumable pages.knowledge_revision backfill (resumed by apply-migrations --force-schema).
   'revision_backfill',
   'schema_columns',
-  // #7776: function bodies an older gbrain's schema replay reverted (init --migrate-only reinstalls them).
+  // #7776: function bodies an older foresights's schema replay reverted (init --migrate-only reinstalls them).
   'schema_function_bodies',
   // #6911: tables the applied migrations created that are missing (repair missing-tables recreates rebuildable caches).
   'schema_missing_tables',
@@ -596,7 +596,7 @@ export function categorizeCheck(name: string): CheckCategory {
  * Skill-category check group. Used by buildChecks's scope-branch gates to
  * SKIP the (expensive, filesystem-walking) skill check group when the caller
  * asked for scope=brain. This is the load-bearing escape hatch that makes
- * `gbrain doctor --scope=brain` sub-second on a brain with thousands of
+ * `foresights doctor --scope=brain` sub-second on a brain with thousands of
  * skills (per D9 in the plan).
  *
  * Use this set as the source of truth for "do these checks belong to the

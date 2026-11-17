@@ -1,10 +1,10 @@
 /**
- * #3502: docs must not reference nonexistent gbrain commands or flags.
+ * #3502: docs must not reference nonexistent foresights commands or flags.
  *
- * `docs/tutorials/personal-brain.md` shipped a `gbrain install` step for two
+ * `docs/tutorials/personal-brain.md` shipped a `foresights install` step for two
  * months after the command it replaced was retired — every reader hit
  * "Unknown command: install". This guard scans README.md, docs/, and skills/
- * for `gbrain <verb>` invocations in code (fenced blocks + inline code spans)
+ * for `foresights <verb>` invocations in code (fenced blocks + inline code spans)
  * and checks each verb against the live CLI surface: CLI_ONLY, operation
  * cliHints names (non-hidden), and aliases.
  *
@@ -63,7 +63,7 @@ const FLAG_CHECKED = ['docs/guides/', 'docs/migrations/', 'docs/mcp/', 'skills/'
 const ALLOWLIST: Record<string, { tokens: string[]; reason: string }> = {
   'docs/guides/rls-and-you.md': {
     tokens: ['rls-exempt'],
-    reason: 'explains that gbrain deliberately does NOT ship this command',
+    reason: 'explains that foresights deliberately does NOT ship this command',
   },
 };
 
@@ -85,12 +85,12 @@ function scanText(rel: string, text: string, valid: Set<string>): Violation[] {
     for (const inv of gbrainInvocations(code)) {
       const snippet = code.trim().slice(0, 100);
       if (!valid.has(inv.verb)) {
-        out.push({ file: rel, line, token: inv.verb, message: `\`gbrain ${inv.verb}\` — unknown verb (not a registered command) — ${snippet}` });
+        out.push({ file: rel, line, token: inv.verb, message: `\`foresights ${inv.verb}\` — unknown verb (not a registered command) — ${snippet}` });
         continue;
       }
       const why = checkFlags ? flagRejection(inv) : null;
       const flag = why?.match(/(--[\w-]+)/)?.[1];
-      if (why) out.push({ file: rel, line, token: flag ?? inv.verb, message: `\`gbrain ${inv.verb}\` — ${why} — ${snippet}` });
+      if (why) out.push({ file: rel, line, token: flag ?? inv.verb, message: `\`foresights ${inv.verb}\` — ${why} — ${snippet}` });
     }
   }
   return out;
@@ -113,7 +113,7 @@ function scan(): Violation[] {
 
 const allowed = (v: Violation) => ALLOWLIST[v.file]?.tokens.includes(v.token) ?? false;
 
-describe('#3502 — docs reference only real gbrain commands and flags', () => {
+describe('#3502 — docs reference only real foresights commands and flags', () => {
   test('the agent entry points are scanned, flags included', () => {
     for (const f of AGENT_ENTRY_POINTS) expect(FLAG_CHECKED).toContain(f);
     expect(FLAG_CHECKED).toContain('docs/mcp/');
@@ -121,12 +121,12 @@ describe('#3502 — docs reference only real gbrain commands and flags', () => {
 
   const violations = scan();
 
-  test('every `gbrain <verb> [--flag]` in README/docs/skills resolves against the live CLI', () => {
+  test('every `foresights <verb> [--flag]` in README/docs/skills resolves against the live CLI', () => {
     const open = violations.filter((v) => !allowed(v)).map((v) => `${v.file}:${v.line}: ${v.message}`);
     expect(
       open,
-      `Docs name gbrain commands/flags the CLI rejects:\n${open.join('\n')}\n\n`
-      + 'Fix the doc to the current command (check `gbrain <verb> --help`), or delete the claim if the '
+      `Docs name foresights commands/flags the CLI rejects:\n${open.join('\n')}\n\n`
+      + 'Fix the doc to the current command (check `foresights <verb> --help`), or delete the claim if the '
       + `feature is gone. If the example documents an older release, put ${HISTORICAL_MARKER} on the line `
       + `above its code fence (or on the inline-code line).\nRerun: ${RERUN}`,
     ).toEqual([]);
@@ -145,9 +145,9 @@ describe('#3502 — docs reference only real gbrain commands and flags', () => {
   test('scanner self-check: unknown verb and unknown flag are caught; the historical marker suppresses', () => {
     const valid = liveCliVerbs();
     const doc = [
-      '```bash', 'gbrain notacommand --x', 'gbrain search "q" --no-such-flag', 'gbrain search "q" --limit 5', '```',
-      HISTORICAL_MARKER, '```bash', 'gbrain notacommand', '```',
-      `Run \`gbrain sync --no-such-flag\`. ${HISTORICAL_MARKER}`,
+      '```bash', 'foresights notacommand --x', 'foresights search "q" --no-such-flag', 'foresights search "q" --limit 5', '```',
+      HISTORICAL_MARKER, '```bash', 'foresights notacommand', '```',
+      `Run \`foresights sync --no-such-flag\`. ${HISTORICAL_MARKER}`,
     ].join('\n');
     const found = scanText('docs/guides/x.md', doc, valid).map((v) => `${v.line}:${v.token}`);
     expect(found).toEqual(['2:notacommand', '3:--no-such-flag']);

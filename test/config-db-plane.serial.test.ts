@@ -121,7 +121,7 @@ describe('config set database_url/database_path — file plane, engine-free', ()
     expect('database_url' in cfg).toBe(false);
     // The flip note points at the data-moving recipe for the pglite direction.
     expect(errs.join('\n')).toContain('engine flipped postgres → pglite');
-    expect(errs.join('\n')).toContain('gbrain migrate --to pglite');
+    expect(errs.join('\n')).toContain('foresights migrate --to pglite');
   });
 
   test('engine-flip warning: pglite → postgres names the flip and the migrate recipe', async () => {
@@ -132,7 +132,7 @@ describe('config set database_url/database_path — file plane, engine-free', ()
     const err = errs.join('\n');
     expect(err).toContain('engine flipped pglite → postgres');
     expect(err).toContain('NOT moved');
-    expect(err).toContain('gbrain migrate --to supabase');
+    expect(err).toContain('foresights migrate --to supabase');
 
     const cfg = readConfig();
     expect(cfg.engine).toBe('postgres');

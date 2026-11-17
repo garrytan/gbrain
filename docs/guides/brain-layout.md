@@ -1,14 +1,14 @@
 # A personal or company brain in one command
 
-`gbrain setup` gives an agent memory. `--shape` also gives that memory a starting shape:
+`foresights setup` gives an agent memory. `--shape` also gives that memory a starting shape:
 a few pages the agent reads, and your existing notes or company docs, searchable from the
 first session.
 
 ```bash
-gbrain setup claude-code --shape personal --notes ~/notes
-gbrain setup claude-code --shape company --docs ~/acme-example/docs --transcripts ~/acme-example/calls
-gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
-# Codex: the same with gbrain setup codex
+foresights setup claude-code --shape personal --notes ~/notes
+foresights setup claude-code --shape company --docs ~/acme-example/docs --transcripts ~/acme-example/calls
+foresights setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
+# Codex: the same with foresights setup codex
 ```
 
 ## Personal: what it writes
@@ -16,21 +16,21 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
 - **Three starter pages**, only when they don't exist yet: `me/facts`, `me/voice` and
   `me/how-i-decide`. Each is an empty form with one line marked "Example (delete me)"
   and `status: stub` in its frontmatter. Nothing about you is invented. Fill them in
-  yourself, or tell the agent a fact and it saves it with `gbrain remember`. A re-run
+  yourself, or tell the agent a fact and it saves it with `foresights remember`. A re-run
   never overwrites a page.
 - **Your notes, read only.** `--notes DIR` imports the markdown in that folder
-  (`gbrain import DIR --no-embed`). Setup never writes into the folder. Above 500
+  (`foresights import DIR --no-embed`). Setup never writes into the folder. Above 500
   markdown files it prints the import command for the agent to run as its own step,
   so setup stays quick.
 
 ## Company: what it writes
 
-- **A `company` source** in the same brain, kept in a folder gbrain owns next to the
+- **A `company` source** in the same brain, kept in a folder foresights owns next to the
   brain's own content (never your docs folder). When the brain serves one person it joins
   default search, so a question that names no source finds company pages too. When the
-  brain may serve several people (`gbrain access serves` says several, or
+  brain may serve several people (`foresights access serves` says several, or
   `brain.audience` is `shared`), it stays out of default search and setup asks you first:
-  `gbrain sources federate company` puts it in. If that folder already exists and is not
+  `foresights sources federate company` puts it in. If that folder already exists and is not
   an empty folder, setup leaves it alone, keeps the company lines out of the instruction
   block and asks you to move it before you run setup again.
 - **Six starter pages** in that source, only when they don't exist yet: `company/facts`
@@ -57,14 +57,14 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
   which of these is on for your brain, or that nothing leaves. Each file is imported once: a re-run from the same folder, or from a folder above it,
   reports it unchanged, and a file you changed since keeps its first page (delete the page to
   import it again). Above 500
-  files setup prints the import command instead (`gbrain import DIR --calls --prefix
+  files setup prints the import command instead (`foresights import DIR --calls --prefix
   company/calls --no-embed --source company`). It needs the company part on this brain,
   so it does not go with `--team`.
 - **Who reads the call pages.** They carry no readers of their own, so whoever can read
   the `company` source reads them, and no one else. Setup prints who that is, for example
   `readable by: everyone who can read source company (this brain serves one person)`, or
   on a brain that serves several people, the members the source's access rules allow
-  (`gbrain access who-can-read <slug> --source company` shows the same). These are not
+  (`foresights access who-can-read <slug> --source company` shows the same). These are not
   your agent conversations: those go to `conversations/` through the
   [conversation archive](conversation-archive.md), which `--transcripts` never touches.
 
@@ -83,12 +83,12 @@ earlier run wrote it.
 
 Then setup checks that keyless search finds one of your notes or docs by its title (for
 company docs, through default search when the source is in it) and prints a question to
-try in a new session. With no docs folder, it suggests `gbrain sources demo company-brain`
+try in a new session. With no docs folder, it suggests `foresights sources demo company-brain`
 to see how a company brain answers. The report also says what the conversation archive is
 doing on this brain: on, off, or offered (a brain that may serve several people is only
 offered it).
 
-`gbrain doctor` notes a facts page with a fact line that has no date
+`foresights doctor` notes a facts page with a fact line that has no date
 (`facts_undated_lines`). It names the page and the line numbers, changes nothing, and
 asks you for the dates.
 
@@ -101,11 +101,11 @@ you where the shared brain lives:
 
 - **Hosted:** a workspace at [gbrain.io](https://gbrain.io) (`gbrainio workspace new`),
   which teammates join by invite.
-- **Self-hosted:** a Postgres brain, with `gbrain access serves several` naming who it
+- **Self-hosted:** a Postgres brain, with `foresights access serves several` naming who it
   serves.
 
 Then connect your harness to the shared brain as well. Pages only some teammates may read
-use `readable_by` in their frontmatter, or `gbrain access rule add --prefix <folder>/` for
+use `readable_by` in their frontmatter, or `foresights access rule add --prefix <folder>/` for
 a whole folder. A company source you set up alone with `--solo` (the default) stays on
 this brain; moving it to a shared brain later is a separate step.
 
@@ -120,13 +120,13 @@ Nothing is written until it is answered, `--yes` included.
 
 ## Undo
 
-`gbrain setup <harness> --shape none` removes the block. The pages and the `company`
-source stay; delete pages with `gbrain delete <slug>` (company ones with
+`foresights setup <harness> --shape none` removes the block. The pages and the `company`
+source stay; delete pages with `foresights delete <slug>` (company ones with
 `--source company`) if you want them gone.
 
 ## Paste this to your agent
 
-> Install gbrain and give it a shape: run `gbrain setup claude-code --shape personal`
+> Install foresights and give it a shape: run `foresights setup claude-code --shape personal`
 > (or `company`, or `both`). If I have a notes folder, add `--notes <that folder>`; for
 > company docs, add `--docs <that folder>`; for exported call transcripts, add
 > `--transcripts <that folder>`; if my team will share the company brain, add `--team`. Then tell me what it wrote and the question to try.

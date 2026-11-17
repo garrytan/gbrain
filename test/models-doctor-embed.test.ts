@@ -1,5 +1,5 @@
 /**
- * v0.40.x — `gbrain models doctor` embedding reachability probe.
+ * v0.40.x — `foresights models doctor` embedding reachability probe.
  *
  * The probe sends one real `embed(['probe'])` as a query with an abort signal
  * (embedQuery takes no signal) and reports a distinct

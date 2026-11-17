@@ -1,7 +1,7 @@
 /**
- * launcher-lanes.ts — the gbrain entries outside setup's and the turn rule's
+ * launcher-lanes.ts — the foresights entries outside setup's and the turn rule's
  * hooks that a harness starts in the session's directory (#8426, #8428): the
- * stdio MCP entries for gbrain serve, the `gbrain bootstrap harness` hooks,
+ * stdio MCP entries for foresights serve, the `foresights bootstrap harness` hooks,
  * the workspace bootstrap lane's hooks and the Codex bootstrap SessionEnd
  * capture. Each is reported with the command that rewrites it through the
  * hook launcher (src/core/setup/hook-launcher.ts). Files only, read-only;
@@ -30,14 +30,14 @@ export interface LauncherLaneFinding {
   lane: LauncherLane;
   /** The config, settings or hooks file holding the entry. */
   source: string;
-  /** session_cwd: gbrain starts in the session's directory; otherwise the launcher's state. */
+  /** session_cwd: foresights starts in the session's directory; otherwise the launcher's state. */
   reason: 'session_cwd' | Exclude<HookLauncherState, 'current'>;
   detail: string;
   /** The command that rewrites the entry through the launcher. */
   rerun: string[];
   /** Where to run it, when not from any directory. */
   rerunFrom?: string;
-  /** True when rerun is gbrain setup for a user-scope entry setup owns, so an agent may run it; anything else is the user's. */
+  /** True when rerun is foresights setup for a user-scope entry setup owns, so an agent may run it; anything else is the user's. */
   setupOwned: boolean;
   /** Which writer owns the entry: setup's are refreshed (or named) by post-upgrade's setup pass, the rest get a line of their own. */
   owner: 'setup' | 'bootstrap' | 'none';
@@ -55,7 +55,7 @@ function readJson(path: string): Record<string, unknown> | null {
 
 const record = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null);
 
-/** A stdio entry that starts gbrain serve, and the launcher state it starts through (null: none). */
+/** A stdio entry that starts foresights serve, and the launcher state it starts through (null: none). */
 function serveEntryLauncher(entry: unknown): { launcher: string | null } | null {
   const e = record(entry);
   if (!e || typeof e.command !== 'string' || typeof e.url === 'string') return null;
@@ -65,13 +65,13 @@ function serveEntryLauncher(entry: unknown): { launcher: string | null } | null 
 }
 
 function state(launcher: string | null): { reason: LauncherLaneFinding['reason']; why: string } | null {
-  if (!launcher) return { reason: 'session_cwd', why: 'starts gbrain in the session\'s directory, so Bun loads that directory\'s bunfig.toml and .env before gbrain runs' };
+  if (!launcher) return { reason: 'session_cwd', why: 'starts foresights in the session\'s directory, so Bun loads that directory\'s bunfig.toml and .env before foresights runs' };
   const s = hookLauncherState(launcher);
   return s.state === 'current' ? null : { reason: s.state, why: `runs through ${launcher}, but ${s.detail}` };
 }
 
 /**
- * The `gbrain setup` command that rewrites an install's entries with what its receipt records. Setup keeps the recorded
+ * The `foresights setup` command that rewrites an install's entries with what its receipt records. Setup keeps the recorded
  * capture and providers decisions on its own; a hooks opt-out, a source pin and the recorded binary only come from flags, so the
  * rerun carries them (a recorded binary that no longer exists falls back to setup's PATH lookup).
  */
@@ -129,7 +129,7 @@ function mcpFindings(): LauncherLaneFinding[] {
   const ocFiles = ['opencode.jsonc', 'opencode.json'].map((f) => join(opencodeConfigDir(), f)).flatMap((file) => {
     try { return existsSync(file) ? [{ file, parsed: parseOpencodeConfig(readFileSync(file, 'utf8'), file) }] : []; } catch { return []; }
   });
-  // A remote gbrain entry in either file makes bootstrap skip the stdio registration, so it never rewrites the local one.
+  // A remote foresights entry in either file makes bootstrap skip the stdio registration, so it never rewrites the local one.
   const ocRemote = ocFiles.some(({ parsed }) => record(record(parsed.mcp)?.gbrain)?.type === 'remote');
   for (const { file, parsed } of ocFiles) {
     const entry = record(record(parsed.mcp)?.gbrain);
@@ -141,7 +141,7 @@ function mcpFindings(): LauncherLaneFinding[] {
     const foreign = opencodeEntryKind(parsed, 'gbrain') === 'foreign';
     const boot = foreign || ocProjectScope || ocRemote ? null : bootstrapRerun('opencode');
     out.push({ harness: 'opencode', lane: 'mcp', source: file, reason: s.reason, ...(boot ?? { rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--repair'], ...(bootstrap ? { rerunFrom: bootstrap.workspace_dir } : {}), setupOwned: false, owner: 'none' }),
-      detail: `the 'gbrain' MCP server in ${file} ${s.why}${foreign ? ` (gbrain's writer does not recognize it as its own)` : ocRemote ? ' (a remote gbrain entry is also configured, so bootstrap leaves this one alone)' : ocProjectScope ? ' (the workspace now records MCP_SCOPE=project, so bootstrap writes opencode.json in the workspace instead)' : ''}` });
+      detail: `the 'gbrain' MCP server in ${file} ${s.why}${foreign ? ` (foresights's writer does not recognize it as its own)` : ocRemote ? ' (a remote foresights entry is also configured, so bootstrap leaves this one alone)' : ocProjectScope ? ' (the workspace now records MCP_SCOPE=project, so bootstrap writes opencode.json in the workspace instead)' : ''}` });
   }
   return out;
 }
@@ -161,19 +161,19 @@ function hookFindings(): LauncherLaneFinding[] {
   const user = claudeUserSettingsPath();
   const harness = first(claudeHookCommands(user, (e, event) => classifyHarnessHook(e, event, 'any') !== null));
   if (harness) out.push({ harness: 'claude-code', lane: 'harness', source: user, reason: harness.reason, rerun: ['gbrain', 'bootstrap', 'harness', '--harness', 'claude-code'], setupOwned: false, owner: 'bootstrap',
-    detail: `gbrain bootstrap harness's hooks in ${user} ${harness.why}` });
+    detail: `foresights bootstrap harness's hooks in ${user} ${harness.why}` });
   const ws = (() => { try { return readReceipt(resolveGbrainHome())?.workspace_dir; } catch { return undefined; } })();
   if (ws) {
     const local = join(ws, CLAUDE_SETTINGS_FILE_RELPATH);
     const v1 = first(claudeHookCommands(local, (e) => e[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_HOOK_MARKER_VALUE));
     if (v1) out.push({ harness: 'claude-code', lane: 'bootstrap', source: local, reason: v1.reason, rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', 'claude-code', '--repair'], rerunFrom: ws, setupOwned: false, owner: 'bootstrap',
-      detail: `gbrain bootstrap's workspace hooks in ${local} ${v1.why}` });
+      detail: `foresights bootstrap's workspace hooks in ${local} ${v1.why}` });
   }
   let census: ReturnType<typeof codexHookCensus> = [];
   try { census = codexHookCensus(codexHooksPath()); } catch { /* unparseable: Codex runs none of it */ }
   const capture = first(census.filter((g) => g.lane === 'bootstrap').flatMap((g) => g.commands));
   if (capture) out.push({ harness: 'codex', lane: 'bootstrap', source: codexHooksPath(), reason: capture.reason, rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', 'codex', '--repair'], ...(ws ? { rerunFrom: ws } : {}), setupOwned: false, owner: 'bootstrap',
-    detail: `gbrain bootstrap's Codex SessionEnd capture in ${codexHooksPath()} ${capture.why} (installed by \`gbrain bootstrap hooks\` or \`gbrain bootstrap harness\`; re-run the one you used)` });
+    detail: `foresights bootstrap's Codex SessionEnd capture in ${codexHooksPath()} ${capture.why} (installed by \`foresights bootstrap hooks\` or \`foresights bootstrap harness\`; re-run the one you used)` });
   return out;
 }
 

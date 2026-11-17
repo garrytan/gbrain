@@ -26,7 +26,7 @@ export const MARKERS: Record<FenceKind, { begin: string; end: string }> = {
   takes: { begin: TAKES_FENCE_BEGIN, end: TAKES_FENCE_END },
 };
 /** The two-dash takes markers authors write from memory (#3769). */
-const NEAR_MISS = { begin: /^<!--\s*gbrain:takes:begin\s*-->$/, end: /^<!--\s*gbrain:takes:end\s*-->$/ };
+const NEAR_MISS = { begin: /^<!--\s*(?:foresights|gbrain):takes:begin\s*-->$/, end: /^<!--\s*(?:foresights|gbrain):takes:end\s*-->$/ };
 
 export interface RawCell {
   /** Cell text as `parseRowCells` reads it: trimmed, `\|` unescaped, `<br>` decoded. */

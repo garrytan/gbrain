@@ -7,7 +7,7 @@
  *
  * Protects (red before: unblock --apply rejects with the kind's error and schedules nothing): with the fences kind
  * stubbed to throw `OperationError('storage_error')`, the fence hold is reported `skipped` with reason `error` and
- * `gbrain sync unblock --source <id> --apply --json` as its next step, and the other hold (a `preparation_stalled`
+ * `foresights sync unblock --source <id> --apply --json` as its next step, and the other hold (a `preparation_stalled`
  * retry) is still scheduled for its re-screen. Runs on PGLite and, with DATABASE_URL, on Postgres.
  */
 import { describe, expect, test } from 'bun:test';
@@ -35,7 +35,7 @@ const setup = ({ root }: { root: string }) => {
   commit(root, 'seed');
 };
 const throwingRegistry = REPAIR_REGISTRY.map(spec => spec.kind !== 'fences' ? spec
-  : { ...spec, handler: { ...spec.handler, plan: async () => { throw new OperationError('storage_error', 'The fences kind failed unexpectedly.', 'Run gbrain repair content to see it.'); } } });
+  : { ...spec, handler: { ...spec.handler, plan: async () => { throw new OperationError('storage_error', 'The fences kind failed unexpectedly.', 'Run foresights repair content to see it.'); } } });
 
 for (const backend of testBackends()) describe(`[${backend}] GBRA-130 A-28: a repair kind that throws during sync unblock --apply`, () => {
   const databaseUrl = backend === 'postgres' ? process.env.DATABASE_URL : undefined;

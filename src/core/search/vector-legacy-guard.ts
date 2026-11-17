@@ -48,7 +48,7 @@ export function resolveVectorLegacyGuard(engine: object, cfg: Pick<GBrainConfig,
   resolved.set(key, setting.enabled);
   if (setting.enabled && !logged) {
     logged = true;
-    console.error(`[gbrain] vector legacy guard active (${setting.via === 'env' ? VECTOR_LEGACY_GUARD_ENV : VECTOR_LEGACY_GUARD_KEY}): `
+    console.error(`[foresights] vector legacy guard active (${setting.via === 'env' ? VECTOR_LEGACY_GUARD_ENV : VECTOR_LEGACY_GUARD_KEY}): `
       + 'vector search keeps the pre-#5824 freshness guard inside the HNSW candidate scan; remove it after upgrading.');
   }
   return setting.enabled;

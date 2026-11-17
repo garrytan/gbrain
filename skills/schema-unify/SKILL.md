@@ -1,17 +1,17 @@
 ---
 name: schema-unify
-description: Migrate a brain from gbrain-base (or any pack) to gbrain-base-v2's 14-canonical-type taxonomy via gbrain onboard --check + the unify-types Minion handler. Collapses 94 noisy types to 15 canonical with subtypes, alias rows, and link rows. Triggers when an agent notices pack_upgrade_available, type_proliferation, or asks "what is the canonical taxonomy / how do I clean up my page types".
+description: Migrate a brain from gbrain-base (or any pack) to gbrain-base-v2's 14-canonical-type taxonomy via foresights onboard --check + the unify-types Minion handler. Collapses 94 noisy types to 15 canonical with subtypes, alias rows, and link rows. Triggers when an agent notices pack_upgrade_available, type_proliferation, or asks "what is the canonical taxonomy / how do I clean up my page types".
 brain_first: exempt
 tools:
-  - gbrain onboard --check
-  - gbrain onboard --check --explain
-  - gbrain onboard --check --json
-  - gbrain jobs submit unify-types
-  - gbrain jobs get
-  - gbrain schema active
-  - gbrain schema use
-  - gbrain schema stats
-  - gbrain restore
+  - foresights onboard --check
+  - foresights onboard --check --explain
+  - foresights onboard --check --json
+  - foresights jobs submit unify-types
+  - foresights jobs get
+  - foresights schema active
+  - foresights schema use
+  - foresights schema stats
+  - foresights restore
   - mcp:run_onboard
 triggers:
   - "unify my types"
@@ -34,18 +34,18 @@ This skill is the playbook for that migration.
 
 ## brain_first: exempt
 
-This skill is ABOUT the brain's shape — it can't depend on the brain it's reshaping. No `gbrain search` lookup first; jump straight to onboard.
+This skill is ABOUT the brain's shape — it can't depend on the brain it's reshaping. No `foresights search` lookup first; jump straight to onboard.
 
 ## When this skill fires
 
-- Agent runs `gbrain onboard --check` and sees `pack_upgrade_available` or `type_proliferation` warnings
+- Agent runs `foresights onboard --check` and sees `pack_upgrade_available` or `type_proliferation` warnings
 - User asks "what is the canonical taxonomy / how do I clean up my page types / migrate to v2"
 - A `dangling_aliases` finding surfaces (post-unify GC)
 - An agent ingesting from a custom pack wants to consult the v2 taxonomy as a reference
 
 ## Mental model (one paragraph)
 
-A production gbrain brain accreted **94 distinct `pages.type` values** over years of ingestion: tweet / tweet-thread / tweet-bundle / tweet-single / media/x-tweet/bundle / tweet-stub all coexisting; 5.5K concept-redirect pages; atom-partner-link pages that should be links; civic / framework / insight / memo / anecdote one-offs. The cure: collapse to **15 canonical types** (person, company, media, tweet, social-digest, analysis, atom, concept, source, deal, email, slack, writing, project, note) with subtypes/format/origin pushed to frontmatter, alias-rows for redirects, real link-rows for edge-shaped pages, and a catch-all that bins long-tail unknowns to `note` with `frontmatter.legacy_type = <original>` for rollback.
+A production foresights brain accreted **94 distinct `pages.type` values** over years of ingestion: tweet / tweet-thread / tweet-bundle / tweet-single / media/x-tweet/bundle / tweet-stub all coexisting; 5.5K concept-redirect pages; atom-partner-link pages that should be links; civic / framework / insight / memo / anecdote one-offs. The cure: collapse to **15 canonical types** (person, company, media, tweet, social-digest, analysis, atom, concept, source, deal, email, slack, writing, project, note) with subtypes/format/origin pushed to frontmatter, alias-rows for redirects, real link-rows for edge-shaped pages, and a catch-all that bins long-tail unknowns to `note` with `frontmatter.legacy_type = <original>` for rollback.
 
 ## Workflow
 
@@ -54,7 +54,7 @@ A production gbrain brain accreted **94 distinct `pages.type` values** over year
 Confirm the brain is actually on `gbrain-base` (not already on v2).
 
 ```bash
-gbrain schema active --json | jq -r '.identity'
+foresights schema active --json | jq -r '.identity'
 ```
 
 Expected: `gbrain-base@1.0.0+<sha>`. If you see `gbrain-base-v2@...`, the brain is already on v2 — skip the migration.
@@ -62,7 +62,7 @@ Expected: `gbrain-base@1.0.0+<sha>`. If you see `gbrain-base-v2@...`, the brain 
 Then run onboard to see what would change:
 
 ```bash
-gbrain onboard --check
+foresights onboard --check
 ```
 
 Look for the `pack_upgrade_available` finding. If it's `ok`, there's no successor declared for the active pack — done.
@@ -72,7 +72,7 @@ Look for the `pack_upgrade_available` finding. If it's `ok`, there's no successo
 Run the per-cluster narrative:
 
 ```bash
-gbrain onboard --check --explain
+foresights onboard --check --explain
 ```
 
 This invokes the `unify-types` handler in dry-run mode and prints:
@@ -90,7 +90,7 @@ supported on a managed brain (managed persistence on) yet: the retype writes
 pages directly instead of through the coordinated writer, so the apply job is
 refused (`writer_coordinator_required`) before it changes anything. The
 `pack_upgrade_available` finding says so on those brains. Keep using
-`gbrain onboard --check --explain` to preview, tell the user the pack upgrade
+`foresights onboard --check --explain` to preview, tell the user the pack upgrade
 waits for coordinated retype support, and don't submit the apply job below.
 One exception: when the preview shows nothing to retype, link or alias, the
 apply job only switches the active pack, so it may be submitted with the
@@ -99,14 +99,14 @@ user's agreement.
 The handler is PROTECTED (manual_only) — autopilot will never auto-fire it. Submit explicitly:
 
 ```bash
-gbrain jobs submit unify-types \
+foresights jobs submit unify-types \
   --params '{"target_pack":"gbrain-base-v2","apply":true}'
 ```
 
-On PGLite (the install default), or on any setup without a running `gbrain jobs work` worker or supervisor daemon, add `--follow` so the job executes inline:
+On PGLite (the install default), or on any setup without a running `foresights jobs work` worker or supervisor daemon, add `--follow` so the job executes inline:
 
 ```bash
-gbrain jobs submit unify-types \
+foresights jobs submit unify-types \
   --follow \
   --params '{"target_pack":"gbrain-base-v2","apply":true}'
 ```
@@ -120,8 +120,8 @@ nothing and left the active pack unflipped. Omit it to preview.
 Watch progress per phase (worker-daemon runs; with `--follow` the same progress streams inline):
 
 ```bash
-gbrain jobs get <job_id>      # one job: status, progress, result
-gbrain jobs watch --follow    # live dashboard of the whole queue
+foresights jobs get <job_id>      # one job: status, progress, result
+foresights jobs watch --follow    # live dashboard of the whole queue
 ```
 
 A job that stays `queued` here means no worker is running; resubmit with `--follow` to execute it inline.
@@ -142,21 +142,21 @@ On a 186K-page brain expect ~10 minutes. The handler runs:
 ### Phase 4: Verify
 
 ```bash
-gbrain onboard --check
-gbrain schema stats
+foresights onboard --check
+foresights schema stats
 ```
 
 Expected:
 - `pack_upgrade_available` → `ok` (active pack is now v2)
 - `type_proliferation` → `ok` (≤16 distinct typed values)
 - `dangling_aliases` → `ok` (slug_aliases all point at active canonicals)
-- `gbrain schema stats` shows ≤16 distinct types
+- `foresights schema stats` shows ≤16 distinct types
 
 ### Phase 5: Post-migration
 
 Search and query `--type article` keep returning those pages post-unify: `media` declares `article` as an alias, so the type filter expands through the active pack's alias closure (the results also include other `media` pages). Direct SQL against `pages.type` needs updating to the canonical types.
 
-Search queries get a small ranking signal: pages reached via `slug_aliases` (canonicals of one or more aliases) get a 1.05x boost. Visible via `gbrain search --explain`.
+Search queries get a small ranking signal: pages reached via `slug_aliases` (canonicals of one or more aliases) get a 1.05x boost. Visible via `foresights search --explain`.
 
 ## Rollback
 
@@ -174,13 +174,13 @@ On PGLite there is no SQL shell, so use the CLI surface instead: `frontmatter.le
 Page-to-alias and page-to-link source pages soft-delete with 72h TTL. Restore within that window:
 
 ```bash
-gbrain restore <slug>
+foresights restore <slug>
 ```
 
 Revert the active pack flip:
 
 ```bash
-gbrain schema use gbrain-base
+foresights schema use gbrain-base
 ```
 
 ## Anti-patterns
@@ -210,7 +210,7 @@ Federated brain (multiple sources)?
     source can be migrated independently.
 
 Worried about a specific cluster's mapping?
-  → Fork gbrain-base-v2 (`gbrain schema fork gbrain-base-v2 my-pack`),
+  → Fork gbrain-base-v2 (`foresights schema fork gbrain-base-v2 my-pack`),
     edit mapping_rules in your fork, then target the fork.
 ```
 
@@ -218,7 +218,7 @@ Worried about a specific cluster's mapping?
 
 Inputs:
 - A brain on `gbrain-base` (or any pack with `migration_from: gbrain-base-v2`).
-- Trusted local CLI access on the brain host: `gbrain jobs submit` grants the PROTECTED-handler opt-in itself for protected names; the remote MCP `submit_job` op cannot.
+- Trusted local CLI access on the brain host: `foresights jobs submit` grants the PROTECTED-handler opt-in itself for protected names; the remote MCP `submit_job` op cannot.
 - ~10 min wallclock on a 186K-page brain.
 
 Outputs:
@@ -228,7 +228,7 @@ Outputs:
 - Active pack flipped to `gbrain-base-v2` atomically at end of successful run.
 
 Side effects:
-- Source pages soft-deleted with 72h restore TTL (`gbrain restore <slug>`).
+- Source pages soft-deleted with 72h restore TTL (`foresights restore <slug>`).
 - One-time cache invalidation on KNOBS_HASH_VERSION bump (5→6); self-healing in `cache.ttl_seconds`.
 - Search/query `--type X` expands through the active pack's alias closure (back-compat).
 
@@ -239,19 +239,19 @@ Failure modes:
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- A second unify submission is rejected because the `gbrain-unify` lock is held ("already in progress"): wait for the running job (`gbrain jobs get <id>`); do not resubmit.
+- A second unify submission is rejected because the `gbrain-unify` lock is held ("already in progress"): wait for the running job (`foresights jobs get <id>`); do not resubmit.
 - A phase fails before `active_pack_flipped`: the pack did not change; resume from the checkpoint rather than restarting from scratch.
 - The run reports a cost line: retyping can call a model, so confirm the budget with the user before submitting on a large brain.
 
 ## Anti-Patterns
 
 DON'T:
-- Submit `unify-types` via the remote MCP `submit_job` op. PROTECTED handlers require trusted local callers (`gbrain jobs submit` on the brain host); remote MCP rejection is the intentional trust boundary.
-- Edit `mapping_rules` in `gbrain-base-v2.yaml` to skip clusters you don't trust. Fork the pack instead (`gbrain schema fork`) so the source-of-truth migration stays consistent across brains.
+- Submit `unify-types` via the remote MCP `submit_job` op. PROTECTED handlers require trusted local callers (`foresights jobs submit` on the brain host); remote MCP rejection is the intentional trust boundary.
+- Edit `mapping_rules` in `gbrain-base-v2.yaml` to skip clusters you don't trust. Fork the pack instead (`foresights schema fork`) so the source-of-truth migration stays consistent across brains.
 - Run `unify-types` from inside an autopilot tick. The check is `manual_only` — autopilot deliberately never auto-fires it because pack upgrades are one-time consenting taxonomy decisions.
-- Hard-delete soft-deleted source pages before the 72h restore window. Use `gbrain restore <slug>` first if rollback is needed.
+- Hard-delete soft-deleted source pages before the 72h restore window. Use `foresights restore <slug>` first if rollback is needed.
 - Assume `frontmatter.legacy_type` survives every roundtrip. The marker is canonical for the immediate post-migration window; downstream re-imports may overwrite it.
 
 ## Output Format
@@ -280,10 +280,10 @@ Final celebration summary to stderr:
 ═══════════════════════════════════════════════════════════
 ```
 
-For structured JSON, `gbrain call get_job '{"id": <id>}'` returns the job row; its `result` field carries the `UnifyTypesResult` shape with `per_phase`, `pack_identity_after`, `active_pack_flipped` (`gbrain jobs get <id>` prints the same result inline).
+For structured JSON, `foresights call get_job '{"id": <id>}'` returns the job row; its `result` field carries the `UnifyTypesResult` shape with `per_phase`, `pack_identity_after`, `active_pack_flipped` (`foresights jobs get <id>` prints the same result inline).
 
 ## Reference
 
-- Architecture: https://github.com/garrytan/gbrain/blob/master/docs/architecture/type-taxonomy.md
-- Pack-upgrade mechanism: https://github.com/garrytan/gbrain/blob/master/docs/architecture/pack-upgrade-mechanism.md
+- Architecture: https://github.com/aimonk2025/gbrain/blob/master/docs/architecture/type-taxonomy.md
+- Pack-upgrade mechanism: https://github.com/aimonk2025/gbrain/blob/master/docs/architecture/pack-upgrade-mechanism.md
 - Issue: https://github.com/garrytan/gbrain/issues/1479

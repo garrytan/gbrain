@@ -1,5 +1,5 @@
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
-// `gbrain schema` CLI surface.
+// `foresights schema` CLI surface.
 //
 // The active schema pack drives type inference, link verbs, expert
 // routing, extractable types, enrichment rubrics, and per-source
@@ -110,13 +110,13 @@ export async function runSchema(args: string[]): Promise<void> {
       return printHelp();
     default:
       console.error(`Unknown schema subcommand: ${sub}`);
-      console.error('Run `gbrain schema --help` for available commands.');
+      console.error('Run `foresights schema --help` for available commands.');
       process.exit(2);
   }
 }
 
 function printHelp(): void {
-  console.log(`gbrain schema — active schema pack management
+  console.log(`foresights schema — active schema pack management
 
 Inspection:
   active                  Show resolved pack + which tier provided it
@@ -161,7 +161,7 @@ Authoring (v0.40.6.0):
                           Generates prompts/extract/<type>.md and
                           fixtures/extract/<type>.jsonl stubs the
                           pack-author edits, then pairs with
-                          \`gbrain extract benchmark\` for the iteration loop.
+                          \`foresights extract benchmark\` for the iteration loop.
 
 Discovery + repair:
   detect                  Cluster pages by source_path → candidate page_types
@@ -191,7 +191,7 @@ Resolution chain (7-tier, tier 1 trust-gated):
  * DB-plane `schema_pack` (tier 4) for the read-only inspection verbs
  * (active / show / graph / lint / explain), so they all report the SAME pack
  * the engine queries with on brains whose active pack was flipped via
- * `gbrain config set schema_pack` / unify-types (#3792, #4653). Best-effort
+ * `foresights config set schema_pack` / unify-types (#3792, #4653). Best-effort
  * AND gated on an actually-configured brain (cfg non-null): an unconfigured
  * home has no DB plane to consult, and connecting would cold-CREATE a PGLite
  * data dir as a side effect of a read-only command. No connectable DB →
@@ -238,7 +238,7 @@ function runList(_args: string[]): void {
 }
 
 async function runShow(args: string[]): Promise<void> {
-  // v0.39 T18 — `gbrain schema show --as-filing-rules` emits the JSON
+  // v0.39 T18 — `foresights schema show --as-filing-rules` emits the JSON
   // shape currently maintained by hand at `skills/_brain-filing-rules.json`.
   // First step of the 4-step T18 sequence (per codex finding #3): ship
   // the alternative source, then migrate consumers, then update tests,
@@ -254,7 +254,7 @@ async function runShow(args: string[]): Promise<void> {
     const path = packPathByName(packName);
     if (!path) {
       console.error(`Unknown pack: ${packName}`);
-      console.error('Run `gbrain schema list` to see available packs.');
+      console.error('Run `foresights schema list` to see available packs.');
       process.exit(1);
     }
     manifest = loadPackFromFile(path);
@@ -272,7 +272,7 @@ async function runShow(args: string[]): Promise<void> {
     // their reads to this output without re-shaping.
     const filingRules = {
       schema_version: 1,
-      source: 'gbrain schema show --as-filing-rules',
+      source: 'foresights schema show --as-filing-rules',
       pack: { name: manifest.name, version: manifest.version },
       page_types: manifest.page_types.map((pt) => ({
         name: pt.name,
@@ -373,13 +373,13 @@ function runValidate(args: string[]): void {
 function runUse(args: string[]): void {
   const packName = args[0];
   if (!packName) {
-    console.error('Usage: gbrain schema use <pack-name>');
+    console.error('Usage: foresights schema use <pack-name>');
     process.exit(2);
   }
   const path = packPathByName(packName);
   if (!path) {
     console.error(`Unknown pack: ${packName}`);
-    console.error('Run `gbrain schema list` to see available packs.');
+    console.error('Run `foresights schema list` to see available packs.');
     process.exit(1);
   }
   // Validate before activating — refuse to set a broken pack.
@@ -399,7 +399,7 @@ function runUse(args: string[]): void {
   writeFileSync(cfgPath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
   console.log(`✓ Active schema pack set to: ${packName}`);
   console.log(`  Written to: ${cfgPath}`);
-  console.log(`\nRun \`gbrain schema active\` to verify resolution.`);
+  console.log(`\nRun \`foresights schema active\` to verify resolution.`);
 }
 
 function packPathByName(name: string): string | null {
@@ -480,7 +480,7 @@ async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').B
   // database URL" or read an empty in-memory PGLite (#5102).
   if (isThinClient(cfg) && !cfg.database_url) {
     throw opError('requires_local_engine',
-      'This `gbrain schema` subcommand reads the brain database, which lives on the brain host; it is not routable from a thin client.',
+      'This `foresights schema` subcommand reads the brain database, which lives on the brain host; it is not routable from a thin client.',
       'Use the matching schema_* MCP tool (e.g. `schema_stats`) from your agent, or run it on the brain host.');
   }
   // PR #1321 (closed) defensive fix retained: build the EngineConfig once and
@@ -517,8 +517,8 @@ async function runDetectCmd(args: string[]): Promise<void> {
     console.log(`  ${p.prefix.padEnd(30)} ${String(p.page_count).padStart(6)} pages → suggest type \`${p.suggested_type}\`${samples}`);
   }
   console.log('');
-  console.log('Next: gbrain schema review-candidates  (decide promote / rename / ignore)');
-  console.log('      gbrain schema suggest             (LLM refinement on this candidate)');
+  console.log('Next: foresights schema review-candidates  (decide promote / rename / ignore)');
+  console.log('      foresights schema suggest             (LLM refinement on this candidate)');
 }
 
 async function runFieldUsageCmd(json: boolean, source: string | undefined): Promise<void> {
@@ -537,7 +537,7 @@ async function runFieldUsageCmd(json: boolean, source: string | undefined): Prom
     console.log(`  optional: ${t.optional.join(', ') || '(none)'}`);
   }
   console.log('');
-  console.log('Next: declare the relation types you rely on in your schema pack (gbrain schema add-link-type <name>) so relation lines use them.');
+  console.log('Next: declare the relation types you rely on in your schema pack (foresights schema add-link-type <name>) so relation lines use them.');
 }
 
 // ------------- T3: schema suggest ---------------------------------
@@ -603,7 +603,7 @@ async function runInitCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
   const name = positional[0];
   if (!name) {
-    console.error('Usage: gbrain schema init <pack-name>  (experimental)');
+    console.error('Usage: foresights schema init <pack-name>  (experimental)');
     process.exit(2);
   }
   const baseDir = gbrainPath('schema-packs', name);
@@ -621,7 +621,7 @@ async function runInitCmd(args: string[]): Promise<void> {
     version: '0.0.1',
     gbrain_min_version: '0.39.0',
     extends: 'gbrain-base',
-    description: `Stub pack scaffolded by 'gbrain schema init ${name}'. Edit ${baseDir}/pack.yaml then 'gbrain schema validate' + 'gbrain schema use ${name}'.`,
+    description: `Stub pack scaffolded by 'foresights schema init ${name}'. Edit ${baseDir}/pack.yaml then 'foresights schema validate' + 'foresights schema use ${name}'.`,
     page_types: [] as SchemaPackManifest['page_types'],
     link_types: [] as SchemaPackManifest['link_types'],
     takes_kinds: ['fact', 'take', 'bet', 'hunch'] as string[],
@@ -653,7 +653,7 @@ borrow_from: []
     return;
   }
   console.log(`(experimental) Scaffolded pack \`${name}\` at ${baseDir}/pack.yaml`);
-  console.log(`Next: edit pack.yaml, then run \`gbrain schema validate ${name}\` and \`gbrain schema use ${name}\`.`);
+  console.log(`Next: edit pack.yaml, then run \`foresights schema validate ${name}\` and \`foresights schema use ${name}\`.`);
 }
 
 async function runForkCmd(args: string[]): Promise<void> {
@@ -661,7 +661,7 @@ async function runForkCmd(args: string[]): Promise<void> {
   const from = positional[0];
   const to = positional[1];
   if (!from || !to) {
-    console.error('Usage: gbrain schema fork <source-pack> <new-name>  (experimental)');
+    console.error('Usage: foresights schema fork <source-pack> <new-name>  (experimental)');
     process.exit(2);
   }
   const fromPath = packPathByName(from);
@@ -690,7 +690,7 @@ async function runEditCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
   const name = positional[0];
   if (!name) {
-    console.error('Usage: gbrain schema edit <pack-name>  (experimental)');
+    console.error('Usage: foresights schema edit <pack-name>  (experimental)');
     process.exit(2);
   }
   const p = packPathByName(name);
@@ -703,7 +703,7 @@ async function runEditCmd(args: string[]): Promise<void> {
     return;
   }
   console.log(`(experimental) Pack file: ${p}`);
-  console.log(`Open it in your editor; then run \`gbrain schema validate ${name}\`.`);
+  console.log(`Open it in your editor; then run \`foresights schema validate ${name}\`.`);
 }
 
 async function runDiffCmd(args: string[]): Promise<void> {
@@ -711,7 +711,7 @@ async function runDiffCmd(args: string[]): Promise<void> {
   const a = positional[0];
   const b = positional[1];
   if (!a || !b) {
-    console.error('Usage: gbrain schema diff <pack-a> <pack-b>  (experimental)');
+    console.error('Usage: foresights schema diff <pack-a> <pack-b>  (experimental)');
     process.exit(2);
   }
   const aPath = packPathByName(a);
@@ -775,7 +775,7 @@ async function runLintCmd(args: string[]): Promise<void> {
     },
   });
   if (positionals.length > 1) {
-    console.error('Usage: gbrain schema lint [<pack>] [--with-db] [--json]');
+    console.error('Usage: foresights schema lint [<pack>] [--with-db] [--json]');
     process.exit(2);
   }
   const name = positionals[0];
@@ -845,7 +845,7 @@ async function runExplainCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
   const typeName = positional[0];
   if (!typeName) {
-    console.error('Usage: gbrain schema explain <type-name>  (experimental)');
+    console.error('Usage: foresights schema explain <type-name>  (experimental)');
     process.exit(2);
   }
   const cfg = loadConfig();
@@ -931,12 +931,12 @@ async function runDowngradeCmd(args: string[]): Promise<void> {
     return;
   }
   console.log(`Active pack restored to \`${restoredTo}\` in ${path}`);
-  console.log('Run `gbrain schema active` to verify. Note: this command restores CONFIG only.');
+  console.log('Run `foresights schema active` to verify. Note: this command restores CONFIG only.');
   console.log('Custom-typed pages, cache rows, and eval rows from v0.39 are not auto-cleaned.');
   console.log('See docs/architecture/schema-packs.md for the full revert procedure.');
 }
 
-// ------------- T23: gbrain schema usage ---------------------------
+// ------------- T23: foresights schema usage ---------------------------
 
 async function runUsageCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
@@ -1031,9 +1031,9 @@ function handleMutationError(err: unknown): never {
     if (err.code === 'PACK_READONLY') {
       console.error('  Hint: fork the pack first, then mutate the fork.');
     } else if (err.code === 'PACK_TOO_LARGE') {
-      console.error('  Hint: `gbrain errors schema_pack_too_large` explains the hand repair.');
+      console.error('  Hint: `foresights errors schema_pack_too_large` explains the hand repair.');
     } else if (err.code === 'EMIT_MISMATCH') {
-      console.error('  Hint: `gbrain errors schema_pack_emit_mismatch` explains what refused.');
+      console.error('  Hint: `foresights errors schema_pack_emit_mismatch` explains what refused.');
     } else if (err.code === 'STILL_REFERENCED') {
       const refs = (err.details?.references as string[] | undefined) ?? [];
       if (refs.length > 0) console.error(`  Still referenced by: ${refs.join(', ')}`);
@@ -1057,7 +1057,7 @@ async function runStatsCmd(args: string[]): Promise<void> {
     console.log(`Typed: ${result.aggregate.typed_pages}; matching the active pack: ${(result.aggregate.coverage * 100).toFixed(1)}%`);
     console.log(`Untyped: ${result.aggregate.untyped_pages}`);
     if (result.aggregate.undeclared_pages > 0) {
-      console.log(`Undeclared type: ${result.aggregate.undeclared_pages} (not a page type or alias of the active pack; list them with \`gbrain schema review-orphans\`)`);
+      console.log(`Undeclared type: ${result.aggregate.undeclared_pages} (not a page type or alias of the active pack; list them with \`foresights schema review-orphans\`)`);
     }
     if (result.aggregate.by_type.length > 0) {
       console.log(`\nBy type:`);
@@ -1098,7 +1098,7 @@ async function runCardinalityPreviewCmd(args: string[]): Promise<void> {
       for (const u of g.undated) console.log(`  leaves ${u} open: no dated start; add one to the page timeline`);
       for (const [a, b] of g.same_date) console.log(`  leaves ${a} and ${b} open: both start on the same date`);
     }
-    console.log('\nThe dream cycle (edge_contradictions phase) applies the closures as timeline lines; `gbrain edge-proposals list` shows them, and deleting a line reopens the relationship.');
+    console.log('\nThe dream cycle (edge_contradictions phase) applies the closures as timeline lines; `foresights edge-proposals list` shows them, and deleting a line reopens the relationship.');
   });
 }
 
@@ -1129,7 +1129,7 @@ async function runSyncCmd(args: string[]): Promise<void> {
     }
     console.log(`\nTotal: would_apply=${result.total_would_apply} applied=${result.total_applied}`);
     if (!apply && result.total_would_apply > 0) {
-      console.log(`\nRun \`gbrain schema sync --apply\` to backfill page.type.`);
+      console.log(`\nRun \`foresights schema sync --apply\` to backfill page.type.`);
     }
   });
 }
@@ -1180,7 +1180,7 @@ async function runRemoveTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = (await positionals(args))[0];
-  if (!name) { console.error('Usage: gbrain schema remove-type <name>'); process.exit(2); }
+  if (!name) { console.error('Usage: foresights schema remove-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeTypeFromPack(packName, name), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1189,7 +1189,7 @@ async function runUpdateTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = (await positionals(args, ['--extractable', '--expert', '--expert-routing', '--primitive']))[0];
-  if (!name) { console.error('Usage: gbrain schema update-type <name> [--extractable BOOL] [--expert BOOL] [--primitive P]'); process.exit(2); }
+  if (!name) { console.error('Usage: foresights schema update-type <name> [--extractable BOOL] [--expert BOOL] [--primitive P]'); process.exit(2); }
   const patch: Record<string, unknown> = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1213,7 +1213,7 @@ async function runAddAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = await positionals(args);
-  if (pos.length < 2) { console.error('Usage: gbrain schema add-alias <type> <alias>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: foresights schema add-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await addAliasToType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1222,7 +1222,7 @@ async function runRemoveAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = await positionals(args);
-  if (pos.length < 2) { console.error('Usage: gbrain schema remove-alias <type> <alias>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: foresights schema remove-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await removeAliasFromType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1231,7 +1231,7 @@ async function runAddPrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = await positionals(args);
-  if (pos.length < 2) { console.error('Usage: gbrain schema add-prefix <type> <prefix>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: foresights schema add-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await addPrefixToType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1240,7 +1240,7 @@ async function runRemovePrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = await positionals(args);
-  if (pos.length < 2) { console.error('Usage: gbrain schema remove-prefix <type> <prefix>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: foresights schema remove-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await removePrefixFromType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1249,7 +1249,7 @@ async function runAddLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = (await positionals(args, ['--inverse', '--page-type', '--target-type']))[0];
-  if (!name) { console.error('Usage: gbrain schema add-link-type <name> [--inverse <verb>] [--page-type <t>] [--target-type <t>]'); process.exit(2); }
+  if (!name) { console.error('Usage: foresights schema add-link-type <name> [--inverse <verb>] [--page-type <t>] [--target-type <t>]'); process.exit(2); }
   let inverse: string | undefined;
   let pageType: string | undefined;
   let targetType: string | undefined;
@@ -1269,7 +1269,7 @@ async function runRemoveLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = (await positionals(args))[0];
-  if (!name) { console.error('Usage: gbrain schema remove-link-type <name>'); process.exit(2); }
+  if (!name) { console.error('Usage: foresights schema remove-link-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeLinkTypeFromPack(packName, name), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1278,7 +1278,7 @@ async function runSetExtractableCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = await positionals(args);
-  if (pos.length < 2) { console.error('Usage: gbrain schema set-extractable <type> <true|false>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: foresights schema set-extractable <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
   if (v === null) { console.error('Second argument must be true|false'); process.exit(2); }
   try { emitMutateResult(await setExtractableOnType(packName, pos[0]!, v), json); }
@@ -1289,7 +1289,7 @@ async function runSetExpertRoutingCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = await positionals(args);
-  if (pos.length < 2) { console.error('Usage: gbrain schema set-expert-routing <type> <true|false>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: foresights schema set-expert-routing <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
   if (v === null) { console.error('Second argument must be true|false'); process.exit(2); }
   try { emitMutateResult(await setExpertRoutingOnType(packName, pos[0]!, v), json); }
@@ -1301,7 +1301,7 @@ async function runScaffoldExtractableCmd(args: string[]): Promise<void> {
   const packName = pickPackName({}, args);
   const pos = await positionals(args, ['--dims']);
   if (pos.length < 1) {
-    console.error('Usage: gbrain schema scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]');
+    console.error('Usage: foresights schema scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]');
     process.exit(2);
   }
   const typeName = pos[0]!;
@@ -1338,7 +1338,7 @@ async function runScaffoldExtractableCmd(args: string[]): Promise<void> {
       console.log('Next steps:');
       console.log(`  1. Edit prompts/extract/${typeName}.md to specify your domain.`);
       console.log(`  2. Replace fixture placeholders in fixtures/extract/${typeName}.jsonl with real cases.`);
-      console.log(`  3. Run: gbrain extract benchmark --pack ${packName} --kind ${typeName}`);
+      console.log(`  3. Run: foresights extract benchmark --pack ${packName} --kind ${typeName}`);
     }
   } catch (e) {
     handleMutationError(e);

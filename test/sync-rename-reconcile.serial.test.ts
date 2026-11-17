@@ -36,7 +36,7 @@ import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 let engine: PGLiteEngine;
 const repos: string[] = [];
 // Serial-file requirement: blocked runs write real rows to the sync-failure
-// ledger under the gbrain home — isolate it per test so the operator's
+// ledger under the foresights home — isolate it per test so the operator's
 // actual ledger is never touched (GBRAIN_HOME is the isolation lever;
 // process.env.HOME does not redirect Bun's os.homedir()).
 let tmpHome: string;
@@ -333,7 +333,7 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
 });
 
 describe('#3479 blocker 1: a permanent reconcile failure has a documented operator exit', () => {
-  test('hard-blocks every --skip-failed run, names the gbrain delete remedy, and the remedy converges it', async () => {
+  test('hard-blocks every --skip-failed run, names the foresights delete remedy, and the remedy converges it', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const { loadSyncFailures } = await import('../src/core/sync-failure-ledger.ts');
     const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });
@@ -373,7 +373,7 @@ describe('#3479 blocker 1: a permanent reconcile failure has a documented operat
       expect(open).toHaveLength(1);
       expect(open[0].attempts).toBeGreaterThanOrEqual(3);
 
-      // The documented remedy — exercised faithfully: `gbrain delete` is a
+      // The documented remedy — exercised faithfully: `foresights delete` is a
       // SOFT-delete (the row keeps its source_path until the purge phase),
       // and the environment's DELETE is STILL denied (the mock stays
       // active). Convergence therefore requires the reconcile to treat a
@@ -387,7 +387,7 @@ describe('#3479 blocker 1: a permanent reconcile failure has a documented operat
       engine.softDeletePages = origDelete;
     }
     const stderrText = stderrChunks.join('');
-    expect(stderrText).toContain("'gbrain delete <stale-slug>'");
+    expect(stderrText).toContain("'foresights delete <stale-slug>'");
     // The error names the exact stale slug the remedy should target
     // (JSON-quoted — the format is machine-parsed by the orphan probe).
     expect(stderrText).toContain('stale row "people/carol" for "people/carol.md" not removed');
@@ -448,7 +448,7 @@ describe('#3479 blocker 2: an orphaned rename sentinel self-clears; a real dupli
     expect(openRenameRows()).toHaveLength(1);
     expect(await engine.getPage('people/carol')).not.toBeNull();
 
-    // The duplicate disappears — via the operator's actual tool, `gbrain
+    // The duplicate disappears — via the operator's actual tool, `foresights
     // delete` (a SOFT-delete: the row keeps its source_path). The sentinel
     // now guards nothing live: the next run — even a quiet up_to_date one,
     // the reviewer's exact probe shape — self-clears it.
@@ -914,7 +914,7 @@ describe('#3583 review: --dry-run must not mutate persistent brain state', () =>
     const { performSync } = await import('../src/commands/sync.ts');
     const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });
     // The heartbeat UPDATE targets the sources row; create it the way
-    // `gbrain sources add` would so the quiet-run UPDATE has a target.
+    // `foresights sources add` would so the quiet-run UPDATE has a target.
     await engine.executeRaw(
       `INSERT INTO sources (id, name) VALUES ('default', 'default') ON CONFLICT (id) DO NOTHING`,
     );
@@ -1118,7 +1118,7 @@ describe('#3583 review: an over-size-gate fallback-regime file suspends deletes 
     );
     expect(stillOpen).toHaveLength(1);
     // ...and it must NOT name an unprovable row as the stale one: that slug
-    // feeds the operator remedy (`gbrain delete <slug>`), and an unprovable
+    // feeds the operator remedy (`foresights delete <slug>`), and an unprovable
     // row may be live — exactly the row this path refused to delete.
     expect(stillOpen[0]?.error).toContain('stale row ? for');
     for (const slug of ['party-notes', 'people/ghost', 'people/alpha']) {

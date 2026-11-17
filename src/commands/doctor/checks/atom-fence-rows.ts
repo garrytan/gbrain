@@ -39,7 +39,7 @@ export async function atomFenceRowsCheck(engine: BrainEngine, sourceIds?: string
   } catch (error) {
     const timedOut = (error as { code?: string } | null)?.code === '57014';
     return { name, status: 'warn', details: { count: 'unknown' },
-      message: timedOut ? `The world atom scan did not finish within ${PLAN_STATEMENT_MS} ms; preview it with gbrain repair atom-fence-rows --source <id>. Health is unknown.`
+      message: timedOut ? `The world atom scan did not finish within ${PLAN_STATEMENT_MS} ms; preview it with foresights repair atom-fence-rows --source <id>. Health is unknown.`
         : `World atoms could not be checked for owner-only fence rows: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
   }
 }

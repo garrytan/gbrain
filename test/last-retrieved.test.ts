@@ -150,7 +150,7 @@ describe('awaitPendingLastRetrievedWrites', () => {
   });
 
   test('C1 fix: second drain after timeout is clean (daemon leak guard)', async () => {
-    // Adversarial-review C1: in `gbrain serve` (long-lived), a timed-out
+    // Adversarial-review C1: in `foresights serve` (long-lived), a timed-out
     // IIFE used to stay tracked forever because its `.finally` never
     // fires. Repeated timeouts would leak references without bound.
     // After the timeout, the next drain MUST see an empty set and

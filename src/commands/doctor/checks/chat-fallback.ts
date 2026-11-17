@@ -45,7 +45,7 @@ function credentialFix(d: EntryDiagnosis, plane: ChatFallbackPlane, filePath: st
     why: `${d.detail} The chain would hand ${d.entry} a request it cannot authenticate. Provide the credential, or remove the entry (${PLANE_LABEL[plane]}).`,
     user_message: d.provider === 'claude-cli'
       ? `The fallback model ${d.entry} runs through the claude CLI, which is not installed here. Install and log in to Claude Code, or set GBRAIN_CLAUDE_CLI_BIN, or remove that entry.`
-      : `The fallback model ${d.entry} needs ${d.credential}. Set it where gbrain runs, or remove that entry from ${plane === 'file' ? filePath : PLANE_LABEL[plane]}.`,
+      : `The fallback model ${d.entry} needs ${d.credential}. Set it where foresights runs, or remove that entry from ${plane === 'file' ? filePath : PLANE_LABEL[plane]}.`,
   };
 }
 
@@ -92,7 +92,7 @@ export async function checkChatFallbackChain(engine: BrainEngine | null, opts: {
       const count = problems.length + planes.malformed.length;
       return {
         name: 'chat_fallback_chain', status: count > 0 ? 'warn' : 'ok',
-        message: `A chat fallback chain is configured on the brain host${count > 0 ? ` and has ${count} problem(s)` : ''}. Its entries and the providers it reaches stay on the host; the host operator runs gbrain doctor --only chat_fallback_chain there.`,
+        message: `A chat fallback chain is configured on the brain host${count > 0 ? ` and has ${count} problem(s)` : ''}. Its entries and the providers it reaches stay on the host; the host operator runs foresights doctor --only chat_fallback_chain there.`,
         fix: { argv: ['gbrain', 'doctor', '--only', NAME], consent: [], actor: 'host_admin', requires_exclusive: false, docs: DOCS,
           why: 'Lists the chain, its config plane, the providers it reaches and per-plane removal guidance on the brain host; read-only.' },
       };

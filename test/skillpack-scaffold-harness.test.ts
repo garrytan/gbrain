@@ -128,7 +128,7 @@ describe('refusals (typed, actionable)', () => {
     });
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('mcp.publish_skills');
-    expect(r.stderr).toContain('gbrain config set mcp.publish_skills true');
+    expect(r.stderr).toContain('foresights config set mcp.publish_skills true');
     expect(existsSync(join(dest, 'query'))).toBe(false); // dead pointers never land
   }, 120_000);
 
@@ -427,7 +427,7 @@ describe('review-driven CLI hardening', () => {
     expect(rm.stderr).toContain("unexpected argument 'query'");
   }, 120_000);
 
-  test('stub preflight honors the DB config plane (gbrain config set, no config.json key)', () => {
+  test('stub preflight honors the DB config plane (foresights config set, no config.json key)', () => {
     const { home, gbrainHome } = homes();
     const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
     cleanups.push(dest);
@@ -487,7 +487,7 @@ describe('reference --harness after a scaffold (#5912)', () => {
     const dest = join(home, 'codex-skills');
     const s = run(['scaffold', '--harness', 'codex', '--skill', 'query', '--dest', dest], env);
     expect(s.code, s.stderr).toBe(0);
-    const hint = /Update lens: gbrain skillpack (.+?) \| remove: gbrain skillpack (.+)$/m.exec(s.stdout);
+    const hint = /Update lens: (?:foresights|gbrain) skillpack (.+?) \| remove: (?:foresights|gbrain) skillpack (.+)$/m.exec(s.stdout);
     expect(hint).not.toBeNull();
     for (const cmd of [hint![1], hint![2]]) expect(cmd).toContain(`--dest ${dest}`);
     const lens = run(hint![1].split(' '), env);

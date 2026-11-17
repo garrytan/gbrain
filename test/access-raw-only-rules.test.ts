@@ -12,7 +12,7 @@ import { testBackends } from './helpers/test-backends.ts';
  * 1. Protects: a rule keeps the pages it covers to its readers and, by default, also closes the lineage of the pages and
  *    facts derived from them (unchanged on upgrade, same digest). A raw-only rule keeps only its own pages: the atoms,
  *    derived_from pages, synthesized concepts, Life Chronicle events and facts derived from them are read by whoever
- *    reads those derivatives. Turning a rule raw-only is a widening held for gbrain access apply; turning it back applies
+ *    reads those derivatives. Turning a rule raw-only is a widening held for foresights access apply; turning it back applies
  *    at once. The origin's own readers list still closes its lineage.
  * 2. Fails when: a default rule's digest or reads change; a raw-only proposal widens anything before apply; apply widens
  *    anything beyond the raw-only rule's derived pages and facts, or opens the raw page itself; a derivative of a page

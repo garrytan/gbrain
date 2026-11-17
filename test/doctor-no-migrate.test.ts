@@ -1,12 +1,12 @@
 /**
- * #4364: `gbrain doctor --no-migrate` must be observational. Pre-fix, the
+ * #4364: `foresights doctor --no-migrate` must be observational. Pre-fix, the
  * doctor branch called connectEngine() WITHOUT probeOnly, whose auto-migrate
  * block ran pending schema migrations — so doctor pointed at a clean DB
  * migrated it 1→latest before the health report, destroying the very
  * pre-migration state it was asked to report on.
  *
  * Spawns `doctor --no-migrate --json` against an UNINITIALIZED PGLite brain,
- * then opens the datadir in-process and asserts the gbrain schema was NOT
+ * then opens the datadir in-process and asserts the foresights schema was NOT
  * created. Red pre-fix: the flag was ignored and connectEngine's
  * tryRunPendingMigrations built the full schema.
  *
@@ -68,7 +68,7 @@ function makeHome(prefix: string): { home: string; dataDir: string; env: Record<
 
 /**
  * Open the datadir directly: connectEngine's connect() creates raw pgdata
- * either way, but the gbrain schema (pages et al) only appears if migrations
+ * either way, but the foresights schema (pages et al) only appears if migrations
  * ran. `null` from to_regclass = schema never created.
  */
 async function pagesRegclass(dataDir: string): Promise<string | null> {

@@ -1,7 +1,7 @@
 /**
  * v0.28: auto-think dream phase.
  *
- * Reads `dream.auto_think.questions[]` from config, runs `gbrain think` on
+ * Reads `dream.auto_think.questions[]` from config, runs `foresights think` on
  * each one, persists the result as a synthesis page if `auto_commit=true`
  * (default false — write to a draft staging area instead). Capped by
  * `max_per_cycle` and the BudgetMeter's USD cap.
@@ -10,8 +10,8 @@
  * so retries after partial failures pick back up.
  *
  * Default-disabled. Operator opts in:
- *   gbrain config set dream.auto_think.enabled true
- *   gbrain config set dream.auto_think.questions '["What patterns ...","Who ..."]'
+ *   foresights config set dream.auto_think.enabled true
+ *   foresights config set dream.auto_think.questions '["What patterns ...","Who ..."]'
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -23,7 +23,7 @@ import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } 
 /**
  * Local phase-result type for auto-think/drift. These phases are not yet
  * wired into cycle.ts's main dispatcher (deferred to v0.28.x); they ship
- * standalone for now and are invoked via `gbrain dream --phase auto_think`
+ * standalone for now and are invoked via `foresights dream --phase auto_think`
  * once the dispatcher integration lands. Adopting cycle.ts's PhaseResult
  * shape forces premature CyclePhase enum extension.
  */

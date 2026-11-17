@@ -35,7 +35,7 @@ export interface SlugFallbackAuditEvent {
   source_path: string;
   /** Always 'info' — keeps the schema explicit for future severity tiers. */
   severity: 'info';
-  /** Stable code consumed by `gbrain doctor`'s slug_fallback_audit check. */
+  /** Stable code consumed by `foresights doctor`'s slug_fallback_audit check. */
   code: 'SLUG_FALLBACK_FRONTMATTER';
 }
 
@@ -66,7 +66,7 @@ export function logSlugFallback(
   // D7 dual logging — every fallback gets an operator-visible stderr line
   // regardless of audit write success. Lives in this caller, not in the
   // shared writer, because only this audit module wants per-call stderr.
-  process.stderr.write(`[gbrain] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; ${reason})\n`);
+  process.stderr.write(`[foresights] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; ${reason})\n`);
   writer.log({
     slug,
     source_path: sourcePath,
@@ -77,7 +77,7 @@ export function logSlugFallback(
 
 /**
  * Read recent (`days` window, default 7) slug-fallback events from the
- * latest week's JSONL. Used by `gbrain doctor`'s slug_fallback_audit check.
+ * latest week's JSONL. Used by `foresights doctor`'s slug_fallback_audit check.
  * Missing file / corrupt rows are skipped silently — the audit trail is
  * informational and shouldn't block doctor.
  */

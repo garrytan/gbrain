@@ -1,5 +1,5 @@
 /**
- * gbrain eval takes-quality — reproducible cross-modal eval CLI for
+ * foresights eval takes-quality — reproducible cross-modal eval CLI for
  * the takes table (v0.32 — EXP-5).
  *
  * Sub-subcommands:
@@ -13,7 +13,7 @@
  * run/trend/regress go through connectEngine in cli.ts.
  *
  * Budget: `--budget-usd N` aborts before the next call's projected cost
- * would exceed the cap. Every canonically priced (or `gbrain pricing set`)
+ * would exceed the cap. Every canonically priced (or `foresights pricing set`)
  * model is gateable; an unpriced model refuses under the cap with a
  * `no_pricing` envelope whose fix registers the rate, and runs with a
  * warning when no cap is set.
@@ -34,7 +34,7 @@ import { loadTrend, renderTrendTable, type TrendRow } from '../core/takes-qualit
 import { OperationError } from '../core/ops/contract.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 
-const HELP = `gbrain eval takes-quality — reproducible cross-modal quality eval
+const HELP = `foresights eval takes-quality — reproducible cross-modal quality eval
 
 Subcommands:
   run [--limit N] [--seed N] [--budget-usd N] [--source db|fs]
@@ -42,8 +42,8 @@ Subcommands:
     Sample N takes from the brain, score with 3 models in parallel,
     aggregate to PASS/FAIL/INCONCLUSIVE. Default: --limit 100, --cycles 3
     (1 in non-TTY), --source db, no --budget-usd cap. Under a cap, a model
-    gbrain has no price for refuses (no_pricing; register its rate with
-    gbrain pricing set); without one it runs uncounted. Default models:
+    foresights has no price for refuses (no_pricing; register its rate with
+    foresights pricing set); without one it runs uncounted. Default models:
       ${DEFAULT_MODEL_PANEL.join(', ')}
     Exit codes: 0 PASS, 1 FAIL, 2 INCONCLUSIVE.
 
@@ -98,7 +98,7 @@ function hasFlag(argv: string[], name: string): boolean {
  */
 export async function runReplayNoBrain(argv: string[]): Promise<number> {
   if (argv.length === 0 || argv[0].startsWith('-')) {
-    process.stderr.write('Usage: gbrain eval takes-quality replay <receipt-path> [--json]\n');
+    process.stderr.write('Usage: foresights eval takes-quality replay <receipt-path> [--json]\n');
     return 2;
   }
   const receiptPath = argv[0];

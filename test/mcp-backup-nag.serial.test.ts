@@ -137,7 +137,7 @@ async function callSearch(opts: CallOpts = {}) {
   // orthogonal to the backup block under test; it is pinned in
   // test/mcp-notice-channels.test.ts. So is F2's keyword count line (test/search-keyword-paging.test.ts),
   // and the GBRA-200 degraded stamp (test/degraded-stamp-paths.serial.test.ts).
-  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ') && !c.text.startsWith('[gbrain search] ') && !c.text.startsWith('[gbrain degraded: ')) };
+  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ') && !c.text.startsWith('[foresights search] ') && !c.text.startsWith('[gbrain degraded: ')) };
 }
 
 async function waitFor(pred: () => boolean, ms = 2000): Promise<boolean> {
@@ -258,7 +258,7 @@ describe('maybeAttachBackupNotice (stdio aggregate block)', () => {
     expect(out.content.length).toBe(1);
   });
 
-  test('opts.remote:false (local gbrain call) → no backup block even with warn cache on stdio', async () => {
+  test('opts.remote:false (local foresights call) → no backup block even with warn cache on stdio', async () => {
     saveBackupStatus(warnStatus());
     const out = await callSearch({ remote: false, transport: 'stdio' });
     expect(out.content.length).toBe(1);

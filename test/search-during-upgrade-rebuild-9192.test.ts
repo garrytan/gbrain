@@ -213,7 +213,7 @@ for (const backend of testBackends()) {
       try { await v153.handler!(engine); } finally { spy.mockRestore(); }
       const line = writes.find(w => w.includes('[153]')) ?? '';
       expect(line).toContain('Search keeps answering from the index 1 of them already had; 1 (images, pages indexed before the safe-chunk fence, and pages with a facts or takes fence, private-key text or a quarantine marker) stay out of search until rebuilt.');
-      expect(line).toContain('gbrain projections drain');
+      expect(line).toContain('foresights projections drain');
     }, url, { belowFence: SLUGS[0] }), 120_000);
   });
 }

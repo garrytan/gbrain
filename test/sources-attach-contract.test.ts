@@ -17,7 +17,7 @@ test('invalid attach source has typed actionable caller error before engine or f
     const err = await caught(() => runSources(engine as never, ['attach', 'INVALID_SOURCE']));
     const envelope = envelopeFor(err, 'stdio');
     expect(envelope.code).toBe('invalid_params');
-    expect(envelope.suggestion).toContain('gbrain sources attach');
+    expect(envelope.suggestion).toContain('foresights sources attach');
     expect(envelope.fix?.argv).toEqual(['gbrain', 'sources', 'list', '--json']);
     expect(reads).toBe(0);
     expect(readFileSync(marker, 'utf8')).toBe('existing-source\n');

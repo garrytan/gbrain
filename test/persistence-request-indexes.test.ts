@@ -34,7 +34,7 @@ test('#5762 the indexes are in the PGLite blob and v151, and filtered out of the
   for (const index of PERSISTENCE_SYNC_RUN_INDEXES) expect(PERSISTENCE_SCHEMA_STATEMENTS).toContain(index.sql);
 });
 
-test('#5762 gbrain repair request-indexes rebuilds a dropped index inline on PGLite; a second run is a no-op; --all includes it', async () => {
+test('#5762 foresights repair request-indexes rebuilds a dropped index inline on PGLite; a second run is a no-op; --all includes it', async () => {
   expect(REPAIR_KINDS).toContain('request-indexes');
   expect(repairForCheck('persistence_request_indexes')?.kind).toBe('request-indexes');
   expect(WAVE_CHECKS.find(spec => spec.id === 'persistence_request_indexes')).toMatchObject({ resolution: 'repair', registration: 'wave' });
@@ -42,7 +42,7 @@ test('#5762 gbrain repair request-indexes rebuilds a dropped index inline on PGL
   await engine.executeRaw(`DROP INDEX ${NAMES[1]}`);
   const doctor = await requestIndexesCheck(engine);
   expect(doctor).toMatchObject({ status: 'warn', details: { count: 1, repair: 'request-indexes', docs: 'docs/guides/repair.md#request-indexes' } });
-  expect(doctor.message).toBe(`${NAMES[1]} is missing: request-table reads (managed sync checkpoints, write claims, page purges, dream synthesis postprocessing) can time out on a large request table. Rebuild on the brain host: gbrain repair request-indexes --apply`);
+  expect(doctor.message).toBe(`${NAMES[1]} is missing: request-table reads (managed sync checkpoints, write claims, page purges, dream synthesis postprocessing) can time out on a large request table. Rebuild on the brain host: foresights repair request-indexes --apply`);
   const scope = await resolveRepairScope(engine);
   expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: false })).toMatchObject({ affected: 1, sample: [`(brain):${NAMES[1]}`], cost: { lifetime_ids: 0, embedding_pages: 0 } });
   expect(await runRepair(ctx(), requestIndexesRepair, scope, { apply: true })).toMatchObject({ applied: 1, complete: true });
@@ -69,10 +69,10 @@ test('persistence_request_growth reports rows, the 7-day rate, lifetime-id use a
     expect(scope).toMatchObject({ lifetime_ids: 9000, limit: 10000, admissions_in_window: 700, per_day: 100, days_to_exhaustion: 10,
       config_key: 'persistence.limits.principal_lifetime_ids', window_days: 7 });
     const command = (warn.details!.commands as string[])[0];
-    expect(command).toMatch(/^gbrain config set persistence\.limits\.principal_lifetime_ids \d+$/);
+    expect(command).toMatch(/^(?:foresights|gbrain) config set persistence\.limits\.principal_lifetime_ids \d+$/);
     expect(Number(command.split(' ').pop())).toBeGreaterThanOrEqual(20_000);
     expect(warn.message).toContain(`principal:local_cli:growth-example admits 100/day over the last 7 day(s) and reaches persistence.limits.principal_lifetime_ids=10000 (9000 used) around ${scope.exhaustion_date}`);
-    expect(warn.message).toContain(`Run on the brain host: ${command} — then verify with gbrain doctor --json (check persistence_request_growth).`);
+    expect(warn.message).toContain(`Run on the brain host: ${command} — then verify with foresights doctor --json (check persistence_request_growth).`);
     // A second warning principal shares the same key: one command, with the largest value either needs.
     await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,
         intent_bytes,terminal_reservation,state,created_at)

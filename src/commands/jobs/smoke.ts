@@ -1,4 +1,4 @@
-/** `gbrain jobs smoke` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs smoke` (dispatched by runJobs in src/commands/jobs.ts). */
 import { hasFlag, type JobsCommandContext } from './shared.ts';
 import { MinionWorker } from '../../core/minions/worker.ts';
 import type { MinionQueue } from '../../core/minions/queue.ts';
@@ -197,7 +197,7 @@ async function runSmokeChecks({ args, engine, queue }: JobsCommandContext, owned
   const tag = tags.length > 0 ? ` + ${tags.join(' + ')}` : '';
   console.log(`SMOKE PASS — Minions healthy${tag} in ${elapsedSec}s (engine: ${engineLabel})`);
   if (engineLabel === 'pglite') {
-    console.log('Note: the `gbrain jobs work` daemon requires Postgres. PGLite');
+    console.log('Note: the `foresights jobs work` daemon requires Postgres. PGLite');
     console.log('supports inline execution only (`submit --follow`).');
   }
   return 0;

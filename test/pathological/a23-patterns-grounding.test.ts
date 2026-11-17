@@ -104,7 +104,7 @@ describe('A-23 patterns grounding isolates one page whose write-back is refused'
         expect(result.status).toBe('warn');
         const failed = result.details.grounding_failed as GroundingRow[];
         expect(failed).toHaveLength(1);
-        expectItemFailure({ key: failed[0]!.slug, code: failed[0]!.code, fix: failed[0]!.fix }, { key: LEFTOVER, code: 'invalid_data', fix: /^gbrain dream --phase patterns --once --source default$/ });
+        expectItemFailure({ key: failed[0]!.slug, code: failed[0]!.code, fix: failed[0]!.fix }, { key: LEFTOVER, code: 'invalid_data', fix: /^(?:foresights|gbrain) dream --phase patterns --once --source default$/ });
         expect((await engine.getPage(FRESH))!.frontmatter.quote_verified_at).toBe('2026-10-15');
         expect((await engine.getPage(LEFTOVER))!.frontmatter.quote_verified_at).toBeUndefined();
         expect(await engine.getConfig(EVIDENCE_KEY)).not.toBeNull();
@@ -130,7 +130,7 @@ describe('A-23 patterns grounding isolates one page whose write-back is refused'
         expect(result.status).toBe('warn');
         const held = result.details.grounding_held as GroundingRow[];
         expectItemFailure({ key: held[0]!.slug, code: held[0]!.code, fix: held[0]!.fix },
-          { key: LEFTOVER, code: 'invalid_data', fix: new RegExp('^gbrain config unset ' + HOLDS_KEY.replace(/\./g, '\\.') + ' && gbrain dream --phase patterns --once --source default$') });
+          { key: LEFTOVER, code: 'invalid_data', fix: new RegExp('^foresights config unset ' + HOLDS_KEY.replace(/\./g, '\\.') + ' && foresights dream --phase patterns --once --source default$') });
         await allowWrites(engine);
         await leftover(engine, LEFTOVER, 'Small pieces recur, edited.');
         const cleared = await withCompletedChild(engine, () => patterns(engine, brainDir));
@@ -320,7 +320,7 @@ describe('A-23 a timeline append whose grounding write-back failed is retried on
         expect(held.result.details.grounding_failed).toEqual([]);
         const rows = held.result.details.grounding_held as Array<GroundingRow & { timeline_appends?: number }>;
         expect(rows.map(r => ({ slug: r.slug, code: r.code, timeline_appends: r.timeline_appends }))).toEqual([{ slug: APPENDED, code: 'invalid_data', timeline_appends: 1 }]);
-        expectItemFailure({ key: rows[0]!.slug, code: rows[0]!.code, fix: rows[0]!.fix }, { key: APPENDED, code: 'invalid_data', fix: /^gbrain get --source default -- wiki\/personal\/patterns\/a-theme$/ });
+        expectItemFailure({ key: rows[0]!.slug, code: rows[0]!.code, fix: rows[0]!.fix }, { key: APPENDED, code: 'invalid_data', fix: /^(?:foresights|gbrain) get --source default -- wiki\/personal\/patterns\/a-theme$/ });
         expect((await pendingAppends(engine)).items?.[APPENDED]).toMatchObject({ attempts: 3 });
 
         await allowWrites(engine);

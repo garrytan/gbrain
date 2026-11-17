@@ -1,8 +1,8 @@
 /**
  * Preview-bound approval (fix wave 5, ENG-O1), shared by every command whose
- * apply must touch exactly the set its preview showed: `gbrain jobs
- * authorize-legacy --select`, `gbrain jobs cancel --select`, `gbrain repair
- * stale-atoms` and `gbrain repair extractor-facts`.
+ * apply must touch exactly the set its preview showed: `foresights jobs
+ * authorize-legacy --select`, `foresights jobs cancel --select`, `foresights repair
+ * stale-atoms` and `foresights repair extractor-facts`.
  *
  * The flow is the same for all four:
  *

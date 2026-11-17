@@ -1,5 +1,5 @@
 /**
- * `gbrain embed --stale --dry-run --background` ran for real.
+ * `foresights embed --stale --dry-run --background` ran for real.
  *
  * The CLI serializes the flag into the job payload (`dryRun:
  * cleanArgs.includes('--dry-run')` in embed.ts's job-args builder), but the
@@ -107,7 +107,7 @@ describe('embed worker honours dryRun from the job payload (#3594 class)', () =>
       updateProgress: async () => {},
     })) as { embedded: number; dry_run: boolean; would_embed: number };
 
-    // The job result must not claim work it did not do: `gbrain jobs get`
+    // The job result must not claim work it did not do: `foresights jobs get`
     // showed `embedded: true` for a dry run.
     expect(result.dry_run).toBe(true);
     expect(result.embedded).toBe(0);

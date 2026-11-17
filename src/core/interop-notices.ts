@@ -105,13 +105,13 @@ function rerankFix(reason: RerankFailedReason, retry?: { op: string; args: Recor
   if (delay !== undefined && retry) {
     return {
       mcp: { tool: retry.op, arguments: retry.args }, consent: [], actor: 'provider', requires_exclusive: false,
-      why: `The results are complete but keep their fused order. If ranking matters, repeat this ${retry.op} call after about ${delay} seconds; if reranking keeps failing, \`gbrain doctor --only reranker_health --json\` on the brain host names the cause.`,
+      why: `The results are complete but keep their fused order. If ranking matters, repeat this ${retry.op} call after about ${delay} seconds; if reranking keeps failing, \`foresights doctor --only reranker_health --json\` on the brain host names the cause.`,
     };
   }
   if (reason === 'auth') {
     return {
       argv: RERANKER_HEALTH_VERIFY.argv, consent: ['credentials'], actor: 'user', requires_exclusive: false, verify: RERANKER_HEALTH_VERIFY,
-      why: 'The reranker provider rejected its API key. The user replaces the key in the .env file in the gbrain home directory (never on a command line); doctor confirms the reranker afterwards.',
+      why: 'The reranker provider rejected its API key. The user replaces the key in the .env file in the foresights home directory (never on a command line); doctor confirms the reranker afterwards.',
       user_message: 'Search results are not being reranked because the reranker rejected its API key. Can you check the reranker key (for example VOYAGE_API_KEY) on the brain host?',
     };
   }
@@ -138,7 +138,7 @@ const PROJECTION_READINESS_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'text
 function projectionReadinessFix(): Action {
   return {
     argv: PROJECTION_READINESS_VERIFY.argv, consent: [], actor: 'agent', requires_exclusive: false, verify: PROJECTION_READINESS_VERIFY,
-    why: "Read-only: doctor's text_projection_readiness counts the pending pages by class and names each fix: `gbrain projections drain` (it asks first) seals sealable images, and a paid re-import (`gbrain embed --stale --images`) seals the rest. Running either is the user's call.",
+    why: "Read-only: doctor's text_projection_readiness counts the pending pages by class and names each fix: `foresights projections drain` (it asks first) seals sealable images, and a paid re-import (`foresights embed --stale --images`) seals the rest. Running either is the user's call.",
   };
 }
 
@@ -151,10 +151,10 @@ function projectionPendingWhy(coverage: RetrievalCoverage, could: number, total:
   const images = coverage.could_affect.pending_images ?? 0;
   const rebuild = coverage.rebuild;
   const rate = rebuild?.pages_per_second ? `, at about ${rebuild.pages_per_second < 10 ? rebuild.pages_per_second.toFixed(1) : Math.round(rebuild.pages_per_second)} page(s) per second measured since it started` : '';
-  const progress = rebuild ? `; the search index rebuild an upgrade started is ${rebuild.done} of ${rebuild.total} page(s) done${rate}, and \`gbrain doctor --only text_projection_readiness\` shows its progress` : '';
+  const progress = rebuild ? `; the search index rebuild an upgrade started is ${rebuild.done} of ${rebuild.total} page(s) done${rate}, and \`foresights doctor --only text_projection_readiness\` shows its progress` : '';
   if (images === 0) return `${rebuild ? 'pages wait for that rebuild' : 'recently written pages are being indexed'} and are not in the search index yet ${counted}${progress}`;
   const text = could - images;
-  return `${images} image page(s) that could match are not in the search index and will not be indexed on their own: sealable images wait for \`gbrain projections drain\` and the rest for a paid re-import (\`gbrain embed --stale --images\`), and doctor's text_projection_readiness check counts them by class${text > 0 ? `; ${text} recently written page(s) are being indexed` : ''} ${counted}${progress}`;
+  return `${images} image page(s) that could match are not in the search index and will not be indexed on their own: sealable images wait for \`foresights projections drain\` and the rest for a paid re-import (\`foresights embed --stale --images\`), and doctor's text_projection_readiness check counts them by class${text > 0 ? `; ${text} recently written page(s) are being indexed` : ''} ${counted}${progress}`;
 }
 
 /** Doctor on the brain host; `run_doctor` where callable (renderAction drops it otherwise). */
@@ -215,7 +215,7 @@ export function degradedRecallNotice(
   const fix = emb ? emb.fix
     : fixKind === 'doctor' ? (onlyKeywordNeedsDoctor ? keywordPlanFix() : onlyImagesNeedDoctor ? projectionReadinessFix() : doctorFix('Doctor names the failing retrieval dependency and its fix.'))
     : rerank ? rerankFix(rerank, opts.retry) : undefined;
-  const choice = emb?.byChoice ? ' This brain was set up keyword-only by the user\'s choice; mention it only if the user asks why something was not found. No query text was sent to an embedding provider. If the user wants semantic search, `gbrain doctor --json` names the enable command; turning it on needs their consent.' : '';
+  const choice = emb?.byChoice ? ' This brain was set up keyword-only by the user\'s choice; mention it only if the user asks why something was not found. No query text was sent to an embedding provider. If the user wants semantic search, `foresights doctor --json` names the enable command; turning it on needs their consent.' : '';
   return {
     code: 'degraded_recall',
     kind: 'degraded',
@@ -282,7 +282,7 @@ export function chatKeyFix(): Action {
     argv: ['gbrain', 'providers', 'list'],
     consent: ['credentials', 'paid'],
     actor: 'user',
-    why: 'Synthesis needs a chat-model API key, and every synthesized answer is a paid call. Either provider works: Anthropic (ANTHROPIC_API_KEY) or OpenAI (OPENAI_API_KEY). The user adds `NAME=<key>` to the .env file in the gbrain home directory (or exports it for every gbrain process); a key is never passed on a command line. `gbrain providers list` shows what each provider needs. Free fallback meanwhile: recall, search and get_page work without a key, so answer from their results.',
+    why: 'Synthesis needs a chat-model API key, and every synthesized answer is a paid call. Either provider works: Anthropic (ANTHROPIC_API_KEY) or OpenAI (OPENAI_API_KEY). The user adds `NAME=<key>` to the .env file in the foresights home directory (or exports it for every foresights process); a key is never passed on a command line. `foresights providers list` shows what each provider needs. Free fallback meanwhile: recall, search and get_page work without a key, so answer from their results.',
     user_message: 'Synthesized answers need a chat-model API key (Anthropic or OpenAI), and each answer costs a little. Want to add one? Until then I can still answer from your notes directly.',
     verify: { argv: ['gbrain', 'doctor', '--only', 'facts_extraction_health', '--json'] },
     requires_exclusive: false,
@@ -314,7 +314,7 @@ export function modelOverrideIgnoredNotice(reason: 'not_allowed' | 'unusable'): 
         consent: ['paid'],
         actor: 'host_admin',
         why: 'think.remote_models is a comma-separated list of models remote callers may pick for think; every think answer is a paid call on the host\'s key.',
-        user_message: 'This brain answers remote think calls with its own configured model. The owner can allow another model on the brain host with gbrain config set think.remote_models <models>.',
+        user_message: 'This brain answers remote think calls with its own configured model. The owner can allow another model on the brain host with foresights config set think.remote_models <models>.',
         inputs: [{ name: 'models', how: 'The current think.remote_models value plus the requested model, comma-separated.' }],
         verify: { argv: ['gbrain', 'config', 'get', 'think.remote_models'] },
         requires_exclusive: false,
@@ -328,7 +328,7 @@ export function thinkNotSavedNotice(): Notice {
   return {
     code: 'think_not_saved',
     kind: 'info',
-    why: 'save/take persist only for the local CLI caller, so this answer was not saved (saved_slug: null). To keep it, save the key facts with remember, or ask the user to run `gbrain think --save` with this question on the brain host.',
+    why: 'save/take persist only for the local CLI caller, so this answer was not saved (saved_slug: null). To keep it, save the key facts with remember, or ask the user to run `foresights think --save` with this question on the brain host.',
   };
 }
 
@@ -345,7 +345,7 @@ export function degradedDedupNotice(cfg?: GBrainConfig | null): Notice {
 
 /** Local CLI remember with visibility private: recall-only, never pushed into agent sessions (#6606). */
 export function privateFactNotice(factId?: string | number): Notice {
-  const forget = factId !== undefined ? ` (then \`gbrain forget ${factId}\` drops the private copy; replaces cannot change visibility)` : '';
+  const forget = factId !== undefined ? ` (then \`foresights forget ${factId}\` drops the private copy; replaces cannot change visibility)` : '';
   return {
     code: 'private_fact_not_pushed',
     kind: 'info',
@@ -361,10 +361,10 @@ export function privateFactNotice(factId?: string | number): Notice {
 export function entityPageMissingNotice(sourceId: string, entitySlug: string, held?: { slug: string; committed: boolean }): Notice {
   const base = { code: 'entity_page_missing', kind: 'info' as const, dedupe_key: `${sourceId}\0${entitySlug}` };
   if (held) return { ...base,
-    why: `${held.committed ? 'Saved and committed to Git' : 'Saved in the database only, as its folder keeps its pages out of Git'}; held on ${held.slug} until ${entitySlug} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table${held.committed ? ', in its file' : ''}.` };
+    why: `${held.committed ? 'Saved and committed to Git' : 'Saved in the database only, as its folder keeps its pages out of Git'}; held on ${held.slug} until ${entitySlug} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (foresights dream) moves the fact into the page's Facts table${held.committed ? ', in its file' : ''}.` };
   const userMessage = `The fact is saved in the database only: ${entitySlug} has no page, so it is in no file in Git. Should I create a page for ${entitySlug}?`;
   return { ...base,
-    why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save, and ask the user whether to create the page; once it exists, the next maintenance cycle (gbrain dream) can move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,
+    why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save, and ask the user whether to create the page; once it exists, the next maintenance cycle (foresights dream) can move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,
     user_message: userMessage,
     fix: {
       ask_user: true,
@@ -491,7 +491,7 @@ export function localTranscriptsNotice(presence: { dirs: string[]; count: number
     why: `This brain host keeps ${presence.count} recent session transcript file(s)${where} (from the last 7 days). They are raw host files, not pages, so search, query, recall and list_pages never return them, and get_recent_transcripts is not callable on this connection. `
       + 'Read them with the command in fix (from a shell on this machine; otherwise ask the user to run it), or read those .txt files directly if you have a shell here. Never answer "no transcripts" or "no notes" from a page search alone.',
     fix: localTranscriptsFix(),
-    user_message: 'Your recent session transcripts are on this machine but not in the searchable pages. I can read them with `gbrain transcripts recent --json`; want me to, or can you run it and share the output?',
+    user_message: 'Your recent session transcripts are on this machine but not in the searchable pages. I can read them with `foresights transcripts recent --json`; want me to, or can you run it and share the output?',
   };
 }
 

@@ -1,5 +1,5 @@
 /**
- * #6884: the managed purge (`gbrain pages purge-deleted`, the cycle purge
+ * #6884: the managed purge (`foresights pages purge-deleted`, the cycle purge
  * phase, the Minion job) submitted every expired tombstone whatever the
  * writer's outstanding-request room, so a large backlog became thousands of
  * `queue_capacity` failures, each recorded toward a park, while the admitted

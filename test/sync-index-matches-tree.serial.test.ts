@@ -19,7 +19,7 @@
  * persisted value outside markdown|code|auto is IGNORED (classifySync in
  * core/sync.ts then falls back to 'markdown'), never honored.
  *
- * HONEST LIMIT: drift() derives both sides from gbrain's own enumerator and
+ * HONEST LIMIT: drift() derives both sides from foresights's own enumerator and
  * slug function, so it pins the sync WIRING, not the enumerator itself. The
  * literal slug list in S1 is the only assertion here that does not derive
  * from the code under test; keep it.

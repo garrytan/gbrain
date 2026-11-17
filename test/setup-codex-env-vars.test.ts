@@ -1,5 +1,5 @@
 /**
- * `gbrain setup codex` forwards provider key names to serve (GST-2732).
+ * `foresights setup codex` forwards provider key names to serve (GST-2732).
  * Codex starts stdio MCP servers with a scrubbed environment, so a key the
  * user exported reached the CLI but never the MCP child, and Codex sessions
  * stayed keyword-only. The entry lists names only (env_vars), never values.

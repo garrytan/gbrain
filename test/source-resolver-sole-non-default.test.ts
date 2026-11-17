@@ -4,7 +4,7 @@
  *
  * When NO brain_default config is set AND exactly one registered source has
  * local_path set and isn't 'default', auto-route to it. Closes the bug
- * class where `gbrain sync` without --source silently routed to source_id
+ * class where `foresights sync` without --source silently routed to source_id
  * 'default' even though the user had a single Vault-mounted source.
  *
  * Tier ordering placement codex review forced:
@@ -333,7 +333,7 @@ describe('formatSoleNonDefaultNudge', () => {
   test('returns canonical nudge string in default env', async () => {
     await withEnv({ GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE: undefined }, async () => {
       expect(formatSoleNonDefaultNudge('studiovault')).toBe(
-        "[gbrain] routing to source 'studiovault' (sole non-default source registered; pass --source to override).",
+        "[foresights] routing to source 'studiovault' (sole non-default source registered; pass --source to override).",
       );
     });
   });

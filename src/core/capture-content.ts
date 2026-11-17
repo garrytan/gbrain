@@ -31,7 +31,7 @@ export interface CaptureFrontmatterOpts {
 }
 
 // v0.42.x — Life Chronicle (#2390): route the default slug prefix by type so
-// `gbrain capture --type diary` lands under life/diary/ and `--type event`
+// `foresights capture --type diary` lands under life/diary/ and `--type event`
 // under life/events/ (matching the chronicle path-prefix inference). Everything
 // else keeps the inbox/ default.
 export function slugPrefixForType(type?: string): string {
@@ -201,7 +201,7 @@ export function buildEventBlock(opts: CaptureFrontmatterOpts): Record<string, un
  * `--type` flag / `type` param wins, else a non-empty string `type:` in
  * the body's existing frontmatter. Returns undefined when neither is
  * present (the default-'note' path — deliberately NOT a vocabulary-check
- * target, so bare `gbrain capture` can never start failing under a pack
+ * target, so bare `foresights capture` can never start failing under a pack
  * that omits 'note') and when the frontmatter is malformed
  * (`mergeCaptureFrontmatter` surfaces that error downstream unchanged).
  */

@@ -1,10 +1,10 @@
 /**
- * #8776: `gbrain upgrade` refused on every host where autopilot runs outside launchd and systemd, gbrain's own
+ * #8776: `foresights upgrade` refused on every host where autopilot runs outside launchd and systemd, foresights's own
  * linux-cron install target included, so the stable auto-upgrade path could never finish there. An autopilot whose
- * launcher starts it again when it exits (this brain's gbrain cron line, or one the operator declares with
+ * launcher starts it again when it exits (this brain's foresights cron line, or one the operator declares with
  * `self_upgrade.autopilot_launcher external`) is now handed to that launcher: stopped only while the pid is still that
  * autopilot, then verified back on the installed build. Without a launcher the upgrade still refuses, naming
- * `gbrain autopilot --install`, and doctor's `self_upgrade_health` warns before the upgrade fails.
+ * `foresights autopilot --install`, and doctor's `self_upgrade_health` warns before the upgrade fails.
  */
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
@@ -27,19 +27,19 @@ const ctx = (over: Partial<RestartContext> = {}): RestartContext => ({ expected:
 const autopilot = (pid = 30, version: string | null = OLD, over: Partial<HostProcess> = {}): HostProcess =>
   ({ pid, ppid: null, role: 'autopilot', version, started_ms: 1_000, ancestors: [7, 6], args: ['autopilot', '--repo', '/srv/brain-example'], ...over });
 
-describe('planRestart: an autopilot started outside gbrain\'s service', () => {
-  test('without a known launcher the upgrade refuses and names gbrain autopilot --install and the declared hand-off', () => {
+describe('planRestart: an autopilot started outside foresights\'s service', () => {
+  test('without a known launcher the upgrade refuses and names foresights autopilot --install and the declared hand-off', () => {
     const plan = planRestart([autopilot()], ctx({ expected: PENDING_BUILD }));
     expect(plan.steps).toEqual([]);
     expect(plan.manual.map(m => [m.role, m.pid, m.argv])).toEqual([['autopilot', 30, ['gbrain', 'autopilot', '--install']]]);
-    expect(plan.manual[0]!.instruction).toContain('started outside gbrain\'s autopilot service');
-    expect(plan.manual[0]!.instruction).toContain('gbrain config set self_upgrade.autopilot_launcher external');
+    expect(plan.manual[0]!.instruction).toContain('started outside foresights\'s autopilot service');
+    expect(plan.manual[0]!.instruction).toContain('foresights config set self_upgrade.autopilot_launcher external');
     const refusal = restartRefusal(plan, ['gbrain', 'upgrade'], false)!;
     expect(refusal.code).toBe('restart_refused');
     expect(refusal.fix).toMatchObject({ actor: 'user', argv: ['gbrain', 'autopilot', '--install'] });
   });
 
-  test('with this brain\'s gbrain cron line, or a declared launcher, the upgrade hands autopilot over instead of refusing', () => {
+  test('with this brain\'s foresights cron line, or a declared launcher, the upgrade hands autopilot over instead of refusing', () => {
     for (const launcher of [CRON, DECLARED]) {
       const plan = planRestart([autopilot()], ctx({ expected: PENDING_BUILD, autopilotLauncher: launcher }));
       expect(plan.manual).toEqual([]);
@@ -71,7 +71,7 @@ describe('planRestart: an autopilot started outside gbrain\'s service', () => {
       expect(plan.steps).toEqual([]);
       expect(plan.manual.map(m => [m.role, m.pid, m.argv])).toEqual([['autopilot', 30, ['kill', '30']]]);
       expect(plan.manual[0]!.instruction).toContain(launcher.pid ? 'names pid 31' : 'names no running autopilot');
-      expect(plan.manual[0]!.instruction).not.toContain('gbrain config set self_upgrade.autopilot_launcher external');
+      expect(plan.manual[0]!.instruction).not.toContain('foresights config set self_upgrade.autopilot_launcher external');
     }
     await withEnv({ GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
       const check = checkSelfUpgradeHealth(planRestart([autopilot(30)], ctx({ expected: PENDING_BUILD, autopilotLauncher: { ...DECLARED, pid: null } })));
@@ -84,7 +84,7 @@ describe('planRestart: an autopilot started outside gbrain\'s service', () => {
   test('an autopilot from another install that is not a Bun global copy still refuses: the hand-off never moves a clone', () => {
     const plan = planRestart([autopilot(30, OLD, { install_root: '/srv/gbrain-checkout', install_version: OLD })], ctx({ ownInstallRoot: '/opt/gbrain', autopilotLauncher: CRON }));
     expect(plan.steps).toEqual([]);
-    expect(plan.manual[0]!.instruction).toContain('runs from another gbrain install');
+    expect(plan.manual[0]!.instruction).toContain('runs from another foresights install');
   });
 });
 
@@ -97,7 +97,7 @@ describe('runRestartSteps and verifyRestart: the hand-off', () => {
     const ok = await runRestartSteps(plan, exec((pid, started, role) => { seen.push([pid, started, role]); return 'stopped'; }));
     expect(seen).toEqual([[30, 1_000, 'autopilot']]);
     expect(ok[0]).toMatchObject({ ok: true });
-    expect(ok[0]!.detail).toContain('this brain\'s gbrain cron line starts it again');
+    expect(ok[0]!.detail).toContain('this brain\'s foresights cron line starts it again');
     const changed = await runRestartSteps(plan, exec(() => 'changed'));
     expect(changed[0]).toMatchObject({ ok: false });
     expect(changed[0]!.detail).toContain('no longer the autopilot the plan saw');
@@ -107,7 +107,7 @@ describe('runRestartSteps and verifyRestart: the hand-off', () => {
     const back = autopilot(130, NEW, { started_ms: 9_000 });
     expect(restartProblems(plan, [back], 5_000, { before: { state: 'absent' }, after: { state: 'absent' } }, 130)).toEqual([]);
     expect(restartProblems(plan, [], 5_000, { before: { state: 'absent' }, after: { state: 'absent' } }, null))
-      .toEqual(['autopilot did not come back after it was stopped for this brain\'s gbrain cron line to start again (this brain\'s autopilot lock names no autopilot).']);
+      .toEqual(['autopilot did not come back after it was stopped for this brain\'s foresights cron line to start again (this brain\'s autopilot lock names no autopilot).']);
     let clock = 0;
     let round = 0;
     const verified = await verifyRestart(plan, 5_000, { state: 'absent' }, {
@@ -129,7 +129,7 @@ describe('verifyRestart: the hand-off is done only when this brain\'s autopilot 
     const brainB = autopilot(130, NEW, { started_ms: 9_000, args: ['autopilot', '--repo', '/srv/brain-b'] });
     const result = await verify([brainB], () => 30);
     expect(result.ok).toBe(false);
-    expect(result.problems).toEqual(['autopilot did not come back after it was stopped for this brain\'s gbrain cron line to start again (this brain\'s autopilot lock names pid 30, which is not an autopilot started after the restart).']);
+    expect(result.problems).toEqual(['autopilot did not come back after it was stopped for this brain\'s foresights cron line to start again (this brain\'s autopilot lock names pid 30, which is not an autopilot started after the restart).']);
   });
 
   test('a lock missing or unreadable at verify time reports that autopilot did not come back, naming the lock, and never verifies', async () => {
@@ -137,7 +137,7 @@ describe('verifyRestart: the hand-off is done only when this brain\'s autopilot 
     for (const lockPid of [() => null, () => { throw new Error('EACCES'); }]) {
       const result = await verify([fresh], lockPid);
       expect(result.ok).toBe(false);
-      expect(result.problems).toEqual(['autopilot did not come back after it was stopped for this brain\'s gbrain cron line to start again (this brain\'s autopilot lock names no autopilot).']);
+      expect(result.problems).toEqual(['autopilot did not come back after it was stopped for this brain\'s foresights cron line to start again (this brain\'s autopilot lock names no autopilot).']);
     }
   });
 
@@ -157,13 +157,13 @@ describe('planRestart: an autopilot known only from its heartbeat row', () => {
 });
 
 describe('autopilotLauncher', () => {
-  test('this brain\'s gbrain cron line is a launcher; a commented line, a monitor-only line, a line that does not start its wrapper every 5 minutes or none is not; the declared key is the fallback', () => {
+  test('this brain\'s foresights cron line is a launcher; a commented line, a monitor-only line, a line that does not start its wrapper every 5 minutes or none is not; the declared key is the fallback', () => {
     const job = resolveAutopilotJob();
     const line = `*/5 * * * * '${join(job.homeDir, 'autopilot-run.sh')}' >> '${job.logPath}' 2>&1${job.cronMarker ? ` ${job.cronMarker}` : ''}`;
     expect(autopilotLauncher(() => `MAILTO=""\n${line}\n`, undefined, 30)).toEqual({ kind: 'cron', wait_ms: 360_000, pid: 30 });
-    expect(autopilotLauncher(() => `# ${line}\n*/30 * * * * gbrain autopilot --status\n`, undefined, 30)).toBeNull();
+    expect(autopilotLauncher(() => `# ${line}\n*/30 * * * * foresights autopilot --status\n`, undefined, 30)).toBeNull();
     expect(autopilotLauncher(() => null, undefined, 30)).toBeNull();
-    expect(autopilotLauncher(() => `0 0 * * * gbrain autopilot pause${job.cronMarker ? ` ${job.cronMarker}` : ''}\n`, undefined, 30)).toBeNull();
+    expect(autopilotLauncher(() => `0 0 * * * foresights autopilot pause${job.cronMarker ? ` ${job.cronMarker}` : ''}\n`, undefined, 30)).toBeNull();
     expect(autopilotLauncher(() => `${line.replace('*/5 * * * *', '0 3 * * *')}\n`, undefined, 30)).toBeNull();
     expect(autopilotLauncher(() => null, 'external', null)).toEqual({ kind: 'declared', wait_ms: 360_000, pid: null });
   });
@@ -192,11 +192,11 @@ describe('autopilotLauncher', () => {
 });
 
 describe('doctor self_upgrade_health with the restart plan', () => {
-  test('warns that gbrain upgrade refuses, naming the autopilot pid, with gbrain autopilot --install as an ask-user fix', async () => {
+  test('warns that foresights upgrade refuses, naming the autopilot pid, with foresights autopilot --install as an ask-user fix', async () => {
     await withEnv({ GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
       const check = checkSelfUpgradeHealth(planRestart([autopilot()], ctx({ expected: PENDING_BUILD })));
       expect(check.status).toBe('warn');
-      expect(check.message).toContain('gbrain upgrade refuses on this host: ');
+      expect(check.message).toContain('foresights upgrade refuses on this host: ');
       expect(check.message).not.toContain('auto-upgrades cannot finish');
       expect(check.message).toContain('autopilot pid 30');
       expect(check.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'autopilot', '--install'] });
@@ -210,7 +210,7 @@ describe('doctor self_upgrade_health with the restart plan', () => {
       const serve: HostProcess = { pid: 9, ppid: null, role: 'serve', version: OLD, started_ms: 1_000, ancestors: [8], args: ['serve', '--http'], install_root: copy, install_version: OLD };
       const check = checkSelfUpgradeHealth(planRestart([autopilot(), serve], ctx({ expected: PENDING_BUILD, autopilotLauncher: CRON, ownInstallRoot: '/opt/gbrain', serveService: { argv: ['true'], pid: 8 } })));
       expect(check.status).toBe('ok');
-      expect(check.message).toContain('upgrades restart autopilot pid 30 through this brain\'s gbrain cron line');
+      expect(check.message).toContain('upgrades restart autopilot pid 30 through this brain\'s foresights cron line');
       expect(check.message).toContain(`pid 9 runs from a second install at ${copy} (v${OLD}), which upgrades replace too`);
       const plain = checkSelfUpgradeHealth().message;
       expect(checkSelfUpgradeHealth(null).message).toBe(plain);
@@ -235,7 +235,7 @@ describe('doctor self_upgrade_health with the restart plan', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-8776-held-'));
     try {
       await withEnv({ GBRAIN_HOME: dir, GBRAIN_AUDIT_DIR: join(dir, 'audit'), GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
-        logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.43.0', latest: '0.99.0', outcome: 'skipped', reason: 'gbrain 0.99.0 requires Bun >=9.0.0' });
+        logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.43.0', latest: '0.99.0', outcome: 'skipped', reason: 'foresights 0.99.0 requires Bun >=9.0.0' });
         const check = checkSelfUpgradeHealth(planRestart([autopilot()], ctx({ expected: PENDING_BUILD })));
         expect(check.status).toBe('warn');
         expect(check.message).toContain('Auto-upgrade to 0.99.0 held');

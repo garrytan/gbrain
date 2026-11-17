@@ -1,5 +1,5 @@
 /**
- * #6712 PR 2 (L5): a plain `gbrain sync status` skips its heavy reads but never reads as an all-clear (DX F1).
+ * #6712 PR 2 (L5): a plain `foresights sync status` skips its heavy reads but never reads as an all-clear (DX F1).
  *
  * Protects: every field keeps its type when skipped (arrays stay arrays, `terminal_failures` reads `unknown`) and its
  * `<field>_read` sibling says `not_read` with the --detail command; `state` / `reason` are in the outcome vocabulary;

@@ -2,12 +2,12 @@
  * A4 user preapprovals: `consent.preapprove.paid.max_usd_per_run` (Tier 1,
  * per run) and `consent.preapprove.persistent_install`. They live only in
  * the host file plane (~/.gbrain/config.json), written by the trusted local
- * CLI (`gbrain config set`); no MCP or HTTP operation writes that file, and a
+ * CLI (`foresights config set`); no MCP or HTTP operation writes that file, and a
  * `consent.*` DB-plane row is never read. `destructive` is never
  * preapprovable, and an install preapproval never covers credentials
  * (enforced by consent.ts's matrix).
  *
- * Split from consent.ts so `gbrain config` can import it without the CLI
+ * Split from consent.ts so `foresights config` can import it without the CLI
  * flag-registry scan granting consent flags to `config`.
  */
 import { shellQuote } from './agent-output.ts';
@@ -44,7 +44,7 @@ export function preapprovalCommand(key: string, value: string): string[] {
 }
 
 /**
- * `gbrain config set consent.*`: writes the host file plane and returns the
+ * `foresights config set consent.*`: writes the host file plane and returns the
  * confirmation line. Remote callers are refused (actor `user`): a preapproval
  * written over MCP would let an agent consent on the user's behalf.
  */
@@ -52,7 +52,7 @@ export function setConsentPreapproval(key: string, value: string, ctx: { remote:
   if (ctx.remote) {
     throw opError('permission_denied', `${key} can only be set from a terminal on the brain host; nothing was written.`,
       'Ask the user to run the command in a terminal on the brain host.',
-      { why: 'A preapproval lets gbrain spend or install without asking, so only the user may grant it.',
+      { why: 'A preapproval lets foresights spend or install without asking, so only the user may grant it.',
         fix: { argv: preapprovalCommand(key, value), consent: [], actor: 'user', requires_exclusive: false,
           why: 'Preapprovals are settable only by the trusted local CLI.' } });
   }
@@ -75,7 +75,7 @@ export function setConsentPreapproval(key: string, value: string, ctx: { remote:
   }
   cfg.consent = { ...consent, preapprove: pre };
   saveConfig(cfg);
-  return `Set ${key} = ${key === PREAPPROVE_PAID_MAX_USD_PER_RUN ? pre.paid!.max_usd_per_run : pre.persistent_install} (file plane: ~/.gbrain/config.json). Remove it with: gbrain config unset ${key}`;
+  return `Set ${key} = ${key === PREAPPROVE_PAID_MAX_USD_PER_RUN ? pre.paid!.max_usd_per_run : pre.persistent_install} (file plane: ~/.gbrain/config.json). Remove it with: foresights config unset ${key}`;
 }
 
 /** Remove one preapproval; true when the file held it. */

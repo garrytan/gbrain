@@ -264,7 +264,7 @@ describe('purge_fact', () => {
         const result = await dispatchToolCall(engine, 'purge_fact', { id: 1, dry_run: true }, { config: { engine: engine.kind } as never, remote: true, transport });
         expect(result.isError).toBe(true);
         expect(JSON.parse(result.content[0]!.text).error).toMatch(/permission_denied|trusted_local_only/);
-        expect(result.content[0]!.text).toContain('gbrain forget');
+        expect(result.content[0]!.text).toContain('foresights forget');
       }
     }
   }), 60_000);

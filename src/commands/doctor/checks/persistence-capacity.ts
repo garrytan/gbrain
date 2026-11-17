@@ -7,7 +7,7 @@ import { doctorCapacityForecast, forecastOrNull } from '../capacity-memo.ts';
 import { capacityVerify } from '../../../core/persistence/capacity-view.ts';
 import { BACKGROUND_PRODUCERS, readBackgroundPauseShare } from '../../../core/persistence/admission-origin.ts';
 
-const VERIFY = 'gbrain doctor --only persistence_capacity --json';
+const VERIFY = 'foresights doctor --only persistence_capacity --json';
 const DOCS = 'docs/guides/concurrent-writes.md#quota-near-exhaustion';
 const OUTSTANDING_WARN = 0.9;
 const OUTSTANDING_STALL_S = 600;
@@ -76,7 +76,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
       needed.set(row.config_key, Math.max(needed.get(row.config_key) ?? 0, value));
     }
     const anyPaused = resources.some(r => r.background_paused);
-    const commands = [...needed].map(([key, value]) => `gbrain config set ${key} ${value}`);
+    const commands = [...needed].map(([key, value]) => `foresights config set ${key} ${value}`);
     const details = { exact: true, inspected: counters.length, truncated: false, resources, outstanding, commands, housekeeping, verify: VERIFY, docs: DOCS,
       background_pause_pct: Math.round(pause * 100), paused_producers: anyPaused ? [...BACKGROUND_PRODUCERS] : [],
       forecast: forecast ? { thresholds: forecast.thresholds, window_days: forecast.window_days, retention_days: forecast.retention_days,
@@ -90,7 +90,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
       fix: { argv: holder ? ['gbrain', 'sources', 'writer', 'status', '--source', holder.source_id, '--json'] : ['gbrain', 'sources', 'writer', 'status', '--json'],
         consent: [], actor: 'host_admin', requires_exclusive: false, verify: capacityVerify(), docs: DOCS,
         why: `Read-only: names the requests${holder ? ` source ${holder.source_id}` : ''} holds and why they have not settled (a refused write ends terminally and frees its slot).` },
-      message: `${held}Run on the brain host: ${holder ? `gbrain sources writer status --source ${holder.source_id} --json` : 'gbrain sources writer status --json'}, then verify with ${VERIFY}.` };
+      message: `${held}Run on the brain host: ${holder ? `foresights sources writer status --source ${holder.source_id} --json` : 'foresights sources writer status --json'}, then verify with ${VERIFY}.` };
     // GBRA-108: receipt storage over the housekeeping target is the host operator's to look at; it never refuses or pauses a write.
     if (!resources.length && housekeeping.over_target) return { name: 'persistence_capacity', status: 'warn', details,
       fix: { argv: ['gbrain', 'repair', 'receipt-compaction', '--json'], consent: [], actor: 'host_admin', requires_exclusive: false, verify: capacityVerify(), docs: DOCS,
@@ -98,8 +98,8 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
       message: `Receipts not yet compacted reserve ${compactable} bytes (receipt storage holds ${stored} in all), above the housekeeping target of ${target} (${RECEIPT_TARGET_KEY}). Writes are not affected: receipt storage never refuses or pauses a write unless the operator sets a cap. `
         + (housekeeping.explicit_retention_days !== null
           ? `Housekeeping leaves receipts to the retention you set (${RECEIPT_RETENTION_KEY} = ${housekeeping.explicit_retention_days} days). `
-          : `Housekeeping compacts settled receipts, and refusals gbrain's own producers write again, older than ${HOUSEKEEPING_FLOOR_DAYS} days while storage is above the target; what stays is newer receipts, refusals whose intent a replay or retry reads, job receipts, receipts an open sync or recovery holds, and compacted receipts that keep request ids idempotent. `)
-        + `On the brain host, gbrain repair receipt-compaction --json previews what an explicit compaction would free and compacts nothing; a larger target, or 0, quiets this warning.` };
+          : `Housekeeping compacts settled receipts, and refusals foresights's own producers write again, older than ${HOUSEKEEPING_FLOOR_DAYS} days while storage is above the target; what stays is newer receipts, refusals whose intent a replay or retry reads, job receipts, receipts an open sync or recovery holds, and compacted receipts that keep request ids idempotent. `)
+        + `On the brain host, foresights repair receipt-compaction --json previews what an explicit compaction would free and compacts nothing; a larger target, or 0, quiets this warning.` };
     if (!resources.length && !cumulative.length) return { name: 'persistence_capacity', status: 'ok', details,
       message: `No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds ${stored} reserved bytes${target > 0 ? `, and receipts not yet compacted are under the housekeeping target of ${target}` : ''}.` };
     if (!resources.length) return { name: 'persistence_capacity', status: 'ok', details,
@@ -109,7 +109,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
     return { name: 'persistence_capacity', status: worst, details,
       fix: { argv: ['gbrain', 'config', 'set', first![0], String(first![1])], consent: [], actor: 'host_admin', requires_exclusive: false,
         verify: capacityVerify(), docs: DOCS,
-        why: `Raises ${first![0]} to a value that covers about one more year at the 7-day rate; reversible with gbrain config unset.${commands.length > 1 ? ` Also run: ${commands.slice(1).join('; ')}.` : ''}` },
+        why: `Raises ${first![0]} to a value that covers about one more year at the 7-day rate; reversible with foresights config unset.${commands.length > 1 ? ` Also run: ${commands.slice(1).join('; ')}.` : ''}` },
       message: `${held}${resources.length} managed write limit(s) near exhaustion: ${resources.map(r => `${r.scope} ${r.resource} ${r.used}/${r.limit}`
         + ('days_to_exhaustion' in r && r.days_to_exhaustion !== null ? ` (about ${r.days_to_exhaustion} day(s) left at the 7-day rate, ${r.basis})` : '')).join('; ')}. `
         + `Admission refuses at the limit. Run on the brain host: ${commands.join('; ')} (each covers about one more year at the current admission rate), `

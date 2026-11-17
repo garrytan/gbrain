@@ -1,7 +1,7 @@
 import type { Migration } from './types.ts';
 
 export const v183: Migration = {
-  // #5455/#5628: `gbrain sources writer deactivate`. mode_epoch counts managed
+  // #5455/#5628: `foresights sources writer deactivate`. mode_epoch counts managed
   // mode changes: activation and deactivation each increment it, it is part of
   // the writer admin-state hash, and managed-root markers and registry records
   // carry it so a later process removes only markers of a retired epoch. A

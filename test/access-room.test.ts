@@ -344,7 +344,7 @@ for (const kind of testBackends()) {
       }
     }, 60_000);
 
-    test('the trusted local CLI marks the owner view; with no owner it is unbound and the fix names gbrain access owner set', async () => {
+    test('the trusted local CLI marks the owner view; with no owner it is unbound and the fix names foresights access owner set', async () => {
       const { declaration } = readRoomDeclaration({ requestMeta: { room: 'alice-example' } }, undefined);
       const local = { access: { owner: false, identity: [] } as never, transport: 'cli', local: true as const };
       const marked = await assessRoom(engine, { op: 'get_page', result: { slug: PAGES.mine.slug, source_id: SRC }, declaration: declaration!, sourceId: SRC, caller: local });

@@ -1,6 +1,6 @@
 /**
  * Ask a labelled decide dataset through the slot's production request shape
- * (the registered dataset adapter, the same one `gbrain decide calibrate`
+ * (the registered dataset adapter, the same one `foresights decide calibrate`
  * and `qualify` use) and record the per-item answer, per-request latency and
  * input tokens. Offline analysis scripts then apply the slot's production
  * reducer at the calibrated threshold, so no verdict needs a second paid run.

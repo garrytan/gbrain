@@ -11,7 +11,7 @@ import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 export type KnowledgePublicationTarget = Pick<WriteRequest, 'source_id' | 'source_incarnation' | 'slug' | 'target_kind'> & Partial<Pick<WriteRequest, 'intent' | 'operation'>>;
 export interface KnowledgePublicationFile { path: string; root: string; expectedBeforeHash?: string | null }
 
-/** The maintenance intent that soft-deletes an approved ghost page (`gbrain repair ghost-pages`, `file-drift --prefer file`). */
+/** The maintenance intent that soft-deletes an approved ghost page (`foresights repair ghost-pages`, `file-drift --prefer file`). */
 export const GHOST_RETIREMENT_INTENT = 'managed_maintenance_retire_ghost_page';
 
 interface PackRoot {

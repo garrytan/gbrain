@@ -33,7 +33,7 @@ let origHome: string | undefined;
 let origGbrainHome: string | undefined;
 
 // HOME holds the host-agent scopes ($HOME/.claude, $HOME/.openclaw); the
-// gbrain home is a SEPARATE dir so every test also proves that migration
+// foresights home is a SEPARATE dir so every test also proves that migration
 // state follows GBRAIN_HOME, never $HOME/.gbrain (#5549).
 beforeEach(() => {
   origHome = process.env.HOME;
@@ -148,8 +148,8 @@ describe('AGENTS.md marker injection', () => {
   });
 });
 
-describe('cron manifest rewrite — gbrain builtins only', () => {
-  test('rewrites `agentTurn` entries whose skill is a gbrain builtin', () => {
+describe('cron manifest rewrite — foresights builtins only', () => {
+  test('rewrites `agentTurn` entries whose skill is a foresights builtin', () => {
     const dir = join(tmp, '.claude');
     const path = writeCronJson(dir, [
       { schedule: '*/5 * * * *', kind: 'agentTurn', skill: 'extract' },
@@ -162,10 +162,10 @@ describe('cron manifest rewrite — gbrain builtins only', () => {
 
     const after = JSON.parse(readFileSync(path, 'utf-8'));
     expect(after.jobs[0].kind).toBe('shell');
-    expect(after.jobs[0].cmd).toContain('gbrain jobs submit extract');
+    expect(after.jobs[0].cmd).toContain('foresights jobs submit extract');
     expect(after.jobs[0]._gbrain_migrated_by).toBe('v0.11.0');
     expect(after.jobs[1].kind).toBe('shell');
-    expect(after.jobs[1].cmd).toContain('gbrain jobs submit backlinks');
+    expect(after.jobs[1].cmd).toContain('foresights jobs submit backlinks');
   });
 
   test('emits JSONL TODO for non-builtin handlers (ea-inbox-sweep etc.)', () => {

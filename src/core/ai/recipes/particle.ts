@@ -2,7 +2,7 @@ import type { Recipe } from '../types.ts';
 
 /**
  * Particle exposes an OpenAI-compatible /v1/chat/completions endpoint. Its
- * Responses API is WebSocket-only, so gbrain uses Chat Completions alone.
+ * Responses API is WebSocket-only, so foresights uses Chat Completions alone.
  * Requests name `particle-1`; responses and /v1/models report
  * `particle-ai/particle-1`, so both ids are listed. Thinking is on by
  * default and bills as output; `reasoning_effort: 'none'` turns it off

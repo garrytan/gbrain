@@ -56,7 +56,7 @@ function timeEvidence(f: DatedConflictFact): EvidenceItem {
 /**
  * True when `a` is older than `b`: valid_from, then created_at, then id. The sweep presents the newer fact of a pair
  * as `fact`, so a proposal always retires the older one, even when the older fact is the one being swept (a fact
- * that just gained an entity through `gbrain facts relink`).
+ * that just gained an entity through `foresights facts relink`).
  */
 export function isOlderFact(a: DatedConflictFact, b: DatedConflictFact): boolean {
   const ms = (v: Date | string) => new Date(v).getTime();

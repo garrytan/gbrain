@@ -135,13 +135,13 @@ describe('GitHub fixture', () => {
   });
 
   test('parses the tarball, codeload and raw paths it serves, and nothing else', () => {
-    expect(parseFixturePath('loopback', '/repos/garrytan/gbrain/tarball/v1.2.3.4')).toEqual({ kind: 'tarball', ref: 'v1.2.3.4' });
-    expect(parseFixturePath('api.github.com', '/repos/garrytan/gbrain/tarball')).toEqual({ kind: 'tarball', ref: 'HEAD' });
-    expect(parseFixturePath('codeload.github.com', '/garrytan/gbrain/tar.gz/master')).toEqual({ kind: 'tarball', ref: 'master' });
-    expect(parseFixturePath('raw.githubusercontent.com', '/garrytan/gbrain/refs/heads/master/VERSION')).toEqual({ kind: 'raw', ref: 'master', file: 'VERSION' });
-    expect(parseFixturePath('api.github.com', '/repos/garrytan/gbrain/releases/latest')).toEqual({ kind: 'api', ref: 'releases/latest' });
+    expect(parseFixturePath('loopback', '/repos/aimonk2025/gbrain/tarball/v1.2.3.4')).toEqual({ kind: 'tarball', ref: 'v1.2.3.4' });
+    expect(parseFixturePath('api.github.com', '/repos/aimonk2025/gbrain/tarball')).toEqual({ kind: 'tarball', ref: 'HEAD' });
+    expect(parseFixturePath('codeload.github.com', '/aimonk2025/gbrain/tar.gz/master')).toEqual({ kind: 'tarball', ref: 'master' });
+    expect(parseFixturePath('raw.githubusercontent.com', '/aimonk2025/gbrain/refs/heads/master/VERSION')).toEqual({ kind: 'raw', ref: 'master', file: 'VERSION' });
+    expect(parseFixturePath('api.github.com', '/repos/aimonk2025/gbrain/releases/latest')).toEqual({ kind: 'api', ref: 'releases/latest' });
     expect(parseFixturePath('raw.githubusercontent.com', '/someone/else/master/VERSION')).toBeNull();
-    expect(parseFixturePath('github.com', '/garrytan/gbrain')).toBeNull();
+    expect(parseFixturePath('github.com', '/aimonk2025/gbrain')).toBeNull();
   });
 
   test('serves only the refs it names, over the proxy with its CA, and logs the commit behind each answer', async () => {
@@ -149,14 +149,14 @@ describe('GitHub fixture', () => {
     const fx = await startGithubFixture({ source: src.dir, mirrorDir: join(work, 'mirror.git'), archiveDir: join(work, 'archives'), certDir: join(work, 'certs') });
     try {
       fx.setRefs({ HEAD: src.first, 'v0.0.1': src.first });
-      const raw = async (ref: string) => (await curl(['--proxy', fx.proxyUrl, '--cacert', fx.caFile, 'https://raw.githubusercontent.com/garrytan/gbrain/' + ref + '/VERSION'])).stdout;
+      const raw = async (ref: string) => (await curl(['--proxy', fx.proxyUrl, '--cacert', fx.caFile, 'https://raw.githubusercontent.com/aimonk2025/gbrain/' + ref + '/VERSION'])).stdout;
       expect(await raw('master')).toBe('0.0.1\n');
       expect(await raw('v0.0.2')).toBe('404: Not Found');
       fx.setRefs({ HEAD: src.second, 'v0.0.2': src.second });
       expect(await raw('master')).toBe('0.0.2\n');
       expect(await raw('v0.0.1')).toBe('404: Not Found');
       const tar = join(work, 't.tgz');
-      expect((await curl(['-o', tar, fx.apiUrl + '/repos/garrytan/gbrain/tarball/v0.0.2'])).status).toBe(0);
+      expect((await curl(['-o', tar, fx.apiUrl + '/repos/aimonk2025/gbrain/tarball/v0.0.2'])).status).toBe(0);
       const listing = execFileSync('tar', ['-tzf', tar], { encoding: 'utf8' });
       expect(listing).toContain('garrytan-gbrain-' + src.second.slice(0, 7) + '/VERSION');
       const lsRemote = execFileSync('git', ['ls-remote', fx.mirror], { encoding: 'utf8' });
@@ -196,7 +196,7 @@ describe('GitHub fixture', () => {
       const home = join(work, 'home');
       mkdirSync(join(home, '.gbrain'), { recursive: true });
       writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite'), self_upgrade: { mode: 'notify', channel: 'stable' } }));
-      writeFileSync(join(work, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/garrytan/gbrain\n');
+      writeFileSync(join(work, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/aimonk2025/gbrain\n');
       const dryRun = async (extra: Record<string, string>) => {
         const p = Bun.spawn([process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts'), 'upgrade', '--dry-run', '--json'], {
           cwd: home, stdout: 'pipe', stderr: 'pipe',

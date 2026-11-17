@@ -1,5 +1,5 @@
 /**
- * An aborted `gbrain embed` stops claiming pages: after the caller's signal
+ * An aborted `foresights embed` stops claiming pages: after the caller's signal
  * fires during one page's embed call, no later page is read or embedded, on
  * both the --stale path (embedAllStale) and the --all path (embedAll). Drives
  * the real embed -> gateway path with one worker and an embed transport that

@@ -4,7 +4,7 @@
  * The bisect anchor for the OpenClaw scaling regression: pre-v0.41.7.0,
  * any agent that wrote the compact `- **name**: t1 | t2` shape (instead
  * of the markdown table) saw every skill reported as unreachable by
- * `gbrain doctor`. The OpenClaw deployment regression was 238 FAIL
+ * `foresights doctor`. The OpenClaw deployment regression was 238 FAIL
  * errors → 0 errors after the parser fix.
  *
  * Two fixtures drive three regression tests:

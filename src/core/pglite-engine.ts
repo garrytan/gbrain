@@ -41,7 +41,7 @@ import {
 } from './background-work.ts';
 // Engine-live path: static top-level import (no lazy `import()`). The opt-in
 // out-of-band disconnect watchdog (#4284) reuses the worker_threads watchdog
-// `gbrain sync` already validated against starved event loops (#1633).
+// `foresights sync` already validated against starved event loops (#1633).
 import { installProcessWatchdog } from './process-watchdog.ts';
 import type {
   BrainEngine,
@@ -406,7 +406,7 @@ export function computeSnapshotSchemaHash(
  *
  * `corrupt` — catalog/pgvector corruption (#2348): 58P01 /
  *   internal_load_library / missing vector type or core relation.
- *   WAL reset cannot fix this class; routes to `gbrain reinit-pglite`.
+ *   WAL reset cannot fix this class; routes to `foresights reinit-pglite`.
  *   MUST stay matched BEFORE the wasm arm — a `58P01 … Aborted()`
  *   message is catalog corruption, not a WAL tear.
  *
@@ -499,7 +499,7 @@ function repairContextLine(ctx: PgliteInitRepairContext): string {
         '  repair — this is an environment/runtime failure, not data corruption.';
     case 'disabled':
       return '  Auto-repair is disabled (GBRAIN_PGLITE_WAL_REPAIR=off). Run\n' +
-        '  `gbrain pglite-repair` to repair manually.';
+        '  `foresights pglite-repair` to repair manually.';
     case 'skipped-validation':
       return `  Auto-repair skipped: ${ctx.detail ?? 'the data dir did not validate as a PG17 pglite layout'}.`;
     case 'skipped-live-writer':
@@ -541,24 +541,24 @@ export function buildPgliteInitErrorMessage(
         '  This looks like a Bun vfs issue: `/$$bunfs/root` is read-only on\n' +
         '  your system, so PGLite cannot extract its pglite.data WASM payload.\n' +
         '  Fix: `bun upgrade` (newer Bun mounts the vfs writable). If that\n' +
-        '  does not help, run via Node: `node src/cli.ts` or install gbrain\n' +
+        '  does not help, run via Node: `node src/cli.ts` or install foresights\n' +
         '  using the Node-based path. See #1340 for details.';
       break;
     case 'wasm-abort':
       hint =
         '  Most common cause: corrupt WAL/checkpoint state after an unclean\n' +
-        '  shutdown (often a macOS-upgrade reboot killing gbrain mid-write) —\n' +
+        '  shutdown (often a macOS-upgrade reboot killing foresights mid-write) —\n' +
         '  NOT a macOS WASM bug, despite the historical diagnosis in\n' +
         '  https://github.com/garrytan/gbrain/issues/223.\n' +
         repairContextLine(ctx ?? { repair: 'not-attempted' }) + '\n' +
         '  Recovery ladder:\n' +
-        '    1. gbrain pglite-repair --dry-run   (diagnose, mutates nothing; prints the\n' +
+        '    1. foresights pglite-repair --dry-run   (diagnose, mutates nothing; prints the\n' +
         '       in-place WAL repair command to run once the user agrees, data preserved)\n' +
-        '    2. Last resort, only with the user\'s agreement: `gbrain reinit-pglite`\n' +
+        '    2. Last resort, only with the user\'s agreement: `foresights reinit-pglite`\n' +
         '       (rebuilds from the brain repo; DB-only pages and facts are not carried over).\n' +
-        '    3. Switch engines (docs/ENGINES.md): `gbrain init --supabase` or\n' +
+        '    3. Switch engines (docs/ENGINES.md): `foresights init --supabase` or\n' +
         '       native Postgres.\n' +
-        '  Run `gbrain doctor` for a full diagnosis.';
+        '  Run `foresights doctor` for a full diagnosis.';
       break;
     case 'corrupt':
       hint =
@@ -566,11 +566,11 @@ export function buildPgliteInitErrorMessage(
         '  extension cannot load). This happens when two processes opened the\n' +
         '  same brain at once — now prevented (#2348), but an already-damaged\n' +
         '  store cannot be repaired in place (WAL repair does not fix catalog\n' +
-        '  corruption; `gbrain pglite-repair --dry-run` can still report the\n' +
+        '  corruption; `foresights pglite-repair --dry-run` can still report the\n' +
         '  state of the data dir). Recover:\n' +
         '    1. Restore a backup of the brain.pglite directory if you have one, OR\n' +
         '    2. Rebuild from your brain repo:\n' +
-        '       gbrain reinit-pglite --embedding-model <id> --embedding-dimensions <N>\n' +
+        '       foresights reinit-pglite --embedding-model <id> --embedding-dimensions <N>\n' +
         '       (wipes + re-inits + re-syncs; DB-only state is re-derived).\n' +
         '  Deleting .gbrain-lock/ or postmaster.pid does NOT fix this.';
       break;
@@ -583,13 +583,13 @@ export function buildPgliteInitErrorMessage(
         ? '  Possible cause: corrupt WAL/checkpoint state after an unclean\n' +
           '  shutdown — the failure class behind\n' +
           '  https://github.com/garrytan/gbrain/issues/223.\n' +
-          '  Try `gbrain pglite-repair --dry-run` to diagnose the data dir, and\n' +
-          '  run `gbrain doctor` for a full diagnosis.'
-        : '  Possible causes: another gbrain process holding the database\n' +
+          '  Try `foresights pglite-repair --dry-run` to diagnose the data dir, and\n' +
+          '  run `foresights doctor` for a full diagnosis.'
+        : '  Possible causes: another foresights process holding the database\n' +
           '  (lock contention), or a damaged PGLite data directory.\n' +
-          '  Try `gbrain pglite-repair --dry-run` to diagnose the data dir, and\n' +
-          '  run `gbrain doctor` for a full diagnosis; if the data dir is\n' +
-          '  damaged, `gbrain reinit-pglite` rebuilds it from your brain repo.';
+          '  Try `foresights pglite-repair --dry-run` to diagnose the data dir, and\n' +
+          '  run `foresights doctor` for a full diagnosis; if the data dir is\n' +
+          '  damaged, `foresights reinit-pglite` rebuilds it from your brain repo.';
       break;
   }
   return `${header}\n${hint}\n  Original error: ${original}`;
@@ -601,15 +601,15 @@ export function buildPgliteInitErrorMessage(
  */
 export function buildWalRepairNotice(receipt: WalRepairReceipt): string {
   return [
-    '⚠️  gbrain repaired this brain\'s PGLite WAL in place.',
+    '⚠️  foresights repaired this brain\'s PGLite WAL in place.',
     `    Data dir: ${receipt.dataDir}`,
     `    Cause: torn WAL/checkpoint state from an unclean shutdown (issue #223 class).`,
     `    Transactions not checkpointed before the corruption may be lost, and`,
     `    indexes are not rebuilt: pages written just before the crash can be`,
     `    missing from vector search while keyword search still finds them.`,
     `    Pre-repair backup: ${receipt.backupPath}`,
-    `    Next: rebuild the vector indexes with \`gbrain reindex --vectors\`,`,
-    `    then run \`gbrain doctor\` to verify brain integrity.`,
+    `    Next: rebuild the vector indexes with \`foresights reindex --vectors\`,`,
+    `    then run \`foresights doctor\` to verify brain integrity.`,
     `    Disable auto-repair with GBRAIN_PGLITE_WAL_REPAIR=off.`,
   ].join('\n');
 }
@@ -900,7 +900,7 @@ export class PGLiteEngine implements BrainEngine {
     this._lock = this._adoptedLock ?? await acquireLock(dataDir);
 
     if (!this._lock.acquired) {
-      throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
+      throw new Error('Could not acquire PGLite lock. Another foresights process is using the database.');
     }
     if (dataDir && this._lock !== this._adoptedLock) {
       try { assertPgliteGraduationOpenable(dataDir, 'locked'); }
@@ -925,7 +925,7 @@ export class PGLiteEngine implements BrainEngine {
     // proc_exit status into `process.exitCode` (initdb here at create-time,
     // the postmaster at close-time), and the writes land asynchronously —
     // a snapshot/restore around these awaits does NOT contain them. That is
-    // why the CLI's exit paths read gbrain's own verdict
+    // why the CLI's exit paths read foresights's own verdict
     // (cli-force-exit.ts currentExitCode), never ambient process.exitCode.
     // Embedded WASM/fsBundle/extension assets (Bun vfs #1340). Resolved once
     // here so both the initial create and the WAL-repair retry below share the
@@ -1166,7 +1166,7 @@ export class PGLiteEngine implements BrainEngine {
 
     const storedIdentity = await readStoredEmbeddingIdentity(this);
     if (storedIdentity) {
-      if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run gbrain migrate embeddings --status and explicitly migrate before schema initialization.');
+      if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run foresights migrate embeddings --status and explicitly migrate before schema initialization.');
       if (embedded) assertEmbeddedEmbedding(embedded, storedIdentity);
       dims = storedIdentity.dimensions;
       model = storedIdentity.model;
@@ -1437,7 +1437,7 @@ export class PGLiteEngine implements BrainEngine {
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
     if (opts?.limit && opts.limit > searchLimitCap()) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
+      console.warn(`[foresights] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Fetch 3x to give dedup headroom, then page-dedup + re-limit.
@@ -1641,7 +1641,7 @@ export class PGLiteEngine implements BrainEngine {
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
     if (opts?.limit && opts.limit > searchLimitCap()) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
+      console.warn(`[foresights] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Source-aware ranking applied here too — searchKeywordChunks is the
@@ -1727,7 +1727,7 @@ export class PGLiteEngine implements BrainEngine {
     const settle = await beforePlannerRead(this, this._pageTransaction);
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     if (opts?.limit && opts.limit > searchLimitCap()) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
+      console.warn(`[foresights] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
     // Same statement as postgres-engine (search/vector-statement.ts); the
     // PGLite dialect adds the timeline `stale` flag and has no exact fallback.

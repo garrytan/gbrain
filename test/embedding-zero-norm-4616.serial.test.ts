@@ -60,7 +60,7 @@ describe('#4616 WAL-repair notice', () => {
     expect(notice).not.toContain('Data files were preserved');
     expect(notice).toContain('indexes are not rebuilt');
     expect(notice).toContain('missing from vector search');
-    expect(notice).toContain('`gbrain reindex --vectors`');
+    expect(notice).toContain('`foresights reindex --vectors`');
   });
 });
 
@@ -116,7 +116,7 @@ for (const kind of testBackends()) describe(`#4616 per-item refusal on write pat
       expect(result.embedded).toBe(99);
       expect(result.failures).toBe(1);
       expect(result.failure_samples.join('\n')).toContain('embedding_zero_norm');
-      expect(result.failure_samples.join('\n')).toContain(`gbrain embed ${slug}`);
+      expect(result.failure_samples.join('\n')).toContain(`foresights embed ${slug}`);
       expect(result.failure_samples.join('\n')).toContain('docs/guides/write-refusals.md#embedding_zero_norm');
       const embedded = await embeddedIndexes(slug);
       expect(embedded).toHaveLength(99);

@@ -290,10 +290,10 @@ describe('voice-gate templates', () => {
       nRecentTotal: 3,
       hushPattern: 'over-confident-macro',
     });
-    // `gbrain takes nudge --hush` never existed as a subcommand; the 14-day
+    // `foresights takes nudge --hush` never existed as a subcommand; the 14-day
     // quiet period is automatic via take_nudge_log. The template must not
     // advertise a command that exits "Unknown subcommand".
-    expect(out).not.toContain('gbrain takes nudge');
+    expect(out).not.toContain('foresights takes nudge');
     expect(out).toContain('over-confident-macro');
     expect(out).toContain('14 days');
     expect(out).toContain('0.85');

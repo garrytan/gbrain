@@ -43,7 +43,7 @@ export function managedSyncWriteDiagnostic(cursor: { sourceId: string; root: str
     write_request: publicWriteReceipt(receiptFor(row)) };
   // #6194: an import that lost to a database write the hold could not prove; the retry re-imports the Git version unless discovery's drift guard holds it.
   if (terminal && code === 'revision_conflict' && pending.intent.kind === 'managed_sync_import') diagnostic.suggestion = `The page changed in the database after this import was frozen. `
-    + `Before retrying, compare the file and the page with gbrain sources reconcile ${cursor.sourceId} ${pending.slug} --preview (it writes nothing): a retry re-imports the Git version over the database one. ${diagnostic.suggestion}`;
+    + `Before retrying, compare the file and the page with foresights sources reconcile ${cursor.sourceId} ${pending.slug} --preview (it writes nothing): a retry re-imports the Git version over the database one. ${diagnostic.suggestion}`;
   if (terminal && !superseded) diagnostic.suggestion += ` After repair, run ${checkpointRetryCommand({ sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? null, repoPath: pending.intent.repoPath })} to retry it under a new request. Skipping failures cannot bypass a managed write.`;
   if (diagnostic.reason === 'pinned_git_worktree_conflict' && pending.intent.path && pending.intent.content !== null) {
     try {

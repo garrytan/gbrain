@@ -114,10 +114,10 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
     expect(msg).toContain('NOT a macOS WASM bug');
     expect(msg).toContain('https://github.com/garrytan/gbrain/issues/223');
     // Full recovery ladder: in-place repair → rebuild → switch engines.
-    expect(msg).toContain('gbrain pglite-repair --dry-run');
+    expect(msg).toContain('foresights pglite-repair --dry-run');
     expect(msg).toContain('reinit-pglite');
     expect(msg).toContain('docs/ENGINES.md');
-    expect(msg).toContain('gbrain doctor');
+    expect(msg).toContain('foresights doctor');
     expect(msg).toContain(`Original error: ${original}`);
     expect(msg).not.toContain('Bun vfs');
   });
@@ -173,14 +173,14 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
   // the causes that are actually plausible off-macOS.
   test('unknown verdict on darwin surfaces the doctor + #223 fallback AND original error', () => {
     const msg = buildPgliteInitErrorMessage('unknown', original, 'darwin');
-    expect(msg).toContain('gbrain doctor');
+    expect(msg).toContain('foresights doctor');
     expect(msg).toContain('issues/223');
     // WAL-repair wave: the darwin branch is reframed to the real root cause
     // behind the #223 reports (torn WAL from unclean shutdown) and offers the
     // mutation-free diagnosis command.
     expect(msg).toContain('corrupt WAL/checkpoint state');
     expect(msg).toContain('unclean');
-    expect(msg).toContain('gbrain pglite-repair --dry-run');
+    expect(msg).toContain('foresights pglite-repair --dry-run');
     expect(msg).toContain(original);
   });
 
@@ -189,19 +189,19 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
       const msg = buildPgliteInitErrorMessage('unknown', original, platform);
       expect(msg).not.toContain('macOS 26.3');
       expect(msg).not.toContain('issues/223');
-      expect(msg).toContain('gbrain doctor');
-      expect(msg).toContain('gbrain reinit-pglite');
+      expect(msg).toContain('foresights doctor');
+      expect(msg).toContain('foresights reinit-pglite');
       expect(msg).toContain(original);
     }
   });
 
   test('corrupt verdict surfaces the reinit-pglite recovery, NOT the macOS hint', () => {
     const msg = buildPgliteInitErrorMessage('corrupt', original);
-    expect(msg).toContain('gbrain reinit-pglite');
+    expect(msg).toContain('foresights reinit-pglite');
     expect(msg).toContain('corrupted');
     // WAL-repair wave: the dry-run diagnosis is offered (report-only — WAL
     // repair cannot fix catalog corruption, and the copy says so).
-    expect(msg).toContain('gbrain pglite-repair --dry-run');
+    expect(msg).toContain('foresights pglite-repair --dry-run');
     expect(msg).toContain(original);
     expect(msg).not.toContain('issues/223');
   });

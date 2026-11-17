@@ -1,8 +1,8 @@
 /**
  * Google connector file privacy (security fix wave). Custom `--dir` Google
- * sources live outside the 0700 `~/.gbrain`, so the files gbrain writes there
+ * sources live outside the 0700 `~/.gbrain`, so the files foresights writes there
  * must be private by themselves: the cursor state file, its corrupt-file
- * quarantine and every materialized page are 0600, and directories gbrain
+ * quarantine and every materialized page are 0600, and directories foresights
  * creates are 0700. A directory the user chose is never chmod-ed.
  *
  * Every mode assertion runs in a child process under umask 0000

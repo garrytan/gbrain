@@ -45,7 +45,7 @@ const REFUSED_OPS = [
   'schema_lint', 'schema_review_orphans', 'schema_stats', 'search_by_image', 'search_modes', 'sync_brain_skills',
   'synthesize', 'takes_calibration', 'takes_list', 'takes_scorecard', 'takes_search', 'volunteer_chronicle',
   'volunteer_context', 'wanted_pages', 'storage_find', 'storage_get', 'storage_list',
-  // hidden operations: no CLI path reaches them (their CLI names are CLI-only commands or gbrain call)
+  // hidden operations: no CLI path reaches them (their CLI names are CLI-only commands or foresights call)
   'advisor', 'code_blast', 'code_callees', 'code_callers', 'code_def', 'code_flow', 'code_refs', 'find_anomalies',
   'find_experts', 'find_orphans', 'get_recent_salience', 'sources_list', 'sources_resolve_path', 'sources_status', 'think',
   'capture', 'list_page_purges', 'list_watches', 'purge_fact', 'unpurge_page', 'unwatch', 'watch_job', 'watch_write_request', 'watch_cron', 'accept_wakeshift_terms', 'connectors_status',
@@ -79,7 +79,7 @@ export const OPERATION_CLASSES: Readonly<Record<string, EnforcedClass>> = Object
 export const ARGUMENT_CONDITIONS: Readonly<Record<string, string>> = {
   get_stats: 'only with --by (grouped counts under the member filter); the plain brain-wide counters are refused',
   remember: 'only one fact with --entity naming the exact slug of a page the member reads; --items, --visibility, --share and --replaces are refused',
-  add_timeline_entry: 'no gbrain fence marker in the summary, detail or source',
+  add_timeline_entry: 'no foresights fence marker in the summary, detail or source',
   get_write_request: "only the member's own receipts (writes this mode accepted for it, recorded on this machine); any other id answers exactly as an unknown id",
 };
 

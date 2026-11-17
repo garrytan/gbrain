@@ -43,11 +43,11 @@ describe('checkSourceConfigShape (#2829)', () => {
     expect(result.message).toContain('gbrain_try_jsonb');
     expect(result.message).not.toContain('IS JSON');
     // #5002: name commands that actually rewrite the config column — never the
-    // "any 'gbrain sources' config write" category (set-cr-mode writes another
+    // "any 'foresights sources' config write" category (set-cr-mode writes another
     // column and leaves the check red).
-    expect(result.message).toContain("gbrain sources federate <id>");
+    expect(result.message).toContain("foresights sources federate <id>");
     expect(result.message).toContain('set-cr-mode');
-    expect(result.message).not.toMatch(/any 'gbrain sources' config write/);
+    expect(result.message).not.toMatch(/any '(?:foresights|gbrain) sources' config write/);
   });
 
   test('detection query targets the exact jsonb_typeof predicate', async () => {

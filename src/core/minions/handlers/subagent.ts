@@ -346,7 +346,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // v0.38 (S1.5 + S1.7) — capability-based gate replaces the v0.31.12
     // Anthropic-only check. The handler now routes between two paths:
     //   1. Gateway path (gateway.toolLoop, provider-agnostic) — opt in via
-    //      `gbrain config set agent.use_gateway_loop true`
+    //      `foresights config set agent.use_gateway_loop true`
     //   2. Legacy Anthropic-direct path (existing code below)
     // Default is the legacy path so v0.38 patch releases ship the same
     // behavior as v0.37. Users dogfood the gateway path by flipping the flag.
@@ -366,7 +366,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // loop-incapable model must be refused loudly here rather than silently
     // run a loop that can't dispatch tools or can't reconcile on replay.
     // The queue.ts gate already catches explicit data.model at submit; this
-    // check additionally covers config-resolved models, direct `gbrain agent
+    // check additionally covers config-resolved models, direct `foresights agent
     // run` invocations, and any path that bypasses the queue's check.
     //
     // Exception (#1151 precedent): a replayed job whose last persisted
@@ -466,7 +466,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       throw new Error(
         `subagent job: resolved model "${model}" is non-Anthropic but agent.use_gateway_loop is not enabled. ` +
         `Enable the gateway-native loop to run on this provider: ` +
-        `\`gbrain config set agent.use_gateway_loop true\`. ` +
+        `\`foresights config set agent.use_gateway_loop true\`. ` +
         `Or use an Anthropic model (e.g. anthropic:claude-sonnet-4-6).`,
       );
     }
@@ -1598,7 +1598,7 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
 
     // Skip if a following tool-result user turn exists AT ALL. A fully-answered
     // turn is already balanced; a PARTIALLY-answered turn (only reachable from
-    // externally-corrupted data — gbrain persists all of a turn's results in one
+    // externally-corrupted data — foresights persists all of a turn's results in one
     // message) is left for repairToolPairing() at the chat() boundary, which
     // back-fills only the missing ids. Synthesizing a full turn here would
     // duplicate the answered results and collide with the persisted row.
@@ -1710,7 +1710,7 @@ function recipeIdFromModel(modelString: string): string {
  *   stripProviderPrefix('anthropic:claude-sonnet-4-6') === 'claude-sonnet-4-6'
  *   stripProviderPrefix('claude-sonnet-4-6') === 'claude-sonnet-4-6'
  *
- * v0.41 Bug 3 — pre-fix, `gbrain agent run --model anthropic:claude-sonnet-4-6`
+ * v0.41 Bug 3 — pre-fix, `foresights agent run --model anthropic:claude-sonnet-4-6`
  * sent the prefixed string straight into `client.messages.create()`, which
  * Anthropic rejects with "model not found." Omitting `--model` worked because
  * `resolveModel()` returns the bare id; explicit-model users hit the bug.

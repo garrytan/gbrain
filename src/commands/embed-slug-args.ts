@@ -1,6 +1,6 @@
 import { opError } from '../core/ops/contract.ts';
 
-/** The flags a single-page run (`gbrain embed <slug>`) reads; the value flags take the next argument. */
+/** The flags a single-page run (`foresights embed <slug>`) reads; the value flags take the next argument. */
 const SLUG_VALUE_FLAGS = new Set(['--source', '--batch-size', '--priority', '--max-usd', '--max-cost', '--pace-max-concurrency']);
 const SLUG_BOOLEAN_FLAGS = new Set(['--dry-run', '--catch-up', '--yes', '--json', '--background', '--follow', '--pace', '--include-null-signature', '--non-interactive']);
 
@@ -20,11 +20,11 @@ export function embedSlugTarget(args: readonly string[]): string | undefined {
     if (a.startsWith('-')) {
       const source = args[args.indexOf('--source') + 1];
       const dryRun = ['gbrain', 'embed', '--stale', '--dry-run', '--json', ...(args.includes('--source') && source ? ['--source', source] : [])];
-      throw opError('unknown_flag', `gbrain embed does not accept ${name}.`,
-        `Nothing was embedded. ${name === '--status' ? 'Embedding coverage is read with gbrain embed --stale --dry-run --json (add --source <id> for one source; it calls no provider and spends nothing) or gbrain doctor --only embedding_state --json. ' : ''}`
-          + 'Run gbrain embed --help for the flags each mode takes.', {
+      throw opError('unknown_flag', `foresights embed does not accept ${name}.`,
+        `Nothing was embedded. ${name === '--status' ? 'Embedding coverage is read with foresights embed --stale --dry-run --json (add --source <id> for one source; it calls no provider and spends nothing) or foresights doctor --only embedding_state --json. ' : ''}`
+          + 'Run foresights embed --help for the flags each mode takes.', {
           detail: name,
-          why: `A single-page run (gbrain embed <slug>) takes only its own flags, and ${name} is not one of them, so the run stopped before it read a page or asked for spend approval.`,
+          why: `A single-page run (foresights embed <slug>) takes only its own flags, and ${name} is not one of them, so the run stopped before it read a page or asked for spend approval.`,
           fix: { argv: dryRun, consent: [], actor: 'agent', requires_exclusive: false,
             why: 'Lists the pages whose embeddings are missing or stale without calling a provider or spending anything.',
             verify: { argv: ['gbrain', 'doctor', '--only', 'embedding_state', '--json'] } },

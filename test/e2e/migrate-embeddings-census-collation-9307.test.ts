@@ -1,5 +1,5 @@
 /**
- * #9307: `gbrain migrate embeddings` built its lock set from a JavaScript-sorted source list and compared it with
+ * #9307: `foresights migrate embeddings` built its lock set from a JavaScript-sorted source list and compared it with
  * `SELECT ... FROM sources ORDER BY id`, which Postgres orders by the database collation. Under a linguistic
  * collation (en_US.utf8, the pgvector image's default) hyphens are ignored at the first level, so ids such as
  * `auto-memory` and `automax-notes` come back in the other order and every apply refused with "Source census

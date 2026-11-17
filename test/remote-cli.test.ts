@@ -1,5 +1,5 @@
 /**
- * `gbrain remote` CLI (src/commands/remote.ts) — ping poll loop, --timeout
+ * `foresights remote` CLI (src/commands/remote.ts) — ping poll loop, --timeout
  * parsing, doctor exit codes, thin-client gate.
  *
  * Seam: runRemote() reads config via loadConfig() (GBRAIN_HOME-routed
@@ -284,7 +284,7 @@ describe('remote — thin-client gate', () => {
     const r = await runRemoteCli(['ping'], localHome);
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('requires thin-client mode');
-    expect(r.stderr).toContain('gbrain init --mcp-only');
+    expect(r.stderr).toContain('foresights init --mcp-only');
     expect(toolCalls.submit_job ?? 0).toBe(0); // never reached the host
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Regression test: `gbrain doctor`'s `supervisor_singleton` check should read
+ * Regression test: `foresights doctor`'s `supervisor_singleton` check should read
  * the pid-file path that was used at supervisor start (recorded on the
  * 'started' audit event as `pid_file` — `this.opts.pidFile` in
  * `MinionSupervisor.start()`), not blindly re-derive `DEFAULT_PID_FILE`

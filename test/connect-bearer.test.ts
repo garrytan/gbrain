@@ -1,8 +1,8 @@
 /**
- * E2E for `gbrain connect`'s D4 raw-bearer smoke probe (connect-probe.ts).
+ * E2E for `foresights connect`'s D4 raw-bearer smoke probe (connect-probe.ts).
  *
- * Spins up a real `gbrain serve --http` against a hermetic PGLite brain (no
- * Postgres / Docker), mints a legacy bearer token via `gbrain auth create`,
+ * Spins up a real `foresights serve --http` against a hermetic PGLite brain (no
+ * Postgres / Docker), mints a legacy bearer token via `foresights auth create`,
  * then drives the real MCP SDK probe against `/mcp`:
  *   - real token  → ok, returns get_brain_identity payload
  *   - wrong token → not ok, reason 'auth'
@@ -143,7 +143,7 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
 
   // -------------------------------------------------------------------------
   // Real-CLI coverage: drive the actual `claude` / `codex` binaries through
-  // `gbrain connect --install` against the live server. Sandboxed via HOME /
+  // `foresights connect --install` against the live server. Sandboxed via HOME /
   // CODEX_HOME so the dev machine's real agent config is untouched. Skips
   // gracefully when a binary isn't on PATH (e.g. CI without the CLIs).
   // -------------------------------------------------------------------------
@@ -154,7 +154,7 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
   const HAS_CLAUDE = hasBin('claude');
   const HAS_CODEX = hasBin('codex');
 
-  // Run `gbrain connect <args>` as a subprocess with extra env (HOME/CODEX_HOME
+  // Run `foresights connect <args>` as a subprocess with extra env (HOME/CODEX_HOME
   // sandbox + GBRAIN_REMOTE_TOKEN). spawnSync captures stderr too — connect's
   // "Verified" / "Added" lines go to stderr.
   const runConnectCli = (args: string[], extraEnv: Record<string, string>): { code: number; out: string } => {

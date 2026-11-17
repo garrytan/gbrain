@@ -1,10 +1,10 @@
 /**
- * v0.36.1.0 (T18 / D19) — A/B harness for `gbrain think`.
+ * v0.36.1.0 (T18 / D19) — A/B harness for `foresights think`.
  *
  * Each invocation runs think TWICE on the same question: once baseline,
  * once --with-calibration. Both answers are written to the database in
  * a single think_ab_results row along with the user's preference. After
- * 30 days of data, `gbrain calibration ab-report` aggregates win/loss
+ * 30 days of data, `foresights calibration ab-report` aggregates win/loss
  * and surfaces calibration_net_negative when the with-calibration variant
  * loses >55% of trials (n >= 20).
  *
@@ -149,7 +149,7 @@ export function formatAbReport(report: AbReportResult, days: number): string {
   lines.push(`A/B report (last ${days} days):`);
   lines.push(`  Total trials: ${report.total_trials}`);
   if (report.total_trials === 0) {
-    // #3697: this used to suggest `gbrain think --ab`, a flag `think` never
+    // #3697: this used to suggest `foresights think --ab`, a flag `think` never
     // parses (the CLI trial-runner wiring never shipped; runAbTrial is
     // API-only). Don't send the user to a silently-misparsed command.
     lines.push('  No data yet. (A/B trials are recorded via the runAbTrial harness; a CLI trial-runner has not shipped.)');

@@ -107,7 +107,7 @@ const SETTINGS = `
   backfill := COALESCE(current_setting('gbrain.write_trust_backfill', true), '') = 'on';
   keep := TG_TABLE_NAME = ANY(string_to_array(COALESCE(current_setting('gbrain.write_trust_keep', true), ''), ','));
   IF ${rank('writer')} = 0 AND writer IS NOT NULL OR ${rank('promo')} = 0 AND promo IS NOT NULL THEN
-    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='gbrain trust setting names no tier', CONSTRAINT='trust_tier_guard';
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='foresights trust setting names no tier', CONSTRAINT='trust_tier_guard';
   END IF;`;
 
 /** A guest page's content for the writer backstop: every content column but deleted_at, so soft delete and restore pass. */

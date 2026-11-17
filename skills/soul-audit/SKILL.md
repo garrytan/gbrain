@@ -3,9 +3,9 @@ name: soul-audit
 version: 2.0.0
 description: |
   Re-run or deepen the agent's identity interview. Drives the SHARED bootstrap
-  answer bank (state/interview.json) via `gbrain bootstrap interview
+  answer bank (state/interview.json) via `foresights bootstrap interview
   --set/--show/--confirm`, then re-renders the identity files with
-  `gbrain bootstrap render --only <FILE> --force`. One answer store, two
+  `foresights bootstrap render --only <FILE> --force`. One answer store, two
   surfaces: first-boot bootstrap and this re-run skill write the same bank, so
   an updated answer flows into SOUL.md, USER.md, ACCESS_POLICY.md, and
   HEARTBEAT.md without hand-editing rendered files. Every answer is the user's
@@ -38,13 +38,13 @@ confirmed by the human.
 ## Contract
 
 This skill guarantees:
-- Answers land in the shared bank via `gbrain bootstrap interview --set KEY "value"`
+- Answers land in the shared bank via `foresights bootstrap interview --set KEY "value"`
   (verbatim, one key per answer; `--skip KEY` records an explicit decline).
 - The read-back ritual runs before any render: `--show` the full answer set,
   mirror it to the user, then `--confirm <hash>` with the hash `--status`
   printed. Confirming a set the user never saw fails by design.
 - Files re-render through the ONE render path:
-  `gbrain bootstrap render --only SOUL.md --force` (repeat per file). `--force`
+  `foresights bootstrap render --only SOUL.md --force` (repeat per file). `--force`
   backs the old file up under `.gbrain-bootstrap-backups/<ts>/` first — nothing
   is clobbered without a recoverable copy.
 - Each phase is independent and re-runnable; updating one answer and
@@ -53,12 +53,12 @@ This skill guarantees:
 ## The command loop
 
 ```
-gbrain bootstrap interview --show            # what the bank holds now (start here)
-gbrain bootstrap interview --set KEY "..."   # record one updated answer, verbatim
-gbrain bootstrap interview --skip KEY        # explicit decline for an optional key
-gbrain bootstrap interview --status          # gate + read-back hash
-gbrain bootstrap interview --confirm <hash>  # after reading answers back to the user
-gbrain bootstrap render --only SOUL.md --force
+foresights bootstrap interview --show            # what the bank holds now (start here)
+foresights bootstrap interview --set KEY "..."   # record one updated answer, verbatim
+foresights bootstrap interview --skip KEY        # explicit decline for an optional key
+foresights bootstrap interview --status          # gate + read-back hash
+foresights bootstrap interview --confirm <hash>  # after reading answers back to the user
+foresights bootstrap render --only SOUL.md --force
 ```
 
 Render targets: `SOUL.md`, `USER.md`, `ACCESS_POLICY.md`, `HEARTBEAT.md`,
@@ -108,7 +108,7 @@ OpenClaw). Jobs ship
 disabled — enable one at a time after a manual dry run (the ritual is in the
 rendered file).
 
-Run `gbrain bootstrap interview --init` first if the bank does not exist yet
+Run `foresights bootstrap interview --init` first if the bank does not exist yet
 (a workspace that never ran bootstrap); it prints the full question list.
 
 ## Output Format
@@ -120,9 +120,9 @@ Re-run any phase anytime."
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain bootstrap interview --confirm <hash>` fails: the hash must come from a read-back the user actually saw. Re-run `gbrain bootstrap interview --status`, read the answers back, and confirm only with the user's agreement.
+- `foresights bootstrap interview --confirm <hash>` fails: the hash must come from a read-back the user actually saw. Re-run `foresights bootstrap interview --status`, read the answers back, and confirm only with the user's agreement.
 - Rendering refuses because required answers are missing: ask the user for them; never fill identity answers yourself.
 
 ## Anti-Patterns

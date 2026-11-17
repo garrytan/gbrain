@@ -1,5 +1,5 @@
 /**
- * #5988 Lane 2: legacy (unmanaged) sync holds. A file gbrain refuses for its
+ * #5988 Lane 2: legacy (unmanaged) sync holds. A file foresights refuses for its
  * content is held instead of failing the run: its skip carries the hold code,
  * it stays out of the failure ledger and the auto-skip streak, the bookmark
  * advances, and the hold is visible in the result until the file changes, is

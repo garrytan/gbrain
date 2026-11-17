@@ -1,7 +1,7 @@
 /**
  * v0.31.12 — THE regression test for the bug class that motivated this release.
  *
- * gbrain v0.31.6 shipped `claude-sonnet-4-6-20250929` as the chat default.
+ * foresights v0.31.6 shipped `claude-sonnet-4-6-20250929` as the chat default.
  * That ID 404s on the Anthropic API, which made `isAvailable("chat")` return
  * false in every code path that loaded the recipe's model list. The headline
  * v0.31.6 feature (real-time facts extraction during sync) was a no-op on the
@@ -83,7 +83,7 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
     // so isAvailable returned false. v0.31.12 prevents this by:
     //   1. The recipe-models merge — configured models extend the recipe's
     //      allowlist per gateway instance.
-    //   2. The doctor probe — operators can run `gbrain models doctor` to
+    //   2. The doctor probe — operators can run `foresights models doctor` to
     //      catch a bad model at config time, not call time.
     // To reproduce the OLD bug, we bypass the merge by clearing the gateway
     // and providing a fictional model NOT in the anthropic recipe.
@@ -96,7 +96,7 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
       env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
     });
     // The user opted into this model via config; the gateway permits it.
-    // The 404 surfaces at provider call time (via `gbrain models doctor`).
+    // The 404 surfaces at provider call time (via `foresights models doctor`).
     expect(isAvailable('chat')).toBe(true);
   });
 

@@ -1,6 +1,6 @@
 /**
  * Real MCP servers for agent-contract surface tests (Lane H3): the production
- * `gbrain serve --http` app (`buildServeHttpApp`) and the legacy bearer
+ * `foresights serve --http` app (`buildServeHttpApp`) and the legacy bearer
  * transport (`startHttpTransport`), each listening on an ephemeral loopback
  * port over a caller-owned engine, plus the raw JSON-RPC and thin-client
  * plumbing to talk to them.

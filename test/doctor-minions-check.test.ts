@@ -1,6 +1,6 @@
 /**
  * Tests for the half-migrated Minions detection checks added to
- * `gbrain doctor` in v0.11.1.
+ * `foresights doctor` in v0.11.1.
  *
  * Two branches:
  *   - Filesystem-only (check #3): `completed.jsonl` has a status:"partial"
@@ -67,7 +67,7 @@ afterEach(() => {
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
-describe('gbrain doctor — half-migrated Minions detection', () => {
+describe('foresights doctor — half-migrated Minions detection', () => {
   test('filesystem: partial completed.jsonl entry with no matching complete → FAIL', async () => {
     // Seed ~/.gbrain/migrations/completed.jsonl with a single status:"partial"
     // entry — the classic signal the stopgap ran but apply-migrations didn't.
@@ -94,7 +94,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     expect(minions).toBeDefined();
     expect(minions!.status).toBe('fail');
     expect(minions!.message).toContain('MINIONS HALF-INSTALLED');
-    expect(minions!.message).toContain('gbrain apply-migrations --yes');
+    expect(minions!.message).toContain('foresights apply-migrations --yes');
     expect(minions!.message).toContain('0.11.0');
   });
 
@@ -134,13 +134,13 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
   });
 
   test('regression: fresh install with schema-applied DB but no prefs must NOT fail', async () => {
-    // CI regression. `gbrain init` against Postgres applies schema v7 but
+    // CI regression. `foresights init` against Postgres applies schema v7 but
     // doesn't write preferences.json (the migration orchestrator does that
     // via apply-migrations). For that brief window, schema is v7 with no
     // prefs — a valid state that must NOT trigger a FAIL check.
     //
     // This pins the bug that broke Tier 1 CI (mechanical.test.ts
-    // "gbrain doctor exits 0 on healthy DB"): the old "schema v7+ no
+    // "foresights doctor exits 0 on healthy DB"): the old "schema v7+ no
     // preferences.json → FAIL" rule was too aggressive. Only a concrete
     // "partial without complete" entry in completed.jsonl counts as
     // half-migrated.
@@ -186,7 +186,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     // Without this override, every install that ever went through a
     // v0.11.0 stopgap and then upgraded carries the FAIL flag forever,
     // even on installs that have been at v0.22+ for months. Real cause:
-    // long-running gbrain installs accumulate partial entries from
+    // long-running foresights installs accumulate partial entries from
     // historical stopgap runs; a doctor flag with no time decay or
     // forward-progress detection becomes meaningless once you've
     // moved past those versions.
@@ -257,7 +257,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     const result = await runFastChecks();
     const minions = result.checks.find(c => c.name === 'minions_migration');
     expect(minions!.status).toBe('warn');
-    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.46.3. Run: gbrain apply-migrations --yes');
+    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.46.3. Run: foresights apply-migrations --yes');
     expect(result.exitCode).toBe(0);
   });
 
@@ -265,7 +265,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     seedLedger(MIGRATION_VERSIONS.filter(v => v !== '0.46.3').map(version => ({ version, status: 'complete' })));
     const minions = (await runFastChecks()).checks.find(c => c.name === 'minions_migration');
     expect(minions!.status).toBe('warn');
-    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.46.3. Run: gbrain apply-migrations --yes');
+    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.46.3. Run: foresights apply-migrations --yes');
     expect((minions!.details as { pending: string[] }).pending).toEqual(['0.46.3']);
   });
 
@@ -284,7 +284,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     const result = await runCli(['doctor', '--fast'], { home: tmp });
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain('MINIONS HALF-INSTALLED');
-    expect(result.stdout).toContain('gbrain apply-migrations --yes');
+    expect(result.stdout).toContain('foresights apply-migrations --yes');
   }, 60_000);
 
   test('DB-connect failure announces the filesystem-only fallback on stderr, credentials redacted', async () => {

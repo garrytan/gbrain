@@ -534,8 +534,8 @@ export function contentSizeHold(byteLength: number, maxBytes: number, codeFile =
 const HOLD_GUIDANCE: Record<InvalidFrontmatterReason, string> = {
   yaml_parse: 'Fix that line in the file (quote a value that contains ": " or starts with a special character), then import it again.',
   needs_interpretation: 'Reading it would mean guessing, so it was not imported. Keep one line per key with its whole value quoted on that line, then import it again.',
-  ambiguous_identity_key: 'gbrain never guesses which page a file is. Keep exactly one line for that key, then import it again.',
-  ambiguous_protected_key: 'gbrain never guesses who may read a page or where it came from. Write that key on its own line with one quoted value, then import it again.',
+  ambiguous_identity_key: 'foresights never guesses which page a file is. Keep exactly one line for that key, then import it again.',
+  ambiguous_protected_key: 'foresights never guesses who may read a page or where it came from. Write that key on its own line with one quoted value, then import it again.',
 };
 
 const HOLD_MESSAGE = new RegExp(`^Invalid YAML frontmatter: (?:ambiguous (?:protected|identity) key(?: "[\\w-]{1,100}")? at line \\d+`
@@ -1416,7 +1416,7 @@ export function resolvePageFilePath(
  *
  * Segment splitting is platform-aware (`pathSep`), not a blanket
  * `[\\/]+` split: on POSIX, `\` is a legal filename character (real
- * gbrain data has Apple Notes titles containing one), not a directory
+ * foresights data has Apple Notes titles containing one), not a directory
  * separator, so splitting on it there reconstructs a path that doesn't
  * exist on disk even though the file does (issue: undeclared_db_only_pages
  * false positive + silent restore/export failure for any such file). On

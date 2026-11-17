@@ -35,7 +35,7 @@ const UPKEEP_CLOSE_CODES = new Set(['actor_unlinked', 'actor_not_attested', 'per
 export interface ProposalLimits {
   ttlHours: number; maxPendingPerActor: number; maxPendingPerCredential: number; retentionDays: number; maxPayloadChars: number; maxReasonChars: number;
 }
-/** Operator-tunable (gbrain config set proposals.<key>), each clamped to its range; the payload and reason caps only go down. */
+/** Operator-tunable (foresights config set proposals.<key>), each clamped to its range; the payload and reason caps only go down. */
 export const PROPOSAL_LIMIT_KEYS: Record<keyof ProposalLimits, { key: string; min: number; max: number; default: number }> = {
   ttlHours: { key: 'proposals.ttl_hours', min: 1, max: 720, default: 168 },
   maxPendingPerActor: { key: 'proposals.max_pending_per_actor', min: 1, max: 1000, default: 10 },
@@ -86,7 +86,7 @@ export async function getProposal(engine: SqlEngine, principal: Principal, reque
 }
 
 const proposalNotFound = (requestId: string) => opError('not_found', `No memory proposal has request id ${requestId}.`,
-  'List the proposals awaiting a decision with gbrain memory-proposals list, and pass one of their request ids.');
+  'List the proposals awaiting a decision with foresights memory-proposals list, and pass one of their request ids.');
 
 /** The proposal an owner names by request id. The namespace holds the credential, so two credentials share one only by a uuidv5 collision; that is refused, never guessed. */
 export async function ownerProposal(engine: SqlEngine, requestId: string): Promise<MemoryProposal> {
@@ -94,13 +94,13 @@ export async function ownerProposal(engine: SqlEngine, requestId: string): Promi
   const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
   if (!rows.length) throw proposalNotFound(requestId);
   if (rows.length > 1) throw opError('invalid_params', `Request id ${requestId} names proposals from two credentials.`,
-    'Decide each from its credential\'s list (gbrain memory-proposals list --json shows principal_kind and principal_id).');
+    'Decide each from its credential\'s list (foresights memory-proposals list --json shows principal_kind and principal_id).');
   return normalize(rows[0]!);
 }
 
 export const proposalClosedError = (row: Pick<MemoryProposal, 'request_id' | 'state'>) => opError('proposal_closed',
   `Proposal ${row.request_id} is ${row.state}; only a proposal awaiting the owner can be approved or denied.`,
-  `Nothing changed. gbrain memory-proposals show ${row.request_id} shows how it ended; the proposer sends a new proposal if the change is still wanted.`);
+  `Nothing changed. foresights memory-proposals show ${row.request_id} shows how it ended; the proposer sends a new proposal if the change is still wanted.`);
 export const proposalExpiredError = (row: Pick<MemoryProposal, 'request_id'>) => opError('proposal_expired',
   `Proposal ${row.request_id} expired before a decision.`,
   'Nothing was written. The proposer sends a new proposal if the change is still wanted; proposals.ttl_hours sets how long one waits.');

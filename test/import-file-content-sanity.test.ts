@@ -54,13 +54,13 @@ created: 2026-05-24
 `;
 
 describe('#4702 importFromContent — content_sanity.disabled_patterns (DB plane end-to-end)', () => {
-  test('gbrain config set content_sanity.disabled_patterns actually reaches the import gate', async () => {
+  test('foresights config set content_sanity.disabled_patterns actually reaches the import gate', async () => {
     await withIsolatedHome(async () => {
       // Line-anchored access_denied body match: quarantined by default…
       const content = FRONTMATTER + 'Access Denied when I open the staging dashboard.\n\nDiscussion of the error follows.';
       const before = await importFromContent(engine, 'test/ad-default', content, { noEmbed: true });
       expect(before.quarantined).toBe(true);
-      // …but a DB-plane opt-out (what `gbrain config set` writes) lets the
+      // …but a DB-plane opt-out (what `foresights config set` writes) lets the
       // page land normally. Pre-fix the key was written but never read.
       await engine.setConfig('content_sanity.disabled_patterns', 'access_denied');
       try {

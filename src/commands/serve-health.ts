@@ -1,5 +1,5 @@
 /**
- * #6543: what a `gbrain serve` reports about itself beyond `SELECT 1`, and the
+ * #6543: what a `foresights serve` reports about itself beyond `SELECT 1`, and the
  * opt-in exit that lets a supervisor recover a wedged serve without a human.
  *
  * Transport: the live read pool's `prepare` and `max_pipeline` (and why
@@ -7,7 +7,7 @@
  * `statement_timeout` as read through the pool once at startup (the doctor's
  * `persistence_session_timeouts` probe, so the reading and its ALTER ROLE fix
  * live in one place; its env-URL pooler verdict is not used), and the
- * backend's `application_name` when it is Supavisor. A `0` where gbrain
+ * backend's `application_name` when it is Supavisor. A `0` where foresights
  * configured a timeout means the startup parameters never applied, so no
  * server-side timeout bounds an autocommit statement. Serve logs the facts as
  * one line at startup and `/health?deep=1` returns them as its `transport`.
@@ -22,7 +22,7 @@
  * exits regardless. A supervisor that restarts on failure (the installed
  * service does) then brings up a fresh one; the floor keeps a restart loop
  * below the unit's `StartLimitBurst=10` per 300 s. A loop guard keeps a
- * durable ledger of self-exits (`serve-self-exit.json` under the gbrain home):
+ * durable ledger of self-exits (`serve-self-exit.json` under the foresights home):
  * after 3 within an hour serve stops exiting, logs `serve_self_exit_suppressed`
  * and `/health?deep=1` reports `self_exit_suppressed`, so a human looks. A
  * pooled statement past the in-flight budget is reported by `/health?deep=1`
@@ -49,7 +49,7 @@ export interface ServeTransport {
   max_pipeline_reason: ReadPoolPipelineReason | null;
   /** `SHOW statement_timeout` through the read pool at startup; null when it could not be read or none is configured. */
   statement_timeout: string | null;
-  /** True when that reading is `0` while gbrain configured a timeout: the startup parameter never reached the server. */
+  /** True when that reading is `0` while foresights configured a timeout: the startup parameter never reached the server. */
   session_timeouts_not_applied: boolean;
   /** The doctor probe's fix for a session timeout that never applied. */
   fix?: string;
@@ -74,9 +74,9 @@ export async function readServeTransport(engine: BrainEngine): Promise<ServeTran
 }
 
 export function formatServeTransportLine(t: ServeTransport): string {
-  return `[gbrain serve] transport pooler_mode=${t.pooler_mode} prepare=${t.prepare ?? 'unknown'} max_pipeline=${t.max_pipeline ?? 'unknown'}`
+  return `[foresights serve] transport pooler_mode=${t.pooler_mode} prepare=${t.prepare ?? 'unknown'} max_pipeline=${t.max_pipeline ?? 'unknown'}`
     + ` max_pipeline_reason=${t.max_pipeline_reason ?? 'unknown'} statement_timeout=${t.statement_timeout ?? 'unknown'}${t.application_name ? ` application_name=${t.application_name}` : ''}`
-    + (t.session_timeouts_not_applied ? ` session_timeouts_not_applied=true fix="${t.fix ?? 'gbrain doctor --json'}" docs=docs/guides/troubleshooting.md#session-timeouts-not-applied` : '');
+    + (t.session_timeouts_not_applied ? ` session_timeouts_not_applied=true fix="${t.fix ?? 'foresights doctor --json'}" docs=docs/guides/troubleshooting.md#session-timeouts-not-applied` : '');
 }
 
 /** Startup: reads the transport once, keeps it for `/health?deep=1` and logs the line. Never throws. */
@@ -119,7 +119,7 @@ export function resolveRestartRequiredExitSeconds(raw: string | undefined): numb
   return seconds;
 }
 
-/** The durable self-exit ledger under the gbrain home: ISO timestamps of recent self-exits. */
+/** The durable self-exit ledger under the foresights home: ISO timestamps of recent self-exits. */
 export function serveSelfExitLedgerPath(): string {
   return gbrainPath('serve-self-exit.json');
 }
@@ -175,8 +175,8 @@ export function installRestartRequiredExit(engine: BrainEngine, seconds: number,
     const recent = readSelfExits(ledger).filter(t => at - t < SERVE_SELF_EXIT_WINDOW_MS && t <= at);
     if (recent.length >= SERVE_SELF_RESTART_LIMIT) {
       suppressedEngines.add(engine);
-      deps.log(`[gbrain serve] error code=serve_self_exit_suppressed cause=persistence_restart_required self_exits_last_hour=${recent.length}`
-        + ` message="${SERVE_RESTART_REQUIRED_EXIT_ENV}: ${recent.length} self-exits within the last hour; not exiting again, restart serve by hand and read gbrain sources writer status --json" ledger=${ledger} docs=docs/ENGINES.md#serve-unhealthy-exit`);
+      deps.log(`[foresights serve] error code=serve_self_exit_suppressed cause=persistence_restart_required self_exits_last_hour=${recent.length}`
+        + ` message="${SERVE_RESTART_REQUIRED_EXIT_ENV}: ${recent.length} self-exits within the last hour; not exiting again, restart serve by hand and read foresights sources writer status --json" ledger=${ledger} docs=docs/ENGINES.md#serve-unhealthy-exit`);
       return;
     }
     fired = true;
@@ -184,18 +184,18 @@ export function installRestartRequiredExit(engine: BrainEngine, seconds: number,
     try {
       mkdirSync(dirname(ledger), { recursive: true });
       writeFileSync(ledger, `${JSON.stringify({ exits: [...recent, at].map(t => new Date(t).toISOString()) })}\n`, { mode: 0o600 });
-    } catch (err: unknown) { deps.log(`[gbrain serve] serve_unhealthy_exit: could not record the self-exit in ${ledger}: ${err instanceof Error ? err.message : String(err)}`); }
+    } catch (err: unknown) { deps.log(`[foresights serve] serve_unhealthy_exit: could not record the self-exit in ${ledger}: ${err instanceof Error ? err.message : String(err)}`); }
     const deadlineMs = deps.cleanupDeadlineMs ?? SERVE_RESTART_REQUIRED_CLEANUP_DEADLINE_MS;
-    deps.log(`[gbrain serve] error code=serve_unhealthy_exit cause=persistence_restart_required held_s=${Math.round(heldMs / 1000)} exit=${SERVE_UNHEALTHY_EXIT_CODE}`
+    deps.log(`[foresights serve] error code=serve_unhealthy_exit cause=persistence_restart_required held_s=${Math.round(heldMs / 1000)} exit=${SERVE_UNHEALTHY_EXIT_CODE}`
       + ` message="${SERVE_RESTART_REQUIRED_EXIT_ENV}=${seconds}: exiting (cleanup bounded at ${deadlineMs} ms) so the supervisor starts a fresh serve" docs=docs/ENGINES.md#serve-unhealthy-exit`);
     const cleanup = setTimeout(() => {
-      deps.log(`[gbrain serve] serve_unhealthy_exit: cleanup deadline (${deadlineMs} ms) exceeded, exiting ${SERVE_UNHEALTHY_EXIT_CODE} without it`);
+      deps.log(`[foresights serve] serve_unhealthy_exit: cleanup deadline (${deadlineMs} ms) exceeded, exiting ${SERVE_UNHEALTHY_EXIT_CODE} without it`);
       exitOnce();
     }, deadlineMs);
     cleanup.unref?.();
     Promise.resolve()
       .then(() => engine.disconnect())
-      .catch((err: unknown) => { deps.log(`[gbrain serve] serve_unhealthy_exit: cleanup error: ${err instanceof Error ? err.message : String(err)}`); })
+      .catch((err: unknown) => { deps.log(`[foresights serve] serve_unhealthy_exit: cleanup error: ${err instanceof Error ? err.message : String(err)}`); })
       .finally(() => { clearTimeout(cleanup); exitOnce(); });
   };
   const timer = setInterval(check, deps.everyMs ?? Math.min(15_000, seconds * 250));

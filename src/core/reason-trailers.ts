@@ -1,5 +1,5 @@
 /**
- * GBRA-217 (A6, A7): page change reasons read back from Git. A commit gbrain makes, and an outside commit made with
+ * GBRA-217 (A6, A7): page change reasons read back from Git. A commit foresights makes, and an outside commit made with
  * `git commit --trailer "gbrain-reason: <path>: <text>"`, carries one `gbrain-reason` trailer per path. Sync mirrors
  * them into page history (`page_versions.change_reason` on the snapshot the import archives); purge finds the commits
  * whose reason quotes a purged claim and tombstones them (`reason_purge_tombstones`, text-free), so no later import

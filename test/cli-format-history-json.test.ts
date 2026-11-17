@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { formatResult } from '../src/cli/main.ts';
 
 /**
- * `gbrain history <slug> --json` accepted `--json` and silently printed the
+ * `foresights history <slug> --json` accepted `--json` and silently printed the
  * human table anyway, and the human table appended `...` unconditionally —
  * so a body shorter than the preview width claimed a truncation that never
  * happened.

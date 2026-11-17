@@ -11,7 +11,7 @@
  * (docs/eval/system-one/README.md).
  *
  * `recommendedSlots` is the one place that turns these rows into a slot set:
- * `gbrain decide enable --recommended` turns it on, and with a TypeSafe key
+ * `foresights decide enable --recommended` turns it on, and with a TypeSafe key
  * present it is the key-aware default-on set (readDecideConfig), so the two
  * can never disagree.
  */

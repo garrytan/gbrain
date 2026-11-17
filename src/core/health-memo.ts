@@ -24,8 +24,8 @@
  *
  * The memo is not in the engine: doctor checks, remediation, maintain,
  * embedding migration and repair verification call `engine.getHealth`
- * directly and always see fresh numbers. `gbrain repair --apply` and
- * `gbrain doctor --remediate` also clear it. If the clock or config read
+ * directly and always see fresh numbers. `foresights repair --apply` and
+ * `foresights doctor --remediate` also clear it. If the clock or config read
  * fails (for example a brain mid-upgrade), the call computes uncached.
  */
 import { createHash } from 'node:crypto';

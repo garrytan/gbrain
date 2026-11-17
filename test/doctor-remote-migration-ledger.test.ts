@@ -37,7 +37,7 @@ describe('remote doctor migration ledger row', () => {
   test('after --force-retry the version is pending, not wedged', async () => {
     const row = await ledgerRow(['partial', 'partial', 'partial', 'retry'].map(status => ({ version: '0.53.0', status })));
     expect(row?.status).toBe('warn');
-    expect(row?.message).toBe('1 host migration(s) not run yet on brain host: 0.53.0. Run on the host: gbrain apply-migrations --yes');
+    expect(row?.message).toBe('1 host migration(s) not run yet on brain host: 0.53.0. Run on the host: foresights apply-migrations --yes');
   }, 60_000);
 
   test('a host migration a newer one skipped past is reported as never run', async () => {

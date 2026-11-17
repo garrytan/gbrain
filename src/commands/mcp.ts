@@ -13,19 +13,19 @@ import { runMcpAdmin } from './mcp-admin.ts';
 import { grantFromClient } from '../core/grants/model.ts';
 import { credentialCensus, exposureServes, renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
 
-const HELP = `gbrain mcp — provision access on the host; install it inside the harness
+const HELP = `foresights mcp — provision access on the host; install it inside the harness
 
-gbrain mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE
-gbrain mcp grant NAME --client ID --if-version N --profile PROFILE --url URL --harness ID --dry-run
-gbrain mcp verify --client ID --harness ID --url URL --credentials-file FILE [--delegate]
-gbrain mcp admin --help
-gbrain mcp adapters | profiles
-gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr] [--no-tailscale] [--no-service] [--no-install] [--force] [--dry-run] [--yes] [--json]
-gbrain mcp expose --status [--json]
-gbrain mcp expose --remove [--yes] [--json]
+foresights mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE
+foresights mcp grant NAME --client ID --if-version N --profile PROFILE --url URL --harness ID --dry-run
+foresights mcp verify --client ID --harness ID --url URL --credentials-file FILE [--delegate]
+foresights mcp admin --help
+foresights mcp adapters | profiles
+foresights mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr] [--no-tailscale] [--no-service] [--no-install] [--force] [--dry-run] [--yes] [--json]
+foresights mcp expose --status [--json]
+foresights mcp expose --remove [--yes] [--json]
 
-expose publishes the gbrain HTTP MCP server on your Tailscale tailnet (--funnel: public, for cloud agents)
-and keeps it running as a user service. Engine-free. See: gbrain mcp expose --help
+expose publishes the foresights HTTP MCP server on your Tailscale tailnet (--funnel: public, for cloud agents)
+and keeps it running as a user service. Engine-free. See: foresights mcp expose --help
 
 --profile defaults to memory-writer for new clients; omitted profiles preserve existing grants.
 New connections follow this brain's published skills within their approved read sources.
@@ -49,7 +49,7 @@ Delegation requires --bound-tools T1,T2.
 --json                             Machine-readable redacted receipt
 
 Next, in the intended harness environment:
-gbrain connect URL --harness ID --credentials-file FILE --install
+foresights connect URL --harness ID --credentials-file FILE --install
 Thin CLI adapters additionally require --root ABSOLUTE-PERSISTENT-DIRECTORY.
 `;
 
@@ -59,10 +59,10 @@ export function mcpNeedsEngine(args: string[], envToken = process.env.GBRAIN_ADM
 
 export function parseMcpGrant(args: string[]): ProvisionGrantInput {
   if (args[0] !== 'grant' || !args[1] || args[1].startsWith('-')) {
-    throw opError('invalid_params', 'gbrain mcp grant needs a client NAME.',
-      'Usage: gbrain mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE. '
-      + 'Example: gbrain mcp grant laptop-agent --harness claude-code --profile memory-writer --source default --url https://brain.example.ts.net/mcp --credentials-out ~/laptop-agent.json --dry-run '
-      + '(`gbrain mcp adapters` and `gbrain mcp profiles` list the ids; `gbrain mcp --help` lists every option).');
+    throw opError('invalid_params', 'foresights mcp grant needs a client NAME.',
+      'Usage: foresights mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE. '
+      + 'Example: foresights mcp grant laptop-agent --harness claude-code --profile memory-writer --source default --url https://brain.example.ts.net/mcp --credentials-out ~/laptop-agent.json --dry-run '
+      + '(`foresights mcp adapters` and `foresights mcp profiles` list the ids; `foresights mcp --help` lists every option).');
   }
   validateHarnessArguments(args.slice(2), MCP_GRANT_ARGUMENTS);
   const value = (flag: string) => { const i = args.indexOf(flag); if (i < 0) return undefined; const v = args[i + 1]; if (!v || v.startsWith('--')) throw new Error(`${flag} requires a value`); return v; };
@@ -135,7 +135,7 @@ export async function runMcp(args: string[], engine?: BrainEngine): Promise<void
       const admin = createMcpAdminHttp({ url: input.url, adminTokenFile: adminFile });
       result = await admin.request('/admin/api/grants', { method: 'POST', body: input,
         mutation: !input.dryRun && !input.resume,
-        nextAction: input.clientId ? `gbrain mcp admin client ${input.clientId} --url ${admin.base}` : `gbrain mcp admin clients --url ${admin.base}`,
+        nextAction: input.clientId ? `foresights mcp admin client ${input.clientId} --url ${admin.base}` : `foresights mcp admin clients --url ${admin.base}`,
       }) as typeof result;
     } else {
       if (!engine) throw new Error('Run on the brain host or supply --admin-token-file for authenticated server administration');
@@ -157,8 +157,8 @@ export async function runMcp(args: string[], engine?: BrainEngine): Promise<void
       credentials: result.credentials ? credentialReceipt(result.credentials) : result.credential_action,
       credential_file: result.credentials ? value('--credentials-out') : null,
       next_action: result.dry_run ? 'Review the grant, then repeat without --dry-run.' : result.credentials
-        ? 'Install the private handoff inside the intended harness with gbrain connect, then run gbrain mcp verify.'
-        : 'Grant updated; inspect effective access with gbrain mcp admin client. Restrictions apply immediately. Newly added scopes require fresh authorization in the native client or a new machine token; existing credentials are preserved.' }, null, args.includes('--json') ? undefined : 2));
+        ? 'Install the private handoff inside the intended harness with foresights connect, then run foresights mcp verify.'
+        : 'Grant updated; inspect effective access with foresights mcp admin client. Restrictions apply immediately. Newly added scopes require fresh authorization in the native client or a new machine token; existing credentials are preserved.' }, null, args.includes('--json') ? undefined : 2));
   } catch (error) {
     if (error instanceof OperationError && error.code === 'invalid_params') {
       // A3/D4: a malformed invocation exits 2 with the usage and an example; the legacy keys lead the document.

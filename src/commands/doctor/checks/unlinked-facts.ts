@@ -7,10 +7,10 @@
  * caller's grant on the remote path): the unlinked share of the newest
  * active facts per source (capped so a 1M-fact brain stays fast), the
  * unlinked share of facts created in the last 7 days, how many facts
- * `gbrain facts relink` already judged to have no subject (`no_subject`),
+ * `foresights facts relink` already judged to have no subject (`no_subject`),
  * the fence-owned unlinked rows (row_num or source_markdown_slug set: relink
  * rewrites their fence row), the conversation extractor's derived rows
- * (#6764: plain relink never examines them; `gbrain facts relink
+ * (#6764: plain relink never examines them; `foresights facts relink
  * --conversation` links them for free, and re-extraction, which runs
  * write-time inference, is the paid fallback for rows that free relink
  * already tried), the top origins of unlinked facts, and the
@@ -180,8 +180,8 @@ export function unlinkedFactsVerdict(stats: UnlinkedFactsStats | null, opts: { t
   const unlinkedNew = recent.unlinked - judged;
   const warn = eligible >= UNLINKED_NEW_MIN_FACTS && unlinkedNew / eligible > UNLINKED_NEW_SHARE_WARN;
   const hint = opts.thinClient
-    ? 'ask the brain host operator to run: gbrain facts relink --dry-run'
-    : 'preview links: gbrain facts relink --dry-run';
+    ? 'ask the brain host operator to run: foresights facts relink --dry-run'
+    : 'preview links: foresights facts relink --dry-run';
   if (w.active === 0 && recent.facts === 0) return { status: 'ok', message: 'No active facts yet; nothing to link.', details: { ...stats, fix: hint } };
   const parts = [
     `${pct(w.unlinked, w.active)} of ${w.active} active facts have no entity (${w.unlinked}${w.capped ? `; newest ${UNLINKED_WINDOW_PER_SOURCE} per source` : ''}; ${w.fence_owned} fence-owned${w.conversation ? `; ${w.conversation} from conversation extraction` : ''})`,
@@ -206,7 +206,7 @@ export function unlinkedFactsVerdict(stats: UnlinkedFactsStats | null, opts: { t
 }
 
 /**
- * #6764: the conversation share's free fix, `gbrain facts relink --conversation` over the pages holding the most
+ * #6764: the conversation share's free fix, `foresights facts relink --conversation` over the pages holding the most
  * unlinked derived rows it has not tried in one source: write-mode subject inference, no model call, one receipted database-only write per page (no Markdown edit, so no consent).
  */
 function relinkFix(c: NonNullable<UnlinkedFactsStats['conversation']>, thinClient: boolean): Action {

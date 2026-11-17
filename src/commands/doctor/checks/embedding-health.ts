@@ -31,7 +31,7 @@ export function embeddingProbeFix(model: string, free = false): Action {
     consent: free ? [] : ['paid', 'egress'],
     actor: 'agent',
     why: `Plain doctor never calls the provider. The probe sends one short embedding request to ${model} to confirm the key, model and dimensions work; it costs a fraction of a cent.`,
-    user_message: `To confirm your embedding provider works, gbrain can send it one tiny test request (${model}, well under a cent). OK to run it?`,
+    user_message: `To confirm your embedding provider works, foresights can send it one tiny test request (${model}, well under a cent). OK to run it?`,
     verify: doctorVerify('embedding_provider'),
     requires_exclusive: false,
   };
@@ -65,8 +65,8 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
     // config has no embedding_model but the schema column exists at a dim
     // that doesn't match the gateway's resolved default. Empty-brain vs
     // non-empty-brain branching determines the repair hint:
-    //   - empty brain (no embedded chunks) → `gbrain init --force --embedding-model …`
-    //   - non-empty brain → `gbrain migrate embeddings --to … --dim …` (#3390)
+    //   - empty brain (no embedded chunks) → `foresights init --force --embedding-model …`
+    //   - non-empty brain → `foresights migrate embeddings --to … --dim …` (#3390)
     // The bug-reporter's `rm -rf ~/.gbrain` recovery is never the right answer.
     let surfacedUnconfiguredDrift = false;
     try {
@@ -95,14 +95,14 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
           } catch { /* table may be missing or fresh; treat as empty */ }
 
           if (totalChunks > 0) {
-            const fix = `Existing brain (${totalChunks} chunks, ${embeddedCount} embedded). Keep a verified database backup and preview the brain-wide migration:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims} --dry-run\n      After reviewing the plan, replace --dry-run with --yes --max-cost-usd <approved-total>. Missing vectors do not mean the brain is empty. See docs/guides/embedding-migration.md#recovery.`;
+            const fix = `Existing brain (${totalChunks} chunks, ${embeddedCount} embedded). Keep a verified database backup and preview the brain-wide migration:\n        foresights migrate embeddings --to ${configuredModel} --dim ${configuredDims} --dry-run\n      After reviewing the plan, replace --dry-run with --yes --max-cost-usd <approved-total>. Missing vectors do not mean the brain is empty. See docs/guides/embedding-migration.md#recovery.`;
 
             checks.push({
               name: 'embedding_provider',
               status: 'warn',
               message:
                 `Schema column is vector(${colDim.dims}) but gateway default resolves to ${configuredModel} (${configuredDims}d). ` +
-                `Persist your provider choice with \`gbrain config set embedding_model ${configuredModel}\` AND fix the schema:\n      ${fix}`,
+                `Persist your provider choice with \`foresights config set embedding_model ${configuredModel}\` AND fix the schema:\n      ${fix}`,
             });
             surfacedUnconfiguredDrift = true;
           }
@@ -152,7 +152,7 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
       }
     } else if (!(await embeddingProviderIsFree(configuredModel)) && providerDeclineRecord()) {
       const fix = providerConsentFix(providerDeclineRecord()!);
-      checks.push(infoCheck('embedding_provider', `Not probed: skipped by consent. gbrain setup recorded provider use as declined, so the probe sends nothing to ${configuredModel}. The user decides; to allow provider use they run: ${fix.argv!.join(' ')}`,
+      checks.push(infoCheck('embedding_provider', `Not probed: skipped by consent. foresights setup recorded provider use as declined, so the probe sends nothing to ${configuredModel}. The user decides; to allow provider use they run: ${fix.argv!.join(' ')}`,
         'disabled_by_choice', fix, { probed: false, model: configuredModel, dimensions: configuredDims }));
     } else {
       // Live embed test
@@ -160,7 +160,7 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
       // Doctor is itself the provider-health circuit breaker. A permanent
       // billing/auth failure must be sampled once, not multiplied by the AI
       // SDK's default retries (which can add ~90s to every health check).
-      const vec = await embedOne('gbrain doctor embedding smoke test', { maxRetries: 0 });
+      const vec = await embedOne('foresights doctor embedding smoke test', { maxRetries: 0 });
       const ms = Date.now() - start;
       const actualDims = vec.length;
 
@@ -246,7 +246,7 @@ async function runAlternativeProviders(ctx: DoctorContext): Promise<Check[]> {
       checks.push({
         name: 'alternative_providers',
         status: 'ok',
-        message: `Detected ${alternatives.length} alternative embedding provider${alternatives.length > 1 ? 's' : ''} ready to use: ${alternatives.join(', ')}. Run \`gbrain providers list\` to switch.`,
+        message: `Detected ${alternatives.length} alternative embedding provider${alternatives.length > 1 ? 's' : ''} ready to use: ${alternatives.join(', ')}. Run \`foresights providers list\` to switch.`,
       });
     }
   } catch { /* listRecipes / gateway not available — silent */ }
@@ -271,7 +271,7 @@ async function runEmbeddingQueryPrefix(ctx: DoctorContext): Promise<Check[]> {
     const model = getEmbeddingModel() || '';
     const suggestion = suggestedQueryPrefix(model);
     if (suggestion && !(await loadEmbeddingQueryPrefix(engine))) {
-      const command = `gbrain config set embedding_query_prefix ${shellQuoteConfigValue(suggestion.value)}`;
+      const command = `foresights config set embedding_query_prefix ${shellQuoteConfigValue(suggestion.value)}`;
       checks.push({
         name: 'embedding_query_prefix',
         status: 'warn',
@@ -279,7 +279,7 @@ async function runEmbeddingQueryPrefix(ctx: DoctorContext): Promise<Check[]> {
           + `none is set, so query embeddings miss it. Set the documented value: ${command} . `
           + 'It applies to query embeddings only; stored document vectors are not re-embedded. '
           + 'It takes effect on the next CLI or MCP query, without restarting a running server. '
-          + 'Remove it with: gbrain config unset embedding_query_prefix . See docs/guides/search-modes.md#query-instruction-prefix.',
+          + 'Remove it with: foresights config unset embedding_query_prefix . See docs/guides/search-modes.md#query-instruction-prefix.',
         details: { model, family: suggestion.family, value: suggestion.value, command },
       });
     }
@@ -376,7 +376,7 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
         if (actualType !== entry.type) {
           issues.push(
             `${colName}: declared type=${entry.type} but actual is ${actual}. ` +
-              `Fix: gbrain config set embedding_columns '<JSON>' OR ` +
+              `Fix: foresights config set embedding_columns '<JSON>' OR ` +
               `ALTER TABLE content_chunks ALTER COLUMN ${colName} TYPE ${entry.type}(${entry.dimensions});`,
           );
           continue;
@@ -430,8 +430,8 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
           coverageWarn =
             `Active column '${activeCol}' is ${pct.toFixed(1)}% populated. ` +
             `Search quality silently degraded on un-embedded chunks. ` +
-            `Fix: gbrain config set search_embedding_column embedding (read the default column), ` +
-            `then gbrain embed --stale; per-column write-side backfill is a filed follow-up (TODOS.md)`;
+            `Fix: foresights config set search_embedding_column embedding (read the default column), ` +
+            `then foresights embed --stale; per-column write-side backfill is a filed follow-up (TODOS.md)`;
         }
       }
 
@@ -492,11 +492,11 @@ export const embeddingEnvOverrideEntry: DoctorEntry = {
  * Doctor `embedding_key_source` (#5137, DX-O8): which provider keys come from
  * the environment and override a different config-plane key, and where the
  * embedding key in effect comes from. Names only, never key values. It sees
- * only the environment `gbrain doctor` runs in, not a daemon's. Engine-free
+ * only the environment `foresights doctor` runs in, not a daemon's. Engine-free
  * filesystem-lane entry (also under `--fast`).
  */
 const KEY_SOURCE_DOCS = 'docs/guides/repair.md#embedding-key-source';
-const KEY_SOURCE_SCOPE = 'This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.';
+const KEY_SOURCE_SCOPE = 'This check sees only the environment `foresights doctor` runs in; a daemon (foresights serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.';
 
 export function embeddingKeySource(fileCfg: GBrainConfig | null, env: Record<string, string | undefined>, file: string): Pick<Check, 'status' | 'message' | 'details'> {
   const shadows = providerKeyShadows(fileCfg, env);
@@ -512,7 +512,7 @@ export function embeddingKeySource(fileCfg: GBrainConfig | null, env: Record<str
   if (!shadows.length) return { status: 'ok', message: `${inEffect} No environment variable overrides a different config-plane provider key. ${KEY_SOURCE_SCOPE}`, details };
   return {
     status: 'warn',
-    message: `${inEffect} ${shadows.map(shadow => keyShadowWarning(shadow, file).replace('[gbrain] warning: ', '')).join(' ')} ${KEY_SOURCE_SCOPE}`,
+    message: `${inEffect} ${shadows.map(shadow => keyShadowWarning(shadow, file).replace('[foresights] warning: ', '')).join(' ')} ${KEY_SOURCE_SCOPE}`,
     details,
   };
 }

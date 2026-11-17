@@ -14,7 +14,7 @@
  *     → OperationContext.localFederatedSourceIds
  *     → federatedSearchScope (get_page / list_pages / search / query).
  *
- * Wire-visible consequences asserted over a real `gbrain serve --http` on
+ * Wire-visible consequences asserted over a real `foresights serve --http` on
  * real Postgres:
  *   - a LEGACY token WITHOUT a source grant sees exactly the set
  *     localFederatedSourceIds computes (default + federated sources; the
@@ -123,7 +123,7 @@ describeE2E('/mcp source-grant wiring — legacy no-grant widening vs granted co
     }, { sourceId: PRIV_SOURCE });
 
     // Legacy bearer tokens. permissions WITHOUT source_id is the historical
-    // no-grant floor (`gbrain auth create` writes {takes_holders:[...]});
+    // no-grant floor (`foresights auth create` writes {takes_holders:[...]});
     // permissions WITH a scalar source_id is an operator source grant.
     noGrantToken = await insertLegacyToken('sg-e2e-nogrant', { takes_holders: ['world'] });
     grantedToken = await insertLegacyToken('sg-e2e-granted', { takes_holders: ['world'], source_id: FED_SOURCE });

@@ -1,5 +1,5 @@
 /**
- * gbrain transcripts archive — the day-sliced conversation archive (GST-2768). On by default on a personal brain, offered on a shared one.
+ * foresights transcripts archive — the day-sliced conversation archive (GST-2768). On by default on a personal brain, offered on a shared one.
  *
  *   run                          archive the last few local days from every readable harness
  *   backfill --from D [--to D]   archive a date range, newest first, capped per run; embedding held for approval
@@ -15,16 +15,16 @@ import type { CliDispatchContext } from '../cli/command-table.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 const HELP = `Usage:
-  gbrain transcripts archive run [--dry-run] [--source S] [--json]
-  gbrain transcripts archive backfill --from YYYY-MM-DD [--to YYYY-MM-DD] [--dry-run] [--source S] [--json]
-  gbrain transcripts archive status [--source S] [--json]
-  gbrain transcripts archive adopt-legacy --dir <folder> [--dry-run | --apply] [--source S] [--json]
-  gbrain transcripts archive on | off [--json]
+  foresights transcripts archive run [--dry-run] [--source S] [--json]
+  foresights transcripts archive backfill --from YYYY-MM-DD [--to YYYY-MM-DD] [--dry-run] [--source S] [--json]
+  foresights transcripts archive status [--source S] [--json]
+  foresights transcripts archive adopt-legacy --dir <folder> [--dry-run | --apply] [--source S] [--json]
+  foresights transcripts archive on | off [--json]
 
 Writes one redacted page per conversation per local day (conversations/<harness>/<day>/...) plus a day index
 (conversations/days/<day>) into the archive source (default "conversations"). On by default on a personal brain,
-where the maintenance pass runs it; "gbrain transcripts archive off" stops it, and a shared brain turns it on with
-"gbrain transcripts archive on". Backfilled pages are keyword-only until "gbrain embed --held" approves their cost.
+where the maintenance pass runs it; "foresights transcripts archive off" stops it, and a shared brain turns it on with
+"foresights transcripts archive on". Backfilled pages are keyword-only until "foresights embed --held" approves their cost.
 Guide: docs/guides/conversation-archive.md`;
 
 function flag(args: string[], name: string): string | undefined {
@@ -49,7 +49,7 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
   if (sub === 'on' || sub === 'off') {
     await archive.setArchiveEnabled(engine, sub === 'on');
     out({ enabled: sub === 'on' }, () => console.log(sub === 'on'
-      ? 'conversation archive: on. Run "gbrain transcripts archive run" now, or "gbrain transcripts archive backfill --from <day>" for history.'
+      ? 'conversation archive: on. Run "foresights transcripts archive run" now, or "foresights transcripts archive backfill --from <day>" for history.'
       : 'conversation archive: off. Pages already written stay; nothing new is archived.'));
     return;
   }
@@ -75,14 +75,14 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
     const dir = flag(rest, '--dir');
     if (!dir) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError('adopt-legacy needs --dir <folder>.', 'Run gbrain transcripts archive adopt-legacy --dir <old archive folder> --dry-run.'), 'transcripts', { json });
+      exitCliError(usageError('adopt-legacy needs --dir <folder>.', 'Run foresights transcripts archive adopt-legacy --dir <old archive folder> --dry-run.'), 'transcripts', { json });
       return;
     }
     const result = await archive.adoptLegacyArchive(engine, { dir, apply: rest.includes('--apply'), sourceId });
     out(result, () => {
       console.log((result.applied ? 'adopted' : 'would adopt (dry run; pass --apply to record)') + ' ' + result.covered.length + ' day(s) from ' + result.dir);
       for (const [h, n] of Object.entries(result.by_harness)) console.log('  ' + (h === '*' ? 'every harness' : h).padEnd(14) + ' ' + n + ' day(s)');
-      console.log('The old files are left as they are. Remove the old scheduled script yourself, then run "gbrain transcripts archive backfill --from <day>" for the gap.');
+      console.log('The old files are left as they are. Remove the old scheduled script yourself, then run "foresights transcripts archive backfill --from <day>" for the gap.');
     });
     return;
   }
@@ -110,7 +110,7 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
     for (const d of result.days.filter(d => d.status === 'held' || d.status === 'error')) console.log('  ' + d.status + ': ' + d.harness + ' ' + d.day + ' (' + d.code + ')');
     for (const line of result.info) console.log('  ' + line);
     for (const e of result.errors) console.log('  error: ' + e.reader + ' ' + e.code + ': ' + e.message);
-    if (sub === 'backfill' && result.written) console.log('  backfilled pages are keyword-only; preview their embedding cost with: gbrain embed --held --dry-run');
+    if (sub === 'backfill' && result.written) console.log('  backfilled pages are keyword-only; preview their embedding cost with: foresights embed --held --dry-run');
   });
   if (result.errors.length || result.days.some(d => d.status === 'error') || (result.held && result.fix)) setCliExitVerdict(1);
 }

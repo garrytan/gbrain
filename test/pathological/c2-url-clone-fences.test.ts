@@ -1,5 +1,5 @@
 /**
- * C-2 (GBRA-130, #6946): gbrain never writes into a `gbrain sources add --url`
+ * C-2 (GBRA-130, #6946): foresights never writes into a `foresights sources add --url`
  * clone it pulls with `git pull --ff-only`, and a clone an older release
  * dirtied has an exit.
  *
@@ -9,7 +9,7 @@
  * the next upstream change to that file still fast-forwards. A clone an older
  * release already dirtied makes sync print the typed refusal
  * `pull_blocked_local_changes` (ask_user, naming the preview-first repair), and
- * `gbrain repair url-clone-fences` proves per file that the diff against HEAD
+ * `foresights repair url-clone-fences` proves per file that the diff against HEAD
  * is only appended fence rows, backs the file up, moves those rows
  * database-only (the database side commits first), restores the file from
  * HEAD and leaves a file with any other edit untouched and named. A run-scoped
@@ -190,7 +190,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         c.push(`${ALICE}.md`, personMd('Alice Example', 'Alice Example works at Acme Example. UPSTREAM-EDIT-2.'));
         const blocked = await c.sync();
         expect({ status: blocked.result.status, reason: blocked.result.reason }).toEqual({ status: 'partial', reason: 'pull_failed' });
-        expect({ code: blocked.stderr.includes('pull_blocked_local_changes'), fix: blocked.stderr.includes(`gbrain repair url-clone-fences --source ${SOURCE}`) })
+        expect({ code: blocked.stderr.includes('pull_blocked_local_changes'), fix: blocked.stderr.includes(`foresights repair url-clone-fences --source ${SOURCE}`) })
           .toEqual({ code: true, fix: true });
         const { urlClonePullBlock } = await import('../../src/core/url-clone.ts');
         const block = await urlClonePullBlock(c.engine, SOURCE);
@@ -217,10 +217,10 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const preview = await expectUnitNotAborted(() => repair(c.engine, { apply: false }));
         expect(preview.listing).toEqual([
           { item: `${SOURCE}:${ALICE}.md`, class: 'fence_rows_only', detail: expect.stringContaining('1 fence row') },
-          { item: `${SOURCE}:${BOB}.md`, class: 'non_fence_edit', detail: expect.stringContaining(`gbrain repair ${KIND} --source ${SOURCE}`) },
+          { item: `${SOURCE}:${BOB}.md`, class: 'non_fence_edit', detail: expect.stringContaining(`foresights repair ${KIND} --source ${SOURCE}`) },
         ]);
         expectItemFailure({ key: preview.listing![1]!.item, code: preview.listing![1]!.class, fix: preview.listing![1]!.detail },
-          { key: `${SOURCE}:${BOB}.md`, code: 'non_fence_edit', fix: /gbrain repair url-clone-fences --source acme-docs/ });
+          { key: `${SOURCE}:${BOB}.md`, code: 'non_fence_edit', fix: /(?:foresights|gbrain) repair url-clone-fences --source acme-docs/ });
         expect(preview.apply_command).toContain(`--expect ${preview.preview_hash}`);
         expect(preview.apply_command).toContain('--yes');
         expect({ dirty: c.dirty(), alice: (await c.facts(ALICE))[0]!.row_num }).toEqual({ dirty: `M ${ALICE}.md\n M ${BOB}.md`, alice: aliceRow!.row_num });

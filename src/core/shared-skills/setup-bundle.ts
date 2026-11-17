@@ -73,11 +73,11 @@ export function packagedSharedSkills(): Record<string, string> {
   files['skillpack.json'] = JSON.stringify({
     api_version: 'gbrain-skillpack-v1', name: DEFAULT_SHARED_PACK_ID, version: VERSION,
     description: 'Keyless memory workflows and a compact shared-brain router.',
-    author: 'GBrain contributors', license: 'MIT', homepage: 'https://github.com/garrytan/gbrain',
+    author: 'Foresights contributors', license: 'MIT', homepage: 'https://github.com/aimonk2025/gbrain',
     gbrain_min_version: VERSION, brain_resident: true,
     skills: skills.map(skill => `skills/${skill.name}`), shared_deps: [],
-    provenance: { upstream: 'garrytan/gbrain', release: VERSION, source: 'src/core/shared-skills/setup-bundle.ts', sha256: hashes },
+    provenance: { upstream: 'aimonk2025/gbrain', release: VERSION, source: 'src/core/shared-skills/setup-bundle.ts', sha256: hashes },
   }, null, 2) + '\n';
-  files['README.md'] = `# Brain content\n\nKnowledge and shared skills live together here. Keep existing knowledge folders; no move to a special knowledge directory is required.\n\n## Skills\n\n${skills.map(skill => `- ${skill.name}: ${skill.description}`).join('\n')}\n\n## Provenance\n\nThis self-contained, prose-only pack is pinned to GBrain ${VERSION} (MIT). Each skill has an empty file dependency closure; no helper, script, package or development checkout is required. The manifest records the upstream source and exact skill hashes. Updates are reviewed imports and must not overwrite local edits.\n\n## Safety\n\nPublication, following, editing and execution are separate permissions. No identity replacement, automatic capture, paid enrichment, GitHub repository, commit or push is implied. Local storage is not a backup.\n`;
+  files['README.md'] = `# Brain content\n\nKnowledge and shared skills live together here. Keep existing knowledge folders; no move to a special knowledge directory is required.\n\n## Skills\n\n${skills.map(skill => `- ${skill.name}: ${skill.description}`).join('\n')}\n\n## Provenance\n\nThis self-contained, prose-only pack is pinned to Foresights ${VERSION} (MIT). Each skill has an empty file dependency closure; no helper, script, package or development checkout is required. The manifest records the upstream source and exact skill hashes. Updates are reviewed imports and must not overwrite local edits.\n\n## Safety\n\nPublication, following, editing and execution are separate permissions. No identity replacement, automatic capture, paid enrichment, GitHub repository, commit or push is implied. Local storage is not a backup.\n`;
   return files;
 }

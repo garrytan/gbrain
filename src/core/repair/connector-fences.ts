@@ -1,5 +1,5 @@
 /**
- * `gbrain repair connector-fences` (fix wave 4 lane B): move a facts or takes
+ * `foresights repair connector-fences` (fix wave 4 lane B): move a facts or takes
  * fence that sits below the timeline sentinel of a connector (Google, GitHub)
  * page back into the page body, so the next connector re-render carries it
  * instead of refusing with `connector_fence_below_timeline`. Each page is

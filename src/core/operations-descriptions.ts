@@ -39,7 +39,7 @@ export const GET_RECENT_TRANSCRIPTS_DESCRIPTION =
   "'what have I been thinking about', or anything personal/emotional. Raw " +
   "transcripts are the canonical source for the user's own state — polished pages " +
   "summarize and flatten. Local-only: rejects remote (MCP/HTTP) callers with a " +
-  "clear permission_denied; call via the gbrain CLI.";
+  "clear permission_denied; call via the foresights CLI.";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Redirect hints appended to existing op descriptions
@@ -49,7 +49,7 @@ export const LIST_PAGES_DESCRIPTION =
   "List pages by type, slug_prefix, frontmatter where; what did I touch this week: sort=updated_desc. Default 50; truncated: continue with updated_after + updated_after_slug from the last row.";
 
 export const QUERY_DESCRIPTION =
-  "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.";
+  "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `foresights transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.";
 
 export const SEARCH_DESCRIPTION =
   "Cheap hybrid search, no LLM expansion, top 20: exact tokens, names, field values. NOT proof of coverage; match: \"keyword\" pages every keyword match and takes OR across quoted names or codes (\"A\" OR \"B\" OR …): one call lists every page matching any. Name lists: entity names. Concepts/landscape or people/companies/projects by topic: `query`; lists: list_pages; personal: get_recent_salience. return_unit: sections or conversations. fields: \"full\" adds diagnostics.";
@@ -63,7 +63,7 @@ export const SEARCH_MATCH_DESCRIPTION = 'keyword: every match, paged.';
 
 export const FIND_CONTRADICTIONS_DESCRIPTION =
   "Return suspected-contradiction findings from the most recent " +
-  "`gbrain eval suspected-contradictions` probe run, optionally filtered by slug " +
+  "`foresights eval suspected-contradictions` probe run, optionally filtered by slug " +
   "and/or severity. Use this when the user asks 'what's inconsistent in my " +
   "brain', 'show me contradictions about Acme', 'high-severity issues only', or " +
   "wants to act on the probe's findings without re-running it. Returns " +
@@ -71,7 +71,7 @@ export const FIND_CONTRADICTIONS_DESCRIPTION =
   "Remote, source-scoped or min_trust callers get only findings whose two sides they can read now " +
   "(each side re-read live, with source_id, trust_tier and origin) and total_visible instead of the run total. " +
   "Reads the stored run without triggering a new probe; users run " +
-  "`gbrain eval suspected-contradictions` for that.";
+  "`foresights eval suspected-contradictions` for that.";
 
 export const FIND_TRAJECTORY_DESCRIPTION =
   "Return the chronological claim trajectory for an entity (typed " +
@@ -85,7 +85,7 @@ export const FIND_TRAJECTORY_DESCRIPTION =
   "drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, " +
   "1 = every consecutive claim is unrelated; null when fewer than 3 typed points " +
   "exist. Visibility-filtered for remote callers (world-only); source-scoped by " +
-  "the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` " +
+  "the caller's OAuth source binding. Pair with `foresights founder scorecard <slug>` " +
   "for an aggregated rollup of the same data.";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ export const CODE_REFS_DESCRIPTION =
 // fat-markdown skills, published so a thin MCP client (Codex desktop, Claude
 // Code, Perplexity) can discover and FOLLOW them. Skills are prose instruction
 // sets, not executable code — "using" one = fetching its prose and then calling
-// the gbrain MCP tools the same server already exposes. The instructional
+// the foresights MCP tools the same server already exposes. The instructional
 // envelope below is the load-bearing UX: it tells the pulling agent what these
 // are and the use protocol. Pinned by test/operations-descriptions.test.ts.
 // ──────────────────────────────────────────────────────────────────────────────

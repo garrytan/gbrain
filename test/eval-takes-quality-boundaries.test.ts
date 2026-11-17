@@ -44,7 +44,7 @@ describe('runner boundaries — pre-LLM (no API calls fire)', () => {
 
     // Unknown model + budget cap set → must abort fail-closed before any
     // network call. The refusal names the offending model; its fix registers
-    // the rate (gbrain pricing set).
+    // the rate (foresights pricing set).
     await expect(
       runEval(engine, {
         models: ['unknown:gpt-99'],

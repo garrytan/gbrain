@@ -35,9 +35,9 @@ export const collectWritebackConsent: AdvisorCollector = {
       detail:
         'Agents would save durable facts the user states directly (preferences, decisions, ' +
         'commitments) with provenance; transient facts get a short TTL. Ask the user before ' +
-        'anything: enable with `gbrain config set memory.auto_writeback salient`, then ' +
-        '`gbrain bootstrap harness --yes`. If they decline, record it with ' +
-        '`gbrain config set memory.auto_writeback off` (this finding then stops).',
+        'anything: enable with `foresights config set memory.auto_writeback salient`, then ' +
+        '`foresights bootstrap harness --yes`. If they decline, record it with ' +
+        '`foresights config set memory.auto_writeback off` (this finding then stops).',
       fix: { command_argv: null },
       collector: 'writeback-consent',
       ask_user: true,

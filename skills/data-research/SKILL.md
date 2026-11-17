@@ -110,7 +110,7 @@ Before adding to tracker:
 
 ## Built-In Recipes
 
-Three example recipes ship with GBrain (see `~/.gbrain/recipes/`):
+Three example recipes ship with Foresights (see `~/.gbrain/recipes/`):
 
 1. **investor-updates** — extract MRR, ARR, growth, burn, runway, headcount from investor update emails
 2. **expense-tracker** — extract amounts, recipients, platforms from receipt emails (subscriptions, services, recurring charges)
@@ -118,10 +118,10 @@ Three example recipes ship with GBrain (see `~/.gbrain/recipes/`):
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `file_upload` is refused for a path outside the allowed root (remote callers are confined): ask the user to upload from the brain host or pass the content inline.
-- `put_page` / `add_timeline_entry` returns `revision_conflict` or `write_pending`: re-read and merge for the first; poll `gbrain write-request <request_id>` for the second.
+- `put_page` / `add_timeline_entry` returns `revision_conflict` or `write_pending`: re-read and merge for the first; poll `foresights write-request <request_id>` for the second.
 - An extraction source rate-limits (`rate_limited`): back off for the stated delay and keep the cursor; log the gap instead of guessing the missing rows.
 
 ## Anti-Patterns

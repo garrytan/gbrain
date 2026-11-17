@@ -3,7 +3,7 @@
  * file (`.gitignore` excludes it, or no commit holds it and it is not on the disk), one reader in
  * `src/core/uncommitted-deletions.ts`. Before #7130 sync read such an absent file as a deletion, so the tombstone may hold
  * the only copy of the page and the purge removes it for good after its retention window. The finding names the
- * read-only `gbrain repair uncommitted-deletions --source <id>` preview; restoring is the user's decision.
+ * read-only `foresights repair uncommitted-deletions --source <id>` preview; restoring is the user's decision.
  *
  * Read-only and bounded: at most `DOCTOR_PATH_LIMIT` tombstones read and checked per run across sources (descending page
  * id), with `truncated` / `exact` details; a bounded source names the `next_after` page id, and the message names the
@@ -42,13 +42,13 @@ async function runUncommittedSyncDeletions(ctx: DoctorContext): Promise<Check[]>
       samples: bySync.slice(0, SAMPLE_LIMIT).map(({ source_id, slug, source_path, deleted_at, evidence }) => ({ source_id, slug, source_path, deleted_at, evidence })) };
     const otherNote = byOther.length ? ` ${byOther.length} more soft-deleted page(s) with an uncommitted file were deleted by another writer, not by a sync (the preview lists them; --include-ambiguous restores them).` : '';
     const continueNote = truncated ? ` This check is bounded (${DOCTOR_PATH_LIMIT} tombstones per run); preview past it with `
-      + `${scans.filter(scan => scan.truncated).map(scan => `gbrain repair uncommitted-deletions --source ${scan.source_id}${scan.next_after !== undefined ? ` --after ${scan.next_after}` : ''}`).join('; ')}.` : '';
+      + `${scans.filter(scan => scan.truncated).map(scan => `foresights repair uncommitted-deletions --source ${scan.source_id}${scan.next_after !== undefined ? ` --after ${scan.next_after}` : ''}`).join('; ')}.` : '';
     if (bySync.length) {
       const sources = [...new Set(bySync.map(page => page.source_id))];
       checks.push({ name: 'uncommitted_sync_deletions', status: 'warn', details: { ...details, ...(unknown.length ? { health: 'unknown' } : {}) },
         message: `${bySync.length}${details.exact ? '' : '+'} soft-deleted page(s) were removed by a sync although Git never held their file (.gitignore excludes it, or it was never committed), so each tombstone may be the only copy and the purge removes it for good `
           + `(${sources.map(source => `${source}: ${bySync.filter(page => page.source_id === source).length}`).join('; ')}; e.g. ${details.samples.map(page => `${page.source_id}:${page.slug} (${page.source_path}, ${page.evidence})`).join(', ')}). `
-          + `Preview the restore with gbrain repair uncommitted-deletions --source ${sources[0]}. ${PURGED_NOTE}${otherNote}${continueNote}`,
+          + `Preview the restore with foresights repair uncommitted-deletions --source ${sources[0]}. ${PURGED_NOTE}${otherNote}${continueNote}`,
         fix: agentFix(['gbrain', 'repair', 'uncommitted-deletions', '--source', sources[0]!, '--json'],
           'Read-only preview: lists each page with its recorded path, deletion time and evidence, and prints the apply command with its hash. Apply only after the user agrees (each page comes back live and database-only).',
           'uncommitted_sync_deletions', { docs: DOCS }) });

@@ -1,5 +1,5 @@
 /**
- * #6340: `gbrain sync status` and `gbrain sync unblock`, the operator contract
+ * #6340: `foresights sync status` and `foresights sync unblock`, the operator contract
  * for a managed catch-up (core in `src/core/persistence/sync-status.ts`,
  * decision table in `sync-fault-class.ts`, prose in
  * `docs/guides/sync-unblock-runbook.md`). Both speak the agent operator
@@ -28,7 +28,7 @@ const SUPERSEDED_TEXT: Record<NonNullable<NonNullable<SyncStatus['last_error']>[
 };
 
 export function printSyncStatusHelp(): void {
-  console.log(`Usage: gbrain sync status --source <id> [--detail] [--json]
+  console.log(`Usage: foresights sync status --source <id> [--detail] [--json]
                           [--limit <n>] [--cursor <next_cursor>] [--all] [--hold-state <state>]
                           [--slug <slug>] [--code <code>]
 
@@ -52,7 +52,7 @@ and cursors_read (status not_read, with the --detail command as fix); --detail
 runs them. Never read a skipped field as "none".
 
 The loop: run this every few minutes; when committed_last_10m is 0 and
-needs_human is false, run \`gbrain sync unblock --source <id> --apply\`, then
+needs_human is false, run \`foresights sync unblock --source <id> --apply\`, then
 the sync it prints; when needs_human is true, page a person with the slug it
 names; when a *_read field is not_read and you need it, run its fix.
 
@@ -85,7 +85,7 @@ Decision table: docs/guides/sync-unblock-runbook.md
 }
 
 export function printSyncUnblockHelp(): void {
-  console.log(`Usage: gbrain sync unblock --source <id> [--apply] [--no-llm] [--no-repair] [--json]
+  console.log(`Usage: foresights sync unblock --source <id> [--apply] [--no-llm] [--no-repair] [--json]
 
 Performs the safe action for every held file of a managed source and refuses
 the rest by name. Without --apply it previews. Idempotent; it writes only
@@ -98,8 +98,8 @@ leaves a file out, and each refusal names the file, why, and its fix.
   preparation_stalled   re-screened (the writer, not the file, stalled)
   concurrent_write      refused: a person reconciles the two versions
   file_drift            refused: a person picks the database or the file
-                        (gbrain repair file-drift --prefer database|file)
-  ${CONTENT_HOLD_CODES.padEnd(22)}repaired by the content-repair lane (gbrain repair content,
+                        (foresights repair file-drift --prefer database|file)
+  ${CONTENT_HOLD_CODES.padEnd(22)}repaired by the content-repair lane (foresights repair content,
                         each file bound to the bytes its plan read, under the
                         fences.repair caps), then re-screened; per
                         path: repaired | held | needs_human | skipped with the reason,
@@ -119,10 +119,10 @@ Runbook: docs/guides/sync-unblock-runbook.md
 }
 
 /**
- * #6803: the operator verb a `gbrain sync` argument vector asks for, shared by
+ * #6803: the operator verb a `foresights sync` argument vector asks for, shared by
  * the CLI's pre-connect preflight (no watchdog, no owner delegation) and
- * `runSyncInner`. `gbrain sync --status` is the status read, the same as
- * `gbrain sync status` (it used to run a full sync, because nothing read the
+ * `runSyncInner`. `foresights sync --status` is the status read, the same as
+ * `foresights sync status` (it used to run a full sync, because nothing read the
  * flag). `--preview` and `--check` are read by no sync path, so a sync that
  * would silently run past them is refused.
  */
@@ -132,8 +132,8 @@ export function syncOperatorVerb(args: readonly string[]): 'status' | 'unblock' 
   const unread = args.find(a => a === '--preview' || a === '--check' || a.startsWith('--preview=') || a.startsWith('--check='));
   if (unread) {
     const flag = unread.split('=')[0];
-    throw opError('invalid_params', `gbrain sync does not read ${flag}; it would have run a full sync.`,
-      'Preview a sync with --dry-run, or read where the source stands with gbrain sync status.',
+    throw opError('invalid_params', `foresights sync does not read ${flag}; it would have run a full sync.`,
+      'Preview a sync with --dry-run, or read where the source stands with foresights sync status.',
       { fix: { argv: ['gbrain', 'sync', ...args.filter(a => a !== unread && a !== '--dry-run'), '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'The same sync with --dry-run reports what it would import and writes nothing.' } });
   }
@@ -143,7 +143,7 @@ export function syncOperatorVerb(args: readonly string[]): 'status' | 'unblock' 
 /** `runSyncInner`'s operator route: `sync --status` prints one hint, then runs exactly `sync status`. */
 export async function runSyncOperator(engine: BrainEngine, verb: 'status' | 'unblock', args: string[]): Promise<void> {
   if (args[0] === verb) return verb === 'status' ? runSyncStatus(engine, args.slice(1)) : runSyncUnblock(engine, args.slice(1));
-  process.stderr.write('[gbrain] sync --status is the status read, the same as gbrain sync status (it never syncs).\n');
+  process.stderr.write('[foresights] sync --status is the status read, the same as foresights sync status (it never syncs).\n');
   return runSyncStatus(engine, args.filter(a => a !== '--status'));
 }
 
@@ -168,17 +168,17 @@ const holdState = (hold: SyncStatusHold): HoldState => hold.needs_human ? 'needs
  * A first page that holds every hold keeps the earlier shape (`holds` only, beside the summary).
  */
 function holdsListing(holds: readonly SyncStatusHold[], args: string[], sourceId: string) {
-  const { request, rest } = parseListingFlags(args, 'gbrain sync status');
+  const { request, rest } = parseListingFlags(args, 'foresights sync status');
   const value = (flag: string, example: string) => {
     const at = rest.indexOf(flag);
     if (at < 0) return undefined;
     const given = rest[at + 1];
-    if (given === undefined || given === '' || given.startsWith('--')) throw opError('invalid_params', `${flag} needs a value.`, `Example: gbrain sync status --source ${sourceId} ${flag} ${example} --json`);
+    if (given === undefined || given === '' || given.startsWith('--')) throw opError('invalid_params', `${flag} needs a value.`, `Example: foresights sync status --source ${sourceId} ${flag} ${example} --json`);
     return given;
   };
   const state = value('--hold-state', 'needs_human');
   if (state !== undefined && !HOLD_STATES.includes(state as HoldState)) {
-    throw opError('invalid_params', `--hold-state must be one of ${HOLD_STATES.join(', ')} (got "${state}").`, `Example: gbrain sync status --source ${sourceId} --detail --hold-state needs_human --json`);
+    throw opError('invalid_params', `--hold-state must be one of ${HOLD_STATES.join(', ')} (got "${state}").`, `Example: foresights sync status --source ${sourceId} --detail --hold-state needs_human --json`);
   }
   const slug = value('--slug', '<slug>');
   const code = value('--code', 'page_write_failed');
@@ -248,7 +248,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   if (listing.paging && !listing.paging.complete) {
     const codes = Object.entries(listing.summary.by_code.counts).map(([code, n]) => `${code} ${n}`).join(', ');
     console.log(`    ... ${listing.matched - listing.rows.length} more not listed here (${codes}${listing.summary.by_code.other ? `, other ${listing.summary.by_code.other}` : ''}); `
-      + `${listing.paging?.next_command ? listing.paging.next_command.join(' ') : `gbrain sync status --source ${sourceId} --detail --json`} lists them`);
+      + `${listing.paging?.next_command ? listing.paging.next_command.join(' ') : `foresights sync status --source ${sourceId} --detail --json`} lists them`);
   }
   const superseded = status.last_error?.superseded;
   if (status.last_error) console.log(`    ${status.last_error.path ?? ''}: ${status.last_error.code}${superseded ? ` (superseded: ${SUPERSEDED_TEXT[superseded.by ?? 'commit']} at ${superseded.at}, after this error${superseded.age_seconds !== undefined ? `, recorded ${Math.round(superseded.age_seconds / 60)} min ago` : ''})` : ` safe: ${status.last_error.safe_actions.join(',')}${status.last_error.needs_human ? ` NEEDS HUMAN: ${status.last_error.human_reason}` : ''}`}`);

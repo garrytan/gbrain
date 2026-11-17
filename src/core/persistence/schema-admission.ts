@@ -31,8 +31,8 @@ export async function readSchemaBehind(engine: Pick<BrainEngine, 'executeRaw'>):
 /** The fix of a schema-behind refusal: apply-migrations as the schema owner, verified read-only with doctor. */
 export function schemaBehindFix(ownsSchema: boolean): Action {
   return { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: ownsSchema ? 'agent' : 'host_admin', requires_exclusive: true,
-    why: 'Applies the pending schema migrations. It needs a database role that owns the gbrain tables; then resubmit the write (the same request_id works, nothing was admitted).',
-    ...(ownsSchema ? {} : { user_message: 'The brain schema is behind this gbrain build and this connection\'s database role does not own the gbrain tables. Run gbrain apply-migrations --yes on the brain host as the role that owns them, then I will resubmit the write.' }),
+    why: 'Applies the pending schema migrations. It needs a database role that owns the foresights tables; then resubmit the write (the same request_id works, nothing was admitted).',
+    ...(ownsSchema ? {} : { user_message: 'The brain schema is behind this foresights build and this connection\'s database role does not own the foresights tables. Run foresights apply-migrations --yes on the brain host as the role that owns them, then I will resubmit the write.' }),
     verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: 'docs/guides/write-refusals.md#schema_behind' };
 }
 
@@ -49,8 +49,8 @@ export async function schemaAdmissionRefusal(tx: BrainEngine): Promise<Operation
   const [owner] = await tx.executeRaw<{ owns: boolean | null }>(
     `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS owns FROM pg_class c WHERE c.oid = to_regclass('sources')`);
   const ownsSchema = owner?.owns !== false;
-  return opError('migrations_pending', `The brain schema is at v${current} and this gbrain build needs v${LATEST_SCHEMA_VERSION}, so the write was not admitted.`,
-    `Not retryable as is: the same write refuses until the schema is migrated. Apply the pending migrations with \`gbrain apply-migrations --yes\`${ownsSchema ? '' : ' as the database role that owns the gbrain tables (this connection\'s role does not)'}, then resubmit; nothing was admitted, so the same request_id commits.`,
+  return opError('migrations_pending', `The brain schema is at v${current} and this foresights build needs v${LATEST_SCHEMA_VERSION}, so the write was not admitted.`,
+    `Not retryable as is: the same write refuses until the schema is migrated. Apply the pending migrations with \`foresights apply-migrations --yes\`${ownsSchema ? '' : ' as the database role that owns the foresights tables (this connection\'s role does not)'}, then resubmit; nothing was admitted, so the same request_id commits.`,
     { reason: SCHEMA_BEHIND_REASON, why: 'The write path of this build reads tables or columns that only the pending migrations add, so publishing now would fail on the missing schema and spend the request id.',
       fix: schemaBehindFix(ownsSchema) });
 }

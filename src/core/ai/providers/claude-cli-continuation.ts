@@ -154,7 +154,7 @@ const noticed = new Set<ContinuationUnprovenReason>();
 function unproven(reason: ContinuationUnprovenReason): ClaudeCliAnswer {
   if (!noticed.has(reason)) {
     noticed.add(reason);
-    process.stderr.write(`[claude-cli] continuation_unproven (${reason}): Claude Code continued an answer past its output cap and gbrain could not prove the full text, so the call finished as length with no text and no tool calls; the caller retries or escalates as for any capped answer. Remedy: ${CONTINUATION_UNPROVEN_REMEDY[reason]}. Details: gbrain errors continuation_unproven.\n`);
+    process.stderr.write(`[claude-cli] continuation_unproven (${reason}): Claude Code continued an answer past its output cap and foresights could not prove the full text, so the call finished as length with no text and no tool calls; the caller retries or escalates as for any capped answer. Remedy: ${CONTINUATION_UNPROVEN_REMEDY[reason]}. Details: foresights errors continuation_unproven.\n`);
   }
   return { kind: 'unproven', reason };
 }

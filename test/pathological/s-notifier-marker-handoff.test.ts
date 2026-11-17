@@ -11,7 +11,7 @@
  *  - a submitter that crashed after its upsert (no job queued) is drained the same way after a resident starts;
  *  - a dry run stays read-only (no marker read, cleared or written);
  *  - the push webhook coalesces a second push into the waiting job and keeps the newer sha; a managed push answers
- *    refresh_required (409) with the gbrain sources refresh fix and queues nothing;
+ *    refresh_required (409) with the foresights sources refresh fix and queues nothing;
  *  - sync trigger --json reports queued then coalesced on either engine (stdout keeps job_id=N, exit 0), and with no
  *    resident watching the source adds resident: null and the no_resident notice with its fix.
  * Real git, real store, real handler, real delegated runner. PGLite always, Postgres when DATABASE_URL is set.

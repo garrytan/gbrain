@@ -14,7 +14,7 @@ import { sanitizeForJsonb } from '../batch-rows.ts';
 export function invalidConnectorText(field: string): OperationError {
   const error = new OperationError('invalid_connector_text',
     `The connector item's ${field} contains a NUL or an unpaired UTF-16 surrogate, so it cannot be stored.`,
-    'The item is counted toward a hold; after it is held, re-attempt it with gbrain sources retry-held <source> once the provider data is fixed.',
+    'The item is counted toward a hold; after it is held, re-attempt it with foresights sources retry-held <source> once the provider data is fixed.',
     'docs/guides/write-refusals.md#invalid-connector-text');
   error.writeError = 'invalid_connector_text';
   return error;

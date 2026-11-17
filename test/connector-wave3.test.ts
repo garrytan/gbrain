@@ -72,9 +72,9 @@ test('account pin: a contacts-only or calendar-only credential swap refuses befo
     expect(error.message).not.toContain('someone-else@example.invalid');
     expect(error.suggestion).toContain('pinned to owner@example.invalid; the credential resolves to someone-else@example.invalid');
     expect(error.suggestion).toContain('g_token_env (CONNECTOR_TEST_TOKEN)');
-    expect(error.suggestion).toContain(`gbrain sync --source ${f.id}`);
-    expect(error.suggestion).toContain(`gbrain sources archive ${f.id}`);
-    expect(error.suggestion).toContain('gbrain google setup --account someone-else@example.invalid');
+    expect(error.suggestion).toContain(`foresights sync --source ${f.id}`);
+    expect(error.suggestion).toContain(`foresights sources archive ${f.id}`);
+    expect(error.suggestion).toContain('foresights google setup --account someone-else@example.invalid');
     expect(await since(engine, f.id, before)).toHaveLength(0);
     // --reset-checkpoint never authorizes an account change.
     await expect(google(engine, f, base, 'someone-else@example.invalid', { resetCheckpoint: true }, config)).rejects.toMatchObject({ code: 'connector_account_changed' });
@@ -106,7 +106,7 @@ test('account pin: a GitHub App without an install id that resolves a different 
     const refused = await run().catch(e => e) as { code: string; suggestion: string };
     expect(refused.code).toBe('connector_account_changed');
     expect(refused.suggestion).toContain('--app-install 200');
-    expect(refused.suggestion).toContain(`gbrain sources archive ${f.id}`);
+    expect(refused.suggestion).toContain(`foresights sources archive ${f.id}`);
     expect(await since(engine, f.id, before)).toHaveLength(0);
     // A token refresh re-mints for the installation first resolved, never a newly discovered one.
     const { AppTokenProvider } = await import('../src/core/github-source.ts');
@@ -164,7 +164,7 @@ test('--reset-checkpoint re-walks once: newly covered items import, unchanged pa
   }
 }), 180_000);
 
-test('freshness: a quiet run with an unchanged cursor stamps last_sync_at under the lease so gbrain waiting stays fresh; a failed sweep does not stamp', async () => withEnv(env, async () => {
+test('freshness: a quiet run with an unchanged cursor stamps last_sync_at under the lease so foresights waiting stays fresh; a failed sweep does not stamp', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const f = await source(engine, googleConfig);
     let fail = false;
@@ -276,7 +276,7 @@ test('mixed versions: a v2 receipt refused by an old consumer names the consumer
   const refusal = (row: WriteRequest) => { try { writeResponse(row); } catch (error) { return error as { code: string; suggestion: string; detail?: string; docs?: string }; } throw new Error('expected refusal'); };
   const old = refusal(receipt('unsupported_mutation_protocol', 'connector_v2_import'));
   expect(old).toMatchObject({ code: 'unsupported_mutation_protocol', detail: 'consumer_upgrade_required', docs: 'docs/guides/write-refusals.md#unsupported-mutation-protocol' });
-  expect(old.suggestion).toContain('gbrain upgrade on every consumer and worktree-owner host');
+  expect(old.suggestion).toContain('foresights upgrade on every consumer and worktree-owner host');
   for (const kind of ['connector_v2_import', 'managed_sync_import']) {
     const denied = refusal(receipt('permission_denied', kind));
     expect(denied.code).toBe('permission_denied');
@@ -311,7 +311,7 @@ test('mixed versions: a retired managed_connector_* intent fails connector_inten
     if (phase === 'pre_upgrade') {
       expect(delivered.detail).toBe('pre_upgrade');
       expect(delivered.suggestion).toContain('No host upgrade is needed');
-    } else expect(delivered.suggestion).toContain('Upgrade gbrain on the host that runs connector jobs');
+    } else expect(delivered.suggestion).toContain('Upgrade foresights on the host that runs connector jobs');
     await disposePersistenceConsumer(engine);
   }
 }), 180_000);
@@ -367,7 +367,7 @@ test('migration 176: re-keys the newest committed checkpoint, re-walks a compact
     expect(await engine.executeRaw("SELECT fingerprint FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1", [archivedKey])).toHaveLength(1);
     expect(report.rewalking).toEqual([compacted.id]);
     expect(lines.join('\n')).toContain(`${live.id}: resumed from pre-upgrade checkpoint of`);
-    expect(lines.join('\n')).toContain(`to re-walk: gbrain sync --source ${live.id} --reset-checkpoint`);
+    expect(lines.join('\n')).toContain(`to re-walk: foresights sync --source ${live.id} --reset-checkpoint`);
     const fingerprints = (await engine.executeRaw<{ op: string; fingerprint: string }>("SELECT op,fingerprint FROM op_checkpoints WHERE op IN ('managed-connector','managed-connector-retry')")).map(row => row.fingerprint);
     expect(fingerprints).not.toContain(orphan);
     expect(fingerprints).toContain(newer);
@@ -415,7 +415,7 @@ test('doctor counts a checkpoint orphaned by a content change once it is 7 days 
     expect(await count()).toBe(before + 1);
     const aged = await checkConnectorCheckpoints(engine);
     expect(aged.status).toBe('warn');
-    expect(aged.message).toContain('gbrain repair connector-checkpoints');
+    expect(aged.message).toContain('foresights repair connector-checkpoints');
     const ctx = { engine, config: { engine: engine.kind }, remote: false, logger: console } as unknown as OperationContext;
     const scope = await resolveRepairScope(engine);
     const dry = await runRepair(ctx, connectorCheckpointsRepair, scope, { apply: false });

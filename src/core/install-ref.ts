@@ -11,5 +11,5 @@
  * `latest-stable` on its own and does not follow this constant.
  */
 export const INSTALL_REF = 'stable';
-export const INSTALL_PIN = `github:garrytan/gbrain#${INSTALL_REF}`;
-export const INSTALL_RAW_BASE = `https://raw.githubusercontent.com/garrytan/gbrain/${INSTALL_REF}`;
+export const INSTALL_PIN = `github:aimonk2025/gbrain#${INSTALL_REF}`;
+export const INSTALL_RAW_BASE = `https://raw.githubusercontent.com/aimonk2025/gbrain/${INSTALL_REF}`;

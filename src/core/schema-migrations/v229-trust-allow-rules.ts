@@ -5,7 +5,7 @@ import { TRUST_ALLOW_RULES_SQL } from '../trust/allow-rules.ts';
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
 // Memory trust (#5575 DX-14, ENG-20): `trust_allow_rules`, the owner's
-// receipted allow rules for the write gate (`gbrain trust allow`). A rule
+// receipted allow rules for the write gate (`foresights trust allow`). A rule
 // names a source and optionally a server-stamped source URI prefix and one
 // reason family; removal keeps the row with removed_at as its receipt. A new
 // table with no backfill. No

@@ -88,7 +88,7 @@ export function outstandingCapacityOf(error: OperationError): { outstanding: num
 
 /**
  * GST-1387: how long an interactive write waits out a refresh fence (`worktree_refreshing`) before it is refused. A
- * `gbrain sources refresh` tick fences its checkout while it drains, fast-forwards and syncs; a write refused there was
+ * `foresights sources refresh` tick fences its checkout while it drains, fast-forwards and syncs; a write refused there was
  * never journaled, so re-running its admission is safe. The cap stays well under a caller's own deadline (the CLI's 30 s
  * remote timeout); past it the refusal is returned with `fix.next: wait` and its `retry_after_ms`, never a success.
  */

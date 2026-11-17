@@ -1,5 +1,5 @@
 /**
- * #4583 — `gbrain sync` refuses an UNSCOPED single-source run that would
+ * #4583 — `foresights sync` refuses an UNSCOPED single-source run that would
  * silently land in source 'default' on a bulk-non-default brain.
  *
  * The hermetic + real-PGLite guard suites pin `assessDefaultWriteGuard`

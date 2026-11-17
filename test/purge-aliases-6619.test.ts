@@ -3,7 +3,7 @@
  * the slug redirects resolving to it), and doctor `dangling_aliases` printed
  * raw DELETE SQL that the managed writer guard refuses (and that would also
  * have dropped the aliases of soft-deleted pages a restore still needs).
- * Purge now removes both, and `gbrain repair aliases` clears leftovers whose
+ * Purge now removes both, and `foresights repair aliases` clears leftovers whose
  * target page row is gone, keeping soft-deleted targets and rename redirects.
  */
 import { expect, test } from 'bun:test';
@@ -45,7 +45,7 @@ test('#6619 repair aliases removes orphaned aliases only; doctor names the per-s
   const doctor = await checkDanglingAliases(engine);
   expect(doctor.check.status).toBe('warn');
   expect(doctor.check.message).toContain('4 alias rows');
-  expect(doctor.check.message).toContain('gbrain repair aliases --source default');
+  expect(doctor.check.message).toContain('foresights repair aliases --source default');
   expect(doctor.check.message).toContain('soft-deleted');
   expect(doctor.check.message).not.toContain('DELETE FROM');
   expect(doctor.check.fix?.argv).toEqual(['gbrain', 'repair', 'aliases', '--source', 'default']);
@@ -61,7 +61,7 @@ test('#6619 repair aliases removes orphaned aliases only; doctor names the per-s
   expect(redirects.map(r => r.alias_slug)).toEqual(['concepts/purged-example']);
   const after = await checkDanglingAliases(engine);
   expect(after.check.message).toContain('1 alias rows');
-  expect(after.check.message).not.toContain('gbrain repair aliases');
+  expect(after.check.message).not.toContain('foresights repair aliases');
 }, { setup: async ({ engine, root }) => {
   gitRoot({ root });
   for (const slug of ['concepts/kept-example', 'concepts/soft-deleted-example']) {

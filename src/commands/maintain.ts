@@ -1,5 +1,5 @@
 /**
- * gbrain maintain — conservative self-healing maintenance.
+ * foresights maintain — conservative self-healing maintenance.
  *
  * This command automates the safe parts of the operator runbook:
  *   - stale link/timeline extraction
@@ -114,7 +114,7 @@ async function reportSkillHealth(): Promise<MaintenanceAction> {
   if (!dir) return { name: 'skill_health', status: 'skipped', message: 'no skills folder found' };
   const { skillHealthFor } = await import('./skillpack/health.ts');
   const report = skillHealthFor(dir);
-  const message = skillHealthSummary(report) + (report.findings.length ? '; run `gbrain skillpack health` for the fixes' : '');
+  const message = skillHealthSummary(report) + (report.findings.length ? '; run `foresights skillpack health` for the fixes' : '');
   return { name: 'skill_health', status: 'ok', message, details: { scope: report.scope, totals: report.totals } };
 }
 
@@ -234,12 +234,12 @@ async function runCycleFreshnessMaintenance(
 export async function runMaintain(engine: BrainEngine, args: string[]): Promise<MaintainReport | void> {
   const opts = parseMaintainArgs(args);
   if (opts.help) {
-    console.log(`Usage: gbrain maintain [--safe] [--dry-run] [--json]
-       gbrain maintain --unattended [--runner <name>] [--json]
-       gbrain maintain --status [--json]
-       gbrain maintain --purge [--yes --expect <hash>] [--json]
-       gbrain maintain --schedule [--yes | --dry-run] [--json]
-       gbrain maintain --unschedule [--json]
+    console.log(`Usage: foresights maintain [--safe] [--dry-run] [--json]
+       foresights maintain --unattended [--runner <name>] [--json]
+       foresights maintain --status [--json]
+       foresights maintain --purge [--yes --expect <hash>] [--json]
+       foresights maintain --schedule [--yes | --dry-run] [--json]
+       foresights maintain --unschedule [--json]
 
 Conservative self-healing maintenance.
 
@@ -257,7 +257,7 @@ Modes:
                 apply it with --yes --expect <hash> from the preview.
   --schedule    Opt in to an operating-system schedule (launchd, systemd user timer or
                 crontab) that runs --unattended every 6 hours; --yes approves the
-                install, --dry-run shows what it writes. A running gbrain serve
+                install, --dry-run shows what it writes. A running foresights serve
                 already runs free upkeep while idle, so most installs need none.
   --unschedule  Remove that schedule.
   --json        Emit a structured before/action/after report.
@@ -265,8 +265,8 @@ Modes:
 Not auto-applied:
   source-file frontmatter fixes, schema-pack upgrades, atom-pack changes,
   semantic hub-link guesses, and destructive cleanup.
-  The source cycle skips the page purge (\`gbrain pages purge-deleted\`) and
-  every phase that calls a model (\`gbrain dream\`).
+  The source cycle skips the page purge (\`foresights pages purge-deleted\`) and
+  every phase that calls a model (\`foresights dream\`).
 `);
     return;
   }
@@ -301,7 +301,7 @@ Not auto-applied:
 }
 
 function printMaintainReport(report: MaintainReport): void {
-  console.log(`GBrain maintain (${report.mode})`);
+  console.log(`Foresights maintain (${report.mode})`);
   console.log(
     `Before: brain_score=${Math.round(report.before.health.brain_score)}/100 ` +
     `stale=${report.before.health.stale_pages} islands=${report.before.health.orphan_pages} ` +
@@ -316,7 +316,7 @@ function printMaintainReport(report: MaintainReport): void {
     `doctor=${report.after.doctor.status}`,
   );
   if (report.mode === 'dry-run') {
-    console.log('Run `gbrain maintain --safe` to apply safe actions.');
+    console.log('Run `foresights maintain --safe` to apply safe actions.');
   }
 }
 
@@ -357,7 +357,7 @@ async function runStatusCli(engine: BrainEngine, opts: MaintainOptions): Promise
   if (status.last_run) console.log(`Last run: ${status.last_run} (${status.runner}), next due: ${status.next_due_at}`);
   for (const p of status.parked) console.log(`Parked: ${p.key} since ${p.since} (${p.slices} slices)`);
   if (status.held.length) console.log(`Held back on this brain (they would call a provider): ${status.held.join(', ')}`);
-  console.log(`Left for you (paid, opt-in; gbrain dream or an autopilot runs them): ${status.paid_phases_opt_in.join(', ')}`);
+  console.log(`Left for you (paid, opt-in; foresights dream or an autopilot runs them): ${status.paid_phases_opt_in.join(', ')}`);
   if (fix) console.log(`Fix: ${fix.argv!.join(' ')}: ${fix.why}`);
   if (alternative) console.log(`Or: ${alternative.argv!.join(' ')}: ${alternative.why}`);
 }
@@ -380,7 +380,7 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
   if (!opts.yes) {
     const preview = { mode: 'preview', retention_hours: retention, count: pages.length, pages: pages.slice(0, 50), blocked: selection.blocked.length, hash,
       ...(pages.length ? { apply: renderAction({ argv: apply, consent: ['destructive'], actor: 'agent', requires_exclusive: false,
-        why: `Permanently deletes the ${pages.length} page(s) listed (soft-deleted more than ${retention}h ago); gbrain restore cannot bring them back.` }, cliRenderContext()) } : {}) };
+        why: `Permanently deletes the ${pages.length} page(s) listed (soft-deleted more than ${retention}h ago); foresights restore cannot bring them back.` }, cliRenderContext()) } : {}) };
     if (opts.json) { console.log(JSON.stringify(preview, null, 2)); return; }
     console.log(`${pages.length} soft-deleted page(s) are past the ${retention}h recovery window.`);
     for (const p of pages.slice(0, 50)) console.log(`  ${p.source_id}/${p.slug}`);
@@ -391,7 +391,7 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
   if (opts.expect !== hash) {
     const why = opts.expect ? `The purge set changed since the preview (expected ${opts.expect}, now ${hash}); nothing was deleted.` : 'A purge needs --expect <hash> from the preview; nothing was deleted.';
     const fix: Action = { argv: ['gbrain', 'maintain', '--purge'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the current purge set and its hash; it deletes nothing.' };
-    setCliExitVerdict(writeCliError(opError('preview_changed', why, 'Preview again: gbrain maintain --purge', { fix, detail: `current hash ${hash}` }), 'maintain', { json: !!opts.json }));
+    setCliExitVerdict(writeCliError(opError('preview_changed', why, 'Preview again: foresights maintain --purge', { fix, detail: `current hash ${hash}` }), 'maintain', { json: !!opts.json }));
     return;
   }
   const previewed = new Set(pages.map((p) => `${p.source_id}/${p.slug}`));

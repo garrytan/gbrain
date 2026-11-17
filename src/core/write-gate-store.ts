@@ -6,7 +6,7 @@
  * Writers record inside their publication transaction (pass the `tx`), so a
  * rolled-back write leaves no orphan receipt. Only flag and quarantine
  * verdicts are recorded; `allow` and `reject` write nothing here. Owner
- * review (`gbrain trust release|drop`, `gbrain quarantine list`) reads and
+ * review (`foresights trust release|drop`, `foresights quarantine list`) reads and
  * decides holds through the list/release/drop functions; releasing a hold
  * returns its payload so the confirm path can publish it at `user_confirmed`
  * in the same transaction.

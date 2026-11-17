@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { planBackfill, planUndo, run, type ReleaseDeps, type ReleaseRow } from '../../scripts/release-channel.ts';
 import { renderTagMessage, rolledUpNotes } from '../../scripts/promote-stable.ts';
 
-const REPO = 'garrytan/gbrain';
+const REPO = 'aimonk2025/gbrain';
 const row = (id: number, version: string, prerelease = false, draft = false): ReleaseRow => ({ id, tag_name: `v${version}`, draft, prerelease });
 const RELEASES = [row(5, '1.0.5'), row(4, '1.0.4', true), row(3, '1.0.3'), row(2, '1.0.2'), row(1, '1.0.1'), row(9, '1.0.6', false, true), { id: 8, tag_name: 'nightly', draft: false, prerelease: false }];
 const CHANGELOG = ['## [1.0.5] - d', 'five', '## [1.0.4] - d', 'four', '## [1.0.3] - d', 'three', '## [1.0.2] - d', 'two', '## [1.0.1] - d', 'one', ''].join('\n');

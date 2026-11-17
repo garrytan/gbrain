@@ -1,5 +1,5 @@
 /**
- * #7679 state matrix 7d of `gbrain sources refresh`: an interrupted refresh that the unattended paths cannot verify, or
+ * #7679 state matrix 7d of `foresights sources refresh`: an interrupted refresh that the unattended paths cannot verify, or
  * that a live or remote holder owns, is never moved. Split from persistence-worktree-refresh.test.ts with 7c
  * (worktree-refresh-settle-matrix-7679.test.ts) so each Postgres file fits run-e2e.sh's per-file cap (#8025). Postgres runs
  * through test/e2e/worktree-refresh-unmoved-matrix-postgres.test.ts.
@@ -114,7 +114,7 @@ test('7d. #7679 state matrix: an interrupted refresh that the unattended paths c
         await refusedWith(refreshWorktree(f.engine, f.alpha), plainCode);
         // #7731: next names the host the command must run on.
         if (kind !== 'recovery_required') expect(await writerStatus(), label).toMatchObject({ liveness: 'unknown', auto_recovery: 'unknown', fix: { actor: 'host_admin' },
-          next: `On host ${hostname()} (${foreignHost}), which holds the refresh lock: gbrain sources writer status --source ${f.alpha} --json` });
+          next: `On host ${hostname()} (${foreignHost}), which holds the refresh lock: foresights sources writer status --source ${f.alpha} --json` });
         await f.engine.executeRaw('UPDATE persistence_worktree_refreshes SET outcome=$2::text::jsonb WHERE id=$1::uuid', [orphan.id, JSON.stringify(outcome)]);
       } else {
         const headFile = join(f.root, '.git', 'HEAD');
@@ -123,7 +123,7 @@ test('7d. #7679 state matrix: an interrupted refresh that the unattended paths c
         try {
           if (action === 'plain_head_unreadable') {
             const refused = await refusedWith(refreshWorktree(f.engine, f.alpha), plainCode);
-            if (kind !== 'recovery_required') expect(refused.suggestion, label).toContain(`gbrain sources writer status --source ${f.alpha} --json`);
+            if (kind !== 'recovery_required') expect(refused.suggestion, label).toContain(`foresights sources writer status --source ${f.alpha} --json`);
           } else {
             // The scan aborts a dead drain (it does not depend on HEAD) and leaves every other kind for a scan that can read HEAD.
             expect(await resumeWorktreeRefreshes(f.engine), label).toBe(kind === 'draining' ? 1 : 0);

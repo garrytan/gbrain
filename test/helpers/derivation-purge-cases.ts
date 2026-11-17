@@ -1027,7 +1027,7 @@ export function registerDerivationPurgeStallsCases(kind: 'pglite' | 'postgres'):
         const first = await h.brain.call('purge_fact', a);
         expect({ state: first.body.state, completion: first.body.completion, exit: first.body.exit_code, sweep: first.body.derivation_sweep, unread })
           .toEqual({ state: 'committed', completion: 'incomplete', exit: 75, sweep: 'stalled', unread: 1 });
-        expect((first.body.next as string[]).some(n => n.includes(`gbrain forget --purge --status --request-id ${a.request_id} --continue`))).toBe(true);
+        expect((first.body.next as string[]).some(n => n.includes(`foresights forget --purge --status --request-id ${a.request_id} --continue`))).toBe(true);
         const b = await purge(idB);
         expect({ completion: b.completion, sweep: b.derivation_sweep }).toEqual({ completion: b.completion === 'complete' ? 'complete' : 'committed', sweep: undefined });
         complete(b);
@@ -1072,7 +1072,7 @@ export function registerDerivationPurgeStallsCases(kind: 'pglite' | 'postgres'):
         const first = (await h.brain.call('purge_fact', params)).body;
         expect({ sweep: first.derivation_sweep, completion: first.completion, exit: first.exit_code, statements: sweepStatements().length })
           .toEqual({ sweep: 'pending', completion: 'incomplete', exit: 75, statements: 1 });
-        expect((first.next as string[]).some(n => n.includes(`gbrain forget --purge --status --request-id ${params.request_id} --continue`))).toBe(true);
+        expect((first.next as string[]).some(n => n.includes(`foresights forget --purge --status --request-id ${params.request_id} --continue`))).toBe(true);
         const done = (await h.brain.call('purge_fact', { status: true, request_id: params.request_id, continue: true })).body;
         expect(done.derivation_sweep).toBeUndefined();
       } finally {
@@ -1104,7 +1104,7 @@ export function registerDerivationPurgeStallsCases(kind: 'pglite' | 'postgres'):
       }
       const open = derivationStore(pending!)! as Record<string, any>;
       expect({ sweep: pending!.derivation_sweep, status: open.status, reason: open.reason }).toEqual({ sweep: 'pending', status: 'unverified', reason: 'verification_deadline' });
-      expect((pending!.next as string[]).some(n => n.includes(`gbrain forget --purge --status --request-id ${params.request_id} --continue`))).toBe(true);
+      expect((pending!.next as string[]).some(n => n.includes(`foresights forget --purge --status --request-id ${params.request_id} --continue`))).toBe(true);
       const done = (await h.brain.call('purge_fact', { status: true, request_id: params.request_id, continue: true })).body;
       expect({ sweep: done.derivation_sweep, recorded: await sweepsRecorded() }).toEqual({ sweep: undefined, recorded: 0 });
     }, 600_000);
@@ -1116,7 +1116,7 @@ export function registerDerivationPurgeStallsCases(kind: 'pglite' | 'postgres'):
       __setDerivationSweepLimitsForTests({ batchRows: 50, totalMs: 0 });
       try { expect((await h.brain.call('purge_fact', params)).body.derivation_sweep).toBe('pending'); } finally { __setDerivationSweepLimitsForTests(null); }
       const [check] = await derivationPurgeSweepsEntry.run({ engine: h.brain.engine } as never) as Array<Record<string, any>>;
-      const command = `gbrain forget --purge --status --request-id ${params.request_id} --continue`;
+      const command = `foresights forget --purge --status --request-id ${params.request_id} --continue`;
       expect({ status: check!.status, named: check!.message.includes(params.request_id), argv: check!.fix?.argv, category: categorizeCheck('derivation_purge_sweeps') })
         .toEqual({ status: 'warn', named: true, argv: command.split(' '), category: 'brain' });
       expect(check!.details.records).toContainEqual(expect.objectContaining({ request_id: params.request_id, state: 'pending', command }));
@@ -1158,7 +1158,7 @@ export function registerDerivationPurgeStallsCases(kind: 'pglite' | 'postgres'):
       const store = derivationStore(first!)! as Record<string, any>;
       expect({ planted: plantedRows, status: store.status, remaining: store.remaining, probe: store.probe, sweep: first!.derivation_sweep, completion: first!.completion })
         .toEqual({ planted: 1, status: 'incomplete', remaining: 1, probe: 'statement_deadline', sweep: 'pending', completion: 'incomplete' });
-      expect((first!.next as string[]).some(n => n.includes(`gbrain forget --purge --status --request-id ${params.request_id} --continue`))).toBe(true);
+      expect((first!.next as string[]).some(n => n.includes(`foresights forget --purge --status --request-id ${params.request_id} --continue`))).toBe(true);
       const done = await continueToEnd(params.request_id);
       expect({ sweep: done.derivation_sweep, rows: await exactHolders(h.brain.engine, late, planted), recorded: await sweepsRecorded() }).toEqual({ sweep: undefined, rows: [], recorded: 0 });
     }, 600_000);

@@ -7,7 +7,7 @@
  *  - `CalendarClient.probeCalendar` classifies the live read;
  *  - doctor `google_calendar_readable` reads the stored result (zero-network)
  *    and `google status --no-probe` reports the same;
- *  - `gbrain sources set-calendar` changes the source's calendar id;
+ *  - `foresights sources set-calendar` changes the source's calendar id;
  *  - (#5012 item 6) changing the contextual retrieval mode prints that
  *    existing pages keep theirs, with the repair command.
  *
@@ -58,8 +58,8 @@ describe('calendar sweep records an unreadable calendar (forced probe)', () => {
       expect(state.calendar_unreadable).toMatchObject({ code: 'calendar_unreadable', calendar_id: 'team0123@group.calendar.google.com', http_status: status });
       const line = logs.join('\n');
       expect(line).toContain('calendar_unreadable');
-      expect(line).toContain('gbrain google calendars --account me@example.com');
-      expect(line).toContain('gbrain sources set-calendar gmail-me <calendar-id>');
+      expect(line).toContain('foresights google calendars --account me@example.com');
+      expect(line).toContain('foresights sources set-calendar gmail-me <calendar-id>');
       expect(line).not.toContain('syncToken expired');
     });
   }
@@ -121,8 +121,8 @@ describe('doctor, google status and sources set-calendar', () => {
     const check = await googleCalendarReadableCheck(engine);
     expect(check.status).toBe('warn');
     expect(check.details).toMatchObject({ code: 'calendar_unreadable', count: 1, sources: [{ source_id: 'gmail-me', http_status: 404 }] });
-    expect(check.message).toContain('gbrain google calendars --account me@example.com');
-    expect(check.message).toContain('gbrain sources set-calendar gmail-me <calendar-id>');
+    expect(check.message).toContain('foresights google calendars --account me@example.com');
+    expect(check.message).toContain('foresights sources set-calendar gmail-me <calendar-id>');
     expect((check.fix as { argv: string[]; verify: { argv: string[] } })).toMatchObject({
       argv: ['gbrain', 'google', 'calendars', '--account', 'me@example.com', '--json'],
       verify: { argv: ['gbrain', 'doctor', '--only', 'google_calendar_readable', '--json'] } });
@@ -137,7 +137,7 @@ describe('doctor, google status and sources set-calendar', () => {
       `SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE id = 'gmail-me'`);
     stored('team0123@group.calendar.google.com');
     expect(await sourceCalendarReadability(engine, row!, null)).toMatchObject({ readable: false, checked: 'last_sync', code: 'calendar_unreadable',
-      fix: { list_command: 'gbrain google calendars --account me@example.com', set_command: 'gbrain sources set-calendar gmail-me <calendar-id>' } });
+      fix: { list_command: 'foresights google calendars --account me@example.com', set_command: 'foresights sources set-calendar gmail-me <calendar-id>' } });
     const probed: string[] = [];
     expect(await sourceCalendarReadability(engine, row!, async (account, id) => { probed.push(`${account} ${id}`); return { readable: true }; }))
       .toEqual({ calendar_id: 'team0123@group.calendar.google.com', readable: true, checked: 'live' });
@@ -163,7 +163,7 @@ describe('doctor, google status and sources set-calendar', () => {
     const r = await cli(() => runSources(engine, ['set-calendar', 'gmail-me', 'family0123@group.calendar.google.com']));
     expect(r.exit).toBeNull();
     expect(r.out).toContain('now syncs calendar family0123@group.calendar.google.com');
-    expect(r.out).toContain('gbrain sync --source gmail-me');
+    expect(r.out).toContain('foresights sync --source gmail-me');
     const [src] = await engine.executeRaw<{ config: Record<string, unknown> }>(`SELECT config FROM sources WHERE id = 'gmail-me'`);
     expect(src!.config.g_calendar_id).toBe('family0123@group.calendar.google.com');
     expect(src!.config.g_account).toBe('me@example.com');
@@ -193,10 +193,10 @@ describe('doctor, google status and sources set-calendar', () => {
   test('#5012 item 6: config set search.contextual_retrieval and sources set-cr-mode print the existing-pages hint', async () => {
     const global = await cli(() => runConfig(engine, ['set', 'search.contextual_retrieval', 'title']));
     expect(global.out).toContain('Existing pages keep the contextual retrieval mode recorded when they were imported');
-    expect(global.out).toContain('gbrain repair contextual-mode --apply');
+    expect(global.out).toContain('foresights repair contextual-mode --apply');
     const perSource = await cli(() => runSources(engine, ['set-cr-mode', 'gmail-me', 'none']));
     expect(perSource.out).toContain('Existing pages keep the contextual retrieval mode');
-    expect(perSource.out).toContain('gbrain repair contextual-mode --source gmail-me --apply');
+    expect(perSource.out).toContain('foresights repair contextual-mode --source gmail-me --apply');
   });
 
   test('config set loops.updates_require_reciprocity validates a boolean and writes nothing on a bad value', async () => {

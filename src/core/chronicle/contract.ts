@@ -15,7 +15,7 @@
  *      content is still live, takes a rolling daily reservation, runs the
  *      judge under a BudgetTracker scope, publishes events, reconciles the
  *      previous generation and records the outcome on the row.
- *   3. `gbrain chronicle-backfill` records `pending` rows with
+ *   3. `foresights chronicle-backfill` records `pending` rows with
  *      trigger='backfill' (exempt from the daily limit and recency rule);
  *      the same phase executes them.
  */

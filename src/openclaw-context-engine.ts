@@ -64,7 +64,7 @@ interface PluginCtx {
   workspaceDir?: string;
   /**
    * Retrieval Reflex (#1981, D1=A): OPTIONAL host-provided resolve capability.
-   * When the OpenClaw host supplies it (backed by the gbrain connection the
+   * When the OpenClaw host supplies it (backed by the foresights connection the
    * gateway already holds), the deterministic pointer layer resolves through it
    * — works on every engine, including PGLite where a second connection is
    * impossible. Narrow by contract: candidates in, a pointer block out (no raw
@@ -86,7 +86,7 @@ export function register(api: PluginApi) {
         : undefined);
     const workspaceDir = ctx.workspaceDir ?? configuredWorkspace;
     if (typeof workspaceDir !== 'string' || !workspaceDir.trim() || !isAbsolute(workspaceDir)) {
-      const reason = 'GBrain context unavailable: the host must supply an absolute workspaceDir (or configure plugins.entries.gbrain-context-engine.config.workspaceDir). No brain source was selected.';
+      const reason = 'Foresights context unavailable: the host must supply an absolute workspaceDir (or configure plugins.entries.gbrain-context-engine.config.workspaceDir). No brain source was selected.';
       api.logger?.warn(reason);
       return {
         info: { id: ENGINE_ID, name: ENGINE_NAME, version: ENGINE_API_VERSION, ownsCompaction: false },
@@ -137,7 +137,7 @@ export function register(api: PluginApi) {
 
 const entry: PluginEntry = {
   id: 'gbrain-context-engine',
-  name: 'GBrain Context Engine',
+  name: 'Foresights Context Engine',
   description: 'Deterministic temporal/spatial context injection on every turn',
   kind: 'context-engine',
   register,

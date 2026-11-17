@@ -92,7 +92,7 @@ function editsAtFirstTransaction(engine: BrainEngine, before: () => void): { eng
 
 const refusedForDrift = (outcome: Awaited<ReturnType<typeof persistSavedIdea>>) => {
   const message = formatSaveOutcome(outcome, { profileLabel: 'lsd', slug: SLUG });
-  return { exit: message.exitCode, named: message.stderr.some(l => l.includes(`${SLUG} (file_database_drift`) && l.includes('gbrain sync --source default')) };
+  return { exit: message.exitCode, named: message.stderr.some(l => l.includes(`${SLUG} (file_database_drift`) && l.includes('foresights sync --source default')) };
 };
 
 for (const { backend, databaseUrl } of pathologicalArms()) {

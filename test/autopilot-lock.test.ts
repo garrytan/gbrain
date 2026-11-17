@@ -46,11 +46,11 @@ describe('decideLockAcquisition', () => {
     });
   });
 
-  test('keeps a lock whose holder is a live gbrain autopilot process', () => {
+  test('keeps a lock whose holder is a live foresights autopilot process', () => {
     writeFileSync(lockPath, '1234');
     expect(decideLockAcquisition(lockPath, process.pid, {
       isPidAlive: (pid) => pid === 1234,
-      readProcessCommand: () => 'gbrain autopilot --repo repo',
+      readProcessCommand: () => 'foresights autopilot --repo repo',
     })).toEqual({
       action: 'exit',
       holderPid: 1234,
@@ -58,7 +58,7 @@ describe('decideLockAcquisition', () => {
     });
   });
 
-  test('keeps a STALE lock whose holder is a live gbrain autopilot process', () => {
+  test('keeps a STALE lock whose holder is a live foresights autopilot process', () => {
     // The age gate applies only to non-autopilot holders: a genuine autopilot
     // sibling is never stolen no matter how old the lockfile mtime is.
     writeFileSync(lockPath, '1234');
@@ -66,7 +66,7 @@ describe('decideLockAcquisition', () => {
     utimesSync(lockPath, stale, stale);
     expect(decideLockAcquisition(lockPath, process.pid, {
       isPidAlive: (pid) => pid === 1234,
-      readProcessCommand: () => 'gbrain autopilot --repo repo',
+      readProcessCommand: () => 'foresights autopilot --repo repo',
     })).toEqual({
       action: 'exit',
       holderPid: 1234,
@@ -226,13 +226,13 @@ describe('readProcessCommand', () => {
 
 describe('looksLikeGbrainAutopilotCommand', () => {
   test('matches packaged and source-tree autopilot invocations', () => {
-    expect(looksLikeGbrainAutopilotCommand('gbrain autopilot --repo repo')).toBe(true);
+    expect(looksLikeGbrainAutopilotCommand('foresights autopilot --repo repo')).toBe(true);
     expect(looksLikeGbrainAutopilotCommand('./gbrain/src/cli.ts autopilot')).toBe(true);
     expect(looksLikeGbrainAutopilotCommand('bun src/cli.ts autopilot --repo repo')).toBe(true);
   });
 
   test('matches a Windows command line with the executable quoted under a path with spaces', () => {
-    expect(looksLikeGbrainAutopilotCommand('"C:\\Program Files\\gbrain\\gbrain.exe" autopilot --repo "C:\\my brain"')).toBe(true);
+    expect(looksLikeGbrainAutopilotCommand('"C:\\Program Files\\foresights\\gbrain.exe" autopilot --repo "C:\\my brain"')).toBe(true);
   });
 
   test('rejects unrelated live processes', () => {

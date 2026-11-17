@@ -2,7 +2,7 @@
  * #6858 ask 6 (option C), reworked by GBRA-133 PR 2a: the serve's adapter over the commit notifier
  * (core in ./commit-notifier.ts, production seams in ./notifier/resident.ts).
  *
- * `gbrain serve` (stdio, serve.ts installResidentTickers) and `gbrain serve --http` (serve-http.ts runServeHttp) start
+ * `foresights serve` (stdio, serve.ts installResidentTickers) and `foresights serve --http` (serve-http.ts runServeHttp) start
  * the host's notifier through `startServeHeadWatcher` and await `stop()` before the delegated sync runner shuts down
  * and the engine disconnects. With `sync.on_commit` on it watches every source this host syncs (managed sources whose
  * worktree it owns and, since 2a, classic sources it last synced), starts a sync on the leading edge of a quiet HEAD

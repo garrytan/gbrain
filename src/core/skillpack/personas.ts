@@ -5,7 +5,7 @@
  * openclaw.plugin.json#skills minus base_exclusions plus additions — the
  * same algebra scripts/generate-plugin-tree.ts enforces). Personas drive
  * two consumers with ONE implementation:
- *   - the harness bridge (`gbrain skillpack scaffold` with a harness) picks
+ *   - the harness bridge (`foresights skillpack scaffold` with a harness) picks
  *     its default install set from a persona;
  *   - scripts/generate-plugin-tree.ts emits a plugin-variants/<plugin_name>/
  *     tree per persona and validates the block in CI.
@@ -63,7 +63,7 @@ export class PersonaError extends Error {
 }
 
 function lanesPath(gbrainRoot: string): string {
-  // gbrainRoot is the detected gbrain repo root joined with literals, on the
+  // gbrainRoot is the detected foresights repo root joined with literals, on the
   // local CLI/build plane — no untrusted input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return join(gbrainRoot, 'skills', 'plugin-lanes.json');

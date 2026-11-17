@@ -1,5 +1,5 @@
 /**
- * Read the JSON-RPC logs scripts/ci-mcp-tap.sh writes in front of gbrain's
+ * Read the JSON-RPC logs scripts/ci-mcp-tap.sh writes in front of foresights's
  * stdio MCP server (#8002): `<log>` holds what the client sent, `<log>.responses`
  * what the server answered. A line that is not JSON-RPC is ignored.
  */
@@ -21,7 +21,7 @@ export function tapToolCalls(log: string): string[] {
 }
 
 /**
- * Every tool call with whether gbrain answered it with a result (#8011): a JSON-RPC `error`, a result with
+ * Every tool call with whether foresights answered it with a result (#8011): a JSON-RPC `error`, a result with
  * `isError: true` or no answer is not ok. The server restarts its ids with each process, so a call is ok only
  * when every request carrying its id got an answer and every answer is a successful result: neither a
  * colliding error nor another request's answer reads as success.

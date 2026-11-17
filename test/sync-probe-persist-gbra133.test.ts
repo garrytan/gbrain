@@ -1,7 +1,7 @@
 /**
  * GBRA-133 wave 4: a fresh process (a CLI \x60gbrain sync\x60, a sync job) had no vouched clean probes (#7338 keeps them in the
  * process), so its pass read and hashed every candidate file again: about 250 ms per pass at 10k pages, linear in the brain.
- * With \x60persist\x60 (\x60sync.level_reuse\x60) a new process starts from the probes the last one saved under this machine's gbrain
+ * With \x60persist\x60 (\x60sync.level_reuse\x60) a new process starts from the probes the last one saved under this machine's foresights
  * home, each still checked against the path's lstat key and tree entry; anything doubtful in the file is ignored whole, and
  * \x60verify\x60 (the level-reuse oracle) still reads every reused path and reports the first that differs.
  */

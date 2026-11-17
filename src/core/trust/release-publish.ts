@@ -62,7 +62,7 @@ interface ReleaseIntent { hold_id: number; last_seen_at: string; by: string; mod
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
 
 function decidedMeanwhile(holdId: number): Error {
-  return opError('preview_changed', `h${holdId} was decided meanwhile; nothing was changed.`, 'Run gbrain trust review.');
+  return opError('preview_changed', `h${holdId} was decided meanwhile; nothing was changed.`, 'Run foresights trust review.');
 }
 
 /** Where a held fact publishes: its own fence row (index-existing) or a new row on its entity's page; null takes the database-only release. */
@@ -161,11 +161,11 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
   const ref = `${hold.source_id}/${target.slug}`;
   if (snapshot?.page.deleted_at) {
     throw opError('page_not_found', `The page h${hold.id} would be released into (${ref}) is deleted; nothing was changed and the fact stays held.`,
-      `Restore the page first (gbrain restore ${target.slug}), or drop the hold with gbrain trust drop h${hold.id}.`);
+      `Restore the page first (foresights restore ${target.slug}), or drop the hold with foresights trust drop h${hold.id}.`);
   }
   if (snapshot && !(await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, excludePrivate: true }))) {
     throw opError('page_not_found', `The page h${hold.id} would be released into (${ref}) is private; nothing was changed and the fact stays held.`,
-      `Drop the hold with gbrain trust drop h${hold.id} and remember the fact on the page yourself if it belongs there.`);
+      `Drop the hold with foresights trust drop h${hold.id} and remember the fact on the page yourself if it belongs there.`);
   }
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation, archived, local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [hold.source_id]);
@@ -203,11 +203,11 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
     || typeof intent.by !== 'string' || (intent.mode !== 'append' && !indexed) || (indexed && !Number.isSafeInteger(intent.row_num))
     || (indexed && !approvedUnpreviewed && typeof intent.cell_fields !== 'string')) {
     throw opError('confirmation_required', 'This release is not confirmed by the owner; nothing was changed.',
-      'Run gbrain trust release on the brain host in an interactive terminal.');
+      'Run foresights trust release on the brain host in an interactive terminal.');
   }
   if (approvedUnpreviewed) {
     throw opError('preview_changed', `h${intent.hold_id} was approved before the release preview showed its fence row's fields; nothing was changed and the fact stays held.`,
-      `Run gbrain trust release h${intent.hold_id} again: it shows the row's fields and asks for a new confirmation.`);
+      `Run foresights trust release h${intent.hold_id} again: it shows the row's fields and asks for a new confirmation.`);
   }
   const current = (hold: WriteGateHold | null): hold is WriteGateHold =>
     hold !== null && hold.kind === 'fact' && hold.status === 'held' && hold.last_seen_at === intent.last_seen_at && hold.source_id === row.source_id;
@@ -234,7 +234,7 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
     const cell = await cellAt(engine, snapshot!.page, intent.row_num!);
     if (cell && ((cell.context ?? null) !== (str(p.context) ?? null) || (cell.source ?? FENCE_SOURCE_DEFAULT) !== (str(p.source) ?? FENCE_SOURCE_DEFAULT))) {
       throw opError('fence_row_changed', `Fence row ${intent.row_num} of ${row.slug} was edited after h${hold.id} was held (held_row_edited); nothing was changed and the fact stays held.`,
-        `The row's context or source no longer matches what h${hold.id} held, so releasing it would index content the owner did not review, and releasing h${hold.id} again refuses the same way. Drop it (gbrain trust drop h${hold.id}); if the edit was itself held, gbrain trust review lists it separately.`,
+        `The row's context or source no longer matches what h${hold.id} held, so releasing it would index content the owner did not review, and releasing h${hold.id} again refuses the same way. Drop it (foresights trust drop h${hold.id}); if the edit was itself held, foresights trust review lists it separately.`,
         { reason: 'held_row_edited', detail: JSON.stringify({ slug: row.slug, row_num: intent.row_num, problem: 'held_row_edited' }) });
     }
     if (cellFieldsDigest(cell) !== intent.cell_fields) {

@@ -14,7 +14,7 @@ export const v048: Migration = {
   //
   // What `transaction: false` actually buys (codex review #2 correction):
   // it frees the migration runner from holding a long transaction across
-  // the UPDATE so other gbrain processes (workers, MCP queries) can
+  // the UPDATE so other foresights processes (workers, MCP queries) can
   // interleave. It does NOT enable mid-statement resume — a single SQL
   // statement either completes or rolls back.
   //

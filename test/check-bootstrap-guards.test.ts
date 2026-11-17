@@ -98,11 +98,11 @@ describe('check-bootstrap-tag.sh', () => {
       {
         VERSION: '1.2.3.4\n',
         'README.md':
-          'Fetch https://raw.githubusercontent.com/garrytan/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md\n' +
-          'Install: `bun install -g github:garrytan/gbrain#stable`\n',
+          'Fetch https://raw.githubusercontent.com/aimonk2025/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md\n' +
+          'Install: `bun install -g github:aimonk2025/gbrain#stable`\n',
         'BOOTSTRAP_FOR_AGENTS.md':
           '<!-- gbrain-runbook-stamp: 1.2.3.4 -->\n# Runbook\n' +
-          'Fetched from https://raw.githubusercontent.com/garrytan/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md\n',
+          'Fetched from https://raw.githubusercontent.com/aimonk2025/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md\n',
       },
       (dir) => {
         const r = runGuard(TAG_GUARD, dir);
@@ -117,7 +117,7 @@ describe('check-bootstrap-tag.sh', () => {
       {
         VERSION: '1.2.3.4\n',
         'README.md':
-          'Fetch https://raw.githubusercontent.com/garrytan/gbrain/v0.42.0.0/BOOTSTRAP_FOR_AGENTS.md\n',
+          'Fetch https://raw.githubusercontent.com/aimonk2025/gbrain/v0.42.0.0/BOOTSTRAP_FOR_AGENTS.md\n',
       },
       (dir) => {
         const r = runGuard(TAG_GUARD, dir);
@@ -132,8 +132,8 @@ describe('check-bootstrap-tag.sh', () => {
       {
         VERSION: '1.2.3.4\n',
         'README.md':
-          'Fetch https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md\n' +
-          'Install: `bun install -g github:garrytan/gbrain#latest-stable`\n',
+          'Fetch https://raw.githubusercontent.com/aimonk2025/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md\n' +
+          'Install: `bun install -g github:aimonk2025/gbrain#latest-stable`\n',
       },
       (dir) => {
         const r = runGuard(TAG_GUARD, dir);
@@ -148,7 +148,7 @@ describe('check-bootstrap-tag.sh', () => {
     withFixture(
       {
         VERSION: '1.2.3.4\n',
-        'README.md': 'Install: `bun install -g github:garrytan/gbrain#master`\n',
+        'README.md': 'Install: `bun install -g github:aimonk2025/gbrain#master`\n',
       },
       (dir) => {
         const r = runGuard(TAG_GUARD, dir);
@@ -163,7 +163,7 @@ describe('check-bootstrap-tag.sh', () => {
       {
         VERSION: '1.2.3.4\n',
         'README.md':
-          'OpenClaw path: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md\n',
+          'OpenClaw path: https://raw.githubusercontent.com/aimonk2025/gbrain/master/INSTALL_FOR_AGENTS.md\n',
       },
       (dir) => {
         expect(runGuard(TAG_GUARD, dir).status).toBe(0);

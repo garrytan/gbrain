@@ -1,5 +1,5 @@
 /**
- * GST-2476 G2: what gbrain git commit-push may do under GBRAIN_ENFORCED_MEMBER. Named-path commits, --dry-run and
+ * GST-2476 G2: what foresights git commit-push may do under GBRAIN_ENFORCED_MEMBER. Named-path commits, --dry-run and
  * --pull run (their output withheld by the caller); every other publishing mode is refused, and a named-path commit
  * refuses when the brain's access.enforced_member_writes is refuse. Each named path (a directory expands to its changed
  * files) must map to a source the member reads, must not be an access policy file, must not be a page the member cannot

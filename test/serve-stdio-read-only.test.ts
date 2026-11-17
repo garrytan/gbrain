@@ -1,5 +1,5 @@
 /**
- * #4768 (stdio half): `gbrain serve --access read-only` over a real MCP stdio
+ * #4768 (stdio half): `foresights serve --access read-only` over a real MCP stdio
  * session on a hermetic PGLite brain, on every surface tier.
  *
  * Protects: the read-only ceiling is one operation set for tools/list, the
@@ -149,9 +149,9 @@ describe('serve --access read-only', () => {
   test('--http --access read-only refuses with the per-token fix', () => {
     const refused = cli(['serve', '--http', '--access', 'read-only', '--port', '0']);
     expect(refused.status).not.toBe(0);
-    expect(refused.stderr).toContain('gbrain auth rescope-token <name> --operations');
+    expect(refused.stderr).toContain('foresights auth rescope-token <name> --operations');
     const refusedEq = cli(['serve', '--http', '--access=read-only', '--port', '0']);
     expect(refusedEq.status).not.toBe(0);
-    expect(refusedEq.stderr).toContain('gbrain auth rescope-token <name> --operations');
+    expect(refusedEq.stderr).toContain('foresights auth rescope-token <name> --operations');
   });
 });

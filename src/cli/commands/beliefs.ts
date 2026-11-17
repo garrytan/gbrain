@@ -1,5 +1,5 @@
 /**
- * `gbrain beliefs`: post-connect dispatch for the belief ledger's coverage
+ * `foresights beliefs`: post-connect dispatch for the belief ledger's coverage
  * tooling; the behavior lives in src/commands/beliefs.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';

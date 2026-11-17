@@ -1,5 +1,5 @@
 /**
- * function_search_path doctor check (#7632): every gbrain function (PINNED_FUNCTION_NAMES) ends its pinned search_path
+ * function_search_path doctor check (#7632): every foresights function (PINNED_FUNCTION_NAMES) ends its pinned search_path
  * with pg_temp.
  *
  * Without it, a session's temp table or view named like a ledger (fact_purges, page_purges, take_purges,
@@ -19,7 +19,7 @@ import { v277 } from '../../../core/schema-migrations/v277-function-search-path-
 
 const DOCS = 'docs/guides/troubleshooting.md#function-search-path';
 
-/** The gbrain functions whose pinned search_path does not end in pg_temp, and the schema-qualified ALTER that fixes each. */
+/** The foresights functions whose pinned search_path does not end in pg_temp, and the schema-qualified ALTER that fixes each. */
 export async function functionSearchPathProblems(engine: BrainEngine): Promise<{ functions: string[]; fix: string[] }> {
   const rows = await engine.executeRaw<{ sig: string; qualified: string; path: string }>(
     `SELECT p.oid::regprocedure::text AS sig,

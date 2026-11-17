@@ -186,7 +186,7 @@ export async function runTrustScan(engine: BrainEngine, opts: TrustScanOptions =
   }
   const complete = tables.every(t => t.done);
   if (complete) await saveCursor(engine, { ...cursor, completed_at: new Date().toISOString() });
-  return { detector_version: WRITE_GATE_DETECTOR_VERSION, tables, complete, ...(complete ? {} : { resume_command: 'gbrain trust scan' }) };
+  return { detector_version: WRITE_GATE_DETECTOR_VERSION, tables, complete, ...(complete ? {} : { resume_command: 'foresights trust scan' }) };
 }
 
 export interface TrustScanState { detector_version: number; unscanned: Record<ScanTable, number>; total_unscanned: number; completed_at: string | null }

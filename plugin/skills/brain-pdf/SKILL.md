@@ -56,7 +56,7 @@ P="$HOME/.claude/skills/gstack/make-pdf/dist/pdf"
 ## Workflow
 
 ```
-1. RESOLVE  → Confirm the brain page exists (gbrain get <slug>).
+1. RESOLVE  → Confirm the brain page exists (foresights get <slug>).
 2. STRIP    → Remove YAML frontmatter — the renderer would otherwise
               dump it as a full page of raw metadata text.
 3. RENDER   → Invoke make-pdf with sane defaults (no --cover, no --toc).
@@ -72,16 +72,16 @@ SLUG="path/to/page"
 P="$HOME/.claude/skills/gstack/make-pdf/dist/pdf"
 
 # 1. Confirm the page exists.
-gbrain get "$SLUG" > /dev/null || { echo "Page $SLUG not found" >&2; exit 1; }
+foresights get "$SLUG" > /dev/null || { echo "Page $SLUG not found" >&2; exit 1; }
 
 # 2. Get the raw markdown. Two paths: read from the brain repo (if user
-#    syncs locally) OR ask gbrain for the body via the API.
-BRAIN_DIR=$(gbrain config get sync.repo_path 2>/dev/null || echo)
+#    syncs locally) OR ask foresights for the body via the API.
+BRAIN_DIR=$(foresights config get sync.repo_path 2>/dev/null || echo)
 if [ -n "$BRAIN_DIR" ] && [ -f "$BRAIN_DIR/$SLUG.md" ]; then
   RAW="$BRAIN_DIR/$SLUG.md"
 else
   RAW=$(mktemp /tmp/brain-page-XXXXXX.md)
-  gbrain get "$SLUG" > "$RAW"   # prints the page as markdown with frontmatter
+  foresights get "$SLUG" > "$RAW"   # prints the page as markdown with frontmatter
 fi
 
 # 3. Strip the leading YAML frontmatter block only: line 1 '---' through
@@ -155,10 +155,10 @@ is the artifact.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- `gbrain get <slug>` fails with `page_not_found`: stop before rendering and resolve the real slug; report the page missing only after a title search.
-- The make-pdf binary is missing: this is a gstack dependency, not a gbrain error. Tell the user to install gstack; do not hand-roll a PDF.
+- `foresights get <slug>` fails with `page_not_found`: stop before rendering and resolve the real slug; report the page missing only after a title search.
+- The make-pdf binary is missing: this is a gstack dependency, not a foresights error. Tell the user to install gstack; do not hand-roll a PDF.
 
 ## Anti-Patterns
 

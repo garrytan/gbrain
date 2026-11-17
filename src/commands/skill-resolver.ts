@@ -1,8 +1,8 @@
 /**
- * `gbrain skills index build|status|remove`, `gbrain skills resolve` and
- * `gbrain skills library`: the skill resolver's CLI (library:
+ * `foresights skills index build|status|remove`, `foresights skills resolve` and
+ * `foresights skills library`: the skill resolver's CLI (library:
  * src/core/skills/resolver/). The router (src/cli/command-route.ts) sends these `skills` subcommands here
- * before any engine or brain is touched; plain `gbrain skills` keeps
+ * before any engine or brain is touched; plain `foresights skills` keeps
  * listing skills through `list_skills`.
  *
  * Exit codes: 0 on success (a no_skill turn and an empty block are
@@ -32,19 +32,19 @@ import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extensio
 import { HERMES_PINS_CATALOG, syncHermesPins } from '../core/setup/hermes-skill-pins.ts';
 import { CURSOR_PINS_CATALOG_PREFIX, cursorPinnedBlock, refreshCursorPins } from '../core/setup/cursor-skill-pins.ts';
 
-const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
+const HELP_INDEX = `Usage: foresights skills index <build|status|remove> [options]
 
 Build, inspect or remove a skill catalog's index (under GBRAIN_HOME/skill-index/).
 No brain connection is needed.
 
-  gbrain skills index build --catalog <name> (--dir <d>... | --bundled | --from-json <file|-> [--dir <d>...]
+  foresights skills index build --catalog <name> (--dir <d>... | --bundled | --from-json <file|-> [--dir <d>...]
         | --claude-plugins <dir>) [--routing <file>] [--harness <h>] [--scope user|project] [--json]
-  gbrain skills index status [--catalog <name>] [--session <id> [--harness <h>] [--shadow]] [--json]
-  gbrain skills index remove --catalog <name> [--json]
+  foresights skills index status [--catalog <name>] [--session <id> [--harness <h>] [--shadow]] [--json]
+  foresights skills index remove --catalog <name> [--json]
 
   --catalog <name>   catalog name: a-z, 0-9, _ and -, up to 64 characters
   --dir <d>          a SKILL.md directory (repeatable; earlier wins on duplicate ids)
-  --bundled          gbrain's own bundled skills
+  --bundled          foresights's own bundled skills
   --from-json <f|->  an adapter's skill list ([{id, name, description, triggers?, path?, eligible?}])
                      or OpenClaw's skills list --json output as is; with --dir, each listed skill
                      takes its body, path and triggers from the folder skill of the same name
@@ -58,7 +58,7 @@ No brain connection is needed.
 Guide: docs/guides/skill-resolver.md
 `;
 
-const HELP_RESOLVE = `Usage: gbrain skills resolve [--catalog <name>]... (--text <t> [--previous <t>] | --input-json -)
+const HELP_RESOLVE = `Usage: foresights skills resolve [--catalog <name>]... (--text <t> [--previous <t>] | --input-json -)
         [--session <id>] [--harness <h>] [--exclude a,b] [--top-k n] [--min-match <strength>] [--top-gate <x>] [--shadow [--shadow-log <file>]]
         [--expect-catalog <hash>] [--reset-session] [--names-only] [--load-hint <text>]
         [--explain-target <id>] [--fail-open] [--json]
@@ -92,16 +92,16 @@ and no brain connection is needed.
 Guide: docs/guides/skill-resolver.md
 `;
 
-const HELP_PIN = `Usage: gbrain skills pin <add|remove|list> --catalog <name> [options]
+const HELP_PIN = `Usage: foresights skills pin <add|remove|list> --catalog <name> [options]
 
 The operator's always-on skills for one catalog: rendered as a pinned block the harness
-shows on every turn, and never suggested twice. gbrain ships no pins; a catalog with
+shows on every turn, and never suggested twice. foresights ships no pins; a catalog with
 none gets no pinned block. Pins live in config.json (skills.resolver.pins.<catalog>),
 so turning the resolver off keeps them.
 
-  gbrain skills pin add <skill-id> --catalog <name> [--line "<when to use it, 100 chars>"] [--json]
-  gbrain skills pin remove <skill-id> --catalog <name> [--json]
-  gbrain skills pin list --catalog <name> [--json]
+  foresights skills pin add <skill-id> --catalog <name> [--line "<when to use it, 100 chars>"] [--json]
+  foresights skills pin remove <skill-id> --catalog <name> [--json]
+  foresights skills pin list --catalog <name> [--json]
 
   --catalog <name>  the catalog the skill must be in (openclaw-<agent>, claude-code-user, ...)
   --line <text>     one trigger-first line shown beside the id (no < or >)
@@ -110,11 +110,11 @@ An OpenClaw agent picks up a pin change on its next turn, with no reload.
 Guide: docs/guides/skill-resolver.md#pinned-skills
 `;
 
-const HELP_LIBRARY = `Usage: gbrain skills library [--out <file.mjs>] [--json]
+const HELP_LIBRARY = `Usage: foresights skills library [--out <file.mjs>] [--json]
 
-Write the skill resolver library, built from this gbrain's own source, as one
+Write the skill resolver library, built from this foresights's own source, as one
 dependency-free ES module that Node imports (default: GBRAIN_HOME/lib/gbrain-skill-resolver.mjs),
-and print its path, sha256 and gbrain version. Run it again after each upgrade.
+and print its path, sha256 and foresights version. Run it again after each upgrade.
 
   --out <file.mjs>   write it here instead
   --json             {path, sha256, bytes, gbrain_version}
@@ -145,7 +145,7 @@ function parseFlags(args: string[], valued: readonly string[], booleans: readonl
     if (a === '--help' || a === '-h') { process.stdout.write(help); process.exit(0); }
     if (!a.startsWith('--')) { positionals.push(a); continue; }
     if (booleans.includes(a)) { bools.add(a); continue; }
-    if (!valued.includes(a)) usage(`unknown flag ${a} for 'gbrain skills'`, 'Run gbrain skills resolve --help or gbrain skills index --help for the accepted flags.');
+    if (!valued.includes(a)) usage(`unknown flag ${a} for 'foresights skills'`, 'Run foresights skills resolve --help or foresights skills index --help for the accepted flags.');
     const v = args[i + 1];
     if (v === undefined || (v.startsWith('--') && v !== '-')) usage(`${a} requires a value.`, `Pass a value after ${a}.`);
     flags.set(a, [...(flags.get(a) ?? []), v!]);
@@ -181,15 +181,15 @@ async function runIndex(args: string[]): Promise<void> {
   const sub = args[0];
   if (sub !== 'build' && sub !== 'status' && sub !== 'remove') {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_INDEX); return; }
-    usage(`Unknown subcommand "skills index ${sub}".`, 'Use gbrain skills index build, status or remove.');
+    usage(`Unknown subcommand "skills index ${sub}".`, 'Use foresights skills index build, status or remove.');
   }
   const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
   const json = p.bools.has('--json');
-  if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass options as flags; see gbrain skills index --help.');
+  if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass options as flags; see foresights skills index --help.');
   try {
     if (sub === 'build') {
       const catalog = one(p, '--catalog');
-      if (!catalog) usage('skills index build needs --catalog <name>.', 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills');
+      if (!catalog) usage('skills index build needs --catalog <name>.', 'Example: foresights skills index build --catalog claude-user --dir ~/.claude/skills');
       const fromJson = one(p, '--from-json');
       const input: BuildInput = { catalog: catalog!, ...(p.flags.get('--dir') ? { dirs: p.flags.get('--dir') } : {}), ...(p.bools.has('--bundled') ? { bundled: true } : {}),
         ...(one(p, '--claude-plugins') !== undefined ? { claudePlugins: one(p, '--claude-plugins') } : {}),
@@ -197,7 +197,7 @@ async function runIndex(args: string[]): Promise<void> {
         ...(one(p, '--scope') ? { scope: one(p, '--scope') as 'user' | 'project' } : {}) };
       if (fromJson === '-') {
         const text = await readStdinCapped(JSON_INPUT_CAP_BYTES);
-        if (!text) exitCliError(toOpError(new ResolverError('skill_resolve_no_input', 'No catalog JSON arrived on stdin.', { suggestion: 'Pipe the skill list: <adapter> | gbrain skills index build --catalog <name> --from-json -' })), CMD);
+        if (!text) exitCliError(toOpError(new ResolverError('skill_resolve_no_input', 'No catalog JSON arrived on stdin.', { suggestion: 'Pipe the skill list: <adapter> | foresights skills index build --catalog <name> --from-json -' })), CMD);
         input.fromJson = text!;
         input.fromJsonStdin = true;
       } else if (fromJson !== undefined) input.fromJson = fromJson;
@@ -208,7 +208,7 @@ async function runIndex(args: string[]): Promise<void> {
     }
     if (sub === 'remove') {
       const catalog = one(p, '--catalog');
-      if (!catalog) usage('skills index remove needs --catalog <name>.', 'Example: gbrain skills index remove --catalog claude-user');
+      if (!catalog) usage('skills index remove needs --catalog <name>.', 'Example: foresights skills index remove --catalog claude-user');
       const r = await removeSkillIndex(catalog!);
       await write(json ? `${JSON.stringify(r)}\n` : r.removed ? `Removed catalog ${r.catalog}.\n` : `No catalog named ${r.catalog}.\n`);
       return;
@@ -223,7 +223,7 @@ async function runIndex(args: string[]): Promise<void> {
     if (json) { await write(`${JSON.stringify(doc, null, 2)}\n`); return; }
     const lines = catalogs.length ? catalogs.map(c => c.present
       ? `${c.catalog}: ${c.receipt!.skill_count} skills, variant ${c.receipt!.variant}, ${c.fresh ? 'fresh' : `stale (${c.stale_reason})`}${c.rebuild.running ? `, rebuild running (${c.rebuild.holder})` : ''}${c.rebuild.last_error ? `, last build failed: ${c.rebuild.last_error.code} (${c.rebuild.log_path})` : ''}`
-      : `${c.catalog}: not built (${c.stale_reason})`) : ['No skill catalogs. Build one with gbrain skills index build --catalog <name> --dir <skills dir>.'];
+      : `${c.catalog}: not built (${c.stale_reason})`) : ['No skill catalogs. Build one with foresights skills index build --catalog <name> --dir <skills dir>.'];
     if (session) lines.push(`session ${session.session_id}: turn ${session.turn}, ${session.spent}/${session.budget} block tokens spent, ${session.remaining} left`);
     await write(`${lines.join('\n')}\n`);
   } catch (e) {
@@ -242,16 +242,16 @@ async function runResolve(args: string[]): Promise<void> {
   const text = one(p, '--text');
   const inputJson = one(p, '--input-json');
   if (text !== undefined && inputJson !== undefined) usage('Pass either --text or --input-json, not both.', 'Use --text "<message>" for one message, or --input-json - for turn JSON on stdin.');
-  if (inputJson !== undefined && inputJson !== '-') usage('--input-json reads stdin only; pass --input-json -.', 'Pipe the turn JSON: echo \'{"message":"..."}\' | gbrain skills resolve --input-json -');
+  if (inputJson !== undefined && inputJson !== '-') usage('--input-json reads stdin only; pass --input-json -.', 'Pipe the turn JSON: echo \'{"message":"..."}\' | foresights skills resolve --input-json -');
   let input: Record<string, unknown>;
   try {
     if (inputJson === '-') {
       const raw = await readStdinCapped(1024 * 1024);
-      if (raw === null || !raw.trim()) throw new ResolverError('skill_resolve_no_input', raw === null ? 'stdin is a terminal, so no turn JSON arrived.' : 'stdin was empty, so no turn JSON arrived.', { suggestion: 'Pipe the turn JSON: echo \'{"message":"..."}\' | gbrain skills resolve --input-json -' });
+      if (raw === null || !raw.trim()) throw new ResolverError('skill_resolve_no_input', raw === null ? 'stdin is a terminal, so no turn JSON arrived.' : 'stdin was empty, so no turn JSON arrived.', { suggestion: 'Pipe the turn JSON: echo \'{"message":"..."}\' | foresights skills resolve --input-json -' });
       try { input = JSON.parse(raw) as Record<string, unknown>; } catch { throw new ResolverError('skill_resolve_invalid_input', 'The turn input on stdin is not valid JSON.', { suggestion: 'Send one JSON object such as {"message": "..."}.' }); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ResolverError('skill_resolve_invalid_input', 'The turn input must be a JSON object.', { suggestion: 'Send one JSON object such as {"message": "..."}.' });
     } else if (text !== undefined) input = { message: text };
-    else throw new ResolverError('skill_resolve_no_input', 'No message: pass --text "<message>" or --input-json -.', { suggestion: 'Example: gbrain skills resolve --text "summarize my meeting notes"' });
+    else throw new ResolverError('skill_resolve_no_input', 'No message: pass --text "<message>" or --input-json -.', { suggestion: 'Example: foresights skills resolve --text "summarize my meeting notes"' });
     const prev = one(p, '--previous');
     if (prev !== undefined) input.previous_user_message = prev;
     const session = one(p, '--session'); if (session !== undefined) input.session_id = session;
@@ -270,7 +270,7 @@ async function runResolve(args: string[]): Promise<void> {
         if (configured !== undefined) input.top_gate = configured;
       } catch (err) {
         if (!failOpen) throw err;
-        console.error(`gbrain skills resolve: ${(err as Error).message}; using the default top_gate.`);
+        console.error(`foresights skills resolve: ${(err as Error).message}; using the default top_gate.`);
       }
     }
     if (p.bools.has('--shadow')) input.shadow = true;
@@ -322,12 +322,12 @@ async function runLibrary(args: string[]): Promise<void> {
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the file with --out <file.mjs>.');
   const json = p.bools.has('--json');
   const out = one(p, '--out');
-  if (out !== undefined && !out.endsWith('.mjs')) usage('--out must name a .mjs file.', 'Example: gbrain skills library --out ./gbrain-skill-resolver.mjs');
+  if (out !== undefined && !out.endsWith('.mjs')) usage('--out must name a .mjs file.', 'Example: foresights skills library --out ./gbrain-skill-resolver.mjs');
   try {
     const { buildResolverLibrary, LIBRARY_FILE } = await import('./skill-resolver-library.ts');
     const built = await buildResolverLibrary(out ? resolvePath(out) : join(resolverHome(), 'lib', LIBRARY_FILE));
     const doc = { ...built, gbrain_version: GBRAIN_VERSION };
-    await write(json ? `${JSON.stringify(doc)}\n` : `Wrote ${doc.path} (gbrain ${doc.gbrain_version}, ${doc.bytes} bytes)\nsha256 ${doc.sha256}\n`);
+    await write(json ? `${JSON.stringify(doc)}\n` : `Wrote ${doc.path} (foresights ${doc.gbrain_version}, ${doc.bytes} bytes)\nsha256 ${doc.sha256}\n`);
   } catch (e) {
     if (!(e instanceof ResolverError)) throw e;
     runtimeFailure(e, json);
@@ -338,7 +338,7 @@ async function runPin(args: string[]): Promise<void> {
   const sub = args[0];
   if (sub !== 'add' && sub !== 'remove' && sub !== 'list') {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_PIN); return; }
-    usage(`Unknown subcommand "skills pin ${sub}".`, 'Use gbrain skills pin add, remove or list.');
+    usage(`Unknown subcommand "skills pin ${sub}".`, 'Use foresights skills pin add, remove or list.');
   }
   const p = parseFlags(args.slice(1), ['--catalog', '--line'], ['--json'], HELP_PIN);
   const json = p.bools.has('--json');
@@ -350,14 +350,14 @@ async function runPin(args: string[]): Promise<void> {
   let pins = readPins(read, catalog);
   if (sub !== 'list') {
     const name = p.positionals[0];
-    if (!name || p.positionals.length > 1) usage(`gbrain skills pin ${sub} takes one skill id.`, `Example: gbrain skills pin ${sub} <skill-id> --catalog ${catalog}`);
+    if (!name || p.positionals.length > 1) usage(`foresights skills pin ${sub} takes one skill id.`, `Example: foresights skills pin ${sub} <skill-id> --catalog ${catalog}`);
     const line = one(p, '--line');
     if (sub === 'add') {
       const problem = pinProblem({ name, ...(line !== undefined ? { line } : {}) });
       if (problem) usage(problem, 'Fix the value and retry.');
       const known = catalogSkillIds(home, catalog);
-      if (!known) runtimeFailure(new ResolverError('skill_index_missing', `The catalog "${catalog}" has not been built, so the pin cannot be checked; nothing was written.`, { suggestion: `Build it first with gbrain skills index build --catalog ${catalog} ...; or run gbrain setup <harness> --skill-loading resolve.` }), json);
-      if (!known.has(name)) exitCliError(opError('skill_resolver_pin_unknown', `"${name}" is not a skill in ${catalog}; nothing was written.`, `Check the id with gbrain skills index status --catalog ${catalog}, then retry.`, { docs: 'docs/guides/skill-resolver.md#skill_resolver_pin_unknown' }), CMD, { json });
+      if (!known) runtimeFailure(new ResolverError('skill_index_missing', `The catalog "${catalog}" has not been built, so the pin cannot be checked; nothing was written.`, { suggestion: `Build it first with foresights skills index build --catalog ${catalog} ...; or run foresights setup <harness> --skill-loading resolve.` }), json);
+      if (!known.has(name)) exitCliError(opError('skill_resolver_pin_unknown', `"${name}" is not a skill in ${catalog}; nothing was written.`, `Check the id with foresights skills index status --catalog ${catalog}, then retry.`, { docs: 'docs/guides/skill-resolver.md#skill_resolver_pin_unknown' }), CMD, { json });
       const others = pins.filter((x) => x.name !== name);
       if (others.length >= PINS_MAX) usage(`${catalog} already has ${PINS_MAX} pins.`, 'Remove one first.');
       pins = [...others, { name, ...(line !== undefined ? { line } : {}) }];

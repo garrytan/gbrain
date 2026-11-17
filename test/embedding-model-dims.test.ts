@@ -3,7 +3,7 @@
  *
  * Ollama serves models spanning 384..4096 dims, but the recipe declared a
  * single `default_dims: 768` (nomic-embed-text's width). Every other model
- * resolved to 768, so `gbrain init --embedding-model ollama:bge-m3` created a
+ * resolved to 768, so `foresights init --embedding-model ollama:bge-m3` created a
  * 768-wide column for a model emitting 1024 and the mismatch only surfaced at
  * first insert.
  *

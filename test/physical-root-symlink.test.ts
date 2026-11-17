@@ -2,7 +2,7 @@
  * #5914 (W14 P1.3c [R9b]): the recorded canonical path now traverses a
  * symlink (the checkout was moved and a link left at the old path). Every
  * verb refused `recovery_required` before any inode comparison, with no exit.
- * `gbrain sources set-path <id> <old-or-new-path>` now converges when
+ * `foresights sources set-path <id> <old-or-new-path>` now converges when
  * `realpathSync(old) === new` and the reservation and stamp agree on token,
  * brainId and worktreeId: the host binding and `local_path` move to the real
  * directory, the reservation is rewritten under the new `sha256(root)` name,

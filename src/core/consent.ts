@@ -226,7 +226,7 @@ export async function requireConsent(req: ConsentRequest, env: ConsentEnv = {}):
   if (via !== 'tty_prompt' && vias.includes('preapproval')) {
     const keys = req.effects.filter((_, i) => vias[i] === 'preapproval')
       .map(e => (e === 'paid' ? PREAPPROVE_PAID_MAX_USD_PER_RUN : PREAPPROVE_PERSISTENT_INSTALL));
-    (env.note ?? stderrLine)(`[consent] ${req.command}: proceeding under the user's preapproval ${keys.join(', ')} (remove with: gbrain config unset <key>).`);
+    (env.note ?? stderrLine)(`[consent] ${req.command}: proceeding under the user's preapproval ${keys.join(', ')} (remove with: foresights config unset <key>).`);
     recordAgentContractEvent({ command: req.command, transport: 'cli', code: 'confirmation_required', effects: [...req.effects], outcome: 'preapproved' });
   }
   const paidIdx = req.effects.indexOf('paid');
@@ -278,7 +278,7 @@ export function consentFix(req: ConsentRequest): Action {
 /**
  * Destructive approvals bind the plan: the approved command already carries
  * `--yes --expect <plan_hash>`. Paid payloads offer a per-run preapproval
- * (`gbrain config set consent.preapprove.paid.max_usd_per_run <usd>`);
+ * (`foresights config set consent.preapprove.paid.max_usd_per_run <usd>`);
  * destructive ones never do.
  */
 export function confirmationPayload(req: ConsentRequest, ctx: RenderContext): ConfirmationPayload {

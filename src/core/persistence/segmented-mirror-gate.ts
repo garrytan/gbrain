@@ -1,6 +1,6 @@
 /**
  * A withdrawal mirror of a page stored in segments writes a version 2 recovery record (effect-model.ts): the file is staged
- * by path and digest, never embedded. A gbrain below SEGMENTED_WRITER_FLOOR cannot read that record: v0.60.290.0 reads it
+ * by path and digest, never embedded. A foresights below SEGMENTED_WRITER_FLOOR cannot read that record: v0.60.290.0 reads it
  * as version 1 (`Buffer.from(record.after)` with `after: null`) and fails every attempt with an untyped TypeError
  * (`effect_unavailable`), retrying every 30 seconds without parking, while the record holds every write and effect on
  * the worktree; it never deletes the record or its stage (recovery-version.ts refuses unknown versions from this release
@@ -13,7 +13,7 @@
  * whole file in memory and in the record, and v0.60.290.0's recovery of it publishes the file and then refuses forever
  * to materialize a segmented page (`assertInlineBody`). Once the gate clears (the older writer upgraded and outside the
  * window), `resumeGatedMirrors` gives each request whose parked targets all carry this code the one more attempt
- * `gbrain sources writer retry-effects` would authorize.
+ * `foresights sources writer retry-effects` would authorize.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
@@ -28,8 +28,8 @@ const SAMPLE = 5;
 
 function gateFix(hosts: string[]): Action {
   return { argv: ['gbrain', 'upgrade'], consent: [], actor: 'host_admin', requires_exclusive: false,
-    why: 'A gbrain that cannot read a large page\'s withdrawal-mirror recovery record wrote to this brain recently, so the mirror waits instead of leaving a record that binary would wedge on.',
-    user_message: `Run gbrain upgrade on ${hosts.join('; ')}, and restart its serve, sync or worker processes. The hold clears ${SEGMENTED_WRITER_WINDOW_DAYS} days after the last write of an older gbrain (gbrain doctor's segmented_storage check names when); the parked mirror then runs again by itself.`,
+    why: 'A foresights that cannot read a large page\'s withdrawal-mirror recovery record wrote to this brain recently, so the mirror waits instead of leaving a record that binary would wedge on.',
+    user_message: `Run foresights upgrade on ${hosts.join('; ')}, and restart its serve, sync or worker processes. The hold clears ${SEGMENTED_WRITER_WINDOW_DAYS} days after the last write of an older foresights (foresights doctor's segmented_storage check names when); the parked mirror then runs again by itself.`,
     verify: { argv: ['gbrain', 'doctor', '--json'] } };
 }
 
@@ -42,8 +42,8 @@ export function segmentedMirrorWriterGate(effect: Pick<PersistenceEffect, 'sourc
   }
   const hosts = [...byHost].slice(0, SAMPLE).map(([host, row]) => `host ${host} (${row.version_label}, ${row.principal}, last ${row.last_seen ?? 'unknown'})`);
   const more = byHost.size > SAMPLE ? ` and ${byHost.size - SAMPLE} more` : '';
-  return opError(SEGMENTED_MIRROR_GATE_CODE, 'The withdrawal mirror of a page stored in segments waits for older gbrain writers to be upgraded.',
-    `Page ${slug} in source ${effect.source_id} is stored in segments, and a gbrain that cannot read the recovery record its mirror writes wrote here in the last ${SEGMENTED_WRITER_WINDOW_DAYS} days: ${hosts.join('; ')}${more}. The withdrawal is committed and nothing was staged; the canonical file keeps the withdrawn row until the mirror runs. Tell the user to upgrade those hosts (fix); the mirror retries, parks, and resumes by itself once the hold clears.`,
+  return opError(SEGMENTED_MIRROR_GATE_CODE, 'The withdrawal mirror of a page stored in segments waits for older foresights writers to be upgraded.',
+    `Page ${slug} in source ${effect.source_id} is stored in segments, and a foresights that cannot read the recovery record its mirror writes wrote here in the last ${SEGMENTED_WRITER_WINDOW_DAYS} days: ${hosts.join('; ')}${more}. The withdrawal is committed and nothing was staged; the canonical file keeps the withdrawn row until the mirror runs. Tell the user to upgrade those hosts (fix); the mirror retries, parks, and resumes by itself once the hold clears.`,
     { fix: gateFix([...hosts, ...(more ? [more.trim()] : [])]) });
 }
 

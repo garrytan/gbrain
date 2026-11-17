@@ -1,4 +1,4 @@
-// gbrain#1861 regression — batch inserts must survive free-text "poison"
+// foresights#1861 regression — batch inserts must survive free-text "poison"
 // payloads (calendar/Zoom context: commas, quotes, backslashes, braces,
 // em-dashes) that the old unnest(${arr}::text[]) array-literal path rejected
 // with Postgres "malformed array literal".

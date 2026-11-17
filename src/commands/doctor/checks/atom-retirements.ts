@@ -1,6 +1,6 @@
 /**
  * #7013 `atom_retirements_restorable`: atoms a managed re-extraction retired (`retired_by: managed-reextract`) that
- * `gbrain repair atoms-restore` can bring back, by the one rule the repair and the purge hold share
+ * `foresights repair atoms-restore` can bring back, by the one rule the repair and the purge hold share
  * (`atomRetirementsSql`). A `WAVE_CHECKS` entry: `ok` when none; `warn` with the count, the origins, the
  * oldest and newest retirement, the date the purge hold of the earliest one ends, and the read-only preview as fix.
  * The apply needs the user's agreement on the previewed set. Read-only. GBRA-161 PR 1b: an atom whose retirement a live

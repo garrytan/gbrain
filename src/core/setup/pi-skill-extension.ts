@@ -1,5 +1,5 @@
 /**
- * pi-skill-extension.ts — gbrain setup pi --skill-loading resolve|off: the
+ * pi-skill-extension.ts — foresights setup pi --skill-loading resolve|off: the
  * skill resolver for the Pi coding agent, as a generated Pi extension.
  *
  * Pi loads extensions into its own Node process from
@@ -118,7 +118,7 @@ export async function syncPiSkillExtension(opts: PiSkillSyncOptions): Promise<Pi
   const run = deps.run ?? defaultRun;
   const out: PiSkillResult = { mode: 'live', steps: [], catalog: PI_SKILL_CATALOG, skills: 0, pins: 0, notes: [] };
   const fail = (code: NonNullable<PiSkillResult['error']>['code'], message: string): PiSkillResult => ({ ...out, error: { code, message } });
-  if (!opts.gbrainBin.startsWith('/')) return fail('skill_resolver_setup_incomplete', 'No absolute gbrain binary was found for the extension (Pi may start with no PATH that has gbrain); pass --gbrain-bin. Nothing was written.');
+  if (!opts.gbrainBin.startsWith('/')) return fail('skill_resolver_setup_incomplete', 'No absolute foresights binary was found for the extension (Pi may start with no PATH that has foresights); pass --gbrain-bin. Nothing was written.');
   const dirs = piSkillDirs();
   if (dirs.length === 0) return fail('skill_resolver_setup_incomplete', `No Pi skill directory exists (looked for ${join(piAgentDir(), 'skills')} and ${join(home0(), '.agents', 'skills')}). Add a skill to one of them, then run setup again. Nothing was written.`);
   let lane: { top_k: number; min_match: string; top_gate?: number; exclude_ids: string[] };
@@ -199,7 +199,7 @@ export async function syncPiSkillExtension(opts: PiSkillSyncOptions): Promise<Pi
   return out;
 }
 
-/** Re-render the pinned block into the state file (gbrain skills pin add|remove); the extension reads it on its next run. True when it changed. */
+/** Re-render the pinned block into the state file (foresights skills pin add|remove); the extension reads it on its next run. True when it changed. */
 export function refreshPiPins(home: string): boolean {
   const prior = readPiSkillState(home);
   if (!prior) return false;

@@ -6,7 +6,7 @@
  *    has a chunk row for every live occurrence and none of a retired one, has no queued projection, and keyword search
  *    finds text from its last segment. A page whose chunks were never built (its create's post-commit projection died
  *    and it was deleted before the resident built it) and whose restore's post-commit projection dies too is queued by
- *    the restore, and `gbrain projections drain` builds it exactly once, leaving no stale row.
+ *    the restore, and `foresights projections drain` builds it exactly once, leaving no stale row.
  * 2. Fails when: a restore seals a page an occurrence of which has no chunks, or leaves an unsealed page with no queued
  *    projection (the soft delete removed its queue row and nothing queues it again).
  * 3. Existing coverage: restore-deferred-retire.test.ts restores a page whose deferred retirement left rows of retired

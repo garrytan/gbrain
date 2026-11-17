@@ -35,7 +35,7 @@ function lostWriteMessage(failures: ExtractBatchFailure[]): string {
   const kinds = [...new Set(failures.map(f => f.kind))].join('/');
   const sources = [...new Set(refs.map(r => r.source_id))];
   const cause = failures[0]?.error;
-  const retry = sources.length === 1 ? `gbrain extract --stale --source-id ${sources[0]}` : 'gbrain extract --stale';
+  const retry = sources.length === 1 ? `foresights extract --stale --source-id ${sources[0]}` : 'foresights extract --stale';
   return `extract: ${failures.length} ${kinds} write(s) failed (${rows} row(s)) across ${refs.length} page(s); `
     + `those pages were left unstamped and remain due (first error: ${cause instanceof Error ? cause.message : String(cause)}). `
     + `Retry them with: ${retry}`;

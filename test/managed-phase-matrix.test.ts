@@ -161,7 +161,7 @@ const MATRIX: Record<CyclePhase, Entry> = {
     },
   },
   unindexed_files: {
-    // #6865: a file the source's last synced commit holds with no page and no hold (an older gbrain's unrecorded refusal) is
+    // #6865: a file the source's last synced commit holds with no page and no hold (an older foresights's unrecorded refusal) is
     // found and scheduled for a re-screen on the next sync; the phase writes no page.
     seed: async ({ engine, sourceId, root }) => {
       git(root, 'init', '-q');

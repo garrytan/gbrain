@@ -6,7 +6,7 @@
  * splice in, plus a sanitized-count for the audit trail.
  *
  * Consumed by two surfaces:
- *   - `src/core/think/prompt.ts` (`gbrain think` production path)
+ *   - `src/core/think/prompt.ts` (`foresights think` production path)
  *   - `src/eval/longmemeval/harness.ts` (benchmark wiring)
  *
  * Both pass through the same XML envelope so the model sees one consistent

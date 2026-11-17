@@ -2,12 +2,12 @@
  * takes-quality-eval/pricing — model pricing for `eval takes-quality run`.
  *
  * Every model the canonical table prices (`src/core/model-pricing.ts`) is
- * budget-gateable; an operator rate registered with `gbrain pricing set`
+ * budget-gateable; an operator rate registered with `foresights pricing set`
  * (`pricing.overrides`) wins over the table. Rates are never hand-copied here.
  *
  * Miss policy (new models must run): an unpriced model runs with a warning when
  * no `--budget-usd` cap is set, and its spend is not counted. Under a user-set
- * cap it refuses with `no_pricing`, whose fix is the `gbrain pricing set`
+ * cap it refuses with `no_pricing`, whose fix is the `foresights pricing set`
  * registration, because the cap could not be enforced.
  */
 
@@ -46,6 +46,6 @@ export function unpricedUnderCapError(modelId: string, capUsd: number): Operatio
 
 /** The warning for an unpriced model with no cap: it runs, its spend is not counted. */
 export function unpricedWarning(modelId: string): string {
-  return `[eval takes-quality] warning: gbrain has no price for ${modelId}; it runs, but its spend is not counted in cost_usd. ` +
+  return `[eval takes-quality] warning: foresights has no price for ${modelId}; it runs, but its spend is not counted in cost_usd. ` +
     `Look up its rate and register it: ${pricingSetCommand(modelId, 'chat')}`;
 }

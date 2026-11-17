@@ -1,5 +1,5 @@
 /**
- * #8982: `gbrain sources federate` names the member-written pages it makes readable to every no-grant connection.
+ * #8982: `foresights sources federate` names the member-written pages it makes readable to every no-grant connection.
  *
  * 1. Protects: a credential bound to a member and granted a non-default source writes there without stamped readers
  *    (GST-2051 stamps only writes the no-grant floor reads). Federating that source adds it to the floor, so an
@@ -91,7 +91,7 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     expect(out.stdout).toContain('is now federated');
     expect(out.stderr).toContain('1 page(s) in ' + SRC + ' were written by a remote token or OAuth client');
     expect(out.stderr).toContain(slug + ' (member alice-example)');
-    expect(out.stderr).toContain('gbrain access rule add --prefix notes/ --readers alice-example --source ' + SRC);
+    expect(out.stderr).toContain('foresights access rule add --prefix notes/ --readers alice-example --source ' + SRC);
     expect(out.stderr).not.toContain('notes/alice-kept');
     expect(out.stderr).not.toContain('notes/operator-page');
     expect((await call('public', 'get_page', { slug, include_content: true })).text).toContain(canary + '.');
@@ -101,8 +101,8 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     const json = await sources(['federate', SRC, '--json']);
     expect(JSON.parse(json.stdout)).toEqual({ id: SRC, federated: true, pages_exposed: {
       count: 1, examples: [{ slug, member: 'alice-example' }],
-      check: 'gbrain access who-can-read ' + slug + ' --source ' + SRC,
-      restrict: 'gbrain access rule add --prefix notes/ --readers alice-example --source ' + SRC } });
+      check: 'foresights access who-can-read ' + slug + ' --source ' + SRC,
+      restrict: 'foresights access rule add --prefix notes/ --readers alice-example --source ' + SRC } });
     expect(await federated()).toBe(true);
   }, 240_000);
 
@@ -124,8 +124,8 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     try {
       const out = await sources(['federate', SRC, '--json']);
       expect(JSON.parse(out.stdout).pages_exposed).toEqual({ count: 2, examples: [{ slug: hostile, member: null }, { slug: 'notes/operator-page-moved', member: null }],
-        check: "gbrain access who-can-read 'notes/$(printf injected)/plan' --source " + SRC,
-        restrict: 'gbrain access rule add --prefix <folder/> --readers <member> --source ' + SRC });
+        check: "foresights access who-can-read 'notes/$(printf injected)/plan' --source " + SRC,
+        restrict: 'foresights access rule add --prefix <folder/> --readers <member> --source ' + SRC });
       expect(out.stderr).toContain("'notes/$(printf injected)/plan' (credential bound to no member now)");
     } finally {
       await rename(hostile, plan!.slug);

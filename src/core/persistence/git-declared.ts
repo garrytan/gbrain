@@ -149,7 +149,7 @@ export async function assertLfsTarget(engine: Pick<BrainEngine, 'getConfig'>, ro
     : `Source ${row.source_id} is git-canonical and ${where} falls under a Git LFS rule, but the checkout does not configure the LFS filter (git lfs install --local) or git-lfs does not run, so nothing was written.`,
   'Ask the user whether this file belongs in Git LFS. If it does, they configure git-lfs in the checkout and turn on storage.git_lfs, then the write is submitted again with a new request_id; if not, they narrow the .gitattributes rule.',
   { reason: state, why, docs: 'docs/guides/write-refusals.md#git_lfs_not_enabled', fix: { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, why,
-    user_message: `A write to source ${row.source_id} falls under a Git LFS rule in .gitattributes. Should it be stored with Git LFS? If so, configure git-lfs in the checkout (git lfs install --local) and run gbrain config set ${GIT_LFS_KEY} true on the brain host; otherwise narrow the .gitattributes rule.`,
+    user_message: `A write to source ${row.source_id} falls under a Git LFS rule in .gitattributes. Should it be stored with Git LFS? If so, configure git-lfs in the checkout (git lfs install --local) and run foresights config set ${GIT_LFS_KEY} true on the brain host; otherwise narrow the .gitattributes rule.`,
     verify: { argv: ['gbrain', 'config', 'get', GIT_LFS_KEY] } } });
 }
 
@@ -180,12 +180,12 @@ export function gitHomeRequired(row: Pick<WriteRequest, 'source_id' | 'slug'>, r
     return opError('git_home_required', message, 'Ask the user to turn managed persistence back on, then run the release again.', { reason, why, docs: DOCS,
       fix: { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, argv: ['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--dry-run', '--json'],
         why: 'Previews turning managed persistence back on; changes nothing. Once it is on, the release commits the fact to Git before its database row.',
-        user_message: `Managed persistence is off on this brain, so releasing this held fact can't save it in Git (source ${row.source_id} is git-canonical). Should managed persistence be turned back on (gbrain sources writer activate) so the release can run again?`,
+        user_message: `Managed persistence is off on this brain, so releasing this held fact can't save it in Git (source ${row.source_id} is git-canonical). Should managed persistence be turned back on (foresights sources writer activate) so the release can run again?`,
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] } } });
   }
   const fix: Action = { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, why, docs: DOCS,
     user_message: reason === 'declared_target'
-      ? `Page ${row.slug} in git-canonical source ${row.source_id} is declared database-only, so gbrain will not commit its file. Should it stay database-only, or move to a path Git tracks (outside storage.db_only and the derive folders, and not private)?`
+      ? `Page ${row.slug} in git-canonical source ${row.source_id} is declared database-only, so foresights will not commit its file. Should it stay database-only, or move to a path Git tracks (outside storage.db_only and the derive folders, and not private)?`
       : `Source ${row.source_id} is git-canonical, so every page needs a home in Git. Should page ${row.slug} be written to a file Git tracks, or declared database-only (its directory under storage.db_only in gbrain.yml, or the page marked visibility: private)?`,
     verify: { argv: ['gbrain', 'sources', 'git-gap', row.source_id, '--json'] } };
   return opError('git_home_required', message, 'Ask the user which git home to configure, then submit the write again with a new request_id.', { reason, why, fix, docs: DOCS });
@@ -204,7 +204,7 @@ export function privateCommitRefused(row: Pick<WriteRequest, 'source_id' | 'slug
   return opError('git_private_commit_refused', `Source ${row.source_id} is git-canonical and page ${row.slug} is ${privacy.replace('_', '-')}, so its file was not committed; nothing was written and HEAD is unchanged.`,
     'The page stays database-only: write it with put_page, which publishes a private page without a file, or remove visibility: private if it belongs in Git, then submit again with a new request_id.',
     { reason: privacy, why, docs: 'docs/guides/write-refusals.md#git_private_commit_refused', fix: { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, why,
-      user_message: `Page ${row.slug} in git-canonical source ${row.source_id} is private, so it stays database-only and gbrain will not commit its file. Should it stay private (written database-only), or become public so its file is committed?`,
+      user_message: `Page ${row.slug} in git-canonical source ${row.source_id} is private, so it stays database-only and foresights will not commit its file. Should it stay private (written database-only), or become public so its file is committed?`,
       verify: { argv: ['gbrain', 'sources', 'git-gap', row.source_id, '--json'] } } });
 }
 

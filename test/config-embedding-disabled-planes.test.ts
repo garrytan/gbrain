@@ -40,8 +40,8 @@ describe('embedding_disabled and schema_pack config planes', () => {
 
   test('a keyless embed names the one enablement command', async () => {
     const run = await cli(['embed', '--stale']);
-    expect(run.stderr).toContain('Turn on semantic search (pages and facts are kept): gbrain init --force --embedding-model');
-    expect(run.stderr).not.toContain('set embedding_model via gbrain config');
+    expect(run.stderr).toContain('Turn on semantic search (pages and facts are kept): foresights init --force --embedding-model');
+    expect(run.stderr).not.toContain('set embedding_model via foresights config');
   }, 60_000);
 
   test('unset removes the init sentinel', async () => {

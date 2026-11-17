@@ -8,7 +8,7 @@
  * 24 h (at most LANDING_RECEIPT_LIMIT, newest first, through the `persistence_requests_sync_watermark` partial index),
  * the newest receipt per slug only (a later delete explains a missing page), then one page read and one embedding-state
  * read for those slugs (`embedding-state.ts` classifier). A read that times out says `unknown`, never `ok`. Readers:
- * `gbrain sync status` (`landing`) and doctor `sync_landing_gaps`.
+ * `foresights sync status` (`landing`) and doctor `sync_landing_gaps`.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
@@ -71,7 +71,7 @@ export async function readLandingGaps(engine: BrainEngine, sourceId: string, opt
     const synced_at = new Date(receipt.completed_at).toISOString(), age_seconds = Math.round(Number(receipt.age));
     if (!live.has(receipt.slug)) {
       gaps.push({ slug: receipt.slug, state: 'page_missing', searchable: false, synced_at, age_seconds, fix: null,
-        why: `Sync committed an import of ${receipt.slug}, but no live page has that slug now and no later sync receipt deleted it; a write outside sync removed or renamed it. gbrain sources resolve-path ${sourceId} <file> names the file's state.` });
+        why: `Sync committed an import of ${receipt.slug}, but no live page has that slug now and no later sync receipt deleted it; a write outside sync removed or renamed it. foresights sources resolve-path ${sourceId} <file> names the file's state.` });
       continue;
     }
     const state = worst.get(receipt.slug);

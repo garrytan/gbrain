@@ -2,7 +2,7 @@
 
 **Auto-generated from `src/core/eval/metric-glossary.ts`. Do not edit by hand.** Run `bun run scripts/generate-metric-glossary.ts` to regenerate.
 
-Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-English explanation here. Industry terms are preserved verbatim so users searching the literature find what we report.
+Every metric `foresights eval *` and `foresights search stats` reports has a plain-English explanation here. Industry terms are preserved verbatim so users searching the literature find what we report.
 
 ## Retrieval Metrics
 
@@ -60,7 +60,7 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Key:** `avg_rank1_score`
 
-**Plain English:** The mean base (pre-boost) retrieval score of the TOP result across recent searches, from `gbrain search stats`. It is NOT a labeled accuracy number — it is a drift signal: if this trends DOWN over time, retrieval quality is regressing (the early warning that would have caught the duplicate-page incident before a human did).
+**Plain English:** The mean base (pre-boost) retrieval score of the TOP result across recent searches, from `foresights search stats`. It is NOT a labeled accuracy number — it is a drift signal: if this trends DOWN over time, retrieval quality is regressing (the early warning that would have caught the duplicate-page incident before a human did).
 
 **Range:** 0..1. Watch the trend, not the absolute value; pair with the <0.6 / 0.6-0.85 / >=0.85 bucket counts for shape.
 
@@ -230,7 +230,7 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Key:** `source_isolation_violations`
 
-**Plain English:** Count of injected pointers that belong to a source other than the active one. Cross-source leakage is gbrain's must-never-violate invariant (a missed source filter is a data leak), so this gates at ZERO — any baseline, any run.
+**Plain English:** Count of injected pointers that belong to a source other than the active one. Cross-source leakage is foresights's must-never-violate invariant (a missed source filter is a data leak), so this gates at ZERO — any baseline, any run.
 
 **Range:** 0..n, count. MUST be 0; any value above 0 fails the gate.
 
@@ -464,5 +464,5 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 ## Coverage
 
-Every metric printed by any `gbrain eval *` or `gbrain search stats` command resolves through `getMetricGloss()` in `src/core/eval/metric-glossary.ts`. Adding a new metric to the glossary REQUIRES updating this doc; the CI guard catches drift.
+Every metric printed by any `foresights eval *` or `foresights search stats` command resolves through `getMetricGloss()` in `src/core/eval/metric-glossary.ts`. Adding a new metric to the glossary REQUIRES updating this doc; the CI guard catches drift.
 

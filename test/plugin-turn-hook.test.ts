@@ -2,10 +2,10 @@
  * GBRA-188 follow-up: the Claude Code and Codex plugins declare setup's own
  * UserPromptSubmit hook (same subcommand and timeout, launched through the
  * plugin's launcher with GBRAIN_HOOK_LANE=plugin). The plugin hook yields to
- * any other gbrain lane wiring the event, so a machine with both fires once.
+ * any other foresights lane wiring the event, so a machine with both fires once.
  * The rule itself stays gated on an installed brain-first block, and doctor
  * harness_wiring and post-upgrade point plugin-only installs at
- * `gbrain setup <harness> --instructions-only`. Hermetic temp HOME, CODEX_HOME,
+ * `foresights setup <harness> --instructions-only`. Hermetic temp HOME, CODEX_HOME,
  * CLAUDE_CONFIG_DIR and GBRAIN_HOME.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
@@ -85,7 +85,7 @@ describe('plugin lane: one hook per event, rule only with a block', () => {
   test('Claude Code plugin only: no block, no rule; doctor and post-upgrade name --instructions-only; after it, the plugin hook carries the rule', async () => {
     const b = box();
     claudeSettings(b);
-    expect(await userPrompt(b, 'claude-code')).not.toContain('check GBrain first');
+    expect(await userPrompt(b, 'claude-code')).not.toContain('check Foresights first');
     await withEnv(b.env, async () => {
       const check = await harnessWiringCheck({ smoke: false });
       expect(check.status).toBe('warn');
@@ -93,7 +93,7 @@ describe('plugin lane: one hook per event, rule only with a block', () => {
       expect(check.details?.instructions).toEqual([expect.objectContaining({ harness: 'claude-code', state: 'missing', from: 'default_path' })]);
       const hints = instructionBlockUpgradeHints();
       expect(hints).toHaveLength(1);
-      expect(hints[0]).toContain('Run `gbrain setup claude-code --instructions-only` to write only that block');
+      expect(hints[0]).toContain('Run `foresights setup claude-code --instructions-only` to write only that block');
       const printed: string[] = [];
       printBrainFirstUpgradeNotice((l) => printed.push(l));
       expect(printed).toEqual(hints);
@@ -129,11 +129,11 @@ describe('plugin lane: one hook per event, rule only with a block', () => {
     claudeSettings(ws, { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'echo unrelated' }] }] } });
     await withEnv(ws.env, async () => { expect(pluginHookYields('claude-code', 'user-prompt', ws.root)).toBe(false); });
     mkdirSync(join(ws.root, '.claude'), { recursive: true });
-    writeFileSync(join(ws.root, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'gbrain hook user-prompt', _gbrain: 'bootstrap-v1' }] }] } }));
+    writeFileSync(join(ws.root, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'foresights hook user-prompt', _gbrain: 'bootstrap-v1' }] }] } }));
     await withEnv(ws.env, async () => { expect(pluginHookYields('claude-code', 'user-prompt', ws.root)).toBe(true); });
   });
 
-  test('a recorded `gbrain setup claude-code --no-hooks` turns the plugin hook off too, block or not', async () => {
+  test('a recorded `foresights setup claude-code --no-hooks` turns the plugin hook off too, block or not', async () => {
     const b = box();
     claudeSettings(b);
     const bin = join(b.root, 'gbrain');
@@ -192,7 +192,7 @@ describe('Codex: yield only to a setup group Codex runs (#7963)', () => {
   });
 });
 
-describe('persona variants count as the gbrain plugin, and only one plugin hook fires (#7963)', () => {
+describe('persona variants count as the foresights plugin, and only one plugin hook fires (#7963)', () => {
   test('Claude Code: a variant alone is a plugin lane; the variants yield to an enabled higher-precedence plugin', async () => {
     const b = box();
     claudeSettings(b, { enabledPlugins: { 'gbrain-daily@gbrain': true } });
@@ -254,13 +254,13 @@ describe('the plugin launcher on the per-turn hook (#7963)', () => {
     return { bin, calls: () => readFileSync(log, 'utf8').split('\n').filter(Boolean) };
   }
 
-  test('no gbrain binary: hook exits 0 with no output; serve keeps exit 127 and the recovery text', () => {
+  test('no foresights binary: hook exits 0 with no output; serve keeps exit 127 and the recovery text', () => {
     const b = box();
     expect(launch({ HOME: b.home }, ['hook', 'user-prompt'])).toEqual({ code: 0, stdout: '', stderr: '' });
     expect(launch({ HOME: b.home, GBRAIN_BIN: join(b.root, 'missing') }, ['hook', 'user-prompt'])).toEqual({ code: 0, stdout: '', stderr: '' });
     const serve = launch({ HOME: b.home }, ['serve', '--surface', 'full']);
     expect(serve.code).toBe(127);
-    expect(serve.stderr).toContain('gbrain binary not found');
+    expect(serve.stderr).toContain('foresights binary not found');
     expect(launch({ HOME: b.home, GBRAIN_BIN: join(b.root, 'missing') }, ['serve']).code).toBe(127);
   });
 

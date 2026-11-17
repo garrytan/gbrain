@@ -25,8 +25,8 @@ health_checks:
   # The old heartbeat_max_age freshness check is gone: heartbeat checks read
   # the recipe's OWN id (~/.gbrain/integrations/calendar-to-brain/), but the
   # connector's funnel events land under ~/.gbrain/integrations/google/.
-  # Freshness is enforced natively instead: `gbrain waiting` refuses on stale
-  # google sources, and `gbrain google status` live-probes each account.
+  # Freshness is enforced natively instead: `foresights waiting` refuses on stale
+  # google sources, and `foresights google status` live-probes each account.
   - type: any_of
     label: "Auth provider"
     checks:
@@ -54,7 +54,7 @@ prep happens automatically because the brain already has the history.
 **You are the installer — but you no longer write a sync script.** Earlier
 versions of this recipe had you build a deterministic calendar sync script
 (pagination, chunking, daily-file generation). All of that is now IMPLEMENTED
-in gbrain's google source kind — see `docs/guides/google-connect.md`. Do NOT
+in foresights's google source kind — see `docs/guides/google-connect.md`. Do NOT
 re-implement it; the connector handles pagination, cursors (`syncToken` with
 automatic 410 recovery), cancelled-event handling, and resumable backfill
 correctly and under test.
@@ -76,8 +76,8 @@ runs first so attendee names resolve to person pages.
 
 ```
 Google Calendar (multiple accounts)
-  ↓ (BYO OAuth via gbrain google connect; tokens in ~/.gbrain/credentials.json)
-gbrain google source kind (--services includes calendar)
+  ↓ (BYO OAuth via foresights google connect; tokens in ~/.gbrain/credentials.json)
+foresights google source kind (--services includes calendar)
   ↓ Materializes in the source's MANAGED DIR:
   ├── calendar/{YYYY}/{MM}/...md   (type: meeting — one page per event)
   └── people/...md                 (type: person — attendee resolution via Contacts)
@@ -91,7 +91,7 @@ Agent reads meeting pages
 
 ## Prerequisites
 
-1. **GBrain installed and configured** (`gbrain doctor` passes)
+1. **Foresights installed and configured** (`foresights doctor` passes)
 2. **Google access** via the **[credential-gateway](credential-gateway.md)**
    recipe (Option A native connector recommended; Option B ClawVisor is the
    hosted alternative)
@@ -100,14 +100,14 @@ Agent reads meeting pages
 
 ### Step 1: Connect and Register the Source
 
-The fast path (`gbrain google setup`) includes calendar by default. The
+The fast path (`foresights google setup`) includes calendar by default. The
 explicit pieces:
 
 ```bash
-gbrain google connect --account you@example.com
-gbrain sources add gcal-you --kind google --account you@example.com \
+foresights google connect --account you@example.com
+foresights sources add gcal-you --kind google --account you@example.com \
   --services calendar,contacts --history-days 3650
-gbrain sync --source gcal-you
+foresights sync --source gcal-you
 ```
 
 - `--services` defaults to `gmail,calendar,contacts`; narrow it to
@@ -125,15 +125,15 @@ exactly two user interactions (GCP checklist + one consent click).
 ### Step 2: Verify
 
 ```bash
-gbrain google status --json          # refresh probe per account
-gbrain search "meeting" --limit 3    # should return type: meeting pages
+foresights google status --json          # refresh probe per account
+foresights search "meeting" --limit 3    # should return type: meeting pages
 ```
 
 ### Step 3: Continuous Sync
 
-Google sources sync like any source: `gbrain sync --source <id>`,
-`gbrain sync --all`, and autopilot pick them up. **A bare un-targeted
-`gbrain sync` (repo mode) does not** — target it or use `--all`. No weekly
+Google sources sync like any source: `foresights sync --source <id>`,
+`foresights sync --all`, and autopilot pick them up. **A bare un-targeted
+`foresights sync` (repo mode) does not** — target it or use `--all`. No weekly
 cron script of its own; incremental syncs ride the calendar `syncToken`, so
 they're cheap.
 
@@ -141,7 +141,7 @@ they're cheap.
 
 This is YOUR job (the agent). For each person who appears in calendar events:
 
-1. **Check brain**: `gbrain search "attendee name"` — do they have a page?
+1. **Check brain**: `foresights search "attendee name"` — do they have a page?
 2. **Create page if missing**: notable attendees (appears 3+ times) get a brain page
 3. **Update existing pages**: add meeting history to timeline:
    `- YYYY-MM-DD | Meeting: {event title} [Source: Google Calendar]`
@@ -153,9 +153,9 @@ address are dropped); conference-room/resource filtering is not yet applied.
 
 ## What the Agent Should Test After Setup
 
-1. **Event pages exist:** `gbrain search "<a real recent meeting title>"`
+1. **Event pages exist:** `foresights search "<a real recent meeting title>"`
    returns a `type: meeting` page with attendees and location.
-2. **Cancelled events:** cancel a test meeting, `gbrain sync --source <id>`,
+2. **Cancelled events:** cancel a test meeting, `foresights sync --source <id>`,
    verify it's gone.
 3. **Attendee resolution:** an attendee who is also a contact links to their
    `people/` page.
@@ -175,7 +175,7 @@ Every connector failure maps to a typed error code with the fix attached —
 
 **No events returned:**
 - Check the source's `--services` list includes `calendar`
-- Check the account: `gbrain google status --json` (probe should be `ok`)
+- Check the account: `foresights google status --json` (probe should be `ok`)
 - `api_not_enabled` errors carry the exact enable link for the Calendar API
 - Some calendars may be empty for the requested window (`--history-days`)
 

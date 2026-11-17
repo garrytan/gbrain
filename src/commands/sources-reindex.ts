@@ -1,11 +1,11 @@
 /**
- * `gbrain sources reindex <source-id> --from-git` (git-canonical memory, G3, docs/designs/GIT_CANONICAL_MEMORY.md): the
+ * `foresights sources reindex <source-id> --from-git` (git-canonical memory, G3, docs/designs/GIT_CANONICAL_MEMORY.md): the
  * re-derive verb of a strict source (`config.canonical = "git"`). The default `--dry-run` reads the level a full sync pass
  * would classify (sync-pass.ts `readShadowLevel`, read-only) and lists every page where Git's verdict replaces what the
  * database holds: an import over a database version sync never saw, a drifted page, a keep_db page or an edited tombstone,
  * and the deletion of a page whose file a commit removed. It prints a preview hash bound to HEAD and that list.
  * `--apply --expect <hash>` reads the level again, refuses `preview_changed` when it differs, and then runs the full sync
- * pass that applies Git's verdict (`gbrain sync --source <id> --no-pull --full`, with `--no-embed` and `--no-extract` passed on). A source that is not strict is refused,
+ * pass that applies Git's verdict (`foresights sync --source <id> --no-pull --full`, with `--no-embed` and `--no-extract` passed on). A source that is not strict is refused,
  * because Git wins only where the source says so. Trusted local CLI only: it prints slugs and paths.
  */
 import type { BrainEngine } from '../core/engine.ts';
@@ -17,7 +17,7 @@ import { previewChangedError, previewHash } from '../core/persistence/preview-ap
 import { readShadowLevel } from '../core/persistence/sync-pass.ts';
 import type { SyncClass } from '../core/persistence/sync-classify.ts';
 
-const USAGE = 'Usage: gbrain sources reindex <source-id> --from-git [--dry-run | --apply --expect <hash> [--no-embed] [--no-extract]] [--json]';
+const USAGE = 'Usage: foresights sources reindex <source-id> --from-git [--dry-run | --apply --expect <hash> [--no-embed] [--no-extract]] [--json]';
 const DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#the-model';
 
 export interface ReindexOverwrite { path: string; slug: string | null; action: 'import' | 'delete'; replaces: SyncClass }
@@ -60,7 +60,7 @@ export async function previewReindex(engine: BrainEngine, sourceId: string): Pro
   await resolveSourceId(engine, sourceId, undefined, { skipLocalSignals: true });
   const [source] = await engine.executeRaw<{ strict: boolean }>(`SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1`, [sourceId]);
   if (!source?.strict) throw new OperationError('invalid_params', `Source ${sourceId} is not strict (git-canonical), so Git does not win there and nothing was read.`,
-    `Only a source with config.canonical = "git" re-derives from Git. gbrain sources git-gap ${sourceId} shows how far its database is from HEAD.`, DOCS);
+    `Only a source with config.canonical = "git" re-derives from Git. foresights sources git-gap ${sourceId} shows how far its database is from HEAD.`, DOCS);
   const level = await readShadowLevel(engine, { sourceId, full: true });
   if (!level) throw new OperationError('invalid_params', `Source ${sourceId} keeps an approved company-brain manifest, so it has no level to re-derive.`, USAGE, DOCS);
   const unsettled = level.paths.filter(entry => !entry.result.settled && !entry.result.inFlight && (entry.result.action === 'import' || entry.result.action === 'delete'));
@@ -87,7 +87,7 @@ export async function runSourcesReindex(engine: BrainEngine, args: string[]): Pr
     const parsed = parseReindexArgs(args);
     const preview = await previewReindex(engine, parsed.sourceId);
     if (!parsed.apply) { console.log(json ? JSON.stringify(preview) : describe(preview)); return; }
-    if (preview.preview_hash !== parsed.expect) throw previewChangedError(parsed.expect!, `gbrain sources reindex ${parsed.sourceId} --from-git --dry-run`);
+    if (preview.preview_hash !== parsed.expect) throw previewChangedError(parsed.expect!, `foresights sources reindex ${parsed.sourceId} --from-git --dry-run`);
     const { runSync } = await import('./sync.ts');
     await runSync(engine, ['--source', parsed.sourceId, '--no-pull', '--full', ...parsed.processing, ...(json ? ['--json'] : [])]);
   } catch (error) {

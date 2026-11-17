@@ -1,6 +1,6 @@
 INPUT: eng e0efd14a6f2d0ce08cf01b9204b102a9374b22bbb165d02a07a2dd73998893b9
 
-# Independent ENG review: GBrain Refactor Wave 1
+# Independent ENG review: Foresights Refactor Wave 1
 
 The input was read in full: native-prompt.md, 254 lines. I checked the claims against /workspace/gbrain at master 608a174 using read-only commands.
 
@@ -90,7 +90,7 @@ None of these blocks the plan. Each needs an explicit rule and a test before the
 - **H-1: "Identical after normalization" is doing heavy lifting in the W1 inventory.** Differences hide in the PGLite `dropRowTypeArrayParsers` behavior (pglite-statements.ts:196), int8 as string versus bigint, halfvec/vector cast probes (`resolveFactsEmbeddingCast`), and PGLite checkpoint admission. The inventory needs a fourth class: "identical SQL, different driver post-processing". Those methods move SQL but keep an engine-side adapter.
 - **H-2: The snapshot hash list is hand-maintained and already misses bootstrap code.** `computeSnapshotSchemaHash` lists about 30 files, and neither forward-reference bootstrap is among them. PGLite's bootstrap is inline in `pglite-engine.ts` (~1077-1400), and Postgres's is in `postgres-engine/forward-reference-bootstrap.ts`. If E1 merges them into a shared module that initSchema runs, decide whether it is a hash input. The W7 transitive-import test should compute inputs from `pglite-schema.ts` + `schema-migrations/index.ts` + the bootstrap module, not from an extended hand list.
 - **H-3: Generated `schema-migrations/index.ts` conflicts on every concurrent migration PR** (both append a line). **Fix:** Document "regenerate, never hand-merge" in the porting kit, and optionally set `merge=union` plus the duplicate check, which catches union artifacts.
-- **H-4: Cold-start budget covers only `--version`.** Twenty-two modules import `LATEST_VERSION`/`MIGRATIONS`. Under `bun run` (non-compiled), any of them on a hot startup path now parses 170+ files. **Fix:** Add `gbrain doctor --fast` or an engine-connect cold start to (f), non-compiled.
+- **H-4: Cold-start budget covers only `--version`.** Twenty-two modules import `LATEST_VERSION`/`MIGRATIONS`. Under `bun run` (non-compiled), any of them on a hot startup path now parses 170+ files. **Fix:** Add `foresights doctor --fast` or an engine-connect cold start to (f), non-compiled.
 - **H-5: The CLI table must keep the module-load alias collision check** (cli.ts:318-330) running over the derived table. Derived sets equal to master's also preserve master's known inconsistencies. That is correct for behavior preservation, so list them in the PR rather than "fixing" them silently.
 - **H-6: One PR with W0-W7 is consistent with the owner's rule, but the review burden needs care.** The mitigation is already in the plan: move-only commits with `verify-move-only`, and cut-lines. The W1-extended gate is "pending owner approval". Resolve that before W1 starts, because it determines whether the landing window (51 open PRs on target paths) is weeks or days.
 

@@ -180,7 +180,7 @@ export async function upsertOpenLoop(
   // The DO UPDATE's WHERE is the manual-close guard: a closed (done/dropped/
   // stale) row only reopens on GENUINELY newer activity. Without it, any
   // re-render of an unchanged thread (label-only history touch, re-extraction
-  // of the same content) would silently revert `gbrain loops done`. #5012: a
+  // of the same content) would silently revert `foresights loops done`. #5012: a
   // loop a mute closed never reopens for the same counterparty while muted,
   // and one an unmute queued for re-check reopens on the re-check's verdict.
   if (rows.length > 0) {
@@ -305,7 +305,7 @@ export async function markStaleLoops(engine: BrainEngine, sourceId: string): Pro
   return rows.length;
 }
 
-// ── Suppressions (`gbrain loops mute`) ───────────────────────────────────────
+// ── Suppressions (`foresights loops mute`) ───────────────────────────────────────
 
 /** #5012: `closed_by` of a reply-owed loop a mute closed (status `dropped`). */
 export const MUTED = 'muted';
@@ -371,7 +371,7 @@ export async function requeueMutedLoops(
   return { requeued: ids((r) => r.thread_id !== null), unverifiable: ids((r) => r.thread_id === null) };
 }
 
-/** #5012: every open reply-owed loop from one sender (`gbrain loops drop sender`), oldest id first. */
+/** #5012: every open reply-owed loop from one sender (`foresights loops drop sender`), oldest id first. */
 export async function listSenderInboundLoops(
   engine: BrainEngine,
   email: string,
@@ -422,7 +422,7 @@ export async function addSuppression(
 }
 
 /**
- * Remove one exact suppression row (`gbrain loops unmute`).
+ * Remove one exact suppression row (`foresights loops unmute`).
  *
  * The symmetric counterpart to addSuppression, and deliberately narrow: it
  * matches the SAME (source_id, kind, value) triple the insert wrote, with the

@@ -46,7 +46,7 @@ export const SLUG_HEAL_MAX_FILES = 200;
 const FALSE = /^(false|0|off|no)$/i;
 const TRUE = /^(true|1|on|yes)$/i;
 
-/** `gbrain config set` refusal text for a value that is not a boolean; null when it is one. */
+/** `foresights config set` refusal text for a value that is not a boolean; null when it is one. */
 export function slugAutoRemoveValueRefusal(value: string): string | null {
   return TRUE.test(value.trim()) || FALSE.test(value.trim()) ? null : `${SLUG_AUTO_REMOVE_KEY} must be true or false (got "${value}"). Nothing was written.`;
 }
@@ -79,11 +79,11 @@ function noticeOf(sourceId: string, r: Omit<SlugHealReport, 'notice' | 'preview_
       : r.skipped === 'remote_authority' ? 'this sync runs under a remote job or agent, which may import but not rewrite files'
       : r.skipped === 'sync_unfinished' ? 'the source still has an unfinished sync' : 'this host may not write the source checkout';
     return `[sync] ${r.pending} held file(s) of source ${sourceId} have a stray frontmatter slug: line; sync left them held because ${why}. `
-      + `Preview the repair with gbrain repair content --source ${sourceId} --no-llm (read-only); the maintenance run applies it when the lane is on.`;
+      + `Preview the repair with foresights repair content --source ${sourceId} --no-llm (read-only); the maintenance run applies it when the lane is on.`;
   }
-  return `[sync] removed the stray frontmatter slug: line of ${r.removed} file(s) in source ${sourceId} that named no page; each is indexed under its path and committed by gbrain`
-    + `${r.pending ? `; ${r.pending} more wait for the next sync` : ''}${r.failed ? `; ${r.failed} failed (gbrain repair content --source ${sourceId} shows why)` : ''}`
-    + `${left ? `; ${left} held file(s) need more than that and stay for the content-repair lane` : ''}. Opt out: gbrain config set ${SLUG_AUTO_REMOVE_KEY} false.`;
+  return `[sync] removed the stray frontmatter slug: line of ${r.removed} file(s) in source ${sourceId} that named no page; each is indexed under its path and committed by foresights`
+    + `${r.pending ? `; ${r.pending} more wait for the next sync` : ''}${r.failed ? `; ${r.failed} failed (foresights repair content --source ${sourceId} shows why)` : ''}`
+    + `${left ? `; ${left} held file(s) need more than that and stay for the content-repair lane` : ''}. Opt out: foresights config set ${SLUG_AUTO_REMOVE_KEY} false.`;
 }
 
 /**

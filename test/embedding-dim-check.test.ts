@@ -1,7 +1,7 @@
 /**
  * v0.28.5 (A4) — Existing-brain dimension-mismatch detection unit tests.
  *
- * Pairs with `gbrain init` and `gbrain doctor`'s loud-failure paths. Validates
+ * Pairs with `foresights init` and `foresights doctor`'s loud-failure paths. Validates
  * that:
  *   1. readContentChunksEmbeddingDim correctly reports null on a fresh brain.
  *   2. After initSchema, it returns the actual templated dim (1536 default).
@@ -173,8 +173,8 @@ describe('embeddingMismatchMessage', () => {
     });
     expect(msg).toContain('vector(1536)');
     expect(msg).toContain('vector(1024)');
-    expect(msg).toContain('gbrain init --force --embedding-model openai:text-embedding-3-small --embedding-dimensions 1536 --path /tmp/test-brain.pglite');
-    expect(msg).toContain('gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1024 --dry-run');
+    expect(msg).toContain('foresights init --force --embedding-model openai:text-embedding-3-small --embedding-dimensions 1536 --path /tmp/test-brain.pglite');
+    expect(msg).toContain('foresights migrate embeddings --to openai:text-embedding-3-small --dim 1024 --dry-run');
     expect(msg).toContain('PGLite cannot ALTER vector column types');
     expect(msg).not.toMatch(/\bmv /);
     // Must NOT contain the Postgres-only SQL recipe.
@@ -191,8 +191,8 @@ describe('embeddingMismatchMessage', () => {
       engineKind: 'pglite',
       databasePath: '/tmp/test-brain.pglite',
     });
-    expect(msg).not.toContain('gbrain init --force');
-    expect(msg).toContain('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run');
+    expect(msg).not.toContain('foresights init --force');
+    expect(msg).toContain('foresights migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run');
   });
 
   test('PGLite branch falls back to default database path when omitted', () => {
@@ -207,7 +207,7 @@ describe('embeddingMismatchMessage', () => {
     expect(msg).toMatch(/--embedding-dimensions 1536 --path \S+brain\.pglite/);
   });
 
-  test('PGLite branch must NOT recommend `gbrain config set embedding_model` (no-op after Lane C.2)', () => {
+  test('PGLite branch must NOT recommend `foresights config set embedding_model` (no-op after Lane C.2)', () => {
     const msg = embeddingMismatchMessage({
       currentDims: 1536,
       requestedDims: 1280,
@@ -215,10 +215,10 @@ describe('embeddingMismatchMessage', () => {
       source: 'doctor',
       engineKind: 'pglite',
     });
-    // The pre-v0.37 recipe pointed at `gbrain config set embedding_model X`
+    // The pre-v0.37 recipe pointed at `foresights config set embedding_model X`
     // which is a no-op after C.2. Recipe must point at init instead.
-    expect(msg).not.toContain('gbrain config set embedding_model');
-    expect(msg).not.toContain('gbrain config set embedding_dimensions');
+    expect(msg).not.toContain('foresights config set embedding_model');
+    expect(msg).not.toContain('foresights config set embedding_dimensions');
   });
 });
 

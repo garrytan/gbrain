@@ -1,6 +1,6 @@
 /**
  * GST-2462 on Postgres: the ignored-privacy-label notice reads that run on write and sync paths end on the server.
- * `gbrain sync` reads the pages a run stored for its end-of-run notice (`ignoredPrivacyLabelRunNotice`), and put_page
+ * `foresights sync` reads the pages a run stored for its end-of-run notice (`ignoredPrivacyLabelRunNotice`), and put_page
  * reads the stored page back (`withIgnoredPrivacyLabelNotice`). As plain autocommit statements they waited on
  * `LOCK TABLE pages IN ACCESS EXCLUSIVE MODE` held in another session for as long as the lock lasted, so a sync stalled
  * past its preparation budget behind a notice (#8933's full E2E, persistence-preparation-engine-reads-lock-postgres).

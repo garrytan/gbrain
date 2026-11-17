@@ -1,6 +1,6 @@
 /**
  * GBRA-346, Postgres side of test/init-stable-channel.test.ts: a fresh
- * `gbrain init --url` on an empty content database persists
+ * `foresights init --url` on an empty content database persists
  * `self_upgrade.channel: stable`, and a re-init of a brain whose config never
  * chose a channel leaves it unset.
  *

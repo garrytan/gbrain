@@ -183,7 +183,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect({ body: (await b.body(ALICE)) === bodyBefore, file: b.file(ALICE) === fileBefore }).toEqual({ body: true, file: true });
         expect(await b.rows(ALICE)).toEqual([{ fact: 'Alice Example moved to Lisbon', row_num: null }]);
         const held = phase.warnings.filter(w => w.includes(`FACTS_FENCE_FAILED: ${ALICE} (file_database_drift`));
-        expect({ held: held.length, fix: held.some(w => w.includes('gbrain sync --source default')) }).toEqual({ held: 1, fix: true });
+        expect({ held: held.length, fix: held.some(w => w.includes('foresights sync --source default')) }).toEqual({ held: 1, fix: true });
         expect(await b.rows(BOB)).toEqual([{ fact: 'Bob Example moved to Porto', row_num: 1 }]);
         expect(fenceClaims(b.file(BOB))).toEqual(['Bob Example moved to Porto']);
         expectOthersUnchanged(before, await snapshotItems(b.engine, 'default'), { expectProgress: [BOB], progressFields: ['updated_at'] });

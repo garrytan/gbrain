@@ -1,5 +1,5 @@
 /**
- * `gbrain recall --since-last-run` must not skip facts when more than one
+ * `foresights recall --since-last-run` must not skip facts when more than one
  * --limit window of new facts arrives between runs.
  *
  * Before this fix the cursor arm reads the NEWEST `limit` rows created
@@ -56,7 +56,7 @@ for (const backend of testBackends()) describe(`recall --since-last-run paging (
     return dir;
   }
 
-  /** One `gbrain recall` call; returns the delivered fact texts. */
+  /** One `foresights recall` call; returns the delivered fact texts. */
   async function recall(args: string[]): Promise<string[]> {
     let out = '';
     process.stdout.write = ((chunk: string | Uint8Array) => { out += chunk.toString(); return true; }) as typeof process.stdout.write;
@@ -217,7 +217,7 @@ for (const backend of testBackends()) describe(`recall --since-last-run paging (
       await withEnv({ GBRAIN_HOME: tmpHome() }, async () => {
         writeCursor('default', new Date(base - 1000), 'briefing'); // creates the cursor dir
         const path = _cursorPathForTests('default', 'briefing');
-        // The exact bytes an older gbrain wrote: schema_version 1, wall clock only.
+        // The exact bytes an older foresights wrote: schema_version 1, wall clock only.
         writeFileSync(path, JSON.stringify({ schema_version: 1, last_run_iso: new Date(base - 1000).toISOString() }) + '\n');
         await seed(Array.from({ length: 3 }, (_, i) => ({ fact: `v1-${i}`, createdAt: at(i + 1) })));
         expect(await recall(['--since-last-run', '--json', '--limit', '2'])).toEqual(['v1-1', 'v1-0']);

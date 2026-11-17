@@ -8,7 +8,7 @@
  * only when the fixture lets it). Protects: the member is released at
  * `persistence.sync_preparation_ms` with `preparation_deadline` and one
  * counted attempt while its root keeps publishing the pages before it; while
- * it hangs, `gbrain sources writer status --json` names the step
+ * it hangs, `foresights sources writer status --json` names the step
  * (`origin_check`), what it waits on (`db`) and the owner process; the second
  * cut-off finishes the request `failed`/`preparation_stalled` within
  * budget x attempts plus slack (so the run ends `blocked` on that page instead
@@ -121,7 +121,7 @@ describe.skipIf(!hasDatabase())('managed catch-up preparation deadlines (Postgre
       const stuck = rows.find(row => row.slug === stuckSlug)!;
       expect(stuck).toMatchObject({ state: 'failed', error_code: 'preparation_stalled', preparation_attempts: 2 });
       expect(stuck.error_message).toContain('step origin_check (waiting on db)');
-      expect(stuck.error_message).toContain(`gbrain sources retry-held ${f.id}`);
+      expect(stuck.error_message).toContain(`foresights sources retry-held ${f.id}`);
       expect(hold.holds()).toBe(2);
       // Time from the first cut-off attempt to the terminal receipt stays inside budget x attempts plus slack.
       expect(ended - held[0]!).toBeLessThan(BUDGET_MS * 2 + 20_000);

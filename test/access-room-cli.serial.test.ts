@@ -99,7 +99,7 @@ describe('--room on the direct path (repo-less PGLite)', () => {
     const human = await run(['query', 'harbor ledger', '--room']);
     expect(human.exitCode).toBe(0);
     expect(human.stderr).toContain('[gbrain degraded:');
-    expect(human.stderr).toContain('[gbrain room: no one readable] no item could be judged (invalid)');
+    expect(human.stderr).toContain('[foresights room: no one readable] no item could be judged (invalid)');
   }, 180_000);
 
   test('search and query --json keep their own rendering (answer ids, --explain) inside the room document', async () => {
@@ -117,7 +117,7 @@ describe('--room on the direct path (repo-less PGLite)', () => {
     const roomed = await run(['list', '--room', 'alice-example']);
     expect(roomed.exitCode).toBe(0);
     expect(roomed.stdout).toBe(plain.stdout);
-    expect(roomed.stderr).toContain('[gbrain room: member:alice-example] 1 of 2 items readable by the room, 1 above its level, 0 unknown');
+    expect(roomed.stderr).toContain('[foresights room: member:alice-example] 1 of 2 items readable by the room, 1 above its level, 0 unknown');
     expect(roomed.stderr).toContain('default:' + MINE + ' (readers)');
   }, 120_000);
 
@@ -139,10 +139,10 @@ describe('--room on the direct path (repo-less PGLite)', () => {
       const out = await run(['list', '--room', 'alice-example']);
       expect(out.exitCode).toBe(0);
       expect(out.stderr).toContain('no item could be judged (unbound)');
-      expect(out.stderr).toContain('gbrain access owner set');
+      expect(out.stderr).toContain('foresights access owner set');
     } finally { await withBrain(engine => setOwner(engine, 'owner-example')); }
     const offline = await run(['errors', 'no_brain', '--room', 'alice-example']);
-    expect(offline.stderr).toContain('[gbrain room] gbrain errors does not mark its results for a room');
+    expect(offline.stderr).toContain('[foresights room] foresights errors does not mark its results for a room');
   }, 180_000);
 });
 

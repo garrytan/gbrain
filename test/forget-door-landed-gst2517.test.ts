@@ -10,7 +10,7 @@
  *     submitted again with a new request_id records the withdrawal without a second commit;
  *   - a remember and a put_page in the same window are replayed the same way: one row, one commit;
  *   - a process killed in the window (Postgres: a SIGKILLed worker) is recovered by the owner and replayed the same way;
- *   - `gbrain repair failed-writes` lists a refused forget as a caller write to resubmit, not one the dream cycle produces.
+ *   - `foresights repair failed-writes` lists a refused forget as a caller write to resubmit, not one the dream cycle produces.
  * PGLite here; with DATABASE_URL also Postgres (test/postgres-unit-arms.txt).
  */
 import { afterEach, describe, expect, test } from 'bun:test';

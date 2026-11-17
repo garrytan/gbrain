@@ -124,7 +124,7 @@ export interface ParsedFact {
    * v0.32.2 strikethrough semantics. Both are mutually exclusive with `active=true`.
    *   - `supersededBy` set: the row was superseded by another fence row;
    *     `context` matches `/superseded by #(\d+)/i`.
-   *   - `forgotten` true: the user invoked `gbrain forget` on this row;
+   *   - `forgotten` true: the user invoked `foresights forget` on this row;
    *     `context` matches `/^forgotten:/i`.
    * When neither is set but `active=false`, the row is "inactive for
    * unrecognized reason" — the parser preserves it (markdown source-of-
@@ -135,7 +135,7 @@ export interface ParsedFact {
   forgotten?: boolean;
   /**
    * v0.35.4 typed-claim fields (D-CDX-5). Optional. When present, drives
-   * `gbrain eval trajectory` + the `find_trajectory` MCP op chronological
+   * `foresights eval trajectory` + the `find_trajectory` MCP op chronological
    * regression detection. The fence layout widens from 10 to 14 columns
    * when any row in the table has a non-undefined typed field; otherwise
    * stays 10-cell for backward compat with existing fences.
@@ -673,7 +673,7 @@ export function factsGapWarning(
     (f) => f.visibility !== 'world' && !incomingRowNums.has(f.rowNum),
   ).length;
   if (dropped === 0) return null;
-  return `[gbrain] #2044 gap on ${slug}: ${dropped} non-'world' fact row(s) present before this ` +
+  return `[foresights] #2044 gap on ${slug}: ${dropped} non-'world' fact row(s) present before this ` +
     `remote write are missing from the incoming write and were NOT restored (the fence parsed ` +
     `with warnings, so the row-level merge could not rewrite it safely). If these rows were ` +
     `dropped by a caller who never saw them, they are now lost.`;

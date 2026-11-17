@@ -1,5 +1,5 @@
 /**
- * `gbrain sources record-origin <id>... --remote|--local [--apply] [--json]`: record who added older URL sources
+ * `foresights sources record-origin <id>... --remote|--local [--apply] [--json]`: record who added older URL sources
  * (`url-source-origin.ts`), for the ids the operator names. Preview unless --apply; exit 1 when any id is refused,
  * 2 on a usage error. Trusted local CLI only; no MCP operation reaches it.
  */
@@ -7,7 +7,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { recordSourceOrigin, type SourceOrigin } from '../core/url-source-origin.ts';
 
-const USAGE = 'Usage: gbrain sources record-origin <id>... --remote|--local [--apply] [--json]';
+const USAGE = 'Usage: foresights sources record-origin <id>... --remote|--local [--apply] [--json]';
 
 export async function runRecordOrigin(engine: BrainEngine, args: string[]): Promise<void> {
   const ids = args.filter(arg => !arg.startsWith('-'));
@@ -22,7 +22,7 @@ export async function runRecordOrigin(engine: BrainEngine, args: string[]): Prom
   else {
     for (const result of report.results) console.log(`[${result.source_id}] ${result.status}${result.code ? ` (${result.code})` : ''}: ${result.reason}`);
     if (!report.apply && report.results.some(result => result.status === 'would_record'))
-      console.log(`(preview; nothing changed) Apply with: gbrain sources record-origin ${report.results.filter(result => result.status === 'would_record').map(result => result.source_id).join(' ')} --${report.origin} --apply`);
+      console.log(`(preview; nothing changed) Apply with: foresights sources record-origin ${report.results.filter(result => result.status === 'would_record').map(result => result.source_id).join(' ')} --${report.origin} --apply`);
   }
   if (report.results.some(result => result.status === 'refused')) setCliExitVerdict(1);
 }

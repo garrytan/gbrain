@@ -1,6 +1,6 @@
 /**
  * Tests for `changedSlugsSinceVersion` in src/core/skillpack/bundle.ts —
- * the git-aware filter that backs `gbrain skillpack reference --all --since
+ * the git-aware filter that backs `foresights skillpack reference --all --since
  * <version>`. Builds a fixture git repo on the fly and tags it to exercise
  * the version-resolution + commit-walking path.
  *

@@ -1,7 +1,7 @@
 /**
  * openclaw-gateway.ts — the conversation archive's reader for current OpenClaw (GST-2768).
  *
- * Current OpenClaw keeps live session rows and transcripts in per-agent SQLite owned by its Gateway; gbrain never
+ * Current OpenClaw keeps live session rows and transcripts in per-agent SQLite owned by its Gateway; foresights never
  * opens that file. It reads through the Gateway's RPCs, called with the documented CLI
  * (openclaw gateway call <method> --json --params <json>), which also owns the Gateway credential and device
  * pairing. Verified against OpenClaw 2026.11.3 (test/fixtures/openclaw-gateway/README.md):
@@ -72,16 +72,16 @@ function gatewayError(kind: 'unreachable' | 'auth' | 'failed', detail: string): 
   const message = redactGatewayText(detail);
   if (kind === 'unreachable') {
     return opError('archive_gateway_unreachable', 'The OpenClaw Gateway did not answer, so no OpenClaw conversation was archived this run: ' + message,
-      'Start the Gateway (openclaw gateway) or point gbrain at it (GBRAIN_OPENCLAW_GATEWAY_URL), then rerun gbrain transcripts archive run.',
+      'Start the Gateway (openclaw gateway) or point foresights at it (GBRAIN_OPENCLAW_GATEWAY_URL), then rerun foresights transcripts archive run.',
       { retryable: true, fix: { argv: ['openclaw', 'health', '--json'], consent: [], actor: 'agent', why: 'Shows whether the local OpenClaw Gateway is running, read-only.', requires_exclusive: false } });
   }
   if (kind === 'auth') {
-    return opError('archive_gateway_auth', 'The OpenClaw Gateway refused gbrain\'s credential, so no OpenClaw conversation was archived this run: ' + message,
-      'Ask the user to give gbrain the Gateway token (GBRAIN_OPENCLAW_GATEWAY_TOKEN, or gateway.auth in the OpenClaw config on this machine), then rerun gbrain transcripts archive run.',
+    return opError('archive_gateway_auth', 'The OpenClaw Gateway refused foresights\'s credential, so no OpenClaw conversation was archived this run: ' + message,
+      'Ask the user to give foresights the Gateway token (GBRAIN_OPENCLAW_GATEWAY_TOKEN, or gateway.auth in the OpenClaw config on this machine), then rerun foresights transcripts archive run.',
       { fix: { argv: ['openclaw', 'gateway', 'call', 'health', '--json'], consent: [], actor: 'user', why: 'Checks that the Gateway accepts the configured credential, read-only.', requires_exclusive: false } });
   }
   return opError('archive_gateway_failed', 'The OpenClaw Gateway returned an error, so no OpenClaw conversation was archived this run: ' + message,
-    'Rerun gbrain transcripts archive run; if it repeats, run gbrain transcripts archive status --json and report the message.', { retryable: true });
+    'Rerun foresights transcripts archive run; if it repeats, run foresights transcripts archive status --json and report the message.', { retryable: true });
 }
 
 /** One CLI result: the parsed document, or the stable archive error for its error envelope. */
@@ -109,7 +109,7 @@ const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 /** The parent variables the openclaw child gets: where binaries and the home folder are, and the locale. */
 const CHILD_ENV_ALLOW = new Set(['PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES']);
 
-/** The default transport: the documented CLI on this machine. The token, when gbrain holds one, goes through the environment, never argv. */
+/** The default transport: the documented CLI on this machine. The token, when foresights holds one, goes through the environment, never argv. */
 export function cliGatewayTransport(opts: {
   bin?: string; url?: string; token?: string; timeoutMs?: number;
   /** Largest stdout the child may write before it is stopped (default 256 MiB). Internal: tests pass a small bound. */
@@ -120,7 +120,7 @@ export function cliGatewayTransport(opts: {
   const bin = opts.bin ?? 'openclaw';
   const maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const launch = opts.spawn ?? execFileBounded;
-  // OpenClaw's own OPENCLAW_GATEWAY_URL/_TOKEN count when gbrain's are unset: a working-folder .env cannot set them (env-trust).
+  // OpenClaw's own OPENCLAW_GATEWAY_URL/_TOKEN count when foresights's are unset: a working-folder .env cannot set them (env-trust).
   const { GBRAIN_OPENCLAW_GATEWAY_URL, GBRAIN_OPENCLAW_GATEWAY_TOKEN, OPENCLAW_GATEWAY_URL, OPENCLAW_GATEWAY_TOKEN } = process.env;
   const url = opts.url ?? GBRAIN_OPENCLAW_GATEWAY_URL ?? OPENCLAW_GATEWAY_URL;
   const urlVar = opts.url !== undefined || GBRAIN_OPENCLAW_GATEWAY_URL !== undefined ? 'GBRAIN_OPENCLAW_GATEWAY_URL' : 'OPENCLAW_GATEWAY_URL';

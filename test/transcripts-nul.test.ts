@@ -1,5 +1,5 @@
 /**
- * gbrain#4392 — an escaped \u0000 in transcript content must never abort the
+ * foresights#4392 — an escaped \u0000 in transcript content must never abort the
  * whole ingest run. Agent transcripts capture raw tool output (grep on a
  * binary, truncated buffers), so NUL is legitimate input; Postgres text/jsonb
  * simply cannot store U+0000 and rejects the write with

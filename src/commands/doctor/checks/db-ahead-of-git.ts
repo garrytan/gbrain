@@ -1,10 +1,10 @@
 /**
  * `db_ahead_of_git` (git-canonical memory, wave G1, docs/designs/GIT_CANONICAL_MEMORY.md): for each source with a
- * checkout, the totals of the read-only git-gap census (`gbrain sources git-gap`, commands/sources-git-gap.ts): pages
+ * checkout, the totals of the read-only git-gap census (`foresights sources git-gap`, commands/sources-git-gap.ts): pages
  * equal to their committed blob at HEAD, database_ahead or git_ahead of it, declared or undeclared database-only, only in
  * the working tree, unparseable. Informational in this release: ok whatever the gap, because nothing converts a source yet.
  * GBRA-541: the census reads the `DOCTOR_GIT_GAP_NEWEST` most recently changed live pages per source (an uncommitted
- * database write is among them) and states that window as the oldest `updated_at` it read; `gbrain sources git-gap` reads
+ * database write is among them) and states that window as the oldest `updated_at` it read; `foresights sources git-gap` reads
  * them all. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (default 10 s) and the entry's deadline; a source the budget
  * stopped or never reached, or one the census could not read, makes the check the unknown convention (`warn`,
  * `health: unknown`), never ok. A source whose directory is not a Git checkout is only counted. Totals only, never a
@@ -28,7 +28,7 @@ export function gitGapScanTimeoutMs(): number {
 
 /**
  * GBRA-541: the most recently changed live pages per source the doctor census reads: about half the 10 s scan bound (800
- * pages took 4.7 to 5.4 s on a synthetic 300,000-page Postgres brain, 4 cores); `gbrain sources git-gap <id>` reads every page.
+ * pages took 4.7 to 5.4 s on a synthetic 300,000-page Postgres brain, 4 cores); `foresights sources git-gap <id>` reads every page.
  */
 export const DOCTOR_GIT_GAP_NEWEST = 800;
 
@@ -85,12 +85,12 @@ async function runDbAheadOfGit(ctx: DoctorContext): Promise<Check[]> {
       ? `${unknown ? 'Health unknown, not clear (a source was not read in full or could not be compared):' : 'Informational, nothing to do:'} the database compared with the commit at HEAD, per source with a Git checkout.${listed.length ? ` ${listed.join('; ')}.` : ''}`
         + `${unread.length ? ` Not reached within the ${details.timeout_ms / 1000}s budget: ${unread.join(', ')}.` : ''}`
         + `${errors.length ? ` Could not compare: ${errors.map(e => `${e.source_id} (${e.message})`).join('; ')}.` : ''}`
-        + ` Page detail: gbrain sources git-gap <source-id>.`
+        + ` Page detail: foresights sources git-gap <source-id>.`
       : 'No source has a Git checkout, so there is no commit to compare the database with.';
     checks.push({ name: 'db_ahead_of_git', status: unknown ? 'warn' : 'ok', details, message });
   } catch (error) {
     checks.push({ name: 'db_ahead_of_git', status: 'warn', details: { informational: true, health: 'unknown', docs: GIT_GAP_DOCS },
-      message: `Health unknown, not clear: the git-gap census could not run (${error instanceof Error ? error.message : String(error)}); run gbrain sources git-gap <source-id> for one source.` });
+      message: `Health unknown, not clear: the git-gap census could not run (${error instanceof Error ? error.message : String(error)}); run foresights sources git-gap <source-id> for one source.` });
   }
   return checks;
 }

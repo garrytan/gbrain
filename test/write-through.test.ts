@@ -2,7 +2,7 @@
  * Shared write-through helper tests (src/core/write-through.ts).
  *
  * Covers the skip/error branches and the atomic-write guarantee. The helper is
- * the canonical disk sink shared by `put_page` and `gbrain brainstorm/lsd
+ * the canonical disk sink shared by `put_page` and `foresights brainstorm/lsd
  * --save`, extracted from the v0.38 put_page write-through and upgraded to write
  * atomically (.tmp + rename).
  */
@@ -562,7 +562,7 @@ describe('deletePageThrough (#4022)', () => {
   // The leak this closes: delete_page was DB-only, so the artifact outlived the
   // page. On any brain committed on a timer (snapshot cron, hardened
   // post-commit push) the orphan got committed AFTER deletion and the next
-  // `gbrain sync` resurrected the page.
+  // `foresights sync` resurrected the page.
   test('removes the artifact written by writePageThrough (path parity)', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'concepts/delete-me';
@@ -610,7 +610,7 @@ describe('deletePageThrough (#4022)', () => {
     expect(written.written).toBe(true);
 
     // The operator opted the brain out of the disk sink — the delete plane
-    // must not start unlinking files gbrain no longer owns.
+    // must not start unlinking files foresights no longer owns.
     await engine.setConfig('sync.write_through', 'false');
     _resetWriteThroughCacheForTest();
 
@@ -682,7 +682,7 @@ describe('delete_page / restore_page write-through symmetry (#4022)', () => {
 
     expect(res.status).toBe('soft_deleted');
     // Pre-fix the delete was DB-only: the authored `.md` survived, the next
-    // timer-based commit pushed it back into git, and `gbrain sync`
+    // timer-based commit pushed it back into git, and `foresights sync`
     // re-imported it — resurrecting the page the user deleted.
     expect(fs.existsSync(path.join(brainDir, authored))).toBe(false);
     expect(res.write_request.state).toBe('committed');

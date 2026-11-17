@@ -1,5 +1,5 @@
 /**
- * `gbrain inbox`: the drop folder wired to the capture pipeline.
+ * `foresights inbox`: the drop folder wired to the capture pipeline.
  *
  * - processInboxOnce with textOnly: text files are delivered then archived; a file no
  *   processor reads (PDF, image) stays in the inbox; dot files are skipped; a delivery

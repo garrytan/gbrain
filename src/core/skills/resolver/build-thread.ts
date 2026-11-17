@@ -37,7 +37,7 @@ export function buildSkillIndexOffThread(input: BuildInput, opts: { home?: strin
     const worker = new Worker(new URL(import.meta.url), { workerData: job });
     worker.once('message', (m: Reply) => settle(() => ('receipt' in m ? resolve(m.receipt) : reject(revive(m.failure)))));
     worker.once('error', e => settle(() => reject(e)));
-    worker.once('exit', () => settle(() => reject(new ResolverError('skill_resolver_internal', 'The skill index build thread exited without a result.', { suggestion: 'Run the build again; if it repeats, run gbrain skills index build in a shell to see the error.' }))));
+    worker.once('exit', () => settle(() => reject(new ResolverError('skill_resolver_internal', 'The skill index build thread exited without a result.', { suggestion: 'Run the build again; if it repeats, run foresights skills index build in a shell to see the error.' }))));
   });
 }
 

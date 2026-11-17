@@ -78,7 +78,7 @@ export async function recordUpstreamObservation(engine: BrainEngine, sourceId: s
 }
 
 /** The managed refresh: a drained, worktree-wide fast-forward of the checkout followed by the managed sync (F0). */
-const managedRefreshFix = (sourceId: string) => `gbrain sources refresh ${sourceId}`;
+const managedRefreshFix = (sourceId: string) => `foresights sources refresh ${sourceId}`;
 
 export interface ManagedPullWarning { code: string; cause: string; fix: string; docs: string }
 
@@ -109,7 +109,7 @@ export function upstreamFreshness(
   const gitRemote = sourceConfigHasRemoteUrl(source.config) && parseSourceConfig(source.config).kind == null;
   const unknown = gitRemote && (ageHours === null || ageHours >= UPSTREAM_OBSERVATION_MAX_AGE_HOURS);
   if (!unknown && behind <= 0) return null;
-  const fix = managed ? managedRefreshFix(source.id) : `gbrain sync --source ${source.id}`;
+  const fix = managed ? managedRefreshFix(source.id) : `foresights sync --source ${source.id}`;
   const fact = unknown
     ? `upstream unknown (${ageHours === null ? 'never checked' : `last checked ${ageHours}h ago`})`
     : `upstream ${behind} commit(s) ahead of the synced commit`;

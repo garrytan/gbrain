@@ -1,5 +1,5 @@
 /**
- * #3037 — `gbrain embed` must exit non-zero when chunks failed to embed.
+ * #3037 — `foresights embed` must exit non-zero when chunks failed to embed.
  *
  * Pre-fix, src/cli.ts discarded runEmbed's result entirely, so a run where
  * EVERY chunk failed to embed still exited 0 — cron, CI and health gates read
@@ -49,7 +49,7 @@ async function runCli(
   }
 }
 
-describe('gbrain embed exit code on failures (#3037)', () => {
+describe('foresights embed exit code on failures (#3037)', () => {
   test('embed --stale exits non-zero when embedding fails, 0 once it succeeds', async () => {
     // Mock OpenAI-compatible embeddings endpoint, flippable between modes.
     let mode: 'fail' | 'ok' = 'fail';

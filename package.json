@@ -11,6 +11,7 @@
   },
   "main": "src/core/index.ts",
   "bin": {
+    "foresights": "src/cli.ts",
     "gbrain": "src/cli.ts"
   },
   "exports": {

@@ -126,11 +126,11 @@ send_notification "$OUTPUT"
 
 ### GBrain-native hooks
 
-Two places gbrain already understands quiet hours natively — use these
+Two places foresights already understands quiet hours natively — use these
 before rolling your own gate for the same job:
 
 - **Self-upgrade** — `auto` mode only applies upgrades during quiet hours,
-  configured via `gbrain config set self_upgrade.quiet_hours
+  configured via `foresights config set self_upgrade.quiet_hours
   '{"start":23,"end":8,"tz":"US/Pacific"}'`. See
   [upgrades-auto-update.md](upgrades-auto-update.md).
 - **Cron prompts** — schedule-driven notification jobs should carry the
@@ -138,7 +138,7 @@ before rolling your own gate for the same job:
   the scheduling side.
 
 The shell pattern below is for everything else: your own cron jobs,
-collectors, and notification paths that gbrain doesn't gate for you.
+collectors, and notification paths that foresights doesn't gate for you.
 
 ### Configurable Hours
 
@@ -193,4 +193,4 @@ Set `enabled: false` to disable quiet hours entirely (e.g., for 24/7 monitoring)
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Foresights Skillpack](../GBRAIN_SKILLPACK.md).*

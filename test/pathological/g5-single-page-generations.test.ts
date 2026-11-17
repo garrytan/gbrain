@@ -2,7 +2,7 @@
  * GBRA-161 PR 5 (S-2, S-10, S-11): the dream summary, the think synthesis page and the drift report are single-item page
  * generations. Each writer binds its write to the page revision it read before composing, so a page that changed while it
  * composed is fenced and keeps its content; each overwrite is versioned (page_versions, the ledger preimage) and
- * restorable through gbrain repair generations. Real writers on PGLite and Postgres; model calls are the existing stubs.
+ * restorable through foresights repair generations. Real writers on PGLite and Postgres; model calls are the existing stubs.
  */
 import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -51,7 +51,7 @@ const versions = async (engine: BrainEngine, slug: string, sourceId = 'default')
 const handEdit = (engine: BrainEngine, slug: string, text: string, sourceId = 'default') =>
   engine.putPage(slug, { type: 'note', title: 'Edited by hand', compiled_truth: text }, { sourceId });
 
-/** Previews and applies gbrain repair generations --mode restore for one kind; returns the applied outcome items. */
+/** Previews and applies foresights repair generations --mode restore for one kind; returns the applied outcome items. */
 async function restore(engine: BrainEngine, kind: string, sourceId = 'default') {
   const scope = await resolveRepairScope(engine, sourceId);
   const generations = { kind, mode: 'restore' as const, since: new Date(Date.now() - 86_400_000).toISOString() };

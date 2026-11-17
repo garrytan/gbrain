@@ -1,5 +1,5 @@
 /**
- * `gbrain transcripts audit-secrets` — the read-only installed-base audit for
+ * `foresights transcripts audit-secrets` — the read-only installed-base audit for
  * credentials in conversation pages imported before the transcript lane's
  * `labeled_credential` detector (logic in core/transcripts/secret-audit.ts).
  * Lists affected page slugs and hit counts per pattern, never a value; caches
@@ -9,7 +9,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 
 export const TRANSCRIPTS_AUDIT_HELP = `Usage:
-  gbrain transcripts audit-secrets [--source-id S] [--json]
+  foresights transcripts audit-secrets [--source-id S] [--json]
 
 Scans every imported conversation page (all sources, or one with
 --source-id) with the transcript import's secret detectors and lists the
@@ -17,12 +17,12 @@ pages that still carry a credential: slug, source and hit count per
 pattern, never the matched text. Pages imported before the
 labeled-credential detector (password: …, login user / pass) are not
 rewritten automatically; this finds them. Read-only: no page changes. The
-summary is cached for \`gbrain doctor --only transcript_secret_exposure\`.
+summary is cached for \`foresights doctor --only transcript_secret_exposure\`.
 
 Next actions are separate and each is yours to choose:
-  review   gbrain get <slug>
-  edit     gbrain put <slug> < edited.md   (remove the credential, keep the page)
-  remove   gbrain delete <slug> --purge    (ask the user first; no recovery window)
+  review   foresights get <slug>
+  edit     foresights put <slug> < edited.md   (remove the credential, keep the page)
+  remove   foresights delete <slug> --purge    (ask the user first; no recovery window)
 A credential that reached a page should also be rotated (SECURITY.md,
 "If a secret reached the brain"): edits and deletes do not reach git history,
 synced copies or exports.
@@ -43,8 +43,8 @@ export async function runTranscriptsAuditSecrets(engine: BrainEngine, args: stri
     if (a === '--json') { json = true; continue; }
     if (a === '--source-id' && args[i + 1] && !args[i + 1]!.startsWith('-')) { sourceId = args[++i]; continue; }
     const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-    exitCliError(usageError(`gbrain transcripts audit-secrets does not accept ${a}; nothing was scanned.`,
-      'Run `gbrain transcripts audit-secrets --json` (every source) or add `--source-id <id>`.'), 'transcripts', { json: args.includes('--json') });
+    exitCliError(usageError(`foresights transcripts audit-secrets does not accept ${a}; nothing was scanned.`,
+      'Run `foresights transcripts audit-secrets --json` (every source) or add `--source-id <id>`.'), 'transcripts', { json: args.includes('--json') });
   }
   const { auditTranscriptSecrets, saveTranscriptSecretAudit } = await import('../core/transcripts/secret-audit.ts');
   const result = await auditTranscriptSecrets(engine, { sourceId });
@@ -66,9 +66,9 @@ export async function runTranscriptsAuditSecrets(engine: BrainEngine, args: stri
     console.log(`  ${p.source_id}:${p.slug}  ${counts}${p.lines.length ? `  (lines ${p.lines.join(', ')})` : ''}`);
   }
   if (result.pages_affected > 0) {
-    console.log('Next (separately): review with `gbrain get <slug>`, edit with `gbrain put <slug> < edited.md`, or remove with `gbrain delete <slug> --purge` after asking the user; ask the user to rotate any real credential.');
+    console.log('Next (separately): review with `foresights get <slug>`, edit with `foresights put <slug> < edited.md`, or remove with `foresights delete <slug> --purge` after asking the user; ask the user to rotate any real credential.');
   }
   if (!cached) {
-    console.error('[transcripts] the audit summary could not be cached; `gbrain doctor` will keep asking for an audit.');
+    console.error('[transcripts] the audit summary could not be cached; `foresights doctor` will keep asking for an audit.');
   }
 }

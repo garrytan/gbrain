@@ -7,7 +7,7 @@
  * for EVERY dispatch shape (plain, compound `&& args[0] === 'sub'`,
  * multi-line compound). Pre-fix only the plain shape was a marker, so every
  * `eval <sub>` no-DB bypass block was attributed to the preceding marker
- * (`dream`) and the documented `gbrain eval longmemeval <f> --retrieval-only
+ * (`dream`) and the documented `foresights eval longmemeval <f> --retrieval-only
  * --by-type --no-trajectory` invocation exited 1 as an unknown flag.
  *
  * Three lanes: (1) pure segmentation on a synthetic snippet, (2) the
@@ -23,7 +23,7 @@ import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { validateCommandFlags } from '../src/cli/main.ts';
 
 /**
- * The flags the plan names for `gbrain eval longmemeval`, plus a sample of
+ * The flags the plan names for `foresights eval longmemeval`, plus a sample of
  * the rest of eval-longmemeval.ts parseArgs. Every entry MUST be a literal in
  * src/commands/eval-longmemeval.ts (the generator scans the command module +
  * one import level) — a flag that only ever lived in a helper's prose (the
@@ -58,7 +58,7 @@ const LONGMEMEVAL_FLAGS = [
   '--search-pin',
 ];
 
-/** Real `gbrain agent register` flags (src/commands/agent-register.ts parseArgs / help). */
+/** Real `foresights agent register` flags (src/commands/agent-register.ts parseArgs / help). */
 const AGENT_REGISTER_FLAGS = [
   '--harness',
   '--preset',

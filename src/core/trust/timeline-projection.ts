@@ -1,5 +1,5 @@
 /**
- * #5575 I2: timeline rows parsed from a page's own timeline (`gbrain extract`
+ * #5575 I2: timeline rows parsed from a page's own timeline (`foresights extract`
  * timeline walks) are a deterministic projection of that page: each row takes
  * its page's stored tier, capped at operator_curated. Rows of pages with
  * different tiers commit in separate attributed maintenance transactions, so
@@ -78,7 +78,7 @@ export async function addProjectedTimelineEntry(engine: BrainEngine, slug: strin
   const assessment = assessTimelineForGate(entry, derivedGateInput(trust), await derivedGateConfig(engine));
   if (!timelineRowAllowed(assessment)) return false;
   return maintenanceTransaction(engine, async tx => {
-    const added = await tx.addTimelineEntry(slug, entry, opts); // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries, stamped with the page tier
+    const added = await tx.addTimelineEntry(slug, entry, opts); // gbrain-allow-direct-insert: foresights extract single-row fallback for timeline entries, stamped with the page tier
     if (added) await recordTimelineFlag(tx, assessment, { slug, source_id: opts?.sourceId, date: entry.date, summary: entry.summary, source: entry.source });
     return added;
   }, trust);

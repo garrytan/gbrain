@@ -81,7 +81,7 @@ function ruleFor(res: AgentWritebackResolution, mode: WritebackMode, ctx: Operat
 
 function degradedNote(res: AgentWritebackResolution): string | undefined {
   if (res.status === 'ok') return undefined;
-  return `The memory settings could not be read cleanly (${res.reasons.join(', ')}), so agents are told the most conservative mode that applies. This is not proof that writeback is off on purpose; the brain host can check with \`gbrain doctor --only memory_writeback\`.`;
+  return `The memory settings could not be read cleanly (${res.reasons.join(', ')}), so agents are told the most conservative mode that applies. This is not proof that writeback is off on purpose; the brain host can check with \`foresights doctor --only memory_writeback\`.`;
 }
 
 const get_memory_settings: Operation = {
@@ -152,7 +152,7 @@ const set_memory_writeback: Operation = {
     if (!(await gateOn(ctx))) {
       const err = opError('permission_denied',
         'The brain operator has not granted remote changes to the memory writeback mode, so this tool is hidden from your catalog.',
-        `Ask whoever runs this brain to enable it with \`gbrain config set ${MEMORY_SETTINGS_GATE_KEY} true\`. Nothing was changed.`,
+        `Ask whoever runs this brain to enable it with \`foresights config set ${MEMORY_SETTINGS_GATE_KEY} true\`. Nothing was changed.`,
         { fix: grantFix(ctx) });
       err.detail = `config_key=${MEMORY_SETTINGS_GATE_KEY}`;
       throw err;

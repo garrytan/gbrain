@@ -1,7 +1,7 @@
 /**
- * Tests for `gbrain extract --source db` (v0.10.3 graph layer).
+ * Tests for `foresights extract --source db` (v0.10.3 graph layer).
  *
- * Verifies the DB-source path of the unified `gbrain extract <subcommand>`
+ * Verifies the DB-source path of the unified `foresights extract <subcommand>`
  * command. Companion to test/extract.test.ts which covers the fs-source path.
  *
  * Runs against in-memory PGLite. Idempotency, --type filtering, --dry-run
@@ -43,7 +43,7 @@ const meetingPage = (title: string, body = ''): PageInput => ({
   type: 'meeting', title, compiled_truth: body, timeline: '',
 });
 
-describe('gbrain extract links --source db', () => {
+describe('foresights extract links --source db', () => {
   beforeEach(truncateAll);
 
   test('extracts links from meeting page with attendee refs', async () => {
@@ -144,7 +144,7 @@ describe('gbrain extract links --source db', () => {
   });
 });
 
-describe('gbrain extract timeline --source db', () => {
+describe('foresights extract timeline --source db', () => {
   beforeEach(truncateAll);
 
   test('extracts dated timeline entries from page content', async () => {
@@ -230,7 +230,7 @@ describe('gbrain extract timeline --source db', () => {
   });
 });
 
-describe('gbrain extract all --source db', () => {
+describe('foresights extract all --source db', () => {
   beforeEach(truncateAll);
 
   test('runs both links and timeline in one command', async () => {

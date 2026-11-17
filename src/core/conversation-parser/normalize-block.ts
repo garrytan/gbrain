@@ -1,7 +1,7 @@
 /**
  * Block-format conversation normalizer.
  *
- * Some chat exports — notably the Slack collector gbrain's own ingestion
+ * Some chat exports — notably the Slack collector foresights's own ingestion
  * uses — emit a HEADER + indented-body BLOCK per message instead of the
  * single-line `**Name** (time): body` shape the built-in patterns
  * (`builtins.ts`) recognize:

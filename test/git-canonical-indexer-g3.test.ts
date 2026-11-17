@@ -8,7 +8,7 @@
  *     where a source that is not strict holds `worktree_dirty`;
  *   - deletes a page whose file a commit removed while an untracked copy stays on disk, as a page imported from Git does;
  *   - refuses `--working-tree` with `managed_sync_flag_refused`.
- * `gbrain sources reindex --from-git` previews every database version that pass replaces and applies it under its hash;
+ * `foresights sources reindex --from-git` previews every database version that pass replaces and applies it under its hash;
  * doctor `git_index_lag` reports how far a strict source's index trails HEAD.
  */
 import { describe, expect, test } from 'bun:test';

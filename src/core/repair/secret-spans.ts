@@ -1,5 +1,5 @@
 /**
- * `gbrain repair secret-spans` (GST-327): replace the credentials the secret
+ * `foresights repair secret-spans` (GST-327): replace the credentials the secret
  * scanner finds in the database copies of named pages with `<REDACTED:rule>`
  * markers, and change nothing else. The text change and its proof are
  * `redactFields` (secret-spans.ts, pure): every field of one page is planned
@@ -93,12 +93,12 @@ const REFUSAL_TEXT: Record<Refusal | PlanRefusal, string> = {
   page_kind_unsupported: 'only markdown pages are redacted here (code and image pages index the file itself)',
   page_too_large: `the segmented body is over the ${PAGE_MAX_BYTES / 1024 ** 2} MiB single-string ceiling this repair reads`,
   proof_failed: 'the planned spans and the scanner\'s own redaction disagree, so nothing on the page is rewritten',
-  fact_value_unsupported: 'an ontology fact\'s resolved value holds a match; its value_hash keys the fact\'s dedup, so this repair does not rewrite it (retire the fact with gbrain forget, then preview again)',
+  fact_value_unsupported: 'an ontology fact\'s resolved value holds a match; its value_hash keys the fact\'s dedup, so this repair does not rewrite it (retire the fact with foresights forget, then preview again)',
   timeline_rows_collide: 'two timeline rows of one day would read the same once redacted, which their dedup key refuses; delete the duplicate row, then preview again',
 };
 
 function previewCommand(selection: Selection): string {
-  return `gbrain repair secret-spans --source ${selection.source_ids[0]}${selection.slugs.map(slug => ` --slug ${slug}`).join('')}`
+  return `foresights repair secret-spans --source ${selection.source_ids[0]}${selection.slugs.map(slug => ` --slug ${slug}`).join('')}`
     + (selection.rules.join(',') === resolveSecretRules().rules.join(',') ? '' : ` --rules ${selection.rules.join(',')}`);
 }
 
@@ -333,13 +333,13 @@ async function receiptsOf(engine: BrainEngine, hash: string, pages: readonly Pla
 
 function selectionOf(scope: RepairScope, slugs: readonly string[] | undefined, rules: readonly string[] | undefined): Selection {
   if (scope.source_ids.length !== 1) {
-    throw new OperationError('invalid_params', 'gbrain repair secret-spans redacts pages of one source; name it with --source.',
-      'Pass --source with the source id and one --slug per page to preview; gbrain sources list shows the source ids.', DOCS);
+    throw new OperationError('invalid_params', 'foresights repair secret-spans redacts pages of one source; name it with --source.',
+      'Pass --source with the source id and one --slug per page to preview; foresights sources list shows the source ids.', DOCS);
   }
   const selected = [...new Set((slugs ?? []).map(slug => slug.trim()).filter(Boolean))].sort();
   if (!selected.length) {
-    throw new OperationError('invalid_params', 'gbrain repair secret-spans redacts only the pages you name; pass --slug <slug> (repeatable).',
-      `Add one --slug per page to gbrain repair secret-spans --source ${scope.source_ids[0]}, then preview.`, DOCS);
+    throw new OperationError('invalid_params', 'foresights repair secret-spans redacts only the pages you name; pass --slug <slug> (repeatable).',
+      `Add one --slug per page to foresights repair secret-spans --source ${scope.source_ids[0]}, then preview.`, DOCS);
   }
   return { source_ids: scope.source_ids, slugs: selected, rules: resolveSecretRules(rules).rules };
 }
@@ -352,10 +352,10 @@ export const secretSpansRepair: RepairHandler = {
   kind: 'secret-spans',
   publication: 'projection',
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (opts?.remote !== false) throw trustedCliRequired('gbrain repair secret-spans reads and rewrites stored credentials, so it runs only from the trusted local CLI on the brain host.');
+    if (opts?.remote !== false) throw trustedCliRequired('foresights repair secret-spans reads and rewrites stored credentials, so it runs only from the trusted local CLI on the brain host.');
     if (!opts.apply && !opts.slugs?.length) {
       return { items: [], residuals: { pages_to_redact: 0, spans: 0, clean: 0, refused: 0, retained_versions: 0 },
-        warnings: ['No page named, so nothing was read. Preview the pages to redact: gbrain repair secret-spans --source <id> --slug <slug>... (repeatable).'] };
+        warnings: ['No page named, so nothing was read. Preview the pages to redact: foresights repair secret-spans --source <id> --slug <slug>... (repeatable).'] };
     }
     const selection = selectionOf(scope, opts.slugs, opts.rules);
     const rules = resolveSecretRules(selection.rules);
@@ -397,7 +397,7 @@ export const secretSpansRepair: RepairHandler = {
         details: { rules: selection.rules, pages: planned } };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair secret-spans --apply redacts only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair secret-spans --apply redacts only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash>`, DOCS);
     }
     const expect = opts.expect;
@@ -416,7 +416,7 @@ export const secretSpansRepair: RepairHandler = {
       preview_hash: expect, residuals: {} };
   },
   async apply(ctx, entry, opts): Promise<RepairItemOutcome> {
-    if (ctx.remote !== false) throw trustedCliRequired('gbrain repair secret-spans runs only from the trusted local CLI on the brain host.');
+    if (ctx.remote !== false) throw trustedCliRequired('foresights repair secret-spans runs only from the trusted local CLI on the brain host.');
     const { page, hash, last } = entry as SpanItem;
     const rules = resolveSecretRules((entry as SpanItem).rules);
     const detail = { spans: spansOf(page), fields: page.fields.length, rules: ruleText(page.rules) };

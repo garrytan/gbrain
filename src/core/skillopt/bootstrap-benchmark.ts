@@ -95,7 +95,7 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
       class: 'NoRoutingEval',
       code: 'no_routing_eval',
       message: `Cannot bootstrap: ${routingPath} does not exist.`,
-      hint: `Create a routing-eval.jsonl file first (gbrain skillify scaffold <name> generates one).`,
+      hint: `Create a routing-eval.jsonl file first (foresights skillify scaffold <name> generates one).`,
     });
   }
 
@@ -276,7 +276,7 @@ export async function runBootstrapFromSkill(opts: BootstrapFromSkillOpts): Promi
     process.stderr.write(`[skillopt] WARNING: only ${generated.length} task(s) generated. The recommended --split 1:1:1 needs >=15 (D_sel >= 5); below that the optimizer refuses with d_sel_too_small. Add tasks or re-run.\n`);
   }
   process.stderr.write(`[skillopt] REVIEW + STRENGTHEN the generated rule checks (they are weak drafts), delete the trailing '${BOOTSTRAP_PENDING_REVIEW}' line, then run:\n`);
-  process.stderr.write(`[skillopt]   gbrain skillopt ${skillName} --bootstrap-reviewed --split 1:1:1\n`);
+  process.stderr.write(`[skillopt]   foresights skillopt ${skillName} --bootstrap-reviewed --split 1:1:1\n`);
 
   return { outputPath, rowsGenerated: generated.length, rowsSkipped: skipped };
 }

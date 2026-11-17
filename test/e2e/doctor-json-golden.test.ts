@@ -1,11 +1,11 @@
 /**
- * Refactor wave 1 (W0): `gbrain doctor --json` golden on Postgres.
+ * Refactor wave 1 (W0): `foresights doctor --json` golden on Postgres.
  *
  * Each capture creates a scratch database (`gbrain_test_doctor_golden_<uuid>`)
  * on the DATABASE_URL server, so the brain is pristine regardless of which
  * E2E files ran before (no carried-over column widths, config rows or
- * pg_stat counters), runs `gbrain init --non-interactive --url <scratch>
- * --no-embedding`, then `gbrain doctor --json` with the hermetic child env
+ * pg_stat counters), runs `foresights init --non-interactive --url <scratch>
+ * --no-embedding`, then `foresights doctor --json` with the hermetic child env
  * from test/helpers/doctor-json-golden.ts. Captured twice (two scratch
  * databases); both must normalize to identical bytes before comparing.
  *
@@ -79,13 +79,13 @@ async function capture(adminUrl: string): Promise<PgRun> {
   const h = makeDoctorHome('doctor-golden-pg');
   homes.push(h);
   const init = await runGbrain(h, ['init', '--non-interactive', '--url', db.url, '--no-embedding']);
-  if (init.exitCode !== 0) throw new Error(`gbrain init failed (${init.exitCode}): ${init.stderr}`);
+  if (init.exitCode !== 0) throw new Error(`foresights init failed (${init.exitCode}): ${init.stderr}`);
   const run = await runGbrain(h, ['doctor', '--json', '--skills-dir', h.skillsDir]);
   expect(networkAttempts(h)).toEqual([]);
   return { run, url: db.url, name: db.name };
 }
 
-describeE2E('gbrain doctor --json golden (Postgres)', () => {
+describeE2E('foresights doctor --json golden (Postgres)', () => {
   test('fresh Postgres brain', async () => {
     assertSafeE2eDatabaseUrl(DATABASE_URL!);
     const normalizer = pgNormalizer(new URL(DATABASE_URL!));

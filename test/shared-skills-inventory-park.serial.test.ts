@@ -40,7 +40,7 @@ test('a wedged 0.53.0 migration resumes through --force-retry, parks the oversiz
       const applied = await cli(home, ['apply-migrations', '--migration', SHARED_CONTENT_MIGRATION_VERSION, '--yes']);
       expect(ledger(home).at(-1)!.status).toBe('complete');
       expect(applied.stderr).toContain('payload_too_large');
-      expect(applied.stderr).toContain('gbrain sources shared-skills default off');
+      expect(applied.stderr).toContain('foresights sources shared-skills default off');
 
       const status = JSON.parse((await cli(home, ['sources', 'shared-skills', 'default', 'status', '--json'])).stdout);
       expect(status).toMatchObject({ schema_version: 1, action: 'status', source_id: 'default', configured: null, mode: 'content',
@@ -81,7 +81,7 @@ test('sources shared-skills off/on through the CLI: help, opError refusals and t
       await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
       await engine.disconnect();
 
-      expect((await cli(home, ['sources', 'shared-skills', '--help'])).stdout).toContain('Usage: gbrain sources shared-skills <id> on|off|status [--json]');
+      expect((await cli(home, ['sources', 'shared-skills', '--help'])).stdout).toContain('Usage: foresights sources shared-skills <id> on|off|status [--json]');
       const invalid = JSON.parse((await cli(home, ['sources', 'shared-skills', 'default', 'maybe', '--json'], 2)).stdout);
       expect({ code: invalid.code, argv: invalid.fix.argv.slice(0, 6) }).toEqual({ code: 'invalid_params', argv: ['gbrain', 'sources', 'shared-skills', 'default', 'status', '--json'] });
       const missing = JSON.parse((await cli(home, ['sources', 'shared-skills', 'absent-source', 'off', '--json'], 1)).stdout);

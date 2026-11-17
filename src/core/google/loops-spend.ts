@@ -98,7 +98,7 @@ export type LoopsSpendGate =
 export async function loopsSpendGate(engine: BrainEngine, nowMs = Date.now()): Promise<LoopsSpendGate> {
   const cap = await readLoopsExtractDailyCap(engine);
   const day = loopsSpendDay(nowMs);
-  const raise = `raise it with \`gbrain config set ${LOOPS_EXTRACT_MAX_USD_PER_DAY_KEY} <usd>\``;
+  const raise = `raise it with \`foresights config set ${LOOPS_EXTRACT_MAX_USD_PER_DAY_KEY} <usd>\``;
   if (cap.capUsd <= 0) {
     return { ok: false, reason: 'spend_cap_zero', day, spentUsd: 0, capUsd: 0,
       message: `${LOOPS_EXTRACT_MAX_USD_PER_DAY_KEY} is 0, so no paid loop extraction is queued; ${raise}` };

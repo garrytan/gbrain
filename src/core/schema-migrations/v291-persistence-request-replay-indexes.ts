@@ -10,7 +10,7 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // sequence. Neither had an index, so on a large request table each lookup was
 // a sequential scan and the preview could not finish. Postgres builds both
 // CONCURRENTLY outside a transaction, after dropping an INVALID leftover (the
-// blob omits them); PGLite builds them inline. `gbrain repair request-indexes`
+// blob omits them); PGLite builds them inline. `foresights repair request-indexes`
 // runs the same helper on a brain whose schema is already current. DDL only.
 export const v291: Migration = {
   version: 291,

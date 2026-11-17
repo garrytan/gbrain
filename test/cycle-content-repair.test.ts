@@ -110,13 +110,13 @@ describe('the content lane', () => {
     expect(lane.preview_hashes).toEqual({ fences: 'fences-hash-2', 'connector-fences': 'connector-fences-hash-1' });
     expect(lane.results.map(r => [r.kind, r.mode, r.affected, r.preview_hash])).toEqual([['fences', 'dry_run', 2, 'fences-hash-2'], ['connector-fences', 'dry_run', 1, 'connector-fences-hash-1']]);
     expect(lane.cost.llm_usd).toBeCloseTo(0.3); expect(lane.cost.llm_allowance_remaining_usd).toBeCloseTo(0.2);
-    expect(lane.apply_command).toBe('gbrain repair content --source default --max-usd 0.5 --apply --expect fences-hash-2,connector-fences-hash-1');
+    expect(lane.apply_command).toBe('foresights repair content --source default --max-usd 0.5 --apply --expect fences-hash-2,connector-fences-hash-1');
     expect(a.applied).toHaveLength(0); expect(b.applied).toHaveLength(0);
     // The second kind's plan was built with the allowance left after the first kind's estimate.
     expect(b.plans[0]?.opts?.maxLlmUsd).toBeCloseTo(0.3);
   });
 
-  test('a bare apply runs each kind\'s current plan in order (its own plan, its own apply, as gbrain repair <kind> --apply); the allowance flows minus the earlier spend', async () => {
+  test('a bare apply runs each kind\'s current plan in order (its own plan, its own apply, as foresights repair <kind> --apply); the allowance flows minus the earlier spend', async () => {
     const a = stubKind('fences', 2, { llmUsdPerItem: 0.1 });
     const b = stubKind('connector-fences', 2, { llmUsdPerItem: 0.1 });
     const lane = await runContentLane(engine, await resolveRepairScope(engine), { apply: true, kinds: ['fences', 'connector-fences'], registry: [a.spec, b.spec], maxLlmUsd: 0.35 });
@@ -174,8 +174,8 @@ describe('content_repair phase gates and budget', () => {
     await engine.setConfig('fences.repair.enabled', 'false');
     const paused = await runContentRepairPhase(engine, { dryRun: false, kinds: ['connector-fences'], registry: [stub.spec] });
     expect(paused).toMatchObject({ status: 'skipped', details: { reason: 'disabled', kinds: ['connector-fences'] } });
-    expect(paused.summary).toContain('gbrain config set fences.repair.enabled true');
-    expect(paused.summary).toContain('gbrain repair content');
+    expect(paused.summary).toContain('foresights config set fences.repair.enabled true');
+    expect(paused.summary).toContain('foresights repair content');
     expect(stub.plans).toHaveLength(0);
     await engine.setConfig('fences.repair.enabled', 'true');
     const resumed = await runContentRepairPhase(engine, { dryRun: false, kinds: ['connector-fences'], registry: [stub.spec] });
@@ -224,7 +224,7 @@ describe('content_repair phase report', () => {
     expect(result.summary).toContain('repaired 1 of 3 content candidate(s) across connector-fences ($0.0200 on the model)');
     expect(result.summary).toContain('2 still held (merge_recommended 1, sync_in_progress 1)');
     expect(result.summary).toContain('the oldest unresolved hold is 30 h old');
-    expect(result.summary).toContain('1 wait for a person: gbrain sync status');
+    expect(result.summary).toContain('1 wait for a person: foresights sync status');
     expect((result.details.fix as { argv?: string[] }).argv).toEqual(['gbrain', 'repair', 'content']);
   });
 
@@ -247,7 +247,7 @@ describe('content_repair phase report', () => {
     const result = await runContentRepairPhase(engine, { dryRun: false, kinds: ['connector-fences'], registry: [failing.spec] });
     expect(result).toMatchObject({ status: 'warn', details: { reason: 'error', code: 'database_error' } });
     expect(JSON.stringify(result)).not.toContain('SENTINEL-CELL-VALUE');
-    expect(result.summary).toContain('gbrain repair content');
+    expect(result.summary).toContain('foresights repair content');
     const controller = new AbortController();
     controller.abort();
     await expect(runContentRepairPhase(engine, { dryRun: false, kinds: ['connector-fences'], registry: [failing.spec], signal: controller.signal })).rejects.toThrow('SENTINEL-CELL-VALUE');

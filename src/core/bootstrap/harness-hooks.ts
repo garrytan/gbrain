@@ -27,22 +27,22 @@ function carrierPath(t: HarnessTarget, d: Pick<HookDeps, 'userSettingsPath'>): s
   return t.scope === 'user' ? (t.path ?? d.userSettingsPath) : t.path!;
 }
 
-/** The agent-first block for harness-looking entries gbrain would not delete. */
+/** The agent-first block for harness-looking entries foresights would not delete. */
 export function harnessHookUnownedNotice(settingsPath: string, events: string[]): string {
   const where = events.map((e) => `hooks.${e}`).join(', ');
   const rendered = renderNotice({
     code: 'harness_hook_unowned',
     kind: 'safety',
-    why: `${where} in ${settingsPath} looks like gbrain's harness hook but is not this install's exact command ` +
-      '(edited, or written by another install or launcher), so gbrain left it in place and does not report the harness as removed.',
+    why: `${where} in ${settingsPath} looks like foresights's harness hook but is not this install's exact command ` +
+      '(edited, or written by another install or launcher), so foresights left it in place and does not report the harness as removed.',
     fix: {
       argv: ['gbrain', 'bootstrap', 'harness', '--remove'],
       consent: [],
       actor: 'user',
       requires_exclusive: false,
       why: 'Only the user can say whether that entry is a leftover; once it is gone the removal completes and consumes the receipt.',
-      user_message: `Open ${settingsPath} and delete the ${where} entry that runs \`gbrain hook\` if you no longer want it ` +
-        '(keep it only if you added it on purpose), then run `gbrain bootstrap harness --remove` again.',
+      user_message: `Open ${settingsPath} and delete the ${where} entry that runs \`foresights hook\` if you no longer want it ` +
+        '(keep it only if you added it on purpose), then run `foresights bootstrap harness --remove` again.',
       verify: { argv: STATUS_ARGV },
     },
   }, cliRenderContext());
@@ -71,14 +71,14 @@ export function removeHarnessHooksTarget(t: HarnessTarget, receipt: HarnessRecei
   if (r.unowned.length > 0) {
     d.logError(harnessHookUnownedNotice(settingsPath, r.unowned));
     throw new Error(
-      `harness_hook_unowned: ${r.unowned.map((e) => `hooks.${e}`).join(', ')} in ${settingsPath} looks like a gbrain harness hook ` +
-        'this install did not write — left in place; delete it by hand, then re-run `gbrain bootstrap harness --remove`',
+      `harness_hook_unowned: ${r.unowned.map((e) => `hooks.${e}`).join(', ')} in ${settingsPath} looks like a foresights harness hook ` +
+        'this install did not write — left in place; delete it by hand, then re-run `foresights bootstrap harness --remove`',
     );
   }
   if (r.removed === 0) d.log(`no harness hook entries in ${settingsPath}${dryRun ? '.' : ' — counted as removed.'}`);
 }
 
-/** `gbrain bootstrap harness --remove --dry-run`: what removal would do, with
+/** `foresights bootstrap harness --remove --dry-run`: what removal would do, with
  * the unmarked hook entries listed; nothing is written and the receipt stays. */
 export function previewHarnessRemoval(receipt: HarnessReceipt, d: HookDeps): number {
   d.log('dry run: nothing is written; the receipt stays in place.');

@@ -29,7 +29,7 @@
  * is created; each timeout then writes one bounded counter row
  * (`search.keyword_timeout_stats`: timeouts, skips counted since the previous
  * write, last timeout time), never one per search. Doctor `keyword_plan`
- * reads it. The cache lives in process memory, so `gbrain serve` and MCP
+ * reads it. The cache lives in process memory, so `foresights serve` and MCP
  * sessions benefit; a one-shot CLI command starts empty.
  *
  * Postgres only: PGLite runs keyword search with no statement timeout.

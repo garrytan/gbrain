@@ -1,6 +1,6 @@
 /**
  * Shared-checkout-safe commit, push and pull for classic (unmanaged) brain
- * repos (#6530). Many writers (agents, crons, hooks, gbrain's own
+ * repos (#6530). Many writers (agents, crons, hooks, foresights's own
  * write-through) commit to ONE checkout, so nothing here rebases, stashes or
  * resets the working tree:
  *
@@ -20,7 +20,7 @@
  * Managed canonical worktrees are refused: the persistence owner is their
  * only writer. The one exception is a keep-checkout publish (`keepCheckout`,
  * `--push-only --keep-checkout`): it pushes HEAD, merging a moved remote in
- * memory, but never moves the checkout and skips its pre-push hook, so `gbrain sources
+ * memory, but never moves the checkout and skips its pre-push hook, so `foresights sources
  * refresh` stays the only importer of remote files into a managed worktree
  * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
  * over MCP (it pushes with host credentials).
@@ -50,11 +50,11 @@ export const COMMIT_LOCK_ENV = 'BRAIN_COMMIT_LOCK_HELD';
 export const PUBLISH_LOCK_NAME = 'brain-publish.lock';
 const PUBLISH_REQUEST_NAME = 'brain-publish.requested';
 const CONFLICT_STATE_NAME = 'brain-integrate-conflict.json';
-/** Write-through files gbrain wrote but could not commit (lock busy past the short budget, or a refused commit): one `<iso>\t<json path>` line each. */
+/** Write-through files foresights wrote but could not commit (lock busy past the short budget, or a refused commit): one `<iso>\t<json path>` line each. */
 const PENDING_NAME = 'brain-writethrough-pending.log';
-/** Toplevel-relative source root(s) of this checkout, one value each (`gbrain sources harden` writes them); unset means the whole checkout. */
+/** Toplevel-relative source root(s) of this checkout, one value each (`foresights sources harden` writes them); unset means the whole checkout. */
 export const SOURCE_ROOT_CONFIG = 'gbrain.sourceRoot';
-/** Set to the commit lock path on every commit gbrain makes under that lock; the opt-in commit guard admits only these. */
+/** Set to the commit lock path on every commit foresights makes under that lock; the opt-in commit guard admits only these. */
 export const COMMIT_VIA_ENV = 'GBRAIN_COMMIT_VIA';
 const MAX_PUSH_ATTEMPTS = 8;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
@@ -134,7 +134,7 @@ export interface CommitPushOptions {
   pending?: boolean;
   /** `--untrack` (#7753): remove the named paths from Git and the index, keeping the files on disk. */
   untrack?: boolean;
-  /** Commit and publish files outside the configured source root(s): the user's explicit choice, or gbrain's own scaffolding at the checkout root. */
+  /** Commit and publish files outside the configured source root(s): the user's explicit choice, or foresights's own scaffolding at the checkout root. */
   allowOutsideSourceRoot?: boolean;
   /** `--base <path>=<blob>`: the blob (or `absent`) each named path had at HEAD when the writer read it; a moved one refuses `commit_base_moved`. */
   bases?: Map<string, string>;
@@ -261,7 +261,7 @@ function withLegacy(root: string, handle: NativeLockSyncHandle, lockPath: string
   return { lockPath, reentrant: false, release() { legacy!.release(); handle.release(); } };
 }
 
-/** The same locks for async callers (`gbrain sync`'s pull), without blocking the event loop while waiting. */
+/** The same locks for async callers (`foresights sync`'s pull), without blocking the event loop while waiting. */
 export async function acquireCommitLockAsync(root: string, waitMs = defaultLockWaitMs(), signal?: AbortSignal): Promise<{ release(): Promise<void> }> {
   const lockPath = absGitPath(root, COMMIT_LOCK_NAME);
   const legacyPath = absGitPath(root, LEGACY_PUSH_LOCK_NAME);
@@ -443,13 +443,13 @@ function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitP
   if (removals.length && removals.length === skipped.length) {
     const quoted = removals.map(p => shellQuote([p])).join(' ');
     return opError('commit_paths_skipped', 'git did not commit ' + skipped.length + ' named path(s) in ' + root + ': ' + list + '. They are staged for removal from Git (git rm --cached) while the files stay on disk, and commit-push does not commit that removal. ' + rest,
-      'To stop tracking them and keep the files, run gbrain git commit-push --untrack -m <msg> -- ' + quoted + '; to keep them tracked, git -C ' + shellQuote([root]) + ' restore --staged -- ' + quoted + '.',
+      'To stop tracking them and keep the files, run foresights git commit-push --untrack -m <msg> -- ' + quoted + '; to keep them tracked, git -C ' + shellQuote([root]) + ' restore --staged -- ' + quoted + '.',
       { docs: 'docs/guides/shared-checkout-git.md#untrack', detail,
         why: 'Something took these files out of the index while leaving them on disk; committing would either publish that removal or quietly add back what someone removed, and only the user knows which was meant.',
         fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
           argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(removals)],
           why: 'Puts the files back in the index as HEAD has them, so the next commit-push commits their edits; the bytes on disk are untouched.',
-          user_message: 'Git has ' + removals.slice(0, 10).join(', ') + ' staged for removal while the files are still on disk, so they were not committed. Keep them in Git (git restore --staged), or stop tracking them and keep the files (gbrain git commit-push --untrack)?',
+          user_message: 'Git has ' + removals.slice(0, 10).join(', ') + ' staged for removal while the files are still on disk, so they were not committed. Keep them in Git (git restore --staged), or stop tracking them and keep the files (foresights git commit-push --untrack)?',
           verify: { argv: ['git', '-C', root, 'status', '--porcelain', '--', ...literalPathspecs(removals)] } } });
   }
   const pages = managed ? skipped.filter(s => isSyncable(s.path)) : [];
@@ -463,11 +463,11 @@ function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitP
       verify: { argv: ['gbrain', 'sources', 'writer', 'status', managed.sourceId ?? '<source>', '--json'] } };
     return opError('writer_coordinator_required',
       `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}, and git did not commit ${skipped.length} named path(s): ${list}. ${rest}`,
-      `${clears.length ? `First, with the user's agreement, clear the flags (${clearCommand}), since the owner's own Git step cannot see a flagged edit either. ` : ''}Then save those pages through gbrain (put_page, edit_page or capture; on the CLI, gbrain put${managed.sourceId ? ` --source-id ${managed.sourceId}` : ''} with the page slug and the page on stdin): the persistence owner commits and pushes them. Never commit page files around it.`,
+      `${clears.length ? `First, with the user's agreement, clear the flags (${clearCommand}), since the owner's own Git step cannot see a flagged edit either. ` : ''}Then save those pages through foresights (put_page, edit_page or capture; on the CLI, foresights put${managed.sourceId ? ` --source-id ${managed.sourceId}` : ''} with the page slug and the page on stdin): the persistence owner commits and pushes them. Never commit page files around it.`,
       { docs, detail,
         why: 'The persistence owner is the only Git writer of pages in a managed worktree; a page file written there directly and left uncommitted is neither in Git nor in the database, so reporting success would lose the write silently.',
         fix: { ...(chain(clears, put) ?? put), ask_user: true,
-          user_message: `These page files were written straight into the managed checkout and git did not commit them: ${pages.slice(0, 10).map(s => s.path).join(', ')}.${clears.length ? ` Git hides their edits (${flagNote}); clear the flags first.` : ''} Save each one through gbrain (put_page), which replaces the stored page with the file's content?` } });
+          user_message: `These page files were written straight into the managed checkout and git did not commit them: ${pages.slice(0, 10).map(s => s.path).join(', ')}.${clears.length ? ` Git hides their edits (${flagNote}); clear the flags first.` : ''} Save each one through foresights (put_page), which replaces the stored page with the file's content?` } });
   }
   return opError('commit_paths_skipped', `git did not commit ${skipped.length} named path(s) in ${root}: ${list}. ${rest}`,
     flagged.length
@@ -519,7 +519,7 @@ function admitPaths(root: string, rel: string[], roots: string[], bases?: Readon
   if (swept.length) {
     const list = `${swept.slice(0, 10).join(', ')}${swept.length > 10 ? ', ...' : ''}`;
     throw opError('commit_prestaged_paths', `${swept.length} file(s) under the named path(s) were already staged by another writer: ${list}.`,
-      'Nothing was staged or committed. If they are yours, name each file explicitly; otherwise leave them to the writer that staged them, or unstage them with the user\'s agreement (git restore --staged -- <file>; the working tree keeps its bytes). Files a parked gbrain Git effect left staged are gbrain\'s own: gbrain sources writer status lists the parked effects with their source and request id, and gbrain sources writer retry-effects with that source and --request-id commits them.',
+      'Nothing was staged or committed. If they are yours, name each file explicitly; otherwise leave them to the writer that staged them, or unstage them with the user\'s agreement (git restore --staged -- <file>; the working tree keeps its bytes). Files a parked foresights Git effect left staged are foresights\'s own: foresights sources writer status lists the parked effects with their source and request id, and foresights sources writer retry-effects with that source and --request-id commits them.',
       { detail: JSON.stringify({ paths: swept }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(swept)],
         why: 'Another writer staged these files; committing them would publish whatever that writer had in progress, and unstaging them drops its staging.',
@@ -656,7 +656,7 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
   if (refused.length) {
     const list = `${refused.slice(0, 10).join(', ')}${refused.length > 10 ? ', ...' : ''}`;
     throw opError('untrack_not_db_only', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}, and ${refused.length} file(s) to untrack are not under a storage.db_only dir that gbrain.yml declares both at HEAD and on disk (matched by page slug, as sync matches it), or .gitignore does not ignore them: ${list}. Nothing was untracked.`,
-      `Declare the folder first: add it under storage.db_only in gbrain.yml and its <dir>/ line to .gitignore, commit both (gbrain git commit-push -m <msg> -- gbrain.yml .gitignore), then rerun the untrack.`,
+      `Declare the folder first: add it under storage.db_only in gbrain.yml and its <dir>/ line to .gitignore, commit both (foresights git commit-push -m <msg> -- gbrain.yml .gitignore), then rerun the untrack.`,
       { detail: JSON.stringify({ paths: refused }), docs: 'docs/guides/shared-checkout-git.md#untrack' });
   }
   return files;
@@ -667,7 +667,7 @@ function previewRoots(root: string, allowOutsideSourceRoot?: boolean): { managed
   const managed = managedFilesystemRootFor(root);
   if (managed && allowOutsideSourceRoot) {
     throw opError('commit_paths_invalid', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}: commit-push there only commits the paths you name.`,
-      `Run gbrain git commit-push with only -m and the page paths after --; gbrain sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
+      `Run foresights git commit-push with only -m and the page paths after --; foresights sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
   }
   return { managed, roots: allowOutsideSourceRoot ? [''] : configuredSourceRoots(root) };
 }
@@ -748,7 +748,7 @@ function untrackPaths(root: string, rel: string[], message: string, scope: Commi
     if (first === parent && !extra.length && !missing.length) return head;
     const undo = git(root, ['update-ref', '-m', 'gbrain: take back an untrack commit that changed other paths', 'HEAD', first, head]);
     throw opError('git_unavailable', `The untrack commit ${first !== parent ? 'was built on a HEAD that moved' : `changed ${[...extra, ...missing].slice(0, 10).join(', ')} beyond deleting the named paths`}, so ${undo.code === 0 ? 'it was taken back and nothing is committed' : `commit ${head.slice(0, 12)} is left unpublished`}.`,
-      'A pre-commit hook or another process changed the commit. Rerun the same gbrain git commit-push --untrack command once it is done.');
+      'A pre-commit hook or another process changed the commit. Rerun the same foresights git commit-push --untrack command once it is done.');
   } catch (e) {
     try { restoreIndex(root, rel, before, flagged); } catch { /* the index lock outlasted the retries; the error below still stands */ }
     throw e;
@@ -776,7 +776,7 @@ function readPendingFile(file: string, into: Map<string, string>): void {
   }
 }
 
-/** Write-through files gbrain wrote in this checkout but could not commit, oldest first. A path committed since stays listed until the next locked commit settles the ledger. */
+/** Write-through files foresights wrote in this checkout but could not commit, oldest first. A path committed since stays listed until the next locked commit settles the ledger. */
 export function readPendingWriteThrough(repo: string): PendingWriteThrough[] {
   try {
     const file = absGitPath(checkoutRoot(repo), PENDING_NAME);
@@ -842,11 +842,11 @@ export function settlePending(root: string): void {
 }
 
 /**
- * Commit-only entry for gbrain's own write paths (write-through pages, facts
+ * Commit-only entry for foresights's own write paths (write-through pages, facts
  * fences, takes, timeline, lint fixes), always under the commit lock. A writer
  * holding the lock past `lockWaitMs` makes this fail `commit_lock_busy` (the
  * file write itself stands) and the file goes into the pending ledger, which
- * the next locked write-through or `gbrain git commit-push --pending` commits and
+ * the next locked write-through or `foresights git commit-push --pending` commits and
  * doctor's `dirty_age` reports. It never commits without the lock: that races
  * other writers on the shared index. Paths must sit under `repo` (the source
  * root). No marker is set, so the post-commit hook publishes. Returns the new
@@ -1103,8 +1103,8 @@ function conflictError(ctx: Ctx, ours: string, theirs: string, merged: MergeTree
   const remote = theirs.slice(0, 12);
   const compare = `Compare the two versions (this machine's: git show ${local}:<path>; the remote's: git show ${remote}:<path>)`;
   const fix = merged.structural.length
-    ? `${preface}The local commit ${local} stays local and the checkout is unchanged. ${merged.structural.map(shellWord).join(', ')} ${merged.structural.length === 1 ? 'is' : 'are'} a file/directory or rename conflict that a per-file choice cannot resolve. ${compare}, then move or remove the local path in a new commit (gbrain git commit-push -m "<msg>" -- <paths>) and rerun gbrain git commit-push --push-only. See docs/guides/shared-checkout-git.md#conflicts.`
-    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --scan-secrets --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
+    ? `${preface}The local commit ${local} stays local and the checkout is unchanged. ${merged.structural.map(shellWord).join(', ')} ${merged.structural.length === 1 ? 'is' : 'are'} a file/directory or rename conflict that a per-file choice cannot resolve. ${compare}, then move or remove the local path in a new commit (foresights git commit-push -m "<msg>" -- <paths>) and rerun foresights git commit-push --push-only. See docs/guides/shared-checkout-git.md#conflicts.`
+    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run foresights git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --scan-secrets --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
   return opError('integrate_conflict', `Local and remote commits both changed ${paths.length} file(s) on ${ctx.branch}; nothing was merged.`, fix,
     { detail: JSON.stringify({ local: ours, remote: theirs, paths, structural: merged.structural, ...(merged.superseded?.length ? { superseded: merged.superseded } : {}) }),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
@@ -1165,7 +1165,7 @@ function pushBase(ctx: Ctx, fetched: string, candidate: string): string {
   const urls = git(ctx.root, ['remote', 'get-url', '--push', '--all', '--', ctx.remote]).stdout.split('\n').map(u => u.trim()).filter(Boolean);
   if (urls.length === 1 && urls[0] === git(ctx.root, ['remote', 'get-url', '--', ctx.remote]).stdout.trim()) return fetched;
   const refuse = (why: string) => opError('push_unconfirmed', `Nothing was pushed: ${why}, so no one scanned range covers what this push would publish to every push URL of ${ctx.remote}.`,
-    `Bring every push URL of ${ctx.remote} to the same commit of ${ctx.mergeRef.replace(/^refs\/heads\//, '')} (git remote get-url --push --all ${ctx.remote} lists them), then rerun gbrain git commit-push --push-only.`,
+    `Bring every push URL of ${ctx.remote} to the same commit of ${ctx.mergeRef.replace(/^refs\/heads\//, '')} (git remote get-url --push --all ${ctx.remote} lists them), then rerun foresights git commit-push --push-only.`,
     { detail: candidate, retryable: true });
   const tips = new Set<string>();
   for (const url of urls) {
@@ -1259,7 +1259,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
       scannedBase = pushBase(ctx, remoteTip, candidate);
       if (bound && remoteTip !== bound) {
         throw opError('push_unconfirmed', `The remote moved to ${remoteTip.slice(0, 12)} after --expect-remote ${bound.slice(0, 12)} was checked, so nothing was pushed: publishing now could merge back commits a rewrite removed.`,
-          'Check the remote history first (gbrain sources refresh checks it for a force-push), then rerun.', { detail: candidate, retryable: true });
+          'Check the remote history first (foresights sources refresh checks it for a force-push), then rerun.', { detail: candidate, retryable: true });
       }
       if (isAncestor(ctx.root, remoteTip, candidate)) {
         if (++stalled > 1) break;
@@ -1294,7 +1294,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   }
   if (remoteContains(ctx, candidate)) return onRemote();
   throw opError('push_unconfirmed', `The commit is durable locally but no push to ${ctx.remote}/${ctx.mergeRef.replace(/^refs\/heads\//, '')} was confirmed.`,
-    `git push failed (network, credentials, branch protection, or a remote that kept moving): ${lastError.slice(0, 500) || 'no detail'}. Rerun gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --scan-secrets once the remote is reachable; never git pull --rebase in this checkout.`,
+    `git push failed (network, credentials, branch protection, or a remote that kept moving): ${lastError.slice(0, 500) || 'no detail'}. Rerun foresights git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --scan-secrets once the remote is reachable; never git pull --rebase in this checkout.`,
     { detail: candidate, retryable: true });
 }
 
@@ -1315,7 +1315,7 @@ export function localCommitsOutsideRoots(root: string, target: string, upstream:
  * Refuse to publish a local commit that changes files outside the configured source root(s). In a shared
  * checkout a commit made without paths (a cron's `git add <dir>; git commit`) carries whatever any writer
  * had staged; the source-root config is how a brain inside a larger repository says which files are its own.
- * Merge commits are not judged (gbrain's in-memory merges bring remote files in). With no root configured
+ * Merge commits are not judged (foresights's in-memory merges bring remote files in). With no root configured
  * the whole checkout is the root and nothing is refused.
  */
 function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]): void {
@@ -1324,7 +1324,7 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
   const files = [...new Set(offending.flatMap(o => o.paths))];
   const shas = offending.map(o => o.sha.slice(0, 12)).join(', ');
   throw opError('commit_outside_source_root', `${offending.length} local commit(s) (${shas}) change ${files.length} file(s) outside this brain's source root (${roots.join(', ')}): ${files.slice(0, 10).join(', ')}${files.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
-    `A commit made without gbrain git commit-push (for example a cron's git add plus git commit) can carry files other writers had staged. Show the user git show --stat ${offending[0].sha.slice(0, 12)}; if they want it published as is, rerun with --allow-outside-source-root. See docs/guides/shared-checkout-git.md#source-roots.`,
+    `A commit made without foresights git commit-push (for example a cron's git add plus git commit) can carry files other writers had staged. Show the user git show --stat ${offending[0].sha.slice(0, 12)}; if they want it published as is, rerun with --allow-outside-source-root. See docs/guides/shared-checkout-git.md#source-roots.`,
     { detail: JSON.stringify({ roots, commits: offending }),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--scan-secrets', '--allow-outside-source-root', '--path', ctx.root],
@@ -1355,7 +1355,7 @@ function advanceLocked(root: string, target: string, expectedHead: string): { ch
   const dirty = [...r.stderr.matchAll(/^\t(.+)$/gm)].map(m => m[1]);
   if (dirty.length) return { checkout: 'lagging', reason: `local edits in ${dirty.join(', ')} block the fast-forward` };
   throw opError('git_unavailable', `git could not fast-forward ${root} to ${target.slice(0, 12)}.`,
-    `${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}. Nothing in the working tree changed; run gbrain git commit-push --pull once git works in this checkout.`, { detail: target });
+    `${r.stderr.trim().slice(0, 300) || `exit ${r.code}`}. Nothing in the working tree changed; run foresights git commit-push --pull once git works in this checkout.`, { detail: target });
 }
 
 function advanceWithLock(root: string, target: string, expectedHead: string, onlyWhenClean: boolean, lockWaitMs?: number): { checkout: CheckoutState; reason?: string } {
@@ -1405,18 +1405,18 @@ function defaultPublishWaitMs(): number {
 }
 
 /**
- * Q1: on a managed canonical worktree commit-push commits only the paths the caller names (pages written outside gbrain,
+ * Q1: on a managed canonical worktree commit-push commits only the paths the caller names (pages written outside foresights,
  * which would otherwise land as bare commits), under the commit lock, and nothing more: no fetch, merge, push or checkout
  * move, so the owner stays the only publisher. The commit reaches the remote on the owner's next Git publish, or with
- * `gbrain git commit-push --push-only --keep-checkout`.
+ * `foresights git commit-push --push-only --keep-checkout`.
  */
 function commitManagedPaths(root: string, opts: CommitPushOptions, managed: ManagedFilesystemRoot): CommitPushResult {
   const where = `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}`;
   if (opts.pending || opts.branch || opts.resolutions || opts.expectRemote || opts.allowOutsideSourceRoot || opts.advanceOnlyWhenClean) {
     throw opError('commit_paths_invalid', `${where}: commit-push there only commits the paths you name.`,
-      `Run gbrain git commit-push with only -m and the page paths after --; gbrain sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
+      `Run foresights git commit-push with only -m and the page paths after --; foresights sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
   }
-  const { result: committed, skipped } = commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.', managed);
+  const { result: committed, skipped } = commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; foresights sources writer status names its state.', managed);
   const counted = git(root, ['rev-list', '--count', '@{upstream}..HEAD']);
   const upstream = git(root, ['for-each-ref', '--format=%(upstream:short)', `refs/heads/${committed.branch}`]).stdout.trim();
   const result: CommitPushResult = { ...committed, managed: true, unpublished: counted.code === 0 ? Number(counted.stdout.trim()) : null, upstream: upstream || null };
@@ -1438,7 +1438,7 @@ function commitRemotelessPaths(root: string, opts: CommitPushOptions): CommitPus
   const where = `${root} has no Git remote, so there is nothing to publish to`;
   if (opts.pushOnly || opts.pending || opts.branch || opts.resolutions || opts.expectRemote || opts.advanceOnlyWhenClean) {
     throw opError('commit_paths_invalid', `${where}; commit-push there only commits the paths you name.`,
-      'Run gbrain git commit-push -m <msg> -- <paths> to commit them locally, or add a remote (git remote add origin <url>) and set the branch upstream to publish.');
+      'Run foresights git commit-push -m <msg> -- <paths> to commit them locally, or add a remote (git remote add origin <url>) and set the branch upstream to publish.');
   }
   const { result: committed, skipped } = commitPathsOnly(root, opts, where, opts.allowOutsideSourceRoot ? [''] : configuredSourceRoots(root), 'Check out a branch (git switch <branch>), then rerun.');
   const result: CommitPushResult = { ...committed, no_remote: true };
@@ -1521,7 +1521,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       return deferred;
     }
     const busy = opError('push_unconfirmed', `${committed ? 'The commit is durable locally, but another' : 'Another'} publish held this checkout's push lock for ${Math.round(waitMs / 1000)}s.`,
-      `The running publish was asked to push HEAD too once it finishes. Rerun gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --scan-secrets to confirm; never git pull --rebase in this checkout.`,
+      `The running publish was asked to push HEAD too once it finishes. Rerun foresights git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --scan-secrets to confirm; never git pull --rebase in this checkout.`,
       { detail: committed ?? '', retryable: true });
     if (skipped.length) throw skippedPathsError(root, skipped, unpublished, undefined, busy);
     throw busy;

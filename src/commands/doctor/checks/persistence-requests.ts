@@ -47,7 +47,7 @@ export async function requestIndexesCheck(engine: BrainEngine): Promise<Check> {
         + `dream synthesis postprocessing) can time out on a large request table. Rebuild on the brain host: ${REQUEST_INDEXES_REPAIR_COMMAND}${deferral}` };
     if (building.length) return { name: 'persistence_request_indexes', status: 'warn', details,
       message: `Still building: ${building.map(index => `${index.name} (${index.progress?.phase ?? 'building'}${index.progress?.blocks_total
-        ? `, ${index.progress.blocks_done}/${index.progress.blocks_total} blocks` : ''})`).join('; ')}. It is safe to leave running; rerun gbrain doctor to follow it.${deferral}` };
+        ? `, ${index.progress.blocks_done}/${index.progress.blocks_total} blocks` : ''})`).join('; ')}. It is safe to leave running; rerun foresights doctor to follow it.${deferral}` };
     if (postprocess.length) return { name: 'persistence_request_indexes', status: 'warn', details,
       message: `Request-table indexes are valid, including ${PERSISTENCE_REQUEST_ID_INDEX.name}, so the timeout is not a missing index.${deferral} `
         + 'The deferred outputs finish without another synthesis call on the first pass whose read completes; compare the elapsed time with the session statement_timeout '
@@ -67,7 +67,7 @@ export async function requestIndexesCheck(engine: BrainEngine): Promise<Check> {
  * `persistence.limits.*`, and the projected days until admission refuses.
  * Warns when a scope would exhaust its lifetime IDs within
  * `persistence.capacity.warn_days` (30), the threshold `persistence_capacity`
- * uses, with the same `gbrain config set` value it prints.
+ * uses, with the same `foresights config set` value it prints.
  */
 export async function requestGrowthCheck(engine: BrainEngine): Promise<Check> {
   const docs = 'docs/guides/repair.md#request-growth';
@@ -110,9 +110,9 @@ export async function requestGrowthCheck(engine: BrainEngine): Promise<Check> {
         : await oneYearCapacity(engine, scope.scope, 'LifetimeIds', scope.lifetime_ids, scope.limit);
       needed.set(scope.config_key, Math.max(needed.get(scope.config_key) ?? 0, value));
     }
-    const commands = [...needed].map(([key, value]) => `gbrain config set ${key} ${value}`);
+    const commands = [...needed].map(([key, value]) => `foresights config set ${key} ${value}`);
     const details = { rows: Number(table?.rows ?? 0), rows_exact: engine.kind !== 'postgres', window_days: WINDOW_DAYS, scopes,
-      commands, verify: 'gbrain doctor --json (check persistence_request_growth)', docs };
+      commands, verify: 'foresights doctor --json (check persistence_request_growth)', docs };
     const rows = `${details.rows_exact ? '' : '~'}${details.rows} request row(s)`;
     if (!soon.length) return { name: 'persistence_request_growth', status: 'ok', details,
       message: `${rows}; no scope exhausts its lifetime request IDs within ${warnDays} days at its last-${WINDOW_DAYS}-day rate.` };
@@ -184,7 +184,7 @@ export async function writeStallCheck(engine: BrainEngine): Promise<Check> {
       message: `${stalls.length} write request(s) have stalled beyond ${MAX_CLAIM_CONFIG_KEY} (${maxClaimMs} ms). `
         + stalls.slice(0, 3).map(stall => `Request ${stall.request_id} (${stall.operation}) on source ${stall.source_id}, root ${stall.root ?? 'database-only'}, `
           + `is stuck in phase ${stall.phase} after ${minutes(Math.max(stall.claim_age_ms, stall.request_age_ms))}; ${stall.waiting_behind} queued write(s) wait behind it. ${stall.why}`).join(' ')
-        + ` Next: inspect it with gbrain sources writer status --source ${first.source_id} --json, then restart the gbrain serve that owns the root`
+        + ` Next: inspect it with foresights sources writer status --source ${first.source_id} --json, then restart the foresights serve that owns the root`
         + `${first.resumes_on_its_own ? ' if it is still stuck after its transaction ends' : ''}. The root trigger of a hang is not known yet; attach that status output when reporting it.`,
       fix: agentFix(['gbrain', 'sources', 'writer', 'status', '--source', first.source_id, '--json'],
         'Read-only: shows the owner, the stuck request\'s claim phase and every write waiting behind it on that root.', 'persistence_write_stall', { docs }) };
@@ -194,7 +194,7 @@ export async function writeStallCheck(engine: BrainEngine): Promise<Check> {
 }
 
 /**
- * #6278 (plan item 1.4): whether the session timeouts gbrain configures as
+ * #6278 (plan item 1.4): whether the session timeouts foresights configures as
  * connection startup parameters (`GBRAIN_STATEMENT_TIMEOUT`, default 5min)
  * actually reach the server through the configured URL. A transaction-mode
  * pooler (PgBouncer, Supavisor) drops or ignores startup parameters, so `SHOW
@@ -224,9 +224,9 @@ export async function sessionTimeoutsCheck(engine: BrainEngine): Promise<Check> 
     const details = { configured, applied, docs, ...(pooler ? { pooler: 'transaction_mode' } : {}) };
     if (applied !== '0') return { name: 'persistence_session_timeouts', status: pooler ? 'warn' : 'ok', details: pooler ? { ...details, reason: 'transaction_mode_pooler' } : details,
       message: `The session statement_timeout (${applied}) reaches the server.${poolerNote}` };
-    const roleFix = `ALTER ROLE <gbrain role> SET statement_timeout = '${configured}'`;
+    const roleFix = `ALTER ROLE <foresights role> SET statement_timeout = '${configured}'`;
     return { name: 'persistence_session_timeouts', status: 'warn', details: { ...details, reason: 'session_timeouts_not_applied', role_fix: roleFix },
-      message: `session_timeouts_not_applied: gbrain configured statement_timeout=${configured} as a connection startup parameter, but SHOW statement_timeout through the configured URL `
+      message: `session_timeouts_not_applied: foresights configured statement_timeout=${configured} as a connection startup parameter, but SHOW statement_timeout through the configured URL `
         + 'reads 0. A transaction-mode pooler (PgBouncer, Supavisor) drops startup parameters, so statements outside a transaction have no server-side bound; GBRAIN_STATEMENT_TIMEOUT is '
         + 'ignored there. Preparation reads are bounded by their own transaction-local timeout (the preparation budget covers the gap); a long autocommit statement elsewhere still runs '
         + `until it finishes. To restore the session default, set it on the role: ${roleFix} (the pooler cannot be told to keep it).${poolerNote}` };
@@ -265,7 +265,7 @@ export async function lostCallerWritesCheck(engine: BrainEngine, sourceIds?: str
     return { name: 'lost_caller_writes', status: 'warn', details,
       message: `${count} caller write(s) never landed (${memory} remember; ${drift} refused source_changed because the page's canonical file did not match its database copy `
         + `or was missing, ${count - drift} refused by the managed writer guard): ${[...bySource].map(([source, n]) => `${source}: ${n}`).join(', ')}. The callers saw an error and `
-        + `the fact or page edit was dropped. Preview the replay on the brain host: gbrain repair failed-writes --source ${first} — it lists which writes can be replayed and records `
+        + `the fact or page edit was dropped. Preview the replay on the brain host: foresights repair failed-writes --source ${first} — it lists which writes can be replayed and records `
         + `an approval checkpoint for that set (no page content changes); then run the apply command it prints after the user agrees.${keptNote}${compactedNote}`,
       fix: agentFix(['gbrain', 'repair', 'failed-writes', '--source', first],
         'Preview: lists each lost write with its disposition (replay, already_written, duplicate, superseded, unpinned_target, file_database_drift), records an approval checkpoint for the replay set (no page content changes) and prints the apply command.', 'lost_caller_writes', { docs }) };
@@ -300,7 +300,7 @@ function rankTerminalFailures(sources: TerminalSourceSummary[], remote: boolean,
     lines.push(`Blocking now (${blocking.length}): ${shown.join('; ')}${blocking.length > 5 ? `; +${blocking.length - 5} more in details.ranked.blocking` : ''}.`);
   }
   if (unresolved.rows) {
-    const shown = groups.slice(0, 3).map(g => `${g.category}/${g.code} ×${g.rows} on ${g.source_id}${g.defect ? ' (gbrain defect)' : g.needs_human ? ' (needs a person)' : ''}`);
+    const shown = groups.slice(0, 3).map(g => `${g.category}/${g.code} ×${g.rows} on ${g.source_id}${g.defect ? ' (foresights defect)' : g.needs_human ? ' (needs a person)' : ''}`);
     lines.push(`Unresolved, not blocking: ${unresolved.rows} row(s) on ${unresolved.pages} page(s) in ${groups.length} group(s): ${shown.join('; ')}${groups.length > 3 ? `; +${groups.length - 3} more group(s)` : ''}. `
       + `Group them: ${unresolved.group_by.slice(0, 2).map(argv => argv.join(' ')).join('; ')} (each group carries its fix and drill-down).`);
   }
@@ -333,7 +333,7 @@ export async function terminalFailuresCheck(engine: BrainEngine | null, sourceId
     const config = { window_days: { key: TERMINAL_WINDOW_KEY, value: thresholds.windowDays }, spike_factor: { key: TERMINAL_SPIKE_FACTOR_KEY, value: thresholds.spikeFactor },
       spike_min: { key: TERMINAL_SPIKE_MIN_KEY, value: thresholds.spikeMin }, receipt_retention_days: thresholds.retentionDays, window_clamped: thresholds.clamped };
     if (summary.status === 'unknown') {
-      return { name, status: 'warn', message: `Terminal write failures could not be read: ${summary.reason}. Health is unknown, not clear; rerun gbrain doctor --only ${name}.`,
+      return { name, status: 'warn', message: `Terminal write failures could not be read: ${summary.reason}. Health is unknown, not clear; rerun foresights doctor --only ${name}.`,
         details: { health: 'unknown', config, docs } };
     }
     const sources = summary.sources;
@@ -376,9 +376,9 @@ export async function terminalFailuresCheck(engine: BrainEngine | null, sourceId
         const builds = [...new Set(sources.flatMap(s => s.new_last_24h_older_builds.builds))].sort();
         const owner = [...sources].sort((a, b) => b.new_last_24h_older_builds.rows - a.new_last_24h_older_builds.rows)[0]!.source_id;
         return { name, status: 'warn', details: { ...details, spike: { ...details.spike, older_builds: { rows: older, builds } } },
-          fix: agentFix(['gbrain', 'sources', 'writer', 'status', '--source', owner, '--json'], 'Read-only: names the write owner of the source, its process and the gbrain version it runs.', name, { docs }),
+          fix: agentFix(['gbrain', 'sources', 'writer', 'status', '--source', owner, '--json'], 'Read-only: names the write owner of the source, its process and the foresights version it runs.', name, { docs }),
           message: `${last24h} write receipt(s) ended without committing in the last 24 h, above ${thresholds.spikeFactor}× the 7-day median (${sevenDayMedian(daily)}/day), but ${older} of them `
-            + `were written by gbrain ${builds.join(', ') || 'an older build'}, older than the release that fixed their class: an older write owner is still producing these; upgrade or restart it. ${counts}` };
+            + `were written by foresights ${builds.join(', ') || 'an older build'}, older than the release that fixed their class: an older write owner is still producing these; upgrade or restart it. ${counts}` };
       }
       return { name, status: 'warn', details,
         fix: agentFix(drill(busiest.source_id), 'Read-only: groups the source\'s unresolved receipts by code, origin and category, each with its fix and drill-down filter.', name, { docs }),

@@ -31,7 +31,7 @@ describe('v0.12.2 — JSONB double-encode repair migration', () => {
     expect(desc).toContain('ingest_log.pages_updated');
     expect(desc).toContain('files.metadata');
     expect(desc).toContain('page_versions.frontmatter');
-    expect(desc).toContain('gbrain sync --full');
+    expect(desc).toContain('foresights sync --full');
   });
 
   test('dry-run skips all side-effect phases', async () => {

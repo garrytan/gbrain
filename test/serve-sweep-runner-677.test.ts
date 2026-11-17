@@ -94,7 +94,7 @@ describe('#677 autopilot PGLite install guard', () => {
     const msg = pgliteDaemonGuardMessage('pglite', false);
     expect(msg).not.toBeNull();
     expect(msg).toContain('single-writer');
-    expect(msg).toContain('gbrain serve');
+    expect(msg).toContain('foresights serve');
     expect(msg).toContain('--force');
   });
 

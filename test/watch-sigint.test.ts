@@ -1,12 +1,12 @@
 /**
- * v0.43 (#2095) — `gbrain watch` SIGINT lifecycle. SERIAL: spawns a real CLI
+ * v0.43 (#2095) — `foresights watch` SIGINT lifecycle. SERIAL: spawns a real CLI
  * subprocess with a tmpdir brain (the parallel unit shards flake on
  * concurrent subprocess spawns — same isolation rationale as
  * apply-migrations-pglite-spawn.test.ts).
  */
 import { describe, test, expect } from 'bun:test';
 
-describe('gbrain watch — SIGINT lifecycle (real subprocess)', () => {
+describe('foresights watch — SIGINT lifecycle (real subprocess)', () => {
   test('SIGINT mid-stream closes the stream and exits cleanly (drain path, exit 0)', async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
     const { join, resolve } = await import('path');

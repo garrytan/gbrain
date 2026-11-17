@@ -1,7 +1,7 @@
 /**
  * #5371: the porcelain filter behind the doctor `bootstrap_push_health` and
  * stop-hook dirty probes drops only exact physical-root ownership metadata, so
- * the stamp gbrain writes is not unpushed work while real changes still count.
+ * the stamp foresights writes is not unpushed work while real changes still count.
  */
 import { describe, expect, test } from 'bun:test';
 import { isPhysicalRootMetadata, withoutPhysicalRootMetadata } from '../src/core/persistence/root-metadata.ts';

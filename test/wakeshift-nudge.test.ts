@@ -27,7 +27,7 @@ import type { Notice } from '../src/core/agent-output.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const KEY = encodeWakeshiftKey(Buffer.alloc(32, 7));
-const OFF_TEXT = 'gbrain can report back when this finishes, through Wakeshift: ask the brain owner to run gbrain wakeshift enable.';
+const OFF_TEXT = 'foresights can report back when this finishes, through Wakeshift: ask the brain owner to run foresights wakeshift enable.';
 const sandbox = mkdtempSync(join(tmpdir(), 'gbrain-wakeshift-nudge-'));
 const home = join(sandbox, 'home');
 const root = join(sandbox, 'notes');

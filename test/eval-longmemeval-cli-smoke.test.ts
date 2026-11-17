@@ -1,12 +1,12 @@
 /**
- * Subprocess smoke: the documented `gbrain eval longmemeval` invocation runs
+ * Subprocess smoke: the documented `foresights eval longmemeval` invocation runs
  * end-to-end through the real CLI (pre-dispatch flag validator included).
  *
- * Invariant: `gbrain eval longmemeval <fixture> --retrieval-only --by-type
+ * Invariant: `foresights eval longmemeval <fixture> --retrieval-only --by-type
  * --no-trajectory --keyword-only --output <tmp>` exits 0 and writes a
  * `by_type_summary` line. Pre-fix the flag registry attributed longmemeval's
  * flags to the `dream` row, so this exact command exited 1 with
- * "unknown flag --retrieval-only for 'gbrain eval'" before any eval code ran.
+ * "unknown flag --retrieval-only for 'foresights eval'" before any eval code ran.
  *
  * Hermetic: --keyword-only imports with noEmbed and searches keyword-only, so
  * no embedding provider / API key is touched; the eval brings its own
@@ -44,7 +44,7 @@ function run(args: string[]) {
   });
 }
 
-describe('gbrain eval longmemeval — documented invocation end-to-end', () => {
+describe('foresights eval longmemeval — documented invocation end-to-end', () => {
   test('--retrieval-only --by-type --no-trajectory --keyword-only exits 0 and emits by_type_summary', () => {
     const out = join(tmp, 'out.jsonl');
     const r = run([
@@ -73,7 +73,7 @@ describe('gbrain eval longmemeval — documented invocation end-to-end', () => {
   test('a typo is still refused by the validator before any eval code runs', () => {
     const r = run(['eval', 'longmemeval', FIXTURE, '--retrieval-only', '--frobnicate']);
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("unknown flag --frobnicate for 'gbrain eval'");
+    expect(r.stderr).toContain("unknown flag --frobnicate for 'foresights eval'");
     expect(r.stderr).not.toContain('[longmemeval]');
   }, 60_000);
 });
@@ -85,7 +85,7 @@ describe('gbrain eval longmemeval — documented invocation end-to-end', () => {
 // cache buckets); Anthropic's cache counts ride providerMetadata, OpenAI's the
 // SDK's cacheRead detail. Hermetic: the generateText seam replaces only the
 // final SDK call, so the gateway's own usage normalization runs.
-describe('gbrain eval longmemeval: reader usage on every row (A1)', () => {
+describe('foresights eval longmemeval: reader usage on every row (A1)', () => {
   afterEach(() => {
     __setGenerateTextTransportForTests(null);
     resetGateway();

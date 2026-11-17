@@ -6,8 +6,8 @@ A stored `webhook_secret` leaked through two surfaces. Both now route through `r
 
 | Surface | How it leaked | Fix |
 |---|---|---|
-| `sources_add` op result, printed by `gbrain call sources_add` | Attaching a path to an existing path-less source (#3903 attach path) returned the full `SourceRow`, including the raw `config` with `webhook_secret` | `src/core/ops/sources.ts`: return `config: redactSourceConfig(parseSourceConfig(row.config))` |
-| Managed `gbrain sources add <id> --path` (attach), its idempotent replay, and the `source_lifecycle` administration op | Outcome carried `config: {...source.config, ...input.config}`; the same outcome is persisted in `persistence_topology_changes` and replayed on retry | `src/core/persistence/source-lifecycle.ts`: outcome `config` goes through `redactSourceConfig()`, so neither the receipt nor the retained journal row holds the secret |
+| `sources_add` op result, printed by `foresights call sources_add` | Attaching a path to an existing path-less source (#3903 attach path) returned the full `SourceRow`, including the raw `config` with `webhook_secret` | `src/core/ops/sources.ts`: return `config: redactSourceConfig(parseSourceConfig(row.config))` |
+| Managed `foresights sources add <id> --path` (attach), its idempotent replay, and the `source_lifecycle` administration op | Outcome carried `config: {...source.config, ...input.config}`; the same outcome is persisted in `persistence_topology_changes` and replayed on retry | `src/core/persistence/source-lifecycle.ts`: outcome `config` goes through `redactSourceConfig()`, so neither the receipt nor the retained journal row holds the secret |
 
 Behavior change on an intentional reveal: `sources webhook set` printed the new secret twice (config summary + GitHub paste block). The summary line now reads `webhook_secret: (shown once below)`, and the paste block still prints it once. `sources webhook rotate` already printed it once and is unchanged.
 
@@ -30,7 +30,7 @@ Every test passes on the real code. Each row applied one targeted production mut
 | M7 | `webhook set` prints the secret twice (pre-fix output) | `src/commands/sources.ts` | "webhook set" | 0 pass / 1 fail |
 | M8 | `webhook rotate` prints the secret twice | `src/commands/sources.ts` | "webhook rotate" | 0 pass / 1 fail |
 | M8b | `webhook rotate` also prints the old secret | `src/commands/sources.ts` | "webhook rotate" | 0 pass / 1 fail |
-| M9 | `sources_add` returns raw config (pre-fix) | `src/core/ops/sources.ts` | "gbrain call" | 0 pass / 1 fail |
+| M9 | `sources_add` returns raw config (pre-fix) | `src/core/ops/sources.ts` | "foresights call" | 0 pass / 1 fail |
 | M10 | `listSources` (remote `sources_list`) returns config | `src/core/sources-ops.ts` | "remote MCP" | 0 pass / 1 fail |
 | M11 | `getSourceStatus` (remote `sources_status`) returns config | `src/core/sources-ops.ts` | "remote MCP" | 0 pass / 1 fail |
 | M12 | sync report (remote `get_status_snapshot`) returns config | `src/core/sync-status-report.ts` | "remote MCP" | 0 pass / 1 fail |
@@ -41,7 +41,7 @@ Every test passes on the real code. Each row applied one targeted production mut
 | M16 | restore reconnect lines / receipt echo detached config | `src/core/backup/quarantine.ts` | agent-install-backup.serial "full backup" | 0 pass / 1 fail (reconnect assertion) |
 | M17 | `GET /admin/api/sources` returns raw rows | `src/commands/serve-http.ts` | e2e/serve-http-oauth "admin source access" | 0 pass / 1 fail |
 
-Pre-fix run of the new file on unmodified master: 5 pass / 3 fail (webhook set printed 2 occurrences; `gbrain call sources_add` and the managed receipt returned the raw secret). Post-fix: 8 pass / 0 fail.
+Pre-fix run of the new file on unmodified master: 5 pass / 3 fail (webhook set printed 2 occurrences; `foresights call sources_add` and the managed receipt returned the raw secret). Post-fix: 8 pass / 0 fail.
 
 A first doctor mutation that edited `checkFederationHealth` survived because local doctor never runs that check (only `run_doctor` does). The test was extended to cover remote `run_doctor` too, and both doctor mutations (M13, M13c) now fail it.
 

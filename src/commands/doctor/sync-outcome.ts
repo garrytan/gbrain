@@ -57,7 +57,7 @@ export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, di
   const what = attempt.state === 'no_attempt'
     ? `no attempt recorded${attempt.unreadable ? ` (last attempt unreadable: ${attempt.unreadable})` : ''}`
     : `last attempt ${attempt.last_attempt_at ?? 'at an unknown time'}, result ${attempt.result ?? 'unknown'}, ${attempt.held} held`;
-  const step = attempt.state === 'attempt_queued' ? 'wait for the queued sync' : attempt.state === 'holds_pending' ? `inspect holds with \`gbrain sync status --source ${sourceId}\``
+  const step = attempt.state === 'attempt_queued' ? 'wait for the queued sync' : attempt.state === 'holds_pending' ? `inspect holds with \`foresights sync status --source ${sourceId}\``
     : `run \`${retry.argv!.join(' ')}\``;
   return {
     issue: `Source ${display}: no successful sync recorded; ${what}; ${step}`,
@@ -69,7 +69,7 @@ export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, di
 /**
  * C-7 (#6892): a gbrain-owned content source never syncs, and doctor exempts it only while its content receipt names
  * the source's root. A receipt left on an old root (a transfer or relocation, or a set-path still to run) is
- * `content_receipt_stale`, fixed by the preview of `gbrain repair content-receipt-root`, never by a sync that refuses.
+ * `content_receipt_stale`, fixed by the preview of `foresights repair content-receipt-root`, never by a sync that refuses.
  */
 function contentReceiptStale(sourceId: string, display: string): { issue: string; entry: SyncOutcomeEntry } {
   const fix = agentFix(['gbrain', 'repair', 'content-receipt-root', '--source', sourceId],
@@ -104,7 +104,7 @@ export async function stoppedConnectorIssues(engine: BrainEngine, sources: Array
 
 /**
  * #6834: the fix for stale managed sources whose unfinished cursor no sync can publish (its checkpoint lost to a
- * `last_commit` that moved outside the run): `gbrain repair managed-sync-orphans` retires it, so the remedy is the
+ * `last_commit` that moved outside the run): `foresights repair managed-sync-orphans` retires it, so the remedy is the
  * preview, not another sync. Null when none of them has a `checkpoint_moved` cursor or the read fails.
  */
 export async function checkpointMovedFix(engine: BrainEngine, staleIds: string[]): Promise<{ fix: Action; note: string } | null> {

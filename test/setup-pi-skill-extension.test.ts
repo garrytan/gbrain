@@ -1,5 +1,5 @@
 /**
- * GBRA-435 PR 2: gbrain setup pi --skill-loading resolve|off and the generated
+ * GBRA-435 PR 2: foresights setup pi --skill-loading resolve|off and the generated
  * Pi extension gbrain-skill-resolver (src/core/setup/pi-skill-extension.ts,
  * pi-skill-extension-code.ts), plus its half of doctor's skill_resolver check.
  *
@@ -96,7 +96,7 @@ process.exit(0);
   try { return JSON.parse(text); } catch { throw new Error('drive failed: ' + r.stderr.toString() + text); }
 }
 
-describe.skipIf(!NODE)('gbrain setup pi --skill-loading', () => {
+describe.skipIf(!NODE)('foresights setup pi --skill-loading', () => {
   test('resolve: catalog, library, state and extension, a self-test under Node and pi --help proving Pi loads it; a brainless home stays brainless', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve']);

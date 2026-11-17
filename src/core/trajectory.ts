@@ -2,7 +2,7 @@
  * v0.35.4 — trajectory derived metrics.
  *
  * Pure functions over `TrajectoryPoint[]` (engine output). Both the
- * `find_trajectory` MCP op and the `gbrain eval trajectory` CLI consume
+ * `find_trajectory` MCP op and the `foresights eval trajectory` CLI consume
  * this module so the regression + drift_score definitions stay in one
  * place.
  *

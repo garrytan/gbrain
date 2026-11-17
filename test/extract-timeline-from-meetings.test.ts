@@ -130,7 +130,7 @@ describe('extractTimelineFromMeetings', () => {
 
 // ─── #4542 — CLI surface: a zero-meeting run must WARN, not mimic success ──
 //
-// `gbrain extract timeline --from-meetings --source db` on a brain with no
+// `foresights extract timeline --from-meetings --source db` on a brain with no
 // meeting-typed pages printed "0 entries on 0 entity pages from 0 meetings"
 // and exited 0 — indistinguishable from a healthy no-op. Worse,
 // --from-meetings REPLACES the default timeline pass (extract.ts runs it
@@ -180,7 +180,7 @@ describe('#4542 zero-meetings warning at the CLI surface', () => {
 // NULL even when frontmatter carries a parseable `date:`. The extractor used
 // to `continue` on those rows BEFORE counting them, so a whole agent-written
 // meeting corpus reported "0 meetings matched" with and without --source-id.
-// The date must come from the same recipe `gbrain backfill effective_date`
+// The date must come from the same recipe `foresights backfill effective_date`
 // uses (computeEffectiveDate over frontmatter/filename), NOT from updated_at:
 // timeline_entries dedups on (page_id, date, summary, source), so an
 // import-timestamp row would survive as a duplicate next to the correctly

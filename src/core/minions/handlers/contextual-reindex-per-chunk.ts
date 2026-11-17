@@ -3,7 +3,7 @@
  * batch loop. The progressive-batch primitive's stage model (trial →
  * ramp → full) doesn't fit Minion handler semantics (one job per page,
  * worker-driven). The primitive's audit + cost-cap value lives at the
- * SUBMITTER side (`gbrain reindex --markdown`, which IS retrofitted in
+ * SUBMITTER side (`foresights reindex --markdown`, which IS retrofitted in
  * T11), not at the handler. The handler already routes its cost through
  * the global synopsis rate-leaser (D26 P0-3). No further retrofit needed.
  *
@@ -301,7 +301,7 @@ function classifyResult(
     case 'skipped':
       // A fact purge's pending derivation sweep blocks the page's paid synopsis: not done, and not a cap to raise.
       if (result.reason === 'purge_sweep_pending') return { ok: false, mode_applied: 'skipped', chunks_embedded: 0, skip_reason: result.reason,
-        next: 'A fact purge\'s sweep of stored derivation results covers this page, so no synopsis was paid for. gbrain doctor --only derivation_purge_sweeps names the purge and the command that finishes its sweep (gbrain forget --purge --status --request-id <request_id> --continue); then run the reindex again.' };
+        next: 'A fact purge\'s sweep of stored derivation results covers this page, so no synopsis was paid for. foresights doctor --only derivation_purge_sweeps names the purge and the command that finishes its sweep (foresights forget --purge --status --request-id <request_id> --continue); then run the reindex again.' };
       return { ok: true, mode_applied: 'skipped', chunks_embedded: 0, skip_reason: result.reason };
     case 'transient_error':
       // Throw so Minion retries. The queue's backoff policy handles

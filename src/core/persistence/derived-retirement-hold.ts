@@ -1,13 +1,13 @@
 /**
  * GBRA-161 PR 0: every derived retirement stays restorable for `DERIVED_RETIREMENT_HOLD_DAYS` before the purge may
  * remove it. A derived writer that retires a page it generated (an atom an extraction no longer produces, a chronicle
- * event a re-judged depth page no longer yields, an atom `gbrain repair stale-atoms` retired) versions it, soft-deletes
+ * event a re-judged depth page no longer yields, an atom `foresights repair stale-atoms` retired) versions it, soft-deletes
  * it and stamps `retired_by` with one of `DERIVED_RETIRED_BY` in the same transaction. The 72 h purge used to remove
  * those rows, and their `page_versions` with them (ON DELETE CASCADE), before anyone could notice a wrong retirement.
  *
  * The window runs from `deleted_at` (the database clock), never from the `retired_at` text. Remote page writes cannot
  * add or change the stamp keys (`RESERVED_RETIREMENT_KEYS`; the page preparer refuses with `reserved_frontmatter_key`). An
- * explicit `gbrain delete --purge` is not held. No engine-sql imports, so `engine-sql/pages.ts` may import it.
+ * explicit `foresights delete --purge` is not held. No engine-sql imports, so `engine-sql/pages.ts` may import it.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';

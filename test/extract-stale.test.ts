@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain extract --stale` + the link-extraction freshness watermark
+ * Tests for `foresights extract --stale` + the link-extraction freshness watermark
  * (v0.42.7, #1696). Hermetic PGLite — no DATABASE_URL, no API keys.
  *
  * Covers:
@@ -103,7 +103,7 @@ describe('engine: stale-page extraction methods', () => {
   });
 });
 
-describe('gbrain extract --stale', () => {
+describe('foresights extract --stale', () => {
   test('extracts typed edges + stamps every processed page (incl. zero-link)', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) is the CEO of [Acme](companies/acme).'));

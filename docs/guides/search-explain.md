@@ -1,6 +1,6 @@
 # Explaining search results
 
-`query` (and the CLI `gbrain search`) explain their own ranking. With `explain: true` every
+`query` (and the CLI `foresights search`) explain their own ranking. With `explain: true` every
 returned row carries `score_details`: which retrieval arms found it and at
 what rank, how fusion scored it, and every boost or demotion applied after
 fusion. With `explain_target` the response says what happened to a page you
@@ -22,8 +22,8 @@ MCP:
 CLI:
 
 ```bash
-gbrain search "acme-example renewal terms" --explain          # readable breakdown
-gbrain search "acme-example renewal terms" --explain --json   # the same score_details per row
+foresights search "acme-example renewal terms" --explain          # readable breakdown
+foresights search "acme-example renewal terms" --explain --json   # the same score_details per row
 ```
 
 Each row's `score_details`:
@@ -45,7 +45,7 @@ reason, never as an invented value.
 
 Every `search` and `query` response carries its stage timings in
 `_meta.retrieval.timings` (MCP and thin clients; never in the result text),
-and `gbrain search --explain` / `gbrain query --explain` print them as the
+and `foresights search --explain` / `foresights query --explain` print them as the
 first header line, on empty and degraded responses too:
 
 ```text
@@ -66,7 +66,7 @@ All values are integer milliseconds.
 
 ### The whole CLI call and what it spent
 
-`gbrain search --json --timings` and `gbrain query --json --timings` print
+`foresights search --json --timings` and `foresights query --json --timings` print
 `{ "results": [...], "timings_ms": {...}, "cost": {...} }` instead of the bare
 result array (plain `--json` is unchanged); without `--json`, `--timings`
 adds one `timings:` line on stderr.
@@ -100,7 +100,7 @@ MCP:
 ```
 
 The response meta `explain_target` holds the diagnosis, and a notice carries
-the next step. On the command line, `gbrain search|query "<q>" --explain-target
+the next step. On the command line, `foresights search|query "<q>" --explain-target
 <source>:<slug> --json` prints `{ "results": [...], "explain_target": {...} }`
 instead of the bare array, with the fix rendered as a command (`next`, `argv`,
 `command`); without `--explain-target` the output stays an array. When an arm
@@ -116,10 +116,10 @@ failed on the call, `why` names it, since a failed arm is not evidence of absenc
 | `target_dropped_token_budget` | The evidence budget filled first. | Repeat with a larger `token_budget`. |
 | `target_dropped_relaxed_keyword` | Only a loose keyword match found it. | `get_page`, or rephrase with the page's own terms. |
 | `target_not_retrieved` | No arm returned it for this query. | `query --expand` (`expand: true`; one call to the configured expansion model) or rephrase. The fix carries `consent: ["paid", "egress"]`, so it renders `next: ask_user`: the agent asks before sending the query to the model. |
-| `target_not_embedded` | Its chunks have no vectors (held from embedding or not embedded yet), so only a keyword or title match can return it. | `gbrain doctor --json` names the held pages and the embed command. |
-| `target_not_indexed` | The page has no indexed chunks. | `gbrain doctor --json` names the re-index command. |
-| `target_projection_stale` | The page changed and its searchable text is still being rebuilt. | Retry after `gbrain doctor` shows the backlog drained. |
-| `target_safe_chunks_uncertified` | Remote reads withhold pages indexed before the current safe-chunk format. | The brain host runs `gbrain repair safe-chunks`. |
+| `target_not_embedded` | Its chunks have no vectors (held from embedding or not embedded yet), so only a keyword or title match can return it. | `foresights doctor --json` names the held pages and the embed command. |
+| `target_not_indexed` | The page has no indexed chunks. | `foresights doctor --json` names the re-index command. |
+| `target_projection_stale` | The page changed and its searchable text is still being rebuilt. | Retry after `foresights doctor` shows the backlog drained. |
+| `target_safe_chunks_uncertified` | Remote reads withhold pages indexed before the current safe-chunk format. | The brain host runs `foresights repair safe-chunks`. |
 | `target_ambiguous` | The slug exists in several sources. | Repeat with `explain_target` as `source:slug`. |
 | `target_not_found_or_not_visible` | No page with that slug is readable here. | Ask the user whether it exists and where; private pages are never confirmed. |
 
@@ -128,4 +128,4 @@ Both params are declared on `query` on the full MCP tool surface; the cheap
 re-sent to the model on each turn. A starter-surface session calls
 `request_tools {"surface": "full"}` first. Agents on the default seven-verb
 memory surface do not have `query`; ask the brain host to run
-`gbrain search "<question>" --explain --json`, or enable the full tool surface.
+`foresights search "<question>" --explain --json`, or enable the full tool surface.

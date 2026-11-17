@@ -1,6 +1,6 @@
 /**
  * facts_undated_lines doctor check (GST-2731): a facts page (type: facts, such as me/facts or company/facts, the
- * starter pages gbrain setup --shape writes) holds one dated line per fact, so an agent quoting it can say when the
+ * starter pages foresights setup --shape writes) holds one dated line per fact, so an agent quoting it can say when the
  * fact was true. This notes each facts page with list lines that carry no YYYY-MM-DD date, by page and line number,
  * never the line's text. Read-only; a warn whose fix reads the page and asks the user for the dates. It reads each
  * page's bounded prefix (the first 64 KiB, far more than a facts page holds); a page stored in segments is skipped

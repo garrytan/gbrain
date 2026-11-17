@@ -1,5 +1,5 @@
 /**
- * scripts/build-lookup-table.ts (#7233): the "Which gbrain call for which
+ * scripts/build-lookup-table.ts (#7233): the "Which foresights call for which
  * lookup" table is written once in skills/conventions/brain-first.md and
  * copied into AGENTS.md, INSTALL_FOR_AGENTS.md, the bootstrap AGENTS
  * template and skills/RESOLVER.md. Fails when a committed copy drifts from

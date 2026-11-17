@@ -124,7 +124,7 @@ describe('git hold store', () => {
     const local = await buildHoldReport(engine, { sourceId: 'holds-a', incarnation, runId: 'run-1', remote: false, policy, screened: 10 });
     expect(local.held).toHaveLength(1);
     expect(local).toMatchObject({ held_count: 4, holds_outstanding: 4, holds_truncated: true });
-    expect(local.holds_fix!.why).toContain('gbrain sources status holds-a');
+    expect(local.holds_fix!.why).toContain('foresights sources status holds-a');
     expect(local.holds_fix!.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', 'holds-a']);
     const remote = await buildHoldReport(engine, { sourceId: 'holds-a', incarnation, runId: 'run-1', remote: true, policy, screened: 10 });
     expect(Object.keys(remote).sort()).toEqual(['held_count', 'holds_fix']);

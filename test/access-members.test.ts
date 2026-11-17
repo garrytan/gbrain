@@ -1,6 +1,6 @@
 /**
  * GBRA-218 A1 identity: the members and groups service and the read-only
- * `gbrain access` checks, on a repo-less brain (in-memory PGLite, no git
+ * `foresights access` checks, on a repo-less brain (in-memory PGLite, no git
  * checkout; Postgres too when DATABASE_URL is set).
  *
  * 1. Protects: member ids are never reused (rm tombstones, add and enable

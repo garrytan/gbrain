@@ -142,7 +142,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const phase = await expectUnitNotAborted(() => b.extract(['Renders vs proof'], 'hash-two'));
         expect({ file: b.file(slug!) === edited, body: (await b.body(slug!)) === bodyBefore }).toEqual({ file: true, body: true });
         const held = holdFor(phase.holds, slug!);
-        expect({ status: phase.status, held: held.length, fix: held.some(h => h.includes('gbrain sync --source default')) })
+        expect({ status: phase.status, held: held.length, fix: held.some(h => h.includes('foresights sync --source default')) })
           .toEqual({ status: 'warn', held: 1, fix: true });
       });
     }, 180_000);

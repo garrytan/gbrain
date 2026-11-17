@@ -86,7 +86,7 @@ describe('#6590 recall facts_calibration', () => {
     expect(firstBody.facts_degraded).toBeUndefined();
     expect(codes(first)).toContain('facts_calibration_unmeasured');
     const block = first.content.find(c => c.text.startsWith('[gbrain notice facts_calibration_unmeasured kind=info]'));
-    expect(block?.text).toContain('gbrain doctor --only fact_admission_floors --json');
+    expect(block?.text).toContain('foresights doctor --only fact_admission_floors --json');
     expect(FACT_ADMISSION_FLOOR_EVIDENCE[(firstBody.facts_calibration as { model_key: string }).model_key]).toBeUndefined();
 
     const second = await dispatchToolCall(engine as never, 'recall', { question: 'What coffee does Alice Example like?' }, opts);

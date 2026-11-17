@@ -1,5 +1,5 @@
 /**
- * The navigation files (core/nav/nav-pages.ts, gbrain nav): index.md, log.md and hot.md.
+ * The navigation files (core/nav/nav-pages.ts, foresights nav): index.md, log.md and hot.md.
  *
  * - rendering: pages by folder with a one-line summary; operations newest first, naming
  *   only listed pages; hot.md capped at HOT_MAX_WORDS.

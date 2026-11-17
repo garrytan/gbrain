@@ -1,8 +1,8 @@
 /**
- * gbrain skillopt --help text.
+ * foresights skillopt --help text.
  */
 
-export const SKILLOPT_HELP_TEXT = `gbrain skillopt <skill-name> [flags]
+export const SKILLOPT_HELP_TEXT = `foresights skillopt <skill-name> [flags]
 
 Self-evolving skill optimization. Treats SKILL.md as the trainable parameters
 of a frozen agent. Validation-gated, budget-capped, atomic-versioned.
@@ -10,7 +10,7 @@ of a frozen agent. Validation-gated, budget-capped, atomic-versioned.
 By default it runs ONE gated rewrite: a forward pass on one train batch, one
 whole-body rewrite, then the selection gate. --loop runs the iterative edit
 loop instead. The loop is deprecated and will be removed on or after
-2026-12-03: on gbrain's benchmarks it tied the one-shot rewrite (same held-out
+2026-12-03: on foresights's benchmarks it tied the one-shot rewrite (same held-out
 score at ~1.8x the cost). Nothing replaces it; edit the skill directly.
 
 Based on SkillOpt (arXiv 2605.23904, MSR May 2026).
@@ -73,7 +73,7 @@ Safety:
                                 if estimate exceeds. A model with no price
                                 runs under the default with a warning; an
                                 explicit cap refuses it before any spend
-                                until you register its rate (gbrain pricing
+                                until you register its rate (foresights pricing
                                 set). off runs uncapped (spend still ledgered).
   --max-cost-usd N              Legacy spelling of --max-usd; 0 still means
                                 uncapped (deprecated: write --max-usd off).
@@ -114,25 +114,25 @@ Diagnostics:
 
 Examples:
   # Generate a starter benchmark from the skill itself (recommended):
-  gbrain skillopt meeting-prep --bootstrap-from-skill
+  foresights skillopt meeting-prep --bootstrap-from-skill
   # ...then review + strengthen the judges, delete the sentinel line, and run:
-  gbrain skillopt meeting-prep --bootstrap-reviewed --split 1:1:1
+  foresights skillopt meeting-prep --bootstrap-reviewed --split 1:1:1
 
   # Bootstrap benchmark from existing routing-eval, then review:
-  gbrain skillopt meeting-prep --bootstrap-from-routing
+  foresights skillopt meeting-prep --bootstrap-from-routing
 
   # After review (sentinel deleted), run the optimizer:
-  gbrain skillopt meeting-prep --bootstrap-reviewed
+  foresights skillopt meeting-prep --bootstrap-reviewed
 
   # Dry-run cost preview:
-  gbrain skillopt meeting-prep --dry-run
+  foresights skillopt meeting-prep --dry-run
 
   # Optimize a bundled skill in place (requires an independent held-out set):
-  gbrain skillopt brain-ops --allow-mutate-bundled --held-out skills/brain-ops/held-out.jsonl
+  foresights skillopt brain-ops --allow-mutate-bundled --held-out skills/brain-ops/held-out.jsonl
   # ...or omit --allow-mutate-bundled to get proposed.md for manual review (no held-out needed).
 
   # Resume after interruption:
-  gbrain skillopt meeting-prep --resume <run-id>
+  foresights skillopt meeting-prep --resume <run-id>
 
 See: docs/guides/skillopt.md
 `;

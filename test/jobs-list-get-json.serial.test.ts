@@ -1,8 +1,8 @@
 /**
- * #3685: `gbrain jobs list --json` / `jobs get <id> --json` accepted the flag
+ * #3685: `foresights jobs list --json` / `jobs get <id> --json` accepted the flag
  * and silently discarded it, printing the human table/detail view (exit 0,
  * no warning). The CHANGELOG explicitly directs scripts at these surfaces
- * ("For scripting, `gbrain jobs stats --json` / `gbrain jobs list --json`
+ * ("For scripting, `foresights jobs stats --json` / `foresights jobs list --json`
  * remain the cleaner surfaces."), so a scripted consumer got a padded ASCII
  * table and a jq parse error with no signal its contract was broken.
  *
@@ -137,9 +137,9 @@ describe('help advertises --json on list/get/stats (#3685)', () => {
     } finally {
       console.log = origLog;
     }
-    expect(out).toContain('gbrain jobs list [--status S] [--queue Q] [--limit N] [--json]');
-    expect(out).toContain('gbrain jobs get <id> [--json]');
-    expect(out).toContain('gbrain jobs stats [--queue Q] [--cluster-errors] [--json]');
+    expect(out).toContain('foresights jobs list [--status S] [--queue Q] [--limit N] [--json]');
+    expect(out).toContain('foresights jobs get <id> [--json]');
+    expect(out).toContain('foresights jobs stats [--queue Q] [--cluster-errors] [--json]');
   });
 
   test('cli.ts JOBS summary lines carry [--json] (source audit)', () => {

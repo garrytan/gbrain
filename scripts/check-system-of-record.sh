@@ -5,7 +5,7 @@
 # links, timeline_entries) must go through the extract / reconcile /
 # migration layer, never directly from arbitrary code paths. Direct
 # calls would bypass the markdown source-of-truth contract — the next
-# `gbrain rebuild` (v0.32.3) would lose the data because the fence
+# `foresights rebuild` (v0.32.3) would lose the data because the fence
 # wasn't updated.
 #
 # This script grep-bans the direct-write surface across src/ and
@@ -26,7 +26,7 @@ set -euo pipefail
 #      .git/ on filesystems where `git init` silently fails under
 #      shard-concurrency load (v0.40.10 flake-hardening fix).
 #   2. `git rev-parse --show-toplevel` — production callers from inside
-#      the gbrain repo.
+#      the foresights repo.
 #   3. $PWD — last-resort fallback for callers without git.
 if [ -n "${GBRAIN_SCAN_ROOT:-}" ]; then
   ROOT="$GBRAIN_SCAN_ROOT"

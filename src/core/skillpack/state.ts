@@ -12,9 +12,9 @@
  * from where, with what verified hash."
  *
  * v2 adds `roots`: per skills root (a workspace's `skills/` dir or a
- * harness skills dir, absolute) and skill, the sha256 of each file as gbrain
+ * harness skills dir, absolute) and skill, the sha256 of each file as foresights
  * installed it (the install's base) and whether the skill is pinned.
- * `gbrain skillpack reference --update-untouched` updates a skill only when
+ * `foresights skillpack reference --update-untouched` updates a skill only when
  * every file still matches its base. A v1 file loads as v2 with no roots.
  *
  * Atomic update via a unique temp file + `rename()`. Schema-versioned.
@@ -63,7 +63,7 @@ export interface SkillpackStateEntry {
 
 /** One installed skill's base under a skills root. */
 export interface InstalledSkillRecord {
-  /** Path relative to the skills root (posix) → sha256 of the bytes gbrain wrote. */
+  /** Path relative to the skills root (posix) → sha256 of the bytes foresights wrote. */
   files: Record<string, string>;
   /** Pinned skills are never updated by --update-untouched. */
   pinned?: boolean;

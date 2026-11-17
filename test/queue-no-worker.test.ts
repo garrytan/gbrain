@@ -3,7 +3,7 @@
  *
  * - CLI `jobs submit` on PGLite without --follow refuses with `no_worker` and
  *   the exact --follow command; --queue-only queues deliberately.
- * - `gbrain jobs work` on PGLite drains the queue in the foreground and exits.
+ * - `foresights jobs work` on PGLite drains the queue in the foreground and exits.
  * - MCP submit_job accepts and emits a `no_worker` notice.
  * - get_job_stats / deriveWedgeSignal distinguish no_worker from wedged.
  * - doctor queue_health counts waiting rows on PGLite with a drain fix.
@@ -103,7 +103,7 @@ describe('CLI jobs submit on PGLite', () => {
       await runJobsSubmit({ args: ['submit', 'sync', '--params', '{}'], engine, queue: new MinionQueue(engine) } as never);
       const text = stderr.mock.calls.map(c => String(c[0])).join('');
       expect(text).toContain('Error [no_worker]');
-      expect(text).toContain("Fix: gbrain jobs submit sync --params '{}' --follow");
+      expect(text).toContain("Fix: foresights jobs submit sync --params '{}' --follow");
       expect(currentExitCode()).toBe(1);
       const [row] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM minion_jobs');
       expect(Number(row?.n ?? 0)).toBe(0);

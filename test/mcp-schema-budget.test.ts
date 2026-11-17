@@ -2,7 +2,7 @@
  * C3 (cost wave): the starter-surface tool list is re-sent to the model on
  * every turn, so its size is a cost every connected agent pays. This file
  * pins:
- *   - the served starter list (Cat 40 configuration: `gbrain serve --surface
+ *   - the served starter list (Cat 40 configuration: `foresights serve --surface
  *     starter`, no skill grants) at 25,000 characters or less, with
  *     `mcp.publish_skills` on (fresh-init default) and off, and its cl100k
  *     token count, both measured on what a model receives (name,

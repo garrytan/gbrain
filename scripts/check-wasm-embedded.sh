@@ -34,7 +34,7 @@ cp "$REPO_ROOT/scripts/chunker-smoketest.ts" "$BUILD_DIR/scripts/chunker-smokete
 ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 
 # Build a minimal smoketest binary that imports the chunker. We compile this
-# instead of the full gbrain CLI so the failure mode is laser-focused on
+# instead of the full foresights CLI so the failure mode is laser-focused on
 # chunker + WASM path resolution, not unrelated CLI wiring.
 if ! (cd "$BUILD_DIR" && bun build --compile --no-compile-autoload-bunfig --outfile "$OUT_BIN" scripts/chunker-smoketest.ts >/dev/null); then
   echo "[check-wasm-embedded] FAIL: bun could not compile the smoketest binary." >&2

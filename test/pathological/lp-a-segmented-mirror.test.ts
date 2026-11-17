@@ -1,5 +1,5 @@
 /**
- * LPH (a): `gbrain repair segmented-mirror` re-mirrors the canonical file of a page stored in segments that an older
+ * LPH (a): `foresights repair segmented-mirror` re-mirrors the canonical file of a page stored in segments that an older
  * binary's withdrawal mirror passed by.
  *
  * 1. Protects: before v0.60.299.0 a purge or forget struck the row in a segmented page's segments but skipped its file
@@ -9,7 +9,7 @@
  *    segmented page or an inline page, and it holds (never rewrites) a segmented file that also differs from the
  *    database for another reason (`file_database_drift`). `--apply --expect <hash>` rewrites each listed file through
  *    a withdrawal-mirror effect of its own receipted request: the file loses the row, is byte-identical to the page's
- *    `gbrain export` render, and the Git effect commits it. A second preview lists nothing; a second apply (the new
+ *    `foresights export` render, and the Git effect commits it. A second preview lists nothing; a second apply (the new
  *    hash, or the old one replayed) writes nothing. A hash no preview saved, or one whose file changed since, refuses
  *    with `preview_changed` before anything is admitted.
  * 2. Fails when: the kind does not exist (red before), the preview misses a stale file or lists a clean, inline or
@@ -54,7 +54,7 @@ async function extract(brain: TwinBrain, slug: string, facts: string[]) {
 }
 
 for (const { backend: kind } of pathologicalArms()) {
-  describe(kind + ': gbrain repair segmented-mirror re-mirrors files an older binary left holding withdrawn rows', () => {
+  describe(kind + ': foresights repair segmented-mirror re-mirrors files an older binary left holding withdrawn rows', () => {
     let brain: TwinBrain;
     const before: Record<string, Buffer> = {};
 

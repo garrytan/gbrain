@@ -3,7 +3,7 @@
  *
  * The fixture page becomes a database-page target (`mode: 'db'`, the shape
  * `readFenceTarget` returns for a stored page) on the eval brain's default
- * source. `analyzeFences` runs the free tiers exactly as `gbrain repair
+ * source. `analyzeFences` runs the free tiers exactly as `foresights repair
  * fences` does; a page they leave for the model goes through `runTier3` with
  * the real daily ledger and attempt store of that brain: prompt v2 (a model
  * may answer HOLD, held as `llm_declined`), one call per fence, a corrective

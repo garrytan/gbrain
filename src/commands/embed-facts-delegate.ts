@@ -14,12 +14,12 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 
 const FACT_EMBED_EXAMPLES: Record<string, string> = { '--source': 'default', '--max-cost-usd': '1', '--max-facts': '500', '--batch-size': '50', '--budget-ms': '60000' };
 const invalid = (message: string, suggestion: string) => opError('invalid_params', message, suggestion,
-  { fix: readFix('Prints every gbrain embed form, including fact repair and its flags.', { argv: ['gbrain', 'embed', '--help'] }) });
+  { fix: readFix('Prints every foresights embed form, including fact repair and its flags.', { argv: ['gbrain', 'embed', '--help'] }) });
 
 export function parseFactEmbedArgs(args: string[]): EmbedFactsOptions {
   if (!args.includes('--stale') || !args.includes('--facts')) {
     throw invalid('Use embed --stale --facts --source <id> [--dry-run | --yes --max-cost-usd N] [--max-facts N]',
-      'Fact repair takes both --stale and --facts: preview with gbrain embed --stale --facts --source SOURCE --dry-run, then apply with --yes --max-cost-usd N after the user approves the cost.');
+      'Fact repair takes both --stale and --facts: preview with foresights embed --stale --facts --source SOURCE --dry-run, then apply with --yes --max-cost-usd N after the user approves the cost.');
   }
   const options: Record<string, unknown> = {};
   const booleans = { '--dry-run': 'dryRun', '--yes': 'yes' } as const;

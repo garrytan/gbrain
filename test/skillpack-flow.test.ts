@@ -1,8 +1,8 @@
 /**
- * E2E flow tests for `gbrain skillpack` — the new v0.33 scaffold+
+ * E2E flow tests for `foresights skillpack` — the new v0.33 scaffold+
  * reference+migrate+harvest contract.
  *
- * Real gbrain subprocess against tempdir workspaces. No DATABASE_URL
+ * Real foresights subprocess against tempdir workspaces. No DATABASE_URL
  * needed — skillpack is filesystem-only.
  *
  * 9 user flows:
@@ -98,8 +98,8 @@ describe('skillpack flow (E2E)', () => {
   });
 
   test('4. reference --apply-clean-hunks applies upstream change to local workspace', () => {
-    // Use a private bundle (scratch gbrain root) so we can mutate the
-    // bundle source without polluting the real gbrain repo.
+    // Use a private bundle (scratch foresights root) so we can mutate the
+    // bundle source without polluting the real foresights repo.
     const gbrainRoot = mkdtempSync(join(tmpdir(), 'sp-e2e-gb-'));
     tempdirs.push(gbrainRoot);
     mkdirSync(join(gbrainRoot, 'src'), { recursive: true });
@@ -126,7 +126,7 @@ describe('skillpack flow (E2E)', () => {
     });
     expect(r0.status).toBe(0);
 
-    // gbrain ships an upstream change.
+    // foresights ships an upstream change.
     writeFileSync(
       join(gbrainRoot, 'skills', 'apply-demo', 'SKILL.md'),
       initial.replace('Line 10\n', 'Line 10 UPSTREAM\n'),
@@ -350,7 +350,7 @@ describe('skillpack flow (E2E)', () => {
     // WARNING must be on stderr (survives stdout redirection).
     expect(r.stderr).toContain('WARNING');
     expect(r.stderr).toContain('two-way');
-    expect(r.stderr).toContain('aligned to gbrain');
+    expect(r.stderr).toContain('aligned to foresights');
     // And must NOT be on stdout (where machine consumers parse).
     expect(r.stdout).not.toContain('WARNING:');
   });

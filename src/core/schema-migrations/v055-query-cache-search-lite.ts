@@ -24,7 +24,7 @@ export const v055: Migration = {
   //                   vector_enabled, etc.) so cached responses can
   //                   surface the same debug info as fresh ones.
   //   ttl_seconds   — per-row TTL. Default 3600. Stale rows are skipped
-  //                   at read time and pruned by `gbrain cache prune`.
+  //                   at read time and pruned by `foresights cache prune`.
   //   created_at    — TTL anchor.
   //   hit_count     — instrumentation; bumped on each lookup-hit.
   //   last_hit_at   — instrumentation.

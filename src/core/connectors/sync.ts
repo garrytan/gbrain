@@ -150,7 +150,7 @@ function terminalHint(term: TerminalStatus, provider: ChatHistoryProvider): stri
   }
   if (term === 'forbidden') {
     return 'The provider blocked this request (bot/challenge). Use the cookie-capture lane or ' +
-      'the official export + `gbrain transcripts ingest`.';
+      'the official export + `foresights transcripts ingest`.';
   }
   return provider.sessionInstructions();
 }
@@ -532,13 +532,13 @@ function unresolvedHint(base: ConnectorSyncResult, provider: ConnectorProviderNa
       'throttling or down. The next sync resumes from the same place.');
   } else if (base.stopReason) {
     parts.push(`Stopped at the run's ${base.stopReason === 'deadline' ? 'deadline' : 'request limit'} before every ` +
-      `conversation was fetched. Run \`gbrain connectors sync ${provider}\` again (without --full) to continue: conversations ` +
+      `conversation was fetched. Run \`foresights connectors sync ${provider}\` again (without --full) to continue: conversations ` +
       'already imported are skipped.');
   }
   if (base.unresolved > 0) {
     parts.push(
       `${base.unresolved} conversation(s) not archived yet; sync retries them automatically ` +
-      `(\`gbrain connectors status ${provider} --json\` lists them).` +
+      `(\`foresights connectors status ${provider} --json\` lists them).` +
       (base.held.length
         ? ` ${base.held.length} recorded before their organization was tracked need one full re-sync, which ` +
           `re-downloads the whole history: ask the user, then run \`${fullSyncArgv(provider, sourceId).join(' ')}\`.`
@@ -546,7 +546,7 @@ function unresolvedHint(base: ConnectorSyncResult, provider: ConnectorProviderNa
   }
   if (base.pending.length) {
     parts.push(`${base.pending.length} conversation(s) were accepted and are still publishing; the next sync `
-      + `finishes them without a second write (\`gbrain sources writer status --source ${sourceId} --json\` shows the queue).`);
+      + `finishes them without a second write (\`foresights sources writer status --source ${sourceId} --json\` shows the queue).`);
   }
   return parts.length ? parts.join(' ') : undefined;
 }

@@ -21,7 +21,7 @@
  *
  * Starter-surface gap snapshot: each bundled skill's frontmatter `tools:`
  * list is compared against the PLUGIN_SURFACE op set (the plugin lanes
- * serve `--surface full` today, the surface every stdio registration gbrain
+ * serve `--surface full` today, the surface every stdio registration foresights
  * writes pins; the root plugin manifests must pin the same value). Harness tools (shell/exec/read/write/edit/
  * web_search/web_fetch), literal `gbrain` (CLI usage marker), and unknown
  * non-op names are not MCP ops; `mcp:`-prefixed names count with the prefix
@@ -135,7 +135,7 @@ try {
 
 // ── Starter-gap snapshot ────────────────────────────────────────────────────
 const SURFACE_OPS = allowedOpNames(operations, PLUGIN_SURFACE);
-// Harness-native tool names a skill may declare that are not gbrain MCP ops.
+// Harness-native tool names a skill may declare that are not foresights MCP ops.
 const HARNESS_TOOLS = new Set(['shell', 'exec', 'read', 'write', 'edit', 'web_search', 'web_fetch', 'gbrain']);
 
 function frontmatterTools(slug: string): string[] {
@@ -152,9 +152,9 @@ function frontmatterTools(slug: string): string[] {
 function starterGaps(slug: string): string[] {
   const mcpOps = frontmatterTools(slug)
     .map(t => (t.startsWith('mcp:') ? t.slice(4) : t))
-    // Multi-word entries ("gbrain schema add-type …") are CLI command
+    // Multi-word entries ("foresights schema add-type …") are CLI command
     // strings, not MCP op names — same class as the bare `gbrain` marker.
-    .filter(t => !HARNESS_TOOLS.has(t) && !t.startsWith('gbrain '));
+    .filter(t => !HARNESS_TOOLS.has(t) && !/^(?:foresights|gbrain) /.test(t));
   return [...new Set(mcpOps.filter(t => !SURFACE_OPS.has(t)))].sort();
 }
 
@@ -167,18 +167,18 @@ for (const slug of laneSet) {
 /**
  * Agent contract v1 (F6): the generated copy of a skill whose steps name
  * tools outside the plugin's starter surface ends with a note mapping each
- * one to its gbrain CLI equivalent. Source skills are never edited.
+ * one to its foresights CLI equivalent. Source skills are never edited.
  */
 const OPS_BY_NAME = new Map(operations.map(op => [op.name, op]));
 function surfaceNote(gaps: readonly string[]): string {
   const rows = gaps.map(name => {
     const op = OPS_BY_NAME.get(name);
-    return `- \`${name}\` → \`${op ? cliEquivalent(op).join(' ') : `gbrain call ${name} '<params_json>'`}\``;
+    return `- \`${name}\` → \`${op ? cliEquivalent(op).join(' ') : `foresights call ${name} '<params_json>'`}\``;
   });
   return [
     '', '## Tools outside your MCP surface', '',
     `This plugin serves the ${PLUGIN_SURFACE} tool surface. When a step above names one of these tools and your tool list`,
-    'does not have it, call request_tools {"surface":"full"} to add it to this session, or run its gbrain CLI equivalent:', '',
+    'does not have it, call request_tools {"surface":"full"} to add it to this session, or run its foresights CLI equivalent:', '',
     ...rows, '',
     "To widen every new session, set this machine's plugin surface with GBRAIN_SURFACE=full.", '',
   ].join('\n');
@@ -292,33 +292,33 @@ writeFileSync(
   `<!-- gbrain-plugin-tree-stamp: ${version} -->
 # gbrain plugin skill tree (generated — do not hand-edit)
 
-This tree is the curated skill set for the gbrain Codex and Claude Code
+This tree is the curated skill set for the foresights Codex and Claude Code
 plugins. Regenerate with \`bun run scripts/generate-plugin-tree.ts --out plugin\`;
 curation lives in \`skills/plugin-lanes.json\` (one recorded decision per
 addition/exclusion).
 
 ## MCP surface note (read once)
 
-The plugin's MCP server runs \`gbrain serve --surface ${PLUGIN_SURFACE}\` — ${SURFACE_OPS.size}
-operations, the same surface every stdio registration gbrain writes pins.
+The plugin's MCP server runs \`foresights serve --surface ${PLUGIN_SURFACE}\` — ${SURFACE_OPS.size}
+operations, the same surface every stdio registration foresights writes pins.
 ${gapSkills === 0
-    ? `Every gbrain operation the bundled skills name is on it. A harness that caps
+    ? `Every foresights operation the bundled skills name is on it. A harness that caps
 its tool count can narrow this machine's plugin surface with
 \`GBRAIN_SURFACE=starter\` (or \`verbs\`); the server honors it and new sessions
-pick it up. Skills keep their first-class \`gbrain\` CLI paths for anything a
+pick it up. Skills keep their first-class \`foresights\` CLI paths for anything a
 narrowed list leaves out.`
-    : `${gapSkills} bundled skills reference gbrain operations beyond that surface; every one of
-them has a first-class \`gbrain\` CLI path, which is the primary way skills
-drive gbrain. When a skill step names an operation your MCP tool list doesn't
+    : `${gapSkills} bundled skills reference foresights operations beyond that surface; every one of
+them has a first-class \`foresights\` CLI path, which is the primary way skills
+drive foresights. When a skill step names an operation your MCP tool list doesn't
 carry, call \`request_tools {"surface":"full"}\` to add it to this session, run
-the equivalent \`gbrain\` CLI command, or widen this machine's plugin surface
+the equivalent \`foresights\` CLI command, or widen this machine's plugin surface
 with \`GBRAIN_SURFACE=full\` (the server honors it; new sessions pick it up).`}
 
 ## Requirements
 
-- gbrain CLI installed: \`bun install -g ${INSTALL_PIN}\`
-  (the npm package named \`gbrain\` is unrelated — never \`npm install -g gbrain\`).
-- A brain: \`gbrain init\` (the bundled \`setup\` skill walks the full path).
+- foresights CLI installed: \`bun install -g ${INSTALL_PIN}\`
+  (the npm package named \`foresights\` is unrelated — never \`npm install -g gbrain\`).
+- A brain: \`foresights init\` (the bundled \`setup\` skill walks the full path).
 `,
 );
 
@@ -345,7 +345,7 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
   cpSync(join(ROOT, '.agents', 'gbrain-launcher'), join(root, '.agents', 'gbrain-launcher'));
 
   // The per-turn hook names its plugin (GBRAIN_PLUGIN) so that, with several
-  // gbrain plugins enabled, the CLI runs only the highest-precedence one's
+  // foresights plugins enabled, the CLI runs only the highest-precedence one's
   // (pluginHookYields, src/core/bootstrap/plugin-lanes.ts).
   const LANE = 'env GBRAIN_HOOK_LANE=plugin ';
   const withIdentity = (hooks: unknown): unknown => {
@@ -367,7 +367,7 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
     ...claudeBase,
     name: def.plugin_name,
     version,
-    description: `${def.description} (persona variant of the gbrain plugin — ${slugs.length} skills)`,
+    description: `${def.description} (persona variant of the foresights plugin — ${slugs.length} skills)`,
     skills: './skills/',
     hooks: withIdentity(claudeBase.hooks),
   };
@@ -386,7 +386,7 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
     ...codexBase,
     name: def.plugin_name,
     version,
-    description: `${def.description} (persona variant of the gbrain plugin — ${slugs.length} skills)`,
+    description: `${def.description} (persona variant of the foresights plugin — ${slugs.length} skills)`,
     skills: './skills/',
     mcpServers: './.codex-plugin/mcp.json',
     hooks: withIdentity(codexBase.hooks),
@@ -406,10 +406,10 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
 
 ${def.description}
 
-${slugs.length} skills curated from the gbrain plugin lane (persona
+${slugs.length} skills curated from the foresights plugin lane (persona
 \`${personaName}\` in \`skills/plugin-lanes.json#personas\`, one recorded
-reason per skill). Install exactly ONE gbrain plugin per machine — every
-variant serves the same \`gbrain\` MCP server name, so two installed variants
+reason per skill). Install exactly ONE foresights plugin per machine — every
+variant serves the same \`foresights\` MCP server name, so two installed variants
 would double-serve. The full-lane plugin's README carries the MCP surface
 note; it applies verbatim here.
 

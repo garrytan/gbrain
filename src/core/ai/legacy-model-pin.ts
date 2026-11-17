@@ -1,5 +1,5 @@
 /**
- * #6795: a DB-plane `chat_model` / `expansion_model` (`gbrain config set`)
+ * #6795: a DB-plane `chat_model` / `expansion_model` (`foresights config set`)
  * is a default below every `models.*` key, `GBRAIN_MODEL` and an explicit
  * file or env pin. The gateway consults it only when its resolution fell to
  * the tier default with no pin, reading the same config snapshot, never gateway
@@ -26,7 +26,7 @@ export async function readLegacyModelPin(
   if (providerKeyReady(resolved.model, mergedProviderEnv(fileCfg, env))) return resolved.model;
   if (!unservableWarned.has(`${key}=${resolved.model}`)) {
     unservableWarned.add(`${key}=${resolved.model}`);
-    process.stderr.write(`[models] DB-plane ${key} has no usable provider key or provider prefix; falling back to the key-aware default. Set the provider's key, or gbrain config unset ${key}.\n`);
+    process.stderr.write(`[models] DB-plane ${key} has no usable provider key or provider prefix; falling back to the key-aware default. Set the provider's key, or foresights config unset ${key}.\n`);
   }
   return null;
 }

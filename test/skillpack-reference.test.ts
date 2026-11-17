@@ -181,7 +181,7 @@ describe('runReference — binary files', () => {
     const gbrainRoot = scratchGbrain();
     const ws = scratchWorkspace();
 
-    // Plant a binary file in gbrain's bundle and a different one on host.
+    // Plant a binary file in foresights's bundle and a different one on host.
     const binPath = join(gbrainRoot, 'skills', 'demo', 'icon.png');
     writeFileSync(binPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00]));
     runScaffold({ gbrainRoot, targetWorkspace: ws, skillSlug: 'demo' });

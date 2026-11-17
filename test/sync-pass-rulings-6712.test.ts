@@ -51,7 +51,7 @@ const base: SyncPathState = { mode: 'committed', tree: 'A', level: 'A', present:
 const at = (patch: Partial<SyncPathState>): SyncPathState => ({ ...base, ...patch });
 const pageless = { page: null, record: null } as const;
 
-/** Raw rows as an older gbrain left them: managed persistence off around the write. */
+/** Raw rows as an older foresights left them: managed persistence off around the write. */
 async function raw<T>(engine: BrainEngine, fn: () => Promise<T>): Promise<T> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try { return await fn(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
@@ -110,7 +110,7 @@ describe('#6712 PR 4b classifier rulings (pglite)', () => {
   test('b1/b5: a page-less file with no deletion imports on the bootstrap pass; a page deleted before PR 4 stays legacy_same (marker with proof) but imports under --full', () => managedBrain(async ({ engine, ctx }) => {
     await engine.setConfig('sync.write_through', 'false');
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
-    // An older gbrain's state: notes/b never got a page (refused once); notes/c was deleted by delete_page and its
+    // An older foresights's state: notes/b never got a page (refused once); notes/c was deleted by delete_page and its
     // tombstone purged before PR 4 (no deleted marker). No pass row and no markers yet.
     const deletion = await deletePage(engine, ctx, 'notes/c');
     await raw(engine, () => engine.executeRaw("DELETE FROM pages WHERE source_id='default' AND slug IN ('notes/b','notes/c')"));
@@ -154,7 +154,7 @@ describe('#6712 PR 4b classifier rulings (pglite)', () => {
   test('b4/b6: the receipt counts dirty paths by their own action and the source\'s legacy twin pairs', () => managedBrain(async ({ engine, root }) => {
     writeFileSync(join(root, 'notes/Foo Bar.md'), note('Foo Bar', 'A synthetic observation about Foo Bar.')); commit(root, 'twin file');
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
-    // #6885: an older gbrain left a legacy page with no recorded origin at the unfolded slug, beside sync's twin.
+    // #6885: an older foresights left a legacy page with no recorded origin at the unfolded slug, beside sync's twin.
     await raw(engine, () => engine.executeRaw(`INSERT INTO pages(source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash)
       SELECT source_id, 'notes/foo bar', type, title, compiled_truth, timeline, frontmatter, content_hash FROM pages WHERE source_id='default' AND slug='notes/foo-bar'`));
     // notes/a: a committed change whose working copy is back at the synced bytes (dirty, absorbed: settled, none);
@@ -194,7 +194,7 @@ describe('#6712 PR 4b classifier rulings (pglite)', () => {
   for (const full of [false, true]) test(`handover: the first pass retires an unfinished legacy cursor and inherits its options${full ? ' (a --full cursor seeds a full episode)' : ''}`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const incarnation = (await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'"))[0]!.incarnation;
-    // What a pre-PR 4b `gbrain sync --no-embed --no-extract${full ? ' --full' : ''}` left behind when it stopped part way.
+    // What a pre-PR 4b `foresights sync --no-embed --no-extract${full ? ' --full' : ''}` left behind when it stopped part way.
     await engine.executeRaw(`INSERT INTO op_checkpoints(op, fingerprint, completed_keys, updated_at) VALUES ('managed-sync', $1, jsonb_build_array($2::jsonb), now())
       ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()`,
       [managedCursorKey(incarnation, undefined), JSON.stringify({ sourceId: 'default', incarnation, runId: randomUUID(), index: 1, total: 3, done: false,

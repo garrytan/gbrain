@@ -6,7 +6,7 @@ export const v042: Migration = {
   // v0.29.1 — capture agent-explicit recency + salience choices for replay
   // reproducibility (D11 codex resolution).
   //
-  // Without these fields, `gbrain eval replay` cannot reproduce a captured
+  // Without these fields, `foresights eval replay` cannot reproduce a captured
   // run: the live behavior depends on the resolved {salience, recency}
   // values, which are absent from v0.29.0's eval_candidates schema. Replays
   // of agent-explicit choices drift the same way as_of_ts replays drifted

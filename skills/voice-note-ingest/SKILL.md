@@ -50,7 +50,7 @@ audio > 25MB via ffmpeg first).
 ## The pipeline
 
 ```
-1. STORE       → Upload original audio to gbrain storage backend
+1. STORE       → Upload original audio to foresights storage backend
                  (S3 / Supabase Storage / local — pluggable per
                  src/core/storage.ts).
 2. TRANSCRIBE  → Use the agent-provided transcript verbatim, OR
@@ -113,7 +113,7 @@ tags: [voice-note, relevant-tags]
 sources:
   voice-note:
     type: voice_note
-    storage_path: "[gbrain storage URL or relative path]"
+    storage_path: "[foresights storage URL or relative path]"
     acquired: YYYY-MM-DD
     acquired_via: "voice note from <channel>"
 ---
@@ -127,7 +127,7 @@ sources:
 > "Exact transcript, verbatim, preserving every word, hesitation, and verbal
 > tic. This is the primary source material. Do not edit."
 
-🔊 [Audio]([gbrain storage URL or relative path])
+🔊 [Audio]([foresights storage URL or relative path])
 
 ## Analysis
 
@@ -170,10 +170,10 @@ No batching.
 
 ## When it fails
 
-Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any foresights error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- Transcription is unavailable or the storage backend refuses the audio (`gbrain storage` shows no backend): file the note text you have and tell the user the audio was not stored.
-- The routed page write returns `revision_conflict` or `write_pending`: re-read and merge, or poll `gbrain write-request <request_id>`; never paraphrase to resolve a conflict.
+- Transcription is unavailable or the storage backend refuses the audio (`foresights storage` shows no backend): file the note text you have and tell the user the audio was not stored.
+- The routed page write returns `revision_conflict` or `write_pending`: re-read and merge, or poll `foresights write-request <request_id>`; never paraphrase to resolve a conflict.
 
 ## Anti-Patterns
 

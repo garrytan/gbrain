@@ -1,9 +1,9 @@
 /**
- * gbrain quarantine — operator surface for the content-quality gate (issue #1699).
+ * foresights quarantine — operator surface for the content-quality gate (issue #1699).
  *
- *   gbrain quarantine list [--json] [--include-flagged]   (also write-gate fact/take holds)
- *   gbrain quarantine clear <slug> [--force] [--no-embed] [--json]
- *   gbrain quarantine scan [--limit N] [--apply] [--no-embed] [--json]
+ *   foresights quarantine list [--json] [--include-flagged]   (also write-gate fact/take holds)
+ *   foresights quarantine clear <slug> [--force] [--no-embed] [--json]
+ *   foresights quarantine scan [--limit N] [--apply] [--no-embed] [--json]
  *
  * `quarantine` (hidden) marks high-confidence junk; `content_flag` (warned,
  * still searchable) marks fuzzy markup-heavy / oversize pages. See
@@ -93,7 +93,7 @@ export interface CollectQuarantineResult {
 }
 
 /**
- * Shared frontmatter scan behind `gbrain quarantine list` and the
+ * Shared frontmatter scan behind `foresights quarantine list` and the
  * quarantine_list op. Scan order is pinned to listPages' default
  * `updated_desc` (most recently updated pages first), so a bounded scan sees
  * the newest markers before older ones [OV13].
@@ -159,7 +159,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const includeFlagged = args.includes('--include-flagged');
   const { rows } = await collectQuarantineRows(engine, { includeFlagged });
-  // #5575: facts and takes the write gate held (never inserted); release or drop with gbrain trust release|drop <ref>.
+  // #5575: facts and takes the write gate held (never inserted); release or drop with foresights trust release|drop <ref>.
   const holds = await listWriteGateHolds(engine, { status: 'held', limit: 1000 });
 
   if (json) {
@@ -170,7 +170,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     const src = h.source_id === 'default' ? '' : ` [${h.source_id}]`;
     console.log(`  HELD    ${h.kind} ${h.ref}${src}${h.slug ? ` ${h.slug}` : ''}  reasons=${h.reason_families.join(',') || 'detector_error'}  tier=${h.tier}  at=${h.last_seen_at}\n          ${holdPreview(h)}`);
   }
-  if (holds.length) console.log(`\n${holds.length} held fact/take row(s): review, then gbrain trust release <ref> or gbrain trust drop <ref>.\n`);
+  if (holds.length) console.log(`\n${holds.length} held fact/take row(s): review, then foresights trust release <ref> or foresights trust drop <ref>.\n`);
   if (rows.length === 0) {
     console.log(
       includeFlagged
@@ -200,7 +200,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
   // --source-id value so it can't be mistaken for the slug).
   const slug = args.find((a, i) => !a.startsWith('--') && !(srcIdx >= 0 && i === srcIdx + 1));
   if (!slug) {
-    console.error('Usage: gbrain quarantine clear <slug> [--source-id <id>] [--force] [--no-embed]');
+    console.error('Usage: foresights quarantine clear <slug> [--source-id <id>] [--force] [--no-embed]');
     process.exit(2);
   }
   // Deterministic source resolution: an unscoped getPage on a slug that
@@ -216,7 +216,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
     if (rows.length > 1) {
       console.error(
         `Slug "${slug}" exists in ${rows.length} sources: ${rows.map(r => r.source_id).join(', ')}.\n` +
-        `Pick one with: gbrain quarantine clear ${slug} --source-id <id>`,
+        `Pick one with: foresights quarantine clear ${slug} --source-id <id>`,
       );
       process.exit(2);
     }
@@ -308,7 +308,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
       + 'and the write gate assesses the page again. To keep it cleared, remove the provenance marker that lowers it (trust_tier, source_kind, '
       + 'ingested_via, captured_via) from the file.' : '') +
     (flagged ? ` (now flagged: ${flagReason} — searchable, agent warned.)` : '') +
-    (noEmbed ? ' Embedding skipped (--no-embed); run `gbrain embed --stale` to make it searchable.' : ''),
+    (noEmbed ? ' Embedding skipped (--no-embed); run `foresights embed --stale` to make it searchable.' : ''),
   );
 }
 
@@ -341,7 +341,7 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   // brain publishes only through its canonical owner, so refuse up front.
   if (apply && await managedPersistenceEnabled(engine)) {
     const error = opError('writer_coordinator_required', 'quarantine scan --apply cannot rewrite pages on a managed brain.',
-      'It re-imports every page outside the canonical owner, so nothing was changed. Preview with gbrain quarantine scan (no --apply); new imports already pass the gate. Review hidden pages with gbrain quarantine list, then clear a false positive by passing its slug to gbrain quarantine clear with --force.',
+      'It re-imports every page outside the canonical owner, so nothing was changed. Preview with foresights quarantine scan (no --apply); new imports already pass the gate. Review hidden pages with foresights quarantine list, then clear a false positive by passing its slug to foresights quarantine clear with --force.',
       { fix: readFix('Previews what the gate would mark, read-only.', { argv: ['gbrain', 'quarantine', 'scan', '--json'] }) });
     if (!await reportPersistenceCliError(error, json)) throw error;
     return;
@@ -423,7 +423,7 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   }
 }
 
-export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan|release|drop> [options]
+export const QUARANTINE_HELP = `Usage: foresights quarantine <list|clear|scan|release|drop> [options]
 
   list [--json] [--include-flagged]
       Pages the content-quality gate hid as junk (quarantine), and with
@@ -438,14 +438,14 @@ export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan|releas
       Re-check existing pages against the gate (preview by default).
       --apply re-imports them and is refused on a managed brain.
   release <h<id>> | drop <h<id>>
-      Aliases of gbrain trust release|drop: release a held fact or take into
+      Aliases of foresights trust release|drop: release a held fact or take into
       memory (asks you to type its ref), or drop it.
 
 One junk pattern that misfires brain-wide can be turned off with
 content_sanity.disabled_patterns.`;
 
 export { QUARANTINE_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
-/** #6259: `gbrain quarantine --help` (router help, printed before any engine is opened). */
+/** #6259: `foresights quarantine --help` (router help, printed before any engine is opened). */
 export function printUsage(): void { console.log(QUARANTINE_HELP); }
 
 export async function runQuarantine(engine: BrainEngine, args: string[]): Promise<void> {

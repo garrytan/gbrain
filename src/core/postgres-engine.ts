@@ -444,7 +444,7 @@ export class PostgresEngine implements BrainEngine {
       const size = Math.min(config.poolSize, db.resolvePoolSize(config.poolSize));
       const embedded = isEmbeddedEngine(this);
       // Honor PgBouncer transaction-mode detection on worker-instance pools too.
-      // Without this, `gbrain jobs work` against a Supabase pooler URL hits
+      // Without this, `foresights jobs work` against a Supabase pooler URL hits
       // "prepared statement does not exist" under load just like the module
       // singleton did before v0.15.4.
       const prepare = db.resolvePrepare(url);
@@ -600,7 +600,7 @@ export class PostgresEngine implements BrainEngine {
 
     const storedIdentity = await readStoredEmbeddingIdentity(this);
     if (storedIdentity) {
-      if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run gbrain migrate embeddings --status and explicitly migrate before schema initialization.');
+      if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run foresights migrate embeddings --status and explicitly migrate before schema initialization.');
       if (embedded) assertEmbeddedEmbedding(embedded, storedIdentity);
       dims = storedIdentity.dimensions;
       model = storedIdentity.model;
@@ -1073,7 +1073,7 @@ export class PostgresEngine implements BrainEngine {
     const symbolKind = opts?.symbolKind;
 
     if (opts?.limit && opts.limit > searchLimitCap()) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
+      console.warn(`[foresights] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     const detailLow = opts?.detail === 'low';
@@ -1298,7 +1298,7 @@ export class PostgresEngine implements BrainEngine {
     const symbolKind = opts?.symbolKind;
 
     if (opts?.limit && opts.limit > searchLimitCap()) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
+      console.warn(`[foresights] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Source-aware ranking applies here too — searchKeywordChunks is the
@@ -1451,7 +1451,7 @@ export class PostgresEngine implements BrainEngine {
     guardSearchStatistics(this, this._pageTransaction);
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     if (opts?.limit && opts.limit > searchLimitCap()) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
+      console.warn(`[foresights] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
     // Two-stage CTE (v0.22): the candidate CTE keeps a pure-distance ORDER BY
     // so the HNSW index stays usable; the outer stages re-rank by source
@@ -3111,7 +3111,7 @@ export class PostgresEngine implements BrainEngine {
     const since = filter?.since ?? new Date(0);
     const tool = filter?.tool ?? null;
     // id DESC tiebreaker so same-millisecond inserts return deterministically
-    // — without this, `gbrain eval export --since` could dupe or miss rows
+    // — without this, `foresights eval export --since` could dupe or miss rows
     // across non-overlapping windows.
     const rows = tool
       ? await sql`

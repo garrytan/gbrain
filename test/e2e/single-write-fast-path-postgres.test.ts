@@ -187,7 +187,7 @@ d('single page writes on Postgres (Phase 4.1-4.4)', () => {
       await disposePersistenceConsumer(engine);
       // A recovering request whose canonical file matches neither its prior nor its published bytes stays blocked.
       const path = join(root, 'notes/blocked.md');
-      writeFileSync(path, 'edited outside gbrain\n');
+      writeFileSync(path, 'edited outside foresights\n');
       await engine.transaction(async tx => {
         await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
         await tx.executeRaw(`UPDATE persistence_requests SET state='recovering',execution_token=gen_random_uuid(),blocked_reason='unexpected_file_bytes',

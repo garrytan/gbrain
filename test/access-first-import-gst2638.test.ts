@@ -1,5 +1,5 @@
 /**
- * GST-2638: the first `gbrain access rule import` on a source with a git checkout and no policy revision yet.
+ * GST-2638: the first `foresights access rule import` on a source with a git checkout and no policy revision yet.
  *
  * 1. Protects: a shallow checkout refuses the import up front (preview and --yes) with the fix and writes nothing, so the
  *    source stays readable; a first import on a source with no policy history never marks the whole source invalid; an
@@ -9,7 +9,7 @@
  * 2. Fails when: any of those regresses to the v0.60.688.0 behaviour (a whole-source mark that a shallow checkout never
  *    clears, exit 0 on state invalid, a stranded git store, no commit-free route to the database store, a silent preview).
  * 3. Existing coverage: access-folder-rules-git (the git store and rebuilds), access-folder-rules (the database store).
- * 4. Real seams: real git repositories and hooks, gbrain git commit-push through the CLI module, PGLite and Postgres.
+ * 4. Real seams: real git repositories and hooks, foresights git commit-push through the CLI module, PGLite and Postgres.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';

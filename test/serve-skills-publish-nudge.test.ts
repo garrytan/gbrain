@@ -1,5 +1,5 @@
 /**
- * Unit coverage for the `gbrain serve --http` skill-publishing banner + nudge
+ * Unit coverage for the `foresights serve --http` skill-publishing banner + nudge
  * (`skillPublishStatus`). When skill publishing is OFF, a connected coding
  * agent (Codex / Claude Code / Perplexity) can't call list_skills / get_skill,
  * so the host's skill catalog is invisible to it. The operator should learn
@@ -25,7 +25,7 @@ describe('skillPublishStatus', () => {
 
   test('OFF nudge carries the paste-ready fix command', () => {
     const s = skillPublishStatus(false);
-    expect(s.nudge).toContain('gbrain config set mcp.publish_skills true');
+    expect(s.nudge).toContain('foresights config set mcp.publish_skills true');
   });
 
   test('OFF nudge names the affected tools so the operator understands the blast radius', () => {

@@ -1,5 +1,5 @@
 /**
- * #6377 Lane B (T3): `gbrain repair slug-conflicts` end to end on a managed
+ * #6377 Lane B (T3): `foresights repair slug-conflicts` end to end on a managed
  * source, with the judgment model behind the gateway's chat transport seam.
  *
  * Protects: the deterministic tier removes a stray `slug:` line when the
@@ -150,7 +150,7 @@ test('deterministic tier: a stray slug (no page, no file) and a slug naming a pa
   expect(details(preview).diffs.map(d => d.rule).sort()).toEqual(['absent_page', 'different_type']);
   expect(details(preview).diffs[0]!.diff).toContain('-slug: ');
   expect(preview.cost.llm_usd).toBe(0);
-  expect(preview.apply_command).toBe(`gbrain repair slug-conflicts --source ${s.id} --apply --expect ${hashOf(preview)}`);
+  expect(preview.apply_command).toBe(`foresights repair slug-conflicts --source ${s.id} --apply --expect ${hashOf(preview)}`);
   expect(s.read('notes/stray.md')).toContain('slug: notes/nowhere-at-all');
   const applied = await s.run({ apply: true, expect: hashOf(preview) });
   expect(applied).toMatchObject({ mode: 'apply', applied: 2, repaired: 2, outcomes: { repaired: 2 } });
@@ -217,7 +217,7 @@ test('model tier: a duplicate pair is judged at apply time; merge_into writes no
   expect(status.needs_human).toBe(true);
   expect(status.human_reason).toContain('`people/alice-example`');
   expect(status.human_reason).toContain('`people/alice-example-2.md`');
-  expect(status.human_reason).toContain('gbrain does not merge pages by itself yet');
+  expect(status.human_reason).toContain('foresights does not merge pages by itself yet');
   expect(status.human_reason).not.toContain(WHY);
   expect(status.next).toMatchObject({ actor: 'user', argv: ['gbrain', 'repair', 'content', '--source', s.id, '--only', 'people/alice-example-2.md'] });
   const item = gitHoldItem(holds[0]!);

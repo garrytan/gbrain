@@ -1,5 +1,5 @@
 /**
- * v0.28: `gbrain think <question>` CLI.
+ * v0.28: `foresights think <question>` CLI.
  *
  * Thin wrapper around runThink + persistSynthesis. Local CLI = remote=false,
  * so --save and --take are honored. Reads ANTHROPIC_API_KEY from the env;
@@ -47,7 +47,7 @@ export function computeThinkCostUsd(
 
 export async function runThinkCli(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: gbrain think "<question>" [options]
+    console.log(`Usage: foresights think "<question>" [options]
 
 Options:
   --anchor <slug>          Pull the entity subgraph around this slug
@@ -80,7 +80,7 @@ exits non-zero.
 Dates: the reader sees today's date in brain.timezone and each page's content
 date; see docs/guides/time-aware-recall.md.
 
-Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run
+Set ANTHROPIC_API_KEY (or run: foresights config set anthropic_api_key ...) to run
 real synthesis. Without it AND without --save, the gather phase still runs and
 prints what would have been the input (exit 0).
 `);
@@ -101,7 +101,7 @@ prints what would have been the input (exit 0).
   }
   const question = positional.join(' ').trim();
   if (!question) {
-    console.error('Missing question. Try: gbrain think "What do we know about acme-example?"');
+    console.error('Missing question. Try: foresights think "What do we know about acme-example?"');
     process.exit(1);
   }
 
@@ -168,7 +168,7 @@ prints what would have been the input (exit 0).
       // #4508: validate --source before the gather runs — an unknown or
       // archived source is a hard exit 1 (SourceTargetError message names
       // it), never a silent full-brain gather.
-      // #4652: without --source, resolve the SAME default scope `gbrain
+      // #4652: without --source, resolve the SAME default scope `foresights
       // search` gets from makeContext (6-tier chain + the federated set for
       // ambient tiers) — think used to hand runThink no scope at all, so the
       // gather spanned every source, including ones registered --no-federated.

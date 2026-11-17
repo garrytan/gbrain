@@ -73,7 +73,7 @@ function writeFile(rel: string, content: string) {
 
 // ─── FS-source path (the issue's repro) ─────────────────────────────────
 
-describe('issue #972 — FS-source (gbrain extract links default)', () => {
+describe('issue #972 — FS-source (foresights extract links default)', () => {
   test("repro: [[struktura]] in concepts/ resolves to projects/struktura when flag ON", async () => {
     // Seed both pages in the DB (extract validates targetSlug exists)
     await engine.putPage('projects/struktura', {
@@ -158,9 +158,9 @@ describe('issue #972 — FS-source (gbrain extract links default)', () => {
   });
 });
 
-// ─── DB-source path (gbrain extract links --source db) ──────────────────
+// ─── DB-source path (foresights extract links --source db) ──────────────────
 
-describe('issue #972 — DB-source (gbrain extract links --source db)', () => {
+describe('issue #972 — DB-source (foresights extract links --source db)', () => {
   test('flag ON → bare wikilink in compiled_truth resolves to basename match', async () => {
     await engine.putPage('projects/struktura', {
       type: 'project', title: 'Struktura',

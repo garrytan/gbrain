@@ -4,7 +4,7 @@
  * Before this recipe existed, LM Studio was half-wired: probes.ts had a
  * probe, build-gateway-config.ts mapped LMSTUDIO_BASE_URL, and
  * commands/providers.ts probed it under `local_probes` — but `lmstudio:`
- * model strings never resolved, so `gbrain providers list` had no row to
+ * model strings never resolved, so `foresights providers list` had no row to
  * select and the mapped base URL reached nothing.
  *
  * Shape mirrors `recipe-llama-server.test.ts`, the sibling user-provided-models

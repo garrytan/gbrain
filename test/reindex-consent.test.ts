@@ -1,5 +1,5 @@
 /**
- * Wave 12 W4.5: `gbrain reindex --markdown` re-embeds pages, which is paid
+ * Wave 12 W4.5: `foresights reindex --markdown` re-embeds pages, which is paid
  * work, so it asks first. A non-interactive run without `--yes`/`--max-usd`
  * exits 3 with an ask_user payload naming the page count and estimate and
  * makes no provider call; `--dry-run`, `--no-embed` and a keyless brain stay

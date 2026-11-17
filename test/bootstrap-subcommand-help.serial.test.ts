@@ -1,8 +1,8 @@
 /**
  * bootstrap subcommand `--help`/`-h`/`help` guard (src/commands/bootstrap.ts).
  *
- * Regression test for a safety defect: `gbrain bootstrap <subcommand> --help`
- * (a help token AFTER the subcommand name, e.g. `gbrain bootstrap repo
+ * Regression test for a safety defect: `foresights bootstrap <subcommand> --help`
+ * (a help token AFTER the subcommand name, e.g. `foresights bootstrap repo
  * --help`) fell straight through into the subcommand's own arg parsing, and
  * none of the mutating handlers (repo/hooks/verify/attach/uninstall/render/
  * interview) checked for a help token themselves. So `--help` did not print

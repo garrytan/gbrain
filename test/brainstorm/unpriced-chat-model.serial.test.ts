@@ -181,13 +181,13 @@ const RUN_CASES: RunCase[] = [
     name: 'unpriced chat model, no cap flag: runs under the default cap and names the model with the registration command',
     gatewayModel: UNPRICED,
     profile: TINY,
-    expect: { completes: true, judgeFailed: false, stderr: /chat model "claude-cli:claude-opus-9-9" has no price: the default \$5\.00 cap cannot meter its calls.*gbrain pricing set claude-cli:claude-opus-9-9 --input/ },
+    expect: { completes: true, judgeFailed: false, stderr: /chat model "claude-cli:claude-opus-9-9" has no price: the default \$5\.00 cap cannot meter its calls.*(?:foresights|gbrain) pricing set claude-cli:claude-opus-9-9 --input/ },
   },
   {
     name: 'unpriced chat model, no cap flag: the $5 default still stops an oversized run at Sonnet rates',
     gatewayModel: UNPRICED,
     profile: BIG_ESTIMATE,
-    expect: { reason: 'cost', message: /estimated cost \$67\.20 exceeds --max-cost \$5\.00\. Lower --limit, register the real rate of "claude-cli:claude-opus-9-9" \(the estimate assumes Sonnet rates\): gbrain pricing set/, refused: 'at-estimate' },
+    expect: { reason: 'cost', message: /estimated cost \$67\.20 exceeds --max-cost \$5\.00\. Lower --limit, register the real rate of "claude-cli:claude-opus-9-9" \(the estimate assumes Sonnet rates\): (?:foresights|gbrain) pricing set/, refused: 'at-estimate' },
   },
   {
     name: 'unpriced chat model, no cap flag: the mid-run guard stops crosses past $5 at Sonnet rates',
@@ -250,14 +250,14 @@ const RUN_CASES: RunCase[] = [
     embeddingModel: UNPRICED_EMBED,
     maxCostUsd: 1,
     profile: TINY,
-    expect: { reason: 'no_pricing', message: /gbrain has no pricing for embedding model "litellm:my-embed".*gbrain pricing set litellm:my-embed --rate/, refused: 'before-preview' },
+    expect: { reason: 'no_pricing', message: /(?:foresights|gbrain) has no pricing for embedding model "litellm:my-embed".*(?:foresights|gbrain) pricing set litellm:my-embed --rate/, refused: 'before-preview' },
   },
   {
     name: 'unpriced chat model under an explicit cap: refused before any work with the shared no_pricing guidance',
     gatewayModel: UNPRICED,
     maxCostUsd: 1,
     profile: TINY,
-    expect: { reason: 'no_pricing', message: /brainstorm \(chat model\): gbrain has no pricing for chat model "claude-cli:claude-opus-9-9" \(provider claude-cli\), so the \$1\.00 cost cap can't be enforced\. Look up .*gbrain pricing set claude-cli:claude-opus-9-9 --input/, refused: 'before-preview' },
+    expect: { reason: 'no_pricing', message: /brainstorm \(chat model\): (?:foresights|gbrain) has no pricing for chat model "claude-cli:claude-opus-9-9" \(provider claude-cli\), so the \$1\.00 cost cap can't be enforced\. Look up .*(?:foresights|gbrain) pricing set claude-cli:claude-opus-9-9 --input/, refused: 'before-preview' },
   },
   {
     name: 'unpriced judge model under an explicit cap: refused before the crosses are paid for',
@@ -265,7 +265,7 @@ const RUN_CASES: RunCase[] = [
     judgeModel: UNPRICED_JUDGE,
     maxCostUsd: 1,
     profile: TINY,
-    expect: { reason: 'no_pricing', message: /brainstorm \(judge model\): gbrain has no pricing for chat model "claude-cli:claude-judge-9-9"/, refused: 'before-preview' },
+    expect: { reason: 'no_pricing', message: /brainstorm \(judge model\): (?:foresights|gbrain) has no pricing for chat model "claude-cli:claude-judge-9-9"/, refused: 'before-preview' },
   },
   {
     name: 'priced chat model, no cap flag: the default $5 ceiling still refuses an oversized run',
@@ -431,7 +431,7 @@ describe('#5873 brainstorm_health names an unpriced brainstorm chat model', () =
         expect(check.message).toContain(`brainstorm ${c.unpriced.role} model "${c.unpriced.model}" has no price`);
         expect(check.message).toContain('under the default $5 cap');
         expect(check.message).toContain('--max-usd');
-        expect(check.message).toContain(`gbrain pricing set ${c.unpriced.model} --input`);
+        expect(check.message).toContain(`foresights pricing set ${c.unpriced.model} --input`);
       } else {
         expect(check.message).not.toContain('has no price');
       }

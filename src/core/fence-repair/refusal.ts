@@ -42,7 +42,7 @@ const SECTIONS: readonly FenceSection[] = ['body', 'timeline'];
 /** The `ContentRefusal` the coordinated screen returns. */
 export interface FenceRefusal { code: 'invalid_fence'; reason: FenceReason; message: string; fence: FenceMessageLocation }
 
-/** A location read back from a stored receipt: an older gbrain's message never named the fence or section. */
+/** A location read back from a stored receipt: an older foresights's message never named the fence or section. */
 export type ReceiptFenceLocation = Omit<FenceMessageLocation, 'fence' | 'section'> & { fence?: FenceKind; section?: FenceSection };
 
 function repeatsOutsideCode(body: string, marker: string, code: MarkdownCodeMap): boolean {
@@ -219,7 +219,7 @@ export function parseFenceMessage(message: string | null | undefined): FenceMess
     line: match[6] ? Number(match[6]) : null };
 }
 
-/** The exact messages older gbrain versions stored for the same fence refusals; they named no section. */
+/** The exact messages older foresights versions stored for the same fence refusals; they named no section. */
 const LEGACY_MESSAGES: ReadonlyArray<readonly [code: string, pattern: RegExp, reason: FenceReason, fence?: FenceKind]> = [
   ['invalid_params', /^Each canonical body section must contain at most one facts fence and one takes fence\.$/, 'repeated_marker'],
   ['invalid_params', /^A canonical facts or takes fence cannot be parsed losslessly\.$/, 'unparseable'],
@@ -292,7 +292,7 @@ export function fenceReceiptLocation(row: { error_code?: string | null; error_me
 }
 
 /**
- * A receipt location completed from the bytes it refused: an older gbrain's
+ * A receipt location completed from the bytes it refused: an older foresights's
  * message named no section (and for some reasons no fence), so take the first
  * section that holds a fence of that kind, else the body.
  */

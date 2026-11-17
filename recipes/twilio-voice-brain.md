@@ -2,7 +2,7 @@
 id: twilio-voice-brain
 name: Voice-to-Brain (DEPRECATED — see agent-voice)
 version: 0.8.2
-description: "DEPRECATED. New installs use `gbrain integrations install agent-voice` — the copy-into-host-repo paradigm with WebRTC-first browser client + Mars/Venus personas + read-only tool router. This recipe stays as a redirect for existing Twilio installs; it is frozen (no longer updated) and will be removed in a future release."
+description: "DEPRECATED. New installs use `foresights integrations install agent-voice` — the copy-into-host-repo paradigm with WebRTC-first browser client + Mars/Venus personas + read-only tool router. This recipe stays as a redirect for existing Twilio installs; it is frozen (no longer updated) and will be removed in a future release."
 category: sense
 requires: [ngrok-tunnel]
 secrets:
@@ -39,7 +39,7 @@ cost_estimate: "$15-25/mo (Twilio number $1-2 + voice $0.01/min, OpenAI Realtime
 > operators with existing Twilio installs. It is **frozen**: no longer updated, and
 > will be removed in a future release once existing installs have migrated.
 >
-> **Migration:** `gbrain integrations install agent-voice --target <your-repo>` copies a
+> **Migration:** `foresights integrations install agent-voice --target <your-repo>` copies a
 > working reference into your host agent repo where you own the edits. The new recipe
 > includes a Twilio bridge in `code/lib/twilio-bridge.mjs` for operators who still want
 > phone inbound, but the WebRTC `/call?test=1` flow is the headline experience.
@@ -50,7 +50,7 @@ cost_estimate: "$15-25/mo (Twilio number $1-2 + voice $0.01/min, OpenAI Realtime
 > - voice production patterns (unicode sanitize, PII scrub, identity-first prompt, conversation timing) → shipped as code in the agent-voice bundle
 >
 > The copies below are kept only so existing installs have a self-contained runbook;
-> they may drift from current gbrain behavior. Treat the homes above as authoritative.
+> they may drift from current foresights behavior. Treat the homes above as authoritative.
 
 
 Call a phone number. Talk. A structured brain page appears with entity detection,
@@ -62,7 +62,7 @@ cross-references, and a summary posted to your messaging app.
 on behalf of the user. Follow these instructions precisely.
 
 **Why sequential execution matters:** Each step depends on the previous one:
-- Step 1 validates prerequisites. If GBrain isn't configured, nothing else works.
+- Step 1 validates prerequisites. If Foresights isn't configured, nothing else works.
 - Step 2 collects credentials. If a credential is wrong, Steps 5-7 will silently fail.
 - Step 3 creates the ngrok tunnel. Step 5 needs the ngrok URL for the Twilio webhook.
 - Step 5 configures Twilio. Step 7 (smoke test) needs Twilio configured to reach your server.
@@ -90,7 +90,7 @@ Caller (phone)
 Voice Server (Node.js, your machine or cloud)
   ↓↑ OpenAI Realtime API (STT + LLM + TTS in one pipeline)
   ↓ Function calls during conversation
-GBrain MCP (semantic search, page reads, page writes)
+Foresights MCP (semantic search, page reads, page writes)
   ↓ Post-call
 Brain page created (meetings/YYYY-MM-DD-call-{caller}.md)
 Summary posted to messaging app (Telegram/Slack/Discord)
@@ -105,7 +105,7 @@ Voice Server (Node.js)
   ↓ Claude API (streaming SSE, sentence-boundary dispatch)
   ↓ Cartesia / OpenAI TTS (text-to-speech, low latency)
   ↓ Function calls during conversation
-GBrain MCP (semantic search, page reads, page writes)
+Foresights MCP (semantic search, page reads, page writes)
   ↓ Post-call
 Brain page + audio upload + transcript storage
 ```
@@ -149,10 +149,10 @@ These are production-tested defaults from a real deployment. Customize after set
 Run these checks and report results to the user:
 
 ```bash
-# 1. Verify GBrain is configured
-gbrain doctor --json
+# 1. Verify Foresights is configured
+foresights doctor --json
 ```
-If this fails: "GBrain isn't set up yet. Let's run `gbrain init --supabase` first."
+If this fails: "Foresights isn't set up yet. Let's run `foresights init --supabase` first."
 
 ```bash
 # 2. Verify Node.js 18+
@@ -266,10 +266,10 @@ Based on their choice:
   Validate: `curl -sf "https://api.telegram.org/bot$TOKEN/getMe" | grep -q '"ok":true'`
 - **Slack:** "Create an Incoming Webhook at https://api.slack.com/apps → your app →
   Incoming Webhooks → Add New. Copy the webhook URL."
-  Validate: `curl -sf -X POST -d '{"text":"GBrain voice test"}' $WEBHOOK_URL`
+  Validate: `curl -sf -X POST -d '{"text":"Foresights voice test"}' $WEBHOOK_URL`
 - **Discord:** "Go to your server → channel settings → Integrations → Webhooks →
   New Webhook. Copy the webhook URL."
-  Validate: `curl -sf -X POST -H "Content-Type: application/json" -d '{"content":"GBrain voice test"}' $WEBHOOK_URL`
+  Validate: `curl -sf -X POST -H "Content-Type: application/json" -d '{"content":"Foresights voice test"}' $WEBHOOK_URL`
 
 Tell the user: "All credentials validated. Moving to server setup."
 
@@ -288,7 +288,7 @@ If using free tier, copy the URL from the ngrok output (changes every restart).
 
 Note: ngrok runs in the foreground. Run it in a background process or new terminal tab.
 
-The same ngrok account can also serve your GBrain MCP server (see
+The same ngrok account can also serve your Foresights MCP server (see
 [ngrok-tunnel recipe](recipes/ngrok-tunnel.md) for the full multi-service pattern).
 
 ### Step 4: Create Voice Server
@@ -322,14 +322,14 @@ The voice server needs these components in `server.mjs`:
      questions. Take messages from unknown callers. Never hang up first."
 
 4. **Tool executor** that:
-   - Spawns GBrain MCP client (`gbrain serve` as stdio child process)
-   - Routes function calls: `search_brain` → `gbrain query`, `lookup_person` → `gbrain search` + `gbrain get`
+   - Spawns Foresights MCP client (`foresights serve` as stdio child process)
+   - Routes function calls: `search_brain` → `foresights query`, `lookup_person` → `foresights search` + `foresights get`
    - Gates write tools behind authentication
 
 5. **Post-call handler** that:
    - Saves transcript to `brain/meetings/YYYY-MM-DD-call-{caller}.md`
    - Posts summary to the user's messaging platform
-   - Runs `gbrain sync --no-pull --no-embed` to index the new page
+   - Runs `foresights sync --no-pull --no-embed` to index the new page
 
 6. **WebRTC endpoint** (optional, for browser-based calling):
    - `POST /session` — accepts SDP offer, forwards to OpenAI Realtime `/v1/realtime/calls` as multipart form-data, returns SDP answer
@@ -442,14 +442,14 @@ curl -X POST "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID/Cal
 1. Messaging notification arrived with call summary
 2. Brain page exists:
    ```bash
-   gbrain search "call" --limit 1
+   foresights search "call" --limit 1
    ```
 3. The brain page has: transcript, entity mentions, action items
 
 **If the smoke test fails:**
 - No ring: check Twilio console for error logs at https://www.twilio.com/console/debugger
 - Ring but no voice: check ngrok tunnel is up, check OpenAI key is valid
-- Voice works but no brain page: check post-call handler logs, run `gbrain sync` manually
+- Voice works but no brain page: check post-call handler logs, run `foresights sync` manually
 - Brain page but no messaging: check messaging bot token is valid
 
 **STOP HERE until the smoke test passes. Do not declare success until the user
@@ -521,9 +521,9 @@ The watchdog restarts the server if it crashes."
 - Verify Realtime API access: not all OpenAI accounts have it. Check https://platform.openai.com/docs/guides/realtime
 
 **Brain pages not created after call:**
-- Run `gbrain doctor` — if it fails, the database connection is broken
+- Run `foresights doctor` — if it fails, the database connection is broken
 - Check if the post-call handler ran (look in server logs for "transcript saved")
-- Run `gbrain sync` manually to force indexing
+- Run `foresights sync` manually to force indexing
 - Check file permissions on the brain repo directory
 
 **ngrok URL keeps changing:**
@@ -604,10 +604,10 @@ maintains it throughout the conversation.
 **Fix:** Auto-upload ALL call audio immediately on call end:
 - Twilio calls: download the MP3 recording URL from Twilio
 - WebRTC calls: capture via MediaRecorder (webm/opus format)
-- Upload via `gbrain files upload-raw <audio-file> --page meetings/call-slug --type call-recording`
-- GBrain auto-routes: small files stay in git, large files go to cloud storage
+- Upload via `foresights files upload-raw <audio-file> --page meetings/call-slug --type call-recording`
+- Foresights auto-routes: small files stay in git, large files go to cloud storage
   with `.redirect.yaml` pointer. Files >= 100 MB use TUS resumable upload.
-- Generate signed URLs for playback: `gbrain files signed-url <storage-path>`
+- Generate signed URLs for playback: `foresights files signed-url <storage-path>`
 - This ensures every call has a recoverable audio source regardless
   of whether the transcript or brain page was created successfully
 

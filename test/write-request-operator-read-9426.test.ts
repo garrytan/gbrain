@@ -1,7 +1,7 @@
 /**
- * #9426: `gbrain sources writer failures` listed a terminal `extract_facts`
+ * #9426: `foresights sources writer failures` listed a terminal `extract_facts`
  * receipt (`storage_error`, origin `owner_exception`) and named
- * `gbrain write-request <id> --json` as its inspect step, but that command
+ * `foresights write-request <id> --json` as its inspect step, but that command
  * answered not_found. The receipt belongs to the principal the write ran under
  * (a fact extraction runs under the page write's MCP client), and the receipt
  * read matched only the caller's own principal. The brain host's trusted local

@@ -3,7 +3,7 @@
  *
  * Every LLM-backed extraction run writes a receipt page recording the
  * round's outcome: total rows, cost, model id, eval verdict. Receipts
- * are first-class brain memory — queryable via gbrain search, citable
+ * are first-class brain memory — queryable via foresights search, citable
  * in takes, surfaced in cross-modal contradiction probes.
  *
  * Two structural protections against extraction loops (D-EXTRACT-19,

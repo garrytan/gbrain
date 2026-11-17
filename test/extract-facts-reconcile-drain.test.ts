@@ -3,7 +3,7 @@
  * behind the page (`page_facts_reconcile`, src/core/facts/reconcile-watermark.ts).
  *
  * Protects: on an unmanaged brain, a fence imported by a standalone
- * `gbrain sync` reaches the facts index on the next dream cycle even though
+ * `foresights sync` reaches the facts index on the next dream cycle even though
  * the cycle's own sync is a no-op; removing a page's whole fence expires its
  * fence rows (`cli:` rows and withdrawals untouched); an edit to an already
  * indexed fence is reconciled; a second run with nothing changed reconciles
@@ -198,7 +198,7 @@ for (const backend of testBackends()) {
     const check = { status: 'ok' as 'ok' | 'warn' | 'fail', message: 'all extractors healthy', details: {} as Record<string, unknown> };
     applyFactsReconcileBacklog(check, backlog);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('to reconcile every page now run: gbrain dream --phase extract_facts');
+    expect(check.message).toContain('to reconcile every page now run: foresights dream --phase extract_facts');
     await runExtractFacts(engine, {});
     expect(await readFactsReconcileBacklog(engine)).toEqual({ pending: 0, invalid: [] });
   }), 60_000);

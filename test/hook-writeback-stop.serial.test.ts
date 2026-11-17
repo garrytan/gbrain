@@ -338,7 +338,7 @@ describe('hook stop — pasted content (#5812)', () => {
   });
 });
 
-describe('hook stop — gbrain claude-cli self-capture (#5820)', () => {
+describe('hook stop — foresights claude-cli self-capture (#5820)', () => {
   const PROMPT = 'Extract the facts from the following page and return them as JSON objects.';
 
   test('a Stop payload from a claude-cli scratch session banks nothing: by-design self_capture', async () => {

@@ -222,7 +222,7 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
       runBootstrap(['hooks', '--workspace', ws, '--harness', 'codex', '--gbrain-bin', process.execPath], { runner }),
     );
     expect(r.result).toBe(0); // HEALTHY skip — never the exit-2 mcpSkipped state
-    expect(r.out).toContain("the 'gbrain@gbrain' plugin already provides the gbrain MCP server");
+    expect(r.out).toContain("the 'gbrain@gbrain' plugin already provides the foresights MCP server");
     expect(r.out).toContain('GBRAIN_SOURCE=');
     expect(r.out).toContain('--mcp-even-if-plugin');
     // No `codex mcp add` argv, and no registration-smoke probes either.
@@ -253,7 +253,7 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
       runBootstrap(['hooks', '--workspace', ws, '--harness', 'codex', '--gbrain-bin', process.execPath], { runner }),
     );
     expect(r.result).toBe(0);
-    expect(r.out).toContain("the 'gbrain-coding@gbrain' plugin already provides the gbrain MCP server");
+    expect(r.out).toContain("the 'gbrain-coding@gbrain' plugin already provides the foresights MCP server");
     expect(calls.some((c) => c[0] === 'codex')).toBe(false);
   }, 30_000);
 
@@ -265,11 +265,11 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
       calls.push(argv);
       if (argv[0] !== 'codex') return { code: 0, stdout: '', stderr: '' };
       if (argv[2] === 'add') {
-        if (!lastAdd) { lastAdd = argv; return { code: 1, stdout: '', stderr: 'Error: server gbrain already exists' }; }
+        if (!lastAdd) { lastAdd = argv; return { code: 1, stdout: '', stderr: 'Error: server foresights already exists' }; }
         lastAdd = argv;
         return { code: 0, stdout: '', stderr: '' };
       }
-      if (argv[2] === 'get') return { code: 0, stdout: calls.some((c) => c[2] === 'remove') ? lastAdd!.join(' ') : 'gbrain\n  transport: stdio\n  command: /opt/elsewhere/gbrain-wrapper\n', stderr: '' };
+      if (argv[2] === 'get') return { code: 0, stdout: calls.some((c) => c[2] === 'remove') ? lastAdd!.join(' ') : 'foresights\n  transport: stdio\n  command: /opt/elsewhere/gbrain-wrapper\n', stderr: '' };
       return { code: 0, stdout: '', stderr: '' };
     };
     const r = await capture(() =>
@@ -370,8 +370,8 @@ describe('doctor plugin_lane_collision (serial: env fixtures)', () => {
     const rows = checks.filter((c) => c.name === 'plugin_lane_collision');
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('warn');
-    expect(rows[0].message).toContain('codex mcp remove gbrain');
-    expect(rows[0].message).toContain('codex plugin remove gbrain');
+    expect(rows[0].message).toContain('codex mcp remove foresights');
+    expect(rows[0].message).toContain('codex plugin remove foresights');
     expect(rows[0].message).toContain('config signal, not a health signal');
   });
 

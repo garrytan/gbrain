@@ -4,7 +4,7 @@
  * `query` op with `search.entity_anchoring` on and off. Hermetic and
  * keyword-only (no gateway): NamedThingBench, the relational retrieval-quality
  * fixture, and the LongMemEval nightly fixture ingested the way
- * `gbrain eval longmemeval` ingests it. Each corpus also runs a cue-added
+ * `foresights eval longmemeval` ingests it. Each corpus also runs a cue-added
  * variant (" now" appended) as a diagnostic, so anchoring fires on corpora
  * whose questions never ask for a current state. `--dump-off <file>` writes the
  * key-off rows for a byte-identity check against a build without the change.

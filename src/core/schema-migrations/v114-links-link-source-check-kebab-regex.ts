@@ -5,7 +5,7 @@ export const v114: Migration = {
   name: 'links_link_source_check_kebab_regex',
   // Issue #1941: open link_source from a closed allowlist to a kebab-case
   // format gate so external derivers (e.g. 'citation-graph') stamp their own
-  // provenance without a per-deriver gbrain migration. Format: lowercase
+  // provenance without a per-deriver foresights migration. Format: lowercase
   // kebab `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` (rejects UPPER, leading digit/dash,
   // trailing/double dash, underscore, space) + char_length <= 64 cap on the
   // indexed free-text column. The five prior built-ins all satisfy the regex,

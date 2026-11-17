@@ -1,7 +1,7 @@
 /**
  * #7145: pglite_leftovers names the exact cleanup for the legacy copier's old store, not only a graduation copy:
  * a size preview (du -sh) and a consent-gated delete (fix argv rm -rf <path>, consent destructive, asked of the user).
- * Synthetic gbrain home under the OS temp dir; nothing is deleted.
+ * Synthetic foresights home under the OS temp dir; nothing is deleted.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

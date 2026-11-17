@@ -9,7 +9,7 @@
  *    no longer resolves to the job's source or the source's incarnation
  *    changed. A child queued by an earlier release (no pin) is re-checked from
  *    its `dream_output.raw_source` and the configured corpus dir.
- * 2. `gbrain dream --dry-run` (synthesize) resolves corpus files read-only:
+ * 2. `foresights dream --dry-run` (synthesize) resolves corpus files read-only:
  *    an unresolved session's record is not frozen by a preview.
  *
  * Repo-less brain directories; PGLite and, with DATABASE_URL, Postgres.

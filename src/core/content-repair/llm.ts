@@ -181,7 +181,7 @@ export async function callJudgment(engine: BrainEngine, model: string, input: Ju
   };
   const budget = judgmentTokenBudget(input, model);
   const quote = estimateChatCallUsd({ model, inputTokens: budget.inputTokens, maxOutputTokens: budget.maxOutputTokens, overrides: opts.overrides, capSource: opts.capSource });
-  if (!quote.ok) return transient('no_pricing', `A spend cap is set but gbrain has no price for ${model}; no call was made.`, { guidance: quote.guidance });
+  if (!quote.ok) return transient('no_pricing', `A spend cap is set but foresights has no price for ${model}; no call was made.`, { guidance: quote.guidance });
   const estimate = quote.quote.usd;
   if (estimate > opts.perPageUsd + 1e-9) return transient('budget_exhausted', `The estimated model cost ($${estimate.toFixed(4)}) exceeds fences.repair.max_usd_per_page ($${opts.perPageUsd.toFixed(2)}).`);
   if (opts.allowanceUsd !== undefined && estimate > opts.allowanceUsd + 1e-9) {

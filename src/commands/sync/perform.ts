@@ -198,7 +198,7 @@ async function performManagedBranch(engine: BrainEngine, outer: SyncOpts): Promi
       ...(outer.followDrainLease ? { follow: { signal: outer.signal, deadlineAtMs: outer.deadlineAtMs } } : {}),
       tty: process.stderr.isTTY === true,
       announce: (holder, phase) => {
-        const who = holder ? `a ${holder.kind} drainer (pid ${holder.pid ?? '?'} on ${holder.host ?? '?'}${holder.version ? `, gbrain ${holder.version}` : ''})` : 'another drainer';
+        const who = holder ? `a ${holder.kind} drainer (pid ${holder.pid ?? '?'} on ${holder.host ?? '?'}${holder.version ? `, foresights ${holder.version}` : ''})` : 'another drainer';
         const done = holder?.progress ? `${holder.progress.committed} page(s) committed since it started${holder.progress.last_committed_at ? `, last at ${holder.progress.last_committed_at}` : ''}` : 'progress unknown';
         serr(phase === 'start'
           ? `[sync] source ${sourceId} is being drained by ${who}; following it until it finishes or this run's budget ends (one drainer per source; it resumes the same cursor). Ctrl-C stops following and leaves it running.`
@@ -212,7 +212,7 @@ async function performManagedBranch(engine: BrainEngine, outer: SyncOpts): Promi
     const held = currentDrainLease(sourceId) ? null : await moves.moveRuledSharedHeld(engine, sourceId)
       .catch((error: unknown) => { serr(`[sync] held facts under a new folder rule wait for the next maintenance cycle: ${error instanceof Error ? error.message : String(error)}`); return null; });
     for (const w of held ? moves.heldMoveIncomplete(held) : []) serr(`[sync] held facts moved under a new folder rule, incomplete: ${w.text}`);
-    if (held?.unmovable.length) serr(`[sync] ${held.unmovable.length} group(s) of held facts could not move yet; the next gbrain dream retries (gbrain repair facts-home --source ${sourceId} lists them).`);
+    if (held?.unmovable.length) serr(`[sync] ${held.unmovable.length} group(s) of held facts could not move yet; the next foresights dream retries (foresights repair facts-home --source ${sourceId} lists them).`);
     const tailed = skips.has('sync_tail') ? drained : await withSyncTail(engine, sourceId, drained, { signal: outer.signal, deadlineAtMs: outer.deadlineAtMs });
     const healed = skips.has('slug_heal') ? tailed : await healAfterManagedSync(engine, outer, tailed);
     return skips.has('origin_heal') ? healed : await healOriginTwinsAfterManagedSync(engine, outer, healed);
@@ -227,7 +227,7 @@ function printInheritedOptions(result: SyncResult): void {
   const kept = result.inherited_options ?? [];
   if (!kept.length) return;
   const flags = { noEmbed: '--no-embed', noExtract: '--no-extract', noSchemaPack: '--no-schema-pack' } as const;
-  const settle = [...(kept.includes('noEmbed') ? ['gbrain embed --stale'] : []), ...(kept.includes('noExtract') ? ['gbrain extract --stale'] : [])];
+  const settle = [...(kept.includes('noEmbed') ? ['foresights embed --stale'] : []), ...(kept.includes('noExtract') ? ['foresights extract --stale'] : [])];
   serr(`[sync] kept the unfinished run's ${kept.map(key => flags[key]).join(' ')} for the pages it imports${settle.length ? `; ${settle.join(' and ')} settle${settle.length === 1 ? 's' : ''} them afterwards` : ''}.`);
 }
 
@@ -244,11 +244,11 @@ async function replayImportedRemembers(engine: BrainEngine, sourceId: string): P
     const report = await replay({ engine, config: loadConfig() ?? { engine: engine.kind }, logger, remote: false, dryRun: false, sourceId } as OperationContext, sourceId);
     if (!report.examined) return null;
     serr(`[sync] replayed ${report.replayed} of ${report.examined} remember(s) refused while their page's file awaited import`
-      + `${report.waiting ? `; ${report.waiting} still waiting` : ''}${report.skipped ? `; ${report.skipped} not replayable (gbrain repair failed-writes --source ${sourceId} lists them)` : ''}`
+      + `${report.waiting ? `; ${report.waiting} still waiting` : ''}${report.skipped ? `; ${report.skipped} not replayable (foresights repair failed-writes --source ${sourceId} lists them)` : ''}`
       + `${report.remaining ? `; ${report.remaining} left for the next sync` : ''}.`);
     return report;
   } catch (error) {
-    serr(`[sync] could not replay remembers refused while their page's file awaited import: ${error instanceof Error ? error.message : String(error)} (gbrain repair failed-writes --source ${sourceId} replays them).`);
+    serr(`[sync] could not replay remembers refused while their page's file awaited import: ${error instanceof Error ? error.message : String(error)} (foresights repair failed-writes --source ${sourceId} replays them).`);
     return null;
   }
 }

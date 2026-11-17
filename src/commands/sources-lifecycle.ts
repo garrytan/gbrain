@@ -16,14 +16,14 @@ import { adminHostConfig } from './persistence-admin.ts';
 import type { AddSourceOpts } from '../core/sources-ops.ts';
 
 export const SOURCE_LIFECYCLE_HELP = `Managed source administration:
-  gbrain sources add <id> [--path <directory> | --url <https-url> | --kind github|google|meetings|slack]
-  gbrain sources archive <id>
-  gbrain sources restore <id> [--no-federate]
-  gbrain sources remove <id> --confirm-destructive
-  gbrain sources purge <archived-id> --confirm-destructive
-  gbrain sources set-path <id> <verified-directory>
-  gbrain sources set-path <id> --clear   (connector sources, or any relative local_path: clear it)
-  gbrain sources reclone <id>
+  foresights sources add <id> [--path <directory> | --url <https-url> | --kind github|google|meetings|slack]
+  foresights sources archive <id>
+  foresights sources restore <id> [--no-federate]
+  foresights sources remove <id> --confirm-destructive
+  foresights sources purge <archived-id> --confirm-destructive
+  foresights sources set-path <id> <verified-directory>
+  foresights sources set-path <id> --clear   (connector sources, or any relative local_path: clear it)
+  foresights sources reclone <id>
 
 All commands accept --request-id <uuid>, --expected-incarnation <uuid>, --dry-run,
 --brain <id>, and --json. Retain the returned request ID across retries. Rebind

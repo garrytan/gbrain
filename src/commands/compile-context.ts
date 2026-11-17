@@ -1,5 +1,5 @@
 /**
- * compile-context.ts — `gbrain compile-context` (cathedral-5, plan D3'/D4').
+ * compile-context.ts — `foresights compile-context` (cathedral-5, plan D3'/D4').
  *
  * Compiles a deterministic, sensitivity-scanned, token-budgeted context
  * file from the brain via src/core/context/compile-view.ts. Byte-stable:
@@ -159,7 +159,7 @@ export function spliceCompiledBlock(existing: string, compiled: string): string 
   }
   if (begins.length !== 1 || ends.length !== 1 || begins[0] > ends[0]) {
     throw new Error(
-      `the gbrain compiled-context markers in this file are damaged ` +
+      `the foresights compiled-context markers in this file are damaged ` +
         `(${begins.length} begin / ${ends.length} end` +
         `${begins.length === 1 && ends.length === 1 ? ', out of order' : ''}) — ` +
         `the managed block was hand-edited. Fix the markers (or delete the whole block) and re-run.`,
@@ -207,7 +207,7 @@ export function removeCompiledBlock(existing: string): string {
 // ── Help ────────────────────────────────────────────────────────────────────
 
 function printCompileContextHelp(): void {
-  process.stdout.write(`Usage: gbrain compile-context --target <t> [flags]
+  process.stdout.write(`Usage: foresights compile-context --target <t> [flags]
 
 Compile a deterministic, sensitivity-scanned, token-budgeted context file
 from the brain. Unchanged brain => identical bytes; the header digest is
@@ -265,7 +265,7 @@ export async function runCompileContext(
   }
   if (!engine) {
     // Defensive: the dispatcher connects before calling with real work.
-    process.stderr.write('compile-context: no brain configured (run `gbrain init` first).\n');
+    process.stderr.write('compile-context: no brain configured (run `foresights init` first).\n');
     return EXIT_ERROR;
   }
 
@@ -274,7 +274,7 @@ export async function runCompileContext(
     flags = parseCompileFlags(args);
   } catch (err) {
     process.stderr.write(`compile-context: ${(err as Error).message}\n`);
-    process.stderr.write('Run `gbrain compile-context --help` for usage.\n');
+    process.stderr.write('Run `foresights compile-context --help` for usage.\n');
     return EXIT_ERROR;
   }
 
@@ -312,7 +312,7 @@ export async function runCompileContext(
     let core: { text: string; revision: string; command: string } | undefined;
     if (flags.includeCore) {
       const block = await loadCoreBlock(engine, { sessionSourceId: sourceId, excludePrivate: true, notices: [] });
-      const command = `gbrain compile-context --target ${flags.target}${flags.target === 'codex-global' ? '' : ' --include-core'}${flags.out ? ` --out ${flags.out}` : ''}`;
+      const command = `foresights compile-context --target ${flags.target}${flags.target === 'codex-global' ? '' : ' --include-core'}${flags.out ? ` --out ${flags.out}` : ''}`;
       core = { text: block.text, revision: block.revision, command };
     }
 

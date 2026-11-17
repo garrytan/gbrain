@@ -118,7 +118,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  // A keyless `gbrain init --pglite --no-embedding` brain resolves search.mode conservative.
+  // A keyless `foresights init --pglite --no-embedding` brain resolves search.mode conservative.
   await engine.setConfig('search.mode', 'conservative');
   for (const p of QUICKSTART_PAGES) {
     await engine.putPage(p.slug, { type: p.type, title: p.title, compiled_truth: p.text, ...(p.visibility ? { frontmatter: { visibility: p.visibility } } : {}) });

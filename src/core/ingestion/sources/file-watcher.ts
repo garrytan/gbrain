@@ -14,7 +14,7 @@
  *
  * Linux scale note: chokidar inherits inotify's limits. On a 10K+ file
  * brain repo, the system `fs.inotify.max_user_watches` (default 8192 on
- * many distros) is the bottleneck. `gbrain doctor`'s inotify_limit
+ * many distros) is the bottleneck. `foresights doctor`'s inotify_limit
  * probe surfaces this with a paste-ready sysctl hint — see E3 in the
  * eng review plan.
  *

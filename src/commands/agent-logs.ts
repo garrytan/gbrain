@@ -1,5 +1,5 @@
 /**
- * `gbrain agent logs <job_id> [--follow] [--since <spec>]`
+ * `foresights agent logs <job_id> [--follow] [--since <spec>]`
  *
  * Reads two sources and merges them chronologically:
  *   - ~/.gbrain/audit/subagent-jobs-*.jsonl  (heartbeat + submission events
@@ -52,7 +52,7 @@ export async function runAgentLogs(
     // Break on terminal job status so --follow exits once the run is done.
     const status = await readJobStatus(engine, jobId);
     if (status && TERMINAL_STATUSES.has(status)) {
-      write(`\n[gbrain agent] job ${jobId} reached terminal state: ${status}\n`);
+      write(`\n[foresights agent] job ${jobId} reached terminal state: ${status}\n`);
       return;
     }
   }

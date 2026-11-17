@@ -7,7 +7,7 @@ describe('getPGLiteSchema', () => {
     // v0.37 fix wave Lane A.1 + CDX2-1: defaults now track the canonical
     // gateway constants in `ai/defaults.ts` instead of the stale v0.13
     // OpenAI literals (1536 / text-embedding-3-large). Fixes the
-    // headline bug where bare `gbrain init --pglite` produced a 1536
+    // headline bug where bare `foresights init --pglite` produced a 1536
     // schema while the Voyage default model emitted 1024-dim vectors.
     const sql = getPGLiteSchema();
     expect(sql).toMatch(/vector\(1024\)/);

@@ -85,7 +85,7 @@ export async function singleTargetParksAndRetries(databaseUrl?: string) {
     expect(doctor).toMatchObject({ status: 'warn', details: { parked_effects: 1, exact: true, truncated: false,
       parked_groups: [{ source_id: 'default', code: 'git_target_unsafe', effects: 1, targets: 1 }] } });
     expect(doctor.message).toContain('default git_target_unsafe: 1 target(s) in 1 Git effect(s)');
-    expect(doctor.message).toContain('gbrain sources writer retry-effects default --parked-code git_target_unsafe --dry-run');
+    expect(doctor.message).toContain('foresights sources writer retry-effects default --parked-code git_target_unsafe --dry-run');
 
     restore();
     expect(await retryParkedEffects(engine, 'default', effect.request_id, true)).toMatchObject({ dry_run: true,
@@ -227,7 +227,7 @@ export async function capacityWarnsAndRefusalNamesTheKey(databaseUrl?: string) {
     expect(details.resources[0]).toMatchObject({ resource: 'lifetime_ids', used: 8, limit: 10 });
     expect(details.resources[0].scope).toStartWith('principal:');
     expect(details.commands).toHaveLength(1);
-    const value = Number(details.commands[0].match(/^gbrain config set persistence\.limits\.principal_lifetime_ids (\d+)$/)![1]);
+    const value = Number(details.commands[0].match(/^(?:foresights|gbrain) config set persistence\.limits\.principal_lifetime_ids (\d+)$/)![1]);
     expect(value).toBeGreaterThanOrEqual(20);
     expect(warning.message).toContain(details.commands[0]);
 
@@ -245,7 +245,7 @@ export async function capacityWarnsAndRefusalNamesTheKey(databaseUrl?: string) {
         verify: { argv: ['gbrain', 'doctor', '--only', 'persistence_capacity', '--json'] } } });
     expect(CODES[refusal.code as keyof typeof CODES]).toMatchObject({ class: 'host_only', retryable: false });
     expect(refusal.message).toContain('10 used of 10');
-    expect(refusal.suggestion).toMatch(/gbrain config set persistence\.limits\.principal_lifetime_ids \d+/);
+    expect(refusal.suggestion).toMatch(/(?:foresights|gbrain) config set persistence\.limits\.principal_lifetime_ids \d+/);
   }, { databaseUrl });
 }
 

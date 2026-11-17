@@ -84,13 +84,13 @@ export function describeRerankerFix(r: RerankerReadiness): string | null {
   if (!r.recipeKnown || !r.hasTouchpoint || !r.modelListed) {
     return (
       `${r.model} is not a known reranker (provider:model) — set one: ` +
-      `gbrain config set search.reranker.model ${DEFAULT_RERANKER_MODEL}`
+      `foresights config set search.reranker.model ${DEFAULT_RERANKER_MODEL}`
     );
   }
   if (!r.keyPresent && r.requiredKey) {
     return (
       `${r.requiredKey} not set — export ${r.requiredKey}=… ` +
-      `(or turn reranking off: gbrain config set search.reranker.enabled false)`
+      `(or turn reranking off: foresights config set search.reranker.enabled false)`
     );
   }
   return `reranker ${r.model} is not ready`;

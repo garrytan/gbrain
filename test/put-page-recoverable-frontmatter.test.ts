@@ -1,7 +1,7 @@
 /**
- * #5988 Lane A: put_page accepts frontmatter gbrain can read exactly by
+ * #5988 Lane A: put_page accepts frontmatter foresights can read exactly by
  * quoting it and writes the quoted canonical form, so anything written
- * through gbrain is clean on disk; frontmatter it would have to guess at is
+ * through foresights is clean on disk; frontmatter it would have to guess at is
  * refused with a typed code, the key and line, and no raw value.
  *
  * Regression it catches: put_page refusing the issue's files (the R2

@@ -1,4 +1,4 @@
-/** `gbrain jobs get` (dispatched by runJobs in src/commands/jobs.ts). */
+/** `foresights jobs get` (dispatched by runJobs in src/commands/jobs.ts). */
 import { formatJobDetail, hasFlag, rehydrateJobDates, type JobsCommandContext } from './shared.ts';
 import { isThinClient, loadConfig } from '../../core/config.ts';
 import type { MinionJob } from '../../core/minions/types.ts';
@@ -11,7 +11,7 @@ import { shellQuote } from '../../core/agent-output.ts';
 
 export async function runJobsGet({ args, queue, engine }: JobsCommandContext): Promise<void> {
   const id = parseInt(args[1], 10);
-  if (isNaN(id)) { console.error('Error: job ID required. Usage: gbrain jobs get <id>'); process.exit(1); }
+  if (isNaN(id)) { console.error('Error: job ID required. Usage: foresights jobs get <id>'); process.exit(1); }
 
   // v0.32: thin-client routing (mirrors `list` branch above).
   const cfg = loadConfig();

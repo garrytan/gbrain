@@ -9,15 +9,15 @@
  *    google.ts) — BYO OAuth client or hosted relay; the default.
  *  - `CommandAccessProvider` (`--access command`) — any CLI that prints an
  *    access token (gog, `gcloud auth print-access-token`, a credential
- *    gateway's mint command). gbrain never stores the token; the command IS
+ *    gateway's mint command). foresights never stores the token; the command IS
  *    the refresher.
  *  - `EnvAccessProvider` (`--access env`) — a token refreshed by something
- *    outside gbrain, read live from a named env var each call.
+ *    outside foresights, read live from a named env var each call.
  *
  * Non-vault modes exist so harness stacks that already hold Google access
  * another way (an OpenClaw deployment routing through a credential gateway,
  * a gog-based setup) can drive the native source — and the open-loop
- * engine — without re-consenting through gbrain's own OAuth flow.
+ * engine — without re-consenting through foresights's own OAuth flow.
  *
  * Trust note: the token command is part of the LOCAL source config, executed
  * only by the locally-running sync (the google source kind is hard-rejected
@@ -133,7 +133,7 @@ export class EnvAccessProvider implements GoogleAccessProvider {
   }
 
   async forceRefresh(): Promise<string> {
-    // The refresher lives outside gbrain; a 401 retry re-reads the var in
+    // The refresher lives outside foresights; a 401 retry re-reads the var in
     // case the external process rotated it between calls.
     return this.read();
   }

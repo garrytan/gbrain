@@ -63,7 +63,7 @@ describe('the shadow warning', () => {
     expect(lines[0]).toContain('the environment value is in effect');
     expect(lines[0]).toContain('remove OPENAI_API_KEY from the environment of the process that reported this');
     expect(lines[0]).toContain('for a daemon its service definition) and restart that process');
-    expect(lines[0]).toContain('run `gbrain config unset openai_api_key`, which also stops this warning');
+    expect(lines[0]).toContain('run `foresights config unset openai_api_key`, which also stops this warning');
     expect(leaks(lines[0])).toEqual([]);
   });
 
@@ -80,7 +80,7 @@ describe('doctor embedding_key_source', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('The embedding key in effect is OPENAI_API_KEY from this environment.');
     expect(check.message).toContain('differs from openai_api_key in /home/example/.gbrain/config.json');
-    expect(check.message).toContain('This check sees only the environment `gbrain doctor` runs in');
+    expect(check.message).toContain('This check sees only the environment `foresights doctor` runs in');
     expect(check.details).toMatchObject({ shadows: [{ variable: 'OPENAI_API_KEY', config_key: 'openai_api_key', in_effect: 'env' }],
       embedding_key: { kind: 'env', variable: 'OPENAI_API_KEY', config_key: 'openai_api_key' }, docs: 'docs/guides/repair.md#embedding-key-source' });
     expect(leaks(JSON.stringify(check))).toEqual([]);
@@ -158,9 +158,9 @@ describe('embedding_auth_failed against a provider that rejects the env key', ()
     expect(leaks(String((failure as Error).message))).toEqual([]);
     expect(leaks(JSON.stringify({ error: (failure as Error).message, ...(failure as object) }))).toEqual([]);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toStartWith('[gbrain] Error [embedding_auth_failed]: The OpenAI embedding provider rejected its key (HTTP 401); the key in effect is OPENAI_API_KEY from this process\'s environment, which differs from openai_api_key in');
+    expect(lines[0]).toStartWith('[foresights] Error [embedding_auth_failed]: The OpenAI embedding provider rejected its key (HTTP 401); the key in effect is OPENAI_API_KEY from this process\'s environment, which differs from openai_api_key in');
     expect(lines[0]).toContain('Fix: To use the config key, remove OPENAI_API_KEY from the environment of the process that reported this');
-    expect(lines[0]).toContain('run `gbrain config unset openai_api_key`');
+    expect(lines[0]).toContain('run `foresights config unset openai_api_key`');
     expect(lines[0]).toContain('Docs: docs/guides/write-refusals.md#embedding_auth_failed');
     expect(leaks(lines.join('\n'))).toEqual([]);
 
@@ -176,6 +176,6 @@ describe('embedding_auth_failed against a provider that rejects the env key', ()
     const error = embeddingAuthFailedError({ id: 'openai', name: 'OpenAI', auth_env: { required: ['OPENAI_API_KEY'] } }, 403, cfg(), {}, '/home/example/.gbrain/config.json');
     expect(error.toJSON()).toMatchObject({ error: 'embedding_auth_failed', docs: 'docs/guides/write-refusals.md#embedding_auth_failed',
       message: 'The OpenAI embedding provider rejected its key (HTTP 403); the key in effect is openai_api_key in /home/example/.gbrain/config.json (OPENAI_API_KEY is not set).',
-      suggestion: 'Run `gbrain config set openai_api_key <valid key>` and restart any daemon that uses it. Then run `gbrain embed --stale` to embed what was saved while the key was rejected.' });
+      suggestion: 'Run `foresights config set openai_api_key <valid key>` and restart any daemon that uses it. Then run `foresights embed --stale` to embed what was saved while the key was rejected.' });
   });
 });

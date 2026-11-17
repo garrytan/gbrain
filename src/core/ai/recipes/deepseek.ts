@@ -107,7 +107,7 @@ export const deepseek: Recipe = {
       supports_prompt_cache: true,
       // Thinking mode is DEFAULT ON for every listed model (see module docstring):
       // reasoning bills as output and counts against max_tokens, so callers
-      // that size output caps must grant reasoning headroom (gbrain#4172).
+      // that size output caps must grant reasoning headroom (foresights#4172).
       thinking_by_default: true,
       max_context_tokens: 1_000_000,
       cost_per_1m_input_usd: 0.30, // deepseek-flash peak cache-miss baseline

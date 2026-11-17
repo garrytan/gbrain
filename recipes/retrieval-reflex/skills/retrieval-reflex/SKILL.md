@@ -12,7 +12,7 @@ triggers:
 mutating: false
 writes_pages: false
 writes_to: []
-# MCP op names; over the CLI, traverse_graph/get_backlinks are `gbrain graph` / `gbrain backlinks`
+# MCP op names; over the CLI, traverse_graph/get_backlinks are `foresights graph` / `foresights backlinks`
 tools: [get_page, query, traverse_graph, get_backlinks]
 ---
 

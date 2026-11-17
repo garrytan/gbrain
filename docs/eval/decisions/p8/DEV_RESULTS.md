@@ -19,7 +19,7 @@ P8 does not change retrieval; the identical recall is the expected result.
 ## Write cost (part 1)
 
 LongMemEval-S sessions written as `note` pages through MCP `put_page` on a fresh PGLite brain, one `remember` per
-page, background jobs drained with `gbrain jobs work`. 1,000 pages, 10,313 messages, 991 remembered facts, build
+page, background jobs drained with `foresights jobs work`. 1,000 pages, 10,313 messages, 991 remembered facts, build
 ef0de8657, `text-embedding-3-large`.
 
 | Arm | Commit-path generative attempts | Generative calls | $ per 1,000 pages | $ per 1,000 messages | `put_page` p50 / p95 | `remember` p50 / p95 | Job drain |
@@ -50,7 +50,7 @@ values. The kind stays off by default until that set qualifies.
 
 ## Quote grounding (part 4)
 
-`gbrain think` (`claude-sonnet-5-5`) on 50 dev questions over amara-life-v1 (35 quote-eliciting, 15 natural). Each
+`foresights think` (`claude-sonnet-5-5`) on 50 dev questions over amara-life-v1 (35 quote-eliciting, 15 natural). Each
 quoted span in what the model wrote is labelled by `gpt-6.1-sol` against the exact evidence the model was given.
 
 | Build | Supported spans | Wrongly flagged | Rate (Wilson 95% upper) | Unsupported spans caught |
@@ -67,7 +67,7 @@ spans.
 
 ## Advertised tool surface (part 5)
 
-Cat 40 on model-ladder-v1 (not sealed: these tasks shaped earlier releases). The gbrain arm is callable `full` in
+Cat 40 on model-ladder-v1 (not sealed: these tasks shaped earlier releases). The foresights arm is callable `full` in
 every arm, with advertised `full` / `starter` / `verbs`. 25 tasks (5 per family) × 4 models × 1 repeat, uncapped tool
 results, build 8f585b0ce.
 

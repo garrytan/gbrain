@@ -69,7 +69,7 @@ describe('checkSourceRoutingHealth (#1167)', () => {
     expect(r.status).toBe('warn');
     expect(r.message).toMatch(/lonely/);
     expect(r.message).toMatch(/--source-id/);
-    expect(r.message).toMatch(/gbrain sources current/);
+    expect(r.message).toMatch(/(?:foresights|gbrain) sources current/);
   });
 });
 

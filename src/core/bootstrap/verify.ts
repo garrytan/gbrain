@@ -1,5 +1,5 @@
 /**
- * `gbrain bootstrap verify` — the whole-install contract check
+ * `foresights bootstrap verify` — the whole-install contract check
  * (agent-bootstrap plan: D8 + G1, G6, G13, CX2-5, CX-P0.5, ENG-tests, B2,
  * D3.6/A4 first-run tour).
  *
@@ -10,7 +10,7 @@
  * Determinism [CX2-5]: verify never talks to a host's live serve. The caller
  * (the bootstrap dispatcher, or a test) holds the engine, so the graph-floor
  * seam is: write via the REAL put_page op handler (ctx.remote:false) →
- * `runMaintenanceSweep` directly (the `gbrain sweep --once` equivalent) →
+ * `runMaintenanceSweep` directly (the `foresights sweep --once` equivalent) →
  * edge query via the engine link tables. No timing nondeterminism, works
  * pre-registration AND as the weekly re-run (verify's caller holds the
  * engine either way).
@@ -23,7 +23,7 @@
  * [G13] Fixed probe slugs; prior leftovers are swept before writing; probe
  * deletion failure is a WARNING, not a verify failure.
  *
- * [B2] Every run persists to `<gbrain home>/bootstrap/verify-<ts>.json`,
+ * [B2] Every run persists to `<foresights home>/bootstrap/verify-<ts>.json`,
  * keeping the last 5 snapshots. `bootstrap status` + doctor read them.
  */
 
@@ -100,7 +100,7 @@ export interface VerifyReport {
 export interface VerifyOpts {
   /** Source the workspace brain/ dir registered as. Default 'workspace'. */
   sourceId?: string;
-  /** Gbrain home for snapshot persistence. Default resolveGbrainHome(). */
+  /** Foresights home for snapshot persistence. Default resolveGbrainHome(). */
   gbrainHomeDir?: string;
   /** Capability report override (test seam — mirrors SweepOpts). */
   capabilities?: CapabilityReport;
@@ -157,7 +157,7 @@ export function putPageFailureDetail(error: unknown, waitMs: number | undefined)
   const receipt = pendingReceiptOf(error);
   if (!receipt) return `put_page failed: ${(error as Error).message}`;
   return `put_page was admitted but is still pending after ${Math.round((waitMs ?? 0) / 1000)}s (request ${receipt.request_id}); `
-    + `check it with \`${pollCommand(receipt.request_id)}\`, or raise ${WRITE_WAIT_ENV} and rerun gbrain bootstrap verify`;
+    + `check it with \`${pollCommand(receipt.request_id)}\`, or raise ${WRITE_WAIT_ENV} and rerun foresights bootstrap verify`;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ type: concept
 
 # Bootstrap Verify Probe Entity
 
-Anchor page for the \`gbrain bootstrap verify\` graph-floor probe. Written and
+Anchor page for the \`foresights bootstrap verify\` graph-floor probe. Written and
 deleted by verify; not user content.
 `;
 
@@ -182,7 +182,7 @@ type: concept
 
 # Bootstrap Verify Probe
 
-Written and deleted by \`gbrain bootstrap verify\` (fixed slug, swept on every
+Written and deleted by \`foresights bootstrap verify\` (fixed slug, swept on every
 run). It links to [[${VERIFY_PROBE_ENTITY_SLUG}]] so the graph floor has a
 deterministic edge to extract.
 
@@ -267,7 +267,7 @@ async function checkDoctorGreen(engine: BrainEngine): Promise<VerifyCheck> {
   const id = 'doctor_green';
   try {
     // The cheapest existing health probe: config round-trip + schema probe.
-    // Deliberately NOT a shell-out to `gbrain doctor` (a second engine open
+    // Deliberately NOT a shell-out to `foresights doctor` (a second engine open
     // would contend for the PGLite lock verify's caller already holds).
     const version = await engine.getConfig('version');
     await engine.executeRaw(`SELECT 1 FROM pages LIMIT 1`, []);
@@ -342,7 +342,7 @@ export function checkWritebackContract(ws: string): VerifyCheck {
     : {
         id: 'writeback_contract',
         ok: false,
-        detail: `${audit.detail}. Fix: run \`gbrain bootstrap contract --repair\` from the workspace (or pass --workspace explicitly).`,
+        detail: `${audit.detail}. Fix: run \`foresights bootstrap contract --repair\` from the workspace (or pass --workspace explicitly).`,
       };
 }
 
@@ -381,7 +381,7 @@ function checkSecretScan(ws: string): VerifyCheck {
     if (findings.length > 0) {
       const sample = findings.slice(0, 5).map((f) => {
         const { since } = f as SecretFinding & { since?: string };
-        return `${f.file}:${f.line} [${f.pattern}${since ? ` since gbrain v${since.replace(/^v/, '')}` : ''}] ${f.fingerprint}`;
+        return `${f.file}:${f.line} [${f.pattern}${since ? ` since foresights v${since.replace(/^v/, '')}` : ''}] ${f.fingerprint}`;
       }).join('; ');
       return {
         id, ok: false,
@@ -451,7 +451,7 @@ function checkMcpJsonHygiene(ws: string): VerifyCheck {
 
 /** [D12 upgrade-path guard, #4585]: an event carried by MORE THAN ONE hook
  * carrier double-fires every turn — Claude Code merges hook scopes, so the
- * carriers compared are ALL the files that can inject a gbrain hook for this
+ * carriers compared are ALL the files that can inject a foresights hook for this
  * workspace: user-scope settings.json (what `bootstrap harness` writes) plus
  * workspace-scope .claude/settings.json and .claude/settings.local.json
  * (what `bootstrap hooks` writes). Same-scope overlap arises when the
@@ -488,9 +488,9 @@ export function checkHookCarrierOverlap(
       id,
       ok: true, // warn-only self-repair channel
       detail:
-        `WARN: double-fire — ${overlaps.join('; ')} carry a gbrain hook in more than one carrier. ` +
-        'Workspace-scope duplication: run `gbrain bootstrap hooks --repair`. ' +
-        'User-scope + workspace overlap: remove one installer\'s wiring (`gbrain bootstrap harness --remove` or `gbrain bootstrap uninstall`), then re-run the one you keep.',
+        `WARN: double-fire — ${overlaps.join('; ')} carry a foresights hook in more than one carrier. ` +
+        'Workspace-scope duplication: run `foresights bootstrap hooks --repair`. ' +
+        'User-scope + workspace overlap: remove one installer\'s wiring (`foresights bootstrap harness --remove` or `foresights bootstrap uninstall`), then re-run the one you keep.',
     };
   } catch (e) {
     return { id, ok: true, detail: `carrier overlap probe failed (${(e as Error).message})` };
@@ -502,7 +502,7 @@ async function checkRepoPrivacy(ws: string): Promise<VerifyCheck> {
   try {
     const origin = gitOriginUrl(ws);
     if (!origin) {
-      return { id, ok: true, detail: 'local-only (no origin remote) — run `gbrain bootstrap repo` any time to add the private body' };
+      return { id, ok: true, detail: 'local-only (no origin remote) — run `foresights bootstrap repo` any time to add the private body' };
     }
     const verdict = await verifyRemotePrivacy(ws);
     if (verdict.verdict === 'private') return { id, ok: true, detail: `origin verified private (${origin})` };
@@ -562,7 +562,7 @@ async function ensureDefaultVisibilityPosture(engine: BrainEngine): Promise<Veri
         detail:
           `facts default visibility: world (set by bootstrap verify — was unset). ` +
           `Governs extraction-path writes only — \`remember\` defaults to world either way, except from a member-bound credential, whose saves stay private on its member page; pass \`visibility\` per call to keep a remembered fact private. ` +
-          `Flip with \`gbrain config set ${FACTS_DEFAULT_VISIBILITY_KEY} private\` if less-trusted surfaces will read this brain.`,
+          `Flip with \`foresights config set ${FACTS_DEFAULT_VISIBILITY_KEY} private\` if less-trusted surfaces will read this brain.`,
       };
     }
     return {
@@ -571,7 +571,7 @@ async function ensureDefaultVisibilityPosture(engine: BrainEngine): Promise<Veri
       detail:
         `facts default visibility: ${existing.trim()} (explicit operator value — untouched). ` +
         `Governs extraction-path writes only — \`remember\` defaults to world either way, except from a member-bound credential, whose saves stay private on its member page; pass \`visibility\` per call to keep a remembered fact private. ` +
-        `Flip with \`gbrain config set ${FACTS_DEFAULT_VISIBILITY_KEY} <world|private>\`.`,
+        `Flip with \`foresights config set ${FACTS_DEFAULT_VISIBILITY_KEY} <world|private>\`.`,
     };
   } catch (e) {
     return { id, ok: true, warn: true, detail: `could not read/set ${FACTS_DEFAULT_VISIBILITY_KEY}: ${(e as Error).message}` };
@@ -611,8 +611,8 @@ export async function checkEmbeddingPlane(
       ok: false,
       detail:
         `the configured embedding column cannot be resolved (${(e as Error).message}) — every chunk ` +
-        `write fails until the registry row is fixed. Inspect \`gbrain config get search_embedding_column\` ` +
-        `and \`gbrain config get embedding_columns\`.`,
+        `write fails until the registry row is fixed. Inspect \`foresights config get search_embedding_column\` ` +
+        `and \`foresights config get embedding_columns\`.`,
     };
   }
   const colLabel = `content_chunks.${activeColName}`;
@@ -637,14 +637,14 @@ export async function checkEmbeddingPlane(
     return {
       id,
       ok: false,
-      detail: `embeddings are configured but the active ${colLabel} column is ABSENT — every embedding write fails. Run \`gbrain migrate embeddings --status\` to diagnose, then \`gbrain migrate embeddings --to <provider:model>\` to (re)build it.`,
+      detail: `embeddings are configured but the active ${colLabel} column is ABSENT — every embedding write fails. Run \`foresights migrate embeddings --status\` to diagnose, then \`foresights migrate embeddings --to <provider:model>\` to (re)build it.`,
     };
   }
   try {
     // Same document-side embed path put_page uses (import-file.ts embedBatch),
     // lazy so keyless verifies never load the gateway.
     const { embedBatch, getEmbeddingModelName } = await import('../embedding.ts');
-    const vecs = await embedBatch(['gbrain bootstrap verify embedding-plane probe']);
+    const vecs = await embedBatch(['foresights bootstrap verify embedding-plane probe']);
     const got = vecs[0]?.length ?? 0;
     let model = 'unknown';
     try { model = getEmbeddingModelName(); } catch { /* label only */ }
@@ -655,7 +655,7 @@ export async function checkEmbeddingPlane(
         detail:
           `EMBEDDING PLANE SPLIT: the runtime embedder (${model}) returns ${got}d vectors but ` +
           `${colLabel} is ${colDims}d — every embedding write fails ("expected ${colDims} ` +
-          `dimensions, not ${got}") and nothing is stored. Fix: gbrain migrate embeddings --to <provider:model> ` +
+          `dimensions, not ${got}") and nothing is stored. Fix: foresights migrate embeddings --to <provider:model> ` +
           `--dim ${got} (or correct embedding_model/embedding_dimensions to match the column).`,
       };
     }
@@ -685,9 +685,9 @@ function checkMcpSurface(): VerifyCheck {
         ok: true,
         warn: true,
         detail:
-          `config mcp_surface='verbs' narrows a bare \`gbrain serve\` to the five memory verbs — the bootstrap ` +
-          `contract needs the full surface. Fix: re-run \`gbrain bootstrap hooks --repair\` (registrations now pin ` +
-          `--surface full) or \`gbrain config set mcp_surface full\`.`,
+          `config mcp_surface='verbs' narrows a bare \`foresights serve\` to the five memory verbs — the bootstrap ` +
+          `contract needs the full surface. Fix: re-run \`foresights bootstrap hooks --repair\` (registrations now pin ` +
+          `--surface full) or \`foresights config set mcp_surface full\`.`,
       };
     }
     return { id, ok: true, detail: `mcp_surface: ${surface ?? 'full (default)'} — full op surface for registrations` };
@@ -773,8 +773,8 @@ async function resolveSourceIdCollision(
         warn: true,
         detail:
           `source '${current}' is already registered to a different checkout (${registered}) — derived ` +
-          `'${derived}' and persisted it to agent.json. Register it (gbrain sources add ${derived} --path ${brainDir}) ` +
-          `and re-run \`gbrain bootstrap hooks --repair\` so GBRAIN_SOURCE follows.`,
+          `'${derived}' and persisted it to agent.json. Register it (foresights sources add ${derived} --path ${brainDir}) ` +
+          `and re-run \`foresights bootstrap hooks --repair\` so GBRAIN_SOURCE follows.`,
       },
     };
   } catch (e) {
@@ -836,7 +836,7 @@ async function runRoundtrip(
           warn: true,
           detail:
             `put_page landed in DB; no file under brain/ because sync.write_through is disabled by config — ` +
-            `agent writes stay DB-only (run \`gbrain config set sync.write_through true\` to materialize repo files)`,
+            `agent writes stay DB-only (run \`foresights config set sync.write_through true\` to materialize repo files)`,
         });
       } else {
         // [G1] A green verify with an empty repo is impossible: name the
@@ -848,7 +848,7 @@ async function runRoundtrip(
           detail:
             `put_page wrote the DB but NO file appeared under brain/ (write-through: ${why}). ` +
             `The workspace source must be registered with its brain/ dir as local_path ` +
-            `(gbrain sources add ${sourceId} --path ${join(ws, 'brain')}) or agent writes never reach the repo.`,
+            `(foresights sources add ${sourceId} --path ${join(ws, 'brain')}) or agent writes never reach the repo.`,
         });
         return { checks };
       }
@@ -857,7 +857,7 @@ async function runRoundtrip(
       return { checks };
     }
 
-    // 2. Sweep — the `gbrain sweep --once` equivalent, run in-process because
+    // 2. Sweep — the `foresights sweep --once` equivalent, run in-process because
     // verify's caller holds the engine [CX2-5]. #6786: passes 1 and 2 only.
     // The probes never need the corpus pass, and verify's engine runs without
     // the gateway extraction would use: every pending transcript came back
@@ -1005,7 +1005,7 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
     // Provenance suffix for every outcome below: which listener answered.
     const via = liveSocket
       ? 'via the live serve’s IPC socket'
-      : `via a verify-owned IPC server (no live serve socket at ${socketPath} — hooks stay degraded (no_serve) until a running \`gbrain serve\` binds it)`;
+      : `via a verify-owned IPC server (no live serve socket at ${socketPath} — hooks stay degraded (no_serve) until a running \`foresights serve\` binds it)`;
     process.env.GBRAIN_SOURCE = sourceId;
     // USER_PROMPT_DEADLINE_MS is the hook's own budget — the smoke compares
     // against the same constant it enforces (no drifting hardcoded copy).
@@ -1075,19 +1075,19 @@ export function checkPushProbe(ws: string): VerifyCheck {
     if (managed) {
       const source = managed.sourceId ?? '<source>';
       return { id, ok: true, detail: `managed canonical worktree${managed.sourceId ? ` (source ${managed.sourceId})` : ''} — page writes are committed and pushed by the persistence owner's Git effect, not by sources push; `
-        + `check \`gbrain sources writer status ${source} --json\` (git_durability) and enable with \`gbrain sources writer git-durability ${source} --enable --dry-run\` if it is off` };
+        + `check \`foresights sources writer status ${source} --json\` (git_durability) and enable with \`foresights sources writer git-durability ${source} --enable --dry-run\` if it is off` };
     }
     if (entries.length > 0) {
       const { failing } = summarizePushStatuses(entries);
       if (failing.length > 0) {
         const s = failing[0]!;
         const rest = failing.length > 1 ? ` [+${failing.length - 1} more]` : '';
-        return { id, ok: true, warn: true, detail: `last workspace push FAILED (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest} — run \`gbrain sources push --path ${s.repoRoot ?? ws}\`` };
+        return { id, ok: true, warn: true, detail: `last workspace push FAILED (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest} — run \`foresights sources push --path ${s.repoRoot ?? ws}\`` };
       }
       const ok = entries.find((e) => e.ok === true);
       return { id, ok: true, detail: `last workspace push succeeded (${ok?.ts ?? 'unknown time'})` };
     }
-    if (origin) return { id, ok: true, warn: true, detail: 'origin exists but no push recorded yet — run `gbrain sources push` once to prove the persistence path' };
+    if (origin) return { id, ok: true, warn: true, detail: 'origin exists but no push recorded yet — run `foresights sources push` once to prove the persistence path' };
     return { id, ok: true, detail: 'local-only mode — no push expected' };
   } catch (e) {
     return { id, ok: true, warn: true, detail: `push probe unreadable: ${(e as Error).message}` };
@@ -1100,7 +1100,7 @@ function checkInertSkills(ws: string, caps: CapabilityReport): VerifyCheck {
   if (!existsSync(dir)) return { id, ok: true, detail: 'no skills/ dir — scaffold not run (optional)' };
   try {
     // Best-effort: a SKILL.md that names a provider key is dormant in keyless
-    // mode. Deep provider matrices live in `gbrain skillpack check`.
+    // mode. Deep provider matrices live in `foresights skillpack check`.
     const skillFiles: string[] = [];
     const walk = (d: string, depth: number): void => {
       if (depth > 3) return;
@@ -1233,7 +1233,7 @@ export async function verifyWorkspace(
       ok: false,
       detail:
         `skipped — source '${sourceId}' is not registered in this brain, so probe writes cannot land. ` +
-        `Register it (gbrain sources add ${sourceId} --path ${join(ws, 'brain')}) and re-run \`gbrain bootstrap verify\`.`,
+        `Register it (foresights sources add ${sourceId} --path ${join(ws, 'brain')}) and re-run \`foresights bootstrap verify\`.`,
     });
   } else if (engineHealthy) {
     checks.push(await checkEmbeddingPlane(engine, caps));
@@ -1268,7 +1268,7 @@ export async function verifyWorkspace(
   persistVerifyRun(gbrainHomeDir, { ts, ok, checks });
 
   const lines: string[] = [];
-  lines.push(`gbrain bootstrap verify — ${ok ? 'PASS' : 'FAIL'} (${ts})`);
+  lines.push(`foresights bootstrap verify — ${ok ? 'PASS' : 'FAIL'} (${ts})`);
   for (const c of checks) {
     const mark = c.ok && !c.warn ? 'ok  ' : c.warn ? 'warn' : 'FAIL';
     lines.push(`  [${mark}] ${c.id}: ${c.detail}`);
@@ -1315,11 +1315,11 @@ export function buildHandoff(ws: string): string[] {
   const ownership = origin
     ? [
         `What you own: your agent's identity files and committed Markdown pages are in YOUR private repo — ${origin}.`,
-        'Read those files any time, or clone the workspace on another machine and run `gbrain bootstrap attach`.',
+        'Read those files any time, or clone the workspace on another machine and run `foresights bootstrap attach`.',
       ]
     : [
         'What you own: your agent\'s files and database remain on this machine (no remote yet).',
-        'Run `gbrain bootstrap repo` any time to keep the workspace files in your own private GitHub repo.',
+        'Run `foresights bootstrap repo` any time to keep the workspace files in your own private GitHub repo.',
       ];
   return [
     ...ownership,

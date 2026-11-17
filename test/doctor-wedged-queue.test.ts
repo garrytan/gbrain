@@ -69,7 +69,7 @@ describe('issue #2557 — queue_health catches deferred embed with no worker', (
     expect(check.status).toBe('warn');
     expect(check.message).toContain('embed-backfill');
     expect(check.message).toContain('no live worker');
-    expect(check.message).toContain('gbrain jobs work --queue default');
+    expect(check.message).toContain('foresights jobs work --queue default');
   });
 
   it('does not warn for old embed-backfill jobs when a worker is live on that queue', async () => {
@@ -223,7 +223,7 @@ describe('issue #1801 fix #3 — computeWedgedQueueCheck', () => {
     expect(check.status).toBe('fail');
     // The bare pair (for 'default') terminates with a backtick — no --queue —
     // and the comma-join carries the per-queue variant right behind it.
-    expect(check.message).toContain('`gbrain jobs supervisor stop && gbrain jobs supervisor start`, `');
+    expect(check.message).toContain('`foresights jobs supervisor stop && foresights jobs supervisor start`, `');
     expect(check.message).toContain("--queue 'q-side'");
   });
 
@@ -255,7 +255,7 @@ describe('orphaned private dream queues', () => {
     expect(check.message).toContain('supervisor restart cannot consume');
     // No owner metadata seeded → the legacy bucket, whose ONLY advertised
     // remediation is the retriage preview (never a worker restart).
-    expect(check.message).toContain('gbrain dream retriage');
+    expect(check.message).toContain('foresights dream retriage');
     expect(check.details).toMatchObject({
       orphaned_private_queues: 1,
       waiting_jobs: 1,
@@ -502,7 +502,7 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     const check = await computeOrphanedPrivateQueueCheck(pgLike);
     expect(check.status).toBe('fail');
     expect(check.message).toContain('inspect it with');
-    expect(check.message).toContain('gbrain jobs get');
+    expect(check.message).toContain('foresights jobs get');
     expect(check.details).toMatchObject({
       owner_pending_queues: 1,
       recoverable_queues: 0,
@@ -510,7 +510,7 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     });
   });
 
-  it('PGLite recoverable fixture advertises `gbrain dream` as the trigger, never the supervisor', async () => {
+  it('PGLite recoverable fixture advertises `foresights dream` as the trigger, never the supervisor', async () => {
     // Terminal owner + aged + expired lease → recoverable bucket. On PGLite
     // the engine-aware remediation must name the dream trigger (a supervisor
     // command is impossible advice — no worker process can ever run there).
@@ -526,7 +526,7 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     const check = await computeOrphanedPrivateQueueCheck(base as unknown as BrainEngine);
     expect(check.status).toBe('fail');
     expect(check.message).toContain('Auto-recovery cancels the metadata-backed queue(s)');
-    expect(check.message).toContain('trigger now: `gbrain dream`');
+    expect(check.message).toContain('trigger now: `foresights dream`');
     expect(check.message).not.toContain('supervisor start`');
   });
 

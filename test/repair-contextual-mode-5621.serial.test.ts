@@ -1,5 +1,5 @@
 /**
- * #5621: `gbrain repair contextual-mode` stamps the contextual retrieval mode
+ * #5621: `foresights repair contextual-mode` stamps the contextual retrieval mode
  * on existing markdown pages that were imported without one, exactly as a
  * fresh import would, and re-embeds only pages whose embedding input changes.
  *
@@ -54,7 +54,7 @@ afterAll(() => {
 
 beforeEach(() => { inputs = []; });
 
-for (const kind of testBackends()) describe(`#5621 gbrain repair contextual-mode (${kind})`, () => {
+for (const kind of testBackends()) describe(`#5621 foresights repair contextual-mode (${kind})`, () => {
   let engine: BrainEngine, close: (() => Promise<void>) | undefined;
   beforeAll(async () => {
     if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
@@ -146,12 +146,12 @@ for (const kind of testBackends()) describe(`#5621 gbrain repair contextual-mode
 
     const before = await checkContextualRetrievalCoverage(engine);
     expect(before.status).toBe('warn');
-    expect(before.message).toContain('gbrain repair contextual-mode --apply');
+    expect(before.message).toContain('foresights repair contextual-mode --apply');
     expect(before.details).toMatchObject({ mode_null_pages: 3, mode_repair: 'contextual-mode' });
 
     const preview = await run(false);
     expect(preview).toMatchObject({ kind: 'contextual-mode', mode: 'dry_run', affected: 3, applied: 0 });
-    expect(preview.apply_command).toBe('gbrain repair contextual-mode --apply');
+    expect(preview.apply_command).toBe('foresights repair contextual-mode --apply');
     expect((await page('plain', 'notes/raw-embedded')).mode).toBeNull();
 
     const applied = await run(true);

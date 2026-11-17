@@ -118,7 +118,7 @@ describe('query-cache key', () => {
   });
 });
 
-describe('gbrain config set round-trip', () => {
+describe('foresights config set round-trip', () => {
   test('the printed command stores trailing whitespace and a newline exactly, and unset clears it', async () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_query_prefix');
     const home = mkdtempSync(join(tmpdir(), 'gbrain-query-prefix-'));
@@ -128,8 +128,8 @@ describe('gbrain config set round-trip', () => {
       const init = spawnSync('bun', ['run', cli, 'init', '--pglite', '--no-embedding', '--non-interactive'], { env, encoding: 'utf8' });
       expect(init.status, init.stderr).toBe(0);
       const value = `${QWEN} \t`;
-      const printed = `gbrain config set embedding_query_prefix ${shellQuoteConfigValue(value)}`;
-      const set = spawnSync('bash', ['-c', printed.replace(/^gbrain /, `bun run ${JSON.stringify(cli)} `)], { env, encoding: 'utf8' });
+      const printed = `foresights config set embedding_query_prefix ${shellQuoteConfigValue(value)}`;
+      const set = spawnSync('bash', ['-c', printed.replace(/^(?:foresights|gbrain) /, `bun run ${JSON.stringify(cli)} `)], { env, encoding: 'utf8' });
       expect(set.status, set.stderr).toBe(0);
       const get = spawnSync('bun', ['run', cli, 'config', 'get', 'embedding_query_prefix', '--raw'], { env, encoding: 'utf8' });
       expect(get.status, get.stderr).toBe(0);
@@ -169,9 +169,9 @@ describe('doctor advisory', () => {
     const [check] = await embeddingQueryPrefixEntry.run(ctx(brainA)) as Check[];
     expect(check?.name).toBe('embedding_query_prefix');
     expect(check?.status).toBe('warn');
-    expect(check?.message).toContain("gbrain config set embedding_query_prefix $'Instruct: Given a web search query, retrieve relevant passages that answer the query\\nQuery:'");
+    expect(check?.message).toContain("foresights config set embedding_query_prefix $'Instruct: Given a web search query, retrieve relevant passages that answer the query\\nQuery:'");
     expect(check?.message).toContain('stored document vectors are not re-embedded');
-    expect(check?.message).toContain('gbrain config unset embedding_query_prefix');
+    expect(check?.message).toContain('foresights config unset embedding_query_prefix');
   });
 
   test('stays silent once a prefix is set, and for other models', async () => {

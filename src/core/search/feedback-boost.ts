@@ -24,7 +24,7 @@ export interface FeedbackStageMeta {
 
 let stageErrors = 0;
 
-/** Fail-open errors of the stage in this process (shown by `gbrain feedback status`). */
+/** Fail-open errors of the stage in this process (shown by `foresights feedback status`). */
 export function feedbackStageErrors(): number {
   return stageErrors;
 }

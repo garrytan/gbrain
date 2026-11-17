@@ -1,4 +1,4 @@
-# Connect GBrain to Codex
+# Connect Foresights to Codex
 
 Adding memory to an existing Codex agent preserves its identity and needs no private repository. Use the [memory-only walkthrough](../tutorials/connect-coding-agent.md). Connecting an existing hosted brain? Choose [native OAuth or a private machine handoff](../guides/hosted-harness-access.md). Opening the owner dashboard or managing clients uses [MCP administration](ADMIN.md) with its separate owner credential.
 
@@ -8,20 +8,20 @@ Adding memory to an existing Codex agent preserves its identity and needs no pri
 > the connection reference.
 >
 > Want the **full agent** — identity, memory, schedules, and a private repo as its
-> durable body — not just a connection? That's `gbrain bootstrap`: see the paste
+> durable body — not just a connection? That's `foresights bootstrap`: see the paste
 > block in the README and [docs/guides/bootstrap.md](../guides/bootstrap.md).
 
-## Fastest local path: `gbrain setup codex`
+## Fastest local path: `foresights setup codex`
 
 For a brain on this machine, one command creates a keyless brain when there is
 none, registers the stdio MCP server, wires the read-context hooks with their
 trust entries and smoke-tests the registration:
 
 ```bash
-bun install -g github:garrytan/gbrain
-gbrain setup codex --dry-run   # the resolved target and every step; writes nothing
-gbrain setup codex             # wire and verify
-gbrain setup codex --remove    # remove only what setup wrote
+bun install -g github:aimonk2025/gbrain
+foresights setup codex --dry-run   # the resolved target and every step; writes nothing
+foresights setup codex             # wire and verify
+foresights setup codex --remove    # remove only what setup wrote
 ```
 
 It writes `[mcp_servers.gbrain]` and one `[hooks.state."…"]` trust table per
@@ -35,7 +35,7 @@ setup reports `native-verified` when it owns the trusted `UserPromptSubmit`
 hook. Details: [setup guide](../guides/setup.md#codex).
 
 Codex starts an MCP server with a short list of environment variables, so a key
-you exported in your shell does not reach gbrain on its own. Setup therefore
+you exported in your shell does not reach foresights on its own. Setup therefore
 lists the provider key names (`OPENAI_API_KEY`, `VOYAGE_API_KEY`,
 `ANTHROPIC_API_KEY` and the other provider `*_API_KEY` and `*_BASE_URL` names)
 under `env_vars` in `[mcp_servers.gbrain]`. Codex forwards each one that is set
@@ -44,20 +44,20 @@ Only names are written, never values.
 
 ## Install as a Codex plugin (recommended)
 
-gbrain ships as a native Codex plugin — MCP server + a curated brain-first
+foresights ships as a native Codex plugin — MCP server + a curated brain-first
 skill set in two commands:
 
 ```bash
-codex plugin marketplace add garrytan/gbrain@codex-plugin   # slim dist branch
+codex plugin marketplace add aimonk2025/gbrain@codex-plugin   # slim dist branch
 codex plugin add gbrain@gbrain
 ```
 
 The `@codex-plugin` ref is the release-published plugin dist (force-advanced
-each release, like `latest-stable`). The bare `garrytan/gbrain` form also
+each release, like `latest-stable`). The bare `aimonk2025/gbrain` form also
 works but downloads the full development repo and tracks master tip — use it
 only for from-source installs. Refresh a snapshot with
 `codex plugin marketplace upgrade`; remove with `codex plugin remove
-gbrain@gbrain` + `codex plugin marketplace remove gbrain`.
+gbrain@gbrain` + `codex plugin marketplace remove foresights`.
 
 **Persona variants (Claude-lane only, for now).** The `gbrain-coding` /
 `gbrain-daily` curated variants ship in the Claude Code marketplace; the
@@ -66,22 +66,22 @@ handling of multi-entry marketplaces gets its observation run (the dist
 branch carries the variant trees already, so enabling is a two-line
 marketplace edit once verified — TODOS.md follow-up).
 
-**Prerequisites.** The plugin cannot ship the gbrain binary; install it once
-(`bun install -g github:garrytan/gbrain#stable` — the npm package
+**Prerequisites.** The plugin cannot ship the foresights binary; install it once
+(`bun install -g github:aimonk2025/gbrain#stable` — the npm package
 named `gbrain` is unrelated, never `npm install -g gbrain`) and create a
-brain (`gbrain init` — zero-config local PGLite by default). The bundled
+brain (`foresights init` — zero-config local PGLite by default). The bundled
 `setup` skill walks both. With no binary, the plugin's MCP server exits with
 that exact install one-liner on stderr; with no brain, it exits with
-"No brain configured. Run: gbrain init". Unix (macOS/Linux) only.
+"No brain configured. Run: foresights init". Unix (macOS/Linux) only.
 
-**What ships.** The MCP server runs `gbrain serve` on the full surface with
+**What ships.** The MCP server runs `foresights serve` on the full surface with
 `--source-guard` through the bundled launcher (`.agents/gbrain-launcher`,
 resolution order: `$GBRAIN_BIN` → `~/.bun/bin/gbrain` → `gbrain` on PATH — the
 sanctioned install location is preferred over PATH so a stray `gbrain` earlier
 on PATH can't shadow it).
 `full` is every operation (the seven memory verbs, page and bulk writes
 such as `put_pages`, graph and skill tools); the plugin keeps it because a plugin
-update rewrites existing installs (new `gbrain setup` registrations pin starter). The curated skills drive host-side work through the
+update rewrites existing installs (new `foresights setup` registrations pin starter). The curated skills drive host-side work through the
 `gbrain` CLI. A harness that caps its tool count can narrow every new session
 on this machine with `GBRAIN_SURFACE=starter` (or `verbs`) in the env that
 launches Codex, or use the bootstrap lane below. Unlike the OpenClaw bundle, the plugin ships the host-side skills
@@ -89,16 +89,16 @@ too (setup, migrate, smoke-test, gbrain-upgrade, schema authoring) — a plugin
 user IS the brain host.
 
 **Per-turn hook.** The plugin also declares the `UserPromptSubmit` hook
-`gbrain setup codex` writes (`gbrain hook user-prompt --harness codex`, 15 s),
+`foresights setup codex` writes (`foresights hook user-prompt --harness codex`, 15 s),
 run through the launcher with `GBRAIN_HOOK_LANE=plugin`. Codex skips a plugin
 hook until you trust it: open `/hooks` in the CLI, review it, and trust it.
 While a brain-first block is installed it puts the brain-first rule beside
-each turn (`gbrain setup codex --instructions-only` writes the block; doctor
-`harness_wiring` and `gbrain post-upgrade` name that command when it's
+each turn (`foresights setup codex --instructions-only` writes the block; doctor
+`harness_wiring` and `foresights post-upgrade` name that command when it's
 missing), and it adds the setup hook's read-context block when a serve is
-running. When `gbrain setup codex` or `gbrain bootstrap` already wires the
+running. When `foresights setup codex` or `foresights bootstrap` already wires the
 event in `$CODEX_HOME/hooks.json`, the plugin's hook exits without output, so
-each turn gets it once. `GBRAIN_HOOKS=0`, or a recorded `gbrain setup codex --no-hooks`, turns it off.
+each turn gets it once. `GBRAIN_HOOKS=0`, or a recorded `foresights setup codex --no-hooks`, turns it off.
 
 **Routing under the plugin lane.** The plugin serve is user-global and runs
 with the plugin snapshot as its working directory, so the per-project
@@ -118,15 +118,15 @@ in project directories, not `$HOME`.)
 
 **One owner per name.** Three lanes can each provide a server named
 `gbrain`: this plugin, a hand-wired `codex mcp add` (below), and the
-`gbrain bootstrap harness` managed block. Keep one. `gbrain bootstrap hooks`
+`foresights bootstrap harness` managed block. Keep one. `foresights bootstrap hooks`
 skips its registration when the plugin is enabled (override:
-`--mcp-even-if-plugin`), and `gbrain doctor` warns on a real
+`--mcp-even-if-plugin`), and `foresights doctor` warns on a real
 double-registration. A plugin being ENABLED is a config signal, not a health
 signal — if its server isn't working, fix the binary, or remove the plugin.
 
 **Upgrading** has two halves: `codex plugin marketplace upgrade` refreshes
 the plugin snapshot (skills + manifests); the `gbrain-upgrade` skill or a
-`bun install -g github:garrytan/gbrain#stable` re-run refreshes the
+`bun install -g github:aimonk2025/gbrain#stable` re-run refreshes the
 binary the launcher resolves.
 
 ## Connect without the plugin
@@ -137,9 +137,9 @@ variable. Where the token lives depends on the path:
 
 | Path | Where the bearer token lives |
 | --- | --- |
-| `gbrain connect <url> --token <token> --agent codex [--install]` (this page) | Your shell environment (`GBRAIN_REMOTE_TOKEN`); Codex's config stores only the variable name. |
-| `gbrain connect <url> --harness codex --credentials-file <handoff> --install` (the [machine handoff](../guides/hosted-harness-access.md)) | **Inline** in a managed, 0600 `[mcp_servers.<name>]` block in `~/.codex/config.toml`. |
-| `gbrain bootstrap harness` (local agent-framework boxes) | **Inline** in the same managed block; stated in its consent block, removable with `gbrain bootstrap harness --remove`. |
+| `foresights connect <url> --token <token> --agent codex [--install]` (this page) | Your shell environment (`GBRAIN_REMOTE_TOKEN`); Codex's config stores only the variable name. |
+| `foresights connect <url> --harness codex --credentials-file <handoff> --install` (the [machine handoff](../guides/hosted-harness-access.md)) | **Inline** in a managed, 0600 `[mcp_servers.<name>]` block in `~/.codex/config.toml`. |
+| `foresights bootstrap harness` (local agent-framework boxes) | **Inline** in the same managed block; stated in its consent block, removable with `foresights bootstrap harness --remove`. |
 
 The inline paths exist because framework-spawned Codex inherits no shell
 profile. Anything that reads or prints that config file (support bundles,
@@ -157,33 +157,33 @@ ignore it, the receipt adds `token_warning`: add the file to that repository's
 committed. Rotating a client secret does not invalidate access tokens already
 issued, so it is not the fix for an exposed token.
 
-## Fastest path: `gbrain connect`
+## Fastest path: `foresights connect`
 
 Use the brain's configured HTTPS endpoint if it already has one. Otherwise,
-publish on the brain host with `gbrain mcp expose` (tailnet-only is enough for
+publish on the brain host with `foresights mcp expose` (tailnet-only is enough for
 your own laptops; [remote MCP guide](../guides/remote-mcp.md)), which prints
 `https://your-machine.your-tailnet.ts.net/mcp`. Mint a token on the brain host,
-then run `gbrain connect` inside the intended client environment. Substitute
+then run `foresights connect` inside the intended client environment. Substitute
 the configured endpoint below for an existing ngrok or cloud-host deployment:
 
 **Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*.
 
 ```bash
-gbrain auth create "codex"
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --agent codex
+foresights auth create "codex"
+foresights connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --agent codex
 ```
 
-> **PGLite brains:** `gbrain auth create` opens the database, which fails with
+> **PGLite brains:** `foresights auth create` opens the database, which fails with
 > `live_serve` while the expose-managed service holds it. Mint the token
-> **before** the service runs (ahead of `gbrain mcp expose`, or while the service
+> **before** the service runs (ahead of `foresights mcp expose`, or while the service
 > is stopped briefly), or provision through the running server instead —
-> `gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
+> `foresights mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
 > `/admin` dashboard. Postgres brains mint fine while the server runs.
 
 This prints a copy-paste block. Or wire it up directly and smoke-test the token:
 
 ```bash
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --agent codex --install
+foresights connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --agent codex --install
 ```
 
 `--install` runs `codex mcp add` for you, then makes one real call to the brain so
@@ -194,7 +194,7 @@ var at runtime, keep `GBRAIN_REMOTE_TOKEN` exported in your shell profile.
 
 ```bash
 export GBRAIN_REMOTE_TOKEN=gbrain_xxx
-codex mcp add gbrain --url https://your-machine.your-tailnet.ts.net/mcp \
+codex mcp add foresights --url https://your-machine.your-tailnet.ts.net/mcp \
   --bearer-token-env-var GBRAIN_REMOTE_TOKEN
 ```
 
@@ -208,7 +208,7 @@ Registering the MCP server only makes the tools available. Agents seldom call a
 brain nobody told them about, so finish the install with:
 
 ```bash
-gbrain setup codex --instructions-only
+foresights setup codex --instructions-only
 ```
 
 It writes one short marked block into `$CODEX_HOME/AGENTS.md` (or a non-empty `AGENTS.override.md`, since Codex
@@ -217,16 +217,16 @@ search the brain first, read the best hit, fill gaps with other tools, apply you
 access rules, then finish the task. Text outside the markers is never touched, a
 re-run upgrades the block in place, `--dry-run` previews it,
 `--no-instructions` opts out (and is remembered) and `--remove` takes it out.
-`gbrain setup codex` and `gbrain connect --agent codex --install` write it for
+`foresights setup codex` and `foresights connect --agent codex --install` write it for
 you; the Codex plugin and a hand-run `codex mcp add` do not. While the block is
 installed, setup's UserPromptSubmit hook also leads every turn with the same rule.
 After a hand-run `codex mcp add`, `--instructions-only` adds that hook on its own
 (a group in `$CODEX_HOME/hooks.json` that prints only the rule, trusted in
-`config.toml`), unless setup, bootstrap or a gbrain plugin already carries it. It
+`config.toml`), unless setup, bootstrap or a foresights plugin already carries it. It
 runs the hook once and exits non-zero with `turn_hook_not_loaded` when it does
 not load ([repair](../guides/repair.md#turn-hook-not-loaded)); `/hooks` inside a
 session lists it.
-`gbrain doctor` warns when the block is missing or out of date, or its per-turn
+`foresights doctor` warns when the block is missing or out of date, or its per-turn
 hook is missing or untrusted.
 
 ## Always-loaded core memory
@@ -236,13 +236,13 @@ Codex does not put MCP server instructions in the prompt, so core memory
 instruction file:
 
 ```bash
-gbrain compile-context --target codex-global
+foresights compile-context --target codex-global
 ```
 
 This writes the default source's core block into a managed block in
 `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`), which Codex loads in
-every session. Rerun it after core changes (`gbrain doctor` names a stale copy);
-`gbrain compile-context --target codex-global --remove-core` takes it out.
+every session. Rerun it after core changes (`foresights doctor` names a stale copy);
+`foresights compile-context --target codex-global --remove-core` takes it out.
 
 ## Verify
 
@@ -256,7 +256,7 @@ Call get_brain_identity, then search my brain for [topic].
 everything it can do.
 
 > **`list_skills` empty?** It's gated by `mcp.publish_skills` on the host — enable
-> it with `gbrain config set mcp.publish_skills true`. The core tools (search,
+> it with `foresights config set mcp.publish_skills true`. The core tools (search,
 > query, get_page, put_page, capture, think, find_experts) work regardless —
 > prefer `capture` for quick notes (auto-slug + dedupe), `put_page` for
 > full-control writes; if a narrowed token's list lacks capture, use `put_page`.
@@ -266,7 +266,7 @@ everything it can do.
 ## Remove
 
 ```bash
-codex mcp remove gbrain
+codex mcp remove foresights
 ```
 
 ## Notes
@@ -274,26 +274,26 @@ codex mcp remove gbrain
 - The token is a long-lived, full-access secret. Keep `GBRAIN_REMOTE_TOKEN` out of
   version control and prefer a scoped token if your host supports one.
 - Local stdio also works if you run the brain on the same machine:
-  `gbrain setup codex` registers `serve --surface starter --advertise verbs` behind
-  gbrain's launcher, so the session directory's `bunfig.toml` and `.env` never load
-  (`gbrain serve` registered with a bare `codex mcp add` loads them). That is the
-  daily-driver tool list every new registration gbrain writes pins (`request_tools`
+  `foresights setup codex` registers `serve --surface starter --advertise verbs` behind
+  foresights's launcher, so the session directory's `bunfig.toml` and `.env` never load
+  (`foresights serve` registered with a bare `codex mcp add` loads them). That is the
+  daily-driver tool list every new registration foresights writes pins (`request_tools`
   reaches the rest; `--surface full` is the opt-in for every operation). A
   `GBRAIN_SURFACE` value in the Codex server entry's `env` table overrides the flag.
 - **PGLite brains are single-process.** PGLite is a single-writer embedded
-  Postgres: the first running `gbrain serve` (the plugin's, or a stdio
+  Postgres: the first running `foresights serve` (the plugin's, or a stdio
   registration) owns the brain's data directory via the data-dir lock. A
-  second `serve` — say, gbrain registered in a second harness on the same
+  second `serve` — say, foresights registered in a second harness on the same
   machine — or any CLI command that opens the DB fails on the lock while
-  that serve is live (`gbrain sync` is the one exception: it delegates to
+  that serve is live (`foresights sync` is the one exception: it delegates to
   the live serve). If multiple processes need the brain at once, run ONE
-  shared `gbrain serve --http` and point every client at it (the remote
+  shared `foresights serve --http` and point every client at it (the remote
   paths above), or migrate to the Postgres/Supabase engine, which tolerates
   concurrent connections. Details:
   [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
 - **Ambient recall.** Codex has lifecycle hooks (`SessionStart`,
   `UserPromptSubmit`, `SessionEnd` in `$CODEX_HOME/hooks.json`, each trusted by
-  a `[hooks.state]` entry in config.toml); `gbrain setup codex` wires the two
+  a `[hooks.state]` entry in config.toml); `foresights setup codex` wires the two
   read-context hooks so brain pages named in a prompt arrive as context without
   a tool call. `hooks.json` is machine-wide, so those hooks name no source:
   each session reads context from the source its capture uses, `GBRAIN_SOURCE`

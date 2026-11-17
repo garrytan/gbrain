@@ -6,7 +6,7 @@ export const v078: Migration = {
   // D20 Phase 3: add the unified-multimodal vector column to content_chunks.
   //
   // Column-only migration — the HNSW partial index is built AFTER the first
-  // bulk reindex completes (via `gbrain reindex --multimodal --build-index`
+  // bulk reindex completes (via `foresights reindex --multimodal --build-index`
   // or auto-built at completion). pgvector docs explicitly note that HNSW
   // build is faster after data load, and per-row index maintenance during
   // bulk reindex would slow the operation 2-3x.

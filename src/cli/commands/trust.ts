@@ -1,5 +1,5 @@
 /**
- * `gbrain trust`: the memory-trust noun (#5575, DX-7). This module dispatches
+ * `foresights trust`: the memory-trust noun (#5575, DX-7). This module dispatches
  * `backfill` (A8, DX-5; `--repair-unknown-markers`, #6550 trust/marker-repair.ts; `--label-lowerings`, GST-2468 trust/label-lowerings.ts), `scan` (DX-6) and `claim-sources` (legacy content, trust/claim.ts),
  * and hands the owner subcommands (review, confirm,
  * release, drop, revert, explain, allow, disable) to src/commands/trust.ts.
@@ -17,30 +17,30 @@ import { TRUST_OWNER_USAGE, isTrustOwnerSubcommand, localTrustBackend, reportTru
 import { TRUST_CLAIM_USAGE } from '../../commands/trust-claim.ts';
 
 export const TRUST_BACKFILL_USAGE = [
-  'Usage: gbrain trust backfill [--dry-run] [--resume] [--batch-size N] [--json]',
+  'Usage: foresights trust backfill [--dry-run] [--resume] [--batch-size N] [--json]',
   '  Classifies rows written before trust tiers (facts, takes, timeline entries, pages) from deterministic signals:',
   '  connector sources, page source_kind, transcript/extraction/dream provenance, facts and takes source tags, and',
   '  the journaled request that wrote the row. Rows with no signal stay "unverified origin"; nothing becomes',
   '  "confirmed by you". --dry-run is read-only (no migrations, no writes) and works before the trust migration;',
   '  it reports the projected count per table and tier. --resume continues an interrupted run.',
   '',
-  'Usage: gbrain trust backfill --repair-unknown-markers [--source ID] [--slug SLUG ... --expect HASH] [--json]',
+  'Usage: foresights trust backfill --repair-unknown-markers [--source ID] [--slug SLUG ... --expect HASH] [--json]',
   '  Lists pages whose trust_tier frontmatter marker is "unknown" while their stored tier is higher (an agent edit',
   '  before v0.60.249.0 stamped it), with the evidence for each, and ends with the exact apply command. Nothing is',
   '  classified for you: apply rewrites only the pages you name with --slug (repeatable), at the revisions of the',
   '  preview whose hash you pass to --expect. The marker becomes the stored tier (none at owner tiers); the tier',
   '  stays. Local CLI only. Docs: docs/guides/memory-trust.md#repair-unknown-markers',
   '',
-  'Usage: gbrain trust backfill --label-lowerings [--source ID] [--json]',
+  'Usage: foresights trust backfill --label-lowerings [--source ID] [--json]',
   '  Read-only. Lists every lower_page proposal with whether its lowering write changed only privacy labels (visibility,',
   '  access, confidentiality) and server stamps, counted by proposer. Changes no tier. Docs: docs/guides/memory-trust.md#label-lowerings',
   '',
-  'Usage: gbrain trust scan [--batch-size N] [--json]',
+  'Usage: foresights trust scan [--batch-size N] [--json]',
   '  Runs the write gate\'s deterministic detector over agent-written and lower rows written before the gate,',
   '  recording a receipt for each instruction-like row, so it reads as flagged (and, under trust.agent_activation',
-  '  suppress, stays out of proactive context) until you confirm it (gbrain trust review). Changes no row;',
+  '  suppress, stays out of proactive context) until you confirm it (foresights trust review). Changes no row;',
   '  resumable (rerun to continue); a detector upgrade rescans.',
-  '  Nothing runs it for you: an agent asks you first. Claim your own sources first (gbrain trust claim-sources)',
+  '  Nothing runs it for you: an agent asks you first. Claim your own sources first (foresights trust claim-sources)',
   '  so your older notes are not treated as unverified.',
 ].join('\n');
 export const TRUST_USAGE = `${TRUST_OWNER_USAGE}\n\n${TRUST_BACKFILL_USAGE}\n\n${TRUST_CLAIM_USAGE}`;
@@ -70,7 +70,7 @@ async function runMarkerRepair(engine: BrainEngine, rest: string[], args: string
   const sourceId = value('--source') ?? null;
   if ((slugs.length > 0) !== (expect !== undefined) || (expect !== undefined && (!expect || expect.startsWith('--')))) {
     await refuse(args, 'Applying the marker repair needs both the pages (--slug, repeatable) and the preview hash (--expect).',
-      'Run gbrain trust backfill --repair-unknown-markers to preview, then run the command it prints after "Apply with:", naming only the pages you judge accidental.');
+      'Run foresights trust backfill --repair-unknown-markers to preview, then run the command it prints after "Apply with:", naming only the pages you judge accidental.');
     return;
   }
   const { applyMarkerRepair, previewMarkerRepair, renderMarkerRepairPreview } = await import('../../core/trust/marker-repair.ts');
@@ -97,8 +97,8 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
   }
   if (!known) {
     if (!jsonRequested(args)) console.log(TRUST_USAGE);
-    await refuse(args, !sub || sub.startsWith('-') ? 'gbrain trust needs a subcommand.' : `Unknown trust subcommand '${sub}'.`,
-      'gbrain trust --help lists the subcommands (review, confirm, explain, backfill, scan, claim-sources and the rest).');
+    await refuse(args, !sub || sub.startsWith('-') ? 'foresights trust needs a subcommand.' : `Unknown trust subcommand '${sub}'.`,
+      'foresights trust --help lists the subcommands (review, confirm, explain, backfill, scan, claim-sources and the rest).');
     return;
   }
   if (sub === 'claim-sources') {
@@ -120,7 +120,7 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
   const sizeAt = rest.indexOf('--batch-size');
   const batchSize = sizeAt >= 0 ? Number(rest[sizeAt + 1]) : undefined;
   if (batchSize !== undefined && (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100_000)) {
-    await refuse(args, '--batch-size must be an integer from 1 to 100000.', `Run gbrain trust ${sub} --batch-size 500, or omit --batch-size for the default.`);
+    await refuse(args, '--batch-size must be an integer from 1 to 100000.', `Run foresights trust ${sub} --batch-size 500, or omit --batch-size for the default.`);
     return;
   }
   if (sub === 'scan') {
@@ -132,7 +132,7 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
     if (jsonRequested(args)) await writeStdoutFinal(`${JSON.stringify(scan, null, 2)}\n`);
     else console.log([`Trust scan (detector v${scan.detector_version}):`,
       ...scan.tables.map(t => `  ${t.table}: ${t.scanned} row(s) scanned, ${t.flagged} flagged${t.done ? '' : ' (more to scan)'}`),
-      scan.complete ? '  Complete. Flagged rows carry their flag wherever they are read (and stay out of proactive context under trust.agent_activation suppress) until confirmed (gbrain trust review).' : `  Continue with: ${scan.resume_command}`].join('\n'));
+      scan.complete ? '  Complete. Flagged rows carry their flag wherever they are read (and stay out of proactive context under trust.agent_activation suppress) until confirmed (foresights trust review).' : `  Continue with: ${scan.resume_command}`].join('\n'));
     return;
   }
   if (rest.includes('--label-lowerings')) {
@@ -140,7 +140,7 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
     const at = rest.indexOf('--source');
     const source = at >= 0 ? rest[at + 1] ?? '' : null;
     if (source !== null && (!source || source.startsWith('-'))) {
-      await refuse(args, '--source needs a source id.', 'Run gbrain trust backfill --label-lowerings --source <id>, or omit --source to list every source.');
+      await refuse(args, '--source needs a source id.', 'Run foresights trust backfill --label-lowerings --source <id>, or omit --source to list every source.');
       return;
     }
     const { listLabelLowerings, renderLabelLowerings } = await import('../../core/trust/label-lowerings.ts');

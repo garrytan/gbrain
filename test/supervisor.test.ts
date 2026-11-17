@@ -578,7 +578,7 @@ describe('MinionSupervisor', () => {
         );
         expect(rows[0]!.status).toBe('cancelled');
         expect(rows[0]!.error_text).toContain('worker startup recovery');
-        expect(diagnostic).toHaveBeenCalledWith('[gbrain jobs] private-queue startup recovery: cancelled 1 job(s) across 1 orphaned queue(s)');
+        expect(diagnostic).toHaveBeenCalledWith('[foresights jobs] private-queue startup recovery: cancelled 1 job(s) across 1 orphaned queue(s)');
       } finally { diagnostic.mockRestore(); }
     });
 
@@ -593,7 +593,7 @@ describe('MinionSupervisor', () => {
         await expect(
           maybeRunWorkerStartupRecovery(new MinionQueue(throwingEngine), { GBRAIN_SUPERVISED: '1' }, true),
         ).resolves.toBeUndefined();
-        expect(diagnostic).toHaveBeenCalledWith('[gbrain jobs] private-queue startup recovery failed: injected executeRaw failure');
+        expect(diagnostic).toHaveBeenCalledWith('[foresights jobs] private-queue startup recovery failed: injected executeRaw failure');
       } finally { diagnostic.mockRestore(); }
     });
 

@@ -65,8 +65,8 @@ describe('checkEmbeddingWidthConsistency', () => {
     const check = await checkEmbeddingWidthConsistency(engine);
     expect(check.status).toBe('warn');
     expect(check.message).toContain('mismatch');
-    // v0.37 hint points at gbrain init (the path that works), not config set.
-    expect(check.message).toContain('gbrain init');
+    // v0.37 hint points at foresights init (the path that works), not config set.
+    expect(check.message).toContain('foresights init');
   });
 
   test('gateway unconfigured: skips with ok', async () => {

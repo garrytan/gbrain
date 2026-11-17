@@ -1,11 +1,11 @@
 /**
- * GBRA-224 W5: the default install adds nothing. A fresh `gbrain setup
- * claude-code`, `gbrain setup codex` or `gbrain init --pglite --no-embedding`
+ * GBRA-224 W5: the default install adds nothing. A fresh `foresights setup
+ * claude-code`, `foresights setup codex` or `foresights init --pglite --no-embedding`
  * (keyless, PGLite, no repo) starts no process that outlives it, calls no
  * service manager, writes no systemd unit, launchd plist, crontab entry or
  * autopilot start script, connects no connector, and leaves self-upgrade in
- * notify mode. An upgrade (`gbrain post-upgrade` without the opt-out, the
- * path `gbrain upgrade` takes) on a brain that never had autopilot installs
+ * notify mode. An upgrade (`foresights post-upgrade` without the opt-out, the
+ * path `foresights upgrade` takes) on a brain that never had autopilot installs
  * none, repo-less or with a repo; it only rewrites a unit that is already
  * installed. Postgres brains (where Phase F can install) are covered in
  * apply-migrations-safety.serial.test.ts, with the postinstall argv.
@@ -76,7 +76,7 @@ async function expectNothingAdded(b: Box): Promise<void> {
 
 describe('the default install adds nothing (GBRA-224 W5)', () => {
   for (const harness of ['claude-code', 'codex'] as const) {
-    test(`fresh \`gbrain setup ${harness}\` on a repo-less keyless brain starts and installs nothing`, async () => {
+    test(`fresh \`foresights setup ${harness}\` on a repo-less keyless brain starts and installs nothing`, async () => {
       const b = box();
       const r = await runCli(['setup', harness, '--gbrain-bin', b.launcher, '--json'],
         { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, PATH: `${b.bin}:${process.env.PATH ?? ''}` }, timeoutMs: 180_000 });
@@ -86,7 +86,7 @@ describe('the default install adds nothing (GBRA-224 W5)', () => {
     }, 240_000);
   }
 
-  test('`gbrain init --pglite --no-embedding` starts and installs nothing', async () => {
+  test('`foresights init --pglite --no-embedding` starts and installs nothing', async () => {
     const b = box();
     const r = await gbrain(b, ['init', '--pglite', '--no-embedding', '--json']);
     expect(r.exitCode, r.stderr).toBe(0);
@@ -98,7 +98,7 @@ test('INSTALL_FOR_AGENTS.md lists every opt-in in one section, under the anchor 
   const doc = readFileSync(resolve(import.meta.dir, '..', 'INSTALL_FOR_AGENTS.md'), 'utf8');
   expect(doc.match(/^## Opt-ins$/gm)).toHaveLength(1);
   const section = doc.split(/^## Opt-ins$/m)[1]!.split(/^## /m)[0]!;
-  for (const command of ['--embedding-model', 'gbrain autopilot --install', ' dream`', 'gbrain connectors auth', 'self_upgrade.mode auto', 'self_upgrade.channel']) {
+  for (const command of ['--embedding-model', 'foresights autopilot --install', ' dream`', 'foresights connectors auth', 'self_upgrade.mode auto', 'self_upgrade.channel']) {
     expect(section).toContain(command);
   }
 });
@@ -129,7 +129,7 @@ describe('an upgrade on a brain that never had autopilot installs none (GBRA-224
     const unitDir = join(b.home, '.config', 'systemd', 'user');
     mkdirSync(unitDir, { recursive: true });
     const unit = join(unitDir, 'gbrain-autopilot.service');
-    writeFileSync(unit, `[Unit]\nDescription=GBrain Autopilot\n[Service]\nExecStart=${join(b.home, '.gbrain', 'autopilot-run.sh')}\nRestart=on-failure\nStandardOutput=append:%h/.gbrain/autopilot.log\n`);
+    writeFileSync(unit, `[Unit]\nDescription=Foresights Autopilot\n[Service]\nExecStart=${join(b.home, '.gbrain', 'autopilot-run.sh')}\nRestart=on-failure\nStandardOutput=append:%h/.gbrain/autopilot.log\n`);
     const r = await gbrain(b, ['post-upgrade']);
     expect(r.exitCode, r.stderr + r.stdout).toBe(0);
     expect(readFileSync(unit, 'utf8')).toContain('Restart=always');

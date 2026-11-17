@@ -1,7 +1,7 @@
 {
   "name": "agent-voice",
   "version": "0.1.0",
-  "description": "Voice agent reference (Mars + Venus personas, WebRTC-first browser client, optional Twilio adapter). Copied into the operator's host agent repo via `gbrain integrations install agent-voice`; not a runtime gbrain dependency.",
+  "description": "Voice agent reference (Mars + Venus personas, WebRTC-first browser client, optional Twilio adapter). Copied into the operator's host agent repo via `foresights integrations install agent-voice`; not a runtime foresights dependency.",
   "type": "module",
   "main": "code/server.mjs",
   "scripts": {

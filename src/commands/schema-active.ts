@@ -1,5 +1,5 @@
 /**
- * `gbrain schema active [--source <id>] [--json]` (#6090): report the pack the
+ * `foresights schema active [--source <id>] [--json]` (#6090): report the pack the
  * engine would use, resolved through the same tier chain as the engine
  * (`engineSchemaInput`), including the tier-3 per-source override. An unknown
  * source is refused (`unknown_source`); an unreadable database is a degraded
@@ -42,7 +42,7 @@ export async function runSchemaActive(opts: { json: boolean; sourceId?: string }
   if (db.state === 'read' && !db.sourceKnown) {
     process.exit(writeCliRefusal(opError('unknown_source',
       `Source "${sourceId}" is not registered on this brain (or is archived), so no per-source pack applies to it.`,
-      'Run `gbrain sources list --json` for the registered source ids, then pass one with --source.', {
+      'Run `foresights sources list --json` for the registered source ids, then pass one with --source.', {
         docs: DOCS,
         fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'Lists the registered source ids that schema active --source accepts.' },
@@ -70,14 +70,14 @@ export async function runSchemaActive(opts: { json: boolean; sourceId?: string }
     const why = `The brain database could not be read (${db.error}), so the database-plane tiers (brain-wide schema_pack and per-source overrides) were skipped; the pack shown comes from env/config.json only and may not be what the engine uses.`;
     if (json) {
       process.exit(writeCliRefusal(opError('database_error', 'database unreadable: showing the env/config.json resolution only.',
-        'Run `gbrain doctor --json` to diagnose the database, then rerun `gbrain schema active --json`.', {
+        'Run `foresights doctor --json` to diagnose the database, then rerun `foresights schema active --json`.', {
           why, docs: DOCS,
           fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
             why: 'Reports why the brain database is unreadable and names the repair.',
             verify: { argv: ['gbrain', 'schema', 'active', '--json'] } },
         }), 'schema', { json, legacy: { ...result, degraded: true } }));
     }
-    console.error(`Degraded: database unreadable (${db.error}); showing the env/config.json resolution only. Run: gbrain doctor --json`);
+    console.error(`Degraded: database unreadable (${db.error}); showing the env/config.json resolution only. Run: foresights doctor --json`);
   }
 
   if (json) { console.log(JSON.stringify(result, null, 2)); return; }

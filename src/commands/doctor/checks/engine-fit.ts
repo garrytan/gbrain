@@ -1,7 +1,7 @@
 /**
  * Engine-fit check cluster — the doctor half of the db-availability loop.
  *
- *   - pglite_scale: makes `gbrain init`'s one-shot 1000-file Supabase
+ *   - pglite_scale: makes `foresights init`'s one-shot 1000-file Supabase
  *     suggestion re-evaluable for the LIFE of the brain (init counts .md
  *     files in a pre-init directory; a live brain is measured in pages).
  *   - db_repair_recurrence: reads the db-repair receipts JSONL. ENGINE-FREE
@@ -10,9 +10,9 @@
  *     the SAME reason for the SAME brain_id count (diagnose/refused rows and
  *     cross-brain rows never sum toward one threshold).
  *
- * pglite_scale's fix is the read-only graduation plan (`gbrain migrate --to
+ * pglite_scale's fix is the read-only graduation plan (`foresights migrate --to
  * postgres --plan --json`, which proposes a target when none is given) and
- * names the stay-on-PGLite alternative, `gbrain mcp expose`.
+ * names the stay-on-PGLite alternative, `foresights mcp expose`.
  */
 
 import type { BrainEngine } from '../../../core/engine.ts';
@@ -36,12 +36,12 @@ export async function pgliteScaleCheck(engine: BrainEngine): Promise<Check | nul
         message:
           `PGLite brain has ${stats.page_count} pages (threshold ${PGLITE_SCALE_PAGE_THRESHOLD}). ` +
           `Postgres gives faster search and concurrent access at this size. ` +
-          `Preview the move (read-only): gbrain migrate --to postgres --plan --json; or stay on PGLite and share it with other machines: gbrain mcp expose.`,
+          `Preview the move (read-only): foresights migrate --to postgres --plan --json; or stay on PGLite and share it with other machines: foresights mcp expose.`,
         fix: {
           argv: PGLITE_SCALE_PLAN_ARGV, consent: [], actor: 'agent', requires_exclusive: false,
           verify: { argv: ['gbrain', 'doctor', '--only', 'pglite_scale', '--json'] }, docs: 'docs/guides/move-to-postgres.md',
-          why: `At ${stats.page_count} pages Postgres searches faster and serves several machines at once. The plan is read-only: it lists what moves, what stays, the blockers and the exact run command (export the user's Postgres URL as GBRAIN_TARGET_URL and add --url-env GBRAIN_TARGET_URL; without one it proposes a target). Staying on PGLite is fine too: \`gbrain mcp expose\` shares this brain without moving it.`,
-          user_message: `Your brain has ${stats.page_count} pages, the size where Postgres gets faster and lets several machines share it. Should I preview a move to Postgres (nothing changes yet), or keep it on this computer and share it over MCP with gbrain mcp expose?`,
+          why: `At ${stats.page_count} pages Postgres searches faster and serves several machines at once. The plan is read-only: it lists what moves, what stays, the blockers and the exact run command (export the user's Postgres URL as GBRAIN_TARGET_URL and add --url-env GBRAIN_TARGET_URL; without one it proposes a target). Staying on PGLite is fine too: \`foresights mcp expose\` shares this brain without moving it.`,
+          user_message: `Your brain has ${stats.page_count} pages, the size where Postgres gets faster and lets several machines share it. Should I preview a move to Postgres (nothing changes yet), or keep it on this computer and share it over MCP with foresights mcp expose?`,
         },
       };
     }

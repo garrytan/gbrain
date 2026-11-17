@@ -1,8 +1,8 @@
 /**
- * #7973: a source registered as a plain directory (`gbrain sources add --path <dir> --force`, no Git checkout at or
- * above it) syncs without Git: each run imports the directory's files the way `gbrain import` does on a repo-less
+ * #7973: a source registered as a plain directory (`foresights sources add --path <dir> --force`, no Git checkout at or
+ * above it) syncs without Git: each run imports the directory's files the way `foresights import` does on a repo-less
  * brain, where the database is the record. There are no commits to diff, so a file removed from the directory keeps
- * its page (`gbrain delete` removes one), and no commit bookmark is written.
+ * its page (`foresights delete` removes one), and no commit bookmark is written.
  */
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';

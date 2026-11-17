@@ -1,5 +1,5 @@
 /**
- * `gbrain sources guard <source> --install|--uninstall|--status [--mode enforce] [--json]` (PR B Part 5,
+ * `foresights sources guard <source> --install|--uninstall|--status [--mode enforce] [--json]` (PR B Part 5,
  * docs/designs/REFRESH_WRITE_BARRIER.md): the commit guard on a managed source's canonical worktree. Trusted local CLI
  * only (no operation exposes it), on the worktree's registered owner host, and install/uninstall run under the
  * worktree's native writer lock. The hook goes in a hooks directory private to that worktree, so a person's own linked
@@ -14,7 +14,7 @@ import { acquireWorktree, getWorktreeBinding, managedPersistenceEnabled } from '
 import { existingHostIdFor } from '../core/persistence/identity.ts';
 import { installOwnerGuard, ownerGuardStatus, uninstallOwnerGuard, type GuardMode, type OwnerGuardStatus } from '../core/git/commit-guard.ts';
 
-const USAGE = 'gbrain sources guard <source> --install|--uninstall|--status [--mode enforce] [--json]';
+const USAGE = 'foresights sources guard <source> --install|--uninstall|--status [--mode enforce] [--json]';
 const LOCK_WAIT_MS = 10_000;
 
 export interface SourcesGuardOptions { sourceId: string; action: 'install' | 'uninstall' | 'status'; mode: GuardMode }
@@ -48,17 +48,17 @@ export function parseSourcesGuardArgs(args: string[]): SourcesGuardOptions {
 async function ownedBinding(engine: BrainEngine, sourceId: string) {
   if (!await managedPersistenceEnabled(engine)) {
     throw opError('invalid_params', `This brain is not managed, so source ${sourceId} has no canonical worktree to guard.`,
-      'In an unmanaged checkout, gbrain git guard --install (run inside the checkout) installs the opt-in guard.');
+      'In an unmanaged checkout, foresights git guard --install (run inside the checkout) installs the opt-in guard.');
   }
   const hostId = existingHostIdFor(engine);
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) {
     throw opError('invalid_params', `Source ${sourceId} has no claimed canonical worktree.`,
-      `Check the source with gbrain sources writer status --source ${sourceId} --json; an unmanaged checkout takes gbrain git guard --install.`);
+      `Check the source with foresights sources writer status --source ${sourceId} --json; an unmanaged checkout takes foresights git guard --install.`);
   }
   if (binding.owner_host_id !== hostId || !binding.local_path) {
     throw opError('permission_denied', `Only the registered owner host (${binding.owner_host_id}) of source ${sourceId} may guard its worktree; this process has ${hostId ? `host identity ${hostId}` : 'no host identity'}.`,
-      `Run it on the owner host with the HOME or GBRAIN_HOME its writer uses; check the owner with gbrain sources writer status ${sourceId}. Nothing was changed.`);
+      `Run it on the owner host with the HOME or GBRAIN_HOME its writer uses; check the owner with foresights sources writer status ${sourceId}. Nothing was changed.`);
   }
   return { ...binding, local_path: binding.local_path };
 }

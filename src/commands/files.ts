@@ -60,10 +60,10 @@ export function formatFileSizeKb(rawSizeBytes: number | bigint | string | null):
  */
 export function noStorageBackendMessage(op: string): string {
   return (
-    `gbrain files ${op}: no storage backend configured — refusing to continue.\n` +
+    `foresights files ${op}: no storage backend configured — refusing to continue.\n` +
     `  The files table records metadata only (there is no blob column), so without a\n` +
     `  backend the bytes go nowhere while the DB claims they are stored.\n` +
-    `  Fix: configure storage (see gbrain init storage settings), or keep the binary\n` +
+    `  Fix: configure storage (see foresights init storage settings), or keep the binary\n` +
     `  outside the brain and capture its extracted text instead.`
   );
 }
@@ -133,7 +133,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
       await filesStatus(args.slice(1));
       break;
     default:
-      console.error(`Usage: gbrain files <command> [args]`);
+      console.error(`Usage: foresights files <command> [args]`);
       console.error(`  list [slug]               List files for a page (or all)`);
       console.error(`  upload <file> --page <slug>  Upload file linked to page`);
       console.error(`  upload-raw <file> --page <slug> [--type <type>]  Smart upload with .redirect.yaml pointer`);
@@ -176,7 +176,7 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
   const pageSlug = args.find((a, i) => args[i - 1] === '--page') || null;
 
   if (!filePath || !existsSync(filePath)) {
-    console.error('Usage: gbrain files upload <file> --page <slug>');
+    console.error('Usage: foresights files upload <file> --page <slug>');
     process.exit(1);
   }
 
@@ -256,7 +256,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const noPointer = args.includes('--no-pointer');
 
   if (!filePath || !existsSync(filePath)) {
-    console.error('Usage: gbrain files upload-raw <file> --page <slug> [--type <type>] [--no-pointer]');
+    console.error('Usage: foresights files upload-raw <file> --page <slug> [--type <type>] [--no-pointer]');
     process.exit(1);
   }
 
@@ -284,7 +284,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
     // command did NOTHING (no repo copy, no files row) while printing
     // success:true. Actually bank the file: copy it into the page's .raw/
     // sidecar dir inside the brain repo and record a files row so
-    // `gbrain files list` / `verify` can see it.
+    // `foresights files list` / `verify` can see it.
     if (!pageSlug) {
       console.error('files upload-raw: --page <slug> is required for git-storage (small text/PDF) files.');
       process.exit(1);
@@ -298,7 +298,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
       console.error(
         `files upload-raw: cannot resolve a brain-repo destination for page "${pageSlug}" ` +
         `(${target.skipped}). Configure sync.repo_path (or the source's local_path), ` +
-        `or use \`gbrain files upload\` with a cloud storage backend.`,
+        `or use \`foresights files upload\` with a cloud storage backend.`,
       );
       process.exit(1);
     }
@@ -360,8 +360,8 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   const { loadConfig } = await import('../core/config.ts');
   const config = loadConfig();
   if (!config?.storage) {
-    console.error('No storage backend configured. Run gbrain init with storage settings.');
-    console.error('Or use gbrain files upload for manual uploads.');
+    console.error('No storage backend configured. Run foresights init with storage settings.');
+    console.error('Or use foresights files upload for manual uploads.');
     process.exit(1);
   }
 
@@ -451,7 +451,7 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
 async function signedUrl(args: string[]) {
   const storagePath = args.find(a => !a.startsWith('--'));
   if (!storagePath) {
-    console.error('Usage: gbrain files signed-url <storage-path>');
+    console.error('Usage: foresights files signed-url <storage-path>');
     process.exit(1);
   }
 
@@ -470,7 +470,7 @@ async function signedUrl(args: string[]) {
 
 async function syncFiles(engine: BrainEngine, dir?: string) {
   if (!dir || !existsSync(dir)) {
-    console.error('Usage: gbrain files sync <directory>');
+    console.error('Usage: foresights files sync <directory>');
     process.exit(1);
   }
 
@@ -645,7 +645,7 @@ async function verifyFiles(engine: BrainEngine) {
   }
   if (unverifiable > 0) {
     console.error(
-      `gbrain files verify: ${unverifiable} cloud file row(s) recorded, but no storage backend is configured.\n` +
+      `foresights files verify: ${unverifiable} cloud file row(s) recorded, but no storage backend is configured.\n` +
       `  Byte existence cannot be checked and these rows cannot be retrieved, so they are\n` +
       `  reported as UNVERIFIABLE rather than "verified" — almost certainly phantoms left by\n` +
       `  a backend-less upload/sync. Configure storage, or delete the rows.`,
@@ -656,7 +656,7 @@ async function verifyFiles(engine: BrainEngine) {
   console.log(`${verified} files verified, ${mismatches} mismatches, ${missing} missing, ${unverifiable} unverifiable`);
   if (mismatches > 0 || missing > 0 || unverifiable > 0) {
     console.error(`VERIFY FAILED: ${mismatches} mismatches, ${missing} missing, ${unverifiable} unverifiable.`);
-    console.error(`Run: gbrain files sync --retry-failed`);
+    console.error(`Run: foresights files sync --retry-failed`);
     process.exit(1);
   }
 }
@@ -668,7 +668,7 @@ async function verifyFiles(engine: BrainEngine) {
 async function mirrorFiles(args: string[]) {
   const dir = args.find(a => !a.startsWith('--'));
   const dryRun = args.includes('--dry-run');
-  if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files mirror <dir> [--dry-run]'); process.exit(1); }
+  if (!dir || !existsSync(dir)) { console.error('Usage: foresights files mirror <dir> [--dry-run]'); process.exit(1); }
 
   const { stringify } = await import('../core/yaml-lite.ts');
   const { storage, storageConfig } = await requireStorageBackend('mirror');
@@ -704,7 +704,7 @@ async function mirrorFiles(args: string[]) {
 
 async function unmirrorFiles(args: string[]) {
   const dir = args.find(a => !a.startsWith('--'));
-  if (!dir) { console.error('Usage: gbrain files unmirror <dir>'); process.exit(1); }
+  if (!dir) { console.error('Usage: foresights files unmirror <dir>'); process.exit(1); }
 
   const markerPath = join(dir, '.supabase');
   if (existsSync(markerPath)) {
@@ -719,11 +719,11 @@ async function unmirrorFiles(args: string[]) {
 async function redirectFiles(args: string[]) {
   const dir = args.find(a => !a.startsWith('--'));
   const dryRun = args.includes('--dry-run');
-  if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files redirect <dir> [--dry-run]'); process.exit(1); }
+  if (!dir || !existsSync(dir)) { console.error('Usage: foresights files redirect <dir> [--dry-run]'); process.exit(1); }
 
   const markerPath = join(dir, '.supabase');
   if (!existsSync(markerPath)) {
-    console.error('Directory must be mirrored first. Run: gbrain files mirror <dir>');
+    console.error('Directory must be mirrored first. Run: foresights files mirror <dir>');
     process.exit(1);
   }
 
@@ -784,14 +784,14 @@ async function redirectFiles(args: string[]) {
 
   console.log(`Redirected ${redirected} files. Originals removed, breadcrumbs created.`);
   if (skippedMissing > 0) {
-    console.log(`Skipped ${skippedMissing} files (not found in remote storage — run 'gbrain files mirror' first).`);
+    console.log(`Skipped ${skippedMissing} files (not found in remote storage — run 'foresights files mirror' first).`);
   }
-  console.log('To undo: gbrain files restore <dir>');
+  console.log('To undo: foresights files restore <dir>');
 }
 
 async function restoreFiles(args: string[]) {
   const dir = args.find(a => !a.startsWith('--'));
-  if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files restore <dir>'); process.exit(1); }
+  if (!dir || !existsSync(dir)) { console.error('Usage: foresights files restore <dir>'); process.exit(1); }
 
   const { createStorage } = await import('../core/storage.ts');
   const { loadConfig } = await import('../core/config.ts');
@@ -844,7 +844,7 @@ async function restoreFiles(args: string[]) {
 async function cleanFiles(args: string[]) {
   const dir = args.find(a => !a.startsWith('--'));
   const confirmed = args.includes('--yes');
-  if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files clean <dir> [--yes]'); process.exit(1); }
+  if (!dir || !existsSync(dir)) { console.error('Usage: foresights files clean <dir> [--yes]'); process.exit(1); }
 
   if (!confirmed) {
     console.error('WARNING: This permanently removes redirect pointers.');
@@ -905,9 +905,9 @@ async function filesStatus(args: string[]) {
   console.log(`  Local binary files: ${local}`);
 
   if (mirrored === 0 && redirected === 0 && local > 0) {
-    console.log(`\n${local} local files. Run: gbrain files mirror <dir> to start migration.`);
+    console.log(`\n${local} local files. Run: foresights files mirror <dir> to start migration.`);
   } else if (redirected > 0) {
-    console.log(`\n${redirected} files redirected to storage. Run: gbrain files clean <dir> --yes to remove breadcrumbs.`);
+    console.log(`\n${redirected} files redirected to storage. Run: foresights files clean <dir> --yes to remove breadcrumbs.`);
   }
 }
 

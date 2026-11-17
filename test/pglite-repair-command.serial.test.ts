@@ -1,5 +1,5 @@
 /**
- * `gbrain pglite-repair` command surface (#223 WAL-repair wave) — SERIAL:
+ * `foresights pglite-repair` command surface (#223 WAL-repair wave) — SERIAL:
  * the happy path does a real persistent-PGLite cold start (create → corrupt
  * pg_wal → repair in place → reconnect), which is too heavy + lock-contended
  * for the parallel unit shards.
@@ -141,7 +141,7 @@ async function approvedPlanHash(dir: string): Promise<string> {
 const backupDirsBeside = (dir: string): string[] =>
   readdirSync(join(dir, '..')).filter((n) => n.startsWith(`${basename(dir)}.wal-repair-backup-`));
 
-describe('gbrain pglite-repair — dry-run is strictly read-only', () => {
+describe('foresights pglite-repair — dry-run is strictly read-only', () => {
   test('1. dry-run on a corrupt-ish layout: exit 0, JSON diagnosis, zero mutation', async () => {
     const parent = tmp('gbrain-repair-dry-');
     const dir = join(parent, 'brain.pglite');
@@ -196,7 +196,7 @@ describe('gbrain pglite-repair — dry-run is strictly read-only', () => {
   });
 });
 
-describe('gbrain pglite-repair — refusals (validate before lock, never mkdir a typo)', () => {
+describe('foresights pglite-repair — refusals (validate before lock, never mkdir a typo)', () => {
   test('3. non-dry-run on a missing path: exit 1, refused_missing-dir, path NOT created', async () => {
     const missing = join(tmp('gbrain-repair-missing-'), 'typo.pglite');
 
@@ -223,7 +223,7 @@ describe('gbrain pglite-repair — refusals (validate before lock, never mkdir a
       pid: process.pid, // this test process — provably alive
       acquired_at: Date.now(),
       refreshed_at: Date.now(),
-      command: 'gbrain embed',
+      command: 'foresights embed',
       subcommand: 'embed',
     });
 
@@ -254,7 +254,7 @@ describe('gbrain pglite-repair — refusals (validate before lock, never mkdir a
       boot_id: process.platform === 'linux' ? readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null,
       acquired_at: Date.now() - 60_000,
       refreshed_at: Date.now() - 60_000,
-      command: 'gbrain embed',
+      command: 'foresights embed',
       subcommand: 'embed',
     });
 
@@ -283,7 +283,7 @@ describe('gbrain pglite-repair — refusals (validate before lock, never mkdir a
       pid: process.pid, // alive — the pre-lock diagnosis catches it as 'locked'
       acquired_at: Date.now(),
       refreshed_at: Date.now(),
-      command: 'gbrain serve',
+      command: 'foresights serve',
       subcommand: 'serve',
     });
 
@@ -305,7 +305,7 @@ describe('gbrain pglite-repair — refusals (validate before lock, never mkdir a
   });
 });
 
-describe('gbrain pglite-repair — TTY + config gates', () => {
+describe('foresights pglite-repair — TTY + config gates', () => {
   test('8. non-TTY without the bound approval refuses: exit 3, consent payload with risk + undo, zero mutation', async () => {
     const dir = join(tmp('gbrain-repair-notty-'), 'brain.pglite');
     makeFakeLayout(dir);
@@ -331,7 +331,7 @@ describe('gbrain pglite-repair — TTY + config gates', () => {
     const out = JSON.parse(stdout.slice(0, stdout.indexOf('\n}\n') + 2));
     expect(out).toMatchObject({ code: 'confirmation_required', effects: ['destructive'], actor: 'agent' });
     expect(out.risk).toContain('may be lost');
-    expect(out.risk).toContain('Undo, with gbrain stopped: mv');
+    expect(out.risk).toContain('Undo, with foresights stopped: mv');
     expect(out.fix.argv).toEqual(['gbrain', 'pglite-repair', '--path', dir, '--json', '--yes', '--expect', out.plan_hash]);
     expect(out.user_message).toContain('Reset its write-ahead log now?');
     // Refused BEFORE any surgery: no backup dir, no sidecar.
@@ -397,7 +397,7 @@ describe('gbrain pglite-repair — TTY + config gates', () => {
   });
 });
 
-describe('gbrain pglite-repair — the happy path (real PGLite)', () => {
+describe('foresights pglite-repair — the happy path (real PGLite)', () => {
   test('4. corrupt pg_wal → repair in place → data survives, no auto-repair on reconnect', async () => {
     const dir = join(tmp('gbrain-repair-happy-'), 'brain.pglite');
 
@@ -459,7 +459,7 @@ describe('gbrain pglite-repair — the happy path (real PGLite)', () => {
   }, 180_000);
 });
 
-describe('gbrain pglite-repair — argument + quarantine hardening (adversarial fixes)', () => {
+describe('foresights pglite-repair — argument + quarantine hardening (adversarial fixes)', () => {
   test('unknown flag is rejected (exit 2), not silently ignored on a destructive command', async () => {
     const cap = captureConsole();
     let rc: number;
@@ -504,7 +504,7 @@ describe('gbrain pglite-repair — argument + quarantine hardening (adversarial 
   });
 });
 
-describe('gbrain pglite-repair — interactive confirm wiring (#4318 residual)', () => {
+describe('foresights pglite-repair — interactive confirm wiring (#4318 residual)', () => {
   test('asks through the consent primitive, not a local prompt', () => {
     // #4318 class: a local promptYesNo/readline here once read a typed "y" as
     // decline. The prompt now lives in requireConsent (interaction.readLine on

@@ -1,9 +1,9 @@
 /**
- * gbrain#4149 — the per-format byte caps get a validated, checkpoint-aware
+ * foresights#4149 — the per-format byte caps get a validated, checkpoint-aware
  * escape hatch instead of being unreachable from the CLI.
  *
  * Pre-fix (red on master at the assertions): ParseSessionsOpts.maxBytes
- * existed but ingest.ts never threaded it, so `gbrain transcripts ingest`
+ * existed but ingest.ts never threaded it, so `foresights transcripts ingest`
  * users hit the Hermes 512MB store guard with no recourse; --max-bytes was
  * an unknown flag; and a --since last checkpoint carried no cap dimension.
  */
@@ -17,7 +17,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-describe('--max-bytes CLI validation (gbrain#4149)', () => {
+describe('--max-bytes CLI validation (foresights#4149)', () => {
   test('accepts plain bytes and kb/mb/gb forms', () => {
     expect((parseIngestArgs(['a.jsonl', '--max-bytes', '800000000']) as any).maxBytes).toBe(800_000_000);
     expect((parseIngestArgs(['a.jsonl', '--max-bytes', '512mb']) as any).maxBytes).toBe(512 * 1024 ** 2);
@@ -41,7 +41,7 @@ describe('--max-bytes CLI validation (gbrain#4149)', () => {
   });
 });
 
-describe('cap threading to adapters (gbrain#4149)', () => {
+describe('cap threading to adapters (foresights#4149)', () => {
   function stubAdapter(seen: Array<ParseSessionsOpts | undefined>): TranscriptAdapter {
     return {
       format: 'claude-code' as never,
@@ -89,7 +89,7 @@ describe('cap threading to adapters (gbrain#4149)', () => {
   });
 });
 
-describe('checkpoint fingerprint carries the cap (gbrain#4149)', () => {
+describe('checkpoint fingerprint carries the cap (foresights#4149)', () => {
   const base = { sourceId: 'default', pathspec: '~/.hermes/state.db', format: 'hermes', version: 'v3' };
 
   test('auto vs explicit caps produce different fingerprints (no silent watermark reuse)', () => {

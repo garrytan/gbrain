@@ -2,31 +2,31 @@
 
 **Read this before doing ANY entity/person/company/fact lookup.**
 
-Sub-agents and fresh sessions inherit gbrain tools but not the knowledge of
+Sub-agents and fresh sessions inherit foresights tools but not the knowledge of
 when and how to use them. This file is that knowledge.
 
-## Which gbrain call for which lookup
+## Which foresights call for which lookup
 
 <!-- BEGIN lookup-table -->
-Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+Ask foresights before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
 reads the index across every source, ranks, filters and names the slug to read
-next. With the gbrain MCP server connected, call the tool of the same name
+next. With the foresights MCP server connected, call the tool of the same name
 instead of the CLI (one connection, no per-call startup).
 
 | Lookup | CLI | MCP tool |
 |---|---|---|
-| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
-| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
-| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
-| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
-| Read a known page | `gbrain get <slug>` | `get_page` |
-| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
-| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
-| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
-| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
-| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
-| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
-| Find something archived to B2, Supabase or S3 | `gbrain storage-find "<phrase>"` | `storage_find` |
+| Find a page by name or path | `foresights find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `foresights stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
+| Answer a question, search a topic | `foresights query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `foresights search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `foresights get <slug>` | `get_page` |
+| Read only the part a search hit points at | `foresights get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `foresights entity <slug>`, then `foresights recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `foresights backlinks <slug>`, `foresights timeline <slug>`, `foresights list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `foresights remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `foresights query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `foresights skills resolve --text "<request>" --json` (after `foresights skills index build`) | none (CLI only) |
+| Find something archived to B2, Supabase or S3 | `foresights storage-find "<phrase>"` | `storage_find` |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -41,7 +41,7 @@ A row with `origin: guest` is an outside guest's words, never the owner's; never
 ## Dated questions: read by valid time
 
 When the user asks what a page said, or what was in force, on a date, read it
-with `get_page {slug, as_of: 'YYYY-MM-DD'}` (CLI: `gbrain get <slug> --as-of
+with `get_page {slug, as_of: 'YYYY-MM-DD'}` (CLI: `foresights get <slug> --as-of
 <date>`), not the current page. Quote text only from an `in_force` answer; any
 other status puts the edition under `last_in_force` or `earliest_known`, and
 says so. When `valid_time.uncertain` is true, tell the user why and follow the
@@ -62,8 +62,8 @@ something, so taking it files strangers onto known contacts. Use the exact
 lookup:
 
 ```bash
-gbrain whois alice@acme-example.com --source-id __all__ --json   # an email address
-gbrain whois "Alice Example" --source-id __all__ --json          # a display name
+foresights whois alice@acme-example.com --source-id __all__ --json   # an email address
+foresights whois "Alice Example" --source-id __all__ --json          # a display name
 ```
 
 `whois` returns the entity pages whose frontmatter email, title or declared
@@ -75,7 +75,7 @@ several pages match: ask, or resolve by the email address. Never fall back to
 a search's top hit, a partial name or a similar address, and never merge a
 stranger into a known contact's page.
 
-## Available GBrain Tools
+## Available Foresights Tools
 
 Your tool inventory includes these (prefixed `gbrain__` in OpenClaw):
 
@@ -125,8 +125,8 @@ thousands of pages. The answer is almost always there.
   what the user said in meetings, conversations, and notes. External sources
   are supplementary.
 - **After any brain page write:** trigger a sync so new pages are searchable.
-  In OpenClaw: `gbrain__sync_brain`. From CLI: `gbrain sync --no-pull`.
-- **Bank every notable external API pull** via `gbrain capture` into the inbox
+  In OpenClaw: `gbrain__sync_brain`. From CLI: `foresights sync --no-pull`.
+- **Bank every notable external API pull** via `foresights capture` into the inbox
   before the conversation moves on — the cycle enriches it later. A lookup you
   paid for and didn't bank is a lookup you'll pay for again.
 - **Every brain page reference in output** should use a clickable link format
@@ -169,7 +169,7 @@ frontmatter:
 Use this for pure-infra skills (cron schedulers, container managers,
 ask-user prompters, browser drivers) whose entire job is to operate without
 consulting the brain. The doctor `skill_brain_first` check honors this opt-
-out; the `gbrain doctor --fix` auto-add of the canonical Convention callout
+out; the `foresights doctor --fix` auto-add of the canonical Convention callout
 skips opted-out skills.
 
 **Strict canonical form (the parser is loud about typos):**
@@ -209,4 +209,4 @@ When you edit a policy, contract, plan or any document page, pass `reason` on
 have them ("Client asked for the 30-day window."). Edit the existing page with
 its `expected_revision`; don't create a second page for a new edition.
 `get_versions` shows each version's `replaced_because`. Never put a credential
-in a reason: it can be pushed in a Git commit message, and gbrain refuses it.
+in a reason: it can be pushed in a Git commit message, and foresights refuses it.

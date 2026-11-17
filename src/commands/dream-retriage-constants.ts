@@ -1,5 +1,5 @@
 /**
- * Spend-gate constants for `gbrain dream retriage` (#4152, outside-voice C12).
+ * Spend-gate constants for `foresights dream retriage` (#4152, outside-voice C12).
  * Split from dream-retriage.ts so tests can pin them without importing the
  * command's engine-bearing module graph. The chars→tokens ratio lives in
  * synthesize.ts (`CHARS_PER_TOKEN`, exported) — the command imports it from

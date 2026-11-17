@@ -40,7 +40,7 @@ export function validateKnownExceptions(entries: unknown): string[] {
     if (!(e?.check in CHECKS)) problems.push(at + ': check must be one of ' + Object.keys(CHECKS).join(', '));
     if (e?.check === 'setup') problems.push(at + ': setup errors are never excepted');
     if (!Array.isArray(e?.from) || e.from.length === 0 || e.from.some((v: unknown) => typeof v !== 'string' || !/^v\d+\.\d+\.\d+(\.\d+)?$/.test(v))) problems.push(at + ': from must list explicit release tags (v<x.y.z.w>), no wildcards');
-    if (typeof e?.issue !== 'string' || !/^https:\/\/github\.com\/garrytan\/gbrain\/(issues|pull)\/\d+$/.test(e.issue)) problems.push(at + ': issue must be a garrytan/gbrain issue or pull URL');
+    if (typeof e?.issue !== 'string' || !/^https:\/\/github\.com\/garrytan\/(?:foresights|gbrain)\/(issues|pull)\/\d+$/.test(e.issue)) problems.push(at + ': issue must be a aimonk2025/gbrain issue or pull URL');
     if (typeof e?.reason !== 'string' || e.reason.length < 20) problems.push(at + ': reason must say what the old release does');
   });
   return problems;

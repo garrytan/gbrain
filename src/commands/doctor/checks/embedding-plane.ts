@@ -31,14 +31,14 @@ export async function embeddingPlaneDisagreementCheck(engine: BrainEngine, file:
     const message = `embedding_plane_disagreement: the config file disables embeddings, but the database does not and holds vectors (${stores.join(', ')}) from ${stored?.model ?? 'an unrecorded model'}${stored ? ` (${stored.dimensions}d)` : ''}. `
       + 'A re-init without a provider key in reach (a new GBRAIN_HOME, a restarted container) wrote the flag, so new pages get no vectors and search is keyword-only. ';
     if (!stored?.model) return { name: 'embedding_plane_disagreement', status: 'warn', details,
-      message: `${message}Run gbrain migrate embeddings --status to read the stored identity before turning embeddings back on.`,
+      message: `${message}Run foresights migrate embeddings --status to read the stored identity before turning embeddings back on.`,
       fix: { argv: ['gbrain', 'migrate', 'embeddings', '--status', '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('embedding_plane_disagreement'), docs: DOCS,
         why: 'Read-only: shows the vectors\' recorded model and width, which the enable command must match.' } };
     const argv = enableArgv(file, stored.model, stored.dimensions);
     return { name: 'embedding_plane_disagreement', status: 'warn', details,
       message: `${message}With the provider key set, \`${argv.join(' ')}\` turns them back on for the same model and width; pages and vectors are kept.`,
       fix: { argv, consent: ['credentials', 'paid'], actor: 'user', requires_exclusive: true, verify: doctorVerify('embedding_plane_disagreement'), docs: DOCS,
-        why: `Re-enables ${stored.model} (${stored.dimensions}d), the model the stored vectors already use, and clears embedding_disabled; pages written meanwhile are embedded by gbrain embed --stale.`,
+        why: `Re-enables ${stored.model} (${stored.dimensions}d), the model the stored vectors already use, and clears embedding_disabled; pages written meanwhile are embedded by foresights embed --stale.`,
         user_message: `Embeddings were switched off on this brain by a re-setup that could not find your provider key, although it already has vectors from ${stored.model}. With that key set, I can turn them back on (same model; embedding new pages costs a little). OK?` } };
   } catch (error) {
     return checkError('embedding_plane_disagreement', 'compare the file and database embedding settings', error, { details: { health: 'unknown', docs: DOCS } });

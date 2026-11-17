@@ -62,7 +62,7 @@ export interface BasePhaseOpts {
   meter?: BudgetMeter;
   /**
    * Absolute wall-clock deadline (epoch ms) inherited from the owning job's
-   * claim-time `timeout_at` (gbrain#4168). Phases with their own relative
+   * claim-time `timeout_at` (foresights#4168). Phases with their own relative
    * deadline (e.g. propose_takes' 30-min cap) clamp it via
    * `effectivePhaseDeadlineMs()` so the clean partial-exit path fires BEFORE
    * the worker's kill switch — without this, a phase default equal to (or,

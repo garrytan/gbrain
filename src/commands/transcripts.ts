@@ -1,9 +1,9 @@
 /**
- * gbrain transcripts — session transcripts: recent corpus reads and the
+ * foresights transcripts — session transcripts: recent corpus reads and the
  * cathedral-4 import lane.
  *
- *   gbrain transcripts recent   — dream-corpus .txt reader (v0.29 surface).
- *   gbrain transcripts ingest   — import dead session logs (Claude Code,
+ *   foresights transcripts recent   — dream-corpus .txt reader (v0.29 surface).
+ *   foresights transcripts ingest   — import dead session logs (Claude Code,
  *                                 Codex, OpenClaw, Hermes, Grok) and consumer
  *                                 chat exports (ChatGPT, Claude.ai) into
  *                                 conversation pages. Local-only, explicit
@@ -12,7 +12,7 @@
  *                                 embed backfill lane).
  *
  * PGLite note: like every engine-opening command, ingest cannot run while
- * `gbrain serve` holds the single-writer lock — the lock error names the PID.
+ * `foresights serve` holds the single-writer lock — the lock error names the PID.
  */
 
 import { homedir } from 'node:os';
@@ -78,18 +78,18 @@ interface IngestCliOpts {
   source?: string;
   facts?: boolean;
   maxCostUsd?: number;
-  /** gbrain#4149: explicit per-format byte-cap override; undefined = adapter-native defaults. */
+  /** foresights#4149: explicit per-format byte-cap override; undefined = adapter-native defaults. */
   maxBytes?: number;
   embed?: boolean;
   all?: boolean;
   json?: boolean;
   quiet?: boolean;
-  /** #4472: include gbrain's own claude-cli subprocess sessions in discovery. */
+  /** #4472: include foresights's own claude-cli subprocess sessions in discovery. */
   includeSelf?: boolean;
 }
 
 /**
- * gbrain#4149: the checkpoint fingerprint input, extracted so the cap
+ * foresights#4149: the checkpoint fingerprint input, extracted so the cap
  * dimension is unit-testable — a `--since last` watermark written under one
  * cap must never be reused under another (or the auto defaults).
  */
@@ -171,7 +171,7 @@ export function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } 
       continue;
     }
     if (a === '--max-bytes') {
-      // gbrain#4149: optional VALIDATED override for the per-format byte
+      // foresights#4149: optional VALIDATED override for the per-format byte
       // caps (e.g. the Hermes store guard). Omission preserves each
       // adapter's native default — one global cap must not replace
       // format-specific safety limits. Accepts plain bytes or kb/mb/gb.
@@ -191,14 +191,14 @@ export function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } 
 }
 
 const HELP = `Usage:
-  gbrain transcripts ingest <path-or-glob>... [options]
-  gbrain transcripts ingest              # discovery: show found session logs
-  gbrain transcripts ingest --all        # import everything discovered
-  gbrain transcripts status              # found vs imported gap table
-  gbrain transcripts recover codex       # restore user turns lost to #5163 (preview; --apply)
-  gbrain transcripts audit-secrets       # list imported pages that still carry a credential (read-only)
-  gbrain transcripts archive run|backfill|status|adopt-legacy|on|off   # day-sliced conversation archive (off unless turned on)
-  gbrain transcripts recent [options]
+  foresights transcripts ingest <path-or-glob>... [options]
+  foresights transcripts ingest              # discovery: show found session logs
+  foresights transcripts ingest --all        # import everything discovered
+  foresights transcripts status              # found vs imported gap table
+  foresights transcripts recover codex       # restore user turns lost to #5163 (preview; --apply)
+  foresights transcripts audit-secrets       # list imported pages that still carry a credential (read-only)
+  foresights transcripts archive run|backfill|status|adopt-legacy|on|off   # day-sliced conversation archive (off unless turned on)
+  foresights transcripts recent [options]
 
 ingest — import dead session logs and chat exports as conversation pages
 (readable text-turn archive: user/assistant text only, secrets redacted,
@@ -207,7 +207,7 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
 
   --all             Import every session log discovered under the harness
                     roots (claude/codex/openclaw/grok projects + the hermes store)
-  --include-self    Also discover gbrain's OWN claude-cli subprocess sessions
+  --include-self    Also discover foresights's OWN claude-cli subprocess sessions
                     (recorded by Claude Code for the provider's scratch cwds;
                     excluded by default to avoid a self-ingestion loop)
   --format F        claude-code | codex | openclaw | hermes | grok |
@@ -239,7 +239,7 @@ recent — read recent raw dream-corpus transcripts (.txt), newest first:
   Dream-generated outputs (frontmatter dream_generated: true) are skipped.
 
 Notes: consumer exports must be unzipped first (pass conversations.json).
-On PGLite, stop gbrain serve first (single-writer lock).
+On PGLite, stop foresights serve first (single-writer lock).
 `;
 
 /** Extensions the importer understands; directory expansion filters to these. */
@@ -373,7 +373,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     return;
   }
   if ('error' in parsed) {
-    console.error(`gbrain transcripts ingest: ${parsed.error}`);
+    console.error(`foresights transcripts ingest: ${parsed.error}`);
     setCliExitVerdict(2);
     return;
   }
@@ -402,7 +402,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
   let discoveredFormats: Map<string, TranscriptFormat> | undefined;
   if (parsed.paths.length === 0) {
     const { discoverTranscriptFiles } = await import('../core/transcripts/discover.ts');
-    // #4472: discovery excludes gbrain's own claude-cli subprocess sessions
+    // #4472: discovery excludes foresights's own claude-cli subprocess sessions
     // (self-ingestion loop) unless --include-self is passed.
     const discovered = discoverTranscriptFiles(undefined, { includeSelf: parsed.includeSelf });
     if (discovered.length === 0) {
@@ -421,7 +421,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       for (const [format, { n, bytes }] of byFormat) {
         console.log(`  ${format.padEnd(12)} ${String(n).padStart(5)} file(s)  ${(bytes / 1024 / 1024).toFixed(1)} MB`);
       }
-      console.log('  tip: `gbrain transcripts status` shows found vs imported per harness');
+      console.log('  tip: `foresights transcripts status` shows found vs imported per harness');
       return;
     }
     parsed.paths = discovered.map((d) => d.path);
@@ -436,7 +436,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     const r = await resolveSourceWithTier(engine, parsed.source ?? null);
     sourceId = r.source_id;
   } catch (e) {
-    console.error(`gbrain transcripts ingest: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`foresights transcripts ingest: ${e instanceof Error ? e.message : String(e)}`);
     setCliExitVerdict(1);
     return;
   }
@@ -454,7 +454,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
 
   const paths = await expandPaths(parsed.paths);
   if (paths.length === 0) {
-    console.error('gbrain transcripts ingest: 0 files matched');
+    console.error('foresights transcripts ingest: 0 files matched');
     return;
   }
 
@@ -466,7 +466,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
   const { TRANSCRIPT_IMPORT_VERSION } = await import('../core/transcripts/render.ts');
   const checkpointKey = {
     op: 'transcripts-ingest',
-    // gbrain#4149: the effective cap is part of scan coverage — a checkpoint
+    // foresights#4149: the effective cap is part of scan coverage — a checkpoint
     // written under a different cap (or the auto defaults) must not be
     // silently reused, or a capped run's skipped tail reads as
     // already-imported. The input builder distinguishes 'auto' from every
@@ -570,7 +570,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     }
     const firstImported = result.files.flatMap((f) => f.sessions).find((s) => !s.error && s.baseSlug);
     if (firstImported && !parsed.dryRun) {
-      console.log(`try it: gbrain query "${firstImported.baseSlug.split('/').pop()}"`);
+      console.log(`try it: foresights query "${firstImported.baseSlug.split('/').pop()}"`);
     }
   }
 
@@ -607,7 +607,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const totalGap = rows.reduce((n, r) => n + (r.gapFiles ?? 0), 0);
   if (totalGap > 0) {
-    console.log(`  backfill: gbrain transcripts ingest --all   (${totalGap} file(s) waiting)`);
+    console.log(`  backfill: foresights transcripts ingest --all   (${totalGap} file(s) waiting)`);
   }
 }
 
@@ -641,8 +641,8 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
   if (sub !== 'recent') {
     if (sub !== '--help' && sub !== '-h' && args.includes('--json')) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets, archive or recent.',
-        'Run `gbrain transcripts recent --json` to list recent transcripts, or `gbrain transcripts --help`.'), 'transcripts', { json: true });
+      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'foresights transcripts needs a subcommand: ingest, status, recover, audit-secrets, archive or recent.',
+        'Run `foresights transcripts recent --json` to list recent transcripts, or `foresights transcripts --help`.'), 'transcripts', { json: true });
     }
     console.log(HELP);
     if (sub && sub !== '--help' && sub !== '-h') setCliExitVerdict(2);
@@ -670,7 +670,7 @@ function renderRecentTranscripts(rows: RecentTranscript[], json: boolean): strin
 }
 
 /**
- * `gbrain transcripts recent` while a live `gbrain serve` owns the PGLite
+ * `foresights transcripts recent` while a live `foresights serve` owns the PGLite
  * brain: read through the owner's local socket as the trusted CLI (the
  * stdio agent's own connection still cannot call get_recent_transcripts).
  * False when no live owner serves the brain (the caller connects normally).

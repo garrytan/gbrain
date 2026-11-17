@@ -1,8 +1,8 @@
 /**
  * Wave B write operations, CLI side (spec 6.1, 6.2, 6.5).
  *
- *   gbrain append <slug> [--file PATH]     append text to the end of a page
- *   gbrain put <slug> --file PATH          replace or create a page from a file
+ *   foresights append <slug> [--file PATH]     append text to the end of a page
+ *   foresights put <slug> --file PATH          replace or create a page from a file
  *
  * `append` calls append_page with a generated request_id (`--request-id`
  * replays one) whenever the call's encoded frame fits the connection's part
@@ -157,8 +157,8 @@ async function reportFailure(error: unknown, command: string, json: boolean, req
   if (requestId) process.stderr.write(`Retry the same ${command} with --request-id ${requestId}.\n`);
 }
 
-const HELP = `Usage: gbrain append <slug> [--file PATH] [options]
-       gbrain append <slug> [options] < file
+const HELP = `Usage: foresights append <slug> [--file PATH] [options]
+       foresights append <slug> [options] < file
 
 Adds text to the end of a page in time proportional to the text added
 (append_page). Use it for conversation logs and running notes: re-putting a
@@ -182,8 +182,8 @@ parts, commit), which appends at the end of the page with region and
 separator auto; --expect-tail, --region and --separator are refused there.
 
 Examples:
-  echo "- 14:02 the next message" | gbrain append conversations/sessions/2026-10-19-standup
-  gbrain append notes/running-log --file ./today.md --request-id 5f0c…
+  echo "- 14:02 the next message" | foresights append conversations/sessions/2026-10-19-standup
+  foresights append notes/running-log --file ./today.md --request-id 5f0c…
 `;
 
 interface AppendArgs {
@@ -208,20 +208,20 @@ export function parseAppendArgs(args: string[]): AppendArgs {
     if (m && APPEND_FLAGS[m[1]!]) {
       const key = APPEND_FLAGS[m[1]!]!;
       const value = m[2] ?? args[++i];
-      if (value === undefined || value === '' || (m[2] === undefined && value.startsWith('--'))) throw usageError(`${m[1]} requires a value.`, 'Run gbrain append --help for the options.');
+      if (value === undefined || value === '' || (m[2] === undefined && value.startsWith('--'))) throw usageError(`${m[1]} requires a value.`, 'Run foresights append --help for the options.');
       const choices = CHOICES[key];
-      if (choices && !choices.includes(value)) throw usageError(`${m[1]} must be one of: ${choices.join(', ')}; got '${value}'.`, 'Run gbrain append --help for the options.');
+      if (choices && !choices.includes(value)) throw usageError(`${m[1]} must be one of: ${choices.join(', ')}; got '${value}'.`, 'Run foresights append --help for the options.');
       (out as unknown as Record<string, unknown>)[key] = value;
       continue;
     }
-    if (arg.startsWith('--')) throw usageError(`unknown flag ${arg.split('=')[0]} for 'gbrain append'`, 'Run gbrain append --help for the options.');
-    if (out.slug !== undefined) throw usageError(`gbrain append takes one slug; got '${out.slug}' and '${arg}'.`, 'Pass the text with --file or on stdin, not as arguments.');
+    if (arg.startsWith('--')) throw usageError(`unknown flag ${arg.split('=')[0]} for 'foresights append'`, 'Run foresights append --help for the options.');
+    if (out.slug !== undefined) throw usageError(`foresights append takes one slug; got '${out.slug}' and '${arg}'.`, 'Pass the text with --file or on stdin, not as arguments.');
     out.slug = arg;
   }
   return out;
 }
 
-/** @internal The whole-file read `gbrain append --file` does for a file within one call's part cap; a test seam proves larger files are never read whole. */
+/** @internal The whole-file read `foresights append --file` does for a file within one call's part cap; a test seam proves larger files are never read whole. */
 export const appendFileIo = { readFileSync: (path: string): Buffer => readFileSync(path) };
 
 const UPLOAD_ONLY_FLAGS = { expected_tail_sha256: '--expect-tail', region: '--region', separator: '--separator' } as const;
@@ -257,8 +257,8 @@ async function readAppendInput(parsed: AppendArgs, cap: number): Promise<{ text:
     }
     return { text: decodeTextInput(appendFileIo.readFileSync(parsed.file), parsed.file) };
   }
-  if (process.stdin.isTTY) throw usageError('gbrain append needs text: pass --file PATH or pipe it on stdin.', 'Run gbrain append --help for examples.');
-  const read = await readStdinPayload('echo "the next message" | gbrain append <slug>');
+  if (process.stdin.isTTY) throw usageError('foresights append needs text: pass --file PATH or pipe it on stdin.', 'Run foresights append --help for examples.');
+  const read = await readStdinPayload('echo "the next message" | foresights append <slug>');
   if (!read.ok) throw usageError(read.message, 'Pipe the text on stdin, or pass --file PATH.');
   return { text: decodeTextInput(read.raw, 'stdin') };
 }
@@ -278,7 +278,7 @@ function printAppendReceipt(result: Record<string, unknown>, json: boolean): Pro
   return writeStdoutFinal(lines.join('\n') + '\n');
 }
 
-/** `gbrain append` (a pre-connect-own-engine command: it opens the engine only when no owner or remote brain takes the call). */
+/** `foresights append` (a pre-connect-own-engine command: it opens the engine only when no owner or remote brain takes the call). */
 export async function run(args: string[], ctx: CliDispatchContext): Promise<void> {
   let parsed: AppendArgs;
   try { parsed = parseAppendArgs(args); } catch (error) { setCliExitVerdict(writeCliError(error, 'append')); return; }
@@ -286,7 +286,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   const requestId = parsed.request_id ?? randomUUID();
   let caller: PageWriteCaller | undefined;
   try {
-    if (!parsed.slug) throw usageError("Missing required parameter 'slug' for 'gbrain append'.", 'Usage: gbrain append <slug> [--file PATH] (see `gbrain append --help`).');
+    if (!parsed.slug) throw usageError("Missing required parameter 'slug' for 'foresights append'.", 'Usage: foresights append <slug> [--file PATH] (see `foresights append --help`).');
     caller = pageWriteCaller(() => ctx.connectEngine(), parsed.source ?? null);
     let cap = caller.thin ? DIRECT_FRAME_MAX_BYTES : LOCAL_FRAME_MAX_BYTES;
     const input = await readAppendInput(parsed, cap);
@@ -347,7 +347,7 @@ function takeFileArg(args: string[]): { path: string | undefined; rest: string[]
 const ONE_REQUEST_ONLY = ['allow_empty', 'allow_shrink', 'drop_timeline', 'dry_run'] as const;
 
 /**
- * `gbrain put <slug> --file PATH` (main.ts runs it before parsing put's args).
+ * `foresights put <slug> --file PATH` (main.ts runs it before parsing put's args).
  * A page that fits one put_page request (the page ceiling locally, the
  * smallest transport cap on a thin client) returns false with `args` now
  * carrying the file as put's stdin param (content), so the ordinary put
@@ -398,7 +398,7 @@ export async function runPutFile(op: { name: string; cliHints?: { stdin?: string
       }
     }
     if (params.force === true && typeof params.expected_revision !== 'string') {
-      throw usageError('--force applies only to a page that fits one put_page request or streams locally.', `${path} goes through an upload session, which replaces a page only with --expected-revision. Pass the page's revision (gbrain get --json).`);
+      throw usageError('--force applies only to a page that fits one put_page request or streams locally.', `${path} goes through an upload session, which replaces a page only with --expected-revision. Pass the page's revision (foresights get --json).`);
     }
     caller = pageWriteCaller(connect, source, { teardown: false });
     const result = await uploadPageBody(caller.call, {
@@ -497,7 +497,7 @@ export async function normalizedFileHash(path: string): Promise<string | null> {
 export interface StreamedCapture { slug: string; status?: string; chunks?: number; content_hash: string }
 
 /**
- * `gbrain capture --file` over the page ceiling on the trusted local CLI:
+ * `foresights capture --file` over the page ceiling on the trusted local CLI:
  * the capture op's slug (from the normalized content hash) and frontmatter
  * merge are computed from a streamed hash and the file head, and the body
  * streams through the import's reader (spec 3.1). Null when this process
@@ -549,7 +549,7 @@ export interface CaptureUploadInput {
 export async function uploadCapture(rawBody: string, input: CaptureUploadInput, requestId: string, connect: () => Promise<BrainEngine>): Promise<Record<string, unknown>> {
   if (input.force && !input.expected_revision) {
     throw usageError('--force applies only to a capture that fits one request.',
-      'This capture is larger than one request, so it goes through an upload session, which replaces a page only with --expected-revision. Read the page revision with gbrain get --json and pass it.');
+      'This capture is larger than one request, so it goes through an upload session, which replaces a page only with --expected-revision. Read the page revision with foresights get --json and pass it.');
   }
   const caller = pageWriteCaller(connect, input.source ?? null, { teardown: false });
   const { defaultSlug, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } = await import('../../core/capture-content.ts');

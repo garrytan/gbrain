@@ -327,7 +327,7 @@ export function compareBaselines(
         breaches,
         notes: [
           ...notes,
-          'no committed baseline to verify — run `gbrain eval brainbench --update-baseline` and commit the result',
+          'no committed baseline to verify — run `foresights eval brainbench --update-baseline` and commit the result',
         ],
       };
     }
@@ -461,7 +461,7 @@ export function renderScoreboardMarkdown(
   }
   lines.push('');
   lines.push(
-    '_seam: `production` rows exercise a shipped integration seam; `contract` rows grade the same gbrain primitives through a harness-shaped injection contract (see docs/eval/BRAINBENCH.md)._',
+    '_seam: `production` rows exercise a shipped integration seam; `contract` rows grade the same foresights primitives through a harness-shaped injection contract (see docs/eval/BRAINBENCH.md)._',
   );
   if (result.seed_failures.length > 0) {
     lines.push('');

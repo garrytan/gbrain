@@ -26,7 +26,7 @@ export const isBooleanLiteral = (tok: string | undefined): boolean =>
  * form.
  *
  * parseOpArgs uses it to refuse letting a non-boolean flag swallow such a
- * token as its value: `gbrain put x --content --source default` stored the
+ * token as its value: `foresights put x --content --source default` stored the
  * literal "--source" as the page body, dropped the real --source (so the write
  * landed on an ambient source instead of the requested one) and never read the
  * stdin pipe, because `content` was already set. Flag order alone decided

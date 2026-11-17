@@ -2,7 +2,7 @@
  * A retry of a capture recorded under the /ingest key from before v0.60.609.0 must not queue a second job.
  *
  * #8798 (v0.60.609.0) added the target slug to the queue idempotency key (#8769). Job rows keep their key until
- * `gbrain jobs prune` removes them, so a capture that completed under the old key form
+ * `foresights jobs prune` removes them, so a capture that completed under the old key form
  * (`ingest:webhook:<client>:<write source>:<content hash>`) missed the new key when its client retried after the
  * upgrade: a second job was queued, and running it wrote the old body over the page's newer edit.
  * Protects: the retry (to the same slug in any case, or slug-less) answers 202 with the recorded job and queues nothing,

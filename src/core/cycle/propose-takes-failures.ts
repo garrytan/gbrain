@@ -11,7 +11,7 @@
  * prompt version gets a failure tombstone in take_proposals: a `rejected` row
  * whose claim text names the code, so the idempotency check skips the page
  * until its content or the prompt version changes, and which stays distinct
- * from a successful empty extraction. `gbrain takes propose --retry-failed`
+ * from a successful empty extraction. `foresights takes propose --retry-failed`
  * deletes the tombstones and records so the next run re-extracts.
  *
  * A run's failures count only when the run is not systemic (most fresh pages

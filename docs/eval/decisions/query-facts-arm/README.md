@@ -1,7 +1,7 @@
 # Facts arm in query: gates and verdict
 
 The facts arm is on by default. It sits behind `search.query_facts_arm`, and `false` turns it off. Gate 1b and
-the revised gate 2 passed at garrytan/gbrain@947536f4c, the build where fact rows take only spare capacity. Gate
+the revised gate 2 passed at aimonk2025/gbrain@947536f4c, the build where fact rows take only spare capacity. Gate
 1 failed at 16288b95c, and that failure is recorded below. With the key set to `false`, `query` returns exactly
 what it returned before the arm existed.
 
@@ -81,7 +81,7 @@ matched by terms and named entity, not by embedding. Two diagnostic copies seed 
 - Relational: fired 38 of 38 times and lost recall@10 on 2 questions (mean 1.000 off, 0.974 on). Fact rows
   take a page slot when the row count is already full.
 
-With the key off, gate-2 output matches garrytan/gbrain@a87c3e2af exactly, apart from wall-clock recency scores
+With the key off, gate-2 output matches aimonk2025/gbrain@a87c3e2af exactly, apart from wall-clock recency scores
 and random revision ids.
 
 Metered spend was $26.05 against a $40 cap:
@@ -113,7 +113,7 @@ correction when it was made. The diagnostic above used the same writes on the ea
 - When there are no free slots or no budget left, `query` returns the page rows unchanged.
 
 Everything else is as in "The change" above: matching, read policy, `superseded_claim` stamps and no model call.
-The measured build is the gbrain commit that contains this change. Both gates name it.
+The measured build is the foresights commit that contains this change. Both gates name it.
 
 **Gate 1b, B2 corrections with correction-dated writes** (gbrain-evals `eval/workload-suites/bench.ts
 corrections`, flags from gbrain-evals `d01d3bc`):
@@ -141,7 +141,7 @@ Otherwise it stays off. Gate 1's failure stands as recorded. Spend cap: $30.
 
 ## Preregistration
 
-The sections below were written and pushed in garrytan/gbrain@a87c3e2af, before any code or gated run, and are
+The sections below were written and pushed in aimonk2025/gbrain@a87c3e2af, before any code or gated run, and are
 unchanged.
 
 ## Why

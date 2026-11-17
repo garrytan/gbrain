@@ -9,7 +9,7 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * so an ANALYZE that waits (the refresh's 2 s lock timeout, or none at all) cancels the autovacuum it meets. Run after
  * every embed drain on a 10M-chunk content_chunks, that cancelled every autovacuum of the table before it finished.
  *
- * Every ANALYZE gbrain runs on Postgres on its own takes the table's lock first, inside its transaction, with NOWAIT:
+ * Every ANALYZE foresights runs on Postgres on its own takes the table's lock first, inside its transaction, with NOWAIT:
  * a lock that is not free at once (a vacuum, another ANALYZE, an index build) fails with 55P03 and the caller defers
  * its ANALYZE (`analyzeDeferred`) instead of waiting. A request that never waits never signals a vacuum, and the
  * ANALYZE that follows reuses the lock this transaction holds. PGLite has no autovacuum and takes no lock here.

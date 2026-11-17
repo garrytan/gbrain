@@ -1,7 +1,7 @@
 /**
  * v0.41.16.0 — Conversation parser quality eval.
  *
- * Pure functions consumed by `gbrain eval conversation-parser` and the
+ * Pure functions consumed by `foresights eval conversation-parser` and the
  * nightly probe. Inputs are JSONL fixtures; outputs are FixtureScore
  * rows + an EvalReport aggregate.
  *

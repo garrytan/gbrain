@@ -15,7 +15,7 @@
  *
  * This is the substrate-level e2e — it's the unit-test concept lifted
  * one layer up to the daemon+handler wiring. The full server-process
- * e2e (gbrain serve --http + POST /ingest + real OAuth) is a separate
+ * e2e (foresights serve --http + POST /ingest + real OAuth) is a separate
  * test that requires DATABASE_URL.
  */
 

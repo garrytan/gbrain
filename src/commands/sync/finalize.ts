@@ -152,7 +152,7 @@ export async function finalizeIncrementalSync(
       `${resolveAutoSkipThreshold()} consecutive syncs:\n` +
       gate.autoSkipped.map(p => `    ${p}`).join('\n') + '\n' +
       `  Bookmark advanced; these pages are NOT indexed and remain in ` +
-      `sync-failures.jsonl. 'gbrain doctor' will warn until they're fixed.`,
+      `sync-failures.jsonl. 'foresights doctor' will warn until they're fixed.`,
     );
   }
 
@@ -200,7 +200,7 @@ export async function finalizeIncrementalSync(
   if (typeWarningsEnabled && typeWarnings.length > 0) {
     const { renderTypeWarningSummary } = await import('../../core/schema-pack/type-usage.ts');
     for (const line of renderTypeWarningSummary(typeWarnings)) serr(`  ${line}`);
-    serr(`  (silence with: gbrain config set schema.type_warnings false)`);
+    serr(`  (silence with: foresights config set schema.type_warnings false)`);
   }
 
   // A run that only re-screened held files (and imported none) changed nothing.
@@ -379,13 +379,13 @@ async function applyBookmarkGate(
     // design, so an environment where the DELETE can never succeed (RLS
     // denying DELETE, an FK RESTRICT) needs a documented exit or a cosmetic
     // duplicate becomes a total sync outage. The remedy is deliberately NOT
-    // pitched at a fully read-only database: 'gbrain delete' soft-deletes
+    // pitched at a fully read-only database: 'foresights delete' soft-deletes
     // via UPDATE, so it unwedges exactly the environments where writes work
     // but this DELETE does not.
     const renameRemedy =
-      `The next 'gbrain sync' retries the reconcile from the same diff. If the delete ` +
+      `The next 'foresights sync' retries the reconcile from the same diff. If the delete ` +
       `keeps failing in your environment (RLS denying DELETE, an FK RESTRICT — anywhere ` +
-      `UPDATE still works), remove the stale row yourself: 'gbrain delete <stale-slug>' ` +
+      `UPDATE still works), remove the stale row yourself: 'foresights delete <stale-slug>' ` +
       `with the stale slug named above (the reconcile only names rows whose backing file ` +
       `is gone from the working tree — never a live page). A sentinel reading 'stale row ?' ` +
       `names nothing on purpose: that run could not prove ANY row stale, usually because a ` +
@@ -417,8 +417,8 @@ async function applyBookmarkGate(
         `\nSync blocked: ${fileFailCount} file(s) failed, most of the files this run tried; this looks like ` +
         `a shared cause, so no attempt was counted and nothing auto-skips:\n` +
         `${codeBreakdown}\n${formatFailedFileList(failedFiles)}\n\n` +
-        `Fix the shared cause (permissions, the embedding provider, the database) and re-run 'gbrain sync', ` +
-        `or acknowledge these files with 'gbrain sync --skip-failed${opts.sourceId ? ` --source ${opts.sourceId}` : ''}'.`,
+        `Fix the shared cause (permissions, the embedding provider, the database) and re-run 'foresights sync', ` +
+        `or acknowledge these files with 'foresights sync --skip-failed${opts.sourceId ? ` --source ${opts.sourceId}` : ''}'.`,
       );
     } else {
       const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;
@@ -433,15 +433,15 @@ async function applyBookmarkGate(
           `${codeBreakdown}\n\n` +
           `These are provider-health failures (timeout / rate limit / quota), not bad ` +
           `files — do NOT use --skip-failed for them. Check the embedding provider ` +
-          `(is it running? out of quota?), then re-run 'gbrain sync' (only the failed ` +
-          `files are re-attempted), or 'gbrain sync --full' to rebuild.`,
+          `(is it running? out of quota?), then re-run 'foresights sync' (only the failed ` +
+          `files are re-attempted), or 'foresights sync --full' to rebuild.`,
         );
       } else {
         serr(
           `\nSync blocked: ${fileFailCount} file(s) failed to parse:\n` +
           `${codeBreakdown}\n${formatFailedFileList(failedFiles)}\n\n` +
-          `Pinpoint a file with 'gbrain frontmatter validate <path>' (--fix auto-repairs), ` +
-          `fix the frontmatter and re-run, or use 'gbrain sync --skip-failed' to ` +
+          `Pinpoint a file with 'foresights frontmatter validate <path>' (--fix auto-repairs), ` +
+          `fix the frontmatter and re-run, or use 'foresights sync --skip-failed' to ` +
           `acknowledge and move on. A file that keeps failing auto-skips after ` +
           `${resolveAutoSkipThreshold()} consecutive syncs.`,
         );
@@ -455,7 +455,7 @@ async function applyBookmarkGate(
     // v0.42.x (#1794): surface banked progress so a blocked run doesn't read as
     // total loss (last_commit is unchanged by design; the checkpoint is banked).
     serr(
-      `[sync] banked ${run.bankedFiles} file(s) this run; next 'gbrain sync' resumes ` +
+      `[sync] banked ${run.bankedFiles} file(s) this run; next 'foresights sync' resumes ` +
       `from the checkpoint (last_commit unchanged at ${(lastCommit ?? '').slice(0, 8)}).`,
     );
     return { done: {
@@ -503,7 +503,7 @@ async function extractAffectedPages(run: SyncRun, plan: Pick<SyncPlan, 'opts' | 
     // slug-scoped (an up_to_date follow-up sync hands it an empty
     // pagesAffected), so a webhook-driven large sync left
     // `links_extracted_at` unstamped FOREVER unless an operator ran
-    // `gbrain extract --stale` by hand. Submit a source-scoped stale-sweep
+    // `foresights extract --stale` by hand. Submit a source-scoped stale-sweep
     // job bound to the consumed commit (idempotency key) so repeated
     // webhook deliveries / sync retries of the same commit coalesce onto
     // one job. The sweep itself is the watermark scan — it picks up the
@@ -559,7 +559,7 @@ async function extractAffectedPages(run: SyncRun, plan: Pick<SyncPlan, 'opts' | 
       (queuedJobId != null
         ? ` — queued stale-sweep job #${queuedJobId} (source: ${opts.sourceId ?? 'default'}); a running jobs worker will consume it.`
         : `.`) +
-      ` Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' to extract now.`,
+      ` Run 'foresights extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' to extract now.`,
     );
   }
   let extractError: string | undefined;
@@ -596,7 +596,7 @@ async function extractAffectedPages(run: SyncRun, plan: Pick<SyncPlan, 'opts' | 
     }
     // A15: best-effort (the import stands and failed pages stay stale for
     // `extract --stale`), but never silent.
-    if (extractError) serr(`  Link/timeline extraction failed: ${extractError}. Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' after fixing it.`);
+    if (extractError) serr(`  Link/timeline extraction failed: ${extractError}. Run 'foresights extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' after fixing it.`);
   }
   return extractError;
 }
@@ -681,12 +681,12 @@ async function embedAffectedPages(
       if (e instanceof EmbeddingDimMismatchError) {
         serr('\n' + e.recipeMessage + '\n');
         serr(`Tip: pass --no-embed to sync without embedding, then`);
-        serr(`run 'gbrain embed --stale' after fixing the schema.\n`);
+        serr(`run 'foresights embed --stale' after fixing the schema.\n`);
       }
       // Other errors stay best-effort — rate limits, transient network.
     }
   } else if (noEmbed || totalChanges > 100) {
-    slog(`Text imported. Run 'gbrain embed --stale' to generate embeddings.`);
+    slog(`Text imported. Run 'foresights embed --stale' to generate embeddings.`);
   }
   return { embedded, embedSlugs };
 }

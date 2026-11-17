@@ -1,7 +1,7 @@
 /**
  * #1123 — the multi_source_drift doctor recommendation must only reference
  * CLI surfaces that actually exist. Pre-fix it pointed at
- * 'gbrain sources rehome' (never built) and at 'gbrain delete <slug>'
+ * 'foresights sources rehome' (never built) and at 'foresights delete <slug>'
  * without saying that delete targets the ACTIVE source — following it
  * literally on a multi-source brain deletes the correctly-routed row.
  */
@@ -18,8 +18,8 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
   });
 
   test('points at the re-sync path that reconciles drift', () => {
-    expect(advice).toContain("gbrain sources status");
-    expect(advice).toContain("gbrain sync --source <id> --full");
+    expect(advice).toContain("foresights sources status");
+    expect(advice).toContain("foresights sync --source <id> --full");
   });
 
   test('does not reference the never-built rehome command', () => {
@@ -27,15 +27,15 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
   });
 
   test('delete advice pins the source explicitly instead of implying delete targets default', () => {
-    expect(advice).toContain('GBRAIN_SOURCE=default gbrain delete <slug> --force');
+    expect(advice).toContain('GBRAIN_SOURCE=default foresights delete <slug> --force');
     expect(advice).not.toContain('delete --source');
   });
 
-  // Page writes are revisioned (v0.51): a `gbrain delete` naming neither
+  // Page writes are revisioned (v0.51): a `foresights delete` naming neither
   // --expected-revision nor --force is refused with revision_conflict, so the
   // advice must carry one of them or its last step cannot run.
   test('delete advice names a revision precondition the op accepts', () => {
-    const m = advice.match(/gbrain delete <slug>((?: --[a-z-]+)*)/);
+    const m = advice.match(/(?:foresights|gbrain) delete <slug>((?: --[a-z-]+)*)/);
     expect(m).not.toBeNull();
     expect(/--force|--expected-revision/.test(m![1])).toBe(true);
   });
@@ -49,7 +49,7 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
     expect(advice).toContain('--include-gitignored');
     expect(advice.toLowerCase()).toContain('not git-tracked');
     const flagIdx = advice.indexOf('--include-gitignored');
-    const deleteIdx = advice.indexOf('gbrain delete <slug>');
+    const deleteIdx = advice.indexOf('foresights delete <slug>');
     expect(flagIdx).toBeGreaterThan(-1);
     expect(deleteIdx).toBeGreaterThan(flagIdx);
   });
@@ -59,9 +59,9 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
   // the unmanaged advice stays byte-identical.
   test('managed advice names --no-pull and no --include-gitignored', () => {
     const managed = multiSourceDriftAdvice(45, 'foo (intended=wiki)', true);
-    expect(managed).toContain("'gbrain sync --source <id> --no-pull --full'");
+    expect(managed).toContain("'foresights sync --source <id> --no-pull --full'");
     expect(managed).not.toContain('--include-gitignored');
-    expect(managed).toContain("'GBRAIN_SOURCE=default gbrain delete <slug> --force'");
+    expect(managed).toContain("'GBRAIN_SOURCE=default foresights delete <slug> --force'");
   });
 
   test('unmanaged advice is byte-identical to the default', () => {
@@ -70,9 +70,9 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
       "45 page slug(s) appear at 'default' but NOT at the intended source (e.g., foo (intended=wiki)). " +
       'Three possible causes: (1) pre-v0.30.3 putPage misroutes; (2) the intended source never completed initial sync and the default page is unrelated; ' +
       '(3) the file behind the slug is not git-tracked in the source repo — the sync walker reads through git objects, so a re-sync imports nothing for it. ' +
-      "Verify with 'gbrain sources status', then re-sync with 'gbrain sync --source <id> --full' (reconciles drift without deleting data); " +
-      "for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' (full filesystem walk that also picks up ignored/untracked syncable files). " +
-      "Only if a misrouted default-source row remains after that, remove it with 'GBRAIN_SOURCE=default gbrain delete <slug> --force' — delete targets the active source, " +
+      "Verify with 'foresights sources status', then re-sync with 'foresights sync --source <id> --full' (reconciles drift without deleting data); " +
+      "for cause (3), commit the file or use 'foresights sync --source <id> --include-gitignored' (full filesystem walk that also picks up ignored/untracked syncable files). " +
+      "Only if a misrouted default-source row remains after that, remove it with 'GBRAIN_SOURCE=default foresights delete <slug> --force' — delete targets the active source, " +
       "so pin it to 'default' explicitly (--force: page writes are revisioned, and a delete naming neither --force nor --expected-revision is refused with revision_conflict).",
     );
   });

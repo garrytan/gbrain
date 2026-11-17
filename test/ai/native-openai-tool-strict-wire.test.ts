@@ -5,10 +5,10 @@
  * which talks to the Responses API. When a function tool carries no `strict`
  * field, the Responses API treats it as strict: every property becomes
  * required, so the model fills optional arguments with placeholders (a zero
- * line window, an empty byte range) that gbrain's own validators then reject.
+ * line window, an empty byte range) that foresights's own validators then reject.
  *
  * Drives the real gateway against a local stub and asserts the request body
- * that leaves gbrain, per route: native OpenAI via chat() and toolLoop() (every
+ * that leaves foresights, per route: native OpenAI via chat() and toolLoop() (every
  * turn) carries `strict: false` on each tool; native Anthropic, native Google
  * and an openai-compatible chat-completions recipe send no strict field at all.
  */

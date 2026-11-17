@@ -134,7 +134,7 @@ export async function readSourceFreshness(engine: FreshnessExec, scope: { source
 const syncNowFix = (sourceId: string, why: string): Action => ({ argv: ['gbrain', 'sync', '--source', sourceId, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, why });
 
 /**
- * The notifier block of `gbrain sync status` (and doctor): the resident that syncs the source or none with the fix,
+ * The notifier block of `foresights sync status` (and doctor): the resident that syncs the source or none with the fix,
  * its state, the retry schedule, the last error and, for a local caller, the trace file. Remote callers get no trace
  * path, pid or host id (the sync_status projection rule).
  */
@@ -162,8 +162,8 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
     ? syncNowFix(sourceId, recorded
       ? `The ${recorded.kind} resident recorded as this source's notifier${recorded.pid ? ` (PID ${recorded.pid})` : ''} holds no live notifier lease${recorded.lease_expired_at ? ` (it lapsed at ${recorded.lease_expired_at})` : ''}, `
         + `so nothing watches this source now; this syncs the checkout HEAD now. If that resident is still running, it is not renewing its lease: restart it, and it catches up on its own.`
-      : onCommit ? 'No resident (gbrain serve, gbrain jobs work or the autopilot daemon) watches this source; this syncs the checkout HEAD now. A resident started later catches up on its own.'
-        : 'No resident watches this source\'s HEAD: sync.on_commit is off, so a running resident (gbrain serve, gbrain jobs work or the autopilot daemon) syncs only explicit requests; this syncs the checkout HEAD now. `gbrain config set sync.on_commit true` turns on watching.')
+      : onCommit ? 'No resident (foresights serve, foresights jobs work or the autopilot daemon) watches this source; this syncs the checkout HEAD now. A resident started later catches up on its own.'
+        : 'No resident watches this source\'s HEAD: sync.on_commit is off, so a running resident (foresights serve, foresights jobs work or the autopilot daemon) syncs only explicit requests; this syncs the checkout HEAD now. `foresights config set sync.on_commit true` turns on watching.')
     : !live ? (holderStalled(holder, lease?.db_now) ? syncNowFix(sourceId, `No notifier watches this source, and the ${holder!.kind} process holding its drain lease has made no commit or cursor save for ${HOLDER_STALL_MS / 60_000} min or more; `
       + 'a foreground sync follows it and takes over when its lease lapses.') : null)
     : stalled ? syncNowFix(sourceId, `The notifier made no progress after ${Number(row.attempts ?? 0)} attempts (${row.last_error_code ?? row.reason ?? 'blocked'}); a foreground sync shows the error`

@@ -44,7 +44,7 @@ function gitInit(repo: string): void {
   gitExec('git config user.name "Test"', repo);
 }
 
-/** Seed a page row as if a pre-fix gbrain had ingested the junk file. */
+/** Seed a page row as if a pre-fix foresights had ingested the junk file. */
 async function seedPoisonedRow(slug: string, sourcePath: string): Promise<void> {
   await engine.putPage(slug, {
     type: 'note',

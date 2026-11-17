@@ -21,7 +21,7 @@ export interface ManagedLinkExtraction { pages: number; created: number; removed
   attendance_skipped?: number;
   /** The mention pass (absent when the caller ran links only, as sync does). */
   mentions?: MentionPassResult; mention_due?: number; mention_last_pass_at?: string | null;
-  /** #6803 (D3): the terminal counts (`gbrain extract --stale` only; sync's tail does not read them). */
+  /** #6803 (D3): the terminal counts (`foresights extract --stale` only; sync's tail does not read them). */
   counts?: StaleExtractionCounts;
   /** GBRA-130 A-1 (present when a page failed): pages whose derivation failed this run; the first `LINK_FAILURE_REPORT_LIMIT` are listed. */
   failed?: number; failures?: LinkExtractionFailure[];
@@ -34,7 +34,7 @@ export interface LinkExtractionSystemic { source_id: string; code: string; reaso
 export const LINK_FAILURE_REPORT_LIMIT = 50;
 
 /**
- * `gbrain extract --stale` on a managed brain, locally or inside the PGLite owner: a plain run stops at the
+ * `foresights extract --stale` on a managed brain, locally or inside the PGLite owner: a plain run stops at the
  * `STALE_TIME_BUDGET_MS` budget and the next resumes, `catchUp` runs until nothing is stale (#6803 D2).
  */
 export async function runManagedStaleExtraction(engine: BrainEngine,

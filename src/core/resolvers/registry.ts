@@ -26,7 +26,7 @@ export interface ResolverListFilter {
 
 /**
  * Summary shape returned by list(). Same data as the Resolver but without
- * the resolve()/available() methods — suitable for `gbrain resolvers list`
+ * the resolve()/available() methods — suitable for `foresights resolvers list`
  * and plugin-discovery UX.
  */
 export interface ResolverSummary {

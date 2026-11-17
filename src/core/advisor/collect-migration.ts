@@ -23,7 +23,7 @@ export const collectMigration: AdvisorCollector = {
         id: 'pending_migration',
         severity: 'critical',
         title: 'Schema migrations are pending — run them before relying on newer features.',
-        detail: 'Newer gbrain code assumes the latest schema; an un-migrated brain can fail or under-perform.',
+        detail: 'Newer foresights code assumes the latest schema; an un-migrated brain can fail or under-perform.',
         fix: { command_argv: ['gbrain', 'apply-migrations', '--yes'], dispatch_id: 'apply_migrations' },
         collector: 'migration',
         ask_user: true,

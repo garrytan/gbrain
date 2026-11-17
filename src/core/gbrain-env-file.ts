@@ -5,7 +5,7 @@
  * Bun only auto-loads `.env` from the process cwd, which for a globally
  * installed CLI is arbitrary — and cwd .env files are UNTRUSTED input (the
  * #427 DATABASE_URL-hijack guard in config.ts exists because of them). The
- * gbrain home directory is operator-owned, so `~/.gbrain/.env` is a
+ * foresights home directory is operator-owned, so `~/.gbrain/.env` is a
  * deliberate place to keep API keys OUT of config.json. loadConfig() calls
  * this before its env-over-file merge; a variable the shell already
  * exported is NEVER overridden, so real env keeps absolute precedence.

@@ -131,7 +131,7 @@ describe('OpenRouter Anthropic live — abort mid-loop and resume', () => {
       }) as never,
     });
 
-    const prompt = 'Call the ping tool exactly once with who=gbrain, then say done. Do not skip the tool.';
+    const prompt = 'Call the ping tool exactly once with who=foresights, then say done. Do not skip the tool.';
     const { jobId } = await makeJob(prompt);
 
     const first = await handler(makeCtx(jobId, prompt, firstAbort.signal));

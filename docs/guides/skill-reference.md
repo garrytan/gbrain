@@ -1,6 +1,6 @@
 # Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 50+ skills
+Read the skill files in `skills/` before doing brain operations. Foresights ships 50+ skills
 (the current list lives in `skills/manifest.json`) organized by `skills/RESOLVER.md`
 (`AGENTS.md` is also accepted):
 
@@ -13,7 +13,7 @@ meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-
 **Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
 testing, soul-audit, webhook-transforms, data-research, minion-orchestrator.
 `minion-orchestrator` is the single skill for both lanes of background work (shell jobs
-via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`), with shared
+via `foresights jobs submit shell`, LLM subagents via `foresights agent run`), with shared
 Preconditions and trigger routing limited to what the skill covers.
 
 **Skillify loop:** skillify (the markdown orchestration), skillpack-check
@@ -33,11 +33,11 @@ preparing for this meeting?"*
 
 **Brain-resident skillpacks + advisor:** A brain repo can carry its
 own publishable skillpack (`brain_resident: true` in `skillpack.json` + `schema_pack`);
-`gbrain skillpack init-brain-pack` scaffolds one with a 5-section machine-parseable README.
-Connecting harnesses discover it on `gbrain sources add` (Topology A advisory, bounded nag
+`foresights skillpack init-brain-pack` scaffolds one with a 5-section machine-parseable README.
+Connecting harnesses discover it on `foresights sources add` (Topology A advisory, bounded nag
 via `nag-state.ts`) and over MCP via the source-scoped `list_brain_skillpack` op +
 `get_skill --source_id` (gated by `mcp.publish_skills`). The bundled `gbrain-advisor` skill
-+ `gbrain advisor` op compute a ranked, read-only list of high-leverage actions from brain
++ `foresights advisor` op compute a ranked, read-only list of high-leverage actions from brain
 state (8 collectors in `src/core/advisor/`); `--json`+exit codes for CI/cron, local-only
 `--apply <id>` behind confirm, exposed over MCP behind `mcp.publish_advisor` (read-only; on
 by default for the local stdio server, opt-in for remote HTTP; an explicit `false` hides it). Thin clients cannot install a brain pack as a binary.

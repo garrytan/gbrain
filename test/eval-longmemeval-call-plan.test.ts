@@ -1,5 +1,5 @@
 /**
- * `gbrain eval longmemeval --call-plan FILE` writes gstack's eval call plan
+ * `foresights eval longmemeval --call-plan FILE` writes gstack's eval call plan
  * (GSTACK_EVAL_CALLS v1) for the run its flags describe, with no provider
  * call and no brain.
  *
@@ -220,7 +220,7 @@ describe('eval longmemeval --call-plan', () => {
     const p = await plan(args);
     expect(shellWords(p.parsed.gate)).toEqual(['gbrain', 'eval', 'longmemeval', FIXTURE, ...args]);
     expect(p.parsed.gate).toContain('--limit 2 --output ');
-    expect(gateCommand([FIXTURE, '--call-plan=x.calls', '--call-plan-gate', 'y', '--limit', '1'])).toBe(`gbrain eval longmemeval ${shellQuote(FIXTURE)} --limit 1`);
+    expect(gateCommand([FIXTURE, '--call-plan=x.calls', '--call-plan-gate', 'y', '--limit', '1'])).toBe(`foresights eval longmemeval ${shellQuote(FIXTURE)} --limit 1`);
     expect(shellQuote('')).toBe("''");
     expect(shellWords(shellQuote(`a'b "c" $d`))).toEqual([`a'b "c" $d`]);
     const custom = await plan(['--keyword-only', '--call-plan-gate', 'bun run eval:lme --questions 5']);

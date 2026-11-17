@@ -4,7 +4,7 @@
  *
  * A worker that died or lost its lock after the page write committed, but before completion was recorded, handed the job
  * to another attempt (the stall sweep), and that attempt wrote the captured body over any edit made in between. A client
- * replaying a POST /ingest after `gbrain jobs prune` removed the completed job row got a fresh job that did the same.
+ * replaying a POST /ingest after `foresights jobs prune` removed the completed job row got a fresh job that did the same.
  * Protects: a re-run of the key writes nothing and returns the first run's result (unmanaged, and managed through the
  * door's journal when the record row is missing); a replay after the job row is deleted leaves the newer edit; two
  * captures with different content to one slug both land in order, and re-running the first afterwards keeps the second.
@@ -305,7 +305,7 @@ for (const backend of backends) {
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: note('Managed retried', 'Page before the capture.') } });
       const stale = await engine.readPageSnapshot(slug, { sourceId: 'default' });
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: note('Managed retried', 'Edit before the capture.'), expected_revision: stale!.revision } });
-      // Attempt 0 reached the door for the revision before that edit and was refused; `gbrain jobs retry` reset attempts_made to 0.
+      // Attempt 0 reached the door for the revision before that edit and was refused; `foresights jobs retry` reset attempts_made to 0.
       await expect(submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: data.event.content, content_origin: 'tool_output',
         expected_revision: stale!.revision, request_id: `${appliedCaptureRequestPrefix(key)}0` } })).rejects.toThrow();
 
@@ -331,7 +331,7 @@ for (const backend of backends) {
       } finally { await lock.release(); }
       expect(await pageText()).toBe('');
 
-      // `gbrain jobs retry` reset attempts_made to 0, so the run sends the same request again.
+      // `foresights jobs retry` reset attempts_made to 0, so the run sends the same request again.
       const result = await makeIngestCaptureHandler(engine)(jobCtx(6, data, key));
       expect(result.status).toBe('imported');
       expect(await pageText()).toContain('Managed body after a failed write.');

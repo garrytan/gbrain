@@ -1,5 +1,5 @@
 /**
- * F3 (O-CEO-8, O-DX-4): `gbrain auth rescope`, one grant editor for legacy
+ * F3 (O-CEO-8, O-DX-4): `foresights auth rescope`, one grant editor for legacy
  * tokens and OAuth clients, run as a real CLI subprocess against a sandboxed
  * PGLite brain.
  *
@@ -225,7 +225,7 @@ describe('9. OAuth clients', () => {
     const error = JSON.parse(missing.stdout) as { error: { code: string; fix: { argv: string[] } } };
     expect(error.error.code).toBe('client_not_found');
     expect(error.error.fix.argv.slice(0, 4)).toEqual(['gbrain', 'auth', 'clients', '--json']);
-    expect(missing.stderr).toContain('Fix: Run gbrain auth clients --json');
+    expect(missing.stderr).toContain('Fix: Run foresights auth clients --json');
 
     const repairOnly = await cli('auth', 'rescope', '--client', client.clientId, '--repair');
     expect(repairOnly.exitCode).toBe(1);

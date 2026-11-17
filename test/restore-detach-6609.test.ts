@@ -7,7 +7,7 @@
  * `canonical_file_absent` and an ask-the-user fix naming `--detach`, and
  * nothing is restored; `detach: true` restores it database-only (no
  * `source_path`, `database_only_reason='detached'`) and a later
- * `gbrain sync --full` keeps it live; `detach` is refused when there is
+ * `foresights sync --full` keeps it live; `detach` is refused when there is
  * nothing to detach; doctor `missing_recorded_files` warns about a live page
  * whose recorded file a full sync would not find.
  * Fails when: the restore succeeds and keeps the stale `source_path`, so the
@@ -143,7 +143,7 @@ describe('#6609 restore of a page whose recorded file is gone', () => {
     expect(check.status).toBe('warn');
     expect(check.details).toMatchObject({ count: 1 });
     expect(check.message).toContain(`stale:${slug} (${slug}.md)`);
-    expect(check.message).toContain(`gbrain restore ${slug} --source-id stale --detach`);
+    expect(check.message).toContain(`foresights restore ${slug} --source-id stale --detach`);
     expect(check.fix).toMatchObject({ ask_user: true });
   }, 60_000);
 });

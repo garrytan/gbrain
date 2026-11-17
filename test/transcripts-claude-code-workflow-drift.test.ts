@@ -1,7 +1,7 @@
 /**
  * Claude Code workflow-run artifacts must not read as host-format drift.
  *
- * `gbrain transcripts ingest` reported "DRIFT WARNING: 27 file(s) parsed to
+ * `foresights transcripts ingest` reported "DRIFT WARNING: 27 file(s) parsed to
  * zero sessions" on a real brain, and every one was a false positive:
  *
  *   1. 22 subagent logs at `<session>/subagents/workflows/<wf>/agent-<id>.jsonl`.

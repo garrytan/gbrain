@@ -3,8 +3,8 @@
  * since the last diet, description size, frontmatter triggers, and drift
  * against the running CLI (src/core/skill-drift.ts). Read-only, with no git,
  * database or model calls, so it behaves the same on repo-less brains.
- * Shared by `gbrain skillpack health`, the `skill_health` doctor check and
- * `gbrain maintain`; scripts/check-skill-health.ts enforces the same limits
+ * Shared by `foresights skillpack health`, the `skill_health` doctor check and
+ * `foresights maintain`; scripts/check-skill-health.ts enforces the same limits
  * on the bundled skills in CI.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -67,7 +67,7 @@ export interface SkillHealthEntry {
 
 export interface SkillHealthReport {
   skills_dir: string;
-  /** managed: a skills manifest or skills.lock.json is present, every skill is checked; bundled_copies: only copies of gbrain's bundled skills are checked; not_gbrain: nothing is checked. */
+  /** managed: a skills manifest or skills.lock.json is present, every skill is checked; bundled_copies: only copies of foresights's bundled skills are checked; not_gbrain: nothing is checked. */
   scope: 'managed' | 'bundled_copies' | 'not_gbrain';
   skills: SkillHealthEntry[];
   findings: SkillHealthFinding[];
@@ -95,7 +95,7 @@ export function parseSkillBudgets(text: string): SkillBudgetRows {
   return out;
 }
 
-/** A folder gbrain manages: it holds a real skills manifest or skills lock (never a derived one). */
+/** A folder foresights manages: it holds a real skills manifest or skills lock (never a derived one). */
 export function isManagedSkillsDir(dir: string): boolean {
   return existsSync(join(dir, 'manifest.json')) || existsSync(join(dir, SKILLS_MANIFEST_FILENAME));
 }
@@ -123,7 +123,7 @@ export interface SkillHealthOptions {
   surface: CliSurface | null;
   /** Rows of the bundle's skills/skill-budgets.tsv, applied to skills of the same name. */
   budgets: ReadonlyMap<string, SkillBudget>;
-  /** Slugs gbrain bundles; copies of them are checked even in a folder gbrain does not manage. */
+  /** Slugs foresights bundles; copies of them are checked even in a folder foresights does not manage. */
   bundled: ReadonlySet<string>;
   /** Check one skill only. */
   only?: string;
@@ -155,11 +155,11 @@ export function computeSkillHealth(opts: SkillHealthOptions): SkillHealthReport 
     const desc = descriptionBytes(skillMd);
     const budget = budgets.get(skill);
     const ceiling = budget?.max ?? NEW_SKILL_CAP;
-    const verify = `gbrain skillpack health ${skill}`;
+    const verify = `foresights skillpack health ${skill}`;
     const findings: SkillHealthFinding[] = [];
     const file = `${skill}/SKILL.md`;
     const upstream = bundled.has(skill)
-      ? `if this copy is unedited, read gbrain's current version with \`gbrain skillpack reference ${skill}\`; otherwise `
+      ? `if this copy is unedited, read foresights's current version with \`foresights skillpack reference ${skill}\`; otherwise `
       : '';
 
     if (bytes > ceiling) {
@@ -193,7 +193,7 @@ export function computeSkillHealth(opts: SkillHealthOptions): SkillHealthReport 
         for (const f of d.findings) {
           drift++;
           findings.push({ code: f.code, skill, file: f.file, line: f.line, observed: f.snippet,
-            expected: f.suggestion ? `'${f.suggestion}'` : 'a command, flag or tool this gbrain has', fix: f.remedy, verify });
+            expected: f.suggestion ? `'${f.suggestion}'` : 'a command, flag or tool this foresights has', fix: f.remedy, verify });
         }
       }
     }
@@ -213,11 +213,11 @@ export function computeSkillHealth(opts: SkillHealthOptions): SkillHealthReport 
 
 /** One line for doctor, maintain and skillpack-check. */
 export function skillHealthSummary(r: SkillHealthReport): string {
-  if (r.scope === 'not_gbrain') return 'no gbrain skills in this folder';
+  if (r.scope === 'not_gbrain') return 'no foresights skills in this folder';
   const t = r.totals;
   const kb = (t.bytes / 1024).toFixed(0);
   const head = r.drift_checked
-    ? `${t.skills} skill(s), ${kb} KB, ${t.invocations} gbrain invocation(s) (${t.subcommands_unverified} with undeclared subcommands, flags checked)`
+    ? `${t.skills} skill(s), ${kb} KB, ${t.invocations} foresights invocation(s) (${t.subcommands_unverified} with undeclared subcommands, flags checked)`
     : `${t.skills} skill(s), ${kb} KB (commands and flags not checked outside the CLI)`;
   if (!r.findings.length) return `${head}; no findings`;
   const parts = [t.drift ? `${t.drift} drift` : '', t.size ? `${t.size} size/frontmatter` : ''].filter(Boolean).join(', ');

@@ -1,5 +1,5 @@
 /**
- * Fix wave 13 P1.18 (from PR #6400, credit @daveove): `gbrain embed` checked an
+ * Fix wave 13 P1.18 (from PR #6400, credit @daveove): `foresights embed` checked an
  * approved `--max-usd` only against the pre-run estimate, which is null for
  * `--slugs` and `--images`, so the run was never metered.
  * Protects: the CLI runs under the approved cap. A provider priced past it
@@ -77,18 +77,18 @@ describe('embed --max-usd is metered', () => {
     expect(calls).toBe(1);
     expect(await embedded()).toEqual(['notes/a']);
     expect(out).toContain('[embed] stopped (reason: cost_cap)');
-    expect(out).toContain(`gbrain embed --slugs ${SLUGS.join(' ')} --max-usd <usd>`);
+    expect(out).toContain(`foresights embed --slugs ${SLUGS.join(' ')} --max-usd <usd>`);
   });
 
   test('the result records the stop and no failure (no quarantine strike, no per-chunk fan-out)', async () => {
     const authorization = await withEnv({ GBRAIN_HOME: home }, () => requireEmbedBackfillConsent(engine, { command: 'embed', argv: ['gbrain', 'embed'], args: ['--max-usd', '0.10'], scope: { unestimated: true } }));
     const result = await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: home }, () => runEmbed(engine, ['--slugs', ...SLUGS, '--max-usd', '0.10', '--yes'], null, { authorization }));
     expect(result).toMatchObject({ reason: 'cost_cap', budget_reason: 'cost', cap_usd: 0.1, failures: 0, embedded: 1, failure_samples: [],
-      resume_command: `gbrain embed --slugs ${SLUGS.join(' ')}` });
+      resume_command: `foresights embed --slugs ${SLUGS.join(' ')}` });
     expect(calls).toBe(1);
     const quoted = { reason: 'x' } as { reason?: string; resume_command?: string };
     noteEmbedCostStop(quoted, new BudgetExhausted('cap', { reason: 'cost', spent: 0.2, cap: 0.1 }), ['--slugs', 'notes/$(id)', '--max-usd', '0.1', '--yes']);
-    expect(quoted.resume_command).toBe("gbrain embed --slugs 'notes/$(id)'");
+    expect(quoted.resume_command).toBe("foresights embed --slugs 'notes/$(id)'");
   });
 
   test('--stale with multi-chunk pages: one provider call, then a clean stop (no per-chunk fan-out, no failures)', async () => {
@@ -97,7 +97,7 @@ describe('embed --max-usd is metered', () => {
     await engine.executeRaw('UPDATE content_chunks SET embedding = NULL, embedded_at = NULL');
     const authorization = await withEnv({ GBRAIN_HOME: home }, () => requireEmbedBackfillConsent(engine, { command: 'embed', argv: ['gbrain', 'embed'], args: ['--max-usd', '0.10'], scope: { unestimated: true } }));
     const result = await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: home, GBRAIN_EMBED_CONCURRENCY: '1' }, () => runEmbed(engine, ['--stale', '--max-usd', '0.10'], null, { authorization }));
-    expect(result).toMatchObject({ reason: 'cost_cap', failures: 0, failure_samples: [], resume_command: 'gbrain embed --stale' });
+    expect(result).toMatchObject({ reason: 'cost_cap', failures: 0, failure_samples: [], resume_command: 'foresights embed --stale' });
     expect(calls).toBe(1);
   });
 

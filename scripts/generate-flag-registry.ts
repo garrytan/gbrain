@@ -1,7 +1,7 @@
 /**
  * #2185 — known-flags registry generator for CLI_ONLY commands.
  *
- * gbrain's CLI_ONLY commands read flags ad hoc (`args.includes('--force')`,
+ * foresights's CLI_ONLY commands read flags ad hoc (`args.includes('--force')`,
  * per-command parseFlags helpers), so there is no parser to make strict. The
  * pre-dispatch validator in src/cli/main.ts needs to know each command's legal
  * flags; this script derives them from the source instead of a hand-typed
@@ -96,7 +96,7 @@ const DELEGATED_MODULES: Record<string, string[]> = {
  * direct-pool-profile.ts reads other commands'
  * argv to pick the process's pool profile (`sync --watch`, `serve --access`):
  * serve imports it for the read-only check, and its `--watch` made
- * `gbrain serve --watch` pass validation. grants/shared-exposure.ts (GST-363)
+ * `foresights serve --watch` pass validation. grants/shared-exposure.ts (GST-363)
  * names other commands' flags (auth rescope, mcp grant, doctor) in warning
  * text that setup, mcp, connect, skillpack and auth print.
  */
@@ -289,7 +289,7 @@ export function isValueOnlyImport(block: string, importIndex: number): boolean {
  * block's text was attributed to the PRECEDING marker: every `eval <sub>`
  * bypass landed on `dream`, every `<cmd> --help` bypass on `status`, and the
  * eval row lacked --retrieval-only/--by-type/--no-trajectory/--keyword-only —
- * the documented `gbrain eval longmemeval` invocation exited 1 as an unknown
+ * the documented `foresights eval longmemeval` invocation exited 1 as an unknown
  * flag. `[ \t]*` (not `\s*`) keeps the marker anchored to its own line; `\(\s*`
  * lets the multi-line shape's newline through. A bare `command === 'X'` inside
  * a non-`if` expression (the serve `degradable` const) is deliberately NOT a

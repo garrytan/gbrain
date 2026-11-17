@@ -1,8 +1,8 @@
 /**
- * `gbrain sources git-reconcile [<source-id>...] [--dry-run] [--wait <seconds>] [--json]`: bring every source checkout on
+ * `foresights sources git-reconcile [<source-id>...] [--dry-run] [--wait <seconds>] [--json]`: bring every source checkout on
  * this host level with its upstream, idempotently, so any thread, agent, cron or hook can call it as often and as
  * concurrently as it likes. A level checkout costs one fetch and reports in_sync. A managed checkout (a persistence
- * worktree) is reconciled by `gbrain sources refresh`, which publishes its local commits (secret gate, rewrite check,
+ * worktree) is reconciled by `foresights sources refresh`, which publishes its local commits (secret gate, rewrite check,
  * Git durability) and fast-forwards; a refresh already running is waited for, then the checkout is checked again. Any
  * other checkout goes through reconcileCheckout (src/core/git/reconcile.ts). Merges are in memory; nothing rebases or
  * force-pushes. A brain with no Git checkout reports no_repo and exits 0.
@@ -26,7 +26,7 @@ import { getWorktreeBinding, managedPersistenceEnabled } from '../core/persisten
 import { REFRESH_PUBLISH_DIVERGED_KEY, publishOptedOut, refreshWorktree } from '../core/persistence/worktree-refresh.ts';
 import { listSources } from '../core/sources-ops.ts';
 
-const USAGE = 'Usage: gbrain sources git-reconcile [<source-id>...] [--dry-run] [--wait <seconds>] [--json]';
+const USAGE = 'Usage: foresights sources git-reconcile [<source-id>...] [--dry-run] [--wait <seconds>] [--json]';
 const RETRYABLE = new Set(['fetch_failed', 'push_unconfirmed', 'commit_lock_busy', 'refresh_in_progress', 'refresh_lock_timeout', 'refresh_drain_timeout', 'git_unavailable']);
 
 export type SourceReconcileStatus = CheckoutReconcileStatus | 'needs_user' | 'failed';
@@ -76,7 +76,7 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
   const all = (await listSources(engine)).filter(s => s.local_path);
   const listed = all.filter(s => !explicit || opts.sourceIds!.includes(s.id));
   const unknown = (opts.sourceIds ?? []).filter(id => !listed.some(s => s.id === id));
-  if (unknown.length) throw new OperationError('unknown_source', `No source with a local checkout named ${unknown.join(', ')}.`, 'gbrain sources list shows each source and its local path.');
+  if (unknown.length) throw new OperationError('unknown_source', `No source with a local checkout named ${unknown.join(', ')}.`, 'foresights sources list shows each source and its local path.');
   const configs = new Map((await engine.executeRaw<{ id: string; config: unknown }>('SELECT id, config FROM sources')).map(row => [row.id, row.config]));
   const managed = await managedPersistenceEnabled(engine);
   const configured = (await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY))?.trim();
@@ -112,7 +112,7 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
         ? await withReconcileLock(group.root, opts.waitMs ?? 300_000, () => reconcileManaged(engine, group.sources[0], group.root, publish, opts,
           optedOut.length ? offReason : `automatic publishing is off (${REFRESH_PUBLISH_DIVERGED_KEY} false)`))
         : await reconcileCheckout(group.root, { dryRun: opts.dryRun, publish, ...(opts.waitMs !== undefined ? { waitMs: opts.waitMs } : {}), ...(opts.childTimeoutMs ? { childTimeoutMs: opts.childTimeoutMs } : {}),
-          ...(optedOut.length ? { unpublishedReason: offReason } : publishSetting === null && !cloned ? { unpublishedReason: `gbrain sources add --url did not clone this checkout for the source, or the source folder is not the repository root; publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
+          ...(optedOut.length ? { unpublishedReason: offReason } : publishSetting === null && !cloned ? { unpublishedReason: `foresights sources add --url did not clone this checkout for the source, or the source folder is not the repository root; publish it with foresights git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
       out.push({ ...entry, ...result, ...off });
     } catch (error) {
       const failure = classifyItemFailure(error);

@@ -65,7 +65,7 @@ describe('autopilot-global-maintenance resumes across jobs (#4578)', () => {
     await engine.setConfig(GLOBAL_MAINTENANCE_PROGRESS_KEY, JSON.stringify({ running_phase: 'orphans', running_job: '6999:0', next_phase: 'orphans' }));
     const result = await run({});
     expect(result.report.phases.find((p: { phase: string }) => p.phase === 'orphans'))
-      .toMatchObject({ status: 'skipped', details: { reason: 'timed_out_previous_job', recovery: 'gbrain dream --phase orphans' } });
+      .toMatchObject({ status: 'skipped', details: { reason: 'timed_out_previous_job', recovery: 'foresights dream --phase orphans' } });
     expect(result.report.phases.find((p: { phase: string }) => p.phase === 'purge')?.status).not.toBe('skipped');
     expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
     const progress = await readGlobalMaintenanceProgress(engine);
@@ -111,7 +111,7 @@ describe('global_maintenance_timeouts doctor check (#4578)', () => {
       docs: 'docs/guides/troubleshooting.md#global-maintenance-timeouts',
       phases: [{ phase: 'embed', consecutive_deaths: 3 }],
     });
-    expect(check.message).toContain('gbrain dream --phase embed');
+    expect(check.message).toContain('foresights dream --phase embed');
     expect(check.message).toContain('autopilot.global_maintenance_timeout_ms');
   });
 
@@ -140,7 +140,7 @@ describe('global_maintenance_timeouts doctor check (#4578)', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('dream.patterns.subagent_timeout_ms');
     expect(check.message).toContain('autopilot.global_maintenance_timeout_ms');
-    expect(check.message).toContain('gbrain dream --phase patterns');
+    expect(check.message).toContain('foresights dream --phase patterns');
     expect(check.message).toContain('paid');
     expect(check.details).toMatchObject({ child_timeouts: [{ phase: 'patterns', consecutive_deaths: 3 }] });
     expect(check.message).not.toContain('synthesize');

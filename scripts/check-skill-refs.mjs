@@ -14,11 +14,11 @@
 //    The allowlist is a ratchet: it may shrink, never silently grow — add a
 //    line only with a review-visible commit. An entry whose file has no donor
 //    hit (cleaned or deleted) fails as stale, so the list shrinks with it.
-// 3. CLI REFS (fail): `gbrain <cmd>` tokens inside fenced code blocks AND
+// 3. CLI REFS (fail): `foresights <cmd>` tokens inside fenced code blocks AND
 //    inline code spans must name a real top-level command (the CLI's
 //    --tools-json surface, CLI_FLAG_REGISTRY, src/cli.ts dispatch, the
 //    command table and op cliHints). A curated list of known-bad
-//    subcommands (`gbrain embed refresh` parses `refresh` as a page slug)
+//    subcommands (`foresights embed refresh` parses `refresh` as a page slug)
 //    fails too. Skill bodies are agent-executed instructions, so a command
 //    that cannot run is a broken instruction, not a style nit. If the CLI
 //    surface cannot be loaded the lane warns and skips.
@@ -256,17 +256,17 @@ if (existsSync(resolverPath)) {
 }
 
 // --- 3. CLI refs (fail) ---
-// `gbrain embed` takes flags or a page slug, so a bare word after it is read
+// `foresights embed` takes flags or a page slug, so a bare word after it is read
 // as a slug: `embed refresh` runs the paid-consent gate, then "Page not found".
 const KNOWN_BAD_SUBCOMMANDS = {
-  embed: { refresh: 'gbrain embed --stale --dry-run (preview), then gbrain embed --stale --yes --max-usd <cap> after the user approves' },
+  embed: { refresh: 'foresights embed --stale --dry-run (preview), then foresights embed --stale --yes --max-usd <cap> after the user approves' },
 };
 // A command position: line/span start, after a shell separator or `$ ` prompt,
 // past `nohup`/`exec`/`time` and env assignments. Prose that merely mentions
-// gbrain mid-sentence ("turned off gbrain update checks") is not a command.
-const GBRAIN_CMD_RE = /(?:^|[|&;(]|\$)\s*(?:(?:nohup|exec|time)\s+|[A-Z_][A-Z0-9_]*=\S*\s+)*gbrain\s+([a-z][a-z0-9-]*)(?:\s+([a-z][a-z0-9-]*))?/g;
+// foresights mid-sentence ("turned off foresights update checks") is not a command.
+const GBRAIN_CMD_RE = /(?:^|[|&;(]|\$)\s*(?:(?:nohup|exec|time)\s+|[A-Z_][A-Z0-9_]*=\S*\s+)*(?:foresights|gbrain)\s+([a-z][a-z0-9-]*)(?:\s+([a-z][a-z0-9-]*))?/g;
 
-/** `gbrain <cmd> [<sub>]` in fenced code lines and inline code spans. */
+/** `foresights <cmd> [<sub>]` in fenced code lines and inline code spans. */
 function cliRefs(text) {
   const refs = [];
   let fence = null;
@@ -297,10 +297,10 @@ if (RUN_CLI_REFS) {
       for (const a of (t.cliHints && t.cliHints.aliases) || []) known.add(String(a));
     }
   } catch {
-    failures.push('[cli-refs] could not load the CLI surface (bun src/cli.ts --tools-json), so no gbrain command in a skill was checked. Fix: make `bun src/cli.ts --tools-json` run (bun install; the Bun version in package.json engines), or pass --no-cli-refs to skip this lane deliberately');
+    failures.push('[cli-refs] could not load the CLI surface (bun src/cli.ts --tools-json), so no foresights command in a skill was checked. Fix: make `bun src/cli.ts --tools-json` run (bun install; the Bun version in package.json engines), or pass --no-cli-refs to skip this lane deliberately');
   }
   if (known && known.size === 0) {
-    failures.push('[cli-refs] --tools-json parsed to an EMPTY command set, so no gbrain command in a skill was checked. Fix: make `bun src/cli.ts --tools-json` print the tool list, or pass --no-cli-refs to skip this lane deliberately');
+    failures.push('[cli-refs] --tools-json parsed to an EMPTY command set, so no foresights command in a skill was checked. Fix: make `bun src/cli.ts --tools-json` print the tool list, or pass --no-cli-refs to skip this lane deliberately');
   }
   if (known && known.size > 0) {
     // top-level commands defined directly in the dispatcher (src/cli/main.ts, not ops): derive from source
@@ -339,11 +339,11 @@ if (RUN_CLI_REFS) {
       const rel = join('skills', relative(SKILLS_DIR, file));
       for (const { cmd, sub, snippet } of cliRefs(readFileSync(file, 'utf8'))) {
         if (!known.has(cmd)) {
-          failures.push(`[cli-refs] ${rel} — \`${snippet}\`: \`gbrain ${cmd}\` is not a gbrain command, so an agent following this skill gets "unknown command". Fix: name the real command (\`gbrain --help\` lists them)`);
+          failures.push(`[cli-refs] ${rel} — \`${snippet}\`: \`foresights ${cmd}\` is not a foresights command, so an agent following this skill gets "unknown command". Fix: name the real command (\`foresights --help\` lists them)`);
           continue;
         }
         const replacement = sub && KNOWN_BAD_SUBCOMMANDS[cmd]?.[sub];
-        if (replacement) failures.push(`[cli-refs] ${rel} — \`${snippet}\`: \`gbrain ${cmd} ${sub}\` does not run as written. Fix: ${replacement}`);
+        if (replacement) failures.push(`[cli-refs] ${rel} — \`${snippet}\`: \`foresights ${cmd} ${sub}\` does not run as written. Fix: ${replacement}`);
       }
     }
   }
@@ -371,7 +371,7 @@ for (const root of generatedRoots.filter((r) => existsSync(r))) {
 }
 
 // --- 5. paid consent (fail, W4.7; migrations included): a documentation tripwire, not enforcement ---
-const PAID_COMMAND_RE = /(?:^|[|&;(]|\$)\s*(?:(?:nohup|exec|time)\s+|[A-Z_][A-Z0-9_]*=\S*\s+)*gbrain\s+(embed|reindex|reindex-code|enrich|extract-conversation-facts|book-mirror|dream|jobs\s+submit|doctor)(?![\w-])([^\n`]*)/;
+const PAID_COMMAND_RE = /(?:^|[|&;(]|\$)\s*(?:(?:nohup|exec|time)\s+|[A-Z_][A-Z0-9_]*=\S*\s+)*(?:foresights|gbrain)\s+(embed|reindex|reindex-code|enrich|extract-conversation-facts|book-mirror|dream|jobs\s+submit|doctor)(?![\w-])([^\n`]*)/;
 const PREAPPROVAL_RE = /(?:^|\s)--(?:yes|max-usd|max-cost|max-cost-usd)(?:[=\s]|$)/;
 const APPROVAL_WORDING_RE = /\b(?:ask|asks|asked|agree|agrees|agreed|approv\w*|consent\w*|confirm\w*|permission)\b/i;
 for (const file of files) {

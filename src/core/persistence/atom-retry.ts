@@ -72,7 +72,7 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
             ? `Transcript ${origin.locator} is a captured session of source ${hold.owner}; its atoms are extracted only by a run for that source, never retried into ${sourceId}. Run the atom drain for ${hold.owner} instead (it calls the configured LLM, so confirm the spend).`
             : hold.reason === 'transcript_outside_corpus'
               ? `Transcript ${origin.locator} is not in the session corpus, and only source default reads transcripts from outside it, so the batch is not retried into ${sourceId}. Read the batch's receipt and report it to the user.`
-              : `Transcript ${origin.locator} is a captured session with no known source (${hold.reason}), so its atoms are not retried into ${sourceId}. Ask the user which source the session belongs to; gbrain sweep --assign-corpus <source> maps it, then a run for that source extracts it.`,
+              : `Transcript ${origin.locator} is a captured session with no known source (${hold.reason}), so its atoms are not retried into ${sourceId}. Ask the user which source the session belongs to; foresights sweep --assign-corpus <source> maps it, then a run for that source extracts it.`,
           { reason: hold.reason, fix: hold.owner ? drainFix(hold.owner) : hold.reason === 'transcript_outside_corpus' ? receiptFix(requestId) : assignFix(sourceId) });
       }
       const item = origin.kind === 'page'

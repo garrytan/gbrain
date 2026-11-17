@@ -13,7 +13,7 @@
  *    clone that has never been bootstrapped; `bootstrap render` flips it true
  *    atomically. Presence alone can NEVER discriminate a template clone from a
  *    machine-two clone — the sentinel does.
- *  - The install receipt lives OUTSIDE the repo (under the gbrain home) and
+ *  - The install receipt lives OUTSIDE the repo (under the foresights home) and
  *    proves that THIS MACHINE ran bootstrap. Uninstall is keyed to the receipt,
  *    never to the repo manifest, because template/attach clones inherit the
  *    manifest but not the receipt.
@@ -30,7 +30,7 @@ export interface AgentManifest {
   /** false in the published template repo; render flips it true atomically. */
   initialized: boolean;
   agent_name: string;
-  /** gbrain version that created/last-rendered this workspace. */
+  /** foresights version that created/last-rendered this workspace. */
   created_by: string;
   /** ISO date of first successful render. Canonical placeholder in templates [CX2-14]. */
   created_at: string;
@@ -123,7 +123,7 @@ export interface InstallReceipt {
   agent_name: string;
   created_at: string;
   created_by: string;
-  /** True when bootstrap ran `gbrain init` itself (vs adopting a pre-existing
+  /** True when bootstrap ran `foresights init` itself (vs adopting a pre-existing
    * brain). Uninstall may only offer --delete-brain when this is true [G2]. */
   brain_created_by_bootstrap: boolean;
   /** Absolute paths bootstrap created OUTSIDE the workspace (hook wiring,
@@ -181,7 +181,7 @@ export function readReceiptState(gbrainHomeDir: string): ReceiptReadState {
 
 /**
  * Pre-write guard every receipt WRITER runs before overwriting: a
- * newer-format receipt (written by a newer gbrain) refuses with an
+ * newer-format receipt (written by a newer foresights) refuses with an
  * upgrade-first error; an unreadable receipt is backed up loudly (never
  * silently discarded) so `created_paths`/`registrations` remain recoverable.
  * Returns the backup path when an invalid receipt was moved aside.
@@ -190,8 +190,8 @@ export function guardReceiptOverwrite(gbrainHomeDir: string): { brokenBackupPath
   const state = readReceiptState(gbrainHomeDir);
   if (state.state === 'newer') {
     throw new Error(
-      `the install receipt at ${receiptPath(gbrainHomeDir)} was written by a newer gbrain ` +
-        `(receipt_version ${state.receiptVersion}) — upgrade gbrain before re-running bootstrap.`,
+      `the install receipt at ${receiptPath(gbrainHomeDir)} was written by a newer foresights ` +
+        `(receipt_version ${state.receiptVersion}) — upgrade foresights before re-running bootstrap.`,
     );
   }
   if (state.state === 'invalid') {
@@ -211,7 +211,7 @@ export function writeReceipt(gbrainHomeDir: string, receipt: InstallReceipt): vo
 }
 
 // ---------------------------------------------------------------------------
-// Machine-level harness receipt (#4043 `gbrain bootstrap harness`)
+// Machine-level harness receipt (#4043 `foresights bootstrap harness`)
 //
 // A SEPARATE file from receipt.json on purpose: the install receipt is
 // workspace-keyed (workspace_dir/source_id/agent_name are required — a
@@ -247,7 +247,7 @@ export interface HarnessTarget {
   entry?: string;
   /** Hook marker value (hooks targets). */
   marker?: string;
-  /** Absolute gbrain launcher rendered into the hook commands (hooks targets;
+  /** Absolute foresights launcher rendered into the hook commands (hooks targets;
    * absent on receipts written before it was recorded). */
   launcher?: string;
   /** Seat label rendered into the hook commands, '' for none (hooks targets;
@@ -359,8 +359,8 @@ export function guardHarnessReceiptOverwrite(gbrainHomeDir: string): { brokenBac
   const state = readHarnessReceiptState(gbrainHomeDir);
   if (state.state === 'newer') {
     throw new Error(
-      `the harness receipt at ${harnessReceiptPath(gbrainHomeDir)} was written by a newer gbrain ` +
-        `(harness_receipt_version ${state.receiptVersion}) — upgrade gbrain before re-running bootstrap harness.`,
+      `the harness receipt at ${harnessReceiptPath(gbrainHomeDir)} was written by a newer foresights ` +
+        `(harness_receipt_version ${state.receiptVersion}) — upgrade foresights before re-running bootstrap harness.`,
     );
   }
   if (state.state === 'invalid') {

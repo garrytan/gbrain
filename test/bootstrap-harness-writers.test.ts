@@ -100,7 +100,7 @@ describe('two-marker coexistence [C6]', () => {
     expect(markerEntries(readJson(path), GBRAIN_HARNESS_MARKER_VALUE)).toBe(CLAUDE_HOOK_EVENTS.length);
   });
 
-  test('refuseOnForeignGbrainMarker: refuses when another gbrain marker wires a target event', () => {
+  test('refuseOnForeignGbrainMarker: refuses when another foresights marker wires a target event', () => {
     const dir = tmp();
     const path = join(dir, 'settings.json');
     writeClaudeHooksAt(path, { gbrainBin: BIN, env: { GBRAIN_SOURCE: 'ws' } }); // bootstrap-v1
@@ -112,7 +112,7 @@ describe('two-marker coexistence [C6]', () => {
         marker: GBRAIN_HARNESS_MARKER_VALUE,
         refuseOnForeignGbrainMarker: true,
       }),
-    ).toThrow(/already wires hooks\..* under gbrain marker "bootstrap-v1"/);
+    ).toThrow(/already wires hooks\..* under (?:foresights|gbrain) marker "bootstrap-v1"/);
 
     // untouched: still exactly the bootstrap-v1 entries
     expect(markerEntries(readJson(path), GBRAIN_HOOK_MARKER_VALUE)).toBe(CLAUDE_HOOK_EVENTS.length);
@@ -320,10 +320,10 @@ describe('harness receipt (format.ts, CX2-12 discipline)', () => {
     expect(state.state).toBe('ok');
     expect((state as { receipt: typeof receipt }).receipt.targets[0].state).toBe('pending');
 
-    // newer-format refusal (never silently clobber a newer gbrain's receipt)
+    // newer-format refusal (never silently clobber a newer foresights's receipt)
     writeFileSync(harnessReceiptPath(home), JSON.stringify({ harness_receipt_version: 2 }));
     expect(readHarnessReceiptState(home).state).toBe('newer');
-    expect(() => guardHarnessReceiptOverwrite(home)).toThrow(/newer gbrain/);
+    expect(() => guardHarnessReceiptOverwrite(home)).toThrow(/newer (?:foresights|gbrain)/);
 
     // broken receipt → backed up aside, never silently discarded
     writeFileSync(harnessReceiptPath(home), 'not json');

@@ -69,7 +69,7 @@ function expectWarnings(report: Awaited<ReturnType<typeof activatePersistence>>,
   expect(warnings.map(w => [w.source_id, w.state]).sort()).toEqual([[ids.bare, 'unknown'], [ids.off, 'off']].sort());
   for (const warning of warnings) {
     expect(warning.code).toBe('git_durability_not_enabled');
-    expect(warning.enable_command).toBe(`gbrain sources writer git-durability ${warning.source_id} --enable --dry-run`);
+    expect(warning.enable_command).toBe(`foresights sources writer git-durability ${warning.source_id} --enable --dry-run`);
     expect(warning.message).toContain('re-queues the Git effects skipped');
     expect(warning.fix.argv).toEqual(['gbrain', 'sources', 'writer', 'git-durability', warning.source_id, '--enable', '--dry-run', '--json']);
     expect(warning.fix.consent).toEqual([]);

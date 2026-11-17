@@ -130,7 +130,7 @@ async function factsAbsorbJob(engine: ManagedBrain['engine'], loser: Awaited<Ret
   return key;
 }
 
-/** The `gbrain repair failed-writes` preview rows for the losing extraction's entity requests. */
+/** The `foresights repair failed-writes` preview rows for the losing extraction's entity requests. */
 async function factsListing(engine: ManagedBrain['engine']) {
   const preview = await (await repairRunner(engine, { apply: false, logger: { info() {}, warn() {}, error() {} } }))
     .run('failed-writes', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' });
@@ -240,7 +240,7 @@ for (const backend of testBackends()) {
     expect(listing).toHaveLength(4);
     for (const entry of listing) {
       expect(entry.class).toBe('producer_owned');
-      expect(entry.detail).toStartWith(`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id`);
+      expect(entry.detail).toStartWith(`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id`);
       expect(entry.detail).toEndWith('; its follow-up batches were refused as well, so a job retry replays the refusal');
       expect(entry.detail).not.toContain('extract --stale');
     }
@@ -258,7 +258,7 @@ for (const backend of testBackends()) {
     expect(interrupted.message).toBe('interrupted before the third follow-up');
     expect((await entityRequests(engine)).map(row => [row.state, row.error_code])).toEqual(Array(3).fill(['conflict', 'revision_conflict']));
     const key = await factsAbsorbJob(engine, loser, 'dead');
-    expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual(Array(3).fill(`recover: gbrain facts retry-dead --reset '${key}'`));
+    expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual(Array(3).fill(`recover: foresights facts retry-dead --reset '${key}'`));
     expect((await resumeManagedFacts(engine, await loser.session()))?.inserted).toBe(1);
     expect(await claimB(engine)).toEqual([{ fact: CLAIM_B, source_markdown_slug: TARGET }]);
     expect(await factsListing(engine)).toEqual([]);
@@ -275,11 +275,11 @@ for (const backend of testBackends()) {
     const race = raceEntityReads(engine, 1, move);
     expect((await publishManagedFacts(engine, before, loser.backstop, [fact(CLAIM_B)], 'private', loser.slug).catch(error => error).finally(race.restore)).code).toBe('revision_conflict');
     const key = await factsAbsorbJob(engine, loser, 'dead');
-    expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual([`recover: gbrain facts retry-dead --reset '${key}'`]);
+    expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual([`recover: foresights facts retry-dead --reset '${key}'`]);
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: loser.slug, request_id: randomUUID(), expected_revision: loser.snapshot.revision,
       content: `---\ntype: meeting\ntitle: Example\n---\n${BODY} (rewritten)\n` } });
     expect((await engine.readPageSnapshot(loser.slug, { sourceId: 'default' }))!.revision).not.toBe(loser.snapshot.revision);
-    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); ${loser.slug} changed after the page write its facts-absorb job extracts, so a job retry skips it`]);
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); ${loser.slug} changed after the page write its facts-absorb job extracts, so a job retry skips it`]);
   }, { databaseUrl }), 120_000);
 
   // Value: protects=a dead job whose page write its own retry would skip for a reason other than a newer write (here the writer's
@@ -294,11 +294,11 @@ for (const backend of testBackends()) {
     const race = raceEntityReads(engine, 1, move);
     expect((await publishManagedFacts(engine, before, loser.backstop, [fact(CLAIM_B)], 'private', loser.slug).catch(error => error).finally(race.restore)).code).toBe('revision_conflict');
     const key = await factsAbsorbJob(engine, loser, 'dead');
-    expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual([`recover: gbrain facts retry-dead --reset '${key}'`]);
+    expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual([`recover: foresights facts retry-dead --reset '${key}'`]);
     const [writer] = await engine.executeRaw<{ principal_kind: string; principal_id: string }>('SELECT principal_kind, principal_id FROM persistence_requests WHERE id=$1::uuid', [loser.write]);
     expect(writer!.principal_kind).toBe('local_cli');
     expect(await engine.executeRaw("UPDATE persistence_local_writers SET grant_ceiling = jsonb_set(COALESCE(grant_ceiling, '{}'::jsonb), '{slugPrefixes}', '[\"people/\"]'::jsonb) WHERE id=$1::uuid RETURNING id", [writer!.principal_id])).toHaveLength(1);
-    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); a job retry would skip the page write (permission_denied), so gbrain facts retry-dead cannot recover it`]);
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); a job retry would skip the page write (permission_denied), so foresights facts retry-dead cannot recover it`]);
   }, { databaseUrl }), 120_000);
 
   // Value: protects=repair failed-writes offers the job reset only for a dead facts-absorb job, and the reset's replay publishes the
@@ -317,21 +317,21 @@ for (const backend of testBackends()) {
     const jobStatus = (status: string) => engine.executeRaw("UPDATE minion_jobs SET status=$2 WHERE name='facts-absorb' AND idempotency_key=$1 RETURNING id", [key, status]);
     expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`pending: its facts-absorb job (${key}) is waiting; preview again once it ends`]);
     expect(await jobStatus('completed')).toHaveLength(1);
-    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its facts-absorb job is completed, so gbrain facts retry-dead has no dead job to reset`]);
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its facts-absorb job is completed, so foresights facts retry-dead has no dead job to reset`]);
     // Value: protects=a cancelled or vanished facts-absorb job is listed for re-extraction, never as pending or with the job reset;
     // fails_when=the pending check stops excluding cancelled (an endless "preview again") or a missing job gets retry-dead; why_new=the
     // rows above cover waiting, completed and dead only; seam=none; no_claim=the status and the job's absence are set by SQL
     expect(await jobStatus('cancelled')).toHaveLength(1);
-    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its facts-absorb job is cancelled, so gbrain facts retry-dead has no dead job to reset`]);
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its facts-absorb job is cancelled, so foresights facts retry-dead has no dead job to reset`]);
     const rekey = (from: string, to: string) => engine.executeRaw("UPDATE minion_jobs SET idempotency_key=$2 WHERE name='facts-absorb' AND idempotency_key=$1 RETURNING id", [from, to]);
     expect(await rekey(key, `${key}:elsewhere`)).toHaveLength(1);
-    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its facts-absorb job is gone, so gbrain facts retry-dead has no dead job to reset`]);
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its facts-absorb job is gone, so foresights facts retry-dead has no dead job to reset`]);
     expect(await rekey(`${key}:elsewhere`, key)).toHaveLength(1);
     expect(await jobStatus('dead')).toHaveLength(1);
     const [entry, ...others] = await factsListing(engine);
     expect(others).toEqual([]);
     expect(entry!.class).toBe('producer_owned');
-    expect(entry!.detail).toStartWith(`recover: gbrain facts retry-dead --reset '${key}'`);
+    expect(entry!.detail).toStartWith(`recover: foresights facts retry-dead --reset '${key}'`);
     const retried = await resumeManagedFacts(engine, await loser.session());
     expect(retried?.inserted).toBe(1);
     expect(await claimB(engine)).toEqual([{ fact: CLAIM_B, source_markdown_slug: TARGET }]);
@@ -355,14 +355,14 @@ for (const backend of testBackends()) {
         WHERE operation='extract_facts' AND slug=$1 AND state='conflict' AND intent->>'origin' LIKE '%chats/source-loser%'`, [TARGET]);
     });
     expect((await factsListing(engine)).map(entry => [entry.class, entry.detail])).toEqual([['producer_owned',
-      `re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call)`]]);
+      `re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call)`]]);
     // Value: protects=the preview's producer warning for fact requests points at each listed request's own command; fails_when=the
     // warning names extract --stale again or one request's recover command for every fact request; why_new=no #7602 row reads the
     // preview warnings; seam=none; no_claim=one fact request only, so the per-request commands are not compared to each other
     const preview = await (await repairRunner(engine, { apply: false, logger: { info() {}, warn() {}, error() {} } }))
       .run('failed-writes', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' });
     expect((preview.warnings ?? []).filter(warning => warning.includes('extract_facts'))).toEqual([
-      'extract_facts:managed_facts_entity in default: produced by gbrain itself, not replayed here; each listed request names the command that recovers its facts']);
+      'extract_facts:managed_facts_entity in default: produced by foresights itself, not replayed here; each listed request names the command that recovers its facts']);
   }, { databaseUrl }), 120_000);
 
   // Value: protects=a moved-entity refusal of an extraction with its own request id (no page write, no facts-absorb job) is listed for
@@ -380,7 +380,7 @@ for (const backend of testBackends()) {
     expect([refused.code, refused.retryable]).toEqual(['revision_conflict', false]);
     expect(await claimB(engine)).toEqual([]);
     expect((await factsListing(engine)).map(entry => [entry.class, entry.detail])).toEqual([['producer_owned',
-      're-extract: gbrain call extract_facts again on the current text of the source turn with a new request_id (one model call)']]);
+      're-extract: foresights call extract_facts again on the current text of the source turn with a new request_id (one model call)']]);
   }, { databaseUrl }), 120_000);
 
   // Value: protects=the stored moved-entity refusal texts stay the ones pre-fix and current receipts carry, so a reword cannot
@@ -434,7 +434,7 @@ for (const backend of testBackends()) {
         expect(await tx.executeRaw("UPDATE persistence_requests SET error_message=$2 WHERE operation='extract_facts' AND slug=$1 AND state='conflict' RETURNING id", [TARGET, message])).toHaveLength(1);
       });
       const key = await factsAbsorbJob(engine, loser, 'dead');
-      expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual([`recover: gbrain facts retry-dead --reset '${key}'`]);
+      expect((await factsListing(engine)).map(entry => entry.detail?.split(' (')[0])).toEqual([`recover: foresights facts retry-dead --reset '${key}'`]);
       const requests = await entityRequests(engine);
       const scope = await resolveRepairScope(engine, 'default');
       const preview = await (await repairRunner(engine, { apply: false, logger: { info() {}, warn() {}, error() {} } })).run('failed-writes', scope, { explicit: true, sourceFlag: 'default' });
@@ -489,15 +489,15 @@ for (const backend of testBackends()) {
   }, { databaseUrl }), 120_000);
 
   // Value: protects=repair failed-writes names the command that produces each guard-refused maintenance facts write again;
-  // fails_when=the listing sends a *_facts producer to gbrain extract --stale again (that sweep runs no fact producer), or a repair's
+  // fails_when=the listing sends a *_facts producer to foresights extract --stale again (that sweep runs no fact producer), or a repair's
   // write to the dream cycle; why_new=no failed-writes test lists a maintenance producer; seam=none; no_claim=the guard refusal (and,
   // past the first row, the intent kind) is stamped onto a committed fence-facts receipt by SQL, as the writer-guard row above does
   const maintenanceProducers: Array<[kind: string, command: string]> = [
-    [FENCE_FACTS_INTENT, 'the next `gbrain dream` cycle (or autopilot) produces it again'],
-    ['managed_maintenance_expire_captured_facts', 'gbrain repair captured-facts --source default'],
-    ['managed_maintenance_restore_extractor_facts', 'gbrain repair extractor-facts --source default'],
-    ['managed_maintenance_restore_redacted_facts', 'gbrain repair redacted-facts --source default'],
-    ['managed_maintenance_conversation_facts', 'gbrain extract-conversation-facts --source-id default --dry-run'],
+    [FENCE_FACTS_INTENT, 'the next `foresights dream` cycle (or autopilot) produces it again'],
+    ['managed_maintenance_expire_captured_facts', 'foresights repair captured-facts --source default'],
+    ['managed_maintenance_restore_extractor_facts', 'foresights repair extractor-facts --source default'],
+    ['managed_maintenance_restore_redacted_facts', 'foresights repair redacted-facts --source default'],
+    ['managed_maintenance_conversation_facts', 'foresights extract-conversation-facts --source-id default --dry-run'],
   ];
   for (const [kind, command] of maintenanceProducers) {
     test(`#7602 [${backend}]: a guard-refused ${kind} write is listed with the command that produces it, not extract --stale`, () => managedBrain(async brain => {
@@ -538,7 +538,7 @@ for (const backend of testBackends()) {
     expect([refused.code, refused.retryable]).toEqual(['revision_conflict', false]);
     expect((await entityRequests(engine)).map(row => row.state)).toEqual(['conflict']);
     expect(await claimB(engine)).toEqual([]);
-    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); entity page ${TARGET} was replaced after these facts were admitted, so a job retry replays the refusal`]);
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual([`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); entity page ${TARGET} was replaced after these facts were admitted, so a job retry replays the refusal`]);
   }, { databaseUrl }), 120_000);
 
   // Value: protects=a held-file sibling refused beside a moved entity is listed for re-extraction, not the job retry (the
@@ -571,7 +571,7 @@ for (const backend of testBackends()) {
     const preview = await (await repairRunner(engine, { apply: false, logger: { info() {}, warn() {}, error() {} } }))
       .run('failed-writes', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' });
     expect((preview.listing ?? []).filter(entry => entry.item.includes(' extract_facts')).map(entry => [entry.item.split(' ')[0], entry.detail])).toEqual([
-      [`default:${OTHER}`, `re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its extraction also holds refusals one job retry does not re-admit together`]]);
+      [`default:${OTHER}`, `re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its extraction also holds refusals one job retry does not re-admit together`]]);
   }, { databaseUrl }), 120_000);
 
   // Value: protects=when the entity's file is held between the move and the follow-up, repair lists the whole chain for
@@ -596,7 +596,7 @@ for (const backend of testBackends()) {
     expect((await entityRequests(engine)).map(row => [row.state, row.error_code])).toEqual([['conflict', 'revision_conflict'], ['conflict', 'source_changed']]);
     expect(await claimB(engine)).toEqual([]);
     await factsAbsorbJob(engine, loser, 'dead');
-    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual(Array(2).fill(`re-extract: gbrain call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its extraction also holds refusals one job retry does not re-admit together`));
+    expect((await factsListing(engine)).map(entry => entry.detail)).toEqual(Array(2).fill(`re-extract: foresights call extract_facts again on the current text of ${loser.slug} with a new request_id (one model call); its extraction also holds refusals one job retry does not re-admit together`));
   }, { databaseUrl }), 120_000);
 
   test(`#7602 [${backend}]: an entity page deleted after admission is not re-targeted; the refusal is not retryable`, () => managedBrain(async brain => {

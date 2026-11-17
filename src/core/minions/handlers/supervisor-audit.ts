@@ -10,14 +10,14 @@
  * `computeIsoWeekFilename()` helper that both call.
  *
  * Shape: every emission already includes `event` and `ts`; we write it
- * verbatim and let consumers (like `gbrain doctor`) grep for events of
+ * verbatim and let consumers (like `foresights doctor`) grep for events of
  * interest. `supervisor_pid` is added at start() time so each line is
  * self-describing even if a log shipper concatenates multiple supervisors'
  * files.
  *
  * Best-effort: write failures go to stderr and never block supervisor work.
  * A disk-full attacker could silently disable the trail — this is an
- * operational trace for `gbrain doctor`, not forensic insurance.
+ * operational trace for `foresights doctor`, not forensic insurance.
  *
  * `GBRAIN_AUDIT_DIR` overrides the default `~/.gbrain/audit/` path for
  * container deploys where `$HOME` is read-only.
@@ -72,7 +72,7 @@ export function writeSupervisorEvent(emission: SupervisorEmission, supervisorPid
 /**
  * Read back the latest supervisor audit file. Returns events sorted
  * oldest-first. Best-effort: missing file / parse errors return [].
- * Used by `gbrain doctor` (Lane D) to surface supervisor health.
+ * Used by `foresights doctor` (Lane D) to surface supervisor health.
  *
  * Pre-v0.40.4 this only walked the CURRENT week's file. v0.40.4 keeps
  * that semantic (single-file read, no cross-week walk) so doctor's
@@ -255,7 +255,7 @@ export function isCrashExit(event: SupervisorEmission): boolean {
 
 /**
  * Summarize crash counts across a window of supervisor audit events. Both
- * `gbrain doctor` and `gbrain jobs supervisor status` consume this — single
+ * `foresights doctor` and `foresights jobs supervisor status` consume this — single
  * regression point, single test target.
  *
  * Bucketing rule: `worker_exited` events classified as crashes by

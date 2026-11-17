@@ -3,7 +3,7 @@
  * covers the repair and reporting surfaces (the sync refusal itself: test/sync-relative-anchor-refusal-7630.test.ts).
  *
  * Protects:
- * - `gbrain sources set-path <id> --clear` clears a relative filesystem path without SQL, and still refuses an absolute one or
+ * - `foresights sources set-path <id> --clear` clears a relative filesystem path without SQL, and still refuses an absolute one or
  *   a source with a canonical owner binding; set-path over "." and beside relative or foreign-OS siblings;
  * - doctor's `default_source_local_path` warns on a relative path, on any source, and on a relative legacy `sync.repo_path`,
  *   and `config set sync.repo_path` refuses one;
@@ -55,7 +55,7 @@ describe7630('sources, config and doctor', (t) => {
   // Value: protects=the CLI clear of a relative filesystem path says sync refuses until a directory is set, not that autopilot syncs it;
   //   fails_when=runClearPath drops the connector branch and prints the connector's autopilot line for a filesystem source;
   //   why_new=the case above calls clearConnectorLocalPath directly and never reads the CLI output; seam=none; no_claim=none beyond protects
-  test('gbrain sources set-path default --clear on a relative path names the absolute set-path and never promises autopilot sync', async () => {
+  test('foresights sources set-path default --clear on a relative path names the absolute set-path and never promises autopilot sync', async () => {
     const { engine } = t;
     await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id='default'");
     const { lines, exit } = await cli(async () => {
@@ -65,7 +65,7 @@ describe7630('sources, config and doctor', (t) => {
     const text = lines.join('\n');
     expect(exit, text).toBeUndefined();
     expect(text).toContain('Cleared source "default" local_path (was .).');
-    expect(text).toContain('Sync of "default" refuses until a directory is set: gbrain sources set-path default <absolute-directory>.');
+    expect(text).toContain('Sync of "default" refuses until a directory is set: foresights sources set-path default <absolute-directory>.');
     expect(text).not.toContain('Autopilot keeps syncing');
     expect((await engine.executeRaw<{ local_path: string | null }>("SELECT local_path FROM sources WHERE id='default'"))[0]!.local_path).toBeNull();
   }, 120_000);
@@ -75,10 +75,10 @@ describe7630('sources, config and doctor', (t) => {
     await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id='default'");
     const check = await defaultSourceLocalPathCheck(engine);
     expect(check?.status).toBe('warn');
-    expect(check?.message).toContain('gbrain sources set-path default --clear');
+    expect(check?.message).toContain('foresights sources set-path default --clear');
   }, 120_000);
 
-  test('gbrain config set sync.repo_path refuses a relative path and writes nothing; an absolute one is stored', async () => {
+  test('foresights config set sync.repo_path refuses a relative path and writes nothing; an absolute one is stored', async () => {
     const { engine, folder } = t;
     const { runConfig } = await import('../src/commands/config.ts');
     const refused = await cli(() => runConfig(engine, ['set', 'sync.repo_path', '.']));
@@ -96,7 +96,7 @@ describe7630('sources, config and doctor', (t) => {
     const check = await defaultSourceLocalPathCheck(engine);
     expect(check?.status).toBe('warn');
     expect(check?.message).toContain('source "notes-a" has the relative local_path "notes"');
-    expect(check?.message).toContain('gbrain sources set-path <id> <absolute-directory>');
+    expect(check?.message).toContain('foresights sources set-path <id> <absolute-directory>');
   }, 120_000);
 
   // /ship coverage audit (GBRA-207, #7630).
@@ -129,8 +129,8 @@ describe7630('sources, config and doctor', (t) => {
     const check = await defaultSourceLocalPathCheck(engine);
     expect(check?.status).toBe('warn');
     expect(check?.message).toContain('sync.repo_path is the relative path "."');
-    expect(check?.message).toContain('gbrain config set sync.repo_path <absolute-directory>');
-    expect(check?.message).toContain('gbrain sources set-path default <absolute-directory>');
+    expect(check?.message).toContain('foresights config set sync.repo_path <absolute-directory>');
+    expect(check?.message).toContain('foresights sources set-path default <absolute-directory>');
     expect(check?.message).not.toContain('sync refuses it');
   }, 120_000);
 
@@ -161,7 +161,7 @@ describe7630('sources, config and doctor', (t) => {
   }, 120_000);
 
   // Value: protects=the repair command (sources set-path) never treats a sibling's relative local_path as the cwd's tree, and the
-  //   #2018 write-through leak guard fails closed on it wherever gbrain runs; fails_when=assertNoOverlappingPath realpaths "." to the
+  //   #2018 write-through leak guard fails closed on it wherever foresights runs; fails_when=assertNoOverlappingPath realpaths "." to the
   //   cwd, so set-path refuses overlapping_path, or otherSourceOwning ignores the relative sibling (or matches it only when run from
   //   its tree); why_new=no other case has a relative sibling; seam=none; no_claim=company-brain admission (same helper)
   test('a sibling with a relative local_path: set-path to the cwd passes and the leak guard fails closed on it', async () => {

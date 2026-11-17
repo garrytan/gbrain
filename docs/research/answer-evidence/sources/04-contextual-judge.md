@@ -25,7 +25,7 @@ Locator: Section 4.1, metric definition.
 
 > A judge is considered correct if it selects the correct response for both runs.
 
-### 2. The best reported model has 55.3% consistent accuracy on this contextual benchmark, not on the GBrain LongMemEval judge task.
+### 2. The best reported model has 55.3% consistent accuracy on this contextual benchmark, not on the Foresights LongMemEval judge task.
 
 Locator: Section 4.2 and Table 3.
 
@@ -33,7 +33,7 @@ Locator: Section 4.2 and Table 3.
 
 ## Limits on interpretation
 
-- A constructed 2,000-pair benchmark across eight contextual criteria. Pairwise judging and a conjunctive two-order metric differ from GBrain's pointwise reference-answer grader; its scores cannot estimate the pilot's error rate.
+- A constructed 2,000-pair benchmark across eight contextual criteria. Pairwise judging and a conjunctive two-order metric differ from Foresights's pointwise reference-answer grader; its scores cannot estimate the pilot's error rate.
 
 [Summary](../summaries/04-contextual-judge.md) · [Compendium](../compendium.md) ·
 [Index](../index.md)

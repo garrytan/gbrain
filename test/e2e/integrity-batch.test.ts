@@ -3,7 +3,7 @@
  *
  * The batch path (Postgres-only fast path added in v0.20.x) and the sequential
  * path (engine.getAllSlugs + getPage loop) MUST return the same result for
- * every supported case, otherwise gbrain doctor reports different numbers
+ * every supported case, otherwise foresights doctor reports different numbers
  * depending on engine type or whether batch was attempted.
  *
  * Codex review of the original perf commit caught a multi-source dedup
@@ -143,7 +143,7 @@ describeE2E('scanIntegrity batch parity (E2E, Postgres-only)', () => {
   describe('soft-deleted pages', () => {
     // The sequential walk never sees a tombstone: listAllPageRefs() and
     // getPage() both filter deleted_at IS NULL. The batch SQL must match, or
-    // `gbrain doctor`'s integrity sample reports hits from deleted pages and,
+    // `foresights doctor`'s integrity sample reports hits from deleted pages and,
     // once tombstones outnumber the sample, stops reaching live pages at all
     // (ORDER BY source_id, slug LIMIT n fills with deleted rows first).
     test('tombstones are skipped on both paths, and do not consume the sample', async () => {

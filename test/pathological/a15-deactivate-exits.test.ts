@@ -44,7 +44,7 @@ const preview = (engine: BrainEngine) => deactivatePersistence(engine, { dryRun:
 
 /** Runs one printed exit the way an agent would: the retry-effects preview's apply step, or the owner's effect worker. */
 async function runExit(engine: BrainEngine, ctx: OperationContext, exit: string): Promise<void> {
-  const retry = /^gbrain sources writer retry-effects (\S+) --request-id (\S+) --dry-run$/.exec(exit);
+  const retry = /^(?:foresights|gbrain) sources writer retry-effects (\S+) --request-id (\S+) --dry-run$/.exec(exit);
   if (retry) {
     await retryRequestEffects(engine, retry[1], retry[2], true, ctx.config);
     await retryRequestEffects(engine, retry[1], retry[2], false, ctx.config);
@@ -74,7 +74,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect(report.blockers.filter(b => b.kind === 'effect')).toEqual([]);
         const failed = new Map((report.failed_effects ?? []).map(entry => [entry.effect_id, entry]));
         expect(failed.get(git.id)).toMatchObject({ kind: 'git', code: 'source_changed',
-          exit: `gbrain sources writer retry-effects default --request-id ${git.request_id} --dry-run` });
+          exit: `foresights sources writer retry-effects default --request-id ${git.request_id} --dry-run` });
         expect(failed.get(zero.id)).toMatchObject({ kind: 'embedding', code: 'embedding_zero_norm', exit: null });
 
         for (const entry of failed.values()) if (entry.exit) await runExit(engine, ctx, entry.exit);

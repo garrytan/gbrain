@@ -8,7 +8,7 @@ how to interpret the headline number, and when to act.
 
 ## Why this exists
 
-gbrain handles contradictions for *curated* pages via compiled-truth-plus-
+foresights handles contradictions for *curated* pages via compiled-truth-plus-
 timeline and source-boost: when `companies/acme.md` says MRR is $2M and a
 chat transcript from 2024 says MRR was $50K, the curated page outranks the
 chat. `takes.active` filtering hides explicitly-superseded takes. Recency
@@ -23,7 +23,7 @@ change)" decision is vibes. The probe produces evidence.
 
 ```
         ┌──────────────────────────────────────┐
-        │ gbrain eval suspected-contradictions │
+        │ foresights eval suspected-contradictions │
         └──────────────────┬───────────────────┘
                            │
         ┌──────────────────▼───────────────────┐
@@ -109,7 +109,7 @@ Decision criteria for the bigger swing (chunk-level `revises` field):
 Each finding ships with a `resolution_command` field — addressable and
 honest about what needs operator judgment:
 
-- `gbrain takes supersede <slug> --row N --claim '<replacement>'` — newer
+- `foresights takes supersede <slug> --row N --claim '<replacement>'` — newer
   take should replace the older one (intra_page kind). `--row` is the
   per-page row number and `--claim` is required; when the winning side has
   an unambiguous claim (temporal supersession where the newer side is
@@ -117,7 +117,7 @@ honest about what needs operator judgment:
   explicit `<replacement claim>` placeholder for you to fill from the
   report — the classifier picks an action, not a winner, and will not
   fabricate a take from arbitrary chunk prose.
-- `gbrain dream --phase synthesize  # re-synthesize; contradiction on <slug>`
+- `foresights dream --phase synthesize  # re-synthesize; contradiction on <slug>`
   — compiled_truth for the curated entity needs an update (cross_slug
   curated-vs-bulk). The synthesize phase has no per-slug flag, so the
   comment names the page to check after the run.
@@ -126,7 +126,7 @@ honest about what needs operator judgment:
   mark-as-debate subcommand does not exist yet, so nothing is minted that
   would fail when pasted.
 
-Run `gbrain eval suspected-contradictions review --severity high` to
+Run `foresights eval suspected-contradictions review --severity high` to
 inspect findings without re-running the probe.
 
 ## Cost model
@@ -149,7 +149,7 @@ pay near-zero on re-runs (until you bump PROMPT_VERSION).
 - Probe never mutates the brain. Runs only read pages/takes/chunks.
   Writes go only to `eval_contradictions_runs` and `eval_contradictions_cache`.
 - `find_contradictions` is read-scope and is not in the subagent allowlist.
-  The bare local `gbrain find-contradictions` reads the latest run as stored:
+  The bare local `foresights find-contradictions` reads the latest run as stored:
   a source the CLI resolved by default (no `--source`, `GBRAIN_SOURCE` or
   `.gbrain-source`) is not a filter.
 - A stored report has no source column and copies both sides' text, private
@@ -189,8 +189,8 @@ listed first, and that a negative claim about one party ("Fund A is not
 leading") and a positive claim about another ("Fund B is leading") agree.
 
 The trajectory substrate builds on the same signal:
-`gbrain eval trajectory <entity>` shows the chronological typed-claim
-history with regressions flagged inline; `gbrain founder scorecard
+`foresights eval trajectory <entity>` shows the chronological typed-claim
+history with regressions flagged inline; `foresights founder scorecard
 <entity>` rolls up four signals (accuracy, consistency, growth
 direction, red flags) into a stable JSON contract. MCP op
 `find_trajectory` (read scope, visibility-filtered for remote callers)

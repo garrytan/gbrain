@@ -1,7 +1,7 @@
 /**
  * v0.41.8.0 — IRON-RULE regression for #1247, #1269, #1290.
  *
- * Pre-fix: `gbrain search`, `gbrain query`, `gbrain get` on PGLite
+ * Pre-fix: `foresights search`, `foresights query`, `foresights get` on PGLite
  * printed results then hung at ~95-98% CPU until SIGKILL.
  *
  * Post-fix: each command exits 0 within a few seconds.
@@ -11,7 +11,7 @@
  * with a hard timeout, and asserts exit 0. Without the drain helper
  * in cli.ts, every variant would time out.
  *
- * Bonus assertion: `gbrain serve --http` (a daemon) MUST stay alive
+ * Bonus assertion: `foresights serve --http` (a daemon) MUST stay alive
  * after the first request — the narrow force-exit guard added in
  * v0.41.8.0 is supposed to fire ONLY on op-dispatch drain timeout,
  * NEVER for daemons. This catches any future regression where the
@@ -72,7 +72,7 @@ beforeAll(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-pglite-exit-'));
   repoSourceDir = mkdtempSync(join(tmpdir(), 'gbrain-pglite-exit-src-'));
 
-  // Seed a tiny git repo with 2 markdown pages so `gbrain sync` has
+  // Seed a tiny git repo with 2 markdown pages so `foresights sync` has
   // something to import. The pages contain the literal token 'foxtrot'
   // so search has a deterministic keyword hit.
   writeFileSync(
@@ -125,7 +125,7 @@ beforeAll(() => {
   );
   if (initResult.status !== 0) {
     throw new Error(
-      `gbrain init failed (code=${initResult.status}):\n` +
+      `foresights init failed (code=${initResult.status}):\n` +
         `STDOUT:\n${initResult.stdout}\n` +
         `STDERR:\n${initResult.stderr}`,
     );
@@ -138,7 +138,7 @@ beforeAll(() => {
   );
   if (sourceResult.status !== 0) {
     throw new Error(
-      `gbrain sources add failed (code=${sourceResult.status}):\n` +
+      `foresights sources add failed (code=${sourceResult.status}):\n` +
         `STDOUT:\n${sourceResult.stdout}\nSTDERR:\n${sourceResult.stderr}`,
     );
   }
@@ -158,7 +158,7 @@ beforeAll(() => {
   );
   if (syncResult.status !== 0) {
     throw new Error(
-      `gbrain sync failed (code=${syncResult.status}):\n` +
+      `foresights sync failed (code=${syncResult.status}):\n` +
         `STDOUT:\n${syncResult.stdout}\n` +
         `STDERR:\n${syncResult.stderr}`,
     );
@@ -213,7 +213,7 @@ function runWithTimeout(
 const TEARDOWN_BANNER = 'did not return within';
 
 describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290)', () => {
-  test('gbrain search "foxtrot" exits 0 within 15s', async () => {
+  test('foresights search "foxtrot" exits 0 within 15s', async () => {
     const { code, stdout, stderr, durationMs } = await runWithTimeout(
       ['search', 'foxtrot', '--limit', '3'],
       15_000,
@@ -232,7 +232,7 @@ describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290
     expect(stdout.length).toBeGreaterThan(0);
   }, 30_000);
 
-  test('gbrain get returns a page body and exits 0 within 15s', async () => {
+  test('foresights get returns a page body and exits 0 within 15s', async () => {
     const { code, stdout, stderr, durationMs } = await runWithTimeout(
       ['get', 'alpha'],
       15_000,
@@ -248,7 +248,7 @@ describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290
     expect(stdout).toContain('foxtrot');
   }, 30_000);
 
-  test('gbrain query without --no-expand exits 0 within 15s (no API key)', async () => {
+  test('foresights query without --no-expand exits 0 within 15s (no API key)', async () => {
     // Without an API key, expansion + vector branches degrade
     // gracefully. The op still runs the keyword path and returns
     // results. The DRAIN is what we're testing, not query quality.
@@ -268,7 +268,7 @@ describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290
   }, 30_000);
 });
 
-describe('v0.42.20.0 — gbrain capture (CLI_ONLY) exits cleanly + frees the lock (#1762)', () => {
+describe('v0.42.20.0 — foresights capture (CLI_ONLY) exits cleanly + frees the lock (#1762)', () => {
   test('multi-chunk capture exits 0 within 25s AND a later command runs lock-free', async () => {
     // The #1762 repro: capture on a multi-chunk page enqueues a fire-and-forget
     // facts:absorb job, then handleCliOnly's finally disconnects mid-job →
@@ -430,7 +430,7 @@ describe('#2084 — explicit-exit teardown: every swept site exits clean, exit c
 });
 
 describe('WAL-repair wave — corrupt persistent brain, auto-repair off: owned exit 1 (#2084 class)', () => {
-  test('gbrain status on a torn-WAL brain with GBRAIN_PGLITE_WAL_REPAIR=off exits 1 (not 0, not 99)', async () => {
+  test('foresights status on a torn-WAL brain with GBRAIN_PGLITE_WAL_REPAIR=off exits 1 (not 0, not 99)', async () => {
     // Fixture (#3922): a REAL persistent PGLite brain — created, probed,
     // cleanly disconnected — whose WAL segments are then overwritten with
     // deterministic garbage (Buffer.alloc(size, 0xff), the exact shape
@@ -491,7 +491,7 @@ describe('WAL-repair wave — corrupt persistent brain, auto-repair off: owned e
 });
 
 describe('v0.41.8.0 — daemon survival (regression guard for narrow force-exit)', () => {
-  test('gbrain serve --http stays alive past the timeout window', async () => {
+  test('foresights serve --http stays alive past the timeout window', async () => {
     // A port the kernel reports free (a taken one would also exit early,
     // and read as this regression). We're testing "still alive
     // 3 seconds after startup" — if the force-exit guard misfired
@@ -532,7 +532,7 @@ describe('v0.41.8.0 — daemon survival (regression guard for narrow force-exit)
 
     if (!wasAlive) {
       throw new Error(
-        `gbrain serve --http exited within 3s (code=${earlyCode}). ` +
+        `foresights serve --http exited within 3s (code=${earlyCode}). ` +
           `If the narrow force-exit guard misclassified 'serve' as a ` +
           `non-daemon command, this is the regression.`,
       );

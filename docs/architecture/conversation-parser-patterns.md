@@ -145,7 +145,7 @@ the non-shadowing contract executable.
 
 ## Email threads
 
-`email-thread-heading` reads gbrain's Gmail thread page
+`email-thread-heading` reads foresights's Gmail thread page
 (`src/core/google/google-render.ts`): one `## <From> · YYYY-MM-DD HH:MM` heading
 per message, `## → <From> · …` for a sent message, the message body below it.
 The speaker is the From display name (the `<address>` and quotes are dropped;
@@ -196,7 +196,7 @@ turns. Dates use the existing page-date fallback and recognized date headings.
 
 **Say to your agent:** *"Preview this conversation and tell me whether its
 speakers can be read without guessing."* The agent can use
-`gbrain extract-conversation-facts --source-id default --slug conversations/example --dry-run`;
+`foresights extract-conversation-facts --source-id default --slug conversations/example --dry-run`;
 the preview does not call a model or mark the page complete.
 
 ## Adding a built-in format

@@ -1,5 +1,5 @@
 /**
- * #7087: a managed `gbrain sync --dry-run` returned the cursor's committed counts (zero before a run) and printed
+ * #7087: a managed `foresights sync --dry-run` returned the cursor's committed counts (zero before a run) and printed
  * nothing, so the preview said nothing would change while files differed. Its counts are now the changes the run
  * would publish (an idle preview after a run used to repeat that run's counts), and the CLI prints them.
  */

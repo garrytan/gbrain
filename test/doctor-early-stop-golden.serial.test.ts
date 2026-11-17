@@ -56,7 +56,7 @@ function enterHome(config?: Record<string, unknown>): DoctorHome {
   process.env.HOME = h.home;
   process.env.GBRAIN_AUDIT_DIR = join(h.home, 'audit');
   process.env.GBRAIN_SYNC_FAILURES_DIR = join(h.home, 'sync-failures');
-  // No globally linked gbrain on PATH (npm_squat would fire on dev boxes).
+  // No globally linked foresights on PATH (npm_squat would fire on dev boxes).
   process.env.PATH = [join(h.home, 'bin'), '/usr/bin', '/bin'].join(delimiter);
   delete process.env.DATABASE_URL;
   delete process.env.GBRAIN_DATABASE_URL;

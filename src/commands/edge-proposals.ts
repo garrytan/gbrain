@@ -1,17 +1,17 @@
 /**
- * `gbrain edge-proposals` — review and apply relationship-contradiction
+ * `foresights edge-proposals` — review and apply relationship-contradiction
  * proposals from the edge_contradictions dream phase (host-local).
  *
- *   gbrain edge-proposals list [--status proposed|applied|...|all] [--limit N] [--json]
- *   gbrain edge-proposals show <id> [--json]
- *   gbrain edge-proposals accept <id>     append the closure line and re-derive
- *   gbrain edge-proposals reject <id>
- *   gbrain edge-proposals undo <id> | --all-applied
- *   gbrain edge-proposals date <id> <YYYY-MM-DD>   date an undated pair: writes "Started <type> [[target]]"
- *   gbrain edge-proposals retry <id> | --all-held  clear a judge error so the next cycle judges the pair again
+ *   foresights edge-proposals list [--status proposed|applied|...|all] [--limit N] [--json]
+ *   foresights edge-proposals show <id> [--json]
+ *   foresights edge-proposals accept <id>     append the closure line and re-derive
+ *   foresights edge-proposals reject <id>
+ *   foresights edge-proposals undo <id> | --all-applied
+ *   foresights edge-proposals date <id> <YYYY-MM-DD>   date an undated pair: writes "Started <type> [[target]]"
+ *   foresights edge-proposals retry <id> | --all-held  clear a judge error so the next cycle judges the pair again
  *
  * Every proposal names the subject page, the relationship that ends, the close
- * date (from relationship-specific evidence) and why. gbrain never invents a
+ * date (from relationship-specific evidence) and why. foresights never invents a
  * date: undated pairs wait for `date`.
  */
 import type { BrainEngine } from '../core/engine.ts';
@@ -31,7 +31,7 @@ interface Row {
 
 function usage(): string {
   return [
-    'Usage: gbrain edge-proposals <list|show|accept|reject|undo|date|retry> [args]',
+    'Usage: foresights edge-proposals <list|show|accept|reject|undo|date|retry> [args]',
     '  list [--status <status|all>] [--limit N] [--json]   default status: proposed + undated_unresolved',
     '  show <id> [--json]',
     '  accept <id>             write the closure line on the subject page and re-derive its links',
@@ -64,7 +64,7 @@ function describe(r: Row): string {
   if (r.status === 'proposed' || r.status === 'applied') {
     return `#${r.id} [${r.status}] ${pair} → ${r.ending} ended ${dateKey(r.close_date)}${r.born_closed ? ' (recorded out of order)' : ''}`;
   }
-  if (r.status === 'undated_unresolved') return `#${r.id} [undated] ${pair} → cannot both hold, but a start date is missing; run: gbrain edge-proposals date ${r.id} <YYYY-MM-DD>`;
+  if (r.status === 'undated_unresolved') return `#${r.id} [undated] ${pair} → cannot both hold, but a start date is missing; run: foresights edge-proposals date ${r.id} <YYYY-MM-DD>`;
   return `#${r.id} [${r.status}] ${pair}`;
 }
 
@@ -94,7 +94,7 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
     const limit = rawLimit === undefined ? 50 : intFlagValue(rawLimit, '--limit', { min: 1, example: 50 });
     const list = status === 'all' ? await rows(engine, 'TRUE', [], limit)
       : await rows(engine, 'p.status = ANY($1::text[])', [status ? [status] : ['proposed', 'undated_unresolved']], limit);
-    out(list, list.length ? list.map(describe).join('\n') + '\n\nNext: gbrain edge-proposals accept <id> | reject <id>' : 'No open relationship proposals.');
+    out(list, list.length ? list.map(describe).join('\n') + '\n\nNext: foresights edge-proposals accept <id> | reject <id>' : 'No open relationship proposals.');
     return;
   }
   if (sub === 'retry' && rest.includes('--all-held')) {
@@ -102,7 +102,7 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
     out({ cleared: cleared.map(r => normalizeId(r.id)) }, `${cleared.length} held judge error(s) cleared; the next dream cycle judges those pairs again.`);
     return;
   }
-  if (!Number.isSafeInteger(id) || id <= 0) { console.error(`${usage()}\n\nA proposal id is required (gbrain edge-proposals list shows them).`); setCliExitVerdict(2); return; }
+  if (!Number.isSafeInteger(id) || id <= 0) { console.error(`${usage()}\n\nA proposal id is required (foresights edge-proposals list shows them).`); setCliExitVerdict(2); return; }
   if (sub === 'show') {
     const [r] = await rows(engine, 'p.id = $1', [id]);
     if (!r) { console.error(`No proposal #${id}.`); setCliExitVerdict(1); return; }
@@ -138,7 +138,7 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
     const op = operations.find(o => o.name === 'add_timeline_entry')!;
     const sourceId = (await engine.executeRaw<{ source_id: string }>(`SELECT source_id FROM link_edge_proposals WHERE id = $1`, [id]))[0].source_id;
     await op.handler({ engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId, logger: { info() {}, warn() {}, error() {} } } as never,
-      { slug: r.subject, date, summary: `Started ${r.link_type} [[${target}]]`, source: 'gbrain edge-proposals' });
+      { slug: r.subject, date, summary: `Started ${r.link_type} [[${target}]]`, source: 'foresights edge-proposals' });
     const { autoLinkWrittenPage } = await import('../core/ops/pages.ts');
     await autoLinkWrittenPage(engine, r.subject, { sourceId });
     await engine.executeRaw(`UPDATE link_edge_proposals SET status = 'rejected', detail = 'dated by user', updated_at = now() WHERE id = $1`, [id]);

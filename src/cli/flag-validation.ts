@@ -109,7 +109,7 @@ export function findUnknownOpFlag(op: OperationMeta, args: string[]): string | n
     //   source — makeContext's 6-tier source resolution (deleted before wire);
     //   dry-run — makeContext's ctx.dryRun projection.
     // Pre-fix, rejecting these broke documented invocations
-    // (`gbrain search "x" --source y`, `gbrain put x --dry-run`).
+    // (`foresights search "x" --source y`, `foresights put x --dry-run`).
     if (rawKey === 'json') {
       // #4602: parseOpArgs consumes a literal true/false as this boolean's
       // value — mirror the traversal so the token counts as consumed here too.

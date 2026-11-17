@@ -1,7 +1,7 @@
 # Conversation backfill durable outcomes
 
-`gbrain extract-conversation-facts` stores page-level outcomes in `facts` so
-bulk runs, autopilot, and `gbrain doctor` can distinguish finished work from
+`foresights extract-conversation-facts` stores page-level outcomes in `facts` so
+bulk runs, autopilot, and `foresights doctor` can distinguish finished work from
 retryable work without adding another state table.
 
 This is completion authority, not ordinary extracted knowledge. The authority
@@ -61,7 +61,7 @@ The digest covers the exact body given to the parser plus parser-relevant page
 metadata: title, type, frontmatter, and effective date. Selection recomputes
 the digest before skipping work. A sidecar-only edit therefore reopens the page.
 
-`gbrain doctor` cannot read sidecars in its SQL aggregate, so it enumerates those
+`foresights doctor` cannot read sidecars in its SQL aggregate, so it enumerates those
 pages in bounded batches and calls the same canonical verifier used by
 extraction. Doctor and extraction therefore agree after sidecar-only edits.
 
@@ -132,7 +132,7 @@ therefore takes more extractor calls than before, under the same cost cap.
 
 Pages stamped complete by an earlier release saw clipped input, and their
 outcome stays valid because the page did not change. To re-extract them
-run `gbrain extract-conversation-facts --source <id> --slug <slug> --force`
+run `foresights extract-conversation-facts --source <id> --slug <slug> --force`
 (or `--force` without `--slug` for the whole source, after a `--dry-run`
 preview of the window count); this spends model calls, so it is the
 operator's decision.
@@ -206,7 +206,7 @@ The result also exposes separate durable-outcome and failure counters:
 - `pages_failed`
 
 The CLI aggregates these across sources. The autopilot backfill phase includes
-them in phase details. `gbrain doctor` reports `completed`,
+them in phase details. `foresights doctor` reports `completed`,
 `scanned_not_extractable`, and `backlog` independently.
 
 ### Preview without model calls
@@ -215,7 +215,7 @@ them in phase details. `gbrain doctor` reports `completed`,
 why any are skipped."*
 
 ```bash
-gbrain extract-conversation-facts --source-id default --dry-run --limit 10 --workers 1
+foresights extract-conversation-facts --source-id default --dry-run --limit 10 --workers 1
 ```
 
 Dry-run reports segmentation and skip reasons without calling the parser
@@ -229,9 +229,9 @@ does not estimate how many facts a later model call would return.
 Run a small canary twice:
 
 ```bash
-gbrain extract-conversation-facts --source-id default --limit 10 --workers 1 --max-cost-usd 0.25 --yes
-gbrain extract-conversation-facts --source-id default --limit 10 --workers 1 --max-cost-usd 0.25 --yes
-gbrain doctor
+foresights extract-conversation-facts --source-id default --limit 10 --workers 1 --max-cost-usd 0.25 --yes
+foresights extract-conversation-facts --source-id default --limit 10 --workers 1 --max-cost-usd 0.25 --yes
+foresights doctor
 ```
 
 On the second run, unchanged pages should move through durable skip counters.

@@ -1,6 +1,6 @@
 # Entity recall: everything the brain says about an account
 
-GBrain links every page that names an entity to that entity's page: by its
+Foresights links every page that names an entity to that entity's page: by its
 title, by the subject of a record title (`CRM record: Acme Example` → "Acme
 Example"), by a frontmatter alias, or by a code the page declares (`Account
 code: ACMX`). The `entity` card then lists those pages grouped by type, newest
@@ -45,13 +45,13 @@ title: "Meeting: Acme Example renewal prep"
 Renewal blocker: the security review. acmx in lowercase is not the code.
 EOF
 
-gbrain init --pglite --no-embedding
-gbrain import brain --no-embed
-gbrain extract --stale
-gbrain entity ACMX
+foresights init --pglite --no-embedding
+foresights import brain --no-embed
+foresights extract --stale
+foresights entity ACMX
 ```
 
-`gbrain extract --stale` reports `Mentions: 4 link(s) added, 0 removed from 5 page(s).` and the card reads:
+`foresights extract --stale` reports `Mentions: 4 link(s) added, 0 removed from 5 page(s).` and the card reads:
 
 ```
 CRM record: Acme Example (crm/acme-example) [crm]
@@ -63,7 +63,7 @@ CRM record: Acme Example (crm/acme-example) [crm]
     ticket (3): tickets/ticket-3, tickets/ticket-2, tickets/ticket-1
 ```
 
-Over MCP (or `gbrain entity ACMX --json`) the card carries the rows:
+Over MCP (or `foresights entity ACMX --json`) the card carries the rows:
 
 ```json
 "referenced_by_count": 4,
@@ -91,7 +91,7 @@ the exact call for the rest:
 ```
 
 ```bash
-gbrain backlinks crm/acme-example --type ticket --group page --limit 2
+foresights backlinks crm/acme-example --type ticket --group page --limit 2
 ```
 
 returns `{rows, total, truncated, cursor, coverage}`, newest first by
@@ -111,10 +111,10 @@ brain recognizes in your source:
 | State | Meaning | What to do |
 |---|---|---|
 | `complete` | Every page is scanned at its current content. | Nothing. |
-| `pending` | Pages were written since the last pass, or no pass ran yet. | `gbrain extract --stale --catch-up` (free). |
-| `failed` | The last pass could not build the name index. | Read `gbrain doctor --only links_extraction_lag --json`, fix, rerun. |
-| `disabled` | `auto_link` or `mentions.auto_link` is `false`. | The user's choice; `gbrain config set mentions.auto_link true` reverses it. |
-| `type_not_linkable` | Nothing links to this page type by name. | `gbrain config set mentions.entity_types +<type>`. |
+| `pending` | Pages were written since the last pass, or no pass ran yet. | `foresights extract --stale --catch-up` (free). |
+| `failed` | The last pass could not build the name index. | Read `foresights doctor --only links_extraction_lag --json`, fix, rerun. |
+| `disabled` | `auto_link` or `mentions.auto_link` is `false`. | The user's choice; `foresights config set mentions.auto_link true` reverses it. |
+| `type_not_linkable` | Nothing links to this page type by name. | `foresights config set mentions.entity_types +<type>`. |
 
 Any state but `complete` adds a `[gbrain notice mention_index]` block, so an
 agent never reads a short list as "nothing else exists".
@@ -126,7 +126,7 @@ agent never reads a short list as "nothing else exists".
   (alias `crm`), `organization` and `entity`. Other packs add their own
   `primitive: entity` types.
 - Put the name in the title, or after a prefix: `CRM record: Acme Example`.
-- Declare other names in the body (see [How gbrain learns an alias](#how-gbrain-learns-an-alias)).
+- Declare other names in the body (see [How foresights learns an alias](#how-gbrain-learns-an-alias)).
 - Or list names in frontmatter `aliases: [Acme, Acme Inc]`.
 
 Names are never linked when they are shorter than 4 characters, a generic word
@@ -135,9 +135,9 @@ Names are never linked when they are shorter than 4 characters, a generic word
 pages, or inside a private facts or takes fence. Contracts and other non-entity
 pages that repeat a code do not claim it.
 
-## How gbrain learns an alias
+## How foresights learns an alias
 
-**Say to your agent:** *"Make sure gbrain knows every name the Acme account goes by."*
+**Say to your agent:** *"Make sure foresights knows every name the Acme account goes by."*
 
 ```markdown
 Acme Example (formerly Gearbox Labs), also known as Blue Harbor, goes by ACMX.
@@ -145,7 +145,7 @@ Internal nickname: Copper Fox
 | Former legal name | Gearbox Labs Inc |
 ```
 
-gbrain reads prose cues (`also known as`, `aka`, `nicknamed`, `goes by`,
+foresights reads prose cues (`also known as`, `aka`, `nicknamed`, `goes by`,
 `formerly`, `doing business as`, ...), label lines and table rows whose label
 names an alias field (`nickname`, `alias`, `trading name`, `account code`, ...),
 and a quoted defined term after the page's own name. A name is a quoted name or
@@ -164,7 +164,7 @@ names of the entity a query names; those rows carry `matched_alias`.
 ## When a name does not link
 
 ```bash
-gbrain extract mentions --explain acmx --page meetings/2026-04-03
+foresights extract mentions --explain acmx --page meetings/2026-04-03
 ```
 
 ```
@@ -178,8 +178,8 @@ The reason codes are `ambiguous_first_word`, `below_min_length`,
 `generic_token`, `alias_collision`, `case_mismatch`, `type_not_linkable`,
 `linking_disabled`, `pending`, `ignored_by_page`, `ignored_by_config`,
 `excluded_by_config`, `denied_by_config` and `not_a_known_name`. Only `pending`
-is fixed by running `gbrain extract --stale`. Given a slug
-(`gbrain extract mentions --explain crm/acme-example`), it also lists every name
+is fixed by running `foresights extract --stale`. Given a slug
+(`foresights extract mentions --explain crm/acme-example`), it also lists every name
 the page derives with its origin and declaring line, each rejected candidate
 with its reason, and the identity-sibling decision.
 
@@ -189,7 +189,7 @@ with its reason, and the identity-sibling decision.
 two clients' figures can come back side by side. To have them grouped:
 
 ```bash
-gbrain config set recall.group_by_entity on
+foresights config set recall.group_by_entity on
 ```
 
 Each entity's facts then sit together, facts saved with no entity form their
@@ -223,19 +223,19 @@ is refused too, so add the compound as its own alias when it names the entity.
 Mention links written inside a longer Hangul word, or across a space, by a
 matcher older than the Hangul boundary rule (#5829), and links written inside a
 longer Katakana word by a matcher older than the Katakana rule (#6843), are stale:
-`gbrain doctor` counts them in `stale_mentions`, and
-`gbrain extract links --by-mention --rebuild --source db` removes them while
+`foresights doctor` counts them in `stale_mentions`, and
+`foresights extract links --by-mention --rebuild --source db` removes them while
 keeping real mentions. A name that is also a common word (a person titled
 인하 against "로 인하여") needs `mentions.exclude_slugs`.
 
 ## How it stays current
 
-`gbrain extract --stale` (and the autopilot cycle, and the managed-brain stale
+`foresights extract --stale` (and the autopilot cycle, and the managed-brain stale
 path) runs the mention pass after link extraction. It rescans only pages whose
 content changed, plus pages a new, removed or renamed entity name can affect,
 and it never reruns link or timeline extraction. Sync's own inline extraction
 stays link-only. A budgeted cycle gives the mention pass half its time while
-pages are due. `gbrain extract --stale --dry-run` shows `mention_due_pages` and
+pages are due. `foresights extract --stale --dry-run` shows `mention_due_pages` and
 the last pass time.
 
 ## Upgrading an existing brain
@@ -246,10 +246,10 @@ the last pass time.
 | Legacy `gbrain-base` | Its entity types (person, company, yc, civic, ...) link; no `account` type. Switch packs or add types with `mentions.entity_types`. |
 | Custom pack | Every type marked `primitive: entity`, plus its aliases, links. |
 
-After upgrading, `gbrain post-upgrade` names the one command to run:
+After upgrading, `foresights post-upgrade` names the one command to run:
 
 ```bash
-gbrain extract --stale --catch-up
+foresights extract --stale --catch-up
 ```
 
 It reads every page once (free, no model calls). The pass also runs from

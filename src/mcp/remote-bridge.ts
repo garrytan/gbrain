@@ -1,5 +1,5 @@
 /**
- * Thin-client `gbrain serve`: a stdio MCP server that relays every request to
+ * Thin-client `foresights serve`: a stdio MCP server that relays every request to
  * the remote brain with this install's stored OAuth credential (#8543).
  *
  * Nothing here opens an engine or runs an operation handler, and no page text
@@ -37,9 +37,9 @@ import { stripUrlSecrets } from '../core/url-redact.ts';
 
 /** The client name the host sees. Not the thin client's, so the host serves the lean rows and windowed pages any remote agent gets. */
 export const BRIDGE_CLIENT_NAME = 'gbrain-stdio-bridge';
-/** Per-call timeout (the CLI's think default); the SDK's own 60 s would cut think off. `gbrain --timeout=Ns serve` overrides it. */
+/** Per-call timeout (the CLI's think default); the SDK's own 60 s would cut think off. `foresights --timeout=Ns serve` overrides it. */
 export const BRIDGE_DEFAULT_TIMEOUT_MS = 180_000;
-/** The first gbrain whose hosts enforce a request-level `_meta.on_behalf_of` and report it as `_meta.access.audience`. */
+/** The first foresights whose hosts enforce a request-level `_meta.on_behalf_of` and report it as `_meta.access.audience`. */
 export const AUDIENCE_MIN_HOST_VERSION = '0.60.543.0';
 
 export interface RemoteBridgeOptions {
@@ -57,7 +57,7 @@ export interface RemoteBridgeOptions {
   forward?: typeof forwardRemoteToolCall;
 }
 
-/** Whether a host's initialize `serverInfo` names a gbrain at least `min` (four-part versions). */
+/** Whether a host's initialize `serverInfo` names a foresights at least `min` (four-part versions). */
 export function hostAtLeast(server: { name?: string; version?: string } | undefined, min: string): boolean {
   if (server?.name !== 'gbrain' || typeof server.version !== 'string') return false;
   const have = server.version.split('.').map(Number);
@@ -143,7 +143,7 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
     const unknown = hostTools.filter(t => !byName.has(t.name) && !warnedUnknown.has(t.name)).map(t => t.name);
     if (unknown.length) {
       for (const n of unknown) warnedUnknown.add(n);
-      log(`${BRIDGE_LOG_PREFIX} not listing ${unknown.length} host tool(s) this gbrain does not know under a narrowed surface: ${unknown.join(', ')}`);
+      log(`${BRIDGE_LOG_PREFIX} not listing ${unknown.length} host tool(s) this foresights does not know under a narrowed surface: ${unknown.join(', ')}`);
     }
     return hostTools.filter(t => byName.has(t.name) && (!session.allowedOps || session.allowedOps.has(t.name)));
   };
@@ -157,7 +157,7 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
   server = new Server({ name: MCP_SERVER_NAME, version: VERSION, description: MCP_SERVER_DESCRIPTION },
     { capabilities: { tools: { listChanged: true } }, instructions: resolveMcpInstructions(cfg, process.env) });
   installInstructionsResolver(server, async () => {
-    const relay = `This MCP server is a gbrain stdio bridge: it relays every call to the remote brain at ${endpointLabel(mcpUrl)}, which decides what each call may read or write.`;
+    const relay = `This MCP server is a foresights stdio bridge: it relays every call to the remote brain at ${endpointLabel(mcpUrl)}, which decides what each call may read or write.`;
     try {
       const defs = await list(cfg, { clientName: BRIDGE_CLIENT_NAME, timeoutMs: Math.min(timeoutMs, 15_000) });
       return `${defs.instructions ?? resolveMcpInstructions(cfg, process.env)}\n\n${relay}`;
@@ -192,7 +192,7 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
       return bridgeRefusal({ code: 'invalid_params', message: 'request_tools surface must be one of: verbs, starter, full.', why: 'The bridge widens its own session surface and knows only these three.',
         suggestion: 'Call request_tools {"surface":"starter"} or {"surface":"full"}.' }, render) as CallToolResult;
     }
-    const persistent = `For a lasting change, set GBRAIN_SURFACE=${requested} in the env of this harness's MCP server entry for gbrain (or edit its --surface) and start a new session.`;
+    const persistent = `For a lasting change, set GBRAIN_SURFACE=${requested} in the env of this harness's MCP server entry for foresights (or edit its --surface) and start a new session.`;
     session.widenAllowed = await sessionWidenAllowed(null, cfg);
     if (!session.widenAllowed) {
       return bridgeRefusal({ code: 'permission_denied', message: 'Session widening is off for this bridge (mcp.allow_session_widen is false), so request_tools cannot add tools to it.',
@@ -280,9 +280,9 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
 
   const audienceUnsupported = (hostVersion: string | undefined): CallToolResult => bridgeRefusal({
     code: 'host_upgrade_required',
-    message: `This call names an audience (_meta.on_behalf_of), but the brain host${hostVersion ? ` (gbrain ${hostVersion})` : ''} cannot be shown to enforce one, so the bridge did not relay it.`,
-    why: `A host older than gbrain ${AUDIENCE_MIN_HOST_VERSION} ignores a request-level audience and would answer with the credential's whole view; the bridge never relays an audience-narrowed call it cannot verify.`,
-    suggestion: 'Upgrade gbrain on the brain host (gbrain upgrade there), or ask its operator to; until then, call without the audience only if every reader of the answer may see this credential\'s whole view.',
+    message: `This call names an audience (_meta.on_behalf_of), but the brain host${hostVersion ? ` (foresights ${hostVersion})` : ''} cannot be shown to enforce one, so the bridge did not relay it.`,
+    why: `A host older than foresights ${AUDIENCE_MIN_HOST_VERSION} ignores a request-level audience and would answer with the credential's whole view; the bridge never relays an audience-narrowed call it cannot verify.`,
+    suggestion: 'Upgrade foresights on the brain host (foresights upgrade there), or ask its operator to; until then, call without the audience only if every reader of the answer may see this credential\'s whole view.',
     fix: { argv: ['gbrain', 'upgrade'], consent: [], actor: 'host_admin', requires_exclusive: false, why: 'The audience is enforced by the brain host; only an upgrade there adds it.' },
   }, render, { client_version: VERSION, ...(hostVersion ? { host_version: hostVersion } : {}), min_host_version: AUDIENCE_MIN_HOST_VERSION }) as CallToolResult;
 
@@ -341,7 +341,7 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
     onDrainExpired: () => {
       for (const w of writes.values()) {
         exitCode = 1;
-        log(`${BRIDGE_LOG_PREFIX} code=write_outcome_unknown tool=${w.tool} submission_status=unknown${w.requestId ? ` request_id=${w.requestId} fix="gbrain write-request -- ${w.requestId}"` : ' fix="ask the brain host owner whether it took effect before resending"'}`);
+        log(`${BRIDGE_LOG_PREFIX} code=write_outcome_unknown tool=${w.tool} submission_status=unknown${w.requestId ? ` request_id=${w.requestId} fix="foresights write-request -- ${w.requestId}"` : ' fix="ask the brain host owner whether it took effect before resending"'}`);
       }
     },
   });

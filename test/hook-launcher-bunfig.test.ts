@@ -1,8 +1,8 @@
 /**
- * #8424: the hooks gbrain writes never let the session directory's bunfig.toml
- * or .env run. The script-mode install maps the gbrain bin to src/cli.ts, and
+ * #8424: the hooks foresights writes never let the session directory's bunfig.toml
+ * or .env run. The script-mode install maps the foresights bin to src/cli.ts, and
  * Bun applies a top-level bunfig.toml preload from the working directory
- * before any gbrain code; harnesses start hooks in the session's directory.
+ * before any foresights code; harnesses start hooks in the session's directory.
  * Every hook here is installed by the real writer, then run with sh -c from a
  * directory whose bunfig.toml preload drops a marker file, the way Claude Code
  * and Codex run it. The marker must never appear.
@@ -27,7 +27,7 @@ const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
 
-/** A temp HOME with a script-mode gbrain (a symlink to src/cli.ts, as bun install -g makes it) and a hostile checkout. */
+/** A temp HOME with a script-mode foresights (a symlink to src/cli.ts, as bun install -g makes it) and a hostile checkout. */
 function box() {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-hook-launcher-'));
   roots.push(root);
@@ -63,7 +63,7 @@ async function waitForDetached(b: Box) {
 const readJson = (p: string) => JSON.parse(readFileSync(p, 'utf8'));
 
 describe('a hook run from a checkout whose bunfig.toml preloads code never runs that preload', () => {
-  test('control: script-mode gbrain started in that checkout runs the preload (the hole the launcher closes)', () => {
+  test('control: script-mode foresights started in that checkout runs the preload (the hole the launcher closes)', () => {
     const b = box();
     const r = runHook(b, `${b.gbrain} --version`);
     expect(r.exitCode).toBe(0);
@@ -95,7 +95,7 @@ describe('a hook run from a checkout whose bunfig.toml preloads code never runs 
     expect(existsSync(b.marker)).toBe(false);
   });
 
-  test('gbrain setup claude-code hook shape, every event', () => {
+  test('foresights setup claude-code hook shape, every event', () => {
     const b = box();
     ensureHookLauncher(b.launcher);
     for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'] as const) {
@@ -105,7 +105,7 @@ describe('a hook run from a checkout whose bunfig.toml preloads code never runs 
     }
   });
 
-  test('gbrain setup codex hook shape: SessionStart, UserPromptSubmit and the detached SessionEnd', async () => {
+  test('foresights setup codex hook shape: SessionStart, UserPromptSubmit and the detached SessionEnd', async () => {
     const b = box();
     ensureHookLauncher(b.launcher);
     for (const event of ['SessionStart', 'UserPromptSubmit', 'SessionEnd'] as const) {
@@ -125,7 +125,7 @@ describe('the launcher', () => {
     expect(r.stdout).toBe(`${b.hostile}|${dirname(b.launcher)}`);
   });
 
-  test('refuses to start anything when its directory holds a file gbrain did not write', () => {
+  test('refuses to start anything when its directory holds a file foresights did not write', () => {
     const b = box();
     ensureHookLauncher(b.launcher);
     writeFileSync(join(dirname(b.launcher), 'bunfig.toml'), `preload = [${JSON.stringify(join(b.hostile, 'tooling', 'pre.ts'))}]\n`);
@@ -196,7 +196,7 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
       expect(hookLauncherProblem('claude-code')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain('claude-code turn-rule hook now starts gbrain from its own directory');
+      expect(lines.join('\n')).toContain('claude-code turn-rule hook now starts foresights from its own directory');
       expect(hookLauncherProblem('claude-code')).toBeNull();
     });
     const entries = readJson(settings).hooks.UserPromptSubmit.flatMap((g: { hooks: unknown[] }) => g.hooks);
@@ -219,7 +219,7 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
       const before = { hooks: readFileSync(hooks, 'utf8'), config: readFileSync(config, 'utf8') };
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain('run `gbrain setup codex --instructions-only` to rewrite it');
+      expect(lines.join('\n')).toContain('run `foresights setup codex --instructions-only` to rewrite it');
       expect({ hooks: readFileSync(hooks, 'utf8'), config: readFileSync(config, 'utf8') }).toEqual(before);
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
     });
@@ -237,7 +237,7 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
     await withEnv(env(b), async () => {
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain('the codex turn-rule hook starts gbrain in the session\'s directory, so it is left as is');
+      expect(lines.join('\n')).toContain('the codex turn-rule hook starts foresights in the session\'s directory, so it is left as is');
     });
     expect(readJson(hooks)).toEqual({ hooks: { UserPromptSubmit: [group] } });
     expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(false);
@@ -279,7 +279,7 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
     await withEnv({ HOME: b.home, GBRAIN_HOME: b.home, CLAUDE_CONFIG_DIR: undefined }, async () => {
       expect(hookLauncherFix(problem(b))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
       expect(hookLauncherFix(problem(b, { lane: 'turn-rule' }))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--instructions-only'] });
-      // gbrain setup codex rewrites the shared hooks.json and its trust (it can re-enable or newly trust a group), so the agent never runs it.
+      // foresights setup codex rewrites the shared hooks.json and its trust (it can re-enable or newly trust a group), so the agent never runs it.
       const codex = hookLauncherFix(problem(b, { harness: 'codex', lane: 'turn-rule', source: join(b.home, '.codex', 'hooks.json') }));
       expect(codex).toMatchObject({ actor: 'user', consent: [] });
       expect(codex.argv).toBeUndefined();
@@ -291,7 +291,7 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
       expect(p.user_message).toContain(`From ${project}, run: gbrain setup claude-code --scope project`);
       const foreign = hookLauncherFix(problem(b, { reason: 'foreign', detail: 'the launcher directory holds .env' }));
       expect(foreign.actor).toBe('user');
-      expect(foreign.user_message).toContain('Remove that file (gbrain did not write it), then run: gbrain setup claude-code');
+      expect(foreign.user_message).toContain('Remove that file (foresights did not write it), then run: gbrain setup claude-code');
       const edited = hookLauncherFix(problem(b, { edited: true }));
       expect(edited.actor).toBe('user');
       expect(edited.user_message).toContain('Remove or rewrite that entry');

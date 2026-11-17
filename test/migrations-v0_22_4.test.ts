@@ -158,7 +158,7 @@ describe('v0.22.4 migration (B11)', () => {
       for (const e of entries) {
         expect(e.migration).toBe('0.22.4');
         expect(e.skill).toBe('skills/migrations/v0.22.4.md');
-        expect(e.command).toContain('gbrain frontmatter validate');
+        expect(e.command).toContain('foresights frontmatter validate');
         expect(e.command).toContain('--fix');
       }
     } finally {

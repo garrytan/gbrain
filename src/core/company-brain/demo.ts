@@ -19,7 +19,7 @@ export interface CompanyBrainDemoResult {
 
 function demoFailure(code: RegistryCode, message: string): OperationError {
   return opError(code, message,
-    'The bundled fictional sample failed in a throwaway in-memory brain, so this is a gbrain packaging or code fault, not a problem with your data. Report it to the user with gbrain --version; no brain was touched.');
+    'The bundled fictional sample failed in a throwaway in-memory brain, so this is a foresights packaging or code fault, not a problem with your data. Report it to the user with foresights --version; no brain was touched.');
 }
 
 export async function runCompanyBrainDemo(): Promise<CompanyBrainDemoResult> {

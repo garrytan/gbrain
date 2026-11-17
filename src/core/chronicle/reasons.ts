@@ -51,11 +51,11 @@ const FIX_ON_HOST = 'Only the brain host operator can extract these pages: previ
 
 export const CHRONICLE_REASONS = {
   auto_chronicle_off: { stage: 'decision',
-    meaning: () => 'Automatic event extraction is off on this brain by choice (`gbrain config set auto_chronicle false`).' },
+    meaning: () => 'Automatic event extraction is off on this brain by choice (`foresights config set auto_chronicle false`).' },
   auto_chronicle_invalid: { stage: 'decision',
     meaning: () => 'auto_chronicle holds a value that is neither true nor false, so it reads as off.',
     fix: () => ({ argv: ['gbrain', 'config', 'set', 'auto_chronicle', 'true'], consent: ['paid'], actor: 'agent',
-      why: 'Ask the user whether automatic extraction should be on (one paid chat call per eligible page) or off (`gbrain config set auto_chronicle false`).',
+      why: 'Ask the user whether automatic extraction should be on (one paid chat call per eligible page) or off (`foresights config set auto_chronicle false`).',
       requires_exclusive: false }) },
   slug_bound_client: { stage: 'decision',
     meaning: () => 'The writer is confined (slug-bound, delegated or namespace-restricted), so its writes never trigger extraction into life/events/.',
@@ -101,7 +101,7 @@ export const CHRONICLE_REASONS = {
     fix: () => ({ consent: ['credentials'], actor: 'user', requires_exclusive: false,
       why: 'Ask the user to configure a chat provider key on the brain host (see docs/ai-providers/); pending pages run on the next cycle.' }) },
   no_pricing: { stage: 'execution',
-    meaning: (ctx) => `chronicle.job_budget_usd was set explicitly, and gbrain has no price for ${ctx.model ?? 'the chat model'}, so the cap cannot be enforced.`,
+    meaning: (ctx) => `chronicle.job_budget_usd was set explicitly, and foresights has no price for ${ctx.model ?? 'the chat model'}, so the cap cannot be enforced.`,
     fix: (ctx) => ({ argv: ['gbrain', 'pricing', 'set', ctx.model ?? '<model>', ...pricingSetCommand('model', 'chat').split(' ').slice(4)],
       consent: [], actor: 'agent', requires_exclusive: false,
     why: 'Look up the model\'s current price and register it on the brain host; extraction retries on the next cycle.',

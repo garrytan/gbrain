@@ -1,6 +1,6 @@
 # DESIGN.md
 
-The design system source of truth for gbrain. Born from the de facto tokens
+The design system source of truth for foresights. Born from the de facto tokens
 that landed in `admin/src/index.css` during the v0.26.0 admin SPA work and
 formalized during the v0.36.1.0 Hindsight calibration wave's design review.
 
@@ -9,7 +9,7 @@ When a question is "does this UI fit the system?", the answer is here.
 
 ## Voice
 
-GBrain talks like a smart friend who knows your past, not a clinical scoring
+Foresights talks like a smart friend who knows your past, not a clinical scoring
 system. Every user-facing string passes through this filter:
 
 - Second person, contractions allowed.

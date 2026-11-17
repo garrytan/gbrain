@@ -1,5 +1,5 @@
 /**
- * `gbrain cache` CLI (src/commands/cache.ts) — clear / prune / arg-parsing
+ * `foresights cache` CLI (src/commands/cache.ts) — clear / prune / arg-parsing
  * reality, end-to-end through the command's OWN loadConfig → createEngine
  * path (runCache builds its own engine; there is no injection seam).
  *
@@ -134,7 +134,7 @@ const THREE_ROWS: SeedRow[] = [
   { id: 'row-b1', source: 'b' },
 ];
 
-describe('gbrain cache clear', () => {
+describe('foresights cache clear', () => {
   test('bare clear (no --yes) exits 1 and deletes NOTHING', async () => {
     await seed(THREE_ROWS);
     const r = await runCacheCli(['clear']);
@@ -177,7 +177,7 @@ describe('gbrain cache clear', () => {
   }, 60_000);
 });
 
-describe('gbrain cache prune', () => {
+describe('foresights cache prune', () => {
   test('prune removes only past-TTL rows and leaves fresh ones', async () => {
     await seed([
       { id: 'fresh-row', source: 'a', ageSeconds: 0, ttl: 3600 },
@@ -191,7 +191,7 @@ describe('gbrain cache prune', () => {
   }, 60_000);
 });
 
-describe('gbrain cache — dispatch edges', () => {
+describe('foresights cache — dispatch edges', () => {
   test('bogus subcommand exits 1 with a pointer to --help', async () => {
     const r = await runCacheCli(['bogus']);
     expect(r.exitCode).toBe(1);
@@ -205,7 +205,7 @@ describe('gbrain cache — dispatch edges', () => {
     try {
       const r = await runCacheCli(['--help'], emptyHome);
       expect(r.exitCode).toBeUndefined();
-      expect(r.stdout).toContain('gbrain cache stats');
+      expect(r.stdout).toContain('foresights cache stats');
       expect(r.stdout).toContain('Requires --yes');
     } finally {
       rmSync(emptyHome, { recursive: true, force: true });
@@ -218,7 +218,7 @@ describe('gbrain cache — dispatch edges', () => {
       const r = await runCacheCli(['prune'], emptyHome);
       expect(r.exitCode).toBe(1);
       expect(r.stderr).toContain('no brain configured');
-      expect(r.stderr).toContain('gbrain init');
+      expect(r.stderr).toContain('foresights init');
     } finally {
       rmSync(emptyHome, { recursive: true, force: true });
     }

@@ -31,7 +31,7 @@ export async function refreshManagedFilesystemRoots(engine: SqlEngine, databaseP
       FROM persistence_host_bindings h JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id WHERE h.host_id=$1::uuid
       UNION SELECT local_path,id,incarnation,NULL,NULL FROM sources WHERE local_path IS NOT NULL`, [hostIdFor(engine)], { signal });
   signal?.throwIfAborted();
-  // #7630: a relative local_path (a legacy ".") names whatever directory gbrain runs from; it is never a managed root.
+  // #7630: a relative local_path (a legacy ".") names whatever directory foresights runs from; it is never a managed root.
   const owned = rows.filter(row => isAbsolute(row.local_path));
   if (databasePath) owned.push({ local_path: databasePath, datastore: true });
   const roots = recordManagedRoots(brain.brain_id, owned, brain.mode_epoch == null ? undefined : Number(brain.mode_epoch));
@@ -66,9 +66,9 @@ export function assertManagedFilesystemWrite(path: string): void {
   const error = new OperationError('writer_coordinator_required',
     `This path belongs to the managed canonical worktree ${managed.root}${managed.sourceId ? ` (source ${managed.sourceId})` : ''}.`,
     staleEnclosingMarker(managed)
-      ? `The evidence is ${managed.evidence}, which an older gbrain wrote in a Git directory that only encloses a managed root (#7988, #9430); gbrain no longer writes it there. `
-        + 'Deactivation removes it: preview with gbrain sources writer deactivate --dry-run --json, run the printed command after the user agrees, then activate again.'
-      : 'Submit the change through the persistence coordinator; check the root with gbrain sources writer status.');
+      ? `The evidence is ${managed.evidence}, which an older foresights wrote in a Git directory that only encloses a managed root (#7988, #9430); foresights no longer writes it there. `
+        + 'Deactivation removes it: preview with foresights sources writer deactivate --dry-run --json, run the printed command after the user agrees, then activate again.'
+      : 'Submit the change through the persistence coordinator; check the root with foresights sources writer status.');
   error.detail = `root=${managed.root} source=${managed.sourceId ?? 'unknown'} evidence=${managed.evidence}`;
   throw error;
 }

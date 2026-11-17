@@ -4,9 +4,9 @@
  *
  * Pre-fix: the local CLI always emitted a scalar `{sourceId}` scope (required
  * field, auto-filled 'default'), so a source registered with
- * `gbrain sources add --federated` was invisible to an unqualified
- * `gbrain search "X"` — contradicting docs/guides/multi-source-brains.md
- * ("Source participates in unqualified `gbrain search` results").
+ * `foresights sources add --federated` was invisible to an unqualified
+ * `foresights search "X"` — contradicting docs/guides/multi-source-brains.md
+ * ("Source participates in unqualified `foresights search` results").
  *
  * Fix: the CLI context builder computes `ctx.localFederatedSourceIds`
  * (resolved source + every other federated source) whenever the source

@@ -1,10 +1,10 @@
 /**
- * gbrain resolvers — introspect the Resolver SDK registry.
+ * foresights resolvers — introspect the Resolver SDK registry.
  *
  * Subcommands:
- *   gbrain resolvers list              Pretty table of all registered resolvers.
- *   gbrain resolvers list --json       Machine-readable output.
- *   gbrain resolvers describe <id>     Detail view: schema + availability.
+ *   foresights resolvers list              Pretty table of all registered resolvers.
+ *   foresights resolvers list --json       Machine-readable output.
+ *   foresights resolvers describe <id>     Detail view: schema + availability.
  *
  * No engine connection required — the registry is in-memory. Loads the
  * embedded builtins at invocation time; future plugin discovery (from
@@ -128,7 +128,7 @@ function pad(s: string, w: number): string {
 async function cmdDescribe(args: string[]): Promise<void> {
   const id = args.find(a => !a.startsWith('--'));
   if (!id) {
-    console.error('Usage: gbrain resolvers describe <id>');
+    console.error('Usage: foresights resolvers describe <id>');
     process.exit(1);
   }
 
@@ -178,7 +178,7 @@ function extractFlag(args: string[], flag: string): string | undefined {
 }
 
 function printHelp(): void {
-  console.log(`Usage: gbrain resolvers <subcommand> [options]
+  console.log(`Usage: foresights resolvers <subcommand> [options]
 
 Subcommands:
   list                    List all registered resolvers (pretty table)
@@ -188,8 +188,8 @@ Subcommands:
   describe <id>           Show schema + availability for a single resolver
 
 Examples:
-  gbrain resolvers list
-  gbrain resolvers list --cost paid
-  gbrain resolvers describe x_handle_to_tweet
+  foresights resolvers list
+  foresights resolvers list --cost paid
+  foresights resolvers describe x_handle_to_tweet
 `);
 }

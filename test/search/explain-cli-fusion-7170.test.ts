@@ -1,5 +1,5 @@
 /**
- * #7170: `gbrain query --explain` (and `search --explain`) reported
+ * #7170: `foresights query --explain` (and `search --explain`) reported
  * `rrf: single_arm_path` and `blend: no_query_embedding` on every row of a
  * hybrid brain. The CLI claims the global --explain flag for its formatter, so
  * the op never received `explain: true`, fusion never stamped its attribution,

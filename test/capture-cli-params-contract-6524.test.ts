@@ -1,5 +1,5 @@
 /**
- * #6524: `gbrain capture` was dead on every brain with a running `gbrain
+ * #6524: `foresights capture` was dead on every brain with a running `foresights
  * serve` and on every thin client. The CLI sends its provenance trio
  * (`source_kind`, `source_uri`, `ingested_via`; #5622) and dispatch rejects
  * every undeclared key on a write (#5970), so the two transports that go

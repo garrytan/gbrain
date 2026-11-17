@@ -1,5 +1,5 @@
 /**
- * #5673: `gbrain sources set-path <id> --clear` clears a connector source's
+ * #5673: `foresights sources set-path <id> --clear` clears a connector source's
  * stale local_path. It takes no path, refuses a filesystem source (naming
  * set-path <id> <path> and remove), and refuses a connector bound to a
  * canonical owner (naming writer status). A cleared connector keeps its
@@ -75,8 +75,8 @@ describe('#5673 sources set-path --clear', () => {
     await engine.executeRaw("INSERT INTO sources (id, name, local_path, config) VALUES ('notes', 'notes', '/tmp', '{}'::jsonb)");
     const refused = await run(['set-path', 'notes', '--clear']);
     expect(refused.code).toBe(2);
-    expect(refused.err).toContain('gbrain sources set-path notes <path>');
-    expect(refused.err).toContain('gbrain sources remove notes');
+    expect(refused.err).toContain('foresights sources set-path notes <path>');
+    expect(refused.err).toContain('foresights sources remove notes');
     expect(await localPath('notes')).toBe('/tmp');
   });
 
@@ -96,7 +96,7 @@ describe('#5673 sources set-path --clear', () => {
       ['gh-bound', source.incarnation, worktree.id]);
     const refused = await run(['set-path', 'gh-bound', '--clear']);
     expect(refused.code).toBe(2);
-    expect(refused.err).toContain('gbrain sources writer status gh-bound');
+    expect(refused.err).toContain('foresights sources writer status gh-bound');
     expect(await localPath('gh-bound')).toBe('/checkout');
   });
 
@@ -104,6 +104,6 @@ describe('#5673 sources set-path --clear', () => {
     const help = await run(['--help']);
     expect(help.out + help.err).toContain('set-path <id> --clear');
     const usage = await run(['set-path']);
-    expect(usage.err).toContain('gbrain sources set-path <id> --clear');
+    expect(usage.err).toContain('foresights sources set-path <id> --clear');
   });
 });

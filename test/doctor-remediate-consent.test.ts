@@ -1,5 +1,5 @@
 /**
- * C1 (agent operator wave): `gbrain doctor --remediate` asks before any work.
+ * C1 (agent operator wave): `foresights doctor --remediate` asks before any work.
  *
  * Protects: a non-interactive run without authorization changes nothing and
  * exits 3 with the consent payload (`--json` never implies consent); with

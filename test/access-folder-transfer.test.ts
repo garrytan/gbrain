@@ -1,5 +1,5 @@
 /**
- * GBRA-218 (A2) folder rules across gbrain export and import, on repo-less
+ * GBRA-218 (A2) folder rules across foresights export and import, on repo-less
  * PGLite brains: an export carries the applied rulebook (never a held
  * widening), import installs it before publishing any page and keeps that
  * barrier across a failure and a rerun, several sources travel as

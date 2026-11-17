@@ -1,13 +1,13 @@
-<!-- source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_SKILLPACK.md -->
-# GBrain Skillpack: Reference Architecture for AI Agents
+<!-- source: https://raw.githubusercontent.com/aimonk2025/gbrain/master/docs/GBRAIN_SKILLPACK.md -->
+# Foresights Skillpack: Reference Architecture for AI Agents
 
-This is a reference architecture for how a production AI agent uses gbrain as its
+This is a reference architecture for how a production AI agent uses foresights as its
 knowledge backbone. Based on patterns from a real deployment with 14,700+ brain
 files, the 50+ bundled skills (`skills/manifest.json`), and 20+ cron jobs running
 continuously.
 
 **The memex vision, realized.** Vannevar Bush imagined a device where an individual
-stores everything, mechanized so it may be consulted with exceeding speed. GBrain is
+stores everything, mechanized so it may be consulted with exceeding speed. Foresights is
 that device, except the memex builds itself. The agent detects entities, enriches
 pages, creates cross-references, and maintains compiled truth automatically.
 
@@ -50,9 +50,9 @@ Running a production brain.
 | Guide | What It Covers |
 |-------|---------------|
 | [Reference Cron Schedule](guides/cron-schedule.md) | 20+ recurring jobs, quiet hours, dream cycle |
-| [Call gbrain through one wrapper](guides/cron-schedule.md#calling-gbrain-unattended) | Cron, workspace scripts and hooks: `GBRAIN_HOME`, logged stderr, exit codes, clean stdout, timeouts, env files |
-| [Scripts and the managed checkout](guides/shared-checkout-git.md#scripts-and-the-managed-checkout) | Write through gbrain, scheduled `sources refresh`, history rewrites, gitignored paths |
-| [Cron via Minions](../skills/conventions/cron-via-minions.md) | Why scheduled work runs as Minion jobs, not `agentTurn`. Built-in handlers are rewritten by the `v0_11_0` migration orchestrator (`gbrain apply-migrations`); host-specific handlers use the plugin contract below. |
+| [Call foresights through one wrapper](guides/cron-schedule.md#calling-gbrain-unattended) | Cron, workspace scripts and hooks: `GBRAIN_HOME`, logged stderr, exit codes, clean stdout, timeouts, env files |
+| [Scripts and the managed checkout](guides/shared-checkout-git.md#scripts-and-the-managed-checkout) | Write through foresights, scheduled `sources refresh`, history rewrites, gitignored paths |
+| [Cron via Minions](../skills/conventions/cron-via-minions.md) | Why scheduled work runs as Minion jobs, not `agentTurn`. Built-in handlers are rewritten by the `v0_11_0` migration orchestrator (`foresights apply-migrations`); host-specific handlers use the plugin contract below. |
 | [Plugin Handlers](guides/plugin-handlers.md) | Registering host-specific Minion handlers via code (no data-file exec surface). |
 | [Minions fix](guides/minions-fix.md) | Repairing a half-migrated Minions install. |
 | [Shell jobs](guides/minions-shell-jobs.md) | Move deterministic crons (API fetch, token refresh, scrape+write) off the LLM gateway. Zero tokens per fire, ~60% gateway headroom. Follow `skills/migrations/v0.14.0.md` for the adoption playbook. |
@@ -68,7 +68,7 @@ injects a marker into AGENTS.md pointing at this convention.
 
 **Cron routing:** scheduled work goes through Minions, not OpenClaw's `agentTurn`.
 See `skills/conventions/cron-via-minions.md` for the rewrite pattern. The `v0_11_0` migration
-orchestrator rewrites entries whose handler is a gbrain builtin; host-specific handlers (e.g.
+orchestrator rewrites entries whose handler is a foresights builtin; host-specific handlers (e.g.
 `ea-inbox-sweep`) need a code-level registration per `docs/guides/plugin-handlers.md`.
 
 ## Architecture
@@ -80,7 +80,7 @@ How to structure your system.
 | [Two-Repo Architecture](guides/repo-architecture.md) | Agent repo vs brain repo, boundary rules, decision tree |
 | [Sub-Agent Model Routing](guides/sub-agent-routing.md) | Which model for which task, signal detector pattern, cost optimization |
 | [The Three Search Modes](guides/search-modes.md) | Keyword, hybrid, direct. When to use each |
-| [Brain vs Agent Memory](guides/brain-vs-memory.md) | 3 layers: GBrain (world knowledge), agent memory, session |
+| [Brain vs Agent Memory](guides/brain-vs-memory.md) | 3 layers: Foresights (world knowledge), agent memory, session |
 
 ## Integrations
 
@@ -102,7 +102,7 @@ Keeping it running and up to date.
 
 | Guide | What It Covers |
 |-------|---------------|
-| [Agent Bootstrap](guides/bootstrap.md) | The paste-in install: `gbrain bootstrap`, hooks, `bootstrap verify`, keyless mode |
+| [Agent Bootstrap](guides/bootstrap.md) | The paste-in install: `foresights bootstrap`, hooks, `bootstrap verify`, keyless mode |
 | [Upgrades & Auto-Update](guides/upgrades-auto-update.md) | check-update, agent notifications, migration files |
 | [Live Sync](guides/live-sync.md) | Keep the index current: cron, --watch, webhook approaches |
 
@@ -118,22 +118,22 @@ data sources to populate it:
 
 ---
 
-## Appendix: GBrain CLI Quick Reference
+## Appendix: Foresights CLI Quick Reference
 
 | Command | Purpose |
 |---------|---------|
-| `gbrain search "term"` | Keyword search across all brain pages |
-| `gbrain query "question"` | Hybrid search (vector + keyword + RRF) |
-| `gbrain get <slug>` | Read a specific brain page by slug |
-| `gbrain sync` | Sync local markdown repo to gbrain index |
-| `gbrain import <path>` | Import files into the brain |
-| `gbrain embed --stale` | Re-embed pages with stale or missing embeddings |
-| `gbrain integrations` | Manage integration recipes (senses + reflexes) |
-| `gbrain stats` | Show brain statistics (page count, last sync, etc.) |
-| `gbrain doctor` | Diagnose brain health issues |
-| `gbrain check-update` | Check for new versions and integration recipes |
+| `foresights search "term"` | Keyword search across all brain pages |
+| `foresights query "question"` | Hybrid search (vector + keyword + RRF) |
+| `foresights get <slug>` | Read a specific brain page by slug |
+| `foresights sync` | Sync local markdown repo to foresights index |
+| `foresights import <path>` | Import files into the brain |
+| `foresights embed --stale` | Re-embed pages with stale or missing embeddings |
+| `foresights integrations` | Manage integration recipes (senses + reflexes) |
+| `foresights stats` | Show brain statistics (page count, last sync, etc.) |
+| `foresights doctor` | Diagnose brain health issues |
+| `foresights check-update` | Check for new versions and integration recipes |
 
-Run `gbrain --help` for the full command reference.
+Run `foresights --help` for the full command reference.
 
 ---
 

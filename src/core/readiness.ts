@@ -6,7 +6,7 @@
  *   object, transport), in-memory config only. The one file read it allows is
  *   a memoized `peekLock()` for `lock_owner` (none when this process holds the
  *   lock itself). Used by MCP initialize, whoami and write receipts. On the
- *   CLI transport `harness_wiring` additionally resolves the absolute gbrain
+ *   CLI transport `harness_wiring` additionally resolves the absolute foresights
  *   binary once per process (a PATH lookup); stdio and http never do.
  * - probed tier (`probedReadiness`): worker, backup (per asset), migrations,
  *   sync applicability; 60 s cache, single-flight, 2 s per-probe bound,
@@ -160,7 +160,7 @@ function providerLabel(recipe: Recipe): string {
   return recipe.name ?? recipe.id;
 }
 
-/** Provider keys `gbrain config set` stores on the file plane (src/commands/config.ts FILE_PLANE_API_KEYS). */
+/** Provider keys `foresights config set` stores on the file plane (src/commands/config.ts FILE_PLANE_API_KEYS). */
 const FILE_PLANE_KEY_ENVS: ReadonlySet<string> = new Set([
   'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'VOYAGE_API_KEY', 'DASHSCOPE_API_KEY',
   'DEEPSEEK_API_KEY', 'LITELLM_API_KEY', 'TOGETHER_API_KEY', 'GOOGLE_API_KEY', 'AZURE_OPENAI_API_KEY',
@@ -168,8 +168,8 @@ const FILE_PLANE_KEY_ENVS: ReadonlySet<string> = new Set([
 
 function keyHow(name: string): string {
   return FILE_PLANE_KEY_ENVS.has(name)
-    ? `store it with \`gbrain config set ${name.toLowerCase()} <key>\` (every gbrain process reads it), or export ${name} in the environment of every gbrain process`
-    : `export ${name}=<key> in the environment of every gbrain process, including the one your agent harness starts`;
+    ? `store it with \`foresights config set ${name.toLowerCase()} <key>\` (every foresights process reads it), or export ${name} in the environment of every foresights process`
+    : `export ${name}=<key> in the environment of every foresights process, including the one your agent harness starts`;
 }
 
 function keyInput(recipe: Recipe): ActionInput[] {
@@ -196,7 +196,7 @@ function datastoreLabel(cfg: GBrainConfig): string {
   return cfg.engine === 'postgres' ? 'this Postgres brain' : `the PGLite brain at ${cfg.database_path ?? gbrainPath('brain.pglite')}`;
 }
 
-const KEPT = 'Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills.';
+const KEPT = 'Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `foresights embed --stale` (or the next maintenance cycle) fills.';
 
 function readyEnablement(cfg: GBrainConfig, choice: EmbeddingChoice, width: number): Action {
   const model = `${choice.recipe.id}:${choice.model}`;
@@ -265,7 +265,7 @@ export function embeddingEnablement(cfg: GBrainConfig): Action {
       argv: ['gbrain', 'migrate', 'embeddings', '--status', '--json'],
       consent: [],
       actor: 'agent',
-      why: `This brain's vector column is ${width}-dimensional and no keyed embedding provider produces ${width}d vectors. Changing the width is a re-embed through \`gbrain migrate embeddings --to <provider:model> --dim <N> --dry-run\` (preview first; pages and facts are kept). Read the status, then ask the user which provider to use.`,
+      why: `This brain's vector column is ${width}-dimensional and no keyed embedding provider produces ${width}d vectors. Changing the width is a re-embed through \`foresights migrate embeddings --to <provider:model> --dim <N> --dry-run\` (preview first; pages and facts are kept). Read the status, then ask the user which provider to use.`,
       verify: VERIFY('embeddings'),
       docs: 'docs/guides/embedding-migration.md',
       requires_exclusive: false,
@@ -300,7 +300,7 @@ function embeddingsEntry(cfg: GBrainConfig): ReadinessEntry {
     why: `Embeddings are configured for ${model} but ${keys.join(', ')} is not set, so new content gets no vectors and search falls back to keyword-only.`,
     fix: {
       consent: ['credentials'], actor: 'user', requires_exclusive: false,
-      why: `Provide ${keys.join(', ')}: ${keys.map(keyHow).join('; ')}. Queued chunks then embed on the next \`gbrain embed --stale\`.`,
+      why: `Provide ${keys.join(', ')}: ${keys.map(keyHow).join('; ')}. Queued chunks then embed on the next \`foresights embed --stale\`.`,
       user_message: `Semantic search is configured for ${providerLabel(recipe)} but its API key is missing. Can you add it?`,
       inputs: keyInput(recipe), verify: VERIFY('embeddings'),
     },
@@ -319,7 +319,7 @@ function chatEntry(cfg: GBrainConfig): ReadinessEntry {
     why: 'No chat model key is configured: memory comes from agent-authored facts and explicit writes; automatic extraction, enrichment and synthesis are off.',
     fix: {
       argv: ['gbrain', 'providers', 'list'], consent: ['credentials', 'paid'], actor: 'user', requires_exclusive: false,
-      why: 'Adding one chat provider key (for example ANTHROPIC_API_KEY or OPENAI_API_KEY) turns on automatic extraction; `gbrain providers list` shows which keys each provider needs.',
+      why: 'Adding one chat provider key (for example ANTHROPIC_API_KEY or OPENAI_API_KEY) turns on automatic extraction; `foresights providers list` shows which keys each provider needs.',
       user_message: 'Automatic fact extraction needs a chat model API key (Anthropic or OpenAI, for example). Want to add one? It costs a little per page processed.',
       verify: VERIFY('facts_extraction_health'),
     },
@@ -346,9 +346,9 @@ function toolSurfaceEntry(cfg: GBrainConfig): ReadinessEntry {
   const base = { capability: 'tool_surface' as const, tier: 'config' as const, http_visible: true, state: 'ok' as const };
   if (cfg.remote_mcp) return { ...base, state: 'not_applicable', reason: 'remote_brain', why: 'The tool surface is set by the remote brain host.' };
   const surface = cfg.mcp_surface ?? 'full';
-  const why = surface === 'full' ? 'gbrain serve exposes every operation by default.'
-    : surface === 'starter' ? 'gbrain serve defaults to the starter surface (the daily-driver tool set); `--surface full` exposes everything.'
-      : 'gbrain serve defaults to the seven memory verbs; `--surface full` exposes everything.';
+  const why = surface === 'full' ? 'foresights serve exposes every operation by default.'
+    : surface === 'starter' ? 'foresights serve defaults to the starter surface (the daily-driver tool set); `--surface full` exposes everything.'
+      : 'foresights serve defaults to the seven memory verbs; `--surface full` exposes everything.';
   return { ...base, reason: `surface_${surface}`, why };
 }
 
@@ -391,12 +391,12 @@ function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
 export type ReadinessHarness = 'claude-code' | 'codex' | 'opencode';
 export interface HarnessWiringInput {
   transport: Transport;
-  /** The surface the registration pins; default REGISTRATION_SURFACE (`gbrain init --surface` overrides). */
+  /** The surface the registration pins; default REGISTRATION_SURFACE (`foresights init --surface` overrides). */
   surface?: McpSurface;
   /** Harnesses detected on this machine (config plane: from process-scoped agent markers). */
   harnesses: readonly ReadinessHarness[];
   lockOwner: LockOwner | null;
-  /** Absolute gbrain binary; null when it cannot be resolved (never registered bare). */
+  /** Absolute foresights binary; null when it cannot be resolved (never registered bare). */
   gbrainBin: string | null;
   /** A live status-only `serve --http` on this machine (its marker), when there is one. */
   httpStatusServer?: HttpStatusMarker | null;
@@ -424,23 +424,23 @@ function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface
   const receipt = record && (() => { try { return (h === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
   if (receipt && h !== 'opencode') {
     const rerun = setupRerunArgv(h, receipt);
-    const why = `gbrain setup already registered gbrain for ${HARNESS_LABEL[h]}; rerunning it with the hooks, source and binary it recorded rewrites the entry in ${HARNESS_DESTINATION[h]}.`;
-    // gbrain setup codex rewrites the shared hooks.json and recomputes its trust, so only the user runs it.
+    const why = `foresights setup already registered foresights for ${HARNESS_LABEL[h]}; rerunning it with the hooks, source and binary it recorded rewrites the entry in ${HARNESS_DESTINATION[h]}.`;
+    // foresights setup codex rewrites the shared hooks.json and recomputes its trust, so only the user runs it.
     if (h === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, why, verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
-      user_message: `gbrain setup codex rewrites the Codex hooks.json and its trust entries, so run it yourself: ${rerun.join(' ')}` };
+      user_message: `foresights setup codex rewrites the Codex hooks.json and its trust entries, so run it yourself: ${rerun.join(' ')}` };
     return { argv: rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, why, verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
-      user_message: `I'd like to rerun gbrain setup for ${HARNESS_LABEL[h]} with the decisions it recorded, which rewrites its MCP entry in ${HARNESS_DESTINATION[h]}. OK?` };
+      user_message: `I'd like to rerun foresights setup for ${HARNESS_LABEL[h]} with the decisions it recorded, which rewrites its MCP entry in ${HARNESS_DESTINATION[h]}. OK?` };
   }
-  // Each harness starts a user-scope stdio server in the session's directory, so its writer registers serve behind gbrain's launcher (#8426, #8435).
+  // Each harness starts a user-scope stdio server in the session's directory, so its writer registers serve behind foresights's launcher (#8426, #8435).
   const serve = [hookLauncherPath(), ...stdioServeArgv(bin, surface, advertise)];
   const argv = h === 'opencode' ? ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(chosen ? ['--surface', chosen] : [])]
     : ['gbrain', 'setup', h, '--no-hooks', '--gbrain-bin', bin, ...(chosen ? ['--surface', chosen] : [])];
   const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.'
-    : ' It also writes gbrain\'s brain-first instruction block, and records hooks as off (--no-hooks), so gbrain\'s per-turn hooks (setup\'s and the plugin\'s) stay off until setup runs again without it. No tool pre-approvals or tokens are added.';
+    : ' It also writes foresights\'s brain-first instruction block, and records hooks as off (--no-hooks), so foresights\'s per-turn hooks (setup\'s and the plugin\'s) stay off until setup runs again without it. No tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
-    why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${advertise ? `listing ${SURFACE_GLOSS[advertise]} and request_tools; ${SURFACE_GLOSS[surface]} stays callable` : SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
-    user_message: `I'd like to add gbrain's memory tools to ${HARNESS_LABEL[h]} by writing one MCP server entry to ${HARNESS_DESTINATION[h]}. OK?`,
+    why: `Registers foresights as a stdio MCP server (${serve.join(' ')}, ${advertise ? `listing ${SURFACE_GLOSS[advertise]} and request_tools; ${SURFACE_GLOSS[surface]} stays callable` : SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
+    user_message: `I'd like to add foresights's memory tools to ${HARNESS_LABEL[h]} by writing one MCP server entry to ${HARNESS_DESTINATION[h]}. OK?`,
     verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
   };
 }
@@ -450,8 +450,8 @@ function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
   return {
     argv: ['gbrain', 'bootstrap', 'harness', '--harness', selector, '--yes'],
     consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
-    why: `Wires ${names} to the shared \`gbrain serve --http\` on this machine (it must be running): mints one bearer token per harness (scopes read+write), writes an HTTP MCP entry with that token to the harness config (Claude Code: ~/.claude.json plus a permissions.allow 'mcp__gbrain' pre-approval and lifecycle hooks in ~/.claude/settings.json; Codex: ~/.codex/config.toml; opencode: its user config), so several sessions share one brain without lock contention.`,
-    user_message: `To let several agent sessions share this brain, I'd connect ${names} to the local gbrain HTTP server. That stores an access token in the harness config, pre-approves gbrain's tools and installs its session hooks. OK?`,
+    why: `Wires ${names} to the shared \`foresights serve --http\` on this machine (it must be running): mints one bearer token per harness (scopes read+write), writes an HTTP MCP entry with that token to the harness config (Claude Code: ~/.claude.json plus a permissions.allow 'mcp__gbrain' pre-approval and lifecycle hooks in ~/.claude/settings.json; Codex: ~/.codex/config.toml; opencode: its user config), so several sessions share one brain without lock contention.`,
+    user_message: `To let several agent sessions share this brain, I'd connect ${names} to the local foresights HTTP server. That stores an access token in the harness config, pre-approves foresights's tools and installs its session hooks. OK?`,
     verify: VERIFY('harness_wiring'), docs: 'docs/guides/remote-mcp.md',
   };
 }
@@ -459,15 +459,15 @@ function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
 const STATUS_REASONS: readonly string[] = ['lock_held', 'no_brain', 'config_unreadable', 'missing_brain', 'brain_unopenable', 'repair_failed', 'engine_graduated'];
 
 /**
- * A shared `gbrain serve --http` exists but answers in status-only mode: the
+ * A shared `foresights serve --http` exists but answers in status-only mode: the
  * fix is its status reason's fix (classified again here, file reads only),
- * never "start `gbrain serve --http`" on a port it already holds.
+ * never "start `foresights serve --http`" on a port it already holds.
  */
 export function httpStatusServerEntry(m: HttpStatusMarker): ReadinessEntry {
   const state = initialStatusState((STATUS_REASONS.includes(m.reason) ? m.reason : 'brain_unopenable') as StatusReason);
   return {
     capability: 'harness_wiring', tier: 'config', http_visible: false, state: 'degraded', reason: 'serve_status_only', transport: 'http',
-    why: `A shared \`gbrain serve --http\` (PID ${m.pid}, port ${m.port}) is running in status-only mode: ${statusHeadline(state)} It re-checks every 5 s and serves the full tool list once the brain opens.`,
+    why: `A shared \`foresights serve --http\` (PID ${m.pid}, port ${m.port}) is running in status-only mode: ${statusHeadline(state)} It re-checks every 5 s and serves the full tool list once the brain opens.`,
     fix: statusFix(state, 'http').fix,
   };
 }
@@ -475,32 +475,32 @@ export function httpStatusServerEntry(m: HttpStatusMarker): ReadinessEntry {
 /** `harness_wiring` for a concrete detection result. Doctor (Lane E) passes filesystem-detected harnesses. */
 export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   const base = { capability: 'harness_wiring' as const, tier: 'config' as const, http_visible: false };
-  if (input.transport === 'stdio') return { ...base, state: 'ok', reason: 'wired_running', why: 'An agent harness launched this gbrain MCP server over stdio.' };
+  if (input.transport === 'stdio') return { ...base, state: 'ok', reason: 'wired_running', why: 'An agent harness launched this foresights MCP server over stdio.' };
   if (input.transport === 'http') return { ...base, state: 'not_applicable', reason: 'remote_transport', why: 'Harness wiring is a property of the brain host.' };
   if (input.httpStatusServer) return httpStatusServerEntry(input.httpStatusServer);
   const { harnesses, lockOwner } = input;
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: MEMORY_VERBS_INSTALL,
-        why: `For Claude Code or Codex, run \`gbrain setup claude-code\` or \`gbrain setup codex\` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register \`${stdioServeArgv('<absolute path to gbrain>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
-        user_message: 'Which agent app should get gbrain memory? The install guide has a one-line command for each.' } };
+        why: `For Claude Code or Codex, run \`foresights setup claude-code\` or \`foresights setup codex\` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register \`${stdioServeArgv('<absolute path to foresights>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
+        user_message: 'Which agent app should get foresights memory? The install guide has a one-line command for each.' } };
   }
   if (lockOwner?.transport === 'http') {
-    return { ...base, state: 'unknown', reason: 'http_serve_running', why: 'A shared `gbrain serve --http` is running; harnesses should connect to it instead of starting their own stdio server.', fix: sharedHttpWiring(harnesses.length > 1 ? 'all' : harnesses[0]) };
+    return { ...base, state: 'unknown', reason: 'http_serve_running', why: 'A shared `foresights serve --http` is running; harnesses should connect to it instead of starting their own stdio server.', fix: sharedHttpWiring(harnesses.length > 1 ? 'all' : harnesses[0]) };
   }
   if (lockOwner && !lockOwner.is_self) {
-    return { ...base, state: 'degraded', reason: 'multiple_sessions', why: `Another gbrain serve (PID ${lockOwner.pid}) holds this brain, so a second stdio server cannot open it; sessions must share one \`gbrain serve --http\`.`, fix: sharedHttpWiring(harnesses.length > 1 ? 'all' : harnesses[0]) };
+    return { ...base, state: 'degraded', reason: 'multiple_sessions', why: `Another foresights serve (PID ${lockOwner.pid}) holds this brain, so a second stdio server cannot open it; sessions must share one \`foresights serve --http\`.`, fix: sharedHttpWiring(harnesses.length > 1 ? 'all' : harnesses[0]) };
   }
   if (harnesses.length > 1) {
-    return { ...base, state: 'unknown', reason: 'multiple_harnesses', why: `Several harnesses are installed (${harnesses.map(h => HARNESS_LABEL[h]).join(', ')}); they share one brain through \`gbrain serve --http\`.`, fix: sharedHttpWiring('all') };
+    return { ...base, state: 'unknown', reason: 'multiple_harnesses', why: `Several harnesses are installed (${harnesses.map(h => HARNESS_LABEL[h]).join(', ')}); they share one brain through \`foresights serve --http\`.`, fix: sharedHttpWiring('all') };
   }
   const h = harnesses[0];
   if (!input.gbrainBin) {
-    return { ...base, state: 'missing', reason: 'binary_unresolved', why: 'The gbrain binary is not on PATH as an absolute path, and harness registrations never use a bare `gbrain` (GUI hosts inherit no PATH).',
+    return { ...base, state: 'missing', reason: 'binary_unresolved', why: 'The foresights binary is not on PATH as an absolute path, and harness registrations never use a bare `gbrain` (GUI hosts inherit no PATH).',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: 'INSTALL_FOR_AGENTS.md',
-        why: 'Install gbrain globally (`bun install -g github:garrytan/gbrain`) so `gbrain` resolves to an absolute path, then re-run readiness.' } };
+        why: 'Install foresights globally (`bun install -g github:aimonk2025/gbrain`) so `gbrain` resolves to an absolute path, then re-run readiness.' } };
   }
-  return { ...base, state: 'unknown', reason: 'registration_unverified', why: `${HARNESS_LABEL[h]} is the active harness; its gbrain registration has not been verified from this process.`, fix: stdioRegistration(h, input.gbrainBin, input.surface) };
+  return { ...base, state: 'unknown', reason: 'registration_unverified', why: `${HARNESS_LABEL[h]} is the active harness; its foresights registration has not been verified from this process.`, fix: stdioRegistration(h, input.gbrainBin, input.surface) };
 }
 
 const MARKER_HARNESS: Record<string, ReadinessHarness> = {
@@ -685,8 +685,8 @@ const syncProbe: Prober = {
     const base = { capability: 'sync' as const, tier: 'probed' as const, http_visible: false };
     const rows = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''`);
     const n = Number(rows[0]?.n ?? 0);
-    if (n === 0) return { ...base, state: 'not_applicable', reason: 'no_repo_sources', why: 'No source is bound to a local repository, so `gbrain sync` has nothing to pull; pages arrive through gbrain writes and imports.' };
-    return { ...base, state: 'ok', reason: 'git_sources', why: `${n} source(s) are bound to local repositories that \`gbrain sync\` reads.` };
+    if (n === 0) return { ...base, state: 'not_applicable', reason: 'no_repo_sources', why: 'No source is bound to a local repository, so `foresights sync` has nothing to pull; pages arrive through foresights writes and imports.' };
+    return { ...base, state: 'ok', reason: 'git_sources', why: `${n} source(s) are bound to local repositories that \`foresights sync\` reads.` };
   },
 };
 
@@ -701,7 +701,7 @@ const transcriptsProbe: Prober = {
         why: 'No session transcripts from the last 7 days in a configured transcript directory (dream.synthesize.session_corpus_dir, dream.synthesize.meeting_transcripts_dir).' };
     }
     return { ...base, state: 'ok', reason: 'transcripts_cli_only',
-      why: `${p.count} recent session transcript(s) exist on this host: read them with \`gbrain transcripts recent --json\` (page search never returns them; get_recent_transcripts is local-only on MCP). Files: ${p.dirs.join(', ')}.`,
+      why: `${p.count} recent session transcript(s) exist on this host: read them with \`foresights transcripts recent --json\` (page search never returns them; get_recent_transcripts is local-only on MCP). Files: ${p.dirs.join(', ')}.`,
       fix: localTranscriptsFix() };
   },
 };

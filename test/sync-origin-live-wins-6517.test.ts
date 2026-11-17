@@ -39,7 +39,7 @@ describe('#6517 selectOriginClaimant, the one origin rule', () => {
   test('several tombstones stay ambiguous', () => expect(selectOriginClaimant([gone(1), gone(2)])).toEqual({ winner: null, ambiguous: 'several_tombstones' }));
   test('the exit text names the soft delete and the kept file, never a purge', () => {
     const text = sharedOriginExit('src-example', ['a', 'b']);
-    expect(text).toContain('gbrain delete <slug> --source-id src-example --expected-revision <rev>');
+    expect(text).toContain('foresights delete <slug> --source-id src-example --expected-revision <rev>');
     expect(text).toContain('one of a, b');
     expect(text).toContain('hidden without touching the file');
     expect(text).not.toContain('--purge');

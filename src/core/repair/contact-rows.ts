@@ -1,5 +1,5 @@
 /**
- * `gbrain repair contact-rows` (#8109): collapse duplicated frontmatter contact
+ * `foresights repair contact-rows` (#8109): collapse duplicated frontmatter contact
  * rows. A writer that appended a `{type, value, last_used}` row on every touch
  * instead of updating the existing one left the same value many times; the
  * repair keeps one row per (type, value) with the newest `last_used`
@@ -35,7 +35,7 @@ interface PlannedPage { source_id: string; slug: string; id: number; revision: s
 interface RowsItem extends RepairItem { page: PlannedPage; hash: string; last: boolean }
 
 function previewCommand(scope: RepairScope, slugs: string[]): string {
-  return `gbrain repair contact-rows${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${slugs.map(slug => ` --slug ${slug}`).join('')}`;
+  return `foresights repair contact-rows${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${slugs.map(slug => ` --slug ${slug}`).join('')}`;
 }
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) => previewHash({ kind: 'contact-rows-v1', brain_id: scope.brain_id,
@@ -62,7 +62,7 @@ function plannedChange(snapshot: PageSnapshot): { content: string; rows_before: 
   return { content, rows_before: (page.frontmatter.contacts as unknown[]).length, rows_after: deduped.dedupe.rows.length };
 }
 
-const reconcileCommand = (page: Pick<PlannedPage, 'source_id' | 'slug'>) => `gbrain sources reconcile ${page.source_id} ${page.slug} --brain host --preview --auto-additive`;
+const reconcileCommand = (page: Pick<PlannedPage, 'source_id' | 'slug'>) => `foresights sources reconcile ${page.source_id} ${page.slug} --brain host --preview --auto-additive`;
 
 /** Every inline page of the selection whose contact rows the repair would collapse, in id order. Read-only. */
 async function scan(engine: BrainEngine, scope: RepairScope, selection: Selection) {
@@ -113,7 +113,7 @@ export const contactRowsRepair: RepairHandler = {
       return { items: planned.map((page, index) => item(page, hash, index === planned.length - 1)), preview_hash: hash, residuals, listing };
     }
     if (!opts.expect) {
-      throw new OperationError('invalid_params', 'gbrain repair contact-rows --apply rewrites only the set a preview printed.',
+      throw new OperationError('invalid_params', 'foresights repair contact-rows --apply rewrites only the set a preview printed.',
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, DOCS);
     }
     const expect = opts.expect;

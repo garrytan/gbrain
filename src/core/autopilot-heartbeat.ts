@@ -1,5 +1,5 @@
 /**
- * #7003: the autopilot daemon's heartbeat sidecar, and how `gbrain autopilot --status` grades staleness from it.
+ * #7003: the autopilot daemon's heartbeat sidecar, and how `foresights autopilot --status` grades staleness from it.
  *
  * The lock file's mtime stays the liveness signal (refreshed at the top of every tick). Before this, `--status`
  * judged it against 6 x the status caller's `--interval` flag (default 300 s), but the daemon sleeps an adaptive
@@ -65,7 +65,7 @@ export function daemonStaleAfterSeconds(heartbeat: AutopilotHeartbeat | null, lo
   return { staleAfter: Math.max(0, Math.ceil((nextMs - lock.mtimeMs) / 1000)) + Math.max(base, 120), nextTickAt: heartbeat.next_tick_at };
 }
 
-/** The live daemon's threshold for `gbrain autopilot --status`: its sidecar graded against the lock's mtime and holder pid. */
+/** The live daemon's threshold for `foresights autopilot --status`: its sidecar graded against the lock's mtime and holder pid. */
 export function readDaemonStaleAfter(lockPath = autopilotLockPath(), heartbeatPath = autopilotHeartbeatPath()): { staleAfter: number; nextTickAt: string | null } | null {
   let lock: { mtimeMs: number; pid: number | null };
   try { lock = { mtimeMs: statSync(lockPath).mtimeMs, pid: null }; } catch { return null; }

@@ -236,7 +236,7 @@ function restorePublishedFile(filePath: string, before: string, published: strin
   }
   console.warn(`[facts.proposal] ${slug} (file_database_drift: the proposal transaction failed after publication and the file changed again, `
     + `so its current bytes were preserved instead of restoring the old file. Check the database copy before retrying the proposal. `
-    + `Import the editor's file with gbrain sync --source ${sourceId}; if the database copy should win, re-save it with write-through on; `
+    + `Import the editor's file with foresights sync --source ${sourceId}; if the database copy should win, re-save it with write-through on; `
     + `when both changed, ask the user which edit wins)`);
 }
 
@@ -364,7 +364,7 @@ export async function prepareProposalMutation(engine: BrainEngine, row: WriteReq
   const store = await pairStore(p?.store);
   if (row.operation !== DECIDE_PROPOSAL_OPERATION || !Number.isSafeInteger(id) || (p?.action !== 'accept' && p?.action !== 'undo') || row.authority.remote || !store) {
     throw opError('permission_denied', 'Unsupported decide proposal intent.',
-      `Request ${row.request_id} in source ${row.source_id} is not a local accept or undo of a proposal, so the coordinator refused it and nothing changed. Decide proposals from the brain host's CLI with gbrain decide proposals accept or undo.`,
+      `Request ${row.request_id} in source ${row.source_id} is not a local accept or undo of a proposal, so the coordinator refused it and nothing changed. Decide proposals from the brain host's CLI with foresights decide proposals accept or undo.`,
       { fix: proposalsFix('Lists proposals with their ids and status, read-only.') });
   }
   const action = p.action;

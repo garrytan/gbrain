@@ -27,7 +27,7 @@ describe('links fence', () => {
 
   test('cells holding pipes, newlines and the fence markers round-trip', () => {
     const tricky: LinksFenceRow = { to: 'people/alice-example', type: 'knows', source: 'manual',
-      context: `a | b\nnext line ${LINKS_FENCE_END} and gbrain&#58;links:begin` };
+      context: `a | b\nnext line ${LINKS_FENCE_END} and foresights&#58;links:begin` };
     const block = renderLinksFence([tricky]);
     expect(block.split('\n')).toHaveLength(5);
     expect(block.indexOf(LINKS_FENCE_END)).toBe(block.lastIndexOf(LINKS_FENCE_END));

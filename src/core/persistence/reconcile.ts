@@ -31,12 +31,12 @@ export type { ReconcileArtifact } from './reconcile-state.ts';
 function grantFix(): Action {
   return readFix('Shows the CLI writer registration and its sources, operations and slug-prefix grant.', { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] });
 }
-/** The trusted CLI grant check every reconcile entry point (and `gbrain repair file-drift`'s preview) runs per page. */
+/** The trusted CLI grant check every reconcile entry point (and `foresights repair file-drift`'s preview) runs per page. */
 export async function authorizeReconcile(engine: BrainEngine, sourceId: unknown, slug: unknown) {
   const verified = currentVerifiedLocalWriter();
   if (!verified || verified.remote || verified.principal.kind !== 'local_cli') throw trustedCliRequired('Reconciliation requires a verified trusted local CLI caller.');
   if (typeof sourceId !== 'string' || !isValidSourceId(sourceId) || typeof slug !== 'string' || !slug) throw opError('invalid_params', 'One explicit source ID and page slug are required.',
-    'Pass the source ID and the exact page slug as the first two arguments of gbrain sources reconcile.');
+    'Pass the source ID and the exact page slug as the first two arguments of foresights sources reconcile.');
   validatePageSlug(slug);
   if (/[?*]/.test(slug)) throw opError('invalid_params', 'Reconciliation requires an exact page slug, not a pattern.',
     `Reconcile one page at a time by its exact slug; an --audit run for source ${sourceId} lists the pages that drifted.`);
@@ -149,7 +149,7 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
     result_digest: preview.result_digest, preview };
 }
 /**
- * GST-2579: refuses a resolution that writes the database copy over a file edit gbrain never imported or wrote
+ * GST-2579: refuses a resolution that writes the database copy over a file edit foresights never imported or wrote
  * (unimported-file.ts), unless `discard` is that file's exact hash: `repair file-drift --prefer database` passes it for a
  * page whose preview named the edit and whose apply the user consented to.
  */
@@ -214,7 +214,7 @@ export async function admitReconcileArtifact<T>(engine: BrainEngine, input: { so
     throw opError('invalid_params', 'Apply requires a ready preview for this exact source and page.',
       `Nothing was submitted. Resolve every conflict first (preview with --from and --decisions until status is ready), then apply that resolved preview for ${slug} in '${sourceId}'.`);
   }
-  // #6643: `gbrain repair file-drift --prefer file` keeps the file's own bytes when they already parse to the resolved result.
+  // #6643: `foresights repair file-drift --prefer file` keeps the file's own bytes when they already parse to the resolved result.
   const callerIntent = { kind: 'canonical_reconcile', preview: artifact, ...(input.keepFileBytes ? { keep_file_bytes: true } : {}) };
   const expectedDigest = intentDigest({ operation: 'put_page', sourceId, slug, callerIntent });
   await assertPageRequestIdentity(engine, authority.principal, requestId);

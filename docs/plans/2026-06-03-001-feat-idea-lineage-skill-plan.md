@@ -13,10 +13,10 @@ Add an `idea-lineage` thinking skill that traces how one idea has evolved throug
 
 ## Problem Frame
 
-GBrain already has two adjacent capabilities that are easy to conflate with this feature:
+Foresights already has two adjacent capabilities that are easy to conflate with this feature:
 
 - `skills/concept-synthesis/SKILL.md` is a mutating, batch-oriented concept map builder. It deduplicates many concept stubs, tiers them, writes concept pages, and creates an intellectual universe.
-- `find_trajectory` and `gbrain eval trajectory` are structured entity trajectories over typed facts and events. They work best for questions like metric history, founder consistency, role/status changes, and event timelines.
+- `find_trajectory` and `foresights eval trajectory` are structured entity trajectories over typed facts and events. They work best for questions like metric history, founder consistency, role/status changes, and event timelines.
 
 `idea-lineage` should occupy the narrow space between them: a query-time, single-idea, citation-backed synthesis of conceptual evolution. It should help a user ask "how has my thinking about this idea changed?" without running a global concept-synthesis job or forcing the idea into an entity/metric trajectory model.
 
@@ -34,7 +34,7 @@ GBrain already has two adjacent capabilities that are easy to conflate with this
 
 - R6. Routing should prefer `idea-lineage` for single-idea evolution requests such as "how has my thinking about X changed?".
 - R7. Routing should keep broad corpus/map requests on `concept-synthesis`.
-- R8. Routing should keep structured entity metric/status questions on `find_trajectory`, `gbrain eval trajectory`, or `gbrain think` trajectory injection.
+- R8. Routing should keep structured entity metric/status questions on `find_trajectory`, `foresights eval trajectory`, or `foresights think` trajectory injection.
 
 **Privacy and portability**
 
@@ -54,7 +54,7 @@ GBrain already has two adjacent capabilities that are easy to conflate with this
 ### Deferred to Follow-Up Work
 
 - A first-class `idea_lineage` MCP operation.
-- A `gbrain idea lineage <query>` CLI.
+- A `foresights idea lineage <query>` CLI.
 - Persisting lineage reports back into the brain.
 - New database tables, schema-pack fields, or concept lineage graph primitives.
 - Automated contradiction-probe reruns. The skill should read cached contradiction findings if available, not trigger expensive probes.
@@ -68,7 +68,7 @@ GBrain already has two adjacent capabilities that are easy to conflate with this
 
 ## Key Technical Decisions
 
-- **Start as a markdown skill:** GBrain's architecture treats skills as fat markdown workflows. This feature can be useful by orchestrating existing read operations, so a CLI/MCP surface would add contract weight before the behavior is proven.
+- **Start as a markdown skill:** Foresights's architecture treats skills as fat markdown workflows. This feature can be useful by orchestrating existing read operations, so a CLI/MCP surface would add contract weight before the behavior is proven.
 - **Make the skill non-mutating by default:** The user intent is investigative. Writing lineage pages should remain a later explicit mode after routing and output quality are established.
 - **Use evidence buckets rather than a single narrative pass:** The output should force the agent to separately evaluate first mention, articulation, current version, reversals, contradictions, and abandoned branches. That reduces the risk of smoothing over conflict.
 - **Keep `find_trajectory` as an optional side-channel:** It is valuable when an idea query resolves to an entity attribute or status history, but `idea-lineage` should not depend on typed facts being present.
@@ -147,7 +147,7 @@ flowchart TB
   - "Synthesize my concepts into a tiered intellectual map" stays on `concept-synthesis`.
   - "How has acme-example MRR trended since January?" does not route to `idea-lineage`.
   - Negative fixtures avoid false positives for generic "publish this report" or "what is this concept?" prompts.
-- **Verification:** `gbrain routing-eval --json` reports no new misses, false positives, or unapproved ambiguity for the added fixtures.
+- **Verification:** `foresights routing-eval --json` reports no new misses, false positives, or unapproved ambiguity for the added fixtures.
 
 ### U4. Add Output Contract and Citation Discipline
 

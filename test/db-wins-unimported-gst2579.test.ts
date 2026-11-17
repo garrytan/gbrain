@@ -7,9 +7,9 @@
  *   - an exact --slug selection names the commit (sha, author, date) in the preview and in the consent, and its apply
  *     needs the user's consent (--yes);
  *   - `sources reconcile`'s preview and apply refuse a resolution that takes the database copy over such a file;
- *   - gbrain's own writer commit counts the same as anyone's: a file holding gbrain's write of a revision the database
+ *   - foresights's own writer commit counts the same as anyone's: a file holding foresights's write of a revision the database
  *     never took (the Git commit landed, the row fell back) is kept_newer_file in bulk and named with --slug;
- *   - a database copy that is provably newer still wins: the file holds the bytes sync imported, or gbrain's write of a
+ *   - a database copy that is provably newer still wins: the file holds the bytes sync imported, or foresights's write of a
  *     revision the page has since moved past (a later, shorter database edit included, --all-drifted --only), or a blob
  *     sync adopted into the page's import record (with the version history pruned), and the repair is listed and applied
  *     as before;
@@ -50,7 +50,7 @@ const FIRST = '---\ntype: concept\ntitle: A\n---\n\nThe first body.\n';
 const EDIT = '---\ntype: concept\ntitle: A\n---\n\nAn edit by another writer.\n';
 const UNBOUND_DB = '---\ntype: note\ntitle: B\n---\n\nWritten while the source had no canonical owner.\n';
 const UNBOUND_FILE = '---\ntype: note\ntitle: B\n---\n\nWritten into the checkout by another writer.\n';
-const WRITER_LINE = 'A line only gbrain\'s own writer committed.';
+const WRITER_LINE = 'A line only foresights\'s own writer committed.';
 const WRITER = `---\ntype: concept\ntitle: A\n---\n\nThe first body.\n\n${WRITER_LINE}\n`;
 const setup = ({ root }: { root: string }) => {
   mkdirSync(join(root, 'notes'), { recursive: true }); git(root, 'init', '-q');
@@ -207,11 +207,11 @@ for (const backend of testBackends()) {
     await settle();
     expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toContain('A database-only edit.');
   }, backendOpts(backend)), 240_000);
-  test(`${backend}: a file whose newest commit is gbrain's own write, over a database copy that fell behind it, is kept_newer_file in bulk and named with --slug`, () => managedBrain(async ({ engine, ctx, root }) => {
+  test(`${backend}: a file whose newest commit is foresights's own write, over a database copy that fell behind it, is kept_newer_file in bulk and named with --slug`, () => managedBrain(async ({ engine, ctx, root }) => {
     await registerLocalWriter(engine, 'cli');
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
     const older = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
-    // gbrain's own writer commits a longer page (Git durability on); then the database row falls back to the older copy,
+    // foresights's own writer commits a longer page (Git durability on); then the database row falls back to the older copy,
     // as when the Git commit lands and the row does not.
     await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/a', content: WRITER, request_id: randomUUID(), expected_revision: older.revision } });
@@ -242,7 +242,7 @@ for (const backend of testBackends()) {
     await settle();
     expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toContain(WRITER_LINE);
   }, backendOpts(backend)), 240_000);
-  test(`${backend}: a file holding gbrain's own committed write of a revision the database has since moved past repairs in bulk as before`, () => managedBrain(async ({ engine, ctx, root }) => {
+  test(`${backend}: a file holding foresights's own committed write of a revision the database has since moved past repairs in bulk as before`, () => managedBrain(async ({ engine, ctx, root }) => {
     await registerLocalWriter(engine, 'cli');
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
     await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
@@ -254,9 +254,9 @@ for (const backend of testBackends()) {
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/a', content: '---\ntype: concept\ntitle: A\n---\n\nA later database edit.\n',
       request_id: randomUUID(), expected_revision: second.revision } });
     await settleManagedGitEffects(engine);
-    // The file goes back to gbrain's earlier write, a revision the page's version history keeps: the database copy is newer.
+    // The file goes back to foresights's earlier write, a revision the page's version history keeps: the database copy is newer.
     writeFileSync(join(root, 'notes/a.md'), written);
-    git(root, 'commit', '-qam', "back to gbrain's earlier write");
+    git(root, 'commit', '-qam', "back to foresights's earlier write");
     await holdBoth(engine);
     const preview = await runner(engine, { held: true, side: 'both', prefer: 'database' });
     expect(preview.affected).toBe(1);
@@ -265,7 +265,7 @@ for (const backend of testBackends()) {
     await settle();
     expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toContain('A later database edit.');
   }, backendOpts(backend)), 240_000);
-  test(`${backend}: a database edit made after gbrain's own last commit of the file, shorter than the file, still wins an --all-drifted --only repair`, () => managedBrain(async ({ engine, ctx, root }) => {
+  test(`${backend}: a database edit made after foresights's own last commit of the file, shorter than the file, still wins an --all-drifted --only repair`, () => managedBrain(async ({ engine, ctx, root }) => {
     await registerLocalWriter(engine, 'cli');
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
     await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
@@ -294,14 +294,14 @@ for (const backend of testBackends()) {
     await settleManagedGitEffects(engine);
     expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).not.toContain(WRITER_LINE);
   }, backendOpts(backend)), 240_000);
-  test(`${backend}: a file holding the blob sync adopted for gbrain's own write still loses to a later database edit when the version history no longer keeps that revision`, () => managedBrain(async ({ engine, ctx, root }) => {
+  test(`${backend}: a file holding the blob sync adopted for foresights's own write still loses to a later database edit when the version history no longer keeps that revision`, () => managedBrain(async ({ engine, ctx, root }) => {
     await registerLocalWriter(engine, 'cli');
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
     await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
     const first = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/a', content: WRITER, request_id: randomUUID(), expected_revision: first.revision } });
     await settleManagedGitEffects(engine);
-    // Sync adopts gbrain's committed write into the page's import record.
+    // Sync adopts foresights's committed write into the page's import record.
     await performManagedSync(engine, SYNC);
     await engine.setConfig('sync.write_through', 'false');
     const written = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
@@ -311,7 +311,7 @@ for (const backend of testBackends()) {
     const newer = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
     expect((await refusal(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/a', content: '---\ntype: concept\ntitle: A\n---\n\nA refused edit.\n',
       request_id: randomUUID(), expected_revision: newer.revision } }))).code).toBe('source_changed');
-    // Retention pruned the version history, so no page_versions row keeps the revision gbrain's write carried.
+    // Retention pruned the version history, so no page_versions row keeps the revision foresights's write carried.
     await engine.executeRaw("DELETE FROM page_versions WHERE page_id=(SELECT id FROM pages WHERE source_id='default' AND slug='notes/a')");
     const preview = await runner(engine, { allDrifted: true, only: ['notes/**'], prefer: 'database' });
     expect(preview.residuals.kept_newer_file).toBeUndefined();

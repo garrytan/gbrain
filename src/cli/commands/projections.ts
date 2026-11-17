@@ -1,5 +1,5 @@
 /**
- * `gbrain projections drain`: pre-connect dispatch that opens its own engine,
+ * `foresights projections drain`: pre-connect dispatch that opens its own engine,
  * so the PGLite resident-owner refusal (#5401, exit 2) happens before any
  * engine opens. The record lives in src/cli/command-table.ts.
  */
@@ -26,13 +26,13 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   const unknown = args.find(arg => !known.has(arg));
   if (args[0] !== 'drain' || unknown !== undefined) {
     await refuse(new OperationError('invalid_params', `Unknown projections argument '${unknown ?? args[0]}'.`,
-      'Run `gbrain projections drain [--limit <n>] [--json]`.', projections.PROJECTION_DRAIN_DOCS));
+      'Run `foresights projections drain [--limit <n>] [--json]`.', projections.PROJECTION_DRAIN_DOCS));
     return;
   }
   const limit = limitValue === undefined ? undefined : Number(limitValue);
   if (limitAt !== -1 && (!Number.isSafeInteger(limit) || limit! < 1)) {
     await refuse(new OperationError('invalid_params', `--limit needs a positive whole number of pages, not '${limitValue ?? ''}'.`,
-      'Run `gbrain projections drain --limit 1000`, or omit --limit to drain everything queued.', projections.PROJECTION_DRAIN_DOCS));
+      'Run `foresights projections drain --limit 1000`, or omit --limit to drain everything queued.', projections.PROJECTION_DRAIN_DOCS));
     return;
   }
 

@@ -5,13 +5,13 @@ export const v057: Migration = {
   name: 'search_telemetry_rollup',
   // v0.32.3 search-lite: per-day rollup of search-call shape.
   //
-  // Powers `gbrain search stats [--days N]` and `gbrain search tune` so an
+  // Powers `foresights search stats [--days N]` and `foresights search tune` so an
   // operator (or an agent calling tune) can reason about hit rate, intent
   // mix, budget pressure, and result-volume averages WITHOUT pulling
   // per-call rows.
   //
   // Schema math per [CDX-17]: sums + counts only, NOT averages. Read-time
-  // derives averages so concurrent ON CONFLICT writes from multiple gbrain
+  // derives averages so concurrent ON CONFLICT writes from multiple foresights
   // processes accumulate correctly.
   //
   // Date-bucketed cache hit/miss per [CDX-18] — query_cache.hit_count is

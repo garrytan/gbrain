@@ -93,7 +93,7 @@ export async function optimizeSharedSkill(opts: SkillOptOpts, run: (opts: SkillO
   const ctx = opts.operationContext && target ? { ...opts.operationContext, sourceId: target.source_id } : undefined;
   if (!ctx || ctx.engine !== opts.engine || !target) {
     throw opError('permission_denied', 'Shared optimization requires the original operation context.',
-      'Start shared-skill optimization through the run_skillopt operation (or gbrain skillopt) so its grant and target travel with it; nothing ran and nothing was spent.');
+      'Start shared-skill optimization through the run_skillopt operation (or foresights skillopt) so its grant and target travel with it; nothing ran and nothing was spent.');
   }
   skillName(opts.skillName); skillName(target.pack_id, 'pack_id');
   requireUuid(target.source_incarnation); requireUuid(target.expected_revision); requireUuid(target.request_id);

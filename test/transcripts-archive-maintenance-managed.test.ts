@@ -1,7 +1,7 @@
 /**
  * GST-2768 PR 3: the maintenance pass archives a writer-claimed (managed) brain through the write coordinator, the way
  * put_page does: each day page is a put_page write request (submitPageMutation) under the trusted-local identity the
- * CLI's `gbrain transcripts archive run` uses (principal local_cli). This process is the writer owner (PGLite: its own
+ * CLI's `foresights transcripts archive run` uses (principal local_cli). This process is the writer owner (PGLite: its own
  * full consumer publishes), so the wait is the owner's own path; a pass called inside a coordinated write (the owner
  * publishing) submits nothing. The coordinator wait counts against the pass's time budget, and a write the coordinator
  * accepted but has not published yet counts as accepted and is not written again. Synthetic sessions only.

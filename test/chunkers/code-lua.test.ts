@@ -1,5 +1,5 @@
 /**
- * The `gbrain serve` hang GBRA-49's LongMemEval scoreboard hit on 0.60.106.0 (PGLite, 99.5% CPU for 9.5 h after a
+ * The `foresights serve` hang GBRA-49's LongMemEval scoreboard hit on 0.60.106.0 (PGLite, 99.5% CPU for 9.5 h after a
  * committed put_page, stdin never read again). The page held five ChatGPT-style ```lua fences around shell commands.
  * The vendored Lua grammar (the `tree-sitter-wasms` build of Azganoth/tree-sitter-lua 2.1.3) allocated its external
  * scanner state with `malloc` and reset it only when `deserialize` was handed two bytes, so every parse after the first

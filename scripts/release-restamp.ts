@@ -723,7 +723,7 @@ export function main(argv: string[], opts: { cwd?: string; env?: Record<string, 
   }
   const top = Bun.spawnSync(['git', 'rev-parse', '--show-toplevel'], { cwd: opts.cwd ?? process.cwd(), stdout: 'pipe', stderr: 'pipe' });
   if (top.exitCode !== 0) {
-    log(`FAIL: not inside a git checkout\nWhy:  restamp edits and commits the current branch.\nFix:  cd into your gbrain checkout and rerun: bun run release:restamp\nSee:  ${RESTAMP_DOCS}`);
+    log(`FAIL: not inside a git checkout\nWhy:  restamp edits and commits the current branch.\nFix:  cd into your foresights checkout and rerun: bun run release:restamp\nSee:  ${RESTAMP_DOCS}`);
     return 1;
   }
   const ctx = new Ctx(top.stdout.toString().trim(), log, env);

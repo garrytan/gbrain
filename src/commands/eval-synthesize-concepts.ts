@@ -1,4 +1,4 @@
-// `gbrain eval synthesize-concepts` — honest not-implemented scaffold (#4198).
+// `foresights eval synthesize-concepts` — honest not-implemented scaffold (#4198).
 //
 // v0.41 T11 shipped the command surface but never wired a dispatch branch:
 // the subcommand fell through to the generic qrels eval ("Error: --qrels
@@ -45,14 +45,14 @@ export async function runEvalSynthesizeConcepts(
   };
 }
 
-const HELP = `gbrain eval synthesize-concepts — concept-synthesis parity eval (NOT IMPLEMENTED)
+const HELP = `foresights eval synthesize-concepts — concept-synthesis parity eval (NOT IMPLEMENTED)
 
 Status: scaffold. Running it evaluates nothing and exits 1 with an
 {ok:false, status:'not_implemented'} envelope so scripts cannot mistake
 the scaffold for a passing eval.
 
 Usage:
-  gbrain eval synthesize-concepts [--parity-baseline <dir>] [--sample <n>] [--json]
+  foresights eval synthesize-concepts [--parity-baseline <dir>] [--sample <n>] [--json]
 
 Options:
   --parity-baseline <dir>  Concepts tree to compare against (recorded, unused yet)

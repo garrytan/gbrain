@@ -1,6 +1,6 @@
 /**
  * The door's index refresh after its commit is atomic against every Git writer that takes the index lock
- * (src/core/persistence/git-door.ts syncIndex, gbrain#7742). Protects, on both engines:
+ * (src/core/persistence/git-door.ts syncIndex, foresights#7742). Protects, on both engines:
  *   - a stage attempted at the moment the door writes the index (after its last read of the entries) is never silently
  *     overwritten: Git refuses it on `index.lock`, the door's publication commits, and a retry of the stage then holds
  *     (red before: the stage was accepted, the door's update-index wrote its own blob over it and reported committed);

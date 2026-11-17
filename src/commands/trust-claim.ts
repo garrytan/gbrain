@@ -1,5 +1,5 @@
 /**
- * `gbrain trust claim-sources` (#5575, legacy content; trust/claim.ts): lists
+ * `foresights trust claim-sources` (#5575, legacy content; trust/claim.ts): lists
  * each source (id, local path or remote, page count, the tier mix now and
  * after a claim) and asks the owner, per claimable source, to type its id.
  * Claimed sources get the per-source default operator_curated and their
@@ -26,8 +26,8 @@ import { relowerClaimedRows, TRUST_RELOWER_COMMAND, type TierCounts } from '../c
 import { reportTrustCliError } from './trust.ts';
 
 export const TRUST_CLAIM_USAGE = [
-  'Usage: gbrain trust claim-sources [--dry-run] [--source <id>]... [--resume] [--batch-size N] [--json]',
-  '       gbrain trust claim-sources --relower [--dry-run] [--source <id>]... [--json]',
+  'Usage: foresights trust claim-sources [--dry-run] [--source <id>]... [--resume] [--batch-size N] [--json]',
+  '       foresights trust claim-sources --relower [--dry-run] [--source <id>]... [--json]',
   '  Claim your own sources once, after upgrading: each source shows its local path or remote, page count and',
   '  the trust mix now and after claiming, and you type its id to claim it. A claimed source syncs as "your notes"',
   '  and its rows from before trust tiers move from "unverified origin" to "your notes", except rows that say',
@@ -35,7 +35,7 @@ export const TRUST_CLAIM_USAGE = [
   '  Nothing becomes "confirmed by you". Connector sources (Google, GitHub) cannot be claimed. --dry-run lists',
   '  without writing; --resume finishes an interrupted claim. Needs you at a terminal; --yes never claims.',
   '  --relower only lowers: rows a claim lifted whose own signals now say they were written by an agent (atoms',
-  '  extracted before gbrain recorded that) go back to that tier. --relower --dry-run lists them first.',
+  '  extracted before foresights recorded that) go back to that tier. --relower --dry-run lists them first.',
 ].join('\n');
 
 const mix = (counts: TierCounts | undefined) =>
@@ -44,7 +44,7 @@ const mix = (counts: TierCounts | undefined) =>
 function describe(s: ClaimSource): string[] {
   const where = s.local_path ?? s.remote_url ?? 'no local path';
   const state = s.blocker === 'connector' ? `${s.kind} connector: cannot be claimed`
-    : s.blocker === 'archived' ? 'archived' : s.pending ? 'claimed; lift not finished (gbrain trust claim-sources --resume)'
+    : s.blocker === 'archived' ? 'archived' : s.pending ? 'claimed; lift not finished (foresights trust claim-sources --resume)'
       : s.claimed ? 'claimed' : s.blocker === 'no_legacy_rows' ? 'nothing to lift' : `${s.legacy_unknown} legacy row(s) with unverified origin`;
   return [
     `  ${s.id} (${where}): ${s.pages} page(s); ${state}`,
@@ -74,7 +74,7 @@ export async function runTrustClaimSources(engine: BrainEngine, args: string[], 
     const sizeAt = args.indexOf('--batch-size');
     const batchSize = sizeAt >= 0 ? Number(args[sizeAt + 1]) : undefined;
     if (batchSize !== undefined && (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100_000)) {
-      throw opError('invalid_params', '--batch-size must be an integer from 1 to 100000.', 'Run gbrain trust claim-sources --batch-size 500, or omit --batch-size.');
+      throw opError('invalid_params', '--batch-size must be an integer from 1 to 100000.', 'Run foresights trust claim-sources --batch-size 500, or omit --batch-size.');
     }
     const sized = batchSize ? { batchSize } : {};
     if (args.includes('--relower')) {
@@ -108,12 +108,12 @@ export async function runTrustClaimSources(engine: BrainEngine, args: string[], 
     }
     const listing = await listClaimSources(engine, sized);
     if (listing.schema === 'pre_trust') {
-      throw opError('migrations_pending', 'This brain has no trust tier columns yet, so there is nothing to claim.', 'Run gbrain apply-migrations --yes on the brain host, then gbrain trust claim-sources.');
+      throw opError('migrations_pending', 'This brain has no trust tier columns yet, so there is nothing to claim.', 'Run foresights apply-migrations --yes on the brain host, then foresights trust claim-sources.');
     }
     const named = flagValues(args, '--source');
     for (const id of named) {
       const s = listing.sources.find(x => x.id === id);
-      if (!s) throw opError('unknown_source', `Source "${id}" does not exist.`, 'List sources with gbrain trust claim-sources --dry-run.');
+      if (!s) throw opError('unknown_source', `Source "${id}" does not exist.`, 'List sources with foresights trust claim-sources --dry-run.');
       if (s.blocker === 'connector') throw connectorRefusal(id, s.kind ?? 'connector');
     }
     const asked = listing.sources.filter(s => s.claimable && (named.length === 0 || named.includes(s.id)));

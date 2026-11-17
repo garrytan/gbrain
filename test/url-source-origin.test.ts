@@ -193,13 +193,13 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     try {
       for (const args of [['source-a', '--remote', '--local'], ['source-a'], ['--remote'], ['source-a', '--remote', '--force']])
         await expect(runRecordOrigin(engine, args)).rejects.toThrow('EXIT 2');
-      expect(errors.mock.calls.flat().join('\n')).toContain('Usage: gbrain sources record-origin');
+      expect(errors.mock.calls.flat().join('\n')).toContain('Usage: foresights sources record-origin');
       expect(await config('source-a')).toEqual(URL_CONFIG);
 
       _resetCliExitVerdictForTests();
       await runRecordOrigin(engine, ['source-a', '--local']);
       expect(currentExitCode()).toBe(0);
-      expect(logs.mock.calls.flat().join('\n')).toContain('Apply with: gbrain sources record-origin source-a --local --apply');
+      expect(logs.mock.calls.flat().join('\n')).toContain('Apply with: foresights sources record-origin source-a --local --apply');
       await runRecordOrigin(engine, ['source-a', 'nope', '--local', '--apply']);
       expect(currentExitCode()).toBe(1);
       expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: false });

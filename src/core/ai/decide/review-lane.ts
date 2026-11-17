@@ -15,7 +15,7 @@
  * for action precision (decide.slots.conflict.min_action_precision); without
  * that it does not call the provider at all. Never applies anything itself:
  * outcomes are pending rows in decide_review_proposals, reviewed with
- * `gbrain decide proposals`. Work is durable in decide_review_queue, written in
+ * `foresights decide proposals`. Work is durable in decide_review_queue, written in
  * the same transaction as the event that created it (a withdrawal, or the
  * owning subsystem's enqueue), so nothing is skipped by a timestamp cursor.
  */

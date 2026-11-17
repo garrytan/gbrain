@@ -105,7 +105,7 @@ for (const arm of pathologicalArms()) {
         const conflicts = (result.details.postprocess_conflicts ?? []) as Array<{ slug: string; code: string; fix: { argv: string[] } }>;
         expect(conflicts.length).toBe(1);
         expectItemFailure({ key: conflicts[0]!.slug, code: conflicts[0]!.code, fix: conflicts[0]!.fix.argv.join(' ') },
-          { key: bad!.slug, code: 'revision_conflict', fix: new RegExp(`^gbrain write-request -- ${bad!.request_id}$`) });
+          { key: bad!.slug, code: 'revision_conflict', fix: new RegExp(`^foresights write-request -- ${bad!.request_id}$`) });
         const after = await snapshotItems(engine, sourceId);
         expectOthersUnchanged(before, after, { changed: summaries(after), expectProgress: [healthy!.slug] });
         expect(result.details.written_slugs).toEqual([healthy!.slug]);
@@ -127,7 +127,7 @@ for (const arm of pathologicalArms()) {
         expect(result.status, result.summary).toBe('warn');
         const conflicts = (result.details.postprocess_conflicts ?? []) as Array<{ slug: string; code: string; fix: { argv: string[] } }>;
         expectItemFailure(conflicts[0] && { key: conflicts[0].slug, code: conflicts[0].code, fix: conflicts[0].fix.argv.join(' ') },
-          { key: bad!.slug, code: 'recovery_required', fix: new RegExp(`^gbrain write-request -- ${bad!.request_id}$`) });
+          { key: bad!.slug, code: 'recovery_required', fix: new RegExp(`^foresights write-request -- ${bad!.request_id}$`) });
         expect(result.details.publish_pending).toBe(1);
         expect((await pendingEntry(engine, sourceId))?.pending.map(p => p.slug)).toEqual([healthy!.slug]);
         const after = await snapshotItems(engine, sourceId);

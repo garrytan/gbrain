@@ -97,7 +97,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
     source: spec.harnessRoot, mirrorDir: join(dir, 'mirror.git'), archiveDir: join(spec.cacheDir, 'archives'), certDir: join(spec.cacheDir, 'certs'),
     forward: mock ? { 'api.voyageai.com': mock.url } : {},
   });
-  writeFileSync(join(dir, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/garrytan/gbrain\n[user]\n\tname = upgrade-matrix\n\temail = upgrade-matrix@example.invalid\n[init]\n\tdefaultBranch = main\n');
+  writeFileSync(join(dir, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/aimonk2025/gbrain\n[user]\n\tname = upgrade-matrix\n\temail = upgrade-matrix@example.invalid\n[init]\n\tdefaultBranch = main\n');
 
   let databaseUrl: string | undefined;
   const dbName = 'um_' + createHash('sha1').update(id + process.pid + started).digest('hex').slice(0, 16);
@@ -165,7 +165,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
   try {
     // ── 1. old release, installed and seeded as a user would ──────────────
     fx.setRefs({ HEAD: spec.from.sha, 'latest-stable': spec.from.sha, stable: spec.from.sha, [spec.from.tag]: spec.from.sha });
-    const install = await run('install-old', ['bun', 'install', '-g', 'github:garrytan/gbrain'], { timeoutMs: 600_000, check: 'setup' });
+    const install = await run('install-old', ['bun', 'install', '-g', 'github:aimonk2025/gbrain'], { timeoutMs: 600_000, check: 'setup' });
     const oldVersion = install.code === 0 ? (await gbrain('version-old', ['--version'], { check: 'setup' })).stdout.trim() : '';
     if (install.code === 0 && !oldVersion.endsWith(spec.from.version)) fail('setup', 'installed ' + oldVersion + ', expected ' + spec.from.version);
     if (failures.length) throw new SetupError();
@@ -216,7 +216,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
       receipt.upgrade_needed_stop_mcp = true;
       up = await gbrain('upgrade-stop-mcp', ['upgrade', '--stop-mcp'], { timeoutMs: 900_000 });
     }
-    if (up.code !== 0) fail('upgrade', 'gbrain upgrade exited ' + up.code + ': ' + (up.stderr || up.stdout).trim().split('\n').slice(-8).join('\n'));
+    if (up.code !== 0) fail('upgrade', 'foresights upgrade exited ' + up.code + ': ' + (up.stderr || up.stdout).trim().split('\n').slice(-8).join('\n'));
 
     const served = fx.requests.slice(switchedAt);
     const foreign = served.filter(r => r.sha && r.sha !== spec.candidate.sha && r.status === 200);
@@ -228,9 +228,9 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
     const newVersion = (await gbrain('version-new', ['--version'])).stdout.trim();
     const tree = compareInstalledTree(spec.harnessRoot, spec.candidate.sha, installDir());
     const lock = readFileSync(join(bunDir, 'install', 'global', 'bun.lock'), 'utf8');
-    const lockSha = /"gbrain@github:garrytan\/gbrain#([0-9a-f]{7,40})"/.exec(lock)?.[1] ?? null;
+    const lockSha = /"(?:foresights|gbrain)@github:garrytan\/(?:foresights|gbrain)#([0-9a-f]{7,40})"/.exec(lock)?.[1] ?? null;
     receipt.installed = { old_version: oldVersion, new_version: newVersion, lock_sha: lockSha, tree_files: tree.checked, tree_mismatches: tree.mismatches.slice(0, 20), tree_missing: tree.missing.slice(0, 20) };
-    if (!newVersion.endsWith(spec.candidate.version)) fail('installed_build', 'gbrain --version says ' + newVersion + ', expected ' + spec.candidate.version);
+    if (!newVersion.endsWith(spec.candidate.version)) fail('installed_build', 'foresights --version says ' + newVersion + ', expected ' + spec.candidate.version);
     if (!lockSha || !spec.candidate.sha.startsWith(lockSha)) fail('installed_build', 'bun.lock pins ' + lockSha + ', expected ' + spec.candidate.sha.slice(0, 7));
     if (tree.mismatches.length || tree.missing.length) fail('installed_build', tree.mismatches.length + ' installed files differ from the candidate tree and ' + tree.missing.length + ' are missing: ' + [...tree.mismatches, ...tree.missing].slice(0, 5).join(', '));
 
@@ -238,7 +238,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
     if (oldServe.alive) {
       receipt.restart_fix_needed = true;
       const fix = await gbrain('restart-only', ['upgrade', '--restart-only', '--stop-mcp'], { timeoutMs: 900_000 });
-      if (fix.code !== 0) fail('one_build', 'gbrain upgrade --restart-only --stop-mcp exited ' + fix.code);
+      if (fix.code !== 0) fail('one_build', 'foresights upgrade --restart-only --stop-mcp exited ' + fix.code);
       await Promise.race([oldServe.proc.exited, new Promise(r => setTimeout(r, 20_000))]);
       if (oldServe.alive) fail('one_build', 'the serve started on ' + spec.from.version + ' is still running after the upgrade and restart');
       await oldServe.close();
@@ -262,7 +262,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
     }
     await stopAll();
     const leftovers = gbrainProcessesFor(home);
-    if (leftovers.length) fail('one_build', 'gbrain processes still running for this brain after stopping serve and the supervisor: ' + leftovers.join('; '));
+    if (leftovers.length) fail('one_build', 'foresights processes still running for this brain after stopping serve and the supervisor: ' + leftovers.join('; '));
 
     // ── 5. migrations, schema head, doctor ─────────────────────────────────
     await gbrain('apply-migrations', ['apply-migrations', '--yes', '--non-interactive'], { timeoutMs: 900_000, check: 'apply_migrations' });

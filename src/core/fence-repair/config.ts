@@ -7,7 +7,7 @@
  *
  * `fences.repair.enabled` (default true, opt-out) lets the maintenance cycle's
  * `fence_repair` phase repair held and stored malformed fences; false pauses
- * it (an explicit `gbrain repair fences --apply` still runs).
+ * it (an explicit `foresights repair fences --apply` still runs).
  * `fences.repair.llm` (default true, opt-out) lets that repair send residual
  * fence rows to the configured chat model (Tier 3); false keeps it to the
  * free tiers everywhere and holds Tier 3 candidates with `llm_disabled`.
@@ -16,7 +16,7 @@
  * `fences.repair.max_usd_per_day` (default $1.00) cap model (Tier 3) fence
  * repair: per page, and per UTC day across every process through the daily
  * USD ledger. 0 means no Tier 3 spend. They are validated at `config set`
- * and shown by `gbrain doctor` (`fence_integrity`); the fence repair reads
+ * and shown by `foresights doctor` (`fence_integrity`); the fence repair reads
  * them.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -30,7 +30,7 @@ export const FENCE_REPAIR_MAX_USD_PER_DAY_KEY = 'fences.repair.max_usd_per_day';
 export const FENCE_REPAIR_DEFAULT_MAX_USD_PER_PAGE = 0.3;
 export const FENCE_REPAIR_DEFAULT_MAX_USD_PER_DAY = 1;
 const USD_KEYS: readonly string[] = [FENCE_REPAIR_MAX_USD_PER_PAGE_KEY, FENCE_REPAIR_MAX_USD_PER_DAY_KEY];
-/** Every `fences.*` key `gbrain config set` accepts. */
+/** Every `fences.*` key `foresights config set` accepts. */
 export const FENCE_CONFIG_KEYS: readonly string[] = [FENCES_NORMALIZE_KEY, FENCE_REPAIR_ENABLED_KEY, FENCE_REPAIR_LLM_KEY, ...USD_KEYS];
 
 const TRUE = /^(true|1|on|yes)$/i;

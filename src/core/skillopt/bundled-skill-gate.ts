@@ -1,7 +1,7 @@
 /**
  * SkillOpt bundled-skill mutation gate (D16).
  *
- * A "bundled" skill is one that lives in the gbrain repo's `skills/` tree
+ * A "bundled" skill is one that lives in the foresights repo's `skills/` tree
  * (shipped alongside the binary). These are load-bearing for production
  * workflows; mutating them via SkillOpt without explicit operator opt-in
  * is too risky. By default, bundled-skill optimization runs in `--no-mutate`
@@ -32,7 +32,7 @@ export function getBundledSkillContext(skillsDir: string, skillName: string): Bu
   const skillPath = path.join(skillsDir, skillName, 'SKILL.md');
   // Detect bundled by checking whether autoDetectSkillsDirReadOnly would
   // have routed here via the install-path fallback. The simpler heuristic:
-  // if the resolved skillsDir is under the gbrain install tree (somewhere
+  // if the resolved skillsDir is under the foresights install tree (somewhere
   // up the chain has node_modules/gbrain or VERSION matching this binary),
   // it's bundled. Use the read-only detector to find the canonical install
   // skillsDir and compare.

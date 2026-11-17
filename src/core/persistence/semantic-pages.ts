@@ -68,7 +68,7 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
   }
   if (row.operation !== 'add_timeline_entry') {
     throw opError('writer_coordinator_required', 'This semantic writer has no registered preparation handler.',
-      `Request ${row.request_id} (${row.operation}) in source ${row.source_id} has no preparation handler in this gbrain version, so nothing changed. This is an internal or version-skew fault: report it to the user.`);
+      `Request ${row.request_id} (${row.operation}) in source ${row.source_id} has no preparation handler in this foresights version, so nothing changed. This is an internal or version-skew fault: report it to the user.`);
   }
   // Wave B: a segmented page within 24 MiB is read back whole and written as a normal put; a larger one refuses.
   const snapshot = (await wholeBodySnapshot(engine, stored, row.operation))!;

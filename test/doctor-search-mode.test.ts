@@ -38,7 +38,7 @@ describe('checkSearchMode [CDX-20]', () => {
     // [CDX-20] original never-warn contract holds again: the balanced
     expect(c.status).toBe('ok');
     expect(c.message).toMatch(/unset/i);
-    expect(c.message).toContain('gbrain search modes');
+    expect(c.message).toContain('foresights search modes');
   });
 
   test('mode set, no overrides → "canonical" message, ok (balanced reranks with the live default)', async () => {
@@ -58,7 +58,7 @@ describe('checkSearchMode [CDX-20]', () => {
     expect(c.message).toContain('conservative');
     expect(c.message).toContain('search.cache.enabled');
     expect(c.message).toContain('search.tokenBudget');
-    expect(c.message).toContain('gbrain search modes --reset');
+    expect(c.message).toContain('foresights search modes --reset');
   });
 
   test('upgrade-notice state key is excluded from override count', async () => {
@@ -87,7 +87,7 @@ describe('checkSearchMode reset advice', () => {
     await engine.setConfig('search.reranker.model', NEW_INSTALL_DEFAULT_RERANKER_MODEL);
     const c = await checkSearchMode(engine);
     expect(c.status).toBe('ok');
-    expect(c.message).toContain('gbrain search modes --reset');
+    expect(c.message).toContain('foresights search modes --reset');
     expect(c.message).not.toContain('load-bearing');
     // Override roster stays visible.
     expect(c.message).toContain('search.reranker.model');
@@ -105,7 +105,7 @@ describe('checkSearchMode reset advice', () => {
     await engine.setConfig('search.reranker.enabled', 'false');
     const c = await checkSearchMode(engine);
     expect(c.status).toBe('ok');
-    expect(c.message).toContain('gbrain search modes --reset');
+    expect(c.message).toContain('foresights search modes --reset');
   });
 
   test('an explicit search.reranker.model equal to the bundle default is called redundant with a precise unset, never --reset', async () => {
@@ -115,7 +115,7 @@ describe('checkSearchMode reset advice', () => {
     const c = await checkSearchMode(engine);
     expect(c.status).toBe('ok');
     expect(c.message).toContain('redundant');
-    expect(c.message).toContain('gbrain config unset search.reranker.model');
+    expect(c.message).toContain('foresights config unset search.reranker.model');
     expect(c.message).not.toContain('--reset');
   });
 
@@ -124,7 +124,7 @@ describe('checkSearchMode reset advice', () => {
     await engine.setConfig('search.cache.enabled', 'false');
     const c = await checkSearchMode(engine);
     expect(c.status).toBe('ok');
-    expect(c.message).toContain('gbrain search modes --reset');
+    expect(c.message).toContain('foresights search modes --reset');
   });
 });
 
@@ -141,9 +141,9 @@ describe('checkEvalDrift [CDX-6]', () => {
     expect(c.message.length).toBeGreaterThan(0);
   });
 
-  test("probes gbrain's own checkout, not whatever repo the operator stood in (#4606)", async () => {
+  test("probes foresights's own checkout, not whatever repo the operator stood in (#4606)", async () => {
     // Unrelated scratch repo with a staged file that happens to match the
-    // retrieval watch list. Doctor must not report it as gbrain drift.
+    // retrieval watch list. Doctor must not report it as foresights drift.
     const tmp = mkdtempSync(join(tmpdir(), 'gb-drift-cwd-'));
     const git = (args: string) =>
       execSync(`git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false ${args}`, {

@@ -9,13 +9,13 @@
  * (`source_changed`, `storage_error`) are routed by their recorded origin or reason; when a legacy receipt carries
  * neither, the verdict is `diagnosis_required` with a read-only inspection, never a guessed fix.
  *
- * The verdict speaks the vocabulary of `gbrain sync status` (`class` / `safe_actions` / `needs_human` / `escalate`,
+ * The verdict speaks the vocabulary of `foresights sync status` (`class` / `safe_actions` / `needs_human` / `escalate`,
  * `sync-fault-class.ts`) plus an `Action` whose `verify` is read-only. It classifies history only: whether a row blocks
  * something right now (a checkpoint blocker, a recovery record holding its root) is decided by the reader
  * (`terminal-failures.ts`) from PR A's `checkpoint_blockers` and the head blocker's `request_recovery`, never here.
  *
  * `supersessionSql` is the one rule for "a later request on the same page made this one moot", extracted from
- * `gbrain repair failed-writes` (`disposition`), which uses it unchanged; `terminal-failures.ts` uses it to label a
+ * `foresights repair failed-writes` (`disposition`), which uses it unchanged; `terminal-failures.ts` uses it to label a
  * row `superseded` / `already_written` / `duplicate`, and anything without that evidence stays `unknown`.
  */
 import type { Action } from '../agent-output.ts';
@@ -37,7 +37,7 @@ export type TerminalCategory =
   | 'sync_fault' | 'transport' | 'caller_refusal' | 'gbrain_defect' | 'diagnosis_required'
   // #6904: the write met a missing relation or column (42P01 / 42703); the schema is behind this build or lost a table.
   | 'schema_missing'
-  // #7837: a request for a write gbrain retired (the v0.13.1 grandfather, #7814) that an older build queued; nothing to do.
+  // #7837: a request for a write foresights retired (the v0.13.1 grandfather, #7814) that an older build queued; nothing to do.
   | 'retired_operation';
 
 /** The receipt columns the classifier reads; every one but `intent_kind` and `error_message` survives compaction. */
@@ -79,7 +79,7 @@ export interface TerminalVerdict {
   needs_human: boolean;
   human_reason?: string;
   escalate: string;
-  /** A gbrain defect class: doctor warns on an unresolved one whatever the trend. */
+  /** A foresights defect class: doctor warns on an unresolved one whatever the trend. */
   defect: boolean;
   /** The release that fixed this class, when one did; a row from an older build is historical. */
   fixed_in: string | null;
@@ -182,14 +182,14 @@ function route(input: TerminalInput): Partial_ {
     const blocked = input.blocked_reason === 'unexpected_staging_bytes' || input.blocked_reason === 'unexpected_file_bytes';
     return blocked
       ? { category: 'recovery_blocked', code: 'recovery_required', origin, class: 'systemic', safe_actions: ['none'], needs_human: true,
-        human_reason: `The publication recovery record of this request is blocked (${input.blocked_reason}): a file it staged or published changed outside gbrain, so its root stays held until a person inspects the bytes.`,
+        human_reason: `The publication recovery record of this request is blocked (${input.blocked_reason}): a file it staged or published changed outside foresights, so its root stays held until a person inspects the bytes.`,
         escalate: 'always: the bytes on disk differ from what the recovery record expects',
-        action: inspect(source, 'Writer status names the held root and the recovery record, read-only.', `Inspect the file named by gbrain sources writer status --source ${source} --json on the brain host; restore the expected bytes or report it.`) }
+        action: inspect(source, 'Writer status names the held root and the recovery record, read-only.', `Inspect the file named by foresights sources writer status --source ${source} --json on the brain host; restore the expected bytes or report it.`) }
       : { category: 'recovery_pending', code: 'recovery_required', origin, class: 'systemic', safe_actions: ['retry'], needs_human: false,
         escalate: 'the record is still there after an owner pass (writer status then names a blocked_reason)',
         action: { argv: ['gbrain', 'sync', '--source', source, '--no-pull', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
           why: 'This request holds a publication recovery record, which holds every queued write on its root (head blocker request_recovery). An owner pass on this host '
-            + 'finishes it: the sync starts one, cleans the staged files and clears the record (a gbrain serve that owns the root does the same).',
+            + 'finishes it: the sync starts one, cleans the staged files and clears the record (a foresights serve that owns the root does the same).',
           verify: { argv: failuresArgv(source) }, docs: 'docs/guides/troubleshooting.md#terminal-write-failures' } };
   }
   const knockOn = input.knock_on ?? knockOnSafe(input);
@@ -200,7 +200,7 @@ function route(input: TerminalInput): Partial_ {
   }
   if (code === 'fence_unrenderable' && origin === null) {
     return { category: 'fence_unrenderable', code, origin, class: 'page', safe_actions: ['none'], needs_human: true,
-      human_reason: 'The fact-fence adoption planner produced a fence that does not read back as its facts: a gbrain planning defect to report with the page slug and version.',
+      human_reason: 'The fact-fence adoption planner produced a fence that does not read back as its facts: a foresights planning defect to report with the page slug and version.',
       escalate: 'always: a build with the adoption fix wrote it',
       action: { argv: ['gbrain', 'doctor', '--only', 'fence_integrity', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'A legacy fact row was not adopted into its page\'s facts fence; the row stays active and searchable. Doctor fence_integrity lists the pages and reason classes, read-only.',
@@ -209,7 +209,7 @@ function route(input: TerminalInput): Partial_ {
   if (origin === SYNC_CURSOR_FENCE_ORIGIN) {
     const cause = cursorFenceCause(detail);
     if (cause === 'outside_fence') return fromTable('outside_fence', code, origin, inspect(source, 'A sync request published outside the cursor that admitted it; writer status and sync status list the drains, read-only.',
-      `Stop the extra drain of source ${source} (gbrain autopilot pause), then report the fence snapshot gbrain sync status --source ${source} --json shows.`), 'outside_fence');
+      `Stop the extra drain of source ${source} (foresights autopilot pause), then report the fence snapshot foresights sync status --source ${source} --json shows.`), 'outside_fence');
     if (cause === 'run_replaced') return fromTable('run_replaced', code, origin, syncRetry(source, 'Another run of the source replaced this one and covers its pages; the current sync finishes the source.'), 'run_replaced');
   }
   if (code === 'cancelled' && input.state === 'cancelled') {
@@ -220,9 +220,9 @@ function route(input: TerminalInput): Partial_ {
   }
   if (code === 'writer_coordinator_required' && origin === 'database_guard') {
     return { category: 'writer_guard', code, origin, class: 'systemic', safe_actions: ['none'], needs_human: true,
-      human_reason: 'The managed-writer database guard refused the write: a gbrain defect, a schema change by another tool, or two gbrain builds sharing the database.',
+      human_reason: 'The managed-writer database guard refused the write: a foresights defect, a schema change by another tool, or two foresights builds sharing the database.',
       escalate: 'always', action: { ...inspect(source, 'Writer status --probe names the table, operation, guard branch and executing build of each refusal, read-only.',
-        'Read recent_failures[].error_detail from gbrain sources writer status --probe --json on the brain host, check doctor managed_guard_schema_drift, then retry the write with a new request id (gbrain repair failed-writes replays caller writes).'),
+        'Read recent_failures[].error_detail from foresights sources writer status --probe --json on the brain host, check doctor managed_guard_schema_drift, then retry the write with a new request id (foresights repair failed-writes replays caller writes).'),
       argv: ['gbrain', 'sources', 'writer', 'status', '--source', source, '--probe', '--json'] } };
   }
   // #6904: a missing relation or column, classified at publication, or recorded as an owner exception by an older build (its errno).
@@ -231,17 +231,17 @@ function route(input: TerminalInput): Partial_ {
   }
   if (origin === 'owner_exception') {
     return { category: 'owner_exception', code, origin, class: 'systemic', safe_actions: ['upgrade'], needs_human: true,
-      human_reason: 'The owner raised an unexpected exception while running this write: a gbrain defect.',
+      human_reason: 'The owner raised an unexpected exception while running this write: a foresights defect.',
       escalate: 'always: report the error class and frame writer status shows',
       action: inspect(source, 'Writer status names the error class, errno, frame and the build that ran the attempt, read-only.',
-        'Report the owner exception (gbrain sources writer status --json on the brain host names it) with the gbrain version; upgrade when a fix ships.') };
+        'Report the owner exception (foresights sources writer status --json on the brain host names it) with the foresights version; upgrade when a fix ships.') };
   }
   if (code === 'storage_error' || code === 'writer_coordinator_required') {
-    if (reason === 'graduation_in_progress') return fromTable('transport', code, origin, syncRetry(source, 'The engine-graduation fence refused writes while the brain moved; retry once gbrain migrate --status --json reports it finished.'), 'graduation_in_progress');
+    if (reason === 'graduation_in_progress') return fromTable('transport', code, origin, syncRetry(source, 'The engine-graduation fence refused writes while the brain moved; retry once foresights migrate --status --json reports it finished.'), 'graduation_in_progress');
     if (reason === 'attribution_unclassified_table' || reason === 'trust_unclassified_table') {
       return { category: 'database_refusal', code, origin, class: 'systemic', safe_actions: ['upgrade'], needs_human: true,
-        human_reason: `A gbrain stamp trigger met a table it is not built for (${reason}): two gbrain builds share this database.`, escalate: 'always',
-        action: inspect(source, 'Writer status lists the admitter and consumer build of each host, read-only.', 'Upgrade every gbrain process that shares this database to one release, restart them, then retry the write.') };
+        human_reason: `A foresights stamp trigger met a table it is not built for (${reason}): two foresights builds share this database.`, escalate: 'always',
+        action: inspect(source, 'Writer status lists the admitter and consumer build of each host, read-only.', 'Upgrade every foresights process that shares this database to one release, restart them, then retry the write.') };
     }
     if (origin === 'database_trigger' || origin === 'database' || origin === 'database_guard') {
       return diagnosis(input, code, origin, `A database trigger refused the write (${stringField(detail, 'raiser') ?? 'unnamed raiser'}${reason ? `, reason ${reason}` : ''}).`);
@@ -272,7 +272,7 @@ function route(input: TerminalInput): Partial_ {
     if (known === 'canonical_file_missing') {
       return { category: 'canonical_file_missing', code, origin: origin ?? known, ...row('canonical_file_missing'),
         action: { argv: ['gbrain', 'repair', 'ghost-pages', '--source', source], consent: [], actor: 'agent', requires_exclusive: false,
-          why: `Previews the live pages whose canonical file is missing and writes nothing; apply only after the user agrees, or restore the file and sync. To keep ${input.slug} and only narrow who reads it, with no file written, preview a page rule instead: gbrain access rule add --slug ${input.slug} --readers <member> --source ${source} (writes nothing without --yes).`,
+          why: `Previews the live pages whose canonical file is missing and writes nothing; apply only after the user agrees, or restore the file and sync. To keep ${input.slug} and only narrow who reads it, with no file written, preview a page rule instead: foresights access rule add --slug ${input.slug} --readers <member> --source ${source} (writes nothing without --yes).`,
           verify: { argv: failuresArgv(source) }, docs: 'docs/guides/write-refusals.md#canonical_file_missing' } };
     }
     if (known === 'source_binding_changed' || known === 'unsafe_file_target') {
@@ -301,7 +301,7 @@ function route(input: TerminalInput): Partial_ {
     return { category: 'retired_operation', code, origin, class: 'page', safe_actions: ['none'], needs_human: false,
       escalate: 'never: the page was left unchanged and nothing retries it',
       action: { argv: terminalInspectArgv(input.request_id ?? '<request_id>'), consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'Retired grandfather, nothing to do: an older gbrain queued the v0.13.1 validate: false stamp for this page, and upgrades no longer rewrite pages (#7814), so the request ended without writing. Do not resubmit it; the receipt is read-only history.' } };
+        why: 'Retired grandfather, nothing to do: an older foresights queued the v0.13.1 validate: false stamp for this page, and upgrades no longer rewrite pages (#7814), so the request ended without writing. Do not resubmit it; the receipt is read-only history.' } };
   }
   if (code === 'revision_conflict' || code === 'page_identity_changed') {
     return { category: 'caller_conflict', code, origin, class: 'page', safe_actions: ['retry'], needs_human: false, escalate: escalateOf(code),
@@ -319,8 +319,8 @@ function route(input: TerminalInput): Partial_ {
   if (!entry) return diagnosis(input, code, origin, `The write ended with code ${code}, which this build does not know.`);
   if (entry.class === 'server') {
     return { category: 'gbrain_defect', code, origin, class: 'systemic', safe_actions: ['upgrade'], needs_human: true,
-      human_reason: `The write ended ${code}, a server-side fault in gbrain.`, escalate: 'always',
-      action: inspect(source, 'Writer status names the build that ran the attempt, read-only.', `Report the ${code} receipt with the gbrain version (gbrain errors ${code} explains it); upgrade when a fix ships.`) };
+      human_reason: `The write ended ${code}, a server-side fault in foresights.`, escalate: 'always',
+      action: inspect(source, 'Writer status names the build that ran the attempt, read-only.', `Report the ${code} receipt with the foresights version (foresights errors ${code} explains it); upgrade when a fix ships.`) };
   }
   if (entry.class === 'retryable' || entry.class === 'unavailable') {
     return { category: 'transport', code, origin, class: 'connection', safe_actions: ['retry'], needs_human: false, escalate: 'the same code after a rerun',
@@ -328,7 +328,7 @@ function route(input: TerminalInput): Partial_ {
         why: `A transient refusal (${code}); the caller resubmits with a new request id. The receipt is read-only.`, verify: { argv: failuresArgv(source) } } };
   }
   return { category: 'caller_refusal', code, origin, class: 'page', safe_actions: ['none'], needs_human: entry.class !== 'caller',
-    ...(entry.class !== 'caller' ? { human_reason: `The write was refused ${code} (${entry.class}); gbrain errors ${code} names who acts.` } : {}),
+    ...(entry.class !== 'caller' ? { human_reason: `The write was refused ${code} (${entry.class}); foresights errors ${code} names who acts.` } : {}),
     escalate: 'never: the caller saw the refusal and its fix',
     action: { argv: terminalInspectArgv(input.request_id ?? '<request_id>'), consent: [], actor: 'agent', requires_exclusive: false,
       why: `The caller's write was refused ${code} and the caller saw why; the receipt carries the diagnosis, read-only.`, verify: { argv: failuresArgv(source) } } };
@@ -340,20 +340,20 @@ function schemaMissingVerdict(input: TerminalInput, code: string, origin: string
   const verify = { argv: ['gbrain', 'doctor', '--json'] };
   const base = { category: 'schema_missing' as const, code, origin, class: 'systemic' as const };
   if (input.schema_behind === true) {
-    return { ...base, safe_actions: ['migrate'], needs_human: false, escalate: 'the schema is still behind after gbrain apply-migrations --yes (doctor schema_version names the failing migration)',
+    return { ...base, safe_actions: ['migrate'], needs_human: false, escalate: 'the schema is still behind after foresights apply-migrations --yes (doctor schema_version names the failing migration)',
       action: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent', requires_exclusive: true,
-        why: `The write needed ${what}, which a pending migration adds: the brain schema is behind this gbrain build. Apply the migrations as the database role that owns the gbrain tables, then resubmit the write with a new request id.`,
+        why: `The write needed ${what}, which a pending migration adds: the brain schema is behind this foresights build. Apply the migrations as the database role that owns the foresights tables, then resubmit the write with a new request id.`,
         verify, docs: 'docs/guides/write-refusals.md#schema_behind' } };
   }
   if (input.schema_behind === false) {
-    const human = `The write needed ${what}, but the schema version is at head: a table or column is missing outside a migration (an older backup restored, a table dropped by hand, or a migration recorded without its change). Doctor's schema_missing_tables check names what is missing and gbrain repair missing-tables previews recreating it; decide with the user before applying.`;
+    const human = `The write needed ${what}, but the schema version is at head: a table or column is missing outside a migration (an older backup restored, a table dropped by hand, or a migration recorded without its change). Doctor's schema_missing_tables check names what is missing and foresights repair missing-tables previews recreating it; decide with the user before applying.`;
     return { ...base, safe_actions: ['repair'], needs_human: true, human_reason: human, escalate: 'always: the schema is at head and still lacks what the write needs',
       action: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, ask_user: true, user_message: human,
-        why: "Read-only: doctor's schema_missing_tables check lists the missing tables and columns and names the gbrain repair missing-tables preview.", verify } };
+        why: "Read-only: doctor's schema_missing_tables check lists the missing tables and columns and names the foresights repair missing-tables preview.", verify } };
   }
   return { ...base, safe_actions: ['none'], needs_human: false, escalate: 'doctor reports the schema at head and the write still fails on a missing relation or column',
     action: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
-      why: `The write needed ${what}. Read-only: when doctor's schema_version reports the schema behind, run gbrain apply-migrations --yes as the database role that owns the gbrain tables and resubmit; when it is at head, its schema_missing_tables check names what is missing (gbrain repair missing-tables previews it).` } };
+      why: `The write needed ${what}. Read-only: when doctor's schema_version reports the schema behind, run foresights apply-migrations --yes as the database role that owns the foresights tables and resubmit; when it is at head, its schema_missing_tables check names what is missing (foresights repair missing-tables previews it).` } };
 }
 
 /** #7630: the caller-submitted page and memory writes a caller resubmits; no sync replays them. */
@@ -398,7 +398,7 @@ function faultAction(code: string, input: TerminalInput): Action {
       + 'Writer status names the step it stopped at and what held it, read-only. Once that clears, rerun the command that wrote it (an import, repair, quarantine clear or grandfather).');
   }
   if (v.safe_actions[0] === 'retry' && operation === 'canonical_reconcile') {
-    return syncRetry(input.source_id, `The canonical reconcile recorded ${code} (${v.class}); the next sync re-admits a keep_db reconcile, and a \`gbrain sources reconcile\` run is retried by running it again.`);
+    return syncRetry(input.source_id, `The canonical reconcile recorded ${code} (${v.class}); the next sync re-admits a keep_db reconcile, and a \`foresights sources reconcile\` run is retried by running it again.`);
   }
   if (inspectOnlyFault(code, input)) {
     return inspect(input.source_id, `The ${input.operation} operation ended ${code}; it was not part of a sync, so a sync does not retry it. Writer status names what holds it, read-only.`, v.human_reason);
@@ -430,7 +430,7 @@ export function terminalKnockOnSql(alias: string): string {
 /** Page removals: a later one supersedes any earlier write of the page. */
 export const PAGE_REMOVAL_OPERATIONS: readonly string[] = ['delete_page', 'purge_page'];
 
-/** The writes `gbrain repair failed-writes` replays: a caller's own `put_page` (no owner `kind`), `add_timeline_entry` and `remember`. */
+/** The writes `foresights repair failed-writes` replays: a caller's own `put_page` (no owner `kind`), `add_timeline_entry` and `remember`. */
 export const CALLER_REPLAYABLE_OPERATIONS: readonly string[] = ['put_page', 'add_timeline_entry', 'remember'];
 /** A writer-guard refusal (no publication ran). */
 export const GUARD_REFUSAL_SQL = (r: string) => `(${r}.state='failed' AND (${r}.error_code='writer_coordinator_required'
@@ -438,8 +438,8 @@ export const GUARD_REFUSAL_SQL = (r: string) => `(${r}.state='failed' AND (${r}.
 /** #6429: a refusal from prepareFileTarget (page-prepare.ts); the receipt keeps the code, not the refusal's detail. */
 export const DRIFT_REFUSAL_SQL = (r: string) => `(${r}.state='conflict' AND ${r}.error_code='source_changed')`;
 /**
- * GBRA-108: a caller's refused write that `gbrain repair failed-writes` could still replay: no later request wrote, removed or
- * repeated it (`supersessionSql`). The retention pass keeps its intent until then; `gbrain repair receipt-compaction
+ * GBRA-108: a caller's refused write that `foresights repair failed-writes` could still replay: no later request wrote, removed or
+ * repeated it (`supersessionSql`). The retention pass keeps its intent until then; `foresights repair receipt-compaction
  * --include-failures` is the operator's explicit drop.
  */
 export const UNRESOLVED_CALLER_REFUSAL_SQL = (r: string) => `((${GUARD_REFUSAL_SQL(r)} OR ${DRIFT_REFUSAL_SQL(r)})
@@ -447,7 +447,7 @@ export const UNRESOLVED_CALLER_REFUSAL_SQL = (r: string) => `((${GUARD_REFUSAL_S
   AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql(r, 'c')}))`;
 
 /**
- * The supersession rule of `gbrain repair failed-writes`, as a predicate over a candidate later request `c` of the
+ * The supersession rule of `foresights repair failed-writes`, as a predicate over a candidate later request `c` of the
  * failed request `r` (both `persistence_requests` aliases): the same intent committed, failed or still pending; a later
  * page removal committed or pending; for a `put_page`, any later write committed or pending, or a later caller
  * `put_page` that failed (the newer content); #6834: for a refused sync checkpoint, any later committed checkpoint of the
