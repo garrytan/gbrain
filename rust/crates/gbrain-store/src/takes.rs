@@ -149,7 +149,7 @@ struct EvidenceRecord {
 
 /// A `real` (float4) column as Postgres reads it back: the shortest text that names the f32,
 /// read as a JavaScript number.
-fn real_out(value: f32) -> f64 {
+pub(crate) fn real_out(value: f32) -> f64 {
     format!("{value}").parse().unwrap_or(f64::from(value))
 }
 
@@ -382,7 +382,7 @@ fn int4(value: &Value, op: &str, column: &str) -> Result<Option<i32>> {
 
 /// A `real` parameter: a finite value that rounds to infinity, or a nonzero one that rounds to
 /// zero, is out of range (`float4in`). Subnormal results are kept.
-fn real(value: f64, op: &str) -> Result<f32> {
+pub(crate) fn real(value: f64, op: &str) -> Result<f32> {
     let narrowed = value as f32;
     if value.is_finite() && narrowed.is_infinite() {
         return Err(StoreError::invalid(format!(
