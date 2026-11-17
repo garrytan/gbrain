@@ -1,4 +1,8 @@
+pub mod children;
+#[cfg(test)]
+mod contract_tests;
 pub mod corpus;
+pub mod engine;
 pub mod fjall_store;
 pub mod keys;
 pub mod kv;
@@ -10,5 +14,7 @@ pub mod records;
 pub mod redb_store;
 #[cfg(test)]
 mod sim;
+pub mod synth;
 pub mod util;
 pub mod vector;
+pub mod workload;

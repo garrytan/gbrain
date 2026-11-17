@@ -9,7 +9,6 @@ use crate::keys::*;
 use crate::kv::*;
 use crate::records::{chunk_parts, decode_page, Records, DIMS};
 use rayon::prelude::*;
-use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub const K: usize = 10;
@@ -340,11 +339,15 @@ pub struct Truth {
 }
 
 /// Compute exact top-10 of every query over the raw corpus vectors and write `truth_top10.json`
-/// into the corpus directory (atomically) if it is not already there.
+/// into the corpus directory (atomically) if it is not already there. The file is shared with the
+/// TypeScript baseline: a JSON array with one entry per query, each the 10 nearest chunk row
+/// indices (rows of vectors.f32), best first.
 pub fn ensure_truth(corpus: &Corpus) -> std::result::Result<Truth, String> {
     let path = corpus.truth_path();
     if path.exists() {
-        return read_truth(&path, corpus.manifest.queries);
+        if let Ok(t) = read_truth(&path, corpus.manifest.queries, corpus.manifest.chunks) {
+            return Ok(t);
+        }
     }
     let data = corpus.read_f32_file("vectors.f32")?;
     let rows = data.len() / DIMS;
@@ -355,58 +358,34 @@ pub fn ensure_truth(corpus: &Corpus) -> std::result::Result<Truth, String> {
         .build()
         .map_err(|e| e.to_string())?;
     let mut top = Vec::with_capacity(nq);
-    let mut scores = Vec::with_capacity(nq);
     for q in 0..nq {
         let t = top_k_mt(&pool, &m, &queries[q * DIMS..(q + 1) * DIMS], None);
         top.push(t.hits().iter().map(|h| h.1).collect::<Vec<_>>());
-        scores.push(t.hits().iter().map(|h| h.0).collect::<Vec<_>>());
     }
-    let doc = json!({
-        "format": "gbrain-bakeoff-truth/1",
-        "k": K,
-        "dims": DIMS,
-        "chunks": rows,
-        "queries": nq,
-        "metric": "dot product of unit vectors (cosine), exact, f32",
-        "top": top,
-        "scores": scores,
-    });
     let tmp = corpus
         .dir
-        .join(format!(".truth_top10.json.tmp{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec(&doc).map_err(|e| e.to_string())?)
+        .join(format!("truth_top10.json.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_vec(&top).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?; // atomic: readers never see half a file
     Ok(Truth { top })
 }
 
 pub fn read_truth(
     path: &std::path::Path,
-    expect_queries: usize,
+    min_queries: usize,
+    rows: usize,
 ) -> std::result::Result<Truth, String> {
-    let v: Value = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+    let v: Vec<Vec<u32>> = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    let top: Vec<Vec<u32>> = v["top"]
-        .as_array()
-        .ok_or("truth_top10.json has no `top`")?
-        .iter()
-        .map(|row| {
-            row.as_array()
-                .map(|r| {
-                    r.iter()
-                        .filter_map(|x| x.as_u64().map(|x| x as u32))
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-        .collect();
-    if top.len() != expect_queries {
-        return Err(format!(
-            "truth has {} queries, corpus has {expect_queries}",
-            top.len()
-        ));
+    if v.len() < min_queries
+        || v.iter()
+            .take(min_queries)
+            .any(|r| r.len() != K || r.iter().any(|&x| x as usize >= rows))
+    {
+        return Err("truth_top10.json does not match this corpus".into());
     }
-    Ok(Truth { top })
+    Ok(Truth { top: v })
 }
 
 #[cfg(test)]

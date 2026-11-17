@@ -339,6 +339,9 @@ impl Txn {
     }
 }
 
+/// A transaction's resolved writes: key and `Some(value)` for a put, `None` for a delete.
+pub type WriteSet = Vec<(Vec<u8>, Option<Vec<u8>>)>;
+
 pub fn encode_write_set(writes: &[(Vec<u8>, Option<Vec<u8>>)]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&(writes.len() as u32).to_le_bytes());
@@ -357,7 +360,7 @@ pub fn encode_write_set(writes: &[(Vec<u8>, Option<Vec<u8>>)]) -> Vec<u8> {
     out
 }
 
-pub fn decode_write_set(buf: &[u8]) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>)>> {
+pub fn decode_write_set(buf: &[u8]) -> Result<WriteSet> {
     fn take<'a>(buf: &'a [u8], pos: &mut usize, n: usize) -> Result<&'a [u8]> {
         let s = buf
             .get(*pos..*pos + n)

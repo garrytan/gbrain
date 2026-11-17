@@ -248,8 +248,7 @@ mod tests {
     fn a_client_process_style_connection_reads_and_writes_through_the_owner() {
         let db = Arc::new(Db::open(Arc::new(MemStore::new()), Options::default()).unwrap());
         let records = Arc::new(Records::open(db).unwrap());
-        let path =
-            std::env::temp_dir().join(format!("gbrain-owner-test-{}.sock", std::process::id()));
+        let path = crate::contract_tests::test_dir("owner").join("o.sock");
         let server = OwnerServer::start(records.clone(), &path).unwrap();
         let mut c = OwnerClient::connect(&path).unwrap();
         c.ping().unwrap();
@@ -268,7 +267,7 @@ mod tests {
             text: "t".into(),
             vector: vec![0.5; 8],
         };
-        let (version, id) = c.put_page(&page, &[chunk.clone()]).unwrap();
+        let (version, id) = c.put_page(&page, std::slice::from_ref(&chunk)).unwrap();
         assert!(version >= 1 && id >= 1);
         let got = c.get_page("s", "a").unwrap().unwrap();
         assert_eq!((got.body.as_str(), got.id), ("hello", id));

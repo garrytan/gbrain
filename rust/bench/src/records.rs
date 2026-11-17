@@ -134,7 +134,7 @@ fn encode_page_id_value(source: &str, slug: &str) -> Vec<u8> {
     out
 }
 
-fn decode_page_id_value(buf: &[u8]) -> Result<(String, String)> {
+pub fn decode_page_id_value(buf: &[u8]) -> Result<(String, String)> {
     let mut r = Reader { buf, pos: 0 };
     Ok((r.string()?, r.string()?))
 }

@@ -2,7 +2,7 @@
 
 use crate::kv::*;
 use heed::types::Bytes;
-use heed::{CommitOrAbort, Database, Env, EnvOpenOptions, RoTxn};
+use heed::{CommitOrAbort, Database, Env, EnvOpenOptions, RoTxn, WithoutTls};
 use std::ops::Bound;
 use std::path::Path;
 
@@ -12,7 +12,7 @@ type Db = Database<'static, Bytes, Bytes>;
 const MAP_SIZE: usize = 256 << 30;
 
 pub struct LmdbStore {
-    env: Env,
+    env: Env<WithoutTls>,
     data: Db,
     log: Db,
 }
@@ -20,7 +20,10 @@ pub struct LmdbStore {
 impl LmdbStore {
     pub fn open(dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(dir).map_err(store_err)?;
-        let mut opts = EnvOpenOptions::new();
+        // Read transactions without thread-local reader slots (MDB_NOTLS): a thread may hold several
+        // snapshots at once (a transaction's snapshot plus a nested read) and a snapshot may move
+        // between threads. With TLS slots LMDB fails with MDB_BAD_RSLOT.
+        let mut opts = EnvOpenOptions::new().read_txn_without_tls();
         opts.map_size(MAP_SIZE).max_dbs(2).max_readers(256);
         // SAFETY: heed requires that the same environment is not opened twice in one process;
         // the harness opens each store directory once per process.
@@ -45,7 +48,7 @@ impl LmdbStore {
 }
 
 struct LmdbSnapshot {
-    tx: RoTxn<'static, heed::WithTls>,
+    tx: RoTxn<'static, WithoutTls>,
     data: Db,
     log: Db,
 }
@@ -76,7 +79,13 @@ impl Snapshot for LmdbSnapshot {
         } else {
             self.log
         };
-        let bounds = (Bound::Included(start), Bound::Excluded(end));
+        // LMDB rejects an empty key, so an empty start means "from the first key".
+        let from = if start.is_empty() {
+            Bound::Unbounded
+        } else {
+            Bound::Included(start)
+        };
+        let bounds = (from, Bound::Excluded(end));
         if reverse {
             for item in db.rev_range(&self.tx, &bounds).map_err(store_err)? {
                 let (k, v) = item.map_err(store_err)?;

@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn chunks_order_by_page_then_index_numerically() {
-        let mut keys = vec![
+        let mut keys = [
             chunk_key(256, 0),
             chunk_key(1, 300),
             chunk_key(1, 2),
