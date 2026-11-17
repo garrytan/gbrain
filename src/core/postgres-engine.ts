@@ -2039,7 +2039,7 @@ export class PostgresEngine implements BrainEngine {
         source_markdown_slug AS source, valid_from, valid_until AS valid_to,
         COALESCE(dim_status, 'active') AS status, id AS fact_id
       FROM facts
-      WHERE entity_slug = ${entitySlug} AND dimension IS NOT NULL AND expired_at IS NULL
+      WHERE entity_slug = ${entitySlug} AND dimension IS NOT NULL AND expired_at IS NULL AND ${sql.unsafe(NOT_CONVERSATION_SLOT_SQL)}
         ${scope} ${privacy} ${visibility}
         AND COALESCE(valid_from, '-infinity'::timestamptz) <= COALESCE(${asof}::timestamptz, now())
         AND COALESCE(valid_until, 'infinity'::timestamptz) > COALESCE(${asof}::timestamptz, now())
@@ -2057,7 +2057,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql<{ dimension: string; entities: number; observations: number }[]>`
       SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
       FROM facts
-      WHERE dimension IS NOT NULL AND expired_at IS NULL ${scope}
+      WHERE dimension IS NOT NULL AND expired_at IS NULL AND ${sql.unsafe(NOT_CONVERSATION_SLOT_SQL)} ${scope}
       GROUP BY dimension ORDER BY entities DESC, dimension`;
     return rows.map((r) => ({ dimension: r.dimension, entities: Number(r.entities), observations: Number(r.observations) }));
   }

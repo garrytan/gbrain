@@ -10,7 +10,8 @@
  * caller and a private fact) or a withdrawn one never ends a window; facts without slots render as before;
  * findOntologyConflicts keeps its output for ontology rows and ignores conversation rows; a retention purge expires the
  * page's slot rows and clears their slots; an ontology proposal never corroborates into or closes a conversation slot,
- * the ontology-facts repair never lists one, and a rename that collides two keeps both facts.
+ * the ontology-facts repair never lists one, getOntology and the dimension census never read one, and a rename that
+ * collides two keeps both facts.
  * PGLite (no git), and Postgres through test/e2e/facts-slot-windows-gbra574-postgres.test.ts.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -332,6 +333,16 @@ for (const backend of testBackends()) {
         await putPages([PAGE]); await extract([PAGE]);
         expect((await slotRows()).filter(r => r.dimension)).toHaveLength(1);
         expect(await classifyOntologyFacts(engine, ['default'])).toEqual([]);
+      });
+
+      test('a newer conversation slot does not change the ontology read or the dimension census', async () => {
+        await engine.mergeOntologyFact({ entitySlug: ALICE, dimension: 'location', value: 'Lisbon', source: 'manual', validFrom: P1, sourceId: 'default' });
+        const before = await engine.discoverOntologyDimensions({ sourceId: 'default' });
+        const porto: Page = { slug: 'meetings/chat-b', title: 'Chat B', date: P2, said: [{ fact: 'Alice Example lives in Porto.', valid: P2, slot: ['location', 'Porto'] }] };
+        await putPages([porto]); await extract([porto]);
+        expect((await slotRows()).filter(r => r.dimension)).toHaveLength(1);
+        expect((await engine.getOntology(ALICE, { sourceId: 'default' })).map(v => [v.dimension, v.value, v.source])).toEqual([['location', 'Lisbon', 'manual']]);
+        expect(await engine.discoverOntologyDimensions({ sourceId: 'default' })).toEqual(before);
       });
 
       test('a rename that collides two conversation slots keeps both facts and clears the losing slot', async () => {

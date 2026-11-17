@@ -2215,7 +2215,7 @@ export class PGLiteEngine implements BrainEngine {
          source_markdown_slug AS source, valid_from, valid_until AS valid_to,
          COALESCE(dim_status,'active') AS status, id AS fact_id
        FROM facts
-       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope} ${privacy} ${visibility}
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND ${NOT_CONVERSATION_SLOT_SQL} ${scope} ${privacy} ${visibility}
          AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
          AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
          AND confidence >= $3
@@ -2233,7 +2233,7 @@ export class PGLiteEngine implements BrainEngine {
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
     const r = await this.db.query(
       `SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
-       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL ${scope}
+       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND ${NOT_CONVERSATION_SLOT_SQL} ${scope}
        GROUP BY dimension ORDER BY entities DESC, dimension`,
       params,
     );
