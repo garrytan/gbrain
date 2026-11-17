@@ -40,7 +40,9 @@ Five kinds of caller read a brain:
 | fact `visibility: private` | reads | reads | hidden | hidden | hidden |
 
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
-links, timelines, versions). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
+links, timelines, versions). Designations govern readers, not processing: restricted pages are embedded
+with the brain's configured embedding provider like any other page. See
+[where text goes](memory-boundaries.md#where-text-goes). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
 reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
 private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
 facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
