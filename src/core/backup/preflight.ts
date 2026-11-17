@@ -77,7 +77,7 @@ export function physicalCopyFix(): Action {
 export const POSTGRES_BACKUP_DOCS = 'docs/guides/memory-boundaries.md#full-backup';
 
 const POSTGRES_DUMP_STEPS = 'This brain lives in Postgres, so back it up with a database dump of its database: ' +
-  '`pg_dump --format=custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token); `pg_restore --list <DUMP_FILE>` reads it back. ' +
+  '`pg_dump --format custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token); `pg_restore --list <DUMP_FILE>` reads it back. ' +
   'Restore it into a new, empty database with `pg_restore --no-owner --dbname <NEW_DATABASE_URL> <DUMP_FILE>`, then run ' +
   '`gbrain init --url <NEW_DATABASE_URL>` under a separate GBRAIN_HOME, which opens the restored brain. ' +
   '`gbrain export` is not a backup: an import of it puts every page in one source and keeps no members, tokens or facts.';
@@ -85,7 +85,7 @@ const POSTGRES_DUMP_STEPS = 'This brain lives in Postgres, so back it up with a 
 /** The full backup of a Postgres brain: the host admin dumps its database; pg_restore --list reads the dump back. */
 export function postgresDumpFix(): Action {
   return {
-    argv: ['pg_dump', '--format=custom', '--file', '<DUMP_FILE>', '--dbname', '<DATABASE_URL>'],
+    argv: ['pg_dump', '--format', 'custom', '--file', '<DUMP_FILE>', '--dbname', '<DATABASE_URL>'],
     consent: ['credentials'], actor: 'host_admin', requires_exclusive: false, docs: POSTGRES_BACKUP_DOCS,
     why: 'A database dump keeps every source, page, fact, member, token and folder rule of a Postgres brain; a Markdown export keeps pages only.',
     user_message: POSTGRES_DUMP_STEPS,

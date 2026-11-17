@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runConnect, buildConnectBlock } from '../src/commands/connect.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gbrain-member-key-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -24,7 +25,15 @@ async function connect(args: string[]): Promise<Record<string, any>> {
   const lines: string[] = [];
   const log = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
   const err = spyOn(console, 'error').mockImplementation(() => {});
-  try { await runConnect(args); } finally { log.mockRestore(); err.mockRestore(); }
+  const priorExitCode = process.exitCode;
+  let exit: number;
+  try { await runConnect(args); } finally {
+    exit = currentExitCode();
+    _resetCliExitVerdictForTests();
+    process.exitCode = priorExitCode ?? 0;
+    log.mockRestore(); err.mockRestore();
+  }
+  expect(exit).toBe(1);
   const text = lines.join('\n');
   expect(text).not.toContain(KEY);
   return JSON.parse(text);

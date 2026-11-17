@@ -63,7 +63,7 @@ export interface ServesOutcome {
 }
 
 /** GBRA-585: a PGLite brain is opened by one process at a time, so a running `gbrain serve --http` blocks most admin commands. */
-export const PGLITE_SEVERAL_NOTE = 'PGLite: one gbrain process opens this brain at a time, so while gbrain serve --http runs for the members, '
+export const PGLITE_SEVERAL_NOTE = 'PGLite lets one process at a time open this brain, so while gbrain serve --http runs for the members, '
   + 'admin commands (access, sources, auth) and most reads refuse with pglite_busy until it stops, and every member\'s connection drops while it is down; '
   + 'page and fact writes (put, remember) still work through it. For a brain several people use, move to Postgres first: gbrain migrate --to postgres (docs/ENGINES.md#pglite-live-serve)';
 
