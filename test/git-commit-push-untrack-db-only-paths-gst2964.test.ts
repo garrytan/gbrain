@@ -193,7 +193,7 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
     const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { sourceId: 'default', sourceRoot: root, slugRoot: 'source-root', checked: tracked(root), live: new Set([json]) }));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [json] });
-    expect(refused.suggestion).toContain('pages on this source and untracking them would delete the pages at the next sync');
+    expect(refused.suggestion).toContain('pages on this source, or its sync imports them as pages, and untracking them would delete the pages at the next sync');
   });
 
   test('a code-extension file the brain read did not check (named after the read) refuses; the rest are admitted', () => {
@@ -403,14 +403,11 @@ const untrackWithBrain = async (engine: BrainEngine, root: string, paths: string
 for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack in a managed canonical worktree`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
-  test('a code-importing source whose tracked, ignored .json files sync has processed without making pages (committed while the strategy was markdown): the untrack is admitted, the dry run lists the same files, and the next sync creates and deletes nothing', () => managedBrain(async ({ engine, root }) => {
+  test('a Markdown source whose tracked, ignored .json files its sync has processed: the untrack is admitted, the dry run lists the same files, and the next sync creates and deletes nothing', () => managedBrain(async ({ engine, root }) => {
     git(root, 'rm', '-q', '--cached', ...JSON_FILES); git(root, 'commit', '-qm', 'the backups arrive after the first import');
-    await strategy(engine, 'auto');
     await syncAll(engine);
-    await strategy(engine, 'markdown');
     git(root, 'add', '-f', ...JSON_FILES); git(root, 'commit', '-qm', 'backups committed under the ignored folder');
     await syncAll(engine);
-    await strategy(engine, 'auto');
     const before = await rows(engine);
     expect(Object.keys(before).filter(slug => slug.includes('json'))).toEqual([]);
     const previewed = (await untrackWithBrain(engine, root, [DIR.slice(0, -1)], { dryRun: true }) as string[]).sort();
@@ -423,6 +420,31 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
       expect(synced.deleted).toBe(0);
       expect(await rows(engine)).toEqual(before);
     }
+  }, { databaseUrl, setup: managedSetup }), 180_000);
+
+  test('a source switched to a code-importing strategy after its sync skipped the .json files: they refuse as pages with no page yet, dry and real, and a sync that imports them before the untrack leaves nothing to delete', () => managedBrain(async ({ engine, root }) => {
+    const late = DIR + 'late-example.json';
+    put(root, late, '{"backup":2}\n');
+    git(root, 'add', '-f', late); git(root, 'commit', '-qm', 'a backup committed while the strategy is markdown');
+    await syncAll(engine);
+    await strategy(engine, 'auto');
+    const managed = { root, sourceId: 'default', evidence: 'test' };
+    const pages = await readUntrackPageVerdict(engine, managed, root, [late]);
+    expect((await rows(engine))['health-dedupe-backups-late-example-json']).toBeUndefined();
+    await syncAll(engine);
+    const before = await rows(engine);
+    expect(before['health-dedupe-backups-late-example-json']).toMatchObject({ deleted: false });
+    const head = git(root, 'rev-parse', 'HEAD');
+    for (const run of [() => previewUntrack(root, [late], { untrackPages: pages }), () => commitAndPush({ repo: root, cwd: root, paths: [late], message: 'm', untrack: true, untrackPages: pages })]) {
+      const refused = refusalOf(run);
+      expect(refused.code).toBe('untrack_not_db_only');
+      expect(JSON.parse(refused.detail!)).toEqual({ paths: [late] });
+      expect(refused.message).toContain('or that its sync imports as pages (its strategy imports code)');
+    }
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    const synced = await syncAll(engine);
+    expect(synced.deleted).toBe(0);
+    expect(await rows(engine)).toEqual(before);
   }, { databaseUrl, setup: managedSetup }), 180_000);
 
   test('a code-importing source where a .json file is a live page: the untrack refuses, the dry run refuses the same, and nothing changes', () => managedBrain(async ({ engine, root }) => {
@@ -442,7 +464,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
     expect(await rows(engine)).toEqual(before);
   }, { databaseUrl, setup: managedSetup }), 180_000);
 
-  test('a sync that imports a code file between the brain read and the untrack: the file refuses until sync has processed it, naming the sync to run, and no page is deleted', () => managedBrain(async ({ engine, root }) => {
+  test('a sync that imports a code file between the brain read and the untrack: the file refuses as a page the source\'s strategy imports, read before or after that sync, and no page is deleted', () => managedBrain(async ({ engine, root }) => {
     await strategy(engine, 'auto');
     await syncAll(engine);
     const late = DIR + 'late-example.json';
@@ -458,7 +480,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
       const refused = refusalOf(run);
       expect(refused.code).toBe('untrack_not_db_only');
       expect(JSON.parse(refused.detail!)).toEqual({ paths: [late] });
-      expect(refused.suggestion).toContain('Run gbrain sync --source default, then rerun the untrack');
+      expect(refused.suggestion).toContain('or its sync imports them as pages, and untracking them would delete the pages at the next sync');
     }
     expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
     await syncAll(engine);
@@ -552,7 +574,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
     }
   }, { databaseUrl, setup: subfolderSetup, sourceDir: SUB }), 180_000);
 
-  test('a source rooted in a folder of its repository that imports code: .json files with no pages are admitted and the next syncs create and delete nothing; a .json file that is a live page refuses', () => managedBrain(async ({ engine, root }) => {
+  test('a source rooted in a folder of its repository that imports code: from either working directory a .json file that is a live page refuses, and so does one its last sync skipped under the Markdown strategy, which the next sync imports; nothing is deleted', () => managedBrain(async ({ engine, root }) => {
     const json = JSON_FILES.map(file => SUB + file);
     git(root, 'rm', '-q', '--cached', json[1]!); git(root, 'commit', '-qm', 'the second backup arrives after the first import');
     await strategy(engine, 'auto');
@@ -571,20 +593,15 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
       const pages = await readUntrackPageVerdict(engine, managed, root, scopePaths(root, [...paths], cwd));
       const refused = refusalOf(() => commitAndPush({ repo: root, cwd, paths: [...paths], message: 'm', untrack: true, untrackPages: pages }));
       expect(refused.code).toBe('untrack_not_db_only');
-      expect(JSON.parse(refused.detail!)).toEqual({ paths: [json[0]] });
+      expect(JSON.parse(refused.detail!)).toEqual({ paths: json });
       expect(refused.suggestion).toContain('would delete the pages at the next sync');
     }
     expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
-    const paths = scopePaths(root, [JSON_FILES[1]!], brain);
-    const pages = await readUntrackPageVerdict(engine, managed, root, paths);
-    expect(previewUntrack(root, paths, { untrackPages: pages })).toEqual([json[1]]);
-    expect(commitAndPush({ repo: root, cwd: brain, paths: [JSON_FILES[1]!], message: 'untrack the second backup', untrack: true, untrackPages: pages })).toMatchObject({ outcome: 'committed_local', managed: true });
-    expect(changed(root)).toEqual([json[1]]);
     for (const full of [false, true]) {
       const synced = await syncAll(engine, full);
-      expect(synced.added).toBe(0);
       expect(synced.deleted).toBe(0);
-      expect(await rows(engine)).toEqual(before);
+      expect((await rows(engine))['health-dedupe-backups-backup-1-json']).toEqual(before['health-dedupe-backups-backup-1-json']);
+      expect((await rows(engine))['health-dedupe-backups-backup-2-json']).toMatchObject({ deleted: false });
     }
   }, { databaseUrl, setup: subfolderSetup, sourceDir: SUB }), 180_000);
 

@@ -17,7 +17,7 @@ import { opError } from '../ops/contract.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 import type { ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { isDeclaredDbOnlySlug, storageConfigFromYaml, unresolvedDbOnlyIn, type StorageConfig } from '../storage-config.ts';
-import { isCodeFilePath, isImageFilePath, isSyncable, resolveSlugForPath } from '../sync.ts';
+import { isCodeFilePath, isImageFilePath, isSyncable, resolveSlugForPath, type SyncStrategy } from '../sync.ts';
 
 /**
  * What the brain says about an untrack: the source's root, the slug root its sync uses (a source rooted in a folder of its
@@ -26,7 +26,9 @@ import { isCodeFilePath, isImageFilePath, isSyncable, resolveSlugForPath } from 
  * A code file counts as checked only when the source's sync has processed it: the sync anchor (`sources.last_commit`, moved
  * only by a finished pass) is on this branch's history, the commit that last changed the file is that anchor or an ancestor
  * of it, and the anchor holds the file's current blob. Otherwise a sync running between this read and the untrack could
- * import the file as a page that the next sync then deletes (`syncNote` says why the anchor did not count).
+ * import the file as a page that the next sync then deletes (`syncNote` says why the anchor did not count). `live` also holds
+ * every code file the source's current strategy imports (`code` or `auto`), page or not yet: the last finished sync may have
+ * skipped it under another strategy, and the next one imports it.
  */
 export type UntrackPageVerdict = { sourceId: string; sourceRoot: string; slugRoot: 'git-root' | 'source-root'; checked: ReadonlySet<string>; live: ReadonlySet<string>;
   syncNote?: string; syncOff?: boolean } | { unreadable: string };
@@ -62,6 +64,8 @@ export async function readUntrackPageVerdict(engine: BrainEngine, managed: Manag
       [source.id, candidates.flatMap(c => c.slugs), candidates.flatMap(c => c.sourcePaths)]) : [];
     const live = new Set<string>();
     for (const c of candidates) if (pages.some(row => c.slugs.includes(row.slug) || (row.source_path !== null && c.sourcePaths.includes(row.source_path)))) live.add(c.file);
+    const strategy = typeof source.config?.strategy === 'string' ? source.config.strategy : 'markdown';
+    for (const c of candidates) if (isSyncable(c.sourcePaths[0]!, { strategy: strategy as SyncStrategy, includeHidden: ['**'], metafilePage: () => true })) live.add(c.file);
     const { syncNote, processed } = syncProcessed(root, source.id, source.last_commit);
     const { isSyncDisabledConfig } = await import('../sync-policy.ts');
     return { sourceId: source.id, sourceRoot: source.path, slugRoot, checked: new Set(candidates.map(c => c.file).filter(processed)), live,
@@ -166,8 +170,8 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
     if (escapes(file, dir)) { refusals.link.push(file); continue; }
     if (!ignored.has(file)) { refusals.unignored.push(file); continue; }
     if (isCodeFilePath(path)) {
-      if (!source.checked.has(file)) refusals.late.push(file);
-      else if (source.live.has(file)) refusals.page.push(file);
+      if (source.live.has(file)) refusals.page.push(file);
+      else if (!source.checked.has(file)) refusals.late.push(file);
       continue;
     }
     if (!pageKind(path)) continue;
@@ -187,8 +191,8 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
       'Untrack only real files inside the folder: a symbolic link that leaves it, or a folder reached through a symbolic link, is refused; name the other files, or replace the link with the file it points to.'],
     [refusals.slug, 'page files whose page slug, which sync keeps a page by, falls outside the declared dir',
       `Declare the slug spelling too: add ${slugDirs.join(', ')} under storage.db_only in ${prefix}gbrain.yml and commit it (gbrain git commit-push -m <msg> -- ${prefix}gbrain.yml), then rerun the untrack.`],
-    [refusals.page, 'code files that are pages on this source, so untracking them would delete the page at the next sync',
-      'These files are pages on this source and untracking them would delete the pages at the next sync: a database-only folder does not make a code file\'s page database-only. Keep them tracked and untrack the folder\'s other files by name.'],
+    [refusals.page, 'code files that are pages on this source, or that its sync imports as pages (its strategy imports code), so untracking them would delete the page at the next sync',
+      'These files are pages on this source, or its sync imports them as pages, and untracking them would delete the pages at the next sync: a database-only folder does not make a code file\'s page database-only. Keep them tracked and untrack the folder\'s other files by name.'],
     [refusals.late, `code files the source's sync has not processed at their current version${source?.syncNote ? ` (${source.syncNote})` : ''}, or that reached the branch after the brain was read`,
       `Sync has not yet decided whether these files are pages, and a sync that imports one after this check would leave a page the next sync deletes, so nothing was untracked. Run gbrain sync --source ${source?.sourceId ?? '<id>'}${source?.syncOff ? ' (automatic sync is off for this source; an explicit sync still runs)' : ''}, then rerun the untrack.`],
     [refusals.unchecked, `files the brain could not be read to check${pages && 'unreadable' in pages ? ` (${pages.unreadable})` : ''}`,
