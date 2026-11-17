@@ -41,15 +41,19 @@ serve source delete yet, so nothing calls it today.
 A rename does what PGLite's `recordRenameAlias` does to `slug_aliases`: it drops the alias spelled
 like the new slug, repoints every alias of the old slug at the new one, and upserts `old -> new`
 with notes `rename` (an existing row keeps its notes). Then the old slug's `page_aliases` rows move
-to the new slug; a row the new slug already had is kept once.
+to the new slug; a row the new slug already had is kept once. Between the two, the rename calls
+`cascade::rename_slug_rows` (PGLite `moveSlugBindings` steps 1-6); the page alias move is steps 7
+and 8.
 
 Where this engine differs from PGLite:
 
 - Only `setPageAliases` writes page aliases, so every row has origin `frontmatter`. The `declared`
   and `subject` rows of the mention pass have no typed writer here; `resolveAliases` still ranks
   origins, so a later writer needs no reader change.
-- A rename does not move fact bindings (`facts.entity_slug`, `facts.source_markdown_slug`, the
-  fact withdrawal subject): this branch has no fact store. The facts family needs a rename hook.
+- A rename calls core's `cascade::rename_slug_rows` for the records other families key by slug
+  (PGLite `moveSlugBindings` steps 1-6: fact withdrawals, `facts.entity_slug`,
+  `facts.source_markdown_slug`). The facts entry is a stub until the facts family fills it, so fact
+  bindings do not move yet.
 - The `none` tier of `updatePageContextualRetrievalState` does not reset `embedding_signature` or
   chunk vectors: this store keeps neither.
 - `putPage` with `contextualRetrieval` does not write the state; that option belongs to the page

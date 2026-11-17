@@ -4,8 +4,8 @@
  * updatePageContextualRetrievalState).
  *
  * A privacy, trust or flag filter refuses with `engine_capability_missing`: the store keeps no page visibility. A
- * rename does not move fact bindings (no fact store yet), and the `none` contextual retrieval tier keeps no vectors to
- * reset (rust/docs/store/aliases.md).
+ * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
+ * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
 import type { PageReadScope } from '../../types.ts';
 import { validateSlug, warnOncePerProcess } from '../../utils.ts';
