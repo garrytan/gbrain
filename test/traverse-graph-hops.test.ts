@@ -114,6 +114,16 @@ describe('traverse_graph hops', () => {
     const later = await runLocal({ slug: 'people/alice-example', hops: [HOPS[0], { link_type: 'advises', toward: 'subject' }] }, notices);
     expect(later.diagnostics).toMatchObject({ status: 'empty_hop', empty_hop: 2 });
     expect(notices.pop()).toMatchObject({ fix: { mcp: { tool: 'traverse_graph', arguments: { hops: [HOPS[0]] } } } });
+    await runLocal({ slug: 'companies/lonely-example', hops: [{ link_type: 'founded', toward: 'subject' }] }, notices);
+    const unscoped = (notices.pop() as any).fix.mcp.arguments;
+    expect(unscoped).not.toHaveProperty('source_id');
+    expect(unscoped).not.toHaveProperty('all_sources');
+    for (const scope of [{ source_id: 'default' }, { all_sources: true }]) {
+      await runLocal({ slug: 'companies/lonely-example', hops: [{ link_type: 'founded', toward: 'subject' }], ...scope }, notices);
+      expect(notices.pop()).toMatchObject({ fix: { mcp: { tool: 'traverse_graph', arguments: { depth: 1, ...scope } } } });
+      await runLocal({ slug: 'people/alice-example', hops: [HOPS[0], { link_type: 'advises', toward: 'subject' }], ...scope }, notices);
+      expect(notices.pop()).toMatchObject({ fix: { mcp: { tool: 'traverse_graph', arguments: { hops: [HOPS[0]], ...scope } } } });
+    }
   });
 
   test('hops is advertised on the full surface only; the starter list stays inside its budget', () => {

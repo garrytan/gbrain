@@ -207,7 +207,7 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
   };
   return new Proxy(engine, { get(target, key) {
     // A shared read takes no member's signal: a caller's own signal bypasses the memo, and (#6278) a bounded preparation read
-    // (`timeoutMs`, whose signal only covers its connection wait) is answered once with the member's bound and signal dropped.
+    // (`timeoutMs`, ended by its bound or its signal) is answered once with the member's bound and signal dropped.
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
       stable.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
