@@ -8,6 +8,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
+import { sqlEngineKind } from '../sql-engine-kind.ts';
 import { admitWriteInTransaction, type WriteAdmission } from './journal.ts';
 import type { Principal, WriteAuthority } from './model.ts';
 import { readManagedMode } from './managed-mode.ts';
@@ -279,7 +280,7 @@ async function chooseReplay(e: GraduationEngines, ctx: VerifyContext): Promise<R
 export async function verifyGraduation(e: GraduationEngines, ctx: VerifyContext): Promise<VerifyResult> {
   const failures: VerifyFailure[] = [];
   const batchRows = ctx.batchRows ?? DEFAULT_DIGEST_BATCH_ROWS;
-  for (const [engine, kind] of [[e.source, e.source.kind], [e.target, e.target.kind]] as const) {
+  for (const [engine, kind] of [[e.source, sqlEngineKind(e.source.kind, 'graduation verify')], [e.target, sqlEngineKind(e.target.kind, 'graduation verify')]] as const) {
     try { await assertRelationSet(engine, kind, ctx.inventory); }
     catch (error) { failures.push({ relation: `(${kind} schema)`, kind: 'relation_set', detail: message(error) }); }
   }

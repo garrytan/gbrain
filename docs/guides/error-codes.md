@@ -1752,6 +1752,18 @@ Reasons: `command_not_allowed`, `member_not_usable`, `target_not_readable`, `lab
 
 More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member.md#refused)
 
+### engine_capability_missing
+
+<a id="engine_capability_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain's engine does not implement the capability this call needs (reason names it), so the call was refused before any work and nothing was written. | The Rust engine preview grows one capability at a time. A call that needs a capability it does not report is refused up front instead of running part of the way; detail names the member, the capability and whether anything was written (written=nothing unless the outcome is partial or unknown). | Run the call on a pglite or postgres brain, or wait for a gbrain release whose Rust engine reports the capability. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `raw_sql`, `persistence_journal`, `minion_queue`, `access_control`, `belief_ledger`, `single_owner`, `postgres_admin`, `schema`, `transactions`, `sources`, `config`, `pages`, `page_versions`, `page_body`, `tags`, `chunks`, `embeddings`, `keyword_search`, `vector_search`, `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `health`, `raw_data`, `eval_capture`, `ingest_log`, `dream_verdicts`, `contradictions`, `ontology`.
+
+More: [docs/ENGINES.md#the-rust-engine-shell](../../docs/ENGINES.md#the-rust-engine-shell)
+
 ### engine_closed
 
 <a id="engine_closed"></a>
@@ -4799,6 +4811,26 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 | Long-running gbrain processes on this host run different builds, or one runs an older build than its install holds on disk: serve, the jobs supervisor, worker parents (in memory) and the job children they spawn from the install (on disk). | A process keeps the code it loaded at start, and `gbrain jobs run-child` spawns a fresh process from the install on disk for every job, so after a checkout reset or an upgrade on disk newer job code runs under an older worker and next to an older serve until each process restarts. | Restart the process the check names (serve with its service command, the supervisor with `gbrain jobs supervisor stop` then `gbrain jobs supervisor start --detach`, a worker by stopping its pid so its supervisor respawns it), then each other listed process on an older build; nothing restarts automatically. Run: gbrain doctor --only runtime_build_skew --json | agent | `gbrain doctor --only runtime_build_skew --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/troubleshooting.md#runtime-build-skew)
+
+### rust_engine_addon_mismatch
+
+<a id="rust_engine_addon_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
+
+### rust_engine_addon_missing
+
+<a id="rust_engine_addon_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
+
+Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
 
 ### schedule_install_failed
 
