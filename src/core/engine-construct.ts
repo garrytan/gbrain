@@ -19,7 +19,7 @@ export async function constructEngine(config: EngineConfig): Promise<BrainEngine
       return new PostgresEngine();
     }
     case 'rust': {
-      // Opt-in. The loader fetches and checks the addon on first use; nobody on another engine reaches it.
+      // Opt-in. The loader loads only a verified cached addon (or the development override); no other engine reaches it.
       const { loadRustEngineAddon } = await import('./rust-engine/addon-loader.ts');
       const { openRustEngine } = await import('./rust-engine.ts');
       const { opError } = await import('./ops/contract.ts');

@@ -365,6 +365,7 @@ function hash12(value: string): string {
 
 /** Minimal config slice the engine-uniform path resolvers key on (loadConfig's shape). */
 export interface IpcPathConfig {
+  /** `rust` keys like PGLite: one store directory, sockets inside it (rust-engine/owner-ipc/). */
   engine?: 'postgres' | 'pglite' | 'rust';
   database_path?: string;
   database_url?: string;
@@ -401,7 +402,7 @@ export interface IpcPathConfig {
  */
 export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' | 'read' = 'resolve', sourceId?: string): string | null {
   if (!cfg) return null;
-  if (cfg.engine === 'pglite' && cfg.database_path) return kind === 'read' ? null : localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
+  if ((cfg.engine === 'pglite' || cfg.engine === 'rust') && cfg.database_path) return kind === 'read' ? null : localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
   if (cfg.engine === 'postgres' && cfg.database_url) {
     const sourceKey = kind !== 'persistence' && sourceId ? `-${hash12(sourceId)}` : '';
     return localIpcSocketPath(join(ipcRunDir(), `${kind}-${hash12(cfg.database_url)}${sourceKey}.sock`));
@@ -434,7 +435,7 @@ export async function hookResolveSocketForConfig(cfg: IpcPathConfig | null | und
  */
 export function ipcSecretPathForConfig(cfg: IpcPathConfig | null | undefined): string | null {
   if (!cfg) return null;
-  if (cfg.engine === 'pglite' && cfg.database_path) return ipcSecretPath(cfg.database_path);
+  if ((cfg.engine === 'pglite' || cfg.engine === 'rust') && cfg.database_path) return ipcSecretPath(cfg.database_path);
   if (cfg.engine === 'postgres' && cfg.database_url) {
     return join(ipcRunDir(), `secret-${hash12(cfg.database_url)}`);
   }
