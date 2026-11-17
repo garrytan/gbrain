@@ -946,6 +946,7 @@ export const fileDriftRepair: RepairHandler = {
     }
     const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
     const mirror = held ? await sourceMirrorReadOnly(engine, sourceId) : false;
+    const mirrorFile = mirror && opts.prefer === 'file';
     const { slugs, classes, notSelected, unknown } = held
       ? { slugs: [], classes: new Map<string, DriftClass>(), notSelected: held.notSelected, unknown: [] as UnknownDrift[] } : await selectSlugs(engine, sourceId, opts);
     const assessmentAt = new Date().toISOString();
@@ -987,7 +988,7 @@ export const fileDriftRepair: RepairHandler = {
           if (targetSlug === null) { count('no_page'); listing.push({ item: `${sourceId}:${label}`, class: 'no_page', detail: 'the hold names no page; the next sync re-classifies it' }); continue; }
           const slug = targetSlug;
           await authorizeReconcile(engine, sourceId, slug);
-          const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold, mirror });
+          const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold, mirror: mirrorFile });
           const live = opts.slugs?.length && found.reason === 'database_only' ? await unboundCollisionDrift(engine, sourceId, slug) ?? found : found;
           if (target && (target.state === 'file_gone') !== (live.reason === 'canonical_file_missing')) {
             count('side_changed');
@@ -1038,7 +1039,7 @@ export const fileDriftRepair: RepairHandler = {
           const page = await prepareDriftPage(engine, sourceId, slug, opts.prefer, assessmentAt);
           if (classes.has(slug)) page.class = classes.get(slug);
           // Whole-class C1: a read-only mirror's file is never written, so a page whose file-wins result needs protected parts appended stays held.
-          if (mirror && page.file_appended) {
+          if (mirrorFile && page.file_appended) {
             count('kept_protected_parts');
             listing.push({ item: `${sourceId}:${slug}`, class: 'kept_protected_parts', detail: keptProtectedPartsDetail(sourceId, slug) });
             continue;
