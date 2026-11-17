@@ -34,7 +34,8 @@ import {
   writeFileSync,
 } from 'fs';
 import { homedir } from 'os';
-import { dirname, join, relative } from 'path';
+import { dirname, join, relative, sep } from 'path';
+import { resolvedPrefixContained } from '../path-confine.ts';
 
 import { copyArtifacts, walkSourceDir } from './copy.ts';
 import { loadSkillSources } from './bundle.ts';
@@ -140,25 +141,29 @@ export function runHarvest(opts: HarvestOptions): HarvestResult {
   // the HOST skill dir (every source must canonicalize inside it). For
   // paired sources outside the skill dir, fall through to symlink-only
   // protection (the host repo is user-trusted at this granularity).
-  const skillItems = items.filter(i => i.source.startsWith(hostSkillDir));
-  const pairedItems = items.filter(i => !i.source.startsWith(hostSkillDir));
+  // "Inside" is separator-aware: a sibling folder that starts with the
+  // slug (skills/foo-extra/ next to skills/foo/) is a paired source.
+  const inSkillDir = (p: string) => resolvedPrefixContained(p, hostSkillDir, sep);
+  const skillItems = items.filter(i => inSkillDir(i.source));
+  const pairedItems = items.filter(i => !inSkillDir(i.source));
 
   let filesCopied: string[] = [];
   try {
+    // Validate both batches before writing either, so a refused paired
+    // source cannot leave a half-copied skill dir behind. The real copies
+    // below re-run the same gates.
+    copyArtifacts(skillItems, {
+      rejectSymlinks: true,
+      confineRealpath: hostSkillDir,
+      dryRun: true,
+    });
+    copyArtifacts(pairedItems, { rejectSymlinks: true, dryRun: true });
     if (!dryRun) {
       copyArtifacts(skillItems, {
         rejectSymlinks: true,
         confineRealpath: hostSkillDir,
       });
       copyArtifacts(pairedItems, { rejectSymlinks: true });
-    } else {
-      // Dry-run still validates safety gates but doesn't copy.
-      copyArtifacts(skillItems, {
-        rejectSymlinks: true,
-        confineRealpath: hostSkillDir,
-        dryRun: true,
-      });
-      copyArtifacts(pairedItems, { rejectSymlinks: true, dryRun: true });
     }
     filesCopied = items.map(i => i.target);
   } catch (err) {
