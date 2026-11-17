@@ -152,6 +152,8 @@ export interface GitHoldMeta {
   competing_request_id?: string;
   competing_operation?: string;
   page_revision?: string;
+  /** GST-2843: the pass rewrote this hold because its basis or drift moved, not because a re-screen came due; a later rewrite that is not a move drops it. */
+  basis_moved?: true;
   /** #6712 PR 1 `file_drift`: which side moved since the page's last recorded import (`unknown`: no usable record); `page_revision` is the page's revision when held. */
   sides?: 'database' | 'both' | 'unknown';
   /** GBRA-133 `file_drift`: the drift screen that held it; an unknown-side hold from an older screen is re-screened (#7340). */
@@ -600,6 +602,17 @@ export async function readGitHoldListing(engine: Exec, sourceIds: string[], limi
   return [...out.values()];
 }
 
+/** GST-2843: each listed source's holds counted per code, over every hold of its current incarnation (not a listing's first rows). */
+export async function readGitHoldCodeCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, Record<string, number>>> {
+  const out = new Map<string, Record<string, number>>();
+  if (!sourceIds.length) return out;
+  const rows = await engine.executeRaw<{ source_id: string; code: string; n: number | string }>(`SELECT s.id AS source_id, x.completed_keys->0->>'code' AS code, count(*) AS n
+    FROM sources s JOIN op_checkpoints x ON x.op=$1 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+    WHERE s.id=ANY($2::text[]) GROUP BY 1,2`, [GIT_HOLD_OP, sourceIds]);
+  for (const row of rows) out.set(row.source_id, { ...out.get(row.source_id), [row.code]: Number(row.n) });
+  return out;
+}
+
 /**
  * #6712: the held paths whose verdict rests on something that has since moved: a dependency-edge hold (`blocked_on`)
  * whose predecessor's hold is gone, and a deterministic `concurrent_write` hold whose page's revision moved (a
@@ -649,8 +662,11 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
  */
 export const FILE_DRIFT_VERSION = 3;
 
+/** Hold codes every sync re-screens, whatever else changed (holdRescreenDue). GST-2843: re-holding one is never progress (sync-pass-status.ts passBanked). */
+export const EVERY_PASS_RESCREEN_CODES: readonly string[] = ['frontmatter_slug_conflict', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'];
+
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
-  return retried || (record.code === 'file_too_large' && record.meta.streamed?.gbrain_version !== VERSION) || ['frontmatter_slug_conflict', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'].includes(record.code)
+  return retried || (record.code === 'file_too_large' && record.meta.streamed?.gbrain_version !== VERSION) || EVERY_PASS_RESCREEN_CODES.includes(record.code)
     // #6712: a transient hold (the write owner stalled, not the file) is retried by every sync until it has been held HOLD_ATTEMPTS_NEEDS_HUMAN times.
     || (outOfAttemptsHold(record.code) && (record.meta.attempts ?? 1) < HOLD_ATTEMPTS_NEEDS_HUMAN)
     || (record.code === 'managed_image_sync_unsupported' && isMultimodalEnabled())

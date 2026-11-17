@@ -80,7 +80,7 @@ export function newerPageParagraph(sourceId: string, slug: string, evidence: Dri
 }
 
 /** One selected page, compared: a held page by its hold, any other by its slug. Never writes. */
-export async function comparePage(engine: BrainEngine, sourceId: string, target: { slug: string | null; hold?: GitHoldRecord }, assessmentAt: string): Promise<ComparedPage> {
+export async function comparePage(engine: BrainEngine, sourceId: string, target: { slug: string | null; hold?: GitHoldRecord; mirror?: boolean }, assessmentAt: string): Promise<ComparedPage> {
   const { slug, hold } = target;
   const item = `${sourceId}:${slug ?? hold?.path ?? ''}`;
   const side = hold ? fileDriftSide(hold.meta) : undefined;
@@ -100,8 +100,16 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
         why: !hold ? 'the page and its file agree' : due ? 'the page and its file agree once gbrain\'s own normalisation is read; the next sync releases the hold with no write'
           : `the page and its file agree; gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file previews the release` };
     }
-    if (live.still_present !== true) return { item, slug, ...held, would: live.still_present === false ? 'no_drift' : 'unknown', why: live.reason };
-    const { path, ...evidence } = await readDriftEvidence(engine, sourceId, slug, assessmentAt);
+    // GST-2843: a read-only mirror never writes its files, so the live check calls every page database-only; a held page whose
+    // file sync still imports is compared with that file instead, and only a file that is gone stays database-only.
+    const mirrorHeld = live.still_present === false && live.reason === 'database_only' && !!hold && side !== 'deleted' && target.mirror === true;
+    if (live.still_present !== true && !mirrorHeld) return { item, slug, ...held, would: live.still_present === false ? 'no_drift' : 'unknown', why: live.reason };
+    const read = await readDriftEvidence(engine, sourceId, slug, assessmentAt).catch(error => {
+      if (mirrorHeld && error instanceof OperationError && error.detail === 'canonical_file_missing') return null;
+      throw error;
+    });
+    if (!read) return { item, slug, ...held, would: 'no_drift', why: live.reason };
+    const { path, ...evidence } = read;
     const base = { item, slug, ...held, path, evidence };
     if (evidence.differs === 'none') return { ...base, would: hold ? 'release_hold' : 'no_drift', why: 'nothing differs once gbrain\'s own normalisation is read' };
     if (evidence.newer === 'file') return { ...base, would: 'prefer_file', why: `${path} was committed after the page last changed, so the file wins (Git is the parent): gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file` };

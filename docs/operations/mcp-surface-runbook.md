@@ -227,6 +227,11 @@ the database before limits and aggregate calculations. A gated page reads exactl
 like a missing one (no existence oracle), and link/graph output never
 enumerates private slugs.
 
+Facts are separate: a fact stamped `private` (as every fact was before
+`facts.default_visibility` became `world`) stays hidden from remote callers
+that are not the owner until the operator opens it with
+`gbrain repair open-facts` (docs/guides/repair.md); no remote path opens it.
+
 Single-user brains where every connected agent is equally trusted can opt
 out:
 
