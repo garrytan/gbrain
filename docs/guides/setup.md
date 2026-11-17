@@ -214,6 +214,25 @@ a brain setup cannot read refuses (`setup_serves_unreadable`).
 `gbrain access serves several --members ...` does the labelling alone (preview, then
 `--yes`).
 
+### A member's key into their harness
+
+A member key (`member-keys/<member>.key`) is a plain bearer key for
+`gbrain serve --http`. Hand the file to its member privately; on their machine they
+put it into Claude Code, Codex or opencode with the bearer-token form of
+`gbrain connect`, which reads the key from `GBRAIN_REMOTE_TOKEN` so it never lands in
+shell history:
+
+```bash
+GBRAIN_REMOTE_TOKEN="$(cat alice-example.key)" \
+  gbrain connect https://brain.example.com/mcp --agent claude-code --install
+# --agent codex or --agent opencode for those harnesses
+```
+
+`gbrain whoami` over that connection names the member. `--harness` and
+`--credentials-file` take only the credential handoff that `gbrain mcp grant`
+writes, never a member key; given one, `gbrain connect` refuses and prints the
+command above.
+
 On such a brain every remote read must say whom it reads for. A token, OAuth
 client or stdio server bound to no member is refused with
 [`requester_scope_required`](write-refusals.md#requester_scope_required) before
