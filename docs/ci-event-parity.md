@@ -310,6 +310,14 @@ a push-to-master red opens the Test `master-red` issue, a scheduled red the
 dependency. When no fix exists, an ignore entry needs Garry's approval and an
 expiry date.
 
+Ignore entries live in `admin/osv-scanner.toml` and apply to `admin/bun.lock`
+only; the root lockfile has none. OSV-Scanner reads the file for that lockfile
+and stops ignoring an entry after its `ignoreUntil` date, and
+`scripts/ci-dependency-audit.sh` passes each id to the admin `bun audit` until
+that date, then reports `audit_ignore_expired`, which blocks like an advisory.
+Current entry: GHSA-fc5q-39xc-vjpf (picomatch, a build-time dependency of the
+admin UI's bundler, with no fixed version), until 2026-12-17.
+
 ## Crash robot ceilings
 
 Every crash-robot run executes one fixed schedule list (`scripts/persistence/robot-driver.ts`

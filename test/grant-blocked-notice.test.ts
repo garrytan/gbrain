@@ -117,6 +117,18 @@ describe('grant_blocked_operations', () => {
     expect((await readClientGrant(engine, created.clientId)).allowedOperations).not.toContain('put_pages');
   });
 
+  // GBRA-585: the guest broker narrowed with --operations, as docs/guides/guest-notes.md says, got the widen nudge on every session.
+  test('a client the owner narrowed on purpose gets no notice on a call it can make, and a refused call still says why', async () => {
+    const created = await client('narrowed-example', 'memory-writer', { allowedOperations: ['get_page', 'put_page', 'get_write_request', 'get_brain_identity'] });
+    const opts = await connect(created);
+    expect(grantNotice(await read(opts('narrowed-session')))).toEqual([]);
+    const refused = await dispatchToolCall(engine, 'put_pages', { pages: [] }, opts('narrowed-session'));
+    expect(refused.isError).toBe(true);
+    const [n] = grantNotice(refused);
+    expect(n.why).toContain('all existed when the snapshot was written');
+    expect([...(await readClientGrant(engine, created.clientId)).allowedOperations!].sort()).toEqual(['get_brain_identity', 'get_page', 'get_write_request', 'put_page']);
+  });
+
   test('a memory-reader stays unable to call put_pages; the refusal names the missing write scope, a plain read says nothing', async () => {
     const opts = await connect(await client('reader-example', 'memory-reader'));
     expect(grantNotice(await read(opts('reader-session-a')))).toEqual([]);
