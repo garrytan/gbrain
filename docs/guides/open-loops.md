@@ -29,6 +29,10 @@ zero LLM, free, always on). For every synced Gmail thread:
   keeps running. "Will do" counts as a reply.
 - a question mark inside a link (`https://docs.example.com/view?id=42`) is
   not a question, so an FYI that only shares a link opens nothing.
+- a forward is judged by the note above the forwarded message. "FYI, see
+  below." over someone else's question asks nothing, so it opens no loop (and
+  a "Thanks!" answers one sent to you); "Can you take this one?" above the
+  same forward is an ask.
 - "unanswered" is measured from the oldest unanswered message since the
   last turn flip (the first one addressed to you, or your first question),
   so a nudge or follow-up never restarts the clock — a request that waited
