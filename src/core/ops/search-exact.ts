@@ -9,10 +9,36 @@ import { invalidParam } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam } from './context.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import {
-  EXACT_DEFAULT_LIMIT, EXACT_DEFAULT_SECONDS, EXACT_MAX_LIMIT, EXACT_MAX_PHRASE_CHARS, EXACT_MAX_SECONDS, runExactScan,
+  EXACT_DEFAULT_LIMIT, EXACT_DEFAULT_SECONDS, EXACT_MAX_LIMIT, EXACT_MAX_PHRASE_CHARS, EXACT_MAX_SECONDS, phrasePattern, runExactScan,
 } from '../search/exact-scan.ts';
+import type { BrainEngine } from '../engine.ts';
+import { heldFenceClaims } from '../eligibility/fence-overlay.ts';
+import { dropHeldFenceRows } from '../eligibility/stamp.ts';
+import { claimTextForms } from '../fence-shared.ts';
+import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 
 const TYPE_NAME = /^[A-Za-z0-9_.:/-]+$/;
+
+/**
+ * GST-2891: a caller whose fact reads are world-only gets no snippet holding a fence row held from it (dropHeldFenceRows)
+ * or, as a snippet can start inside a row, that row's claim (heldFenceClaims). A snippet that no longer holds the phrase
+ * matched held text, so it goes, and a match left without snippets goes too: its presence alone would confirm the phrase.
+ * A page that cannot be read again drops its match (fail closed).
+ */
+async function withoutHeldSnippets<M extends { slug: string; source_id: string; matching_chunks: number; snippets: Array<{ text: string }> }>(engine: BrainEngine, matches: M[], phrase: RegExp): Promise<M[]> {
+  if (!matches.length) return matches;
+  const { snapshots } = await engine.readPageSnapshotsBatch(matches.map(m => ({ slug: m.slug, sourceId: m.source_id })));
+  const out: M[] = [];
+  for (const m of matches) {
+    const page = snapshots.get(pageSnapshotKey(m.source_id, m.slug))?.page;
+    if (!page) continue;
+    const forms = claimTextForms(await heldFenceClaims(engine, { sourceId: m.source_id, slug: m.slug, compiled_truth: page.compiled_truth, timeline: page.timeline }));
+    const kept = await dropHeldFenceRows(engine, m.snippets.map(s => ({ snippet: s, source_id: m.source_id, slug: m.slug, chunk_text: s.text })));
+    const snippets = kept.filter(k => phrase.test(k.chunk_text!) && !forms.some(f => k.chunk_text!.toLowerCase().includes(f))).map(k => ({ ...k.snippet, text: k.chunk_text! }));
+    if (snippets.length) out.push({ ...m, matching_chunks: m.matching_chunks - (m.snippets.length - snippets.length), snippets });
+  }
+  return out;
+}
 
 function parseParams(ctx: OperationContext, p: Record<string, unknown>) {
   const bad = (param: string, message: string, example: unknown) =>
@@ -70,7 +96,7 @@ const search_exact: Operation = {
     const scope = federatedSearchScope(ctx, sourceIdParam);
     const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
     await assertExplicitSourceLive(ctx, sourceIdParam);
-    const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
+    const { resolveExcludePrivatePages, worldOnlyFacts } = await import('../search/private-visibility.ts');
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     const { resolveHardExcludes } = await import('../search/source-boost.ts');
     const excludeSlugPrefixes = resolveHardExcludes();
@@ -89,7 +115,11 @@ const search_exact: Operation = {
       deadlineMs: startedAt + params.seconds * 1000,
     });
     const { stampPageTrust } = await import('../eligibility/stamp.ts');
-    const matches = await stampPageTrust(ctx.engine, result.matches.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
+    const pattern = phrasePattern(params.phrase);
+    const visible = worldOnlyFacts(ctx.remote)
+      ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, new RegExp(pattern.regex.replaceAll('[[:space:]]+', '\\s+'), params.caseSensitive ? '' : 'i')) : []
+      : result.matches;
+    const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
     // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).
     const { quotePageText, quotesStored } = await import('../search/transcript-quote.ts');
     const quoted = <M extends Omit<(typeof matches)[number], 'chunk_text'>>(m: M) => ctx.remote !== false && quotesStored(m.type, (m as { trust_tier?: unknown }).trust_tier)

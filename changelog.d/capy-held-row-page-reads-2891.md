@@ -1,0 +1,12 @@
+---
+important: security
+---
+**A private fact restated as world and held for the operator's accept no longer reaches remote callers through its page: get_page, fetch, search, query, search_exact, get_chunks and the entity card leave the held row out for callers who cannot read the private fact.**
+
+<!-- behavior-change: held_row_page_reads_2891 -->
+
+### Fixed
+- A remote `put_page` that restated a private fence row as world (#9196), or a remote `remember` that restated a private fact (GST-2875), stored the new fact private until the operator accepts the widening, but the page body kept the restatement in a world cell. Every remote caller who cannot read the private fact (another member, an unbound token) read it through get_page (whole, include_content, lines, grep, section, outline and windows around a chunk), fetch, keyword and hybrid search, query, search_exact (snippets, and the match itself), get_chunks and the entity card. Those reads now leave out a world fence cell whose fact is stored narrower than world, including a row a chunk boundary cut in half and chunks written before the upgrade, so no rechunk is needed. The owner's callers, the local CLI and a member reading their own member page read exactly what they read before. If the held-row lookup fails, the read drops every fence row.
+- An edit elsewhere in a held page (a hand edit synced from the repository, or a local `put_page`) could re-derive the held row as world without the accept when the private copy was less trusted than `user_confirmed`. A held row now stays private whatever the writer's tier until the operator accepts it. Accept still makes it world, and reject and undo still work.
+- A remote writer could skip the GST-2875 hold by first saving the same claim as a world fact about another entity: the hold looked for an existing world copy anywhere in the source, found that one, and stored the restatement on the confirmed private fact's entity as world, so remote recall returned it. The world copy now has to be on the same entity.
+- Not covered: the page file in the brain repository still carries the world cell, so anyone who reads the repository directly, or a Markdown export, reads it. Restatements that were never held (capture, extract_facts, a restatement written onto another page or entity, a reworded claim, and a remember whose private copy is no more trusted than the writer) stay world as before.

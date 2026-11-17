@@ -74,7 +74,8 @@ export async function lexicalContestCandidate(engine: BrainEngine, sourceId: str
 
 /**
  * GST-2875: the active non-world fact of `sourceId` on entity `entity` stating exactly `claim`, more trusted than `writer`,
- * while no active world fact states it. A world write of that claim restates it: the write is stored at the copy's visibility
+ * while no active world fact on that entity states it (GST-2891: a world copy the writer saved on another entity does not
+ * lift the hold). A world write of that claim restates it: the write is stored at the copy's visibility
  * and its proposal carries the widening, which only the owner's accept applies (the fence rule of GST-2511, for every
  * remember). Same entity only, as GST-2511 is same page only: the supersede_fact accept refuses a pair across entities.
  */
@@ -84,6 +85,7 @@ export async function restatedPrivateCopy(engine: BrainEngine, sourceId: string,
     `SELECT f.id, f.visibility, f.trust_tier FROM facts f WHERE f.source_id = $1 AND f.fact = $2 AND f.visibility <> 'world'
        AND f.entity_slug IS NOT DISTINCT FROM $4::text AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${trustRankSql('f.trust_tier')} > ${trustRankSql('$3::text')}
        AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.fact = $2 AND w.visibility = 'world' AND w.expired_at IS NULL
+         AND w.entity_slug IS NOT DISTINCT FROM $4::text
          AND (w.valid_until IS NULL OR w.valid_until > now()))
      ORDER BY f.id LIMIT 1`, [sourceId, claim, writer, entity]);
   return row ? { id: Number(row.id), visibility: row.visibility, trust_tier: storedTrustTier(row.trust_tier) } : null;

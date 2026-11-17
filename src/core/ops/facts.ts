@@ -551,7 +551,7 @@ const recall: Operation = {
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
       const applied = recallDeliveryPlan(effectivePlan(evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
-      searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor);
+      searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor, undefined, worldOnlyFacts(ctx.remote));
     }
 
     // Pack what is delivered: results redacted for all; facts for remote only (localVerbatim).

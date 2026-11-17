@@ -6,6 +6,11 @@
  * - held rows (a write-gate hold for the row's fingerprint on this page) and
  *   purged rows (a fact_purges tombstone; L3's import overlay already drops
  *   them from canonical markdown, this is the backstop) are omitted;
+ * - GST-2891: on a read for a caller that cannot read a private row
+ *   (`hideHeld`), a world cell whose fact is stored narrower (`heldRowSql`:
+ *   a widening the owner has not accepted, #9196 / GST-2875) is omitted and
+ *   listed in `held`. Chunks keep it, as every caller reads them; search
+ *   drops it from a delivered chunk for such a caller (stamp.ts);
  * - rows whose stored tier is below the page tier are taken out of the page's
  *   chunks and emitted as separate chunks whose first line is a trust marker
  *   naming the row tier (`fenceTrustMarker`, read back by `chunkTrustMarker`).
@@ -28,6 +33,7 @@ import { compareTrust, isTrustTier, minTrust, TRUST_TIERS, type TrustTier } from
 import { compactTrustLabel } from './labels.ts';
 import { activationSuppressedSql } from './sql.ts';
 import { holdFingerprint } from '../write-gate-store.ts';
+import { memberFactAdmitSql } from '../access/member-facts.ts';
 
 /** The origin slot of a fence trust marker: the chunk holds facts-fence rows, not page prose. */
 export const FENCE_TRUST_ORIGIN = 'facts-fence';
@@ -39,6 +45,8 @@ export interface FenceChunkOverlay {
   demote: ReadonlyMap<number, TrustTier>;
   /** Demoted rows carrying an unconfirmed instruction-family write-gate flag (CEO-20): their marker says so. */
   unconfirmed?: ReadonlySet<number>;
+  /** GST-2891: world cells held from the current caller (`hideHeld`), all of them in `omit` too. */
+  held?: ReadonlySet<number>;
 }
 
 export function fenceOverlayIsEmpty(overlay: FenceChunkOverlay | null | undefined): boolean {
@@ -199,7 +207,24 @@ export function fenceRowHoldTexts(row: Pick<ParsedFact, 'claim' | 'context'>): H
   return [row.claim, row.context ?? null, null];
 }
 
-const OVERLAY_SQL = (held: boolean) => `WITH incoming AS MATERIALIZED (
+/**
+ * GST-2891: SQL true when the world fence cell (`rowNum`, `claim`) of page (`sourceId`, `slug`) is held from the current
+ * caller: the live facts row at that row number is narrower than world, or the claim is a live narrower fact of the page
+ * that no live world fact of the page states (the restatement rule without the tier, so it also holds a restatement whose
+ * own row is not stored yet), and the caller's fact reads do not admit that narrower fact (memberFactAdmitSql). For a
+ * caller that reads private facts (worldOnlyFacts false) nothing is held: callers skip the check. `partial` (an SQL
+ * boolean) marks a claim cut by a chunk boundary: it then matches a fact that contains it rather than one equal to it.
+ */
+export function heldRowSql(sourceId: string, slug: string, rowNum: string, claim: string, partial = 'false'): string {
+  const page = (a: string) => `${a}.source_id = ${sourceId} AND ${a}.source_markdown_slug = ${slug} AND ${a}.expired_at IS NULL`;
+  const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)}`;
+  const states = (a: string) => `(CASE WHEN ${partial} THEN strpos(${a}.fact, ${claim}) > 0 ELSE ${a}.fact = ${claim} END)`;
+  return `(EXISTS (SELECT 1 FROM facts hr WHERE ${narrower('hr')} AND hr.row_num = ${rowNum})
+    OR (EXISTS (SELECT 1 FROM facts hc WHERE ${narrower('hc')} AND ${states('hc')})
+      AND NOT EXISTS (SELECT 1 FROM facts hw WHERE ${page('hw')} AND hw.visibility = 'world' AND ${states('hw')})))`;
+}
+
+const OVERLAY_SQL = (held: boolean, hideHeld = false) => `WITH incoming AS MATERIALIZED (
     SELECT i.row_num, i.claim, i.visibility, i.fp FROM jsonb_to_recordset($3::text::jsonb) AS i(row_num integer, claim text, visibility text, fp text))
   SELECT incoming.row_num,
     (SELECT p.trust_tier FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL LIMIT 1) AS page_tier,
@@ -210,7 +235,8 @@ const OVERLAY_SQL = (held: boolean) => `WITH incoming AS MATERIALIZED (
     EXISTS (SELECT 1 FROM fact_purges fp WHERE fp.source_id=$1 AND fp.visibility=incoming.visibility
       AND fp.fact_hash=gbrain_fact_fingerprint(incoming.claim) AND (fp.subject='*' OR fp.subject=$2)) AS purged,
     ${held ? `EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind='fact' AND h.source_id=$1 AND h.slug=$2
-      AND h.status='held' AND h.fingerprint=incoming.fp)` : 'false'} AS held
+      AND h.status='held' AND h.fingerprint=incoming.fp)` : 'false'} AS held,
+    ${hideHeld ? heldRowSql('$1', '$2', 'incoming.row_num', 'incoming.claim') : 'false'} AS narrower
   FROM incoming`;
 const OVERLAY_SQL_WITH_HOLDS = OVERLAY_SQL(true);
 const OVERLAY_SQL_WITHOUT_HOLDS = OVERLAY_SQL(false);
@@ -218,6 +244,18 @@ const OVERLAY_SQL_WITHOUT_HOLDS = OVERLAY_SQL(false);
 export interface LoadFenceOverlayOpts {
   /** Overrides the registered L2a fingerprint for this call. */
   holdFingerprint?: ((texts: HoldTexts) => string) | null;
+  /** GST-2891: a read for a caller whose fact reads are world-only (worldOnlyFacts): rows held from it are omitted. */
+  hideHeld?: boolean;
+}
+
+/** GST-2891: the claims of a body's world fence cells held from a caller whose fact reads are world-only (heldRowSql). */
+export async function heldFenceClaims(
+  engine: Pick<BrainEngine, 'executeRaw'>,
+  page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null },
+): Promise<string[]> {
+  const held = (await loadFenceChunkOverlay(engine, page, { hideHeld: true }))?.held;
+  if (!held?.size) return [];
+  return [...worldFenceRows(page.compiled_truth), ...worldFenceRows(page.timeline)].filter(row => held.has(row.rowNum)).map(row => row.claim);
 }
 
 /**
@@ -236,16 +274,19 @@ export async function loadFenceChunkOverlay(
   const fingerprint = opts.holdFingerprint === undefined ? factHoldFingerprint : opts.holdFingerprint;
   const incoming = rows.map(row => ({ row_num: row.rowNum, claim: row.claim, visibility: row.visibility,
     fp: fingerprint ? fingerprint(fenceRowHoldTexts(row)) : null }));
-  const found = await engine.executeRaw<{ row_num: number; page_tier: string | null; row_tier: string | null; row_flagged: boolean | null; purged: boolean; held: boolean }>(
-    fingerprint ? OVERLAY_SQL_WITH_HOLDS : OVERLAY_SQL_WITHOUT_HOLDS, [page.sourceId, page.slug, JSON.stringify(incoming)]);
+  const sql = opts.hideHeld ? OVERLAY_SQL(fingerprint !== null, true) : fingerprint ? OVERLAY_SQL_WITH_HOLDS : OVERLAY_SQL_WITHOUT_HOLDS;
+  const found = await engine.executeRaw<{ row_num: number; page_tier: string | null; row_tier: string | null; row_flagged: boolean | null; purged: boolean; held: boolean; narrower: boolean }>(
+    sql, [page.sourceId, page.slug, JSON.stringify(incoming)]);
   const pending = pendingRows.getStore();
   const pendingHere = pending && pending.sourceId === page.sourceId && pending.slug === page.slug ? new Set(pending.rowNums) : null;
   const omit = new Set<number>();
   const demote = new Map<number, TrustTier>();
   const unconfirmed = new Set<number>();
+  const held = new Set<number>();
   for (const row of found) {
     const rowNum = Number(row.row_num);
-    if (row.purged === true || row.held === true) { omit.add(rowNum); continue; }
+    if (row.narrower === true) held.add(rowNum);
+    if (row.narrower === true || row.purged === true || row.held === true) { omit.add(rowNum); continue; }
     if (!isTrustTier(row.page_tier)) continue;
     const isPending = pendingHere?.has(rowNum) === true;
     const rowTier = isPending ? pending!.tier : isTrustTier(row.row_tier) ? row.row_tier : null;
@@ -253,5 +294,5 @@ export async function loadFenceChunkOverlay(
     demote.set(rowNum, rowTier);
     if (isPending ? pending!.unconfirmed === true : row.row_flagged === true) unconfirmed.add(rowNum);
   }
-  return omit.size || demote.size ? { omit, demote, ...(unconfirmed.size ? { unconfirmed } : {}) } : undefined;
+  return omit.size || demote.size ? { omit, demote, ...(unconfirmed.size ? { unconfirmed } : {}), ...(held.size ? { held } : {}) } : undefined;
 }
