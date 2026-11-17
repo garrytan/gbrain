@@ -61,6 +61,7 @@ import { VERSION } from '../version.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
 import { withRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withBearerScopeHint } from './serve-http-oauth.ts';
+import { mcpForegroundMiddleware } from '../core/foreground-activity.ts';
 import type { ServeHttpContext } from './serve-http.ts';
 
 /** Per-request state shared by the tools/list and tools/call handlers of one POST /mcp. */
@@ -162,7 +163,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     req => createHash('sha256').update(((req as any).auth as AuthInfo).token).digest('hex'), 'Too many requests for this token');
   app.post('/mcp', ipLimit, withBearerScopeHint(
     requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
-  ), tokenLimit, (req: Request, res: Response) => withEngineScope(engine, () => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res))));
+  ), mcpForegroundMiddleware, tokenLimit, (req: Request, res: Response) => withEngineScope(engine, () => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res))));
 
   // #6721: one config snapshot serves every config read of one POST /mcp (the
   // surface, row-shape and writeback reads below, tools/list and a read op's
