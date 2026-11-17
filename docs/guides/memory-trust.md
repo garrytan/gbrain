@@ -51,6 +51,12 @@ token at a terminal on the brain host. `--yes` never confirms.
   `gbrain trust review` lists flagged items; confirming one clears its flag.
 - **Flagged items still reach proactive context, labeled**
   (`trust.agent_activation` is `allow`).
+- **A restated private fact stays private.** When a remote `remember`
+  repeats the exact claim of a private fact that a more trusted writer saved
+  on the same entity, the new fact is stored private and a proposal waits in
+  `gbrain trust review`; `gbrain trust confirm tp<N>` makes it world. A
+  reworded claim isn't matched, and the held claim's text can still appear
+  in the page body that remote readers fetch.
 
 These defaults come from a preregistered paid eval with Opus 5.5, Sonnet 5.5
 and GPT-6.1 Sol (gbrain-evals

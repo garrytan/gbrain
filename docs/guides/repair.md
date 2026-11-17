@@ -2477,8 +2477,13 @@ open only when you name that class, for example `--class unpaged:mail:extract`
 (quote a lane that contains spaces).
 `--ids-file <file>` (one fact id per line) narrows the set.
 
+A fact someone saved private on purpose before the cut looks the same as a
+legacy one, so it is opened with them. The preview says so and shows samples
+and every listed fact; when some must stay private, put the ids you do want
+opened in a file and pass `--ids-file`.
+
 The preview also counts every fact it leaves private, by reason: `expired`,
-`superseded`, `member_page`, `withdrawn` (forgotten or purged, at any
+`superseded`, `lapsed` (its `valid_until` has passed), `member_page`, `withdrawn` (forgotten or purged, at any
 visibility), `contested` (an open trust proposal, or a widening the owner
 rejected or undid), `holding_page_private`, `holding_page_missing`,
 `holding_page_quarantined`, `provenance_private`, `provenance_unresolved`,
@@ -2493,7 +2498,8 @@ eligible inside the window since the preview refuses `preview_changed`. Each
 write locks the pages the fact names and checks it again, so a page made
 private while the apply waits keeps its facts private. A fenced row has its
 table cell set to `world` by the same label-only write the other privacy
-repairs use. A fact the apply could not open is reported `fact_left_private`
+repairs use, in the table where it sits, above or below the timeline
+sentinel. A fact the apply could not open is reported `fact_left_private`
 with the reason, never as applied.
 
 The command refuses remote callers and any CLI running under
