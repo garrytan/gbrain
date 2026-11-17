@@ -6196,9 +6196,11 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
 The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PGLite and Postgres behave exactly
 as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
 (`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
-addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
-when the `rust` config value lands with the loader. Selecting the engine and refusing a missing or mismatched addon
-belong to the loader, not the shell.
+addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `constructEngine` builds it when the
+config says `engine: rust` and an absolute `database_path`: it runs the addon loader (`src/core/rust-engine/addon-loader.ts`),
+then `openRustEngine`. Selecting the engine and refusing a missing or mismatched addon (`rust_engine_addon_missing`,
+`rust_engine_addon_mismatch`) belong to the loader, not the shell. `openEngine` (embedded settings) still takes only
+`postgres` or `pglite`.
 
 - **Capabilities.** The shell declares no capabilities. Each `BrainEngine` member it does not implement refuses
   `engine_capability_missing` with the capability as `reason` (`raw_sql`, `pages`, `search`, ...), the member in

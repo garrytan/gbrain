@@ -1,7 +1,8 @@
 # Rust engine (experimental)
 
 This folder holds an optional Rust engine for gbrain. Nothing in gbrain uses it unless a brain's
-config says `engine: rust`, and the engine itself is not built yet. Today it is a
+config says `engine: rust`, and that engine is a shell that refuses every call with
+`engine_capability_missing` until later changes build it. Today it is a
 small Node-API addon that proves the pieces a Rust engine needs: that Bun can load it, call it,
 cancel its work, survive its panics and shut it down cleanly. You do not need Rust to build, test
 or run gbrain.
