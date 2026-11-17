@@ -1,0 +1,5 @@
+**The nightly heavy upgrade matrix no longer dies with exit 141 on a large doctor report, and the IPC takeover test no longer fails on slow macOS runners (#6049).**
+
+### Tests and CI
+- `tests/heavy/pg_upgrade_matrix.sh` read doctor's top-level status with `grep -o | head -1` under `pipefail`. Doctor's one-line JSON report now holds more than one pipe buffer of `"status"` matches, so `head` closed the pipe early, `grep` took SIGPIPE and `set -e` ended the script with exit 141 and no message, which turned the nightly Heavy Tests red (#6049). It now reads with `sed -n`, which consumes the whole stream, and a report with no status fails that shape by name. `test/scripts/pg-upgrade-matrix-status.test.ts` fails before the fix and passes after it.
+- The "simultaneous processes elect one provider" IPC test asked the elected provider through the 250 ms production budget, so a slow darwin-x64 runner read it as unavailable. The test now pauses the provider for 400 ms on every run and asks with a test-sized wait. `resolveViaIpc` takes an optional `{ timeoutMs }` like its sibling clients; the default is unchanged.
