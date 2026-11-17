@@ -106,6 +106,30 @@ describe('slot parsing', () => {
     ]);
   });
 
+  test('reads the compact array form and a fact with no slot key, and still reads the object form', async () => {
+    const bare = (text: string) => ({ fact: text, kind: 'fact', entity: 'people/alice-example', confidence: 1, notability: 'high' });
+    const { seen, outcome } = await run({ slots: true } as Partial<ExtractInput>, { facts: [
+      fact('Alice Example works at Acme Example.', ['employer', 'Acme Example']),
+      fact('Alice Example lives in Springfield.', { dimension: 'location', value: 'Springfield' }),
+      bare('Alice Example likes tea.'),
+      fact('Alice Example plays chess.', ['hobby', 'chess']),
+      fact('Alice Example is a role.', ['role']),
+      fact('Alice Example is numbered.', ['role', 7]),
+    ] });
+    expect(seen[0]!.system as string).toContain('"slot":["');
+    expect(seen[0]!.system as string).not.toContain('"slot":null');
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.facts.map(f => [f.fact, (f as { dimension?: string | null }).dimension ?? null, (f as { value?: string | null }).value ?? null])).toEqual([
+      ['Alice Example works at Acme Example.', 'employer', 'Acme Example'],
+      ['Alice Example lives in Springfield.', 'location', 'Springfield'],
+      ['Alice Example likes tea.', null, null],
+      ['Alice Example plays chess.', null, null],
+      ['Alice Example is a role.', null, null],
+      ['Alice Example is numbered.', null, null],
+    ]);
+  });
+
   test('an 80-character value is kept', async () => {
     const { outcome } = await run({ slots: true } as Partial<ExtractInput>, { facts: [fact('Alice Example has a long title.', { dimension: 'role', value: 'y'.repeat(80) })] });
     expect(outcome.ok && (outcome.facts[0] as { value?: string }).value).toBe('y'.repeat(80));

@@ -461,12 +461,11 @@ const ATTRIBUTION_BLOCK = [
 /** Slot block (GBRA-574 B2): the one single-valued dimension a fact states, for read-time validity windows. */
 const SLOT_BLOCK = [
   '',
-  'Slots: add "slot" to every fact object. A fact that states where a person lives, which organization employs them,',
-  'or their role or job title carries {"dimension":"location|employer|role","value":"<the place, organization or title alone>"};',
-  'every other fact has "slot":null.',
+  'Slots: a fact that states where a person lives, which organization employs them, or their role or job title adds',
+  '"slot":["location|employer|role","<the place, organization or title alone>"]. Every other fact leaves "slot" out.',
   '- Only with an entity: the person the value belongs to. No entity, no slot.',
   '- A fact saying the value changed (moved, joined, was promoted) carries the new value. A fact that only ends a value',
-  '  ("left the company") or states a past one ("used to live in ...") has "slot":null.',
+  '  ("left the company") or states a past one ("used to live in ...") has no slot.',
   '- No slot for plans, wishes, trips, visits or guesses.',
 ].join('\n');
 
@@ -531,9 +530,7 @@ function factsResponseSchema(variant: ExtractorVariant): typeof FACTS_RESPONSE_S
   const extra: Record<string, unknown> = {
     ...(variant.dateGrounding ? { valid_from: { type: ['string', 'null'] } } : {}),
     ...(variant.attribution ? { attributed_to: { type: ['string', 'null'], enum: ['user', 'assistant', 'other', null] } } : {}),
-    ...(variant.slots ? { slot: { anyOf: [{ type: 'null' }, { type: 'object', properties: {
-      dimension: { type: 'string', enum: ['location', 'employer', 'role'] }, value: { type: 'string' },
-    }, required: ['dimension', 'value'], additionalProperties: false }] } } : {}),
+    ...(variant.slots ? { slot: { anyOf: [{ type: 'null' }, { type: 'array', items: { type: 'string' } }] } } : {}),
   };
   const variantItems = {
     ...items,
@@ -1052,7 +1049,7 @@ function tryArrayShapeDetailed(s: string): ParsedExtractorShape | null {
 
 function rawSlot(s: unknown): RawExtracted['slot'] {
   if (typeof s !== 'object' || s === null) return null;
-  const { dimension, value } = s as Record<string, unknown>;
+  const [dimension, value] = Array.isArray(s) ? s : [(s as Record<string, unknown>).dimension, (s as Record<string, unknown>).value];
   return typeof dimension === 'string' && typeof value === 'string' ? { dimension, value } : null;
 }
 
