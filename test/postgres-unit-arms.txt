@@ -613,6 +613,7 @@ test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
 test/repair-lost-fence-rows.test.ts
+test/repair-open-facts-8194.test.ts
 test/repair-private-labels-batch.test.ts
 test/repair-purged-page-facts-8859.test.ts
 test/repair-quoted-markers-8059.test.ts
@@ -656,6 +657,7 @@ test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/source-lifecycle-dry-run-physical-root-6849.test.ts
 test/source-purge-stranded-pages-7072.test.ts
+test/source-resolver-null-path.test.ts
 test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-git-reconcile.test.ts

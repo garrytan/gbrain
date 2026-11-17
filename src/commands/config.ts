@@ -1062,7 +1062,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         process.exit(1);
       }
       console.log(`Set ${key} = ${audience} (${hostPlane ? 'file + db planes' : 'db plane only — mounted brain'})`);
-      return;
+      return (await import('./archive-rescope.ts')).rescopeArchiveAfter(engine);
     }
     if (key === 'memory.agent_writeback') return (await import('./config-agent-writeback.ts')).setAgentWritebackFromCli(engine, value);
     if (MEMORY_DUAL_PLANE_KEYS.has(key)) {
