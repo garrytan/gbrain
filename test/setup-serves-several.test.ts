@@ -271,13 +271,13 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
   test('--serves several labels each person, proves it with bound reads, prints key paths never values; a re-run keeps it all', async () => {
     const b = box();
     await brainWithPages(b);
-    const preview = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--stdio-member', 'alice-example', '--dry-run']);
+    const preview = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--stdio-member', 'alice-example', '--open-history', '--dry-run']);
     expect(preview.exitCode).toBe(0);
     expect(preview.stdout).toContain('stdio      this claude-code entry would start serve --stdio-member alice-example: only its sessions read as alice-example');
     expect(preview.stdout).toContain('serve --surface starter --advertise verbs --stdio-member alice-example');
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
     expect(await stdioKey(b)).toBe('');
-    const first = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example']);
+    const first = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--open-history']);
     expect(first.exitCode).toBe(0);
     for (const m of ROSTER) {
       const key = readFileSync(join(b.home, '.gbrain', 'member-keys', `${m}.key`), 'utf8').trim();

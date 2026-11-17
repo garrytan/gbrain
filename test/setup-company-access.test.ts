@@ -24,6 +24,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { labelSeveral, receiptLines } from '../src/commands/access-serves.ts';
+import { historyRefusal } from '../src/commands/setup-serves.ts';
 import { mintToken } from '../src/commands/auth-mint.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { ownerMemberId, setOwner } from '../src/core/access/owner.ts';
@@ -266,6 +267,100 @@ describe('A: gbrain setup --shape company --transcripts gives the members the ca
     } finally {
       await engine.disconnect();
     }
+  }, 480_000);
+});
+
+
+const HISTORY: Record<string, string> = {
+  'journal/owner-day': 'journalcanary',
+  'conversations/claude-code/2026-11-01/plan-abc12345': 'archivecanary',
+};
+const historyText = (slug: string, canary: string) => `---\ntype: ${slug.startsWith('conversations/') ? 'conversation' : 'note'}\ntitle: ${slug}\n---\n# ${slug}\n\nHarbor ledger notes ${canary}.\n`;
+
+for (const kind of testBackends()) {
+  describe(`C: turning a brain with history shared needs a choice (${kind}, repo-less)`, () => {
+    let engine: BrainEngine;
+    let close: () => Promise<void>;
+    let home: string;
+    beforeAll(async () => {
+      ({ engine, close } = await openEngine(kind));
+      home = tempDir('gbrain-history-');
+      for (const [slug, canary] of Object.entries(HISTORY)) await importFromContent(engine, slug, historyText(slug, canary), { sourceId: 'default', noEmbed: true });
+    }, 120_000);
+    afterAll(async () => { await close?.(); }, 60_000);
+
+    test('the refusal names the count, the DMs/chat/mail and archive share and both choices; --labelled-only keeps the history from members, not from the owner', async () => {
+      await addMember(engine, 'owner-example');
+      await setOwner(engine, 'owner-example');
+      const ownerKey = (await mintToken(engine, 'owner-laptop', { scopes: ['read', 'write'], binding: { member: 'owner-example' } })).token;
+      const canaries = Object.values(HISTORY);
+      const ownerBefore = await tokenReads(engine, ownerKey, canaries);
+      expect(ownerBefore).toEqual([...canaries].sort());
+      const flags = { serves: 'several' as const, dryRun: false };
+      const status = { serves: 'one' as const, from: 'derived' as const, enabled_members: ['owner-example'], since: null, owner: 'owner-example', stdio_member: null } as never;
+      const preview = await withEnv({ GBRAIN_HOME: home }, () => labelSeveral(engine, ROSTER, 'default', false, true, { owner: 'owner-example' }));
+      const refusal = historyRefusal(status, preview, flags, 'claude-code', ROSTER, { id: 'owner-example', from: 'flag' });
+      expect(refusal).toMatchObject({ code: 'setup_history_choice_required' });
+      expect(refusal!.message).toContain('2 page(s)');
+      expect(refusal!.message).toContain('1 of them DMs, chat or mail');
+      expect(refusal!.message).toContain('1 in the conversation archive');
+      expect(refusal!.suggestion).toContain('--labelled-only');
+      expect(refusal!.suggestion).toContain('--open-history');
+      expect(historyRefusal(status, preview, { ...flags, openHistory: true }, 'claude-code', ROSTER, undefined)).toBeNull();
+      expect(historyRefusal(status, preview, { ...flags, labelledOnly: true }, 'claude-code', ROSTER, undefined)).toBeNull();
+      expect(historyRefusal({ ...(status as object), serves: 'several' } as never, preview, flags, 'claude-code', ROSTER, undefined)).toBeNull();
+      expect(historyRefusal(status, { ...preview, open_pages: { ...preview.open_pages!, total: 0 } }, flags, 'claude-code', ROSTER, undefined)).toBeNull();
+      const r = await withEnv({ GBRAIN_HOME: home }, () => labelSeveral(engine, ROSTER, 'default', true, true, { owner: 'owner-example', labelledOnly: true }));
+      expect(r.error).toBeUndefined();
+      const alice = readFileSync(keyFile(home, 'alice-example'), 'utf8').trim();
+      expect(await tokenReads(engine, alice, canaries)).toEqual([]);
+      expect(await tokenReads(engine, ownerKey, canaries)).toEqual(ownerBefore);
+    }, 120_000);
+  });
+}
+
+describe('C: gbrain setup --serves several on a brain with history (spawned, PGLite)', () => {
+  async function historyBox() {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    for (const [slug, canary] of Object.entries(HISTORY)) expect((await gbrain(b, ['put', slug, '--content', historyText(slug, canary)])).exitCode).toBe(0);
+    return b;
+  }
+  const memberReads = async (b: ReturnType<typeof box>, member: string) => {
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: join(b.home, '.gbrain', 'brain.pglite') } as never);
+    try { return await tokenReads(engine, readFileSync(keyFile(b.home, member), 'utf8').trim(), Object.values(HISTORY)); } finally { await engine.disconnect(); }
+  };
+  const args = ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example'];
+
+  test('without a choice setup refuses and writes nothing; --labelled-only keeps the history private; a brain already shared is not refused', async () => {
+    const b = await historyBox();
+    const refused = await setup(b, [...args, '--json']);
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stdout + refused.stderr).toContain('setup_history_choice_required');
+    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
+    const status = JSON.parse((await gbrain(b, ['access', 'serves', '--json', '--no-open-pages'])).stdout);
+    expect(status).toMatchObject({ serves: 'one', enabled_members: [] });
+    const run = await setup(b, [...args, '--labelled-only']);
+    expect(run.exitCode).toBe(0);
+    expect(await memberReads(b, 'alice-example')).toEqual([]);
+    const again = await setup(b, args);
+    expect(again.exitCode).toBe(0);
+  }, 480_000);
+
+  test('--open-history lets the members read it', async () => {
+    const b = await historyBox();
+    const run = await setup(b, [...args, '--open-history']);
+    expect(run.exitCode).toBe(0);
+    expect(await memberReads(b, 'alice-example')).toEqual(['archivecanary', 'journalcanary']);
+  }, 480_000);
+
+  test('a new brain is not asked: one this run creates, and one with no pages yet', async () => {
+    const fresh = box();
+    expect((await setup(fresh, args)).exitCode).toBe(0);
+    const empty = box();
+    expect((await gbrain(empty, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    expect((await setup(empty, args)).exitCode).toBe(0);
   }, 480_000);
 });
 

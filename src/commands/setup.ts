@@ -171,6 +171,9 @@ Flags:
   --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
   --labelled-only      With --serves several: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
+  --open-history       With --serves several on a brain that serves one person and already holds
+                       pages: let the members read them. Without it or --labelled-only, setup
+                       refuses (setup_history_choice_required) and writes nothing.
   --members-file PATH  The same, one id per line.
   --owner ID           With --serves several: the brain owner, added as a member and named with
                        gbrain access owner set when the brain has none (default: your login name
@@ -314,6 +317,8 @@ interface SetupFlags {
   membersFile?: string;
   /** GST-2670: --labelled-only, passed to access serves several. */
   labelledOnly?: boolean;
+  /** GBRA-585 C: --open-history, the members read the pages a one-person brain already holds. */
+  openHistory?: boolean;
   /** GBRA-585 D: --owner, the brain owner --serves several names when none is set (default: the login name). */
   owner?: string;
   /** GST-363: written into this harness's MCP entry as serve --stdio-member; never into config. */
@@ -354,6 +359,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
   if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
   if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
+  if (args.includes('--open-history') && serves !== 'several') return '--open-history applies to the people of --serves several';
+  if (args.includes('--open-history') && args.includes('--labelled-only')) return 'pass --labelled-only (keep the history private) or --open-history (members read it), not both';
   const owner = value('--owner');
   if (owner !== undefined && serves !== 'several') return '--owner names the brain owner of --serves several';
   if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
@@ -421,6 +428,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
     ...(args.includes('--labelled-only') ? { labelledOnly: true } : {}),
+    ...(args.includes('--open-history') ? { openHistory: true } : {}),
     ...(owner !== undefined ? { owner } : {}),
     ...(stdioMember !== undefined ? { stdioMember } : {}),
     noStdioMember,

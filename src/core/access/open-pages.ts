@@ -40,6 +40,8 @@ export interface OpenPages {
   sensitive: number;
   /** Open pages that visibility: private (or a privacy alias) keeps from members; counted in total instead where remote privacy is relaxed or a reading member's grant opens private pages. */
   private: number;
+  /** GBRA-585 C: open pages in the conversation archive (conversations/), also counted in total. */
+  archive: number;
   folders: OpenFolder[];
   other: { folders: number; pages: number; sensitive: number };
   top_sensitive: { source: string; type: string; pages: number } | null;
@@ -174,7 +176,7 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
 export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}): Promise<OpenPages> {
   return withOpenScope(engine, opts, async (scope, boundedRead) => {
     const { owner, sources } = scope;
-    const result: OpenPages = { owner, members: scope.members, sources, total: 0, sensitive: 0, private: 0,
+    const result: OpenPages = { owner, members: scope.members, sources, total: 0, sensitive: 0, private: 0, archive: 0,
       folders: [], other: { folders: 0, pages: 0, sensitive: 0 }, top_sensitive: null };
     if (!sources.length) return result;
     const params: unknown[] = [sources];
@@ -198,6 +200,7 @@ export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}
       folders.set(key, f);
       f.pages += n;
       result.total += n;
+      if (row.folder === 'conversations') result.archive += n;
       if (!row.type || !SENSITIVE_PAGE_TYPES.includes(row.type)) continue;
       f.sensitive += n;
       result.sensitive += n;

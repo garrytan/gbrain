@@ -15,6 +15,8 @@
  *     per other member (`gbrain find people/<other>/ --as <member> --json`): none returns a page.
  *   - GBRA-585 D: on a brain with no owner it also names one: --owner <id>, else the login name as a member id
  *     (loginOwnerId), passed to the child as --owner. An existing owner is kept and no credential is rebound.
+ *   - GBRA-585 C: turning a one-person brain shared while it holds open pages refuses (setup_history_choice_required)
+ *     until the admin picks --labelled-only (keep that history private) or --open-history (members read it).
  */
 import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
@@ -25,7 +27,7 @@ import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readRoster, readsLines, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
-export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; owner?: string; dryRun: boolean }
+export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; openHistory?: boolean; owner?: string; dryRun: boolean }
 
 /** GBRA-585 D: the login name of the person running setup as a member id (lower-cased, other characters as '-'), or null when none fits. */
 export function loginOwnerId(login?: string): string | null {
@@ -132,6 +134,27 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
       verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
 }
 
+/**
+ * GBRA-585 C: --serves several on a brain that serves one person and holds pages the members' keys would read (the
+ * labelling preview's open_pages, or a count that could not be read) needs the admin's choice first. A brain this run
+ * creates, a brain with no open pages and a brain already shared are not refused.
+ */
+export function historyRefusal(status: ServesStatus | null, preview: ServesReceipt | null, flags: ServesFlags, harness: string, roster: string[], owner: ServesOwner | undefined): OperationError | null {
+  if (flags.serves !== 'several' || flags.labelledOnly || flags.openHistory || status?.serves !== 'one' || !preview || !('members' in preview)) return null;
+  const open = preview.open_pages;
+  if (open && !open.total) return null;
+  const parts = open ? [open.sensitive ? `${open.sensitive} of them DMs, chat or mail` : '', open.archive ? `${open.archive} in the conversation archive` : ''].filter(Boolean) : [];
+  const holds = open ? `${open.total} page(s) no rule or readable_by restricts${parts.length ? ` (${parts.join(', ')})` : ''}`
+    : `pages setup could not count (${preview.open_pages_error?.code ?? 'open_pages_failed'})`;
+  const argv = ['gbrain', 'setup', harness, '--serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(owner?.from === 'flag' ? ['--owner', owner.id] : [])];
+  return opError('setup_history_choice_required',
+    `This brain serves one person and holds ${holds}; turned shared as asked, every member's key would read them. Nothing was written. Run setup again with --labelled-only to keep that history private, or with --open-history to let every member read it.`,
+    `Pick one: ${[...argv, '--labelled-only'].join(' ')} keeps that history private (each member reads only pages labelled for them, so not the company source either), or ${[...argv, '--open-history'].join(' ')} lets every member read it.`,
+    { fix: { argv: [...argv, '--labelled-only'], consent: ['credentials'], actor: 'user', ask_user: true, requires_exclusive: false,
+      why: 'Keeps the existing pages from the members; ask the user, who may instead choose --open-history so the members read them.',
+      verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
+}
+
 /** --serves several: the labelling child (preview on a dry run) and, when applied, one bound read per member. */
 function servesArgv(roster: string[], flags: ServesFlags, owner: ServesOwner | undefined, apply: boolean): string[] {
   return ['access', 'serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(flags.labelledOnly ? ['--labelled-only'] : []), ...(owner ? ['--owner', owner.id] : []), ...(apply ? ['--yes'] : []), '--json'];
@@ -185,7 +208,8 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
   if (flags.serves === 'several') {
     const owner = servesOwner(flags, harness, roster);
     if (owner instanceof OperationError) return owner;
-    return { roster, status, owner };
+    const preview = status?.serves === 'one' && !flags.labelledOnly && !flags.openHistory ? parsed<ServesReceipt>(child(launcher, servesArgv(roster, flags, owner, false)).stdout) : null;
+    return historyRefusal(status, preview, flags, harness, roster, owner) ?? { roster, status, owner };
   }
   if (named && !status?.enabled_members.includes(named)) {
     return opError('invalid_params', `--stdio-member ${named} is not an enabled member of this brain, so the ${harness} sessions would read as nobody; nothing was written.`,

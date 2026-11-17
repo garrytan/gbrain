@@ -179,6 +179,14 @@ other pages no rule or `readable_by` restricts, which every member's key still r
 by folder, with the commands that label them; `--labelled-only` keeps each member to
 the pages labelled for it instead (never the owner). See
 [pages every member's key can read](access-designations.md#pages-every-members-key-can-read).
+When the brain serves one person and already holds such pages (a journal, DMs, chat,
+mail, the conversation archive), setup asks for that choice before it writes anything:
+it refuses with `setup_history_choice_required`, naming the count, how many are DMs,
+chat or mail and how many are in the conversation archive, until you pass
+`--labelled-only` (keep that history private) or `--open-history` (every member reads
+it). Labelled-only members read no page of the `company` source either, because a rule
+names a folder, never a whole source. A new brain, one with no such pages and one that
+already serves several people are not asked.
 On a brain with no owner, setup also names one: `--owner <id>`, or by default your
 login name as a member id. It adds that member and runs `gbrain access owner set`;
 the preview shows it first, and an owner that is already set is kept. No key is
