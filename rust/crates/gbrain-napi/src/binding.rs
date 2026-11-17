@@ -233,26 +233,24 @@ pub fn probe_panic_sync(env: &Env) -> napi::Result<()> {
 /// What a JavaScript `AbortSignal` is mapped to: `signal.addEventListener('abort', () => token.cancel())`.
 #[napi]
 pub struct CancelToken {
-    token: Token,
+    flag: Token,
 }
 
 #[napi]
 impl CancelToken {
     #[napi(constructor)]
     pub fn new() -> Self {
-        Self {
-            token: Token::new(),
-        }
+        Self { flag: Token::new() }
     }
 
     #[napi]
     pub fn cancel(&self) {
-        self.token.cancel();
+        self.flag.cancel();
     }
 
     #[napi(getter)]
     pub fn cancelled(&self) -> bool {
-        self.token.is_cancelled()
+        self.flag.is_cancelled()
     }
 }
 
@@ -375,7 +373,7 @@ impl Pool {
         })
     }
 
-    /// `steps` steps of `step_ms` each. Resolves with the steps done. If `token` is cancelled
+    /// `steps` steps of `step_ms` each. Resolves with the steps done. If `cancel` is cancelled
     /// after the task started, rejects with `cancelled` and `completedSteps`.
     #[napi]
     pub fn run_steps<'env>(
@@ -383,14 +381,14 @@ impl Pool {
         env: &'env Env,
         steps: u32,
         step_ms: u32,
-        token: Option<&CancelToken>,
+        cancel: Option<&CancelToken>,
     ) -> napi::Result<Object<'env>> {
-        let token = token.map(|t| t.token.clone());
+        let cancel = cancel.map(|t| t.flag.clone());
         spawn(env, &self.pool, move || {
             pool::run_steps(
                 steps,
                 Duration::from_millis(u64::from(step_ms)),
-                token.as_ref(),
+                cancel.as_ref(),
             )
         })
     }

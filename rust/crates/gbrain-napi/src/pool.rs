@@ -297,21 +297,21 @@ impl CancelToken {
 pub fn run_steps(
     steps: u32,
     step: Duration,
-    token: Option<&CancelToken>,
+    cancel: Option<&CancelToken>,
 ) -> Result<u32, TaskError> {
-    run_steps_observed(steps, step, token, |_| {})
+    run_steps_observed(steps, step, cancel, |_| {})
 }
 
 /// [`run_steps`] that calls `after_step` with the count after each finished step.
 fn run_steps_observed(
     steps: u32,
     step: Duration,
-    token: Option<&CancelToken>,
+    cancel: Option<&CancelToken>,
     mut after_step: impl FnMut(u32),
 ) -> Result<u32, TaskError> {
     let mut completed = 0;
     while completed < steps {
-        if token.is_some_and(CancelToken::is_cancelled) {
+        if cancel.is_some_and(CancelToken::is_cancelled) {
             return Err(TaskError::cancelled(completed, true));
         }
         thread::sleep(step);
