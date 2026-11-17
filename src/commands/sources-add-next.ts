@@ -33,7 +33,7 @@ export async function noGrantFloorNext(engine: BrainEngine, id: string): Promise
   return {
     command: argv.join(' '),
     argv,
-    why: `Connections with no source grant read only the default source and federated sources, and none of them holds a page, so their reads are refused until "${id}" is federated or they are granted sources.`,
+    why: `Connections with no source grant read only the default source and federated sources, and none of them holds a page every reader of its source can read, so their empty reads are refused until "${id}" is federated or they are granted sources.`,
   };
 }
 

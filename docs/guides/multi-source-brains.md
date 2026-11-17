@@ -139,9 +139,11 @@ empty result that reads like a clean miss.
 
 So an unscoped `search`, `query`, `recall` or `list_pages` from such a
 connection that comes back empty is refused with `sources_not_readable` when
-the sources it reads hold no page at all (for `recall` and `query`, no active world fact either)
+the sources it reads hold no page that every reader of the source can read (for `recall` and `query`, no active world fact either)
 while other sources on the brain hold pages. Quarantined pages count on neither
-side. The check is one yes/no about the whole brain, independent of the query:
+side, and neither do pages kept to named readers (a member's own pages
+included) or private pages, so a member can be refused while its own pages
+sit in `default`. The check is one yes/no about the whole brain, independent of the query:
 whether another source holds pages. It never says another source matches the
 question, and it never names a source or page the connection cannot read. Its fix is host-side: the
 user picks the source these connections should read and the brain host runs
