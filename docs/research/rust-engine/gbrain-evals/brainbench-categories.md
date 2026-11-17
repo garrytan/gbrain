@@ -239,7 +239,7 @@ Published reports: none for 5, 8, 9.
 ### Cat 20 brainstorm grounding (eval/runner/cat20-brainstorm.ts, cat20-judges.ts)
 
 - Measures: whether `gbrain brainstorm` ideas cite real pages and pass gbrain's internal judge; decision rule in cat20-judges.ts header: median of outside judges' mean scores on passing ideas at least 2.5, inconclusive when fewer than 10 ideas pass.
-- Run: via all.ts (`brainstorm-grounding`, registry.ts:483). P, report-only, 3600 s, cost unknown. Keyless re-score: `cat20-judges.ts` (135 lines, four judges, cluster bootstrap).
+- Run: via all.ts (`brainstorm-grounding`, registry.ts:483). P, report-only, 3600 s, cost unknown. Offline re-score: `cat20-judges.ts` (135 lines, four judges, cluster bootstrap).
 - Keys: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. Judges in the re-score: claude-sonnet-5-5, gpt-6.1-sol, claude-opus-5-5, claude-fable-5-1.
 - gbrain imports: deep `node_modules/gbrain/src/core/brainstorm/orchestrator.ts` (runBrainstorm), `gbrain/ai/gateway` (configureGateway), `gbrain/pglite-engine` (connect, initSchema, setConfig, disconnect), `import-embedded.ts`; `cat18-embedding-providers.ts` (for embedding setup); `synthetic-corpus-loader.ts`.
 - Published: docs/benchmarks/2026-10-06-cat20-judges.md (inconclusive: internal judge passed 0 of 216 ideas).
