@@ -307,6 +307,41 @@ export const cases: Case[] = [
     },
   },
   {
+    // The refusal above asks the runtime whether the buffer is a plain ArrayBuffer
+    // (napi_is_arraybuffer), which reads the engine's own record of the buffer, not JavaScript
+    // state. Hiding the global constructor or swapping the prototype must not change the answer.
+    name: 'typed arrays: shared memory is refused even with SharedArrayBuffer hidden or a swapped prototype',
+    async run(addon) {
+      const realShared = globalThis.SharedArrayBuffer;
+      const shared = new Float32Array(new realShared(12));
+      shared.set([1, 2, 3]);
+      const swapped = new Float32Array(new realShared(12));
+      swapped.set([1, 2, 3]);
+      Object.setPrototypeOf(swapped.buffer, ArrayBuffer.prototype);
+      const pool = new addon.Pool(1);
+      try {
+        // @ts-expect-error hiding the global on purpose
+        globalThis.SharedArrayBuffer = undefined;
+        for (const [label, values] of [['hidden constructor', shared], ['swapped prototype', swapped]] as const) {
+          const calls: Array<[string, () => unknown]> = [
+            ['sumF32', () => addon.sumF32(values)],
+            ['scaleF32', () => addon.scaleF32(values, 2)],
+            ['scaleInPlaceF32', () => addon.scaleInPlaceF32(values, 2)],
+            ['pool.sumF32', () => pool.sumF32(values)],
+            ['pool.scaleF32', () => pool.scaleF32(values, 2)],
+          ];
+          for (const [name, call] of calls) {
+            assert.equal(thrown(call).code, 'InvalidArg', `${label}: ${name} refuses`);
+          }
+          assert.deepEqual([...values], [1, 2, 3], `${label}: memory untouched`);
+        }
+      } finally {
+        globalThis.SharedArrayBuffer = realShared;
+        await pool.shutdown(1000);
+      }
+    },
+  },
+  {
     name: 'sink: a full queue says queue_full, closing says closing, nothing is lost',
     async run(addon) {
       assert.equal(addon.sinkMaxQueueSize, 4);

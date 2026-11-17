@@ -10,17 +10,27 @@ name: Rust engine
 #              (rust/smoke/run.ts, including a `bun build --compile` executable) on Linux x64 and
 #              macOS arm64, then uploads the .node file.
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
+#   scope      reads a pull request's changed files and picks the advisory check and addon cells.
 #
 # Runs only when something the Rust engine depends on changes (the path list below). The two
 # rust-unit-arms entries start with `**/` because those files arrive in a later change and the
 # repo's doc-path check rejects a plain path to a file that does not exist yet; the pattern still
 # matches the same files.
+#
+# Event parity (docs/TESTING.md#event-parity), named exceptions:
+#   - The macOS addon cell runs on pushes to master, on workflow_dispatch, and on pull requests
+#     that change rust/** or the loader files (src/core/rust-engine.ts, src/core/rust-engine/**).
+#     macOS runners are the landing line's bottleneck. Covered by every push to master.
+#   - The cargo-deny advisory check runs on a pull request only when it changes rust/** (which
+#     holds rust/Cargo.lock), so a new RustSec advisory cannot turn an unrelated pull request red.
+#     Covered by every push to master and the daily Rust engine schedule, which runs only `checks`.
 
 on:
   pull_request:
     paths:
       - 'rust/**'
-      - 'src/core/rust-engine*'
+      - 'src/core/rust-engine**'
+      - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
@@ -36,7 +46,8 @@ on:
     branches: [master]
     paths:
       - 'rust/**'
-      - 'src/core/rust-engine*'
+      - 'src/core/rust-engine**'
+      - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
@@ -48,6 +59,9 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - '.github/workflows/rust-engine.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 7 * * *'  # daily 07:17 UTC: cargo-deny advisories on master (checks job only)
 
 permissions:
   contents: read
@@ -61,8 +75,50 @@ env:
   CARGO_INCREMENTAL: '0'
 
 jobs:
+  # Event parity (docs/TESTING.md#event-parity): see the named exceptions in the header. Off a
+  # pull request every output is the full set. On a pull request whose file list cannot be read
+  # (the API stops at 3000 files, or the call fails), everything runs.
+  scope:
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      targets: ${{ steps.scope.outputs.targets }}
+    steps:
+      - id: scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          rust=true
+          macos=true
+          if [ "$EVENT" = pull_request ]; then
+            if [[ "$CHANGED_FILES" =~ ^[0-9]{1,4}$ ]] && [ "$CHANGED_FILES" -lt 3000 ] \
+              && files=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename'); then
+              grep -Eq '^rust/' <<< "$files" || rust=false
+              grep -Eq '^(rust/|src/core/rust-engine(\.ts$|/))' <<< "$files" || macos=false
+            fi
+          fi
+          linux='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404"}'
+          # Unverified before the first CI run: the dylib name (libgbrain_napi.dylib) and Bun
+          # loading an unsigned .node with process.dlopen.
+          darwin='{"target":"darwin-arm64","runner":"macos-26"}'
+          if [ "$macos" = true ]; then targets="[$linux,$darwin]"; else targets="[$linux]"; fi
+          echo "scope: event=$EVENT rust=$rust macos=$macos"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
   checks:
     name: Format, clippy, unit tests, cargo-deny
+    needs: scope
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 25
     steps:
@@ -78,17 +134,15 @@ jobs:
         timeout-minutes: 3
         with:
           persist-credentials: false
-      # rustup reads the pinned version from rust/rust-toolchain.toml. The GitHub-hosted macOS
-      # image and most Linux images already have rustup; the install below only runs when it is
-      # missing.
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
       - name: Install the pinned Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf --retry 3 https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
           fi
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
           test -n "$channel"
@@ -130,24 +184,27 @@ jobs:
           mkdir -p "$RUNNER_TEMP/cargo-deny-bin"
           tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP/cargo-deny-bin" cargo-deny-0.21.0-x86_64-unknown-linux-musl/cargo-deny
           echo "$RUNNER_TEMP/cargo-deny-bin" >> "$GITHUB_PATH"
-      - name: cargo-deny (licenses, bans, sources, advisories)
+      - name: cargo-deny (licenses, bans, sources)
         working-directory: rust
-        run: cargo deny --locked check
+        run: cargo deny --locked check licenses bans sources
+      # Event parity (docs/TESTING.md#event-parity): named exception, see the header.
+      - name: cargo-deny (advisories)
+        if: needs.scope.outputs.rust == 'true'
+        working-directory: rust
+        run: cargo deny --locked check advisories
 
+  # Event parity (docs/TESTING.md#event-parity): the scope job picks the cells (named exception in
+  # the header); the schedule runs only `checks`. macOS minutes cost more than Linux.
   addon:
     name: Addon and Bun smoke / ${{ matrix.target }}
+    needs: scope
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: linux-x64-glibc
-            runner: ubicloud-standard-4-ubuntu-2404
-          # macOS minutes cost more than Linux. Unverified before the first CI run: the dylib
-          # name (libgbrain_napi.dylib) and Bun loading an unsigned .node with process.dlopen.
-          - target: darwin-arm64
-            runner: macos-26
+        include: ${{ fromJSON(needs.scope.outputs.targets) }}
     steps:
       - id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -164,17 +221,15 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.4
-      # rustup reads the pinned version from rust/rust-toolchain.toml. The GitHub-hosted macOS
-      # image and most Linux images already have rustup; the install below only runs when it is
-      # missing.
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
       - name: Install the pinned Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf --retry 3 https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
           fi
           channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
           test -n "$channel"
@@ -211,8 +266,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.
   without-rust:
     name: Builds and runs with no Rust installed
+    if: github.event_name != 'schedule'
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 20
     steps:

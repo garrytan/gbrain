@@ -55,14 +55,20 @@ if (!target) {
   fail(`no addon target is defined for host ${host}. Add it to TARGETS here and to target() in the crate.`);
 }
 
-const build = Bun.spawnSync(['cargo', 'build', '--release', '-p', 'gbrain-napi'], {
-  cwd: rustDir,
-  stdout: 'inherit',
-  stderr: 'inherit',
-});
+// Name the output directory and the target, so a CARGO_TARGET_DIR, build.target-dir,
+// CARGO_BUILD_TARGET or build.target setting cannot send the build elsewhere while the copy below
+// picks up an older library. With --target, cargo always writes to target/<host>/release.
+const build = Bun.spawnSync(
+  ['cargo', 'build', '--release', '-p', 'gbrain-napi', '--target', host, '--target-dir', join(rustDir, 'target')],
+  {
+    cwd: rustDir,
+    stdout: 'inherit',
+    stderr: 'inherit',
+  },
+);
 if (build.exitCode !== 0) fail(`cargo build failed (exit ${build.exitCode}). No addon was written.`);
 
-const built = join(rustDir, 'target', 'release', target.library);
+const built = join(rustDir, 'target', host, 'release', target.library);
 if (!existsSync(built)) fail(`cargo succeeded but ${built} does not exist.`);
 
 const outDir = join(rustDir, 'target', 'addon');

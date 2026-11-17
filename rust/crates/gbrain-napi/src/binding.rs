@@ -8,7 +8,7 @@
 //! - errors are real `Error` objects with a stable `code` (and, for `cancelled`, the number of
 //!   `completedSteps`), never a bare message.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -76,15 +76,58 @@ pub fn module_exports(mut exports: Object, env: Env) -> napi::Result<()> {
 
 /// Adds in `f64`, starting from +0.0. (`Iterator::sum` on floats starts from -0.0, which would
 /// turn an empty array into `-0` in JavaScript.)
-fn sum_as_f64(values: &[f32]) -> f64 {
-    values.iter().fold(0.0, |total, v| total + f64::from(*v))
+fn sum_as_f64(values: impl IntoIterator<Item = f32>) -> f64 {
+    values
+        .into_iter()
+        .fold(0.0, |total, v| total + f64::from(v))
 }
 
-/// A `Float32Array` argument whose memory no other thread can reach. Rust reads, copies and
-/// writes these arrays without locks, which is only sound when the backing buffer is a plain
-/// `ArrayBuffer`. A view of a `SharedArrayBuffer` can be written by another Worker during the
-/// call, so it is refused with the same `InvalidArg` error as an argument of the wrong type.
-pub struct PlainF32(Float32Array);
+/// A `Float32Array` argument. A view of a `SharedArrayBuffer` is refused with the same
+/// `InvalidArg` error as an argument of the wrong type, because another Worker could write it
+/// during the call.
+///
+/// That refusal is the safety argument. It asks the runtime (`napi_is_arraybuffer` on the view's
+/// buffer), which reads the engine's own record of the buffer, so no JavaScript state (a replaced
+/// global constructor, a swapped prototype) can change the answer, and an unclear answer is
+/// treated as shared. Rust never makes a `&[f32]` or `&mut [f32]` over the caller's memory: every
+/// read and write goes through `AtomicU32` cells with relaxed ordering (see [`PlainF32::cells`]),
+/// which compile to plain loads and stores. Atomics do not make shared memory safe (another Worker
+/// may write it with accesses of a different size), which is why shared memory is refused.
+pub struct PlainF32 {
+    /// Keeps the JavaScript array alive for the call.
+    _array: Float32Array,
+    /// First element (the view's byte offset already applied) and element count, as Node-API
+    /// reported them. Null or zero for an empty array.
+    data: *mut f32,
+    length: usize,
+}
+
+impl PlainF32 {
+    /// The caller's elements as atomic cells.
+    fn cells(&self) -> &[AtomicU32] {
+        if self.data.is_null() || self.length == 0 {
+            return &[];
+        }
+        // SAFETY: `data` points at `length` elements of 4 bytes that stay allocated while
+        // `_array` is held (this struct only lives for one call on the JavaScript thread).
+        // `AtomicU32` has the size and alignment of `u32`, and the pointer is 4-aligned (checked
+        // in `from_napi_value`). The buffer is a plain ArrayBuffer (`backed_by_shared_memory`),
+        // so only this thread, blocked in the call, can reach it.
+        unsafe { std::slice::from_raw_parts(self.data.cast::<AtomicU32>(), self.length) }
+    }
+
+    /// Reads every element.
+    fn values(&self) -> impl Iterator<Item = f32> + '_ {
+        self.cells()
+            .iter()
+            .map(|cell| f32::from_bits(cell.load(Ordering::Relaxed)))
+    }
+
+    /// A Rust-owned copy, for work that outlives the call.
+    fn to_vec(&self) -> Vec<f32> {
+        self.values().collect()
+    }
+}
 
 impl TypeName for PlainF32 {
     fn type_name() -> &'static str {
@@ -108,13 +151,43 @@ impl FromNapiValue for PlainF32 {
             ));
         }
         // SAFETY: as above.
-        Ok(Self(unsafe { Float32Array::from_napi_value(env, value) }?))
+        let array = unsafe { Float32Array::from_napi_value(env, value) }?;
+        let mut kind = 0;
+        let mut length = 0;
+        let mut data = std::ptr::null_mut();
+        let mut buffer = std::ptr::null_mut();
+        let mut offset = 0;
+        // SAFETY: every out pointer is a valid local; `value` is a Float32Array (checked above).
+        let status = unsafe {
+            sys::napi_get_typedarray_info(
+                env,
+                value,
+                &mut kind,
+                &mut length,
+                &mut data,
+                &mut buffer,
+                &mut offset,
+            )
+        };
+        let data = data.cast::<f32>();
+        if status != sys::Status::napi_ok || (!data.is_null() && !data.is_aligned()) {
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                "the Float32Array's memory could not be read safely",
+            ));
+        }
+        Ok(Self {
+            _array: array,
+            data,
+            length,
+        })
     }
 }
 
 /// True when `value` is a typed array over memory that may be shared, or when that cannot be
-/// told. A value that is not a typed array returns false, so the `Float32Array` conversion
-/// reports its own wrong-type error.
+/// told. Only the runtime's `napi_is_arraybuffer` answer counts: a buffer it does not call a plain
+/// ArrayBuffer is treated as shared. A value that is not a typed array returns false, so the
+/// `Float32Array` conversion reports its own wrong-type error.
 ///
 /// # Safety
 /// `env` and `value` must be live handles of the current Node-API call.
@@ -145,56 +218,25 @@ unsafe fn backed_by_shared_memory(env: sys::napi_env, value: sys::napi_value) ->
     }
     let mut plain = false;
     // SAFETY: `buffer` is the live handle the call above returned.
-    if unsafe { sys::napi_is_arraybuffer(env, buffer, &mut plain) } != ok || !plain {
-        return true;
-    }
-    // Some runtimes report a SharedArrayBuffer as an ArrayBuffer too, so ask its constructor.
-    let mut global = std::ptr::null_mut();
-    let mut shared_class = std::ptr::null_mut();
-    let mut class_type = 0;
-    // SAFETY: valid out pointers and a NUL-terminated property name.
-    unsafe {
-        if sys::napi_get_global(env, &mut global) != ok
-            || sys::napi_get_named_property(
-                env,
-                global,
-                c"SharedArrayBuffer".as_ptr(),
-                &mut shared_class,
-            ) != ok
-            || sys::napi_typeof(env, shared_class, &mut class_type) != ok
-        {
-            return true;
-        }
-    }
-    if class_type != sys::ValueType::napi_function {
-        // No SharedArrayBuffer in this runtime, so no buffer can be one.
-        return false;
-    }
-    let mut is_shared = false;
-    // SAFETY: `shared_class` is a function, checked above.
-    if unsafe { sys::napi_instanceof(env, buffer, shared_class, &mut is_shared) } != ok {
-        return true;
-    }
-    is_shared
+    let status = unsafe { sys::napi_is_arraybuffer(env, buffer, &mut plain) };
+    status != ok || !plain
 }
 
 /// Sum of a `Float32Array`, added in `f64`. Reads the JavaScript memory in place for the length
 /// of the call (a view with a byte offset is honoured); nothing is copied and nothing is kept.
 #[napi]
 pub fn sum_f32(env: &Env, values: PlainF32) -> napi::Result<f64> {
-    let values = values.0;
-    sync_call(env, || Ok(sum_as_f64(&values)))
+    sync_call(env, || Ok(sum_as_f64(values.values())))
 }
 
 /// A new `Float32Array` with every value multiplied by `factor`. The input is left alone and the
 /// result is a separate array.
 #[napi]
 pub fn scale_f32(env: &Env, values: PlainF32, factor: f64) -> napi::Result<Float32Array> {
-    let values = values.0;
     sync_call(env, || {
         let scaled: Vec<f32> = values
-            .iter()
-            .map(|v| (f64::from(*v) * factor) as f32)
+            .values()
+            .map(|v| (f64::from(v) * factor) as f32)
             .collect();
         Ok(Float32Array::new(scaled))
     })
@@ -205,16 +247,16 @@ pub fn scale_f32(env: &Env, values: PlainF32, factor: f64) -> napi::Result<Float
 /// touch the array while it is written.
 #[napi]
 pub fn scale_in_place_f32(env: &Env, values: PlainF32, factor: f64) -> napi::Result<u32> {
-    let mut values = values.0;
     sync_call(env, || {
-        // SAFETY: the call is synchronous on the JavaScript thread, the buffer is not shared with
-        // another thread (`PlainF32`), and no other Rust reference to it exists while the slice
-        // is alive.
-        let slice = unsafe { values.as_mut() };
-        for v in slice.iter_mut() {
-            *v = (f64::from(*v) * factor) as f32;
+        let cells = values.cells();
+        for cell in cells {
+            let v = f32::from_bits(cell.load(Ordering::Relaxed));
+            cell.store(
+                ((f64::from(v) * factor) as f32).to_bits(),
+                Ordering::Relaxed,
+            );
         }
-        Ok(slice.len() as u32)
+        Ok(cells.len() as u32)
     })
 }
 
@@ -401,8 +443,8 @@ impl Pool {
     /// may change or be freed while a worker runs.
     #[napi]
     pub fn sum_f32<'env>(&self, env: &'env Env, values: PlainF32) -> napi::Result<Object<'env>> {
-        let copy: Vec<f32> = values.0.to_vec();
-        spawn(env, &self.pool, move || Ok(sum_as_f64(&copy)))
+        let copy: Vec<f32> = values.to_vec();
+        spawn(env, &self.pool, move || Ok(sum_as_f64(copy)))
     }
 
     /// Async scale. The result is a new `Float32Array` made on the JavaScript thread.
@@ -413,7 +455,7 @@ impl Pool {
         values: PlainF32,
         factor: f64,
     ) -> napi::Result<Object<'env>> {
-        let copy: Vec<f32> = values.0.to_vec();
+        let copy: Vec<f32> = values.to_vec();
         spawn(env, &self.pool, move || {
             Ok(Float32Array::new(
                 copy.iter()

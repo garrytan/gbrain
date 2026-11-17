@@ -10,8 +10,6 @@
 /** The engine_abi this gbrain source loads. Bumped with the crate's ENGINE_ABI when the JS side of the binding changes. */
 export const RUST_ENGINE_ABI = 1;
 
-export const RUST_ADDON_MANIFEST_ASSET = 'gbrain-engine-rust.sha256.json';
-
 /** One target's entry: the release asset to download and what its bytes must hash to. */
 export interface RustAddonManifestTarget {
   /** The release asset name, which is also the subject name in its build-provenance attestation. */

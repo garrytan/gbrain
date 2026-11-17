@@ -32,7 +32,9 @@ Point gbrain at it with:
 ```
 
 Run that `export` line in your shell. If cargo is missing the command stops with install
-instructions and writes nothing.
+instructions and writes nothing. The build always goes to `rust/target/`: the command passes
+`--target-dir`, so `CARGO_TARGET_DIR` and a `build.target-dir` setting are ignored and it never
+packages an older library from another build directory.
 
 ## Check it works under Bun
 
@@ -386,8 +388,12 @@ Errors from the addon are real `Error` objects with a `code`:
 | `writer_not_initialized` | The brain has no persistence identity. |
 
 A typed-array argument of the wrong type, or a view of a `SharedArrayBuffer`, throws the
-standard Node-API `InvalidArg` error before any Rust code reads it. Rust reads and writes these
-arrays without locks, which is only sound for memory no other thread can reach.
+standard Node-API `InvalidArg` error before any Rust code reads it. The addon decides by asking
+the runtime (`napi_is_arraybuffer` on the view's buffer): anything the runtime does not call a
+plain `ArrayBuffer`, or cannot answer for, is refused, so hiding `SharedArrayBuffer` or swapping a
+prototype in JavaScript changes nothing. Rust reads and writes the accepted arrays through relaxed
+atomic cells and never builds a slice over them, which is only sound for memory no other thread
+can reach.
 
 ## Good to know
 
@@ -398,6 +404,11 @@ arrays without locks, which is only sound for memory no other thread can reach.
   `internal_error` and stops the threads it started.
 - The callback queue (`Sink`) holds 4 values. That size is fixed at compile time by napi-rs.
 - `rust/bench/` is a separate workspace and is not part of this one.
+- gbrain's addon loader (`src/core/rust-engine/addon-loader.ts`) uses `GBRAIN_RUST_ENGINE_ADDON`
+  first, then an addon cached under `<gbrain home>/engines/rust/` whose SHA-256 matches this
+  release's cached manifest. It does not download anything: with no cached addon it refuses with
+  `rust_engine_addon_missing`, reason `not_installed`. Nothing starts the loader yet (ENGINES.md,
+  "The Rust engine shell").
 - To go back to the normal gbrain path, `unset GBRAIN_RUST_ENGINE_ADDON`.
 - `GBRAIN_TEST_BACKEND=rust bun test <file>` arrives with the Rust test arm in a later change. It
   does not exist yet.

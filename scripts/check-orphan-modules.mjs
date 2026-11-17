@@ -57,7 +57,6 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/rust-engine.ts', reason: "held: the Rust engine shell (plan PR 8, docs/designs/RUST_ENGINE.md); the addon loader PR on rust-engine/core wires openRustEngine into engine construction" },
   { path: 'src/core/rust-engine/members.ts', reason: 'held: the Rust engine shell member table; reached through src/core/rust-engine.ts once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/addon-errors.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },
-  { path: 'src/core/rust-engine/addon-fetch.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/addon-loader.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/addon-manifest.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },
   { path: 'src/core/rust-engine/addon-target.ts', reason: 'held: the Rust engine addon loader (loadRustEngineAddon); the addon release PR wires it into engine construction with the rust config value' },
