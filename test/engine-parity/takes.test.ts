@@ -555,13 +555,20 @@ describe('engine parity: contradiction probe runs and judge cache', () => {
     'writeContradictionsRun is idempotent on run_id; loadContradictionsTrend returns runs newest first with parsed JSON',
     { methods: ['writeContradictionsRun', 'loadContradictionsTrend'] },
     async (engine) => {
-      // ran_at defaults to now(); space the writes so newest-first order is deterministic
-      const tick = () => new Promise((r) => setTimeout(r, 15));
+      // ran_at defaults to the database clock's now(), and loadContradictionsTrend keeps rows with
+      // ran_at >= a cutoff taken from the JS clock. Wait until the JS clock is strictly past the
+      // newest stored ran_at (millisecond ISO) before the next write or the days=0 read, so neither
+      // newest-first order nor the empty window depends on how fast the calls ran.
+      const waitPastNewestRun = async () => {
+        const newest = Date.parse((await engine.loadContradictionsTrend(7))[0]!.ran_at);
+        expect(Number.isFinite(newest)).toBe(true);
+        while (Date.now() <= newest) await new Promise((r) => setTimeout(r, 1));
+      };
       const wrote: boolean[] = [];
       wrote.push(await engine.writeContradictionsRun(runRow('run-a') as Run));
-      await tick();
+      await waitPastNewestRun();
       wrote.push(await engine.writeContradictionsRun(runRow('run-b', { queries_evaluated: 30, cost_usd_total: 1.5, report_json: {} }) as Run));
-      await tick();
+      await waitPastNewestRun();
       wrote.push(await engine.writeContradictionsRun(runRow('run-a', { queries_evaluated: 999 }) as Run)); // same run_id: no-op
       wrote.push(await engine.writeContradictionsRun(runRow('run-c', { judge_model: 'judge-m2', source_tier_breakdown: {} }) as Run));
       expect(wrote).toEqual([true, true, false, true]);
@@ -569,6 +576,7 @@ describe('engine parity: contradiction probe runs and judge cache', () => {
       expect(trend.map((r) => r.run_id)).toEqual(['run-c', 'run-b', 'run-a']);
       expect(trend.find((r) => r.run_id === 'run-a')?.queries_evaluated).toBe(20); // not overwritten
       expect(typeof trend[0].ran_at).toBe('string');
+      await waitPastNewestRun();
       const nothing = await engine.loadContradictionsTrend(0);
       expect(nothing).toEqual([]);
       return {
