@@ -3,14 +3,14 @@
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), same (Rust must match once its arm exists),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 198/198
+# covered: 208/208
 # lifecycle: 9/9
-# pages: 24/24
+# pages: 26/26
 # search: 7/7
-# chunks: 17/17
+# chunks: 22/22
 # extraction: 7/7
 # links: 23/23
-# tags: 3/3
+# tags: 5/5
 # timeline: 8/8
 # ontology: 4/4
 # raw_files: 5/5
@@ -21,7 +21,7 @@
 # segmented_body: 14/14
 # versions: 3/3
 # stats_ingest: 4/4
-# sync_aliases: 9/9
+# sync_aliases: 10/10
 # config: 5/5
 # raw_sql: 4/4
 # code_edges: 5/5
@@ -37,17 +37,17 @@ transaction	lifecycle	yes	8	no	yes	yes	same
 transactionDirect	lifecycle	yes	1	no	yes	yes	same
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	same
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	24	yes	yes	yes	same
-readPageSnapshot	pages	yes	6	no	yes	yes	same
+getPage	pages	yes	27	yes	yes	yes	same
+readPageSnapshot	pages	yes	7	no	yes	yes	same
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	same
 lockPageKeys	pages	yes	1	no	yes	yes	same
-putPage	pages	yes	88	yes	yes	yes	same
+putPage	pages	yes	96	yes	yes	yes	same
 findDuplicatePage	pages	yes	1	no	yes	yes	same
 findDuplicatePages	pages	yes	1	no	yes	yes	same
 deletePage	pages	yes	2	yes	yes	yes	same
 deletePages	pages	yes	1	yes	yes	yes	same
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	same
-softDeletePage	pages	yes	16	yes	yes	yes	same
+softDeletePage	pages	yes	18	yes	yes	yes	same
 softDeletePages	pages	yes	1	yes	yes	yes	same
 restorePage	pages	yes	5	yes	yes	yes	same
 purgeDeletedPages	pages	yes	1	no	yes	yes	same
@@ -61,16 +61,18 @@ listAllSources	pages	yes	2	no	yes	yes	same
 updateSourceConfig	pages	yes	1	no	yes	yes	same
 listPrefixSampledPages	pages	yes	1	no	yes	yes	same
 listCorpusSample	pages	yes	1	no	yes	yes	same
+getPageSealState	pages	yes	1	no	yes	yes	same
+refreshPageOrigin	pages	yes	1	no	yes	yes	same
 searchKeyword	search	yes	8	yes	yes	yes	same
 countKeywordPages	search	yes	1	no	yes	yes	same
 searchKeywordPages	search	yes	1	no	yes	yes	same
-searchTitles	search	yes	1	yes	yes	yes	same
+searchTitles	search	yes	2	yes	yes	yes	same
 searchVector	search	yes	2	yes	yes	yes	same
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	same
 searchKeywordChunks	search	yes	1	yes	yes	yes	same
-upsertChunks	chunks	yes	11	yes	yes	yes	same
-sealChunks	chunks	yes	2	no	yes	yes	same
-getChunks	chunks	yes	14	yes	yes	yes	same
+upsertChunks	chunks	yes	13	yes	yes	yes	same
+sealChunks	chunks	yes	4	no	yes	yes	same
+getChunks	chunks	yes	17	yes	yes	yes	same
 getChunkPage	chunks	yes	3	no	yes	yes	same
 getChunkWindows	chunks	yes	1	no	yes	yes	same
 countStaleChunks	chunks	yes	5	no	yes	yes	same
@@ -84,6 +86,11 @@ listChunklessPagesWithContent	chunks	yes	1	yes	yes	yes	same
 readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	same
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	same
 deleteChunks	chunks	yes	2	no	yes	yes	same
+deleteChunksExcept	chunks	yes	1	no	yes	yes	same
+setChunkerVersion	chunks	yes	1	no	yes	yes	same
+writeTextProjectionSeal	chunks	yes	1	no	yes	yes	same
+moveChunkIndexes	chunks	yes	1	no	yes	yes	same
+getChunkReuseRows	chunks	yes	1	no	yes	yes	same
 getChunksWithEmbeddings	chunks	yes	1	no	yes	yes	same
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	same
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	same
@@ -117,7 +124,9 @@ getSalienceScores	links	yes	1	yes	yes	yes	same
 findOrphanPages	links	yes	1	yes	yes	yes	same
 addTag	tags	yes	5	yes	yes	yes	same
 removeTag	tags	yes	1	no	yes	yes	same
-getTags	tags	yes	1	yes	yes	yes	same
+pruneFrontmatterTags	tags	yes	1	no	yes	yes	same
+addPageTagsById	tags	yes	1	no	yes	yes	same
+getTags	tags	yes	2	yes	yes	yes	same
 addTimelineEntry	timeline	yes	5	yes	yes	yes	same
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	same
 getTimeline	timeline	yes	3	yes	yes	yes	same
@@ -197,8 +206,9 @@ updateSlug	sync_aliases	yes	4	no	yes	yes	same
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	same
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	same
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	same
-resolveAliases	sync_aliases	yes	1	no	yes	yes	same
-setPageAliases	sync_aliases	yes	1	no	yes	yes	same
+resolveAliases	sync_aliases	yes	2	no	yes	yes	same
+setPageAliases	sync_aliases	yes	2	no	yes	yes	same
+replaceDerivedAliases	sync_aliases	yes	1	no	yes	yes	same
 refreshPageBody	sync_aliases	yes	1	no	yes	yes	same
 updatePageContextualRetrievalState	sync_aliases	yes	1	no	yes	yes	same
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	same

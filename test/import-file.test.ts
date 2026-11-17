@@ -32,6 +32,8 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
     get(_, prop: string) {
       if (prop === '_calls') return calls;
       if (prop === 'getTags') return overrides.getTags || (() => Promise.resolve([]));
+      // Like a real engine, the reuse read resolves to a row array (no stored chunks).
+      if (prop === 'getChunkReuseRows') return overrides.getChunkReuseRows || (() => Promise.resolve([]));
       if (prop === 'getPage') {
         return async (slug: string, opts?: { sourceId?: string }) => {
           // If the test provides a custom getPage, call it first (for the
