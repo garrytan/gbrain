@@ -200,6 +200,9 @@ test/held-bare-name-move-gst2492.test.ts
 test/held-fence-readers-gst2492.test.ts
 test/held-move-plan-gst2497.test.ts
 test/held-read-signals.test.ts
+test/held-row-page-reads-2891.test.ts
+test/held-row-review-2891.test.ts
+test/held-row-writeback-2891.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
 test/holding-page-saves-gst2497.test.ts
@@ -629,6 +632,7 @@ test/repair-unwithdrawn-facts-8819.test.ts
 test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
+test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
