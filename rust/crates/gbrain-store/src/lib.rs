@@ -8,6 +8,7 @@
 //! This crate has no JavaScript types. `gbrain-napi` turns each `Store` method into an async
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
+mod cascade;
 pub mod chunks;
 pub mod config;
 pub mod env;
@@ -22,6 +23,31 @@ pub mod redb_kv;
 pub mod search;
 pub mod sources;
 pub mod timeline;
+
+// One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
+// so building a family never edits this list.
+pub mod aliases;
+pub mod chunk_queries;
+pub mod code_edges;
+pub mod contradictions;
+pub mod dream;
+pub mod embeddings;
+pub mod eval_capture;
+pub mod extraction;
+pub mod facts;
+pub mod keyword;
+pub mod link_queries;
+pub mod ontology;
+pub mod page_body;
+pub mod page_ops;
+pub mod raw_files;
+pub mod relations;
+pub mod salience;
+pub mod stats;
+pub mod takes;
+pub mod timeline_queries;
+pub mod transactions;
+pub mod vectors;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;

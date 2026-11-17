@@ -4,7 +4,7 @@
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), serves (the Rust engine serves the member: with
 #   GBRAIN_TEST_RUST_ARM=1 its case must match PGLite, end on the typed refusal of an option or input the member declines
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
-#   test/rust-expected-divergence.tsv names),
+#   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
 # covered: 198/198
 # lifecycle: 9/9

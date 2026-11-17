@@ -349,7 +349,7 @@ export interface RustCase<T> {
  *  - it ends on the typed refusal of a capability it reaches (a member Rust does not serve, or an option a served
  *    member declines): counted as refused;
  *  - it returns the value the reference arm returned: counted as equal;
- *  - it returns a value that differs from the reference in exactly the way its row in test/rust-expected-divergence.tsv
+ *  - it returns a value that differs from the reference in exactly the way its row in test/rust-expected-divergence/
  *    names (a named normaliser maps both sides to one value, and the raw values must still differ so a stale row
  *    fails): counted as diverged.
  * Anything else fails: a refusal the case caught on its way to some other failure, or to a value, does not make it pass,
@@ -380,7 +380,7 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
       throw outcome.error;
     }
     if (c.divergence) {
-      throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence.tsv (${c.divergence.reason}) but now stops on a typed refusal; remove the row`);
+      throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence/ (${c.divergence.reason}) but now stops on a typed refusal; remove the row`);
     }
     tally.refused++;
     return;
@@ -404,7 +404,7 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
     return;
   }
   if (same) {
-    throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence.tsv (${c.divergence.reason}) but now matches ${reference.backend}; remove the row`);
+    throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence/ (${c.divergence.reason}) but now matches ${reference.backend}; remove the row`);
   }
   const normalize = DIVERGENCE_NORMALIZERS[c.divergence.normalizer];
   if (normalize === undefined) throw new Error(`[rust] "${c.name}": the divergence row names the normaliser "${c.divergence.normalizer}", which does not exist`);

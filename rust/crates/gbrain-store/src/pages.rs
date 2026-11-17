@@ -998,6 +998,7 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     clear_chunks(tx, page.id)?;
     crate::links::remove_page_links(tx, page.id)?;
     crate::timeline::remove_page_timeline(tx, page.id)?;
+    crate::cascade::remove_page_rows(tx, page)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
 }

@@ -21,7 +21,7 @@
  * option or input it declines (a served member can refuse part of its surface: a
  * `source_path` write, `listColumnsOnly`, a vector, a fuzzy `resolveSlugs`, a
  * multi-source `getChunks`), or differ only the way a row in
- * test/rust-expected-divergence.tsv names), `refuses:<capability>` (the arm must throw the typed
+ * test/rust-expected-divergence/ names), `refuses:<capability>` (the arm must throw the typed
  * `engine_capability_missing` refusal) or `n/a:<why>` (the method does not
  * exist on that arm). They come from each case's `requires` declaration and
  * test/engine-parity/arm-capabilities.ts.
@@ -196,7 +196,7 @@ export function buildCoverage(): CoverageReport {
     const reqs = requirements.get(m);
     if (!reqs) return '-';
     if (arm === 'rust') {
-      // The Rust engine serves the member (it must match PGLite, bar a row in test/rust-expected-divergence.tsv) or refuses its capability.
+      // The Rust engine serves the member (it must match PGLite, bar a row in test/rust-expected-divergence/) or refuses its capability.
       const refusal = rustRefusal(m);
       return refusal === null ? 'serves' : `refuses:${refusal}`;
     }
@@ -219,7 +219,7 @@ export function buildCoverage(): CoverageReport {
     '# pglite/postgres/rust = what each arm must do: yes (runs, compared), serves (the Rust engine serves the member: with',
     '#   GBRAIN_TEST_RUST_ARM=1 its case must match PGLite, end on the typed refusal of an option or input the member declines',
     '#   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in',
-    '#   test/rust-expected-divergence.tsv names),',
+    '#   test/rust-expected-divergence/ names),',
     '#   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).',
     `# covered: ${covered.length}/${methods.length}`,
     ...perFamily,

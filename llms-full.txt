@@ -6314,12 +6314,12 @@ A scope that names no source (an empty string `sourceId` or `sourceIds` entry) i
 Keyword search hides what PGLite hides: soft-deleted pages, archived sources, and pages that carry a `quarantine` or
 `pinned_question` frontmatter key, whatever its value. Ranking-only options of `searchKeyword` are accepted and
 ignored, because Rust ranks with BM25 and this is not parity with PGLite (design D5). Its scores and tie order differ
-from PGLite's. The expected difference is listed in `test/rust-expected-divergence.tsv`.
+from PGLite's. The expected difference is listed in `test/rust-expected-divergence/` (one file per family).
 
 The parity suite checks this: with `GBRAIN_TEST_RUST_ARM=1` each `test/engine-parity/` file adds a Rust arm. A case that
 reaches a member or an option Rust refuses must end on that typed refusal (a refusal the case caught on the way to
 another outcome does not count); any other case must return what PGLite returns, or differ only as its row in
-`test/rust-expected-divergence.tsv` names with a normaliser, and Rust must still return a value (a thrown error never
+`test/rust-expected-divergence/` (one file per family) names with a normaliser, and Rust must still return a value (a thrown error never
 passes, and a row that stops being true fails the run). The suite
 runs on PGLite alone without the flag.
 
