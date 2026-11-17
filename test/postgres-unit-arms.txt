@@ -199,6 +199,9 @@ test/held-bare-name-move-gst2492.test.ts
 test/held-fence-readers-gst2492.test.ts
 test/held-move-plan-gst2497.test.ts
 test/held-read-signals.test.ts
+test/held-row-page-reads-2891.test.ts
+test/held-row-review-2891.test.ts
+test/held-row-writeback-2891.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
 test/holding-page-saves-gst2497.test.ts
@@ -378,6 +381,7 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
+test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
@@ -627,6 +631,7 @@ test/repair-unwithdrawn-facts-8819.test.ts
 test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
+test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
@@ -732,6 +737,7 @@ test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
 test/sync-restored-file-purge.test.ts
+test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
 test/sync-status-commits-waiting-gst2515.test.ts
