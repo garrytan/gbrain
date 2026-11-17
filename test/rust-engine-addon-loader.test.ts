@@ -7,8 +7,8 @@
  *    home and the brain as they were and says rust_engine_addon_missing or rust_engine_addon_mismatch.
  * 2. Credible regressions: skipping the digest or attestation check; renaming before verifying; leaving the staging
  *    file or a half-written addon behind; refetching when a verified addon is cached; GBRAIN_RUST_ENGINE_ADDON
- *    skipping the engine_abi or target checks too; loadRustEngineAddon swallowing an error that is not a refusal.
- *    Also: two starts sharing one gbrain home interleaving a replace and its rollback.
+ *    skipping the engine_abi or target checks too; loadRustEngineAddon swallowing an error that is not a refusal;
+ *    two starts sharing one gbrain home interleaving a replace and its rollback.
  * 3. Why not already covered: nothing else exercises the addon loader in src/core/rust-engine/.
  * 4. Production seam: AddonFetchDeps (the same shape binary-self-update.ts injects) plus `dlopen`, `target` and
  *    `rustDir`; no production caller needs them to differ, tests do.
@@ -21,8 +21,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
-import { dirname } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { EXPECTED_BUILDER_IDS, type ParsedAttestation } from '../src/core/binary-self-update.ts';
 import { loadRustAddon, loadRustEngineAddon, type RustAddonLoaderDeps } from '../src/core/rust-engine/addon-loader.ts';
