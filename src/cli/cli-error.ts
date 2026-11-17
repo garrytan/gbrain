@@ -178,6 +178,7 @@ export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[];
     const err = opError('pglite_busy', String(busy.message ?? 'The brain is busy.'), suggestion, {
       ...(typeof busy.reason === 'string' ? { reason: busy.reason } : {}),
       ...(fix ? { fix } : {}),
+      ...(busy.reason === 'live_serve' ? { docs: 'docs/ENGINES.md#pglite-live-serve' } : {}),
     });
     return writeCliError(err, command, { argv, legacy: { error: 'pglite_busy', retryable: true, reason: busy.reason, next_action: next } });
   }
