@@ -19,7 +19,8 @@ Five kinds of caller read a brain:
   sub-agents included, with `gbrain auth rescope --token <name> --member <owner>`. A Claude Code or Codex install
   only the owner uses: `gbrain setup <claude-code|codex> --stdio-member <owner>`, which binds that harness's stdio
   entry on that machine and nothing else (PGLite or Postgres); for a harness several people talk to, one key per
-  person over `gbrain serve --http` (`gbrain auth create <name> --member <id>`). On a single-user brain this is how the owner's own
+  person over `gbrain serve --http` (`gbrain auth create <name> --member <id>`, which mints read and write only; add
+  `--scopes read,write,admin` for a key that also runs admin tools). On a single-user brain this is how the owner's own
   agent reads the whole brain.
 - **Other members**: credentials bound to any other enabled member.
 - **Public or unbound callers**: credentials bound to no member, and audiences that include a guest.
@@ -38,6 +39,7 @@ Five kinds of caller read a brain:
 | folder rule (`gbrain access rule`) | reads | only when listed | only when listed | hidden | only when every entry is listed |
 | derived from a `readable_by` page | reads | hidden | hidden | hidden | hidden |
 | fact `visibility: private` | reads | reads | hidden | hidden | hidden |
+| page or fact in an owner-only source (`imessage`, `owner_only: true`), or derived from one | reads | reads | hidden | hidden | hidden, under every relaxation |
 
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
 links, timelines, versions). Designations govern readers, not processing: restricted pages are embedded
@@ -224,7 +226,7 @@ page private only by a privacy alias, a pinned question, a derived type or a pri
 `visibility: private` by any of these writes that states no visibility, and a pinned question keeps its
 `pinned_question`. The revision and the journaled request (`ownerWrite`) name the owner's credential. Readers lists and
 folder rules that leave the owner out still refuse it, a soft-deleted private page stays refused, and every other caller
-is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope (`gbrain auth create <name> --member <owner> --scopes read`; without `--scopes` the token gets full access).
+is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope (`gbrain auth create <name> --member <owner> --scopes read`; without `--scopes` a `--member` token gets read and write, and `--scopes read,write,admin` adds admin).
 
 **The owner opt-in.** `gbrain access owner reads-restricted on` (config `access.owner_reads_restricted`, off by
 default and unchanged on upgrade) lets the owner's credentials read the pages that `readable_by` lists, folder rules
@@ -241,6 +243,18 @@ One owner credential both reads every private page and writes new `default` page
 owner agent can copy private content into a shared page. A prompt planted in a page that agent reads can ask it to.
 Bind only agents you trust with the whole brain as the owner; give every other agent its own member, whose new pages
 stay kept to it.
+
+### Owner-only sources (`owner_only`)
+
+An `imessage` source, and any source whose `sources.config` has `owner_only: true`, is read only by the local CLI and
+by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
+(private or not), for its facts and timeline rows, and for pages and facts derived from them: a synthesized concept
+with an input page there, and any page or fact whose recorded derivation inputs reach a row there. None of the
+relaxations above widens it: `--private-pages granted-sources`, `--private-facts granted-sources`,
+`search.remote_private_pages`, `access.members_read_lineage`, `access.owner_reads_restricted` and
+`visibility.honor_aliases` leave it in place, and so do shared-room audiences, guests and attested calls. A remote
+write into an owner-only source from any credential but the owner's is refused the same way. The rule is worked out
+at read time from the source, so nothing is stored per page and a repo-less brain works the same.
 
 ### Audience members (`gbrain access member kind`)
 

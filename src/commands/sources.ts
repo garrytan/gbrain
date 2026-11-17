@@ -148,11 +148,11 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
 
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
-  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
+  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack] ' +
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
@@ -1204,8 +1204,8 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   const exposure = await import('../core/access/federation-exposure.ts');
   const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !wasFederated);
   if (exposed) console.error(exposure.pagesExposedLines(id, exposed).join('\n'));
-  if (json) console.log(JSON.stringify({ id, federated: value, ...(exposed ? { pages_exposed: exposed } : {}) }));
-
+  const keys = value ? [] : await (await import('./access-serves.ts')).keysStillReadingNotice(engine, id, say);
+  if (json) console.log(JSON.stringify({ id, federated: value, ...(exposed ? { pages_exposed: exposed } : {}), ...(keys.length ? { keys_still_reading: keys } : {}) }));
   // v0.40 D19: auto-submit embed-backfill when coverage < 100%. Federation
   // flip is a moment when the user explicitly opted into seeing this source
   // in default search; un-embedded chunks would hide content from the very

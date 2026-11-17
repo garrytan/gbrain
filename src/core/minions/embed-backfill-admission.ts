@@ -6,13 +6,14 @@
  * config, policy, SQL, or transaction access.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { EngineKind } from '../sql-engine-kind.ts';
 import { assertValidSourceId } from '../source-id.ts';
 
 export const EMBED_BACKFILL_JOB_NAME = 'embed-backfill';
 
 export type EmbedBackfillWorkerSurface =
   | { status: 'worker_backed'; engineKind: 'postgres' }
-  | { status: 'no_worker_surface'; engineKind: 'pglite' | 'unknown' };
+  | { status: 'no_worker_surface'; engineKind: 'pglite' | 'rust' | 'unknown' };
 
 export interface EmbedBackfillAdmissionTrust {
   /** The caller starts and awaits an inline worker in this same process. */
@@ -22,9 +23,10 @@ export interface EmbedBackfillAdmissionTrust {
 export function embedBackfillWorkerSurface(
   engine: Pick<BrainEngine, 'kind'>,
 ): EmbedBackfillWorkerSurface {
-  const kind = engine.kind;
+  const kind: EngineKind = engine.kind;
   if (kind === 'postgres') return { status: 'worker_backed', engineKind: 'postgres' };
   if (kind === 'pglite') return { status: 'no_worker_surface', engineKind: 'pglite' };
+  if (kind === 'rust') return { status: 'no_worker_surface', engineKind: 'rust' };
   kind satisfies never;
   // Runtime defense for untyped plugins/casts whose value is outside the
   // declared union; the compile-time check above forces policy for new kinds.
@@ -58,15 +60,17 @@ function assertEmbedBackfillSourceId(sourceId: unknown): asserts sourceId is str
 
 export class NoEmbedBackfillWorkerSurfaceError extends Error {
   readonly code = 'no_worker_surface' as const;
-  readonly engineKind: 'pglite' | 'unknown';
+  readonly engineKind: 'pglite' | 'rust' | 'unknown';
   readonly sourceId: string;
 
-  constructor(sourceId: string, engineKind: 'pglite' | 'unknown' = 'pglite') {
+  constructor(sourceId: string, engineKind: 'pglite' | 'rust' | 'unknown' = 'pglite') {
     const source = sourceId || '<source-id>';
     const direct = embedBackfillManualDrainCommand(source);
     const surface = engineKind === 'pglite'
       ? 'PGLite has no persistent worker surface'
-      : 'the runtime engine kind has no recognized persistent worker surface';
+      : engineKind === 'rust'
+        ? 'the Rust engine has no minion queue yet'
+        : 'the runtime engine kind has no recognized persistent worker surface';
     super(
       `embed-backfill job rejected: ${surface}, so a queued row cannot drain. ` +
       `Run \`${direct}\` instead.`,

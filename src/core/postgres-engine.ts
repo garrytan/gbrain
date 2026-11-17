@@ -1,4 +1,5 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
+import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
@@ -224,6 +225,7 @@ export class PostgresEngine implements BrainEngine {
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
+  readonly capabilities: EngineCapabilities = capabilitiesForEngineKind('postgres');
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
   private _disconnectPromise: Promise<void> | null = null;
 
@@ -1718,6 +1720,10 @@ export class PostgresEngine implements BrainEngine {
   async listEmbeddingStateRows(opts: { sourceIds?: string[]; slugs?: string[]; states: readonly EmbeddingState[]; limit: number; purgeWindowHours: number }): Promise<EmbeddingStateRow[]> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return this.withScopedReadTransaction(opts.sourceIds, undefined, tx => chunksImpl.listEmbeddingStateRows(scopedRead(this.engineSqlOn(tx)), column, opts));
+  }
+
+  async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+    await this.transaction(tx => { const e = tx as PostgresEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
   }
 
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {

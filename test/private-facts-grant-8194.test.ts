@@ -49,6 +49,7 @@ import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { v319 } from '../src/core/schema-migrations/v319-principal-private-facts.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const GRANTED = 'pf-alpha';
