@@ -24,7 +24,7 @@
 
 import { BudgetTracker } from '../../core/budget/budget-tracker.ts';
 import { createBenchmarkBrain, resetTables } from '../longmemeval/harness.ts';
-import type { PGLiteEngine } from '../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 import { ClaudeCodeAdapter } from './adapters/claude-code.ts';
 import { CodexAdapter } from './adapters/codex.ts';
 import { OpenClawAdapter } from './adapters/openclaw.ts';
@@ -122,7 +122,7 @@ function crossSourceSlugs(
  * external re-scorers see self-contained rows.
  */
 async function replayFixture(
-  engine: PGLiteEngine,
+  engine: BrainEngine,
   adapter: HarnessAdapter,
   lf: LoadedFixture,
   seed: SeedOutcome,

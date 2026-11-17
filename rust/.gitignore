@@ -1,0 +1,2 @@
+# Cargo build output, including the addon copied to target/addon/ by rust/scripts/build.ts.
+target/

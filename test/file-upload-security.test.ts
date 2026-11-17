@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, symlinkSync, mkdirSync, realpathSync } from 'fs';
-import { join } from 'path';
+import { join, win32 } from 'path';
 import { tmpdir } from 'os';
 import {
   validateUploadPath,
@@ -8,6 +8,7 @@ import {
   validateFilename,
   OperationError,
 } from '../src/core/operations.ts';
+import { uploadPathInsideRoot } from '../src/core/ops/context.ts';
 
 // --- validateUploadPath ---
 
@@ -58,6 +59,63 @@ describe('validateUploadPath', () => {
       expect(() => validateUploadPath(p, root)).toThrow(OperationError);
     } finally {
       rmSync(p, { force: true });
+    }
+  });
+
+  it('allows a file under a folder whose name starts with two dots', () => {
+    // `..drafts` is an ordinary name, not a parent-dir step: the confinement
+    // check must compare path components, not a `..` string prefix.
+    const dir = join(root, '..drafts');
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, 'report.pdf');
+    writeFileSync(p, 'pdf');
+    try {
+      expect(validateUploadPath(p, root)).toBe(realpathSync(p));
+      expect(validateUploadPath(p, root, true)).toBe(realpathSync(p));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows a file under a folder named exactly ... (three dots)', () => {
+    const dir = join(root, '...');
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, 'note.txt');
+    writeFileSync(p, 'hi');
+    try {
+      expect(validateUploadPath(p, root)).toBe(realpathSync(p));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects the confinement root itself', () => {
+    expect(() => validateUploadPath(root, root)).toThrow(/within the working directory/i);
+  });
+
+  it('rejects a sibling directory that shares the root name as a prefix', () => {
+    const sibling = `${root}-sibling`;
+    mkdirSync(sibling, { recursive: true });
+    const p = join(sibling, 'x.txt');
+    writeFileSync(p, 'x');
+    try {
+      expect(() => validateUploadPath(p, root)).toThrow(/within the working directory/i);
+    } finally {
+      rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a ..-named folder reached through a parent-dir step', () => {
+    // `<root>/../..drafts-escape/x` leaves the root even though the folder
+    // name itself only starts with two dots.
+    const dir = join(root, '..', `..drafts-escape-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, 'x.txt');
+    writeFileSync(p, 'x');
+    try {
+      expect(() => validateUploadPath(p, root)).toThrow(/within the working directory/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -236,5 +294,45 @@ describe('validateFilename', () => {
 
   it('rejects path separators in filename', () => {
     expect(() => validateFilename('foo/bar.txt')).toThrow(OperationError);
+  });
+});
+
+// --- strict upload containment, Windows path shapes ---
+// No Windows runner exists, and validateUploadPath's realpathSync never returns
+// backslash paths on POSIX, so these drive the pure comparison it uses with
+// path.win32 shapes. The old check (relative + round trip) accepted another
+// drive and a UNC share, because path.win32.relative across drives returns an
+// absolute path that does not start with '..'.
+
+describe('uploadPathInsideRoot — win32 shapes', () => {
+  const root = 'C:\\work';
+  const inside = (p: string) => uploadPathInsideRoot(p, root, win32.sep);
+
+  it('the old relative-path check accepted another drive and a UNC share', () => {
+    const oldCheck = (real: string) => {
+      const rel = win32.relative(root, real);
+      return !(rel === '' || rel.startsWith('..') || win32.resolve(root, rel) !== real);
+    };
+    expect(oldCheck('D:\\x.txt')).toBe(true);
+    expect(oldCheck('\\\\srv\\share\\x.txt')).toBe(true);
+  });
+
+  it('refuses a file on another drive', () => {
+    expect(inside('D:\\x.txt')).toBe(false);
+    expect(inside('D:\\work\\x.txt')).toBe(false);
+  });
+
+  it('refuses a file on a UNC share', () => {
+    expect(inside('\\\\srv\\share\\x.txt')).toBe(false);
+  });
+
+  it('refuses a sibling folder sharing the root name, and the root itself', () => {
+    expect(inside('C:\\work-sibling\\x.txt')).toBe(false);
+    expect(inside('C:\\work')).toBe(false);
+  });
+
+  it('accepts a file under a folder whose name starts with two dots', () => {
+    expect(inside('C:\\work\\..drafts\\report.pdf')).toBe(true);
+    expect(inside('C:\\work\\a.txt')).toBe(true);
   });
 });

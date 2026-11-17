@@ -544,8 +544,8 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
 /** One migration's full body (SQL + handler + verify), extracted so the
  *  runMigrations loop can name the failing migration in quiet-replay mode. */
 async function applyOneMigration(engine: BrainEngine, m: Migration): Promise<void> {
-    // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
-    const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+    // Pick SQL: engine-specific `sqlFor` wins over `sql`; Rust has no dialect (D18) and its runMigration refuses raw_sql.
+    const sql = (m.sqlFor as Partial<Record<string, string>> | undefined)?.[engine.kind] ?? m.sql;
 
     if (sql) {
       try {
