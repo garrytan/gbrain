@@ -39,7 +39,7 @@ describe('frontmatterHandle', () => {
     expect(frontmatterHandle('twitter.com/alicetweets?lang=en')).toBe('alicetweets');
   });
   test('placeholders, ids and prose are not handles', () => {
-    for (const v of ['unknown', 'Unknown', 'none', 'n/a', '0', '000', '12345', '', '  ', 'Alice Example', 'a-very-long-handle-name']) {
+    for (const v of ['unknown', 'Unknown', 'none', 'n/a', '0', '000', '12345', '', '  ', 'Alice Example', 'a-very-long-handle-name', 'true', 'false']) {
       expect(frontmatterHandle(v)).toBeNull();
     }
     expect(frontmatterHandle(null)).toBeNull();
@@ -106,5 +106,21 @@ describe('frontmatter aliases and bare first names', () => {
     await put('companies/alice', 'company', 'Alice');
     expect(await links('Zorbinsky called.')).toEqual(['people/zorbinsky']);
     expect(await links('Alice the company called.')).toEqual(['companies/alice']);
+  });
+
+  test('a one-word person title keeps linking when only its own alias starts with it', async () => {
+    await put('people/zorbinsky', 'person', 'Zorbinsky', { aliases: ['Zorbinsky Example'] });
+    expect(await links('Zorbinsky called.')).toEqual(['people/zorbinsky']);
+  });
+
+  test('a thin title keeps its name when the claimant alias is dropped by a later guard', async () => {
+    await put('companies/acme', 'company', 'Acme');
+    await put('companies/acme-holdings', 'company', 'Acme Holdings', { aliases: ['Acme'] });
+    expect(await links('We met Acme today.')).toEqual(['companies/acme']);
+  });
+
+  test('a YAML boolean in a handle field is no handle', async () => {
+    await put('people/alice-example', 'person', 'Alice Example', { x: true });
+    expect(await links('Posted by @true today.')).toEqual([]);
   });
 });

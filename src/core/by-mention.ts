@@ -113,7 +113,7 @@ export const HANDLE_FRONTMATTER_KEYS = ['x_handle', 'twitter', 'twitter_handle',
 
 const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 /** Values people write in a handle field when they do not know the handle. */
-const PLACEHOLDER_HANDLES = new Set(['unknown', 'none', 'null', 'nil', 'na', 'tbd', 'todo', 'unset', 'undefined', 'private', 'redacted', 'anonymous']);
+const PLACEHOLDER_HANDLES = new Set(['unknown', 'none', 'null', 'nil', 'na', 'tbd', 'todo', 'unset', 'undefined', 'private', 'redacted', 'anonymous', 'true', 'false', 'yes', 'no']);
 
 /**
  * The X handle a frontmatter value names, lowercase without the `@`, or null
@@ -574,7 +574,8 @@ export async function buildGazetteer(
   // exactly one other page of its kind claims, while it claims nothing itself,
   // is a thin page for that person or company: its title yields the name to
   // the claimant (a handle mention lands on the person, not on a page whose
-  // slug is the handle). Two claimants keep the title.
+  // slug is the handle) once the claimant's own entry for the name survives
+  // the alias guards below. Two claimants keep the title.
   const handlesOf = (r: typeof rows[number]) => [...new Set([r.h1, r.h2, r.h3, r.h4].map(frontmatterHandle).filter((h): h is string => !!h))];
   const explicit = new Map<string, Set<string>>();
   const claim = (src: string, key: string, slug: string) => {
@@ -590,17 +591,21 @@ export async function buildGazetteer(
     const [other] = slugs;
     return kindOf.get(`${src}\0${other}`) === kindOf.get(`${src}\0${slug}`) ? other! : null;
   };
-  /** `source\0name\0claimant` for every title that yielded its name to a claimant. */
+  /** `source\0name\0claimant` for every title that yields its name to a claimant whose entry survives. */
   const yielded = new Set<string>();
+  const yielding: Array<{ entry: GazetteerEntry; base: Omit<DroppedName, 'reason'>; key: string }> = [];
 
   // Per source: the first word of every multi-word person name (titles and
-  // aliases). A one-word person title equal to one is a bare first name: it
-  // never links alone, the same rule single-token aliases follow below.
-  const personFirstWords = new Map<string, Set<string>>();
+  // aliases) and the pages that write it. A one-word person title equal to
+  // another page's one is a bare first name: it never links alone, the same
+  // rule single-token aliases follow below.
+  const personFirstWords = new Map<string, Map<string, Set<string>>>();
   const notePersonName = (src: string, slug: string, name: string | null) => {
     const tokens = tokenizeTitle(name ?? '');
     if (tokens.length < 2 || !isPerson(src, slug)) return;
-    personFirstWords.set(src, (personFirstWords.get(src) ?? new Set<string>()).add(tokens[0]!));
+    const words = personFirstWords.get(src) ?? new Map<string, Set<string>>();
+    words.set(tokens[0]!, (words.get(tokens[0]!) ?? new Set<string>()).add(slug));
+    personFirstWords.set(src, words);
   };
   for (const r of rows) notePersonName(r.source_id ?? 'default', r.slug, r.title);
   for (const a of aliasRows) notePersonName(a.source_id ?? 'default', a.slug, a.alias_norm);
@@ -649,10 +654,11 @@ export async function buildGazetteer(
     // ("Will Smith") are unaffected; aliases of every type are checked below.
     if (tokens.length === 1 && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     noteFirstWord(src, tokens);
-    if (tokens.length === 1 && isPerson(src, row.slug) && personFirstWords.get(src)?.has(tokens[0]!)) { drop({ ...base, reason: 'ambiguous_first_word' }); continue; }
+    if (tokens.length === 1 && isPerson(src, row.slug) && [...personFirstWords.get(src)?.get(tokens[0]!) ?? []].some(s => s !== row.slug)) { drop({ ...base, reason: 'ambiguous_first_word' }); continue; }
+    const entry: GazetteerEntry = { slug: row.slug, source_id: src, title: row.title, tokens, origin: 'title', matchText: row.title, ...stubFlag(src, row.slug) };
     const owner = claimant(src, tokens.join(' '), row.slug);
-    if (owner) { yielded.add(`${src}\0${tokens.join(' ')}\0${owner}`); drop({ ...base, reason: 'alias_collision' }); continue; }
-    add({ slug: row.slug, source_id: src, title: row.title, tokens, origin: 'title', matchText: row.title, ...stubFlag(src, row.slug) });
+    if (owner) { const key = `${src}\0${tokens.join(' ')}\0${owner}`; yielded.add(key); yielding.push({ entry, base, key }); continue; }
+    add(entry);
   }
 
   // ── Alias entries ────────────────────────────────────────────────────────
@@ -758,12 +764,20 @@ export async function buildGazetteer(
       if (yielded.has(k) && !aliasKeys.has(k)) { aliasKeys.add(k); aliasEntries.push({ entry, base: { ...base, name: handle } }); }
     }
   }
+  const claimed = new Set<string>();
   for (const { entry, base } of aliasEntries) {
     if (entry.tokens.length === 1 && firstWords.get(entry.source_id)?.has(entry.tokens[0]!)) {
       drop({ ...base, reason: 'ambiguous_first_word' });
       continue;
     }
     add(entry);
+    claimed.add(`${entry.source_id}\0${entry.tokens.join(' ')}\0${entry.slug}`);
+  }
+  // A title yields only to a claimant whose entry for the name survived;
+  // otherwise it keeps the name, as it did before the claim.
+  for (const { entry, base, key } of yielding) {
+    if (claimed.has(key)) drop({ ...base, reason: 'alias_collision' });
+    else add(entry);
   }
 
   // Sort each bucket by token-count DESC so maximal-munch walks longest-first;
