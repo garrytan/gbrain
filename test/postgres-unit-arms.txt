@@ -171,6 +171,7 @@ test/git-canonical-conversion-progress.test.ts
 test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
 test/git-canonical-indexer-g3.test.ts
+test/git-commit-push-untrack-db-only-paths-gst2964.test.ts
 test/git-commit-push-untrack-gst2519.test.ts
 test/git-door-index-lock-7742.test.ts
 test/git-door-planned-state.test.ts
