@@ -799,3 +799,9 @@ describe('ci-reuse remote-gate decision', () => {
     expect(await decideGate(deps, PROFILES.test, M2, T, REPO)).toMatchObject({ state: 'reuse', tests: 600 });
   });
 });
+describe('docs/ci-event-parity.md', () => {
+  test('carries no paragraph cut short by a line-truncation marker', () => {
+    const doc = readFileSync(resolve(import.meta.dir, '../../docs/ci-event-parity.md'), 'utf8');
+    expect(doc).not.toMatch(/\(line truncated to \d+ chars\)/);
+  });
+});
