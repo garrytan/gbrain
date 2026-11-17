@@ -1374,7 +1374,7 @@ COVERAGE_DIR=$PWD/.coverage bash scripts/test-shard.sh 1 36 \
 
 When `bun run test` finds any failure, the wrapper:
 
-1. Writes failure blocks (each prefixed with `--- shard N: <test name> ---`) to `.context/test-failures.log` (workspace-local, gitignored). On systems without a writable `.context/`, falls back to `/tmp/gbrain-test-failures.log`.
+1. Writes one block per failing test to `.context/test-failures.log` (workspace-local, gitignored). On systems without a writable `.context/`, falls back to `/tmp/gbrain-test-failures.log`. A block holds the test's own source context, error and Expected/Received diff, then its `--- shard N: (fail) <test name>` line.
 2. Prints a loud stderr banner with the absolute log path, plus the last 30 lines of the failure log inlined. Banner survives `| head` / `| tail` / agent-side log truncation.
 3. Writes a one-line-per-shard summary to `.context/test-summary.txt` (`shard N/M: pass=X fail=Y skip=Z rc=W`).
 4. Exits non-zero. Empty failure log + non-zero exit = infrastructure problem (wedged shard, killed child); the banner says so.

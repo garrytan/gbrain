@@ -58,6 +58,7 @@ import { atomFenceRowsRepair } from './atom-fence-rows.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
 import { unwithdrawnFactsRepair } from './unwithdrawn-facts.ts';
 import { purgedPageFactsRepair } from './purged-page-facts.ts';
+import { purgedChangeReasonsRepair } from './purged-change-reasons.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { agentSessionFactsRepair, agentSessionFlagArgs } from './agent-session-facts.ts';
@@ -272,6 +273,20 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'exists. Rows of a page the purge ledger records are evidenced; rows of a page gone with no purge record (a retention purge, or a rename that did '
       + 'not carry its facts) are retired only with --include-ambiguous; withdrawn, superseded and referenced rows are never touched. Preview-bound: '
       + '--apply --expect <hash> --yes expires exactly the previewed rows; a row that changed since reports changed_since_preview. Database-only; runs only when named.',
+  },
+  'purged-change-reasons': {
+    handler: purgedChangeReasonsRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: "Set the previewed page-history change reasons that quote a purged claim to '[purged]'",
+      why: 'The preview listed each stored change reason whose text is the Git reason of a (commit, path) a fact purge tombstoned; applying it redacts exactly those rows.',
+      risk: "Database rows only: page_versions.change_reason becomes '[purged]', as the purge itself writes; no page, file or Git commit changes. "
+        + 'A row whose reason changed since the preview is kept. The old text is not kept anywhere by this repair.',
+      user_message: "Redact the previewed page-history change reasons that still quote a purged claim? They become '[purged]'; pages, files and Git history are unchanged.",
+    },
+    summary: 'Redact change reasons that a sync stored after a fact purge tombstoned them (before the #8635 fix): a page version in a source whose '
+      + 'change_reason equals the Git reason trailer of a tombstoned (commit, path), re-read from the checkout. Rows whose source_path is that path are '
+      + 'evidenced; the same text under another path is kept unless --include-ambiguous. Preview-bound: --apply --expect <hash> --yes sets exactly the '
+      + "previewed rows to '[purged]'; a row that changed since reports changed_since_preview. Repo-less sources have nothing to check. Database-only; runs only when named.",
   },
   'conversation-labels': {
     handler: conversationLabelsRepair, embeds: 'none', checks: ['conversation_label_facts'], explicit_only: true, consent: 'destructive',
