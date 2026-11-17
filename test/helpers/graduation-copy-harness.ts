@@ -12,7 +12,7 @@ import { copyOrder, GRADUATION_INVENTORY, listRelations } from '../../src/core/p
 
 export function inventoryEntry(relation: string, extra: Partial<InventoryEntry> = {}): InventoryEntry {
   const known = GRADUATION_INVENTORY.entries.find(e => e.relation === relation);
-  return { ...(known ?? { relation, kind: 'table', class: 'carry', engines: { pglite: true, postgres: true }, lossKind: 'user_data', transforms: [], reason: 'test table' }), ...extra };
+  return { ...(known ?? { relation, kind: 'table', class: 'carry', engines: { pglite: true, postgres: true, rust: false }, lossKind: 'user_data', transforms: [], reason: 'test table' }), ...extra };
 }
 
 /** Carried and rebound entries present on both engines, parents first. */

@@ -176,7 +176,8 @@ claude mcp add gbrain -t http \
 Replace the host with your MagicDNS name (or your ngrok domain) and
 `YOUR_TOKEN` with a token from `gbrain auth create "claude-code"`.
 
-> A `gbrain auth create` token is a long-lived, full-access secret. Keep it
+> A `gbrain auth create` token is a long-lived secret that carries its grant's
+> scopes (full-access when minted without `--scopes`). Keep it
 > private (it lands in `~/.claude.json`), and prefer a scoped/short-lived token
 > where your host supports one.
 

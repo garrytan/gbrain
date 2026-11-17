@@ -70,10 +70,10 @@ describe('private-pages grant output (#8104)', () => {
     expect(privatePagesFromColumn(null)).toBe('none');
   });
 
-  test('auth list --json prints exactly id, name, scopes, created_at, last_used_at, status and private_pages: never token_hash', async () => {
+  test('auth list --json prints exactly id, name, scopes, created_at, last_used_at, status, private_pages, private_facts and member_status: never token_hash', async () => {
     const tokens = JSON.parse(await auth(['list', '--json'])) as Array<Record<string, unknown>>;
     for (const t of tokens) {
-      expect(Object.keys(t).sort()).toEqual(['created_at', 'id', 'last_used_at', 'name', 'private_pages', 'scopes', 'status']);
+      expect(Object.keys(t).sort()).toEqual(['created_at', 'id', 'last_used_at', 'member_status', 'name', 'private_facts', 'private_pages', 'scopes', 'status']);
     }
     expect(JSON.stringify(tokens)).not.toContain('token_hash');
     const byName = Object.fromEntries(tokens.map(t => [t.name as string, [t.status, t.private_pages]]));
@@ -107,6 +107,11 @@ describe('private-pages grant output (#8104)', () => {
   test('a brain without the private_pages column lists its clients with private pages none (the top rung of the fallback ladder)', async () => {
     // Last test of the file: the column is dropped from this throwaway brain.
     const rows = await withBrain(async engine => {
+      // Value: protects=a brain without oauth_clients.private_facts still lists clients with private_pages (second rung); fails_when=private_facts leaves the degrade list or the rung is removed; why_new=only the private_pages rung was driven; seam=none; no_claim=Postgres error codes (PGLite only)
+      await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN private_facts');
+      const facts = (await listClientRows(engine)).find(r => r.client_id === 'client-granted')!;
+      expect(facts.private_pages).toBe('granted_sources');
+      expect((facts as { private_facts?: unknown }).private_facts).toBeUndefined();
       await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN private_pages');
       return listClientRows(engine);
     });

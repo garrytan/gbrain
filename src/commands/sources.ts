@@ -1205,8 +1205,8 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   const exposure = await import('../core/access/federation-exposure.ts');
   const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !wasFederated);
   if (exposed) console.error(exposure.pagesExposedLines(id, exposed).join('\n'));
-  if (json) console.log(JSON.stringify({ id, federated: value, ...(exposed ? { pages_exposed: exposed } : {}) }));
-
+  const keys = value ? [] : await (await import('./access-serves.ts')).keysStillReadingNotice(engine, id, say);
+  if (json) console.log(JSON.stringify({ id, federated: value, ...(exposed ? { pages_exposed: exposed } : {}), ...(keys.length ? { keys_still_reading: keys } : {}) }));
   // v0.40 D19: auto-submit embed-backfill when coverage < 100%. Federation
   // flip is a moment when the user explicitly opted into seeing this source
   // in default search; un-embedded chunks would hide content from the very

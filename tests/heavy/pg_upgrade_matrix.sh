@@ -93,7 +93,11 @@ for SHAPE in "${SHAPES[@]}"; do
   # a freshly walked-forward brain may have legitimate warnings (zero pages,
   # no embeddings, etc) that are not wedge-class failures. We do NOT accept
   # 'fail' or 'failures' (gbrain doctor's terminal-failure shape).
-  STATUS=$(grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]+"' "$DOCTOR_OUT" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+  # The report is one JSON line with a "status" per check, so grep -o can print
+  # more than one pipe buffer. A reader that stops after the first line (head)
+  # SIGPIPEs grep, and pipefail + set -e then kill the script with 141 and no
+  # message. sed -n reads to EOF and keeps only the first (top-level) match.
+  STATUS=$(grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]+"' "$DOCTOR_OUT" | sed -nE '1s/.*"([^"]+)"$/\1/p') || STATUS=""
   case "$STATUS" in
     ok|warn|warnings)
       echo "[pg_upgrade_matrix] OK: shape=$SHAPE → status=$STATUS" | tee -a "$LOG_FILE"

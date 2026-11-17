@@ -210,6 +210,24 @@ describe('generateHtml', () => {
     expect(html).toContain('prefers-color-scheme: dark');
   });
 
+  test('markdown that contains a closing script tag cannot end the page script', () => {
+    const html = generateHtml({ title: 'T', markdown: '```html\n</script><img src=x onerror=alert(1)>\n```' });
+    const body = html.slice(html.lastIndexOf('<script>'));
+    expect(body.match(/<\/script>/gi)?.length).toBe(1);
+    expect(body).toContain('\\u003c/script>\\u003cimg src=x onerror=alert(1)>');
+  });
+
+  test('both page kinds render through the sanitizer with no inline handlers or outside resources', () => {
+    for (const encrypted of [null, encryptContent('# x', 'pw')]) {
+      const html = generateHtml({ title: 'T', markdown: '# x', encrypted });
+      expect(html).toContain('content.innerHTML = sanitizeHtml(marked.parse(markdown))');
+      expect(html).not.toMatch(/innerHTML = marked\.parse/);
+      expect(html).toContain("addEventListener('click'");
+      expect(html).not.toMatch(/<[a-z]+[^>]*\son[a-z]+=/i);
+      expect(html).not.toMatch(/\s(src|href)=["']?https?:/i);
+    }
+  });
+
   test('inlines marked.js (no CDN dependency)', () => {
     const html = generateHtml({ title: 'T', markdown: 'x' });
     expect(html).not.toContain('cdn.jsdelivr.net');

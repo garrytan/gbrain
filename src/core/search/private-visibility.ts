@@ -302,6 +302,10 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    may see, from its grant's `private_pages: granted_sources` axis (never the
  *    no-grant floor, federation, an OAuth client's bound source or a request's
  *    `source_ids`); empty for writes;
+ *  - privateFactSources: GBRA-575, the sources whose private facts the read may
+ *    see, from its grant's `private_facts: granted_sources` axis, on the same
+ *    terms as privateReadableSources; empty for writes, audiences, attested
+ *    actors and scope reads (privateFactSources());
  *  - hidePrivate: false only when an operator relaxed privacy for remote reads
  *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible),
  *    or the caller is the brain owner (owner);
@@ -346,6 +350,7 @@ export interface CallerAccess {
   /** GBRA-218 (A2): prefixes that read as nobody (a narrowing being stamped, an invalid policy file); prefix '' is the whole source. */
   folderCoverage: readonly FolderCoverage[];
   privateReadableSources: readonly string[];
+  privateFactSources: readonly string[];
   hidePrivate: boolean;
   owner: boolean;
   /**
@@ -385,7 +390,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, lineage: false, ownerReadsRestricted: false, audienceKindMembers: [], labelledOnly: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], privateFactSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, lineage: false, ownerReadsRestricted: false, audienceKindMembers: [], labelledOnly: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -395,6 +400,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
   const sources = access.privateReadableSources ?? base.privateReadableSources;
   const validIds = identity.length > 0 && validIdentity(identity);
   const fresh = access.identity !== undefined || access.audienceIdentities !== undefined;
+  const factSources = access.privateFactSources ?? (fresh ? [] : base.privateFactSources);
   const audienceIdentities = (access.audienceIdentities ?? (fresh ? [] : base.audienceIdentities))
     .map(id => id.length && validIdentity(id) ? Object.freeze([...new Set(id)].sort()) : Object.freeze([] as string[]));
   const audience = access.audience !== undefined ? access.audience : fresh ? null : base.audience;
@@ -409,6 +415,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     satisfiedRuleIds: satisfied.length && satisfied.every(validQualifiedRuleId) ? Object.freeze([...new Set(satisfied)].sort()) : Object.freeze([]),
     folderCoverage: Object.freeze([...(access.folderCoverage ?? base.folderCoverage)].map(c => Object.freeze({ source_id: c.source_id, prefix: c.prefix }))),
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
+    privateFactSources: factSources.length && factSources.every(isValidSourceId) ? Object.freeze([...new Set(factSources)]) : Object.freeze([]),
     hidePrivate: access.hidePrivate ?? (fresh ? true : base.hidePrivate),
     owner: access.owner ?? (fresh ? false : base.owner),
     ...lineageReads(access.owner ?? (fresh ? false : base.owner), audienceIdentities.length <= 1,
@@ -456,9 +463,22 @@ export function callerIsOwner(): boolean {
  * GST-2089: whether a fact read stays world-only (visibility = 'world'). Only the trusted local CLI (remote strictly
  * false) and the brain owner (CallerAccess.owner, the page rule) read private facts; provenance, source grants and
  * member access still apply to both. Fact arms decide their visibility list here and nowhere else.
+ * GBRA-575: a world-only read is not always world-only row by row. Its caller's private-facts grant
+ * (privateFactSources) still admits private facts in the sources that grant names: the visibility list stays
+ * ['world'] and factVisibilitySql widens it per row, because a whole-read boolean cannot see which source a row is in.
  */
 export function worldOnlyFacts(remote: boolean | undefined): boolean {
   return remote !== false && !callerIsOwner();
+}
+
+/**
+ * GBRA-575: the sources whose private facts a world-only read (worldOnlyFacts true) still admits: the grant's
+ * `private_facts: granted_sources` sources, which dispatch sets only on a credential's own non-mutating read. Empty
+ * for an audience, an attested actor and a labelled-only caller, and outside a remote record.
+ */
+export function privateFactSources(): readonly string[] {
+  const access = currentCallerAccess();
+  return access.audience || access.actor || access.labelledOnly ? [] : access.privateFactSources;
 }
 
 /** The current caller's member identity; empty outside a bound remote read or a local --as, and for an audience of several entries (see callerIdentities). */
@@ -936,7 +956,7 @@ export function privateTimelineEventFilterForCaller(timelineAlias: string): stri
  * every other page that is not a member page as the reader, and an owner read an audience member's page too. The
  * provenance page is judged as an origin: a raw-only rule (covers_derived false) does not hide the facts from its pages.
  */
-export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
+export function privateProvenanceFilterUnderPolicy(factAlias: string, perCandidate = false): string {
   const access = currentCallerAccess();
   const hide = !callerRelaxesPrivacy();
   const member = access.actor?.member ?? (access.audienceIdentities.length ? null : access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length));
@@ -949,7 +969,7 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds, true)} ELSE ${otherwise} END`
     : otherwise;
-  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)}${labelledOnlyFactSql(factAlias)})`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias, perCandidate)}${labelledOnlyFactSql(factAlias)})`;
 }
 
 /**
@@ -991,6 +1011,15 @@ function sharedHeldRuledSql(factAlias: string): string {
  */
 export function privateFactFilterForCaller(factAlias: string, perCandidate = false): string {
   return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)}${labelledOnlyFactSql(factAlias)})`;
+}
+
+/**
+ * GST-2951: the page gate for a fact read whose visibility follows worldOnlyFacts. The brain owner's read is judged by
+ * the policy recall and find_trajectory use (privateProvenanceFilterUnderPolicy), so the owner keeps facts taken from a
+ * private page it reads, while member access still applies; every other caller keeps privateFactFilterForCaller.
+ */
+export function privateFactFilterForReader(factAlias: string, perCandidate = false): string {
+  return callerIsOwner() ? privateProvenanceFilterUnderPolicy(factAlias, perCandidate) : privateFactFilterForCaller(factAlias, perCandidate);
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */

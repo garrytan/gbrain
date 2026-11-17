@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 314,
+    "count": 315,
     "gaps": [
       17,
       18,
@@ -72,8 +72,8 @@
       "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
       "failClosedLedgerGuards": "dadd3ceb13286ca7ab969a911a310c87be313de6ec2c2c8e14d3f95b72901481",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
-      "grantFromRow": "9586c777b944e8010340a1d0240b814fd89e24d01ea92fbde90d9005537a1925",
-      "hardenFunctionSearchPaths": "fd4dbb5e6f42931b80b3b041dde4b22100d08a449bd2d8b9c4a6e555e8959dfa",
+      "grantFromRow": "5e476f2df993a1de223727c72ddad3351462a1981c9a02285a2d847f7c29188d",
+      "hardenFunctionSearchPaths": "ca7bce96a087bfb4644268e5c2ad0ace76532905ceffb4efdc69608e0ef11894",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
       "identityIndexHasSource": "ab7e4cad64ebf233f3a884816c114b0c582f4f2166c3bcf19ed8d92bcfcf3807",
       "isLockTimeoutError": "52a3720e1ffb74ce381cc3269f78130c38a89c807e308283ec3d557bae2b89b1",
@@ -105,7 +105,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 319,
+    "latest": 320,
     "records": [
       {
         "handler": {
@@ -5207,6 +5207,19 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "principal_private_facts",
+        "sql": {
+          "length": 301,
+          "sha256": "af474ba82428e4e78e45de2dc84b8d016b954d920ab0e4285d47a2261db08669"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 319
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "token_read_shared",
         "sql": {
           "length": 173,
@@ -5215,7 +5228,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 319
+        "version": 320
       }
     ],
     "versions": [
@@ -5532,7 +5545,8 @@
       316,
       317,
       318,
-      319
+      319,
+      320
     ]
   },
   "normalizer": "migrations-record-v1"

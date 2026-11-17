@@ -16,6 +16,9 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { commitAndPush, checkoutRoot, previewPaths, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
+import { readUntrackPageVerdict, UNTRACK_PAGE_READ_TIMEOUT_MS, type UntrackPageVerdict } from '../core/git/untrack-admission.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import type { ManagedFilesystemRoot } from '../core/persistence/filesystem-guard.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -217,11 +220,45 @@ function runScan(p: Parsed): number {
   const commits = Number(execFileSync('git', ['-C', repo, 'rev-list', '--count', `${from}..${to}`], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim());
   const seconds = Math.round((Date.now() - started) / 100) / 10;
   const items = [...scan.findings.map(f => `  ${f.commit.slice(0, 7)} ${f.path}:${f.line} ${f.pattern} ${f.fingerprint}`),
-    ...scan.unscanned.map(u => `  ${u.commit.slice(0, 7)} ${u.path} too large to scan`), ...scan.gate_changes.map(g => `  ${g.commit.slice(0, 7)} ${g.path} changes what the scan sees`)];
+    ...scan.unscanned.map(u => `  ${u.commit.slice(0, 7)} ${u.path} too large to scan`), ...scan.gate_changes.map(g => `  ${g.commit.slice(0, 7)} ${g.path} changes what the scan sees`),
+    ...(scan.allowed ?? []).map(a => `  ${a.commit.slice(0, 7)} ${a.path}:${a.line} ${a.pattern} allowed by .gbrain-scan-allow line: ${a.entry}`),
+    ...(scan.allowlist_problems ?? []).map(p => `  .gbrain-scan-allow line ${p.entry}: ${p.problem}`)];
   emit(p.json, { repo, from, to, commits, seconds, would_refuse: refusal?.code ?? null, findings: scan.findings, unscanned: scan.unscanned, gate_changes: scan.gate_changes,
-    unreadable: scan.unreadable ?? null }, [`scanned ${commits} commit(s) ${from.slice(0, 12)}..${to.slice(0, 12)} in ${seconds} s: ${refusal ? `a push would refuse (${refusal.code})` : 'a push would not refuse'}`,
+    allowed: scan.allowed ?? [], allowlist_problems: scan.allowlist_problems ?? [], unreadable: scan.unreadable ?? null }, [`scanned ${commits} commit(s) ${from.slice(0, 12)}..${to.slice(0, 12)} in ${seconds} s: ${refusal ? `a push would refuse (${refusal.code})` : 'a push would not refuse'}`,
     ...(scan.unreadable !== undefined ? [`  not read in full: ${scan.unreadable}`] : []), ...items].join('\n'));
   return 0;
+}
+
+/** Opens this machine's brain with no migration or startup step, reads the verdict, and closes it; any failure or a read past the timeout is `unreadable`. */
+export async function untrackPageVerdict(managed: ManagedFilesystemRoot, root: string, rel: string[]): Promise<UntrackPageVerdict> {
+  const { isThinClient, loadConfig, toEngineConfig } = await import('../core/config.ts');
+  const { createEngine } = await import('../core/engine-factory.ts');
+  let engine: BrainEngine | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+  const read = (async (): Promise<UntrackPageVerdict> => {
+    const config = loadConfig();
+    if (!config) return { unreadable: 'no brain is configured on this machine' };
+    if (isThinClient(config) && !config.database_url) return { unreadable: 'this install is a thin client with no local brain' };
+    const engineConfig = config.engine === 'pglite' ? { ...toEngineConfig(config), pglite_shared_buffers: '32MB' } : { ...toEngineConfig(config), pool_max: 1 };
+    engine = await createEngine(engineConfig);
+    await engine.connect(engineConfig);
+    return readUntrackPageVerdict(engine, managed, root, rel);
+  })();
+  const timeout = new Promise<UntrackPageVerdict>(done => { timer = setTimeout(() => done({ unreadable: `the read took longer than ${UNTRACK_PAGE_READ_TIMEOUT_MS / 1000} s (another process may hold the brain)` }), UNTRACK_PAGE_READ_TIMEOUT_MS); });
+  let settled = false;
+  void read.finally(() => { settled = true; }).catch(() => {});
+  try {
+    return await Promise.race([read.catch((error: unknown) => ({ unreadable: (error as { code?: string; message?: string })?.code ?? (error as Error)?.message ?? String(error) })), timeout]);
+  } finally {
+    clearTimeout(timer);
+    const close = () => (engine as BrainEngine | null)?.disconnect().catch(() => {});
+    if (settled) await close(); else void read.catch(() => {}).finally(close);
+  }
+}
+
+/** GST-2964: in a managed canonical worktree, the brain's answer for an untrack (the source's root and its live code-file pages); a checkout with no managed source opens no brain. */
+async function untrackPagesFor(repo: string, paths: string[]): Promise<UntrackPageVerdict | undefined> {
+  const managed = managedFilesystemRootFor(repo);
+  return managed && paths.length ? untrackPageVerdict(managed, repo, paths) : undefined;
 }
 
 function emit(json: boolean, doc: Record<string, unknown>, human: string): void {
@@ -268,7 +305,7 @@ export async function runGit(args: string[]): Promise<number> {
       const branch = execFileSync('git', ['-C', repo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
       const managed = managedFilesystemRootFor(repo);
-      const untracked = p.untrack && paths.length ? previewUntrack(repo, paths, { allowOutsideSourceRoot: p.allowOutside }) : undefined;
+      const untracked = p.untrack && paths.length ? previewUntrack(repo, paths, { allowOutsideSourceRoot: p.allowOutside, untrackPages: await untrackPagesFor(repo, paths) }) : undefined;
       if (!p.untrack && paths.length) previewPaths(repo, paths, { allowOutsideSourceRoot: p.allowOutside, bases, cwd });
       emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : p.untrack ? 'untrack' : 'commit-push', managed, ...(untracked ? { untracked } : {}) },
         `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `${p.untrack ? 'untrack' : 'commit'} ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); ${managed ? `managed canonical worktree (${managed.evidence})` : 'not a managed worktree'}; nothing written`);
@@ -291,7 +328,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.scanTimeout ? { scanTimeoutMs: Number(p.scanTimeout) * 1000 } : {}),
       scanProgress: (line: string) => process.stderr.write(`[gbrain] ${line}\n`),
-      ...(p.untrack ? { untrack: true } : {}),
+      ...(p.untrack ? { untrack: true, untrackPages: await untrackPagesFor(repo, scopePaths(repo, p.paths, cwd)) } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),

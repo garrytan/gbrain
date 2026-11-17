@@ -44,6 +44,7 @@ import {
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
+import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { postgresTlsEntry } from './checks/postgres-tls.ts';
 import { databaseEncodingEntry } from './checks/database-encoding.ts';
 import { schemaFunctionBodiesEntry } from './checks/schema-function-bodies.ts';
@@ -268,6 +269,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   rlsEntry,
   postgresTlsEntry,
   functionSearchPathEntry,
+  guardLedgerChecksEntry,
   databaseEncodingEntry,
   schemaVersionEntry,
   schemaFunctionBodiesEntry,
@@ -539,7 +541,8 @@ export function runDoctorRegistry(ctx: DoctorContext, entries: readonly DoctorEn
             checks.push(...later.emits.filter((n) => !ctx.only || ctx.only.has(n)).map((n) => budgetUnknownCheck(n, ctx.connectError instanceof DoctorBudgetError ? ctx.connectError.elapsedMs : 0, ctx.deadline?.budgetMs ?? 0, 'overall')));
           }
         }
-        return ctx.only ? onlyResult(checks, ctx.only, true) : checks;
+        // An engine-free --only run stops at the database gate by design: only a failed or skipped connect stopped the database checks early.
+        return ctx.only ? onlyResult(checks, ctx.only, ctx.connectError !== undefined || ctx.connectionFailed === true || ctx.fastMode) : checks;
       }
       const pastDeadline = ctx.deadline?.deadlineAt != null && Date.now() >= ctx.deadline.deadlineAt;
       const produced = result.map((c) => {

@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+On a read-only mirror source, keeping the deletion of a page whose file the upstream edited after you deleted it now sticks. gbrain repair file-drift --held --side deleted --state tombstone_edited --prefer database lists such a page keep_deleted instead of removing a file gbrain never writes, and its apply (the user's yes on the preview hash) records the decision on the hold. The hold stays and is reported carried with reason mirror_keep_deleted, with needs_human false, in gbrain sources status, gbrain sync status and doctor, so it no longer asks again on every re-check; a re-check of the same file bytes keeps the decision. A new upstream edit of the file or gbrain restore of the page makes it ask again, and purging the deleted page moves the decision to the purged_differs hold. Nothing is deleted, restored or written into the mirror. Writable sources behave as before.

@@ -483,6 +483,10 @@
       },
       {
         "category": "ops",
+        "name": "guard_ledger_checks"
+      },
+      {
+        "category": "ops",
         "name": "database_encoding"
       },
       {
