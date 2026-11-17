@@ -28,7 +28,7 @@ const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 function sink(active = true): ShadowSink & { offered: CapturedRead[] } {
   const offered: CapturedRead[] = [];
-  return { counters: newMirrorCounters(), offer: (r) => { offered.push(r); }, active: () => active, offered };
+  return { counters: newMirrorCounters(), offer: (capture) => { offered.push(capture()); }, active: () => active, offered };
 }
 
 function fakePrimary(): BrainEngine {
@@ -53,7 +53,68 @@ describe('wrapper', () => {
     expect(s.offered).toHaveLength(1);
     expect(s.offered[0].op).toBe('getPage');
     expect(s.offered[0].args).toEqual(['a']);
-    expect(s.offered[0].result).toBe(page);
+    expect(s.offered[0].result).toEqual(encodeValue(page));
+    expect(s.offered[0].result).not.toBe(page);
+  });
+
+  test('a caller that changes the result right after the call does not change what the shadow compares', async () => {
+    const lines: string[] = [];
+    const q = new MirrorQueue({ bound: 8, transport: { send: (l) => { lines.push(l); return true; } } });
+    const engine = wrapShadowEngine(fakePrimary(), { counters: q.counters, offer: (c) => q.offer(c), active: () => true }, { sampleRate: 1 });
+    const page = await engine.getPage('a') as unknown as Record<string, unknown>;
+    page.title = 'changed by caller';
+    page.extra = 'added by caller';
+    delete page.slug;
+    const opts: Record<string, unknown> = { limit: 5 };
+    const pending = engine.searchKeyword('q', opts as never) as unknown as Promise<Array<Record<string, unknown>>>;
+    opts.limit = 99;
+    const rows = await pending;
+    rows[0].score = 0;
+    rows.push({ slug: 'pushed', score: 9 });
+    await tick();
+    const [getLine, searchLine] = lines.map((l) => JSON.parse(l));
+    expect(getLine).toMatchObject({ t: 'read', op: 'getPage', args: ['a'], result: { slug: 'a', title: 'T' } });
+    expect(getLine.result.extra).toBeUndefined();
+    expect(searchLine).toMatchObject({ op: 'searchKeyword', args: ['q', { limit: 5 }], result: [{ slug: 'q', score: 1 }] });
+    expect(searchLine.result).toHaveLength(1);
+  });
+
+  test('only sampled reads pay the encode: unsampled reads never touch their arguments or result', async () => {
+    let touched = 0;
+    const probe = { get spy() { touched++; return 1; } };
+    const primary = fakePrimary();
+    (primary as unknown as { getPage: () => Promise<unknown> }).getPage = async () => probe;
+    const s = sink();
+    const engine = wrapShadowEngine(primary, s, { sampleRate: 0.5, random: () => 0.9 });
+    await (engine.getPage as unknown as (arg: unknown) => Promise<unknown>)(probe);
+    expect(touched).toBe(0);
+    expect(s.counters.sampled_out).toBe(1);
+    const sampled = wrapShadowEngine(primary, s, { sampleRate: 1 });
+    await (sampled.getPage as unknown as (arg: unknown) => Promise<unknown>)(probe);
+    // A sampled read reads the probe three times: the function-argument check, the argument encode and the result encode.
+    expect(touched).toBe(3);
+    expect(s.offered).toHaveLength(1);
+  });
+
+  test('a full queue sheds without encoding, and an encode that throws fails open', async () => {
+    let touched = 0;
+    const probe = { get spy() { touched++; return 1; } };
+    const primary = fakePrimary();
+    (primary as unknown as { getPage: () => Promise<unknown> }).getPage = async () => probe;
+    const q = new MirrorQueue({ bound: 1, transport: { send: () => true }, schedule: () => {} });
+    const engine = wrapShadowEngine(primary, { counters: q.counters, offer: (c) => q.offer(c), active: () => true }, { sampleRate: 1 });
+    await engine.getPage('a');
+    expect(touched).toBe(1);
+    await engine.getPage('b');
+    expect(touched).toBe(1);
+    expect(q.counters.shed_queue_full).toBe(1);
+    const bad = { get boom(): never { throw new Error('getter'); } };
+    (primary as unknown as { getPage: () => Promise<unknown> }).getPage = async () => bad;
+    const q2 = new MirrorQueue({ bound: 4, transport: { send: () => true }, schedule: () => {} });
+    const engine2 = wrapShadowEngine(primary, { counters: q2.counters, offer: (c) => q2.offer(c), active: () => true }, { sampleRate: 1 });
+    expect(await engine2.getPage('a')).toBe(bad as never);
+    expect(q2.counters.encode_error).toBe(1);
+    expect(q2.depth).toBe(0);
   });
 
   test('never mirrors writes, and passes a primary rejection through unchanged', async () => {
@@ -117,7 +178,7 @@ describe('mirror queue', () => {
   test('sheds once the bound is reached and never blocks', async () => {
     const lines: string[] = [];
     const q = new MirrorQueue({ bound: 2, transport: { send: (l) => { lines.push(l); return true; } } });
-    q.offer(read()); q.offer(read()); q.offer(read());
+    q.offer(read); q.offer(read); q.offer(read);
     expect(q.counters.shed_queue_full).toBe(1);
     await tick();
     expect(q.counters.sent).toBe(2);
@@ -126,8 +187,8 @@ describe('mirror queue', () => {
 
   test('counts a refused send and an oversize line', async () => {
     const q = new MirrorQueue({ bound: 10, maxLineBytes: 200, transport: { send: () => false } });
-    q.offer(read());
-    q.offer({ ...read(), result: 'x'.repeat(500) });
+    q.offer(read);
+    q.offer(() => ({ ...read(), result: 'x'.repeat(500) }));
     await tick();
     expect(q.counters.shed_transport).toBe(1);
     expect(q.counters.shed_too_large).toBe(1);
@@ -135,7 +196,7 @@ describe('mirror queue', () => {
 
   test('a throwing transport fails open', async () => {
     const q = new MirrorQueue({ bound: 10, transport: { send: () => { throw new Error('pipe'); } } });
-    q.offer(read());
+    q.offer(read);
     await tick();
     expect(q.counters.shed_transport).toBe(1);
   });

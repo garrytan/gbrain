@@ -38,7 +38,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor });
   const sink = {
     counters: queue.counters,
-    offer: (read: Parameters<MirrorQueue['offer']>[0]) => queue.offer(read),
+    offer: (capture: Parameters<MirrorQueue['offer']>[0]) => queue.offer(capture),
     active: () => supervisor.active(),
   };
   engine.registerBeforeDisconnect(async () => {

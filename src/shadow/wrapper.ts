@@ -4,8 +4,11 @@
  *
  * A Proxy over the primary BrainEngine. Every member reads through to the primary, bound to it, so the primary's own
  * code runs unchanged. For an allowlisted read (reads.ts) the wrapper calls the primary, returns the primary's promise
- * outcome to the caller unchanged, and, after the primary resolves, offers `{ op, args, result, primary_ms }` to the
- * mirror sink. Nothing awaits the sink and a sink error never reaches the caller. Writes are not mirrored here.
+ * outcome to the caller unchanged, and, after the primary resolves and before the caller sees the result, offers the
+ * sink a capture of `{ op, args, result, primary_ms }`. A sampled read encodes its arguments (codec.ts `encodeValue`)
+ * before the primary call and its result inside that capture, so neither the primary nor the caller can change what
+ * the shadow compares; unsampled reads encode nothing. Nothing awaits the sink and a sink or encode error never
+ * reaches the caller. Writes are not mirrored here.
  *
  * `transaction` and `transactionDirect` hand the callback a wrapped transaction engine whose reads are counted as
  * `skipped_in_transaction` and not mirrored: a read inside an open transaction may see uncommitted state the shadow
@@ -13,12 +16,14 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
+import { encodeValue } from './codec.ts';
 import type { CapturedRead, MirrorCounters } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 
 export interface ShadowSink {
   readonly counters: MirrorCounters;
-  offer(read: CapturedRead): void;
+  /** Takes a capture function; the sink calls it synchronously when it accepts the read (mirror.ts). */
+  offer(capture: () => CapturedRead): void;
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;
 }
@@ -74,12 +79,20 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       sink.counters.shed_unmirrorable++;
       return fn.apply(engine, args);
     }
+    let encodedArgs: unknown;
+    try {
+      encodedArgs = encodeValue(args);
+    } catch {
+      try { sink.counters.encode_error++; } catch { /* fail open */ }
+      return fn.apply(engine, args);
+    }
     const started = now();
     const out = fn.apply(engine, args);
     if (!isThenable(out)) return out;
     return out.then((result: unknown) => {
+      const primaryMs = now() - started;
       try {
-        sink.offer({ op, args, result, primary_ms: now() - started, at: Date.now() });
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result), primary_ms: primaryMs, at: Date.now() }));
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {

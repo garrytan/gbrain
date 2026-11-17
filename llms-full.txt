@@ -6229,7 +6229,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 
 - **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
   and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
-  mirrored. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  mirrored. Only sampled reads are copied, at the moment the primary answers, so a caller that changes a result
+  afterwards cannot cause a false difference. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
   comparison.
 - **No network in the background.** `start --yes` loads the addon in the foreground and may download it. The child

@@ -1,18 +1,20 @@
 /**
  * The bounded, fail-open mirror queue in the serving process (plan PR S1).
  *
- * The engine wrapper `offer`s a captured read and returns at once. Nothing is serialized on the request path: the
- * queue drains on `setImmediate`, encodes each event to one NDJSON line there and hands it to the transport (the
- * supervisor's child pipe). A full queue sheds the new event; an encoded line over the size cap is shed as
- * `too_large`. Every shed, sample miss and in-transaction skip is counted, and the counts travel to the child as a
+ * The engine wrapper `offer`s a sampled read as a capture function and returns at once. When the queue has room it
+ * calls the capture function synchronously, before the caller sees the result, so the read is frozen into plain JSON
+ * values (codec.ts `encodeValue`) at capture time: a caller that changes the result object afterwards cannot change
+ * what the shadow compares. Only sampled reads the queue accepts pay that encode; a full queue sheds the event
+ * without encoding it. The queue drains on `setImmediate`, stringifies each event to one NDJSON line there and hands
+ * it to the transport (the supervisor's child pipe); a line over the size cap is shed as `too_large`. Every shed, sample miss and in-transaction skip is counted, and the counts travel to the child as a
  * `stats` event so the ledger and the report show what was not observed.
  */
-import { encodeValue } from './codec.ts';
-
-/** One captured primary read, as the wrapper saw it. */
+/** One captured primary read, frozen at capture time: `args` and `result` are already `encodeValue` output. */
 export interface CapturedRead {
   op: string;
-  args: unknown[];
+  /** Encoded call arguments (plain JSON). */
+  args: unknown;
+  /** Encoded primary result (plain JSON). */
   result: unknown;
   /** Primary wall time in milliseconds. */
   primary_ms: number;
@@ -84,12 +86,22 @@ export class MirrorQueue {
   /** Queued, not yet delivered. */
   get depth(): number { return this.items.length; }
 
-  /** Accepts a captured read or sheds it. Never throws, never awaits. */
-  offer(read: CapturedRead): void {
+  /**
+   * Accepts a read or sheds it. `capture` runs synchronously, only when the queue has room, and must return the read
+   * already encoded; a throw counts as `encode_error`. Never throws, never awaits.
+   */
+  offer(capture: () => CapturedRead): void {
     if (this.stopped) return;
     this.counters.offered++;
     if (this.items.length >= this.bound) {
       this.counters.shed_queue_full++;
+      return;
+    }
+    let read: CapturedRead;
+    try {
+      read = capture();
+    } catch {
+      this.counters.encode_error++;
       return;
     }
     this.items.push(read);
@@ -126,7 +138,7 @@ export class MirrorQueue {
       try {
         line = JSON.stringify({
           t: 'read', id: nextId++, at: read.at, op: read.op, primary_ms: read.primary_ms,
-          args: encodeValue(read.args), result: encodeValue(read.result),
+          args: read.args, result: read.result,
         }) + '\n';
       } catch {
         this.counters.encode_error++;
