@@ -112,3 +112,54 @@ describe('remote title arm plan (postgres)', () => {
     }
   });
 });
+
+// #7082: the local cut's candidates CTE (`search_vector @@ q ORDER BY p.id LIMIT cap + 1`) has two good plans. A rare
+// term's few matches come from the GIN index idx_pages_search and are sorted, never by walking pages_pkey through every
+// page; a term on nearly every page walks pages_pkey and stops at cap + 1 matches, never bitmapping every match first.
+// Statistics come from ANALYZE on a 12,000-page fixture, with no planner setting changed.
+describe('local title cut plan (postgres)', () => {
+  let engine: PostgresEngine;
+  let close: () => Promise<void>;
+
+  beforeAll(async () => {
+    ({ engine, close } = await isolatedPersistencePostgres(requirePostgresTestDatabase()));
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth)
+       SELECT 'notes/filler-' || g, 'note', CASE WHEN g % 3000 = 0 THEN 'Zorbex ledger ' || g ELSE 'Filler page ' || g END, 'Common body ' || g
+       FROM generate_series(1, 12000) g`);
+    // A page is searchable once its text projection matches its knowledge revision, as the projection worker leaves it.
+    await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision');
+    await engine.executeRaw('ANALYZE pages');
+  }, 180_000);
+
+  afterAll(async () => { await close?.(); });
+
+  async function candidatesPlan(query: string): Promise<string> {
+    const statement = buildSearchTitlesStatement(query, { limit: 50 }, POSTGRES_DIALECT);
+    expect(statement.sql).toContain('ORDER BY p.id');
+    const rows = await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${statement.sql}`, statement.params);
+    const lines = rows.map((r) => r['QUERY PLAN']);
+    const start = lines.findIndex((l) => /CTE candidates/.test(l));
+    expect(start).toBeGreaterThanOrEqual(0);
+    const indent = lines[start].search(/\S/);
+    const end = lines.findIndex((l, i) => i > start && l.search(/\S/) <= indent && !/^\s*->/.test(l) && /\S/.test(l));
+    return lines.slice(start, end < 0 ? undefined : end).join('\n');
+  }
+
+  test('a rare term takes its candidates from idx_pages_search, not a pages_pkey walk', async () => {
+    expect((await engine.searchTitles('zorbex', { limit: 50 })).length).toBe(4);
+    const plan = await candidatesPlan('zorbex');
+    expect(plan).toContain('idx_pages_search');
+    expect(plan).not.toContain('pages_pkey');
+  });
+
+  test('a term on every page walks pages_pkey and stops at the cap', async () => {
+    const cut: string[] = [];
+    await engine.searchTitles('filler', { limit: 50, onKeywordIncomplete: r => { cut.push(r); } });
+    expect(cut).toEqual(['candidate_budget']);
+    const plan = await candidatesPlan('filler');
+    expect(plan).toMatch(/Limit/);
+    expect(plan).toContain('pages_pkey');
+    expect(plan).not.toContain('idx_pages_search');
+  });
+});

@@ -79,8 +79,7 @@ describe('S8 history: every dated value of the slot reaches the reader', () => {
     const dated = rows.filter(r => /\[observed \d{4}-\d\d-\d\d|valid \d{4}-\d\d-\d\d/.test(r.chunk_text ?? '')).map(r => r.chunk_text).join('\n');
     for (const [c] of CITIES) expect(dated).toContain(c);
   });
-  // Ended values reach the reader only with B1 (history in the facts block, the next PR); it removes `.failing`.
-  test.failing('S8b after consolidate stamps valid_until on the older values: all four cities are in the context', async () => {
+  test('S8b after consolidate stamps valid_until on the older values: all four cities are in the context', async () => {
     const close = (city: string, until: number) => engine.executeRaw(
       'UPDATE facts SET valid_until = $2::timestamptz WHERE source_id = $1 AND fact = $3', [sourceId, day(until) + 'T00:00:00Z', 'Alice Example lives in ' + city + '.']);
     await close('Lisbon', 30);

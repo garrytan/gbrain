@@ -1195,6 +1195,13 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
+          "message": "Skipped (PGLite has no row-level security, so every guard reads its ledgers in full)",
+          "name": "guard_ledger_checks",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite is always UTF8)",
           "name": "database_encoding",
           "status": "ok"

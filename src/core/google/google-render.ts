@@ -176,6 +176,21 @@ export function htmlToText(html: string): string {
   return t.trim();
 }
 
+function isForwardSeparator(trimmedLine: string): boolean {
+  return /^-{2,}\s*Forwarded message\s*-{2,}$/i.test(trimmedLine) || /^Begin forwarded message:$/i.test(trimmedLine);
+}
+
+/**
+ * The sender's own words in a stored message body: the text above the first
+ * forward separator. `trimQuotedReply` keeps what follows it (#8719), and
+ * that part was written by someone else.
+ */
+export function textAboveForward(text: string): string {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => isForwardSeparator(l.trim()));
+  return at < 0 ? text : lines.slice(0, at).join('\n');
+}
+
 /**
  * Trim quoted-reply tails: trailing '>'-quoted runs and the "On ... wrote:"
  * marker line and everything after it. Conservative — only the TAIL is cut,
@@ -189,7 +204,7 @@ export function trimQuotedReply(text: string): string {
   let cut = lines.length;
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i].trim();
-    if (/^-{2,}\s*Forwarded message\s*-{2,}$/i.test(l) || /^Begin forwarded message:$/i.test(l)) return text.trim();
+    if (isForwardSeparator(l)) return text.trim();
     if (/^On .{4,80} wrote:$/.test(l) || /^-{2,}\s*Original Message\s*-{2,}$/i.test(l)) {
       cut = i;
       break;

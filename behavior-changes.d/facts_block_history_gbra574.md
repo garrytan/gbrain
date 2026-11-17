@@ -1,0 +1,4 @@
+---
+kind: add
+---
+When a query asks about the past, the facts block now shows the named person's or company's earlier values too. A question with a history word (before, earlier, previously, first, used to, in order and similar) or a date that has already passed, about one entity the brain has a page for, also pulls that entity's ended facts: facts a newer fact replaced, and facts whose valid_until has passed. Each keeps its own dates in its header, for example [observed 2025-01-16; valid 2025-01-16 to 2025-03-02], inside the block's usual share of the token budget, oldest first beside the current facts. A forgotten or withdrawn fact never appears, nor one from a page that was deleted and purged, and a remote caller sees only the world-visible facts it could already read. A question without such a cue gets exactly what it got before.
