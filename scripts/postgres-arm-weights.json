@@ -331,6 +331,7 @@
   "test/migration-persistence-foreground-committed-index.test.ts": 9311,
   "test/migration-persistence-request-id-index.test.ts": 10916,
   "test/migration-persistence-request-slug-index.test.ts": 13917,
+  "test/mirror-keep-deleted.test.ts": 44596,
   "test/notifier-passed-freshness-marker-7941.test.ts": 31038,
   "test/notifier-retry-unwatched-gst2515.test.ts": 6875,
   "test/on-commit-embedding.serial.test.ts": 13575,

@@ -166,6 +166,7 @@ Every hold and error has three fields, from one table
 | `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
 | `file_drift_unknown` | page | reconcile | yes | always: the file and the page differ and no import record says which changed |
 | `file_drift_mirror_database_only` | page | none | no | never: the page stays live and database-only because gbrain never writes a read-only mirror |
+| `mirror_keep_deleted` | page | none | no | never: the user kept the deletion; a new upstream edit of the file or a restore asks again |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
 | `page_identity_decision` | page | none | yes | always: only a person decides which page the file is |
 | `absent_from_worktree` | page | none | yes | always: only a person decides whether the file comes back or its deletion is committed |
@@ -284,6 +285,12 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
   gbrain never writes the mirror. These holds never block the pass and are not
   re-screened every sync; the run and `sync status` report them as `carried`
   (class, count, a sample and the preview that lists them).
+- `mirror_keep_deleted`: on a read-only mirror the user kept the deletion of
+  a page whose file the upstream edited
+  ([keep it deleted](repair.md#mirror-keep-deleted)). The hold stays, decided:
+  it never blocks the pass, needs nobody, and the run and `sync status` report
+  it `carried` with this class. Nothing to unblock; a new upstream edit of the
+  file or `gbrain restore` makes it ask again.
 - A symlink whose target does not exist is not a page: sync skips it and
   counts it (`skipped.symlink_dangling`) instead of holding it as unreadable,
   and releases an unreadable hold an older release wrote for it. A dangling

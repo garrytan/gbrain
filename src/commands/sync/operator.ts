@@ -285,7 +285,7 @@ export function syncStatusHeadline(status: Pick<SyncStatus, 'source_id' | 'state
   const c = status.cursor;
   switch (status.reason) {
     case 'nothing_pending': return `Source ${status.source_id} is synced${c?.done ? ` (last run ${status.run_id?.slice(0, 8) ?? '?'} finished at ${c.index}/${c.total})` : ''}.`;
-    case 'held_by_design': return `Source ${status.source_id} is synced; ${status.holds.length} file(s) stay held by design${(status.carried ?? []).map(carried => `; ${carried.count} ${carried.class} (database-only pages this read-only mirror keeps, e.g. ${carried.sample[0]}; list: ${carried.list.join(' ')})`).join('')}.`;
+    case 'held_by_design': return `Source ${status.source_id} is synced; ${status.holds.length} file(s) stay held by design${(status.carried ?? []).map(carried => `; ${carried.count} ${carried.class} (${carried.class === 'mirror_keep_deleted' ? 'deleted pages the user kept deleted although this read-only mirror\'s upstream edited their files' : 'database-only pages this read-only mirror keeps'}, e.g. ${carried.sample[0]}; list: ${carried.list.join(' ')})`).join('')}.`;
     case 'held_needs_human': return `Source ${status.source_id} is synced except ${status.holds.length} held file(s), some waiting on a person (see NEEDS HUMAN below); the rest keeps syncing.`;
     case 'live_job': return `Source ${status.source_id} is resumable: sync job #${status.live_job_id} is draining it.`;
     case 'cursor_unfinished': return `Source ${status.source_id} is resumable: run ${status.run_id?.slice(0, 8) ?? '?'} stands at ${c?.index ?? '?'}/${c?.total ?? '?'}; the next sync resumes it.`;

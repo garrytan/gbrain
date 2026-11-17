@@ -88,6 +88,8 @@ const RESCREEN_PAGE = 500;
  * only re-hold a page that keeps moving build the streak too.
  * GST-2869: nor is a rewrite marked `retry_only` (re-checked only because `sync unblock` or `sources retry-held` asked, with
  * nothing due), nor one that brought a transient hold to its attempt cap: both leave the path where it was, waiting on a person.
+ * Nor is a rewrite that carries a mirror's kept deletion (`meta.keep_deleted`): the page stays as the user decided, so passes
+ * whose only work is carrying those paths build the streak too.
  */
 export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, telemetry: { pass_id: string; started_at: string }): Promise<boolean> {
   const [row] = await engine.executeRaw<{ banked: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_source_bindings b ON b.worktree_id=r.worktree_id
@@ -102,7 +104,7 @@ export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, source
       FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
       WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz
         AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) AND h.completed_keys->0->'meta'->'basis_moved' IS NULL
-        AND h.completed_keys->0->'meta'->'retry_only' IS NULL AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
+        AND h.completed_keys->0->'meta'->'retry_only' IS NULL AND h.completed_keys->0->'meta'->'keep_deleted' IS NULL AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
     [sourceId, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.pass_id, telemetry.started_at, [...EVERY_PASS_RESCREEN_CODES], after, RESCREEN_PAGE]);
     if (rewritten.some(({ record, revision }) => !holdRescreenDue(record, false) && !reachedAttemptCap(record)
       && (record.code !== 'file_drift' || record.page_id == null || (record.meta.page_revision ?? null) === revision))) return true;
