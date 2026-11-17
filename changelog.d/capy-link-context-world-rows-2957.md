@@ -8,4 +8,4 @@ important: security
 - unify-types' `preserve_notes` stored the first 240 characters of a converted page as the new link's context, facts and takes tables included. It now leaves those tables out, so links written from now on store a shorter excerpt for every reader, the owner included. Contexts it stored before are emptied for callers who may read only world facts when they hold a table marker.
 - `delta` with `beliefs: true` returned each changed link's stored context in its before and after values. Those callers now get the link change without the context.
 - With `memory.core.enabled` on, context_pack's core memory block showed those callers a core page's held rows. It now leaves them out, as get_page does.
-- The owner's remote callers and the local CLI read exactly what they read before. Stored links are not rewritten and no migration runs.
+- The owner's remote callers and the local CLI read stored links exactly as before. Stored links are not rewritten and no migration runs.
