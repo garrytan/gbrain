@@ -35,6 +35,7 @@ import { doctorVerify, infoCheck } from '../check-fix.ts';
 import { SCAN_REPORT_RESERVE_MS } from '../budget.ts';
 import { sourceRoots } from './git-convergence.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
+import { relativeEscapesRoot } from '../../../core/path-confine.ts';
 
 export const PLUMBING_WINDOW_S = 10 * 60;
 export const UNCONFIRMED_WINDOW_MS = 60_000;
@@ -159,7 +160,7 @@ async function repositories(engine: BrainEngine): Promise<{ repos: Repo[]; skipp
     const rel = relative(canonical(top), canonical(root)).split(sep).join('/');
     const entry = repo.checkouts.get(top) ?? { top, gitDir, source_ids: [], roots: [] };
     entry.source_ids.push(...ids.filter(id => !entry.source_ids.includes(id)));
-    entry.roots.push(rel.startsWith('..') ? '' : rel);
+    entry.roots.push(relativeEscapesRoot(rel) ? '' : rel);
     repo.checkouts.set(top, entry);
     repos.set(key, repo);
   }

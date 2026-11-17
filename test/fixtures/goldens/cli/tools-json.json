@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 300735,
-    "stdoutSha256": "33eac5e04d5362ecb7175edec8781ab33558a5dbad8061e781550f43cbc415ac",
+    "stdoutBytes": 300780,
+    "stdoutSha256": "8f97f2de38e80665f2b4290a0c7b3235c552b728d3957ed59861c8c0a49bbc96",
     "toolNames": [
       "remember",
       "entity",
@@ -3280,7 +3280,7 @@
         "scope": "admin"
       },
       {
-        "description": "Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. Each attribution names the request id, operation, principal (kind, id, current name), time and origin (request, maintenance or unrecorded), plus the row's trust_tier and write_origin (for derived rows, the inputs that set the tier). Remote callers stay inside their source grant and see only world facts.",
+        "description": "Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. Each attribution names the request id, operation, principal (kind, id, current name), time and origin (request, maintenance or unrecorded), plus the row's trust_tier and write_origin (for derived rows, the inputs that set the tier). Remote callers stay inside their source grant and see only world facts, except credentials bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,

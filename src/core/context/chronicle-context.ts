@@ -6,6 +6,7 @@
 // Pure composition of engine.getSince + engine.getOntology — no new SQL.
 import type { BrainEngine } from '../engine.ts';
 import type { ChronicleTimelineRow, OntologyValue, PageReadScope } from '../types.ts';
+import { worldOnlyFacts } from '../search/private-visibility.ts';
 
 export interface ChronicleContextOpts extends PageReadScope {
   /** Lookback window in days for the recent timeline (default 7). */
@@ -14,7 +15,7 @@ export interface ChronicleContextOpts extends PageReadScope {
   entities?: string[];
   /** Cap on timeline rows (default 50). */
   limit?: number;
-  /** Untrusted caller → only world-visibility ontology, diary-sourced rows redacted. */
+  /** Untrusted caller → diary-sourced rows redacted, and world-visibility ontology only unless it is the brain owner (worldOnlyFacts). */
   remote?: boolean;
   sourceId?: string;
   sourceIds?: string[];
@@ -44,7 +45,7 @@ export async function loadChronicleContext(
 
   const ontologies: Record<string, OntologyValue[]> = {};
   for (const slug of opts.entities ?? []) {
-    let vals = await engine.getOntology(slug, { ...scope, excludePrivate: opts.excludePrivate, visibility: opts.remote ? ['world'] : undefined });
+    let vals = await engine.getOntology(slug, { ...scope, excludePrivate: opts.excludePrivate, visibility: worldOnlyFacts(opts.remote) ? ['world'] : undefined, excludeDiary: opts.remote !== false });
     if (opts.remote) vals = vals.filter((v) => !(v.source ?? '').startsWith('life/diary/'));
     if (vals.length) ontologies[slug] = vals;
   }

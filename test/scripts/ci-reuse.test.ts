@@ -58,6 +58,7 @@ function fixture(f: Fixture): ReuseDeps & { jobCalls: string[] } {
       return runs.filter(r => r.head_sha === sha);
     },
     async recentSuccessfulRuns() { return runs.filter(r => r.conclusion === 'success'); },
+    async recentRuns() { return runs; },
     async pullHeads(sha) {
       if (f.fail === 'pulls') throw new Error(`GitHub API GET commits/${sha}/pulls -> 502: bad gateway`);
       return f.pulls?.[sha] ?? [];
@@ -279,14 +280,31 @@ describe('ci-reuse decision', () => {
       expect(await decide(squash([prRun(), failedFork]), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500 } });
     });
 
-    test('a passed run on a same-tree head GitHub does not name for the commit runs in full', async () => {
-      const elsewhere = prRun({ head_sha: H2 });
-      expect(await decide(squash([elsewhere]), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
-      expect(await decide(squash([elsewhere], { pulls: { [M]: [H2] } }), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500, sha: H2 } });
+    test('#9577: a no-content merge of master made just before landing leaves the passed full run on the head before it, and that run is reused', async () => {
+      // The landed pull request's head H is a merge of master that changed no file, so it carries the tree the full
+      // run tested on H2 (its first parent) but only a cheap pull_request run of its own.
+      const MASTER = '5'.repeat(40);
+      const commits = { [M]: { tree: T, parents: [MASTER] }, [H]: { tree: T, parents: [H2, MASTER] }, [H2]: { tree: T, parents: [BASE, MASTER] }, [BASE]: { tree: OTHER, parents: [] }, [MASTER]: { tree: OTHER, parents: [] } };
+      const cheap = prRun({ id: 610, head_sha: H, event: 'pull_request' });
+      const full = prRun({ id: 500, head_sha: H2 });
+      const d = await decide(squash([cheap, full], { commits }), PROFILES.test, M, REPO);
+      expect(d).toMatchObject({ reuse: true, reason: 'identical_tree_full_run', tree: T, source: { run_id: 500, run_attempt: 1, sha: H2 } });
+      // The newest full run on the tree still decides: a newer failure on H2 refuses.
+      const failed = prRun({ id: 620, head_sha: H2, conclusion: 'failure' });
+      expect(await decide(squash([cheap, full, failed], { commits }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_failed' });
     });
 
-    test('a one-parent push with no pull request behind it (a hand revert, a direct push) runs in full', async () => {
-      expect(await decide(squash([prRun()], { pulls: {} }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
+    test('a passed run on a same-tree head GitHub does not name for the commit (a hand-dispatched branch) is reused; a newer failure there refuses', async () => {
+      const elsewhere = prRun({ head_sha: H2 });
+      expect(await decide(squash([elsewhere]), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500, sha: H2 } });
+      expect(await decide(squash([elsewhere], { pulls: { [M]: [H2] } }), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500, sha: H2 } });
+      const failedElsewhere = prRun({ id: 600, head_sha: H2, conclusion: 'failure' });
+      expect(await decide(squash([prRun(), failedElsewhere]), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_failed' });
+    });
+
+    test('a one-parent push with no pull request behind it (a hand revert, a direct push) reuses a passed full run of its exact tree, and runs in full without one', async () => {
+      expect(await decide(squash([prRun()], { pulls: {} }), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500, sha: H } });
+      expect(await decide(squash([prRun({ head_sha: BASE })], { pulls: {} }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
     });
 
     test('a named head with another tree never counts', async () => {
@@ -779,5 +797,11 @@ describe('ci-reuse remote-gate decision', () => {
     const M2 = '7'.repeat(40);
     const deps = gate({ commits: { [A]: { tree: T, parents: [BASE] }, [M2]: { tree: T, parents: [BASE, A] } }, runs: [run('test.yml'), run('e2e.yml')] });
     expect(await decideGate(deps, PROFILES.test, M2, T, REPO)).toMatchObject({ state: 'reuse', tests: 600 });
+  });
+});
+describe('docs/ci-event-parity.md', () => {
+  test('carries no paragraph cut short by a line-truncation marker', () => {
+    const doc = readFileSync(resolve(import.meta.dir, '../../docs/ci-event-parity.md'), 'utf8');
+    expect(doc).not.toMatch(/\(line truncated to \d+ chars\)/);
   });
 });
