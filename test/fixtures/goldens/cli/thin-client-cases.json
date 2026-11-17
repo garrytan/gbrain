@@ -965,6 +965,16 @@
         "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
+    },
+    {
+      "argv": "graph-map",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `foresights graph-map` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain graph-map",
+        "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
     }
   ],
   "normalizer": "cli-thin-client-v1"
