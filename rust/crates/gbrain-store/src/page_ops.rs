@@ -10,3 +10,13 @@
 //! are this file's to define; document them here.
 //!
 //! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md.
+
+/// The page index hook (`page_index::reindex_page`): keeps this family's index of page fields in
+/// step with a page write. Empty until this family indexes a page field.
+pub(crate) fn reindex_page(
+    _tx: &mut dyn crate::kv::KvWrite,
+    _before: Option<&crate::pages::PageRecord>,
+    _after: Option<&crate::pages::PageRecord>,
+) -> crate::Result<()> {
+    Ok(())
+}

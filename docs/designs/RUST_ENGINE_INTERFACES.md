@@ -52,7 +52,7 @@ refused member must still end on that refusal.
 These files belong to core. If a family needs a change in one of them, it asks core for the change in a separate,
 small commit. Every other file in the table at the end belongs to exactly one family.
 
-- `rust/crates/gbrain-store/src/{lib.rs,keys.rs,kv.rs,redb_kv.rs,env.rs,error.rs,format.rs,cascade.rs,page_columns.rs,test_support.rs}`
+- `rust/crates/gbrain-store/src/{lib.rs,keys.rs,kv.rs,redb_kv.rs,env.rs,error.rs,format.rs,cascade.rs,page_columns.rs,page_index.rs,test_support.rs}`
 - `rust/crates/gbrain-store/src/{pages.rs,sources.rs,config.rs,chunks.rs,search.rs,links.rs,timeline.rs,journal.rs}`
   (the families core already built)
 - `rust/crates/gbrain-napi/src/{lib.rs,store_binding.rs,binding.rs,error.rs,pool.rs}` and `families/mod.rs`
@@ -62,7 +62,7 @@ small commit. Every other file in the table at the end belongs to exactly one fa
 - `test/engine-parity/{harness.ts,rust-arm.ts,coverage.ts}`, `test/rust-engine-shell.test.ts`,
   `test/rust-engine-store.test.ts`, `test/rust-arm-harness.test.ts`
 
-The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, the reserved block in
+The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, `page_index.rs`, the reserved block in
 `keys.rs`) already name every planned family once, so no family edits them.
 
 ## Shared contracts (frozen)
@@ -95,7 +95,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 
 | Tag | Records | Owner |
 |---|---|---|
-| `M` | meta: format record and id counters (`M next_<name>`) | core |
+| `M` | meta: format record, id counters (`M next_<name>`), chunk stats, per-page segment chunk views (`M chunk_segment_view/<page id>`) | core |
 | `C` | config | core |
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
@@ -277,9 +277,59 @@ already deleted when it runs; the ids are sorted and all belong to `page_id`.
 - `upsertChunks`, `putPage` and every other chunk rewrite report only the chunks whose index the new set does not
   keep. A chunk that keeps its index keeps its id, as in Postgres, so its rows stay. The hook is not called when no
   chunk is gone.
+- A segment chunk delete (`delete_occurrence_chunks`, `delete_generation_chunks`, see "Segment chunks") reports the
+  chunks it removed.
 - **Owners:** code_edges (edges whose from or to chunk is gone). vectors and embeddings are on the list because their
   records hang off chunk ids in this store, while Postgres keeps them on the chunk row; their hooks stay empty if
   they key nothing by chunk id.
+
+#### Segment chunks (`chunks.rs`)
+
+```rust
+pub(crate) fn append_segment_chunks(tx: &mut dyn KvWrite, page_id: u64, generation: u64, chunks: &[SegmentChunkInput]) -> Result<Vec<u32>>;
+pub(crate) fn publish_segment_chunks(tx: &mut dyn KvWrite, page_id: u64, generation: u64, offsets: BTreeMap<u64, u64>) -> Result<()>;
+pub(crate) fn delete_occurrence_chunks(tx: &mut dyn KvWrite, page_id: u64, occurrences: &BTreeSet<u64>, max_generation: Option<u64>) -> Result<Vec<u64>>;
+pub(crate) fn delete_generation_chunks(tx: &mut dyn KvWrite, page_id: u64, generation: u64, keep: &BTreeSet<u64>) -> Result<Vec<u64>>;
+pub(crate) fn delete_chunks_matching(tx: &mut dyn KvWrite, page_id: u64, pred: &dyn Fn(&ChunkRecord) -> bool) -> Result<Vec<u64>>;
+pub(crate) fn count_chunks_matching(read: &dyn KvRead, page_id: u64, pred: &dyn Fn(&ChunkRecord) -> bool) -> Result<usize>;
+pub(crate) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>>;
+pub(crate) fn forget_segment_view(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>;
+```
+
+The chunk rows of a segmented page body: PGLite's `content_chunks.occurrence_id`, `local_ordinal`, `raw_byte_start`,
+`raw_byte_end` and `body_generation` columns. The page_body family calls these from `stageSegmentChunks` and the
+generation flip, inside its own write transaction. They check nothing about the page body: the caller has already
+decided the write is allowed. The contract is the "Segment chunks" comment in `chunks.rs`.
+
+- **Record.** A segment chunk is a normal chunk record (`K page_id chunk_index`) with its `segment` field set
+  (`SegmentPlace`: occurrence, local ordinal, raw byte span, the body generation it was staged for). An inline chunk,
+  which `upsertChunks` and `putPage` write, has no `segment`. Records written before the field existed read as inline
+  chunks, so the store format version stays 1.
+- **Append.** `append_segment_chunks` writes the chunks at the indexes after the page's highest `chunk_index`
+  (staged, live and retired rows all count, as PGLite's `COALESCE(MAX(chunk_index), -1) + 1`), in input order, and
+  returns those indexes. It checks `chunk_source` as `upsertChunks` does, strips NUL from the text, and keeps no
+  vector.
+- **Staged chunks stay hidden until the flip.** A segment chunk is visible when its `body_generation` is at or below
+  the page's view generation; an inline chunk is always visible (PGLite's `chunkVisibleFilter`). The view generation
+  is a per-page copy kept by `chunks.rs` (`M chunk_segment_view/<page id>`, with the live occurrence offsets), because
+  the body generation lives in the page_body family. It is 0 until the first publish. Keyword postings exist only
+  for visible chunks, so a staged chunk is not searchable. `count_chunks` counts every chunk record, staged and
+  retired included, as PGLite does.
+- **Publish.** The flip calls `publish_segment_chunks` in its transaction. It records the page's new generation and
+  the manifest `byte_start` of each live occurrence, and writes or removes the postings of the chunks whose
+  visibility changed.
+- **`get_chunks` filters by the current body generation.** It returns the visible chunks only, in PGLite's document
+  order: segment chunks whose occurrence has a live offset by `(byte_start, local_ordinal, chunk_index)`, then the
+  rest by `(local_ordinal, inline last, chunk_index)`. The output has no segment fields, as PGLite's `getChunks`
+  columns have none. `visible_chunks` gives other families the same list.
+- **Delete by occurrence or by generation.** `delete_occurrence_chunks` removes the segment chunks of the given
+  occurrences (at or below `max_generation` when given). `delete_generation_chunks` removes the segment chunks of one
+  generation whose occurrence is not in `keep`. Both go through `delete_chunks_matching`, which removes the chunks
+  and their postings, updates the stats, and fires `cascade::remove_chunk_rows` once with the sorted ids of the
+  removed chunks (not at all when none match). `count_chunks_matching` counts first, for the flip's `retireMaxRows`
+  bound.
+- **Page delete.** The page_body family calls `forget_segment_view` when a page is deleted for good (from its
+  `remove_page_rows`). `deleteChunks` keeps the view, because the page and its generation remain.
 
 #### Source delete (`cascade::remove_source_rows`)
 
@@ -343,6 +393,34 @@ is the store's `moveSlugBindings`.
   8. page_aliases (aliases family): `UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`.
 - Sync's rename paths (`commands/sync/renames.ts`, `rename-collision.ts`) call `moveSlugBindings` too; they run
   through `executeRaw`, which the Rust engine refuses.
+
+#### Page index (`page_index::reindex_page`)
+
+```rust
+// In keyword.rs and page_ops.rs (full paths, so neither file needs an import line):
+pub(crate) fn reindex_page(
+    tx: &mut dyn crate::kv::KvWrite,
+    before: Option<&crate::pages::PageRecord>,
+    after: Option<&crate::pages::PageRecord>,
+) -> crate::Result<()>;
+```
+
+A family keeps its own index of page fields (title trigrams, slugs by content hash) in step with page writes, in the
+same transaction. `before` is the page as stored before the write; `after` is the page as stored after it.
+
+- `(None, Some(after))` is a new page, `(Some(before), Some(after))` is any change to a stored page (including a soft
+  delete, a restore, a rename, where `before.slug` is the old slug, and a tag change), and `(Some(before), None)` is a
+  hard delete, called before the page record is deleted.
+- `pages::write_page` and `pages::remove_page` call it; every page write goes through one of them, so a family that
+  writes pages through core keeps every index right with no extra step.
+- It fires on writes only, and on every write: also when no field the family indexes changed (a tag change, a
+  sealed text projection). Compare `before` and `after` and return early. One store call can fire it more than once:
+  a `putPage` that chunks the page writes the page, then writes it again to seal its text projection.
+- Cost: `write_page` reads the stored page once by id before it writes (the same read keeps the origin index).
+- **Owners:** keyword (`R` title trigram postings) and page_ops (its `p` indexes). A family that is not listed and
+  needs the hook asks core for one line.
+- The timeline date index (`u`, timeline_queries) is a different hook in `timeline.rs`; core adds it when that family
+  asks.
 
 #### Page origin (`source_path` on `putPage`)
 
@@ -424,7 +502,8 @@ A float score (cosine similarity, salience, rank) matches PGLite within an absol
 way the PGLite `ORDER BY` breaks them, usually by id. Postgres `REAL` columns (`emotional_weight`, take `weight`)
 are rounded to `f32` before arithmetic, then computed in `f64`. The store's keyword ranking is a plain BM25 today;
 the one keyword case that differs because of it is the row in `test/rust-expected-divergence/search.tsv`. The
-`ts_rank` compatibility ranker (design D5) is the parity baseline the keyword family builds toward; every other
+`ts_rank` compatibility ranker (design D5), which the keyword family writes in `keyword.rs` over the core `T`
+postings, is the parity baseline it builds toward; every other
 keyword, title and trigram case must match exactly.
 
 ### Expected differences
@@ -493,7 +572,7 @@ Batch page reads and writes the pages capability still refuses.
 - **Members (18), capability:** `pages` (17), `page_versions` (1).
 - **Store and binding:** `readPageSnapshotsBatch` (`read_page_snapshots_batch`), `findDuplicatePage` (`find_duplicate_page`), `findDuplicatePages` (`find_duplicate_pages`), `deletePages` (`delete_pages`), `resolveSlugsByPaths` (`resolve_slugs_by_paths`), `softDeletePages` (`soft_delete_pages`), `purgeDeletedPages` (`purge_deleted_pages`), `findPages` (`find_pages`), `countPagesBy` (`count_pages_by`), `getAllSlugs` (`get_all_slugs`), `listAllPageRefs` (`list_all_page_refs`), `listPrefixSampledPages` (`list_prefix_sampled_pages`), `listCorpusSample` (`list_corpus_sample`), `getContentFlagsByPageIds` (`get_content_flags_by_page_ids`), `getUnverifiedExtractionPageIds` (`get_unverified_extraction_page_ids`), `getPageTimestamps` (`get_page_timestamps`), `getEffectiveDates` (`get_effective_dates`), `revertToVersion` (`revert_to_version`).
 - **Postgres tables:** `pages` (read and soft/hard delete through `pages.rs`), `page_versions` (revert).
-- **Keys:** No rows of its own are needed for parity. Use `p` only for an index the reads need (for example `p 0x01 <source> 0x00 <source_path> 0x00 <slug>` for `resolveSlugsByPaths`, `p 0x02 <source> 0x00 <content_hash> 0x00 <page id>` for duplicate lookup), kept in step by an index hook in `write_page` from core.
+- **Keys:** No rows of its own are needed for parity. Use `p` only for an index the reads need (for example `p 0x01 <source> 0x00 <source_path> 0x00 <slug>` for `resolveSlugsByPaths`, `p 0x02 <source> 0x00 <content_hash> 0x00 <page id>` for duplicate lookup), kept in step by the core page index hook (`page_index::reindex_page`; the stub is in `page_ops.rs`). For `resolveSlugsByPaths`, the core `o` key already indexes live pages by `source_path` ("Page origin"); it holds no soft-deleted pages, so a read that needs them keeps scanning `all_pages` or adds its own `p` index.
 - **Depends on:** Core page helpers (`read_page`, `all_pages`, `remove_page`, `write_page`, `snapshot_in`). `deletePages` and `purgeDeletedPages` also remove the deleted slugs from eval candidates (`retrieved_slugs`): call the eval_capture family's `pub(crate) fn remove_retrieved_slugs`, so build eval_capture first. The other tables PGLite scrubs there (retrieval events, feedback, gazetteer entries) have no Rust records; the scrub is a no-op for them until a family stores them.
 - **Estimate:** about 9 days.
 - **Notes:** `revertToVersion` restores only `compiled_truth` and `frontmatter`, writes a version snapshot, and refuses for a segmented page. `findPages` and `countPagesBy` are the largest members (filters, frontmatter keys). `deletePages`, `softDeletePages` and `resolveSlugsByPaths` keep the `DELETE_BATCH_SIZE` input cap. `listAllPageRefs` orders by `(source_id, slug)` in byte order.
@@ -566,7 +645,7 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Store and binding:** `allocateBodyOccurrenceIds` (`allocate_body_occurrence_ids`), `stageSegmentTexts` (`stage_segment_texts`), `readSegmentTexts` (`read_segment_texts`), `stageManifestRows` (`stage_manifest_rows`), `readManifest` (`read_manifest`), `stageSegmentChunks` (`stage_segment_chunks`), `createSegmentedPageShell` (`create_segmented_page_shell`), `flipBodyGeneration` (`flip_body_generation`), `openBodyStaging` (`open_body_staging`), `setBodyStagingState` (`set_body_staging_state`), `sweepSegments` (`sweep_segments`), `readSegmentDerivations` (`read_segment_derivations`), `upsertSegmentDerivations` (`upsert_segment_derivations`), `retireSegmentDerivations` (`retire_segment_derivations`), `refreshPageBody` (`refresh_page_body`).
 - **Postgres tables:** `page_segment_texts`, `page_body_manifest`, `page_body_stagings`, `page_segment_derivations`, `page_derivation_spend`.
 - **Keys:** `b 0x01 <source> 0x00 <sha256>` segment text; `b 0x02 <page id> <occurrence id> <gen_from> <staging id>` manifest row (ids big-endian); `b 0x03 <staging id>` staging; `b 0x04 <page id> ...` derivations; `M next_body_occurrence_id` for occurrence ids. Page-keyed rows go in `remove_page_rows`; segment texts are kept until `sweepSegments`, as in PGLite.
-- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration` and `refreshPageBody` (page record writes go through `write_page`). `stageSegmentChunks` writes chunk rows: use the core chunk helpers, and refuse any input that carries vectors until the embeddings family lands. The generation-1 parity case also needs the transactions family.
+- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration` and `refreshPageBody` (page record writes go through `write_page`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
 - **Parity cases (5, in `segmented-body.test.ts`, `sync-aliases.test.ts`):**
@@ -847,9 +926,9 @@ Keyword search members the keyword_search capability still refuses, and title tr
 - **Members (5), capability:** `keyword_search` (5).
 - **Store and binding:** `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
-- **Keys:** Postings stay core (`T`). `R <source> 0x00 <trigram> 0x00 <page id>` title trigram postings, kept by a core hook in `write_page`.
-- **Depends on:** Core search postings and the `ts_rank` compatibility ranker (design D5). Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
-- **Estimate:** about 3 days.
+- **Keys:** Postings stay core (`T`). `R <source> 0x00 <trigram> 0x00 <page id>` title trigram postings, kept by the core page index hook (`page_index::reindex_page`; the stub is in `keyword.rs`).
+- **Depends on:** Core search postings (`T`). The family writes the `ts_rank` compatibility ranker (design D5) in `keyword.rs` over those postings; the facts keyword arm reuses it. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
+- **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
 - **Notes:** Every keyword case except the one in `search.tsv` must match PGLite exactly, order and score within `1e-6`.
 - **Parity cases (4, in `links.test.ts`, `search.test.ts`):**
   - `links.test.ts`: findByTitleFuzzy returns the best title match above the threshold, honoring prefix and source
@@ -1002,7 +1081,7 @@ other family calls it. If both families are in progress at once, they agree on t
 
 ## Work plan toward Dec 1
 
-About 52 days of family work are open, against about 9 or 10 working days until Dec 1, so six people working at
+About 54 days of family work are open, against about 9 or 10 working days until Dec 1, so six people working at
 once is the plan. Every group below can start now; none waits for another group to finish before its first
 member lands. Within a group, build in the order shown.
 
@@ -1013,10 +1092,10 @@ member lands. Within a group, build in the order shown.
 | 3. Page bodies | page_body | yes | about 7 to 8 days | vector input to `stageSegmentChunks` refuses until embeddings; one case needs transactions |
 | 4. Memory records | dream, contradictions, facts, ontology, raw_files, stats | yes | about 9 days | three facts cases need takes (group 5); `getHealth` last |
 | 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges uses the core chunk-delete hook (built) |
-| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 9 days | keyword needs the `ts_rank` compatibility ranker; two chunk cases need embeddings |
+| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
-done. Group 2 is the longest and sets the critical path. If time runs short, the candidates to leave refused for
+done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. If time runs short, the candidates to leave refused for
 Dec 1 are `purgeDeletedPages`, `sweepSegments` and `getHealth`; each is a single member that refuses cleanly, so the
 rest of its family still ships.
 
@@ -1031,8 +1110,8 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | built | code_edges; vectors and embeddings listed |
 | Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
-| Index hooks in `write_page` and `timeline.rs` if a family needs one | a family asking | page_ops, keyword, timeline_queries |
-| `ts_rank` compatibility ranker | nothing | keyword, facts keyword arm |
+| Page index hook (`page_index::reindex_page`, called by `write_page` and `remove_page`) | built; the family fills in the body | keyword (`R` title trigrams), page_ops |
+| Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
 | vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
 | transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction |
@@ -1040,4 +1119,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
 | Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |
 | `putPage` with `source_path`, and the one-live-page-per-origin refusal (`o` key) | built | page_ops (`resolveSlugsByPaths`) |
+| Segment chunks (`chunks.rs`: append, publish, delete by occurrence or generation, `get_chunks` by body generation) | built | page_body (`stageSegmentChunks`, the flip) |
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |

@@ -376,13 +376,15 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
     get_json(read, &key)
 }
 
-/// Stores a page record and its id key, and keeps its origin key (`o`) in step with it.
+/// Stores a page record and its id key, keeps its origin key (`o`) in step with it, and calls the
+/// page index hook (`page_index::reindex_page`) with the record as stored before and after.
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
     let key = page_key(&record.source_id, &record.slug);
     put_json(tx, &key, record)?;
     tx.put(&keys::page_id(record.id), &key)?;
-    index_origin(tx, before.as_ref(), Some(record))
+    index_origin(tx, before.as_ref(), Some(record))?;
+    crate::page_index::reindex_page(tx, before.as_ref(), Some(record))
 }
 
 /// An origin (`source_path`) in the form PGLite compares two of them: as stored, and on Windows
@@ -1193,7 +1195,9 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     crate::timeline_queries::remove_event_projections(tx, page.id)?;
     crate::cascade::remove_page_rows(tx, page)?;
     let stored = read_page_by_id(&*tx, page.id)?;
-    index_origin(tx, stored.as_ref().or(Some(page)), None)?;
+    let stored = stored.as_ref().unwrap_or(page);
+    index_origin(tx, Some(stored), None)?;
+    crate::page_index::reindex_page(tx, Some(stored), None)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
 }
