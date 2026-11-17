@@ -13,6 +13,7 @@
  * dir is set through process.env; binds local ports.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import type { TCPSocketListener } from 'bun';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,7 +34,7 @@ const rows = (): SearchResult[] => ['a', 'b', 'c'].map((s, i) => ({
 
 let server: ReturnType<typeof Bun.serve>;
 let deadPort: number;
-let deadListener: ReturnType<typeof Bun.listen>;
+let deadListener: TCPSocketListener<undefined>;
 let auditDir: string;
 
 beforeAll(() => {
