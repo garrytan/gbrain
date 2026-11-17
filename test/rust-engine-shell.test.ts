@@ -25,6 +25,34 @@ class FakeBrain {
 }
 class FakePool { async shutdown() {} }
 const addon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: FakePool, Brain: FakeBrain };
+/** An addon whose store open waits until the test lets it finish, so a disconnect or a second connect can land mid-open. */
+function deferredAddon() {
+  const brains: Array<{ isOpen: boolean }> = [];
+  let release: (() => void) | undefined;
+  let fail: ((error: Error) => void) | undefined;
+  let started: (() => void) | undefined;
+  let started_ = new Promise<void>((resolve) => { started = resolve; });
+  let immediate = false;
+  class GatedBrain {
+    isOpen = false;
+    constructor() { brains.push(this); }
+    async open() {
+      started?.();
+      if (!immediate) await new Promise<void>((resolve, reject) => { release = resolve; fail = reject; });
+      this.isOpen = true;
+    }
+    async close() { this.isOpen = false; }
+  }
+  return {
+    addon: { target: 'linux-x64-glibc', engine_abi: 1, Pool: FakePool, Brain: GatedBrain },
+    brains,
+    opening: () => started_,
+    finishOpen: () => release?.(),
+    failOpen: () => fail?.(Object.assign(new Error('store open failed'), { code: 'store_corrupt' })),
+    /** From now on an open finishes at once. */
+    finishOpenNow: () => { immediate = true; started_ = Promise.resolve(); },
+  };
+}
 const open = () => openRustEngine({ addon, databasePath: '/var/brains/test.rust' });
 
 /** Runs `fn`, expecting an OperationError, and returns it. */
@@ -96,6 +124,60 @@ describe('openRustEngine', () => {
     await engine.disconnect();
     expect(engine.connected).toBe(false);
     expect(stopped).toBe(1);
+  });
+
+  test('a disconnect that comes while connect is still opening wins: the opened store is closed and the engine stays disconnected', async () => {
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: '/var/brains/test.rust' });
+    const connecting = engine.connect({ engine: 'pglite', database_path: '/var/brains/test.rust' });
+    const settled = connecting.then(() => 'resolved', (error: { code?: string }) => error.code);
+    await gate.opening();
+    const disconnecting = engine.disconnect();
+    gate.finishOpen();
+    await disconnecting;
+    expect(await settled).toBe('engine_closed');
+    expect(engine.connected).toBe(false);
+    expect(gate.brains.map((brain) => brain.isOpen)).toEqual([false]);
+    expect((await refusal(() => engine.getConfig('k'))).code).toBe('engine_closed');
+    // The engine can be connected again afterwards, and that open is the engine's one live store.
+    gate.finishOpenNow();
+    await engine.connect({ engine: 'pglite', database_path: '/var/brains/test.rust' });
+    expect(engine.connected).toBe(true);
+    expect(gate.brains.filter((brain) => brain.isOpen)).toHaveLength(1);
+    await engine.disconnect();
+    expect(gate.brains.filter((brain) => brain.isOpen)).toHaveLength(0);
+  });
+
+  test('connects that overlap open the store once', async () => {
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: '/var/brains/test.rust' });
+    const config = { engine: 'pglite', database_path: '/var/brains/test.rust' } as const;
+    const first = engine.connect(config);
+    const second = engine.connect(config);
+    await gate.opening();
+    gate.finishOpen();
+    await Promise.all([first, second]);
+    expect(gate.brains).toHaveLength(1);
+    expect(engine.connected).toBe(true);
+    await engine.connect(config);
+    expect(gate.brains).toHaveLength(1);
+    await engine.disconnect();
+    expect(gate.brains[0]!.isOpen).toBe(false);
+  });
+
+  test('a failed open rejects every overlapping connect and the next connect tries again', async () => {
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: '/var/brains/test.rust' });
+    const config = { engine: 'pglite', database_path: '/var/brains/test.rust' } as const;
+    const results = [engine.connect(config), engine.connect(config)].map((p) => p.then(() => 'resolved', () => 'rejected'));
+    await gate.opening();
+    gate.failOpen();
+    expect(await Promise.all(results)).toEqual(['rejected', 'rejected']);
+    expect(engine.connected).toBe(false);
+    gate.finishOpenNow();
+    await engine.connect(config);
+    expect(engine.connected).toBe(true);
+    await engine.disconnect();
   });
 
   test('a partial or unknown outcome says what may have been written', () => {

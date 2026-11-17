@@ -47,6 +47,9 @@ export class RustEngine {
   private _savedConfig: EngineConfig | null = null;
   private _connected = false;
   private _store: RustStore | null = null;
+  private _opening: Promise<void> | null = null;
+  /** Bumped by every `disconnect`, so an open that started before it knows it was abandoned. */
+  private _generation = 0;
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
 
   constructor(opts: OpenRustEngineOptions) {
@@ -57,12 +60,30 @@ export class RustEngine {
   /** True between `connect()` and `disconnect()`. */
   get connected(): boolean { return this._connected; }
 
-  /** Opens the brain store at `databasePath`. A second `connect` while connected changes nothing. */
+  /**
+   * Opens the brain store at `databasePath`. A second `connect` while connected changes nothing, and connects that
+   * overlap share one open (the store takes the directory's lock once). A `disconnect` that comes while the open is
+   * still running wins: the store the open produces is closed, the engine stays disconnected, and that `connect`
+   * rejects `engine_closed` instead of resolving into an engine that was told to close.
+   */
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config;
     if (this._store) return;
-    this._store = await openRustStore(this.addon, this.databasePath);
-    this._connected = true;
+    if (!this._opening) {
+      const generation = this._generation;
+      const opening: Promise<void> = openRustStore(this.addon, this.databasePath)
+        .then(async (store) => {
+          if (generation !== this._generation) {
+            await store.close().catch(() => undefined);
+            throw mapStoreError({ code: 'store_closed' }, { member: 'connect' });
+          }
+          this._store = store;
+          this._connected = true;
+        })
+        .finally(() => { if (this._opening === opening) this._opening = null; });
+      this._opening = opening;
+    }
+    await this._opening;
   }
 
   async disconnect(): Promise<void> {
@@ -71,10 +92,14 @@ export class RustEngine {
     for (const stop of stops) {
       try { await stop(); } catch { /* a stop barrier never blocks shutdown */ }
     }
+    this._generation++; // an open still running is abandoned: it closes what it opened
+    const opening = this._opening;
+    this._opening = null;
     const store = this._store;
     this._store = null;
     this._connected = false;
     await store?.close();
+    await opening?.catch(() => undefined);
   }
 
   /** The open store a served member runs on; rejects `engine_closed` when the engine is not connected. */
