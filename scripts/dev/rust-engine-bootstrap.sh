@@ -318,7 +318,7 @@ write_env_file() {
       printf 'case ":$PATH:" in *:%q:*) ;; *) export PATH=%q:"$PATH" ;; esac\n' "$d" "$d"
     done
     echo "# Local test database. Not exported as DATABASE_URL on purpose: the test"
-    echo "# preload refuses plain \`bun test\` while DATABASE_URL is set. Use:"
+    echo "# preload refuses a direct test run while DATABASE_URL is set. Use:"
     echo '#   DATABASE_URL="$RUST_ENGINE_DATABASE_URL" bash scripts/run-e2e.sh <files>'
     printf 'export RUST_ENGINE_DATABASE_URL=%q\n' "$url"
   } >"$tmp" || { rm -f "$tmp"; return 1; }
