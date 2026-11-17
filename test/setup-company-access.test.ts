@@ -17,21 +17,22 @@ import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { labelSeveral, receiptLines } from '../src/commands/access-serves.ts';
+import { labelSeveral, receiptLines, receiptOk } from '../src/commands/access-serves.ts';
+import { applyApproved, previewApply } from '../src/core/access/policy.ts';
 import { historyRefusal } from '../src/commands/setup-serves.ts';
+import { currentFolderRules } from '../src/commands/access-rules.ts';
 import { mintToken } from '../src/commands/auth-mint.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { ownerMemberId, setOwner } from '../src/core/access/owner.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { box, gbrain, pageText, removeTempDirs, setup, tempDir } from './helpers/setup-serves-box.ts';
+import { box, gbrain, memoryBrain, openBrainFile, pageText, removeTempDirs, setup, tempDir } from './helpers/setup-serves-box.ts';
 
 afterAll(removeTempDirs);
 
@@ -45,9 +46,7 @@ const PAGES: Record<string, string> = {
 
 async function openEngine(kind: string): Promise<{ engine: BrainEngine; close: () => Promise<void> }> {
   if (kind === 'postgres') return isolatedPersistencePostgres(process.env.DATABASE_URL!);
-  const engine = new PGLiteEngine();
-  await engine.connect({ engine: 'pglite' } as never);
-  await engine.initSchema();
+  const engine = await memoryBrain();
   return { engine, close: () => engine.disconnect() };
 }
 
@@ -260,8 +259,7 @@ describe('A: gbrain setup --shape company --transcripts gives the members the ca
     expect(r.exitCode).toBe(0);
     expect(r.doc.serves.regrant.keys.map((k: any) => [k.member, k.adds])).toEqual([['alice-example', ['company']], ['bob-example', ['company']]]);
     expect(r.doc.brain_layout.transcripts.readers.detail).toContain('the member keys gbrain setup mints read source company');
-    const engine = new PGLiteEngine();
-    await engine.connect({ engine: 'pglite', database_path: join(b.home, '.gbrain', 'brain.pglite') } as never);
+    const engine = await openBrainFile(b.home);
     try {
       for (const m of ROSTER) expect(await tokenReads(engine, readFileSync(keyFile(b.home, m), 'utf8').trim(), ['callcanary'])).toEqual(['callcanary']);
     } finally {
@@ -327,8 +325,7 @@ describe('C: gbrain setup --serves several on a brain with history (spawned, PGL
     return b;
   }
   const memberReads = async (b: ReturnType<typeof box>, member: string) => {
-    const engine = new PGLiteEngine();
-    await engine.connect({ engine: 'pglite', database_path: join(b.home, '.gbrain', 'brain.pglite') } as never);
+    const engine = await openBrainFile(b.home);
     try { return await tokenReads(engine, readFileSync(keyFile(b.home, member), 'utf8').trim(), Object.values(HISTORY)); } finally { await engine.disconnect(); }
   };
   const args = ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example'];
@@ -364,3 +361,89 @@ describe('C: gbrain setup --serves several on a brain with history (spawned, PGL
   }, 480_000);
 });
 
+
+
+const COMPANY_CANARIES = ['factscanary', 'callcanary', 'boardcanary'];
+const companyRules = (engine: BrainEngine) => currentFolderRules(engine, 'company');
+
+for (const kind of testBackends()) {
+  describe(`C: labelled-only members read the company pages through one company/ rule (${kind}, repo-less)`, () => {
+    let engine: BrainEngine;
+    let close: () => Promise<void>;
+    let home: string;
+    let ownerKey: string;
+    const label = (roster: string[], labelledOnly: boolean, apply = true) => withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: undefined },
+      () => labelSeveral(engine, roster, 'default', apply, true, { owner: 'owner-example', labelledOnly }));
+    const memberReads = (member: string) => tokenReads(engine, readFileSync(keyFile(home, member), 'utf8').trim(), COMPANY_CANARIES);
+
+    beforeAll(async () => {
+      ({ engine, close } = await openEngine(kind));
+      home = tempDir('gbrain-company-rule-');
+      await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('company', 'company', '{}'::jsonb) ON CONFLICT (id) DO NOTHING");
+      for (const [slug, canary] of Object.entries(COMPANY)) await importFromContent(engine, slug, companyText(slug, canary), { sourceId: 'company', noEmbed: true });
+      await addMember(engine, 'owner-example');
+      await setOwner(engine, 'owner-example');
+      ownerKey = (await mintToken(engine, 'owner-laptop', { scopes: ['read', 'write'], binding: { member: 'owner-example' },
+        sources: { kind: 'federated', writeSource: 'default', readSources: ['default', 'company'] } })).token;
+    }, 120_000);
+    afterAll(async () => { await close?.(); }, 60_000);
+
+    test('a run that is not labelled-only adds no company rule', async () => {
+      const r = await label(['dave-example'], false) as any;
+      expect(r.error).toBeUndefined();
+      expect(r.company_rule).toBeUndefined();
+      expect(await companyRules(engine)).toEqual([]);
+      expect(await memberReads('dave-example')).toEqual(['callcanary', 'factscanary']);
+    }, 120_000);
+
+    test("the preview shows the rule and writes nothing; the run adds company/ for the owner and every member; members read company/facts and a call; the owner's key reads the same", async () => {
+      const ownerBefore = await tokenReads(engine, ownerKey, COMPANY_CANARIES);
+      expect(ownerBefore).toEqual(['boardcanary', 'callcanary', 'factscanary']);
+      const preview = await label(['alice-example', 'bob-example'], true, false) as any;
+      expect(preview.company_rule).toMatchObject({ source: 'company', id: 'company', prefix: 'company/', action: 'add',
+        readers: ['member:alice-example', 'member:bob-example', 'member:dave-example', 'member:owner-example'] });
+      expect(receiptLines(preview).join('\n')).toContain('rule       company:company/ readable by alice-example, bob-example, dave-example, owner-example (will add)');
+      expect(await companyRules(engine)).toEqual([]);
+      const r = await label(['alice-example', 'bob-example'], true) as any;
+      expect(r.error).toBeUndefined();
+      expect((await companyRules(engine)).map(x => [x.id, x.prefix, x.readable_by])).toEqual([['company', 'company/', ['member:alice-example', 'member:bob-example', 'member:dave-example', 'member:owner-example']]]);
+      for (const m of ['alice-example', 'bob-example', 'dave-example']) expect(await memberReads(m)).toEqual(['callcanary', 'factscanary']);
+      expect(await tokenReads(engine, ownerKey, COMPANY_CANARIES)).toEqual(ownerBefore);
+    }, 120_000);
+
+    test('a re-run with one more member adds that member and keeps every reader', async () => {
+      const r = await label(['alice-example', 'bob-example', 'carol-example'], true) as any;
+      expect(r.error).toBeUndefined();
+      expect(r.company_rule).toMatchObject({ action: 'add', adds: ['member:carol-example'], write: { state: 'recorded' } });
+      expect(receiptOk(r)).toBe(true);
+      expect(receiptLines(r).join('\n')).toContain('the added readers wait for approval, as every widening does: preview with gbrain access apply --source company');
+      expect((await companyRules(engine))[0]!.readable_by).toEqual(['member:alice-example', 'member:bob-example', 'member:carol-example', 'member:dave-example', 'member:owner-example']);
+      expect(await memberReads('carol-example')).toEqual([]);
+      const plan = await previewApply(engine, 'company');
+      await applyApproved(engine, 'company', { expect: plan.plan_hash! });
+      expect(await memberReads('carol-example')).toEqual(['callcanary', 'factscanary']);
+      for (const m of ['alice-example', 'bob-example', 'dave-example']) expect(await memberReads(m)).toEqual(['callcanary', 'factscanary']);
+      const again = await label(['alice-example'], true) as any;
+      expect(again.company_rule).toMatchObject({ action: 'keep' });
+      expect((await companyRules(engine))[0]!.readable_by).toHaveLength(5);
+    }, 120_000);
+  });
+}
+
+describe('C: gbrain setup --shape company --labelled-only gives labelled-only members the calls (spawned, PGLite)', () => {
+  test('each labelled-only member reads an imported call through the company/ rule', async () => {
+    const b = box();
+    const dir = join(b.root, 'calls');
+    mkdirSync(dir);
+    writeFileSync(join(dir, '2026-03-04 acme-example renewal.txt'), 'Alice: harbor ledger notes callcanary, we agreed to move acme-example to annual billing.\n');
+    const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--transcripts', dir, '--labelled-only', '--json']);
+    expect(r.exitCode).toBe(0);
+    expect(r.doc.serves.regrant.company_rule).toMatchObject({ prefix: 'company/', action: 'add', readers: ['member:alice-example', 'member:bob-example', 'member:owner-example'] });
+    const engine = await openBrainFile(b.home);
+    try {
+      for (const m of ROSTER) expect(await tokenReads(engine, readFileSync(keyFile(b.home, m), 'utf8').trim(), ['callcanary'])).toEqual(['callcanary']);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 480_000);
+});

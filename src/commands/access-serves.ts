@@ -31,8 +31,8 @@ import { hashToken } from '../core/utils.ts';
 import { opError } from '../core/ops/contract.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
-import { addMember, assertAccessId, getMember, parseIdList } from '../core/access/members.ts';
+import { normalizeRule, ruleIdForPrefix, type FolderRule } from '../core/access/folder-rules.ts';
+import { addMember, assertAccessId, getMember, listMembers, parseIdList } from '../core/access/members.ts';
 import { hintReaders, ownerMemberId, ownerView, setOwner } from '../core/access/owner.ts';
 import { stdioMemberId } from '../core/access/caller.ts';
 import { brainServes, SERVES_KEY, unlabeledPeopleFolders, type PeopleFolder, type ServesView } from '../core/access/serves.ts';
@@ -46,6 +46,8 @@ import { mintToken } from './auth-mint.ts';
 export const MEMBER_KEY_DIR = 'member-keys';
 export const memberKeyName = (member: string): string => `member-${member}`;
 export const memberKeyDir = (): string => join(configDir(), MEMBER_KEY_DIR);
+
+type RuleWrite = { store: string; revision: number | null; state: string; git_commit?: string | null };
 
 export interface ServesStatus extends ServesView { owner: string | null; stdio_member: string | null; open_pages?: OpenPages | null; open_pages_error?: OpenPagesError }
 
@@ -61,7 +63,13 @@ export interface ServesReceipt {
   /** GBRA-585 D (--owner): live credentials bound to no member, each with the command that binds it to the owner. Never rebound here. */
   unbound?: Array<{ kind: 'token' | 'client'; name: string; command: string }>;
   rules: Array<{ id: string; prefix: string; readers: string[]; action: 'add' | 'keep' | 'blocked'; detail?: string }>;
-  rule_write?: { store: string; revision: number | null; state: string; git_commit?: string | null };
+  rule_write?: RuleWrite;
+  /**
+   * GBRA-585 C: on a --labelled-only run once the company source exists, one folder rule company/ in source company,
+   * readable by the owner, this run's members and every enabled member who is not labelled-only (who read those pages
+   * today), so labelled-only members still read the company pages. A re-run only adds readers.
+   */
+  company_rule?: { source: string; id: string; prefix: string; readers: string[]; adds?: string[]; action: 'add' | 'keep' | 'blocked'; detail?: string; write?: RuleWrite };
   /** GBRA-585 A: reads = the source list a minted or list key holds once the run is done; adds = what a re-run adds to a kept list key. */
   keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'blocked'; detail?: string; reads?: string[]; adds?: string[] }>;
   /** GBRA-585 A: what the keys this run mints write and read, and what the company source holds when they read it. */
@@ -167,6 +175,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
       detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${hinted[i]} --source ${sourceId}` };
   });
   const desired = await memberKeyReadSources(engine, sourceId);
+  const companyRule = labelledOnly && desired.includes(COMPANY_SOURCE_ID) ? await planCompanyRule(engine, members, owner) : undefined;
   const keys: ServesReceipt['keys'] = [];
   for (const id of roster) {
     const name = memberKeyName(id);
@@ -187,7 +196,22 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
   }
   return { serves: 'several', source_id: sourceId, applied: false, config: { key: SERVES_KEY, value: 'several', action: explicit === 'several' ? 'keep' : 'write' },
     members, ...(ownerPlan ? { owner: ownerPlan, unbound: ownerPlan.action === 'blocked' ? [] : await unboundCredentials(engine, ownerPlan.id) } : {}),
-    rules, keys, reads: { write: sourceId, sources: desired, company: desired.includes(COMPANY_SOURCE_ID) ? await companyCounts(engine) : null }, key_dir: keyDir, unlabeled: await unlabeledOutside(engine, sourceId, rules), ...await openPagesFor(engine, sourceId, members, rules, labelledOnly, owner), completed: [] };
+    rules, ...(companyRule ? { company_rule: companyRule } : {}), keys, reads: { write: sourceId, sources: desired, company: desired.includes(COMPANY_SOURCE_ID) ? await companyCounts(engine) : null }, key_dir: keyDir,
+    unlabeled: await unlabeledOutside(engine, sourceId, rules), ...await openPagesFor(engine, sourceId, members, rules, labelledOnly, owner, companyRule), completed: [] };
+}
+
+/** GBRA-585 C: the company/ rule a --labelled-only run adds or widens (ServesReceipt.company_rule); it never removes a reader. */
+async function planCompanyRule(engine: BrainEngine, members: ServesReceipt['members'], owner: string | null): Promise<NonNullable<ServesReceipt['company_rule']>> {
+  const at = { source: COMPANY_SOURCE_ID, id: ruleIdForPrefix(`${COMPANY_SOURCE_ID}/`), prefix: `${COMPANY_SOURCE_ID}/` };
+  if (!owner) return { ...at, readers: [], action: 'blocked', detail: "its readers start with the brain owner and this brain has none; run again with --owner and the owner's member id" };
+  const base = await currentFolderRules(engine, COMPANY_SOURCE_ID);
+  const existing = base.find(b => b.prefix === at.prefix);
+  const clash = existing ? undefined : base.find(b => b.id === at.id);
+  if (clash) return { ...at, readers: [], action: 'blocked', detail: `rule "${clash.id}" in source company already covers ${clash.prefix}; give it another id with gbrain access rule add --id <new id> --prefix ${clash.prefix} --source company, then run this again` };
+  const open = (await listMembers(engine)).filter(m => m.status === 'enabled' && !m.labelled_only).map(m => m.id);
+  const held = existing?.readable_by ?? [];
+  const adds = [...new Set([owner, ...members.filter(m => m.action !== 'blocked').map(m => m.id), ...open].map(m => `member:${m}`))].filter(p => !held.includes(p)).sort();
+  return { ...at, id: existing?.id ?? at.id, readers: [...held, ...adds].sort(), ...(existing && adds.length ? { adds } : {}), action: existing && !adds.length ? 'keep' : 'add' };
 }
 
 /** A text[] column value as a list (Postgres returns an array, PGLite may return the {a,b} literal). */
@@ -201,10 +225,11 @@ async function companyCounts(engine: BrainEngine): Promise<{ pages: number; call
 }
 
 /** The open pages once this run's members, keys and rules are in place (the preview counts what it is about to add). */
-function openPagesFor(engine: BrainEngine, sourceId: string, members: ServesReceipt['members'], rules: ServesReceipt['rules'], labelledOnly: boolean, owner: string | null): Promise<OpenPagesRead> {
+function openPagesFor(engine: BrainEngine, sourceId: string, members: ServesReceipt['members'], rules: ServesReceipt['rules'], labelledOnly: boolean, owner: string | null, companyRule?: ServesReceipt['company_rule']): Promise<OpenPagesRead> {
   return readOpenPages(engine, {
     planned: { members: members.filter(m => m.action !== 'blocked').map(m => m.id), source: sourceId, labelledOnly, owner },
-    exclude: rules.filter(r => r.action !== 'blocked').map(r => ({ source: sourceId, prefix: r.prefix })),
+    exclude: [...rules.filter(r => r.action !== 'blocked').map(r => ({ source: sourceId, prefix: r.prefix })),
+      ...(companyRule && companyRule.action !== 'blocked' ? [{ source: companyRule.source, prefix: companyRule.prefix }] : [])],
   });
 }
 
@@ -214,7 +239,7 @@ async function unlabeledOutside(engine: BrainEngine, sourceId: string, rules: Se
   return (await unlabeledPeopleFolders(engine)).filter(u => !(u.source === sourceId && covered.has(u.prefix)));
 }
 
-const blocked = (r: ServesReceipt): boolean => [...r.members, ...(r.owner ? [r.owner] : []), ...r.rules, ...r.keys].some(x => x.action === 'blocked');
+const blocked = (r: ServesReceipt): boolean => [...r.members, ...(r.owner ? [r.owner] : []), ...r.rules, ...(r.company_rule ? [r.company_rule] : []), ...r.keys].some(x => x.action === 'blocked');
 
 function writeKeyFile(path: string, token: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -253,6 +278,12 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
       const { result } = await addFolderRules(engine, sourceId, added, { apply: true, json });
       if (result) receipt.rule_write = { store: result.store, revision: result.revision, state: result.state, ...(result.git ? { git_commit: result.git.commit ?? null } : {}) };
     }
+    const cr = receipt.company_rule;
+    if (cr?.action === 'add') {
+      const prior = (await currentFolderRules(engine, cr.source)).find(b => b.id === cr.id);
+      const { result } = await addFolderRules(engine, cr.source, [{ ...prior, id: cr.id, prefix: cr.prefix, readable_by: cr.readers }], { apply: true, json });
+      if (result) cr.write = { store: result.store, revision: result.revision, state: result.state, ...(result.git ? { git_commit: result.git.commit ?? null } : {}) };
+    }
     receipt.completed.push('rules');
     abortAfter('serves-rules');
     for (const k of receipt.keys.filter(x => x.action === 'mint')) {
@@ -273,7 +304,7 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
     if (receipt.config.action === 'write') await engine.setConfig(SERVES_KEY, 'several');
     receipt.completed.push('config');
     receipt.unlabeled = await unlabeledOutside(engine, sourceId, receipt.rules);
-    const { open_pages, open_pages_error } = await openPagesFor(engine, sourceId, receipt.members, receipt.rules, labelledOnly, await ownerMemberId(engine));
+    const { open_pages, open_pages_error } = await openPagesFor(engine, sourceId, receipt.members, receipt.rules, labelledOnly, await ownerMemberId(engine), receipt.company_rule);
     receipt.open_pages = open_pages;
     if (open_pages_error) receipt.open_pages_error = open_pages_error; else delete receipt.open_pages_error;
   } catch (e) {
@@ -282,7 +313,10 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
   return receipt;
 }
 
-const ruleWritePending = (r: ServesReceipt): boolean => !!r.rule_write && r.rule_write.state !== 'applied' && r.rule_write.state !== 'unchanged';
+const writePending = (w: RuleWrite | undefined): boolean => !!w && w.state !== 'applied' && w.state !== 'unchanged';
+const companyHeld = (r: ServesReceipt): boolean => r.company_rule?.write?.state === 'recorded';
+const ruleWritePending = (r: ServesReceipt): boolean => writePending(r.rule_write) || (writePending(r.company_rule?.write) && !companyHeld(r));
+const writeLine = (w: RuleWrite) => `             ${w.store} store, revision ${w.revision ?? '-'} ${w.state}${w.git_commit ? `, committed ${w.git_commit.slice(0, 12)}` : ''}`;
 
 export function receiptLines(r: ServesReceipt): string[] {
   const verb = (a: string) => (r.applied ? { add: 'added', mint: 'minted', write: 'written', keep: 'kept', blocked: 'BLOCKED' } : { add: 'will add', mint: 'will mint', write: 'will write', keep: 'keep', blocked: 'BLOCKED' })[a] ?? a;
@@ -293,14 +327,30 @@ export function receiptLines(r: ServesReceipt): string[] {
     ...(r.owner ? [`  owner      ${r.owner.id} (${ownerVerb(r.owner.action, r.applied)})${r.owner.detail ? `: ${r.owner.detail}` : ''}`] : []),
     ...(r.unbound ?? []).map(u => `  unbound    ${u.kind === 'token' ? 'token' : 'OAuth client'} ${u.name} is bound to no member, and setup binds none; if it is the owner's, bind it with ${u.command}`),
     ...r.rules.map(x => `  rule       ${x.prefix} readable by ${x.readers.map(p => p.replace(/^member:/, '')).join(', ')} (${verb(x.action)})${x.detail ? `: ${x.detail}` : ''}`),
-    ...(r.rule_write ? [`             ${r.rule_write.store} store, revision ${r.rule_write.revision ?? '-'} ${r.rule_write.state}${r.rule_write.git_commit ? `, committed ${r.rule_write.git_commit.slice(0, 12)}` : ''}`] : []),
+    ...(r.rule_write ? [writeLine(r.rule_write)] : []),
+    ...companyRuleLines(r),
     ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name}${k.adds?.length ? `; ${r.applied ? 'now also reads' : 'will also read'} ${k.adds.join(', ')}` : ''})${k.detail ? `: ${k.detail}` : ''}`),
     ...readsLines(r),
-    ...(ruleWritePending(r) ? [`  The rules are not enforced yet: finish with gbrain access resume --source ${r.source_id}`] : []),
+    ...(writePending(r.rule_write) ? [`  The rules are not enforced yet: finish with gbrain access resume --source ${r.source_id}`] : []),
+    ...(writePending(r.company_rule?.write) && !companyHeld(r) ? [`  The company rule is not enforced yet: finish with gbrain access resume --source ${r.company_rule!.source}`] : []),
     ...r.unlabeled.map(u => `  unlabeled  ${u.source}:${u.prefix} (${u.pages} page(s)) has no folder rule, so every member reads it: name its readers with gbrain access rule add --prefix ${u.prefix} --readers <list> --source ${u.source}, or add the person with --members`),
     ...openPagesLines(r, labelledOnlyCommand(r)),
     ...(r.error ? [`Stopped: ${r.error.message}`, `  Finished before it stopped: ${r.completed.join(', ') || 'nothing'}. Every step is idempotent: run the same command again to finish.`] : []),
     ...(r.applied ? [] : [blocked(r) ? 'Nothing written: fix each BLOCKED line, then run this again.' : 'Nothing written. Add --yes to apply.']),
+  ];
+}
+
+/** GBRA-585 C: the company/ rule a --labelled-only run adds, and that only keys bound to its readers read those pages. */
+export function companyRuleLines(r: ServesReceipt): string[] {
+  const c = r.company_rule;
+  if (!c) return [];
+  const names = (ps: string[]) => ps.map(p => p.replace(/^member:/, '')).join(', ');
+  const verb = c.action === 'blocked' ? 'BLOCKED' : c.action === 'keep' ? 'kept' : r.applied ? 'added' : 'will add';
+  return [
+    `  rule       ${c.source}:${c.prefix} readable by ${names(c.readers)} (${verb}${c.adds?.length ? `; ${r.applied ? 'added' : 'adds'} ${names(c.adds)}` : ''})${c.detail ? `: ${c.detail}` : ''}`,
+    ...(c.action === 'blocked' ? [] : [`             labelled-only members read the company pages through this rule; only keys bound to these members read pages under ${c.prefix}`]),
+    ...(c.write ? [writeLine(c.write)] : []),
+    ...(companyHeld(r) ? [`             the added readers wait for approval, as every widening does: preview with gbrain access apply --source ${c.source}, then approve with the --yes --expect line it prints`] : []),
   ];
 }
 

@@ -25,7 +25,7 @@ import { openclawStateDir } from '../core/setup/brain-first.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
-import { readRoster, readsLines, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
+import { companyRuleLines, readRoster, readsLines, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
 export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; openHistory?: boolean; owner?: string; dryRun: boolean }
 
@@ -149,7 +149,7 @@ export function historyRefusal(status: ServesStatus | null, preview: ServesRecei
   const argv = ['gbrain', 'setup', harness, '--serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(owner?.from === 'flag' ? ['--owner', owner.id] : [])];
   return opError('setup_history_choice_required',
     `This brain serves one person and holds ${holds}; turned shared as asked, every member's key would read them. Nothing was written. Run setup again with --labelled-only to keep that history private, or with --open-history to let every member read it.`,
-    `Pick one: ${[...argv, '--labelled-only'].join(' ')} keeps that history private (each member reads only pages labelled for them, so not the company source either), or ${[...argv, '--open-history'].join(' ')} lets every member read it.`,
+    `Pick one: ${[...argv, '--labelled-only'].join(' ')} keeps that history private (each member reads only pages labelled for them; with the company shape, setup adds one company/ rule so they read the company pages), or ${[...argv, '--open-history'].join(' ')} lets every member read it.`,
     { fix: { argv: [...argv, '--labelled-only'], consent: ['credentials'], actor: 'user', ask_user: true, requires_exclusive: false,
       why: 'Keeps the existing pages from the members; ask the user, who may instead choose --open-history so the members read them.',
       verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
@@ -268,7 +268,8 @@ export function servesOk(o: ServesOutcome | null): boolean {
  */
 export function servesAfterLayout(o: ServesOutcome | null, flags: ServesFlags, launcher: string, plan: ServesPlan, company: { action: string } | null | undefined): ServesOutcome | null {
   if (!o || flags.serves !== 'several' || company?.action !== 'created') return o;
-  if (flags.dryRun) return { ...o, note: [o.note, 'the member keys this run mints also read source company once the layout step adds it: every page in it, including the calls it imports, which every member reads whether or not they attended'].filter(Boolean).join('; ') };
+  if (flags.dryRun) return { ...o, note: [o.note, 'the member keys this run mints also read source company once the layout step adds it: every page in it, including the calls it imports, which every member reads whether or not they attended',
+    ...(flags.labelledOnly ? ['as the members are labelled-only, a folder rule company/ in source company then names them and the owner as its readers'] : [])].filter(Boolean).join('; ') };
   if (!o.receipt?.applied || o.error) return o;
   const r = child(launcher, servesArgv(plan.roster, flags, plan.owner, true));
   const regrant = parsed<ServesReceipt>(r.stdout);
@@ -293,7 +294,7 @@ export function servesLines(o: ServesOutcome, dryRun: boolean): string[] {
       : `  proof      a read bound to ${p.member} sees its own folder (${p.own} page(s)) and no page of another member's folder${openTail(o.receipt, p.member)}`),
     ...(o.owner_from === 'login' && o.receipt?.owner && o.receipt.owner.action !== 'keep' && o.receipt.owner.action !== 'blocked'
       ? [`  owner      ${o.receipt.owner.id} is named from your login name; to name someone else, ${dryRun ? 'pass --owner <id>' : 'add them (gbrain access member add <id>) and run gbrain access owner set <id>'}`] : []),
-    ...(o.regrant ? [...o.regrant.keys.filter(k => k.adds?.length).map(k => `  key        ${k.member}: now also reads ${k.adds!.join(', ')}, which this run added`), ...readsLines(o.regrant)] : []),
+    ...(o.regrant ? [...o.regrant.keys.filter(k => k.adds?.length).map(k => `  key        ${k.member}: now also reads ${k.adds!.join(', ')}, which this run added`), ...companyRuleLines(o.regrant), ...readsLines(o.regrant)] : []),
     ...(o.stdio ? [`  stdio      ${o.stdio.detail}`] : []),
     ...(o.note ? [`  labels     ${o.note}`] : []),
     ...(o.error ? [`  error      ${o.error}`] : []),

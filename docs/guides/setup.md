@@ -184,9 +184,14 @@ mail, the conversation archive), setup asks for that choice before it writes any
 it refuses with `setup_history_choice_required`, naming the count, how many are DMs,
 chat or mail and how many are in the conversation archive, until you pass
 `--labelled-only` (keep that history private) or `--open-history` (every member reads
-it). Labelled-only members read no page of the `company` source either, because a rule
-names a folder, never a whole source. A new brain, one with no such pages and one that
-already serves several people are not asked.
+it). When the brain has the `company` source (`--shape company`), a `--labelled-only` run
+also adds one folder rule, `company/` in source `company`, readable by the owner, the
+run's members and every member who is not labelled-only, so the members still read the
+company pages and imported calls; only keys bound to those members read pages under
+`company/`. A re-run adds new members to that rule and never removes one; because that
+widens it, the new readers wait for `gbrain access apply --source company` (preview, then
+the `--yes --expect` line it prints). A run without `--labelled-only` adds no such rule. A
+new brain, one with no such pages and one that already serves several people are not asked.
 On a brain with no owner, setup also names one: `--owner <id>`, or by default your
 login name as a member id. It adds that member and runs `gbrain access owner set`;
 the preview shows it first, and an owner that is already set is kept. No key is

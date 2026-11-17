@@ -15,7 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { openBrainFile } from './helpers/setup-serves-box.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -44,8 +45,7 @@ async function brain(kind: string): Promise<Brain> {
   return {
     env: base,
     engine: async () => {
-      engine = new PGLiteEngine();
-      await engine.connect({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite') } as never);
+      engine = await openBrainFile(home);
       return engine;
     },
     close: async () => { await engine?.disconnect(); },
