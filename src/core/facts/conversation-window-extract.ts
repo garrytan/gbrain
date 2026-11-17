@@ -64,7 +64,7 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   const sessionId = `${CONVERSATION_FACTS_SOURCE_PREFIX}:${page.slug}`;
   let extracted: ExtractedFact[];
   const input: ExtractInput = { turnText: text, sessionId, source: CONVERSATION_FACTS_SOURCE_PREFIX, engine: run.engine, abortSignal: run.signal,
-    entityHints, entityHintsCap: CONVERSATION_ENTITY_HINTS_CAP };
+    entityHints, entityHintsCap: CONVERSATION_ENTITY_HINTS_CAP, slots: true };
   if (run.extractor) {
     extracted = await run.extractor(input);
   } else {
