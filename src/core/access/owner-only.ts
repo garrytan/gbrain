@@ -28,8 +28,10 @@ function ownerOnlySourceRowSql(alias: string): string {
 /**
  * Does the brain hold an owner-only source? Uncorrelated, so a statement evaluates it once. Like search's other live read
  * checks (search/read-policy-sql.ts, guests/marker.ts) it reads sources as `read_source`: a read check, not a listing.
+ * `id >= ''` holds for every row; it gives the planner the primary key as a path (a NOT NULL test would be folded away),
+ * so a plan that prices out sequential scans still reads sources by index.
  */
-export const ANY_OWNER_ONLY_SQL = `EXISTS (SELECT 1 FROM sources read_source WHERE ${ownerOnlySourceRowSql('read_source')})`;
+export const ANY_OWNER_ONLY_SQL = `EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND ${ownerOnlySourceRowSql('read_source')})`;
 
 /** The source whose id is the SQL expression `sourceId` is owner-only (the SQL twin of sourceIsOwnerOnly). */
 export function ownerOnlySourceSql(sourceId: string): string {
