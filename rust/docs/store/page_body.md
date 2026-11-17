@@ -22,6 +22,7 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.readSegmentTexts(sourceId, [sha256])` | `[sha256, body]` pairs of the texts found, in request order, each sha once. The TypeScript member returns PGLite's `Map` | `readSegmentTexts` |
 | `brain.stageManifestRows(rows)` | `null` | `stageManifestRows` |
 | `brain.readManifest(pageId, { generation?, stagingId?, region?, lastN? }?)` | manifest rows by `seq`. With `stagingId`, that staging's rows; else the rows of `generation`, default the page's live `body_generation` (0 for a missing page or one with no segmented state). `lastN` keeps the last rows, still in `seq` order. An empty `region` is ignored, as in PGLite | `readManifest` |
+| `brain.stageSegmentChunks(pageId, generation, chunks)` | the chunk indexes, in input order, after the page's highest `chunk_index`. See "Segment chunks" | `stageSegmentChunks` |
 | `brain.createSegmentedPageShell(slug, meta, { sourceId })` | `{ id }` of a new page at body generation 0, `body_storage: 'segmented'`, `body_bytes: 0` | `createSegmentedPageShell` |
 | `brain.flipBodyGeneration(input)` | `{ retiredChunks, retireDeferred }` | `flipBodyGeneration` |
 | `brain.openBodyStaging(input)` | `null`; the staging starts `open` | `openBodyStaging` |
@@ -61,20 +62,46 @@ does; an inline page has neither.
    expected and current generation and a `get_page` fix.
 4. A staging that is not `open`, `sealed` or `prepared` refuses `body_staging_expired`.
 5. Live rows in `closeOccurrences` get `genTo = newGeneration`; the staging's rows become published.
-6. With `retireInlineChunks`, the page's chunks are deleted, unless there are more than
-   `retireMaxRows` (then none are, and `retireDeferred` is true).
+6. Chunks retire by PGLite's predicate: segment chunks of `retireChunkOccurrences` at or below
+   `expectedGeneration`, the inline chunks when `retireInlineChunks`, and segment chunks of
+   `newGeneration` whose occurrence is not live in it (the staging's rows plus the open published
+   rows not in `closeOccurrences`). They are deleted, unless there are more than `retireMaxRows`
+   (then none are, and `retireDeferred` is true).
 7. The page row takes the meta (`type`, `page_kind` default `markdown`, `title`, `frontmatter`;
    the other meta fields only when given; `chunker_version` at most 3; `ingested_at` now when a
    provenance field is set), and the body state takes the body columns.
 8. The live rows must tile `body_bytes` from 0 without a gap, with `segment_count` rows; else the
    flip refuses `body_staging_expired` with `reason: 'generation_incomplete'`.
+9. The chunks family publishes `newGeneration` (`chunks::publish_segment_chunks`), with the
+   `byteStart` of each live row, so chunks staged for it become visible in document order.
 
-The store reports refusals 2, 3, 4 and 8 as `invalid_state` with the message `page_body:<json>`;
+The store reports refusals 2, 3, 4 and 8, and the `stageSegmentChunks` refusal, as `invalid_state` with the message `page_body:<json>`;
 the TypeScript members rebuild the error PGLite throws, message and fix included.
 `setBodyStagingState` follows PGLite: a live staging moves to any state, and a move to a live state
 restarts its idle deadline at most one hour ahead, never past its hard deadline. An `aborted` or
 `expired` move of an ended staging, or a move to the state it already holds, does nothing. Any other
 move of an ended or unknown staging refuses `body_staging_expired`.
+
+## Segment chunks
+
+`stageSegmentChunks(pageId, generation, chunks)` writes chunk rows for a body generation through the
+chunks family's segment-chunk helper (`chunks::append_segment_chunks`; its contract is the comment
+above "Segment chunks" in `rust/crates/gbrain-store/src/chunks.rs`). In one store write it:
+
+1. Answers `[]` for no chunks, without reading the page.
+2. Refuses PGLite's `revision_changed` (legacy `invalid_params`, `detail` `{ staged_generation,
+   current_generation }`, `current_generation` `null` for a missing page) when the page is missing,
+   `generation` is below the page's body generation, or `generation` is the page's and the page is
+   inline or a chunk's occurrence has no published manifest row in that generation.
+3. Writes each chunk at the next index after the page's highest `chunk_index` (rows staged, live
+   and retired-but-not-deleted all count), in input order, with its occurrence, ordinal and raw
+   byte span, and returns the indexes.
+
+The chunks stay out of `getChunks` and keyword search until a flip publishes their generation. The
+TypeScript member normalises them as `upsertChunks` does (`prepareChunks`), refuses a chunk that
+carries a vector (`engine_capability_missing`: vectors are not stored) and refuses
+`opts.embeddingColumn` (PGLite takes the default model label from it). Deleting a page for good
+also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 
 ## Refusals
 
@@ -95,8 +122,6 @@ foreign key to the texts has no cascade).
 
 The TypeScript engine refuses these with `engine_capability_missing`:
 
-- `stageSegmentChunks`: segment chunk rows need an occurrence-keyed chunk append in the chunks family
-  and the embeddings work. Until then a flip retires only inline chunks.
 - `sweepSegments`: its roots include page versions by body generation and the journal's staging
   references, which this family cannot read yet.
 - A segmented page inside `transaction`: the store has no transactions yet, so the parity cases that
@@ -104,6 +129,12 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 
 ## Known differences from PGLite
 
+- `stageSegmentChunks` reads occurrence ids, ordinals and byte spans as unsigned numbers; a negative
+  one refuses `invalid_argument`. PGLite's columns are signed, but its occurrence ids come from a
+  sequence that starts at 1.
+- A segmented page is sealed on PGLite by the text projection, which this engine does not serve.
+  `getChunks` therefore answers `[]` for a page a flip has unsealed, on both engines, until the page
+  is sealed again.
 - The shell's `content_hash`, `compiled_truth` and `timeline` are `''` in the page record, where
   PGLite stores `NULL`. `getPage` hides the body fields on both engines; `content_hash` reads `''`
   on Rust and `null` on PGLite for a shell that was never flipped.

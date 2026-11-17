@@ -2,8 +2,8 @@
 //! `refreshPageBody`, each a thin call over `gbrain_store::page_body`.
 //!
 //! Bytes cross as lowercase hex and dates as ISO strings; `store-members/page-body.ts` converts
-//! them to and from `Uint8Array` and `Date`. Not bound (the TypeScript engine refuses them):
-//! stageSegmentChunks and sweepSegments.
+//! them to and from `Uint8Array` and `Date`. Not bound (the TypeScript engine refuses it):
+//! sweepSegments.
 
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -114,6 +114,26 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.flip_body_generation(&required(input, "flipBodyGeneration input")?)
+        })
+    }
+
+    /// `stageSegmentChunks(pageId, generation, chunks)`: the chunk indexes, in input order.
+    #[napi]
+    pub fn stage_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+        generation: Value,
+        chunks: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let chunks: Vec<gbrain_store::chunks::SegmentChunkInput> =
+                required(chunks, "stageSegmentChunks chunks")?;
+            s.stage_segment_chunks(
+                required(page_id, "stageSegmentChunks pageId")?,
+                required(generation, "stageSegmentChunks generation")?,
+                &chunks,
+            )
         })
     }
 

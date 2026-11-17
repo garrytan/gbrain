@@ -4,11 +4,11 @@
  * hex and dates as ISO strings; this file converts them to and from `Uint8Array` and `Date`.
  *
  * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest,
- * createSegmentedPageShell, flipBodyGeneration, openBodyStaging, setBodyStagingState, readSegmentDerivations,
- * upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody.
+ * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, openBodyStaging, setBodyStagingState,
+ * readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. stageSegmentChunks
+ * refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
  *
- * Refused with `engine_capability_missing` (not exported): stageSegmentChunks (needs the embeddings family) and
- * sweepSegments (needs page_versions and journal roots).
+ * Refused with `engine_capability_missing` (not exported): sweepSegments (needs page_versions and journal roots).
  *
  * The flip and the staging members refuse as PGLite does: the store reports the refusal as an `invalid_state` error
  * whose message is `page_body:<json>`, and `bodyError` rebuilds the error PGLite's engine throws from that JSON.
@@ -18,13 +18,14 @@
  * unexported.
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
-  SegmentedPageMeta, SegmentTextInput } from '../../page-body/types.ts';
+  SegmentChunkInput, SegmentedPageMeta, SegmentTextInput } from '../../page-body/types.ts';
 import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
 import { readFix } from '../../ops/op-fix.ts';
+import { prepareChunks } from '../chunk-input.ts';
 import { storeErrorCode } from '../store-errors.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
 const unhex = (text: string): Uint8Array => new Uint8Array(Buffer.from(text, 'hex'));
@@ -35,6 +36,7 @@ type BodyRefusal =
   | { kind: 'page_identity_changed'; page_id: number }
   | { kind: 'revision_changed'; slug: string; source_id: string; expected: number; current: number }
   | { kind: 'staging_gone'; slug: string | null; staging_id: string; state: string | null }
+  | { kind: 'chunks_stale'; page_id: number; slug: string | null; staged_generation: number; current_generation: number | null }
   | { kind: 'generation_incomplete'; slug: string; staging_id: string; rows: number; covered: number; gapless: boolean;
       body_bytes: number; segment_count: number };
 
@@ -61,6 +63,10 @@ function bodyError(refusal: BodyRefusal): Error {
         { legacy_error: 'invalid_params', detail: JSON.stringify({ expected_generation: refusal.expected, current_generation: refusal.current }),
           fix: readFix('Returns the current revision and size.', { argv: ['gbrain', 'get', '--source', refusal.source_id, '--', refusal.slug],
             mcp: { tool: 'get_page', arguments: { slug: refusal.slug, source_id: refusal.source_id, body: 'none' } } }) });
+    case 'chunks_stale':
+      return opError('revision_changed', `Page ${refusal.slug ?? refusal.page_id} moved to body generation ${refusal.current_generation ?? 'none'} while chunks for generation ${refusal.staged_generation} were staged.`,
+        'Another write published first. Read the page again and repeat this write against its current revision.',
+        { legacy_error: 'invalid_params', detail: JSON.stringify({ staged_generation: refusal.staged_generation, current_generation: refusal.current_generation }) });
     case 'staging_gone':
       return bodyStagingGoneError(refusal.slug ?? refusal.staging_id, refusal.staging_id, refusal.state);
     case 'generation_incomplete':
@@ -131,6 +137,27 @@ export const readManifest: StoreMember<[pageId: number, opts?: { generation?: nu
     const o = takeOptions('readManifest', opts, ['generation', 'stagingId', 'region', 'lastN']);
     const rows: StoredManifestRow[] = await storeCall({ member: 'readManifest' }, () => brain.readManifest(pageId, o));
     return rows.map(toManifestRow);
+  };
+
+/**
+ * The chunks get PGLite's normalisation (`prepareChunks`: model default, empty values to null, scrubbed text) plus
+ * their place in the occurrence; `chunk_index` is the store's to pick. `opts.embeddingColumn` is refused: PGLite takes
+ * the default model label from it, and the store has no embedding columns.
+ */
+export const stageSegmentChunks: StoreMember<[pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: unknown }], number[]> =
+  async (brain, pageId, generation, chunks, opts) => {
+    takeOptions('stageSegmentChunks', opts, []);
+    if (chunks.length === 0) return [];
+    for (const chunk of chunks) {
+      if (chunk.embedding !== undefined || chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'chunk vectors are not stored');
+    }
+    const prepared = await prepareChunks(brain, chunks.map(chunk => ({ ...chunk, chunk_index: 0 })));
+    const sent = prepared.map((row, i) => {
+      const { chunk_index: _index, ...rest } = row;
+      const c = chunks[i]!;
+      return { ...rest, occurrence_id: c.occurrence_id, local_ordinal: c.local_ordinal, raw_byte_start: c.raw_byte_start, raw_byte_end: c.raw_byte_end };
+    });
+    return bodyCall('stageSegmentChunks', () => brain.stageSegmentChunks(pageId, generation, sent));
   };
 
 export const createSegmentedPageShell: StoreMember<[slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }], { id: number }> =

@@ -4,12 +4,12 @@
 //! below follows it, refusals included. rust/docs/store/page_body.md lists what differs.
 //!
 //! Members served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts,
-//! stageManifestRows, readManifest, createSegmentedPageShell, flipBodyGeneration, openBodyStaging,
-//! setBodyStagingState, readSegmentDerivations, upsertSegmentDerivations,
-//! retireSegmentDerivations, refreshPageBody. Not served (the TypeScript engine refuses them with
-//! `engine_capability_missing`): stageSegmentChunks (segment chunk rows and their vectors need core
-//! chunk helpers) and sweepSegments (its roots are version and journal rows this family cannot
-//! read).
+//! stageManifestRows, readManifest, stageSegmentChunks, createSegmentedPageShell,
+//! flipBodyGeneration, openBodyStaging, setBodyStagingState, readSegmentDerivations,
+//! upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. Segment chunk rows go
+//! through the chunks family's segment-chunk helper (`chunks::append_segment_chunks` and friends).
+//! Not served (the TypeScript engine refuses it with `engine_capability_missing`): sweepSegments
+//! (its roots are version and journal rows this family cannot read).
 //!
 //! Keys. Every record starts with `keys::PAGE_BODY` (`b`) and one kind byte. Page ids are
 //! big-endian u64; occurrence ids and generations are signed and stored sign-flipped big-endian
@@ -44,7 +44,7 @@ use crate::pages::{
 use crate::{Result, Store, StoreError, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
@@ -700,6 +700,7 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     delete_prefix(tx, &manifest_prefix(page.id))?;
     delete_prefix(tx, &derivation_prefix(page.id))?;
     tx.delete(&body_key(page.id))?;
+    crate::chunks::forget_segment_view(tx, page.id)?;
     let by_page = staging_by_page_prefix(page.id);
     let mut stagings = Vec::new();
     scan_prefix(&*tx, &by_page, false, &mut |k, _| {
@@ -1169,16 +1170,36 @@ impl Store {
                     "state": staged.map(|s| s.state),
                 })));
             }
-            // Only inline chunks exist on this engine (segment chunks are not served), so the
-            // retirement is the page's chunks when the write asks for inline ones.
-            let to_retire = if input.retire_inline_chunks == Some(true) {
-                crate::chunks::read_chunks(&*tx, page.id)?.len() as u64
-            } else {
-                0
-            };
-            let retire_deferred = i128::from(to_retire) > i128::from(input.retire_max_rows);
             let close: HashSet<i64> = input.close_occurrences.iter().copied().collect();
             let rows = manifest_rows(&*tx, page.id)?;
+            // PGLite's retire predicate, read before any manifest row moves: chunks of
+            // `retireChunkOccurrences` at or below the expected generation, the inline chunks
+            // when asked, and chunks staged for the new generation whose occurrence is not live in
+            // it (`newLive`: this staging's rows plus the open published rows it does not close).
+            let new_live: BTreeSet<u64> = rows
+                .iter()
+                .filter(|(_, r)| {
+                    r.staging_id.as_deref() == Some(staging.as_str())
+                        || (live_published(r) && !close.contains(&r.occurrence_id))
+                })
+                .filter_map(|(_, r)| u64::try_from(r.occurrence_id).ok())
+                .collect();
+            let retire_occurrences: BTreeSet<u64> = input
+                .retire_chunk_occurrences
+                .iter()
+                .filter_map(|o| u64::try_from(*o).ok())
+                .collect();
+            let retire_inline = input.retire_inline_chunks == Some(true);
+            // Both generations are at least 0 here: the expected one equals the stored one.
+            let expected_generation = u64::try_from(input.expected_generation).unwrap_or(0);
+            let new_generation = u64::try_from(input.new_generation).unwrap_or(0);
+            let retire = |c: &crate::chunks::ChunkRecord| {
+                crate::chunks::occurrence_match(c.segment, &retire_occurrences, Some(expected_generation))
+                    || (retire_inline && c.segment.is_none())
+                    || crate::chunks::generation_match(c.segment, new_generation, &new_live)
+            };
+            let to_retire = crate::chunks::count_chunks_matching(&*tx, page.id, &retire)? as u64;
+            let retire_deferred = i128::from(to_retire) > i128::from(input.retire_max_rows);
             let staging_bytes = uuid_bytes(&staging);
             let mut live_seqs: HashSet<i64> = HashSet::new();
             let mut moved = Vec::new();
@@ -1197,8 +1218,7 @@ impl Store {
             let retired = if retire_deferred || to_retire == 0 {
                 0
             } else {
-                crate::chunks::clear_chunks(tx, page.id)?;
-                to_retire
+                crate::chunks::delete_chunks_matching(tx, page.id, &retire)?.len() as u64
             };
             for (key, _) in &moved {
                 tx.delete(key)?;
@@ -1276,10 +1296,71 @@ impl Store {
                     "body_bytes": body.body_bytes, "segment_count": body.segment_count,
                 })));
             }
+            // Chunks staged for the new generation become visible, ordered by the byte_start of
+            // their occurrence's live row.
+            let offsets = live
+                .iter()
+                .filter_map(|r| Some((u64::try_from(r.occurrence_id).ok()?, u64::try_from(r.byte_start).ok()?)))
+                .collect();
+            crate::chunks::publish_segment_chunks(tx, page.id, new_generation, offsets)?;
             Ok(BodyFlipResult {
                 retired_chunks: retired,
                 retire_deferred,
             })
+        })
+    }
+
+    /// `stageSegmentChunks(pageId, generation, chunks)`: writes the chunks of a segmented write
+    /// for body generation `generation` at the indexes after the page's highest `chunk_index` and
+    /// returns those indexes. They stay hidden until a flip publishes that generation. Refuses
+    /// (writing nothing) with `revision_changed` when the page is gone, the generation is below the
+    /// page's, or the generation is the page's and the page is inline or an occurrence has no
+    /// published row in it, as PGLite does. No chunks: no read, no write, `[]`.
+    pub fn stage_segment_chunks(
+        &self,
+        page_id: i64,
+        generation: i64,
+        chunks: &[crate::chunks::SegmentChunkInput],
+    ) -> Result<Vec<u32>> {
+        if chunks.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.write(|tx| {
+            let page = page_u64(page_id)
+                .map(|id| read_page_by_id(&*tx, id))
+                .transpose()?
+                .flatten();
+            let refuse = |slug: Option<&str>, live: Option<i64>| {
+                body_error(json!({
+                    "kind": "chunks_stale", "page_id": page_id, "slug": slug,
+                    "staged_generation": generation, "current_generation": live,
+                }))
+            };
+            let Some(page) = page else {
+                return Err(refuse(None, None));
+            };
+            let state = read_body_state(&*tx, page.id)?;
+            let live = state.as_ref().map_or(0, |s| s.body_generation);
+            let segmented = is_segmented(state.as_ref());
+            let stale = generation < live
+                || (generation == live && !segmented)
+                || (generation == live && {
+                    let rows = manifest_rows(&*tx, page.id)?;
+                    let published: HashSet<i64> = rows
+                        .iter()
+                        .filter(|(_, r)| in_generation(r, generation))
+                        .map(|(_, r)| r.occurrence_id)
+                        .collect();
+                    chunks.iter().any(|c| {
+                        i64::try_from(c.occurrence_id).map_or(true, |o| !published.contains(&o))
+                    })
+                });
+            if stale {
+                return Err(refuse(Some(&page.slug), Some(live)));
+            }
+            // Not stale, so the generation is at or above the page's, which is at least 0.
+            let at = u64::try_from(generation).unwrap_or(0);
+            crate::chunks::append_segment_chunks(tx, page.id, at, chunks)
         })
     }
 
@@ -2004,5 +2085,286 @@ mod tests {
                 .len(),
             1
         );
+    }
+}
+
+/// Segment chunks through the page-body members. A flip unseals the page (as in PGLite), and
+/// `get_chunks` answers nothing for an unsealed page, so visibility is read with
+/// `chunks::visible_chunks`, the list `get_chunks` returns once the page is sealed.
+#[cfg(test)]
+mod segment_chunk_tests {
+    use super::*;
+    use crate::chunks::{SegmentChunkInput, visible_chunks};
+
+    const STAGING: &str = "11111111-1111-4111-8111-111111111111";
+    const STAGING_2: &str = "22222222-2222-4222-8222-222222222222";
+
+    fn sha(text: &str) -> String {
+        use sha2::{Digest, Sha256};
+        to_hex(&Sha256::digest(text.as_bytes()))
+    }
+
+    fn text(body: &str) -> SegmentTextInput {
+        SegmentTextInput {
+            sha256: sha(body),
+            body: to_hex(body.as_bytes()),
+            line_count: 1,
+        }
+    }
+
+    fn staging(id: &str, page_id: i64, client: &str) -> BodyStagingInput {
+        serde_json::from_value(json!({
+            "id": id, "kind": "put", "principalKind": "local", "principalId": "cli",
+            "clientRequestId": client, "sourceId": "default",
+            "sourceIncarnation": "33333333-3333-4333-8333-333333333333", "slug": "notes/a",
+            "pageId": page_id, "mode": "replace", "declaredBytes": 1, "reservedBytes": 1,
+            "idleExpiresAt": "2099-01-01T00:00:00Z", "hardExpiresAt": "2099-01-02T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    fn row(
+        page_id: i64,
+        occurrence: i64,
+        gen_from: i64,
+        seq: i64,
+        start: i64,
+        body: &str,
+        staging: &str,
+    ) -> ManifestRow {
+        serde_json::from_value(json!({
+            "pageId": page_id, "occurrenceId": occurrence, "genFrom": gen_from, "seq": seq,
+            "region": "truth", "sourceId": "default", "sha256": sha(body), "byteStart": start,
+            "byteLen": body.len(), "lineStart": 0, "lineCount": 1, "cutKind": "heading",
+            "entryState": {"depth": 0}, "protectedRegions": [], "factsSlots": [], "outline": [],
+            "staticProjBytes": body.len(), "staticProjLines": 1, "hashState": sha("state"),
+            "stagingId": staging,
+        }))
+        .unwrap()
+    }
+
+    fn flip(
+        page_id: i64,
+        expected: i64,
+        staging: &str,
+        body_bytes: i64,
+        extra: Value,
+    ) -> BodyFlipInput {
+        let mut input = json!({
+            "pageId": page_id, "expectedGeneration": expected, "newGeneration": expected + 1,
+            "stagingId": staging, "retireMaxRows": 1000,
+            "body": {
+                "content_hash": "h", "body_bytes": body_bytes, "truth_bytes": body_bytes,
+                "body_lines": 2, "segment_count": 2, "segmenter_version": 1,
+                "truth_lead": "", "timeline_lead": "", "body_flags": {},
+            },
+            "meta": {"type": "note", "title": "Flipped"},
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            input[k] = v.clone();
+        }
+        serde_json::from_value(input).unwrap()
+    }
+
+    fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
+        serde_json::from_value(json!({
+            "chunk_text": body, "chunk_source": "compiled_truth", "model": "m",
+            "occurrence_id": occurrence, "local_ordinal": ordinal,
+            "raw_byte_start": 0, "raw_byte_end": body.len(),
+        }))
+        .unwrap()
+    }
+
+    fn visible(store: &Store, id: i64) -> Vec<String> {
+        visible_chunks(&*store.read().unwrap(), id as u64)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.chunk_text)
+            .collect()
+    }
+
+    /// A shell published at generation 1 from occurrences 1 ("one\n" at 0) and 2 ("two\n" at 4).
+    fn published(store: &Store) -> i64 {
+        let id = store
+            .create_segmented_page_shell(
+                "notes/a",
+                &serde_json::from_value(json!({"type": "note", "title": "A"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        store
+            .open_body_staging(&staging(
+                STAGING,
+                id,
+                "44444444-4444-4444-8444-444444444444",
+            ))
+            .unwrap();
+        store
+            .stage_segment_texts(
+                "default",
+                &[text("one\n"), text("two\n")],
+                &StageTextsOptions {
+                    staging_id: Some(STAGING.into()),
+                },
+            )
+            .unwrap();
+        store
+            .stage_manifest_rows(&[
+                row(id, 1, 1, 0, 0, "one\n", STAGING),
+                row(id, 2, 1, 1, 4, "two\n", STAGING),
+            ])
+            .unwrap();
+        store
+            .flip_body_generation(&flip(id, 0, STAGING, 8, json!({})))
+            .unwrap();
+        id
+    }
+
+    /// Generation 2 staged: occurrence 3 replaces occurrence 2 at byte 4, with a chunk for
+    /// occurrence 3 and one for occurrence 9, which has no row in generation 2.
+    fn second_generation(store: &Store, id: i64) {
+        store
+            .open_body_staging(&staging(
+                STAGING_2,
+                id,
+                "55555555-5555-4555-8555-555555555555",
+            ))
+            .unwrap();
+        store
+            .stage_segment_texts(
+                "default",
+                &[text("TWO!\n")],
+                &StageTextsOptions {
+                    staging_id: Some(STAGING_2.into()),
+                },
+            )
+            .unwrap();
+        store
+            .stage_manifest_rows(&[row(id, 3, 2, 1, 4, "TWO!\n", STAGING_2)])
+            .unwrap();
+        store
+            .stage_segment_chunks(id, 2, &[chunk(3, 0, "TWO!"), chunk(9, 0, "orphan")])
+            .unwrap();
+    }
+
+    #[test]
+    fn staged_chunks_take_new_indexes_and_read_in_document_order() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(
+            store.stage_segment_chunks(id, 1, &[]).unwrap(),
+            Vec::<u32>::new()
+        );
+        // Occurrence 2 first: document order is the occurrence's byte_start, then the ordinal.
+        let first = store
+            .stage_segment_chunks(id, 1, &[chunk(2, 0, "two"), chunk(1, 1, "one b")])
+            .unwrap();
+        assert_eq!(first, vec![0, 1]);
+        assert_eq!(
+            store
+                .stage_segment_chunks(id, 1, &[chunk(1, 0, "one a")])
+                .unwrap(),
+            vec![2]
+        );
+        assert_eq!(visible(&store, id), vec!["one a", "one b", "two"]);
+    }
+
+    #[test]
+    fn a_flip_publishes_staged_chunks_and_defers_retirement_past_the_cap() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        second_generation(&store, id);
+        assert_eq!(visible(&store, id), vec!["one", "two"]);
+        // Two rows match (occurrence 2 at generation 1, and the orphan), over the cap of 1.
+        let result = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2], "retireMaxRows": 1}),
+            ))
+            .unwrap();
+        assert_eq!(
+            result,
+            BodyFlipResult {
+                retired_chunks: 0,
+                retire_deferred: true
+            }
+        );
+        // Deferred rows stay until a later delete. Rows without a live offset read last.
+        assert_eq!(visible(&store, id), vec!["one", "TWO!", "two", "orphan"]);
+    }
+
+    #[test]
+    fn a_flip_deletes_retired_segment_chunks_under_the_cap() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        second_generation(&store, id);
+        let result = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2]}),
+            ))
+            .unwrap();
+        assert_eq!(
+            result,
+            BodyFlipResult {
+                retired_chunks: 2,
+                retire_deferred: false
+            }
+        );
+        assert_eq!(visible(&store, id), vec!["one", "TWO!"]);
+        // The next index follows the highest row left (index 2), as PGLite's MAX(chunk_index) + 1.
+        assert_eq!(
+            store
+                .stage_segment_chunks(id, 2, &[chunk(1, 1, "more")])
+                .unwrap(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn a_refused_flip_publishes_nothing() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        second_generation(&store, id);
+        // The body would end at 10 while the rows cover 9: the flip refuses and the staged
+        // chunks stay hidden.
+        assert!(
+            store
+                .flip_body_generation(&flip(
+                    id,
+                    1,
+                    STAGING_2,
+                    10,
+                    json!({"closeOccurrences": [2]})
+                ))
+                .is_err()
+        );
+        assert!(visible(&store, id).is_empty());
+    }
+
+    #[test]
+    fn deleting_a_page_for_good_forgets_its_segment_view() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        let view = keys::meta(&format!("chunk_segment_view/{id}"));
+        assert!(store.read().unwrap().get(&view).unwrap().is_some());
+        store.delete_page("notes/a", None).unwrap();
+        assert!(store.read().unwrap().get(&view).unwrap().is_none());
     }
 }

@@ -40,11 +40,11 @@ transaction	lifecycle	yes	8	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	29	yes	yes	yes	serves
+getPage	pages	yes	30	yes	yes	yes	serves
 readPageSnapshot	pages	yes	6	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	89	yes	yes	yes	serves
+putPage	pages	yes	90	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	3	yes	yes	yes	serves
@@ -180,7 +180,7 @@ stageSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	4	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	1	no	yes	yes	refuses:page_body
+stageSegmentChunks	segmented_body	yes	2	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	5	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	5	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	6	no	yes	yes	serves

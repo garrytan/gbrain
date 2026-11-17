@@ -711,3 +711,68 @@ fn a_shell_refuses_a_taken_slug_and_an_unknown_source() {
     let p = page(&store, "notes/a");
     assert_eq!(p["body_bytes"], json!(0));
 }
+
+fn seg_chunk(occurrence: i64, ordinal: i64, body: &str) -> gbrain_store::chunks::SegmentChunkInput {
+    serde_json::from_value(json!({
+        "chunk_text": body, "chunk_source": "compiled_truth", "model": "test-model",
+        "occurrence_id": occurrence, "local_ordinal": ordinal,
+        "raw_byte_start": 0, "raw_byte_end": body.len(),
+    }))
+    .unwrap()
+}
+
+fn chunk_texts(store: &Store, slug: &str) -> Vec<String> {
+    store
+        .get_chunks(slug, &ReadScope::default())
+        .unwrap()
+        .iter()
+        .map(|c| c["chunk_text"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn stale_detail(error: &StoreError) -> Value {
+    assert_eq!(error.code, INVALID_STATE, "{}", error.message);
+    let detail: Value =
+        serde_json::from_str(error.message.strip_prefix("page_body:").unwrap()).unwrap();
+    assert_eq!(detail["kind"], json!("chunks_stale"));
+    json!([detail["staged_generation"], detail["current_generation"]])
+}
+
+#[test]
+fn staging_segment_chunks_refuses_a_stale_or_unpublished_generation() {
+    let dir = TempDir::new("pb-chunks-stale");
+    let store = open(&dir);
+    let id = published(&store);
+    let below = store
+        .stage_segment_chunks(id, 0, &[seg_chunk(1, 0, "x")])
+        .unwrap_err();
+    assert_eq!(stale_detail(&below), json!([0, 1]));
+    // Occurrence 3 has no published row in generation 1.
+    let unpublished = store
+        .stage_segment_chunks(id, 1, &[seg_chunk(1, 0, "x"), seg_chunk(3, 0, "y")])
+        .unwrap_err();
+    assert_eq!(stale_detail(&unpublished), json!([1, 1]));
+    let missing = store
+        .stage_segment_chunks(999, 1, &[seg_chunk(1, 0, "x")])
+        .unwrap_err();
+    assert_eq!(stale_detail(&missing), json!([1, null]));
+    let input: PageInput =
+        serde_json::from_value(json!({"type": "note", "title": "I", "compiled_truth": "inline"}))
+            .unwrap();
+    store
+        .put_page("notes/inline", &input, &PutPageOptions::default())
+        .unwrap();
+    let inline = page(&store, "notes/inline")["id"].as_i64().unwrap();
+    let at_live = store
+        .stage_segment_chunks(inline, 0, &[seg_chunk(1, 0, "x")])
+        .unwrap_err();
+    assert_eq!(stale_detail(&at_live), json!([0, 0]));
+    // Above the live generation an inline page takes rows, hidden until a flip.
+    let before = chunk_texts(&store, "notes/inline");
+    store
+        .stage_segment_chunks(inline, 1, &[seg_chunk(1, 0, "hidden")])
+        .unwrap();
+    assert_eq!(chunk_texts(&store, "notes/inline"), before);
+    // Nothing was written by the refusals.
+    assert!(chunk_texts(&store, "notes/a").is_empty());
+}

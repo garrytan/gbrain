@@ -446,4 +446,24 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       return { all, timeline, picked, none, otherPage, noPage, retiredTimeline, retiredLinks, left };
     },
   );
+
+  parityTest(
+    'segment chunks stage for the live or a later generation and refuse a stale, missing or unpublished target',
+    { methods: ['stageSegmentChunks', 'putPage', 'getPage'] },
+    async (engine) => {
+      const { pageId, occurrences } = await publishApart(engine, 'notes/chunks-apart');
+      const [one, two, three] = occurrences;
+      const noChunks = await engine.stageSegmentChunks(pageId, 0, []);
+      const stale = await thrown(() => engine.stageSegmentChunks(pageId, 0, [chunk(one!, 0, 'old')]));
+      const missing = await thrown(() => engine.stageSegmentChunks(987_654_321, 1, [chunk(one!, 0, 'gone')]));
+      const unpublished = await thrown(() => engine.stageSegmentChunks(pageId, 1, [chunk(one!, 0, 'ok'), chunk(three! + 1_000_000, 0, 'stray')]));
+      const live = await engine.stageSegmentChunks(pageId, 1, [chunk(one!, 0, 'one'), chunk(two!, 0, 'two'), chunk(two!, 1, 'two more')]);
+      const later = await engine.stageSegmentChunks(pageId, 2, [chunk(three! + 1_000_000, 0, 'next')]);
+      await engine.putPage('notes/chunks-inline', { type: 'note', title: 'Inline', compiled_truth: 'Inline body.', timeline: '' });
+      const inline = await engine.getPage('notes/chunks-inline');
+      const inlineNow = await thrown(() => engine.stageSegmentChunks(inline!.id, 0, [chunk(1, 0, 'inline')]));
+      const inlineNext = await engine.stageSegmentChunks(inline!.id, 1, [chunk(1, 0, 'inline next')]);
+      return { noChunks, stale, missing, unpublished, live, later, inlineNow, inlineNext };
+    },
+  );
 });
