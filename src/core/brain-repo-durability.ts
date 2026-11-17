@@ -785,7 +785,7 @@ export function getLastPushOutcome(branch: string, repo?: string): PushLogOutcom
       detail: `unresolved integrate_conflict on ${branch} (${conflict.paths.join(', ')}): run gbrain git commit-push --push-only --expect-remote ${String(conflict.remote).slice(0, 12)} --resolve <path>=ours|theirs` };
   }
   const refused = repo ? readCredentialRefusal(repo) : null;
-  if (refused) {
+  if (refused && (!refused.branch || refused.branch === branch)) {
     const answered = refused.helpers.find(h => h.answered);
     return { status: 'needs_attention', at: refused.at,
       detail: `push_credential_refused since ${refused.since}: ${refused.url} refused the credential git used (${refused.kind === 'not_found' ? 'repository not found, HTTP 404' : 'HTTP 403'}${answered ? `, from ${answered.helper} (${answered.scope ?? 'scope unknown'})${refused.username ? ` for ${refused.username}` : ''}` : ''}); fix the credential, then run gbrain git commit-push --push-only` };

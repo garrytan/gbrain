@@ -194,6 +194,37 @@ describe('gbrain git commit-push against a host that refuses the credential', ()
     expect(readCredentialRefusal(work)).toBeNull();
   }, 120_000);
 
+  test('a token in the remote URL or given as the username never reaches the error, the push log or the state file', async () => {
+    const URL_TOKEN = 'CANARY-gst2961-url-token-not-real';
+    const USER_TOKEN = 'gho_CANARYgst2961helperusernotreal';
+    const passwordOnly = join(dir, 'helper-password-only.sh');
+    writeFileSync(passwordOnly, '#!/bin/sh\n[ "$1" = get ] || exit 0\ncat >/dev/null\necho password=' + LOCAL_SECRET + '\n');
+    chmodSync(passwordOnly, 0o755);
+    const urlToken = checkout('brain-urltoken', 'forbidden');
+    git(urlToken, ['config', 'credential.helper', passwordOnly]);
+    git(urlToken, ['remote', 'set-url', 'origin', 'http://' + URL_TOKEN + '@127.0.0.1:' + port + '/forbidden/brain-urltoken.git']);
+    const viaUrl = commitPush(urlToken, { GLOBAL_HELPER_SILENT: '1' });
+    expect(viaUrl.doc.code).toBe('push_credential_refused');
+    expect(everythingWritten(urlToken, viaUrl)).not.toContain(URL_TOKEN);
+
+    const userToken = checkout('brain-usertoken', 'forbidden');
+    git(userToken, ['config', 'credential.helper', writeHelper('helper-token-user.sh', USER_TOKEN, LOCAL_SECRET)]);
+    const viaHelper = commitPush(userToken, { GLOBAL_HELPER_SILENT: '1' });
+    expect(viaHelper.doc.code).toBe('push_credential_refused');
+    expect(everythingWritten(userToken, viaHelper)).not.toContain(USER_TOKEN);
+    expect(everythingWritten(userToken, viaHelper)).not.toContain(LOCAL_SECRET);
+  }, 180_000);
+
+  test('a push that lands outside commit-push ends the refusal for put_page and doctor', async () => {
+    const work = checkout('brain-outside', 'notfound');
+    commitPush(work);
+    expect(readCredentialRefusal(work)).not.toBeNull();
+    setMode(work, 'ok');
+    git(work, ['push', '-q', 'origin', 'main']);
+    expect(readCredentialRefusal(work)).toBeNull();
+    expect((await withEnv({ GBRAIN_HOME: home }, async () => getLastPushOutcome('main', work))).detail ?? '').not.toContain('push_credential_refused since');
+  }, 120_000);
+
   test('doctor git_convergence warns at once, and a push that lands clears the record', async () => {
     const work = checkout('brain-clear', 'notfound');
     commitPush(work);

@@ -56,6 +56,12 @@ export interface PushCredential {
 
 const anonymize = (url: string) => url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, '$1');
 
+const TOKEN_PREFIX = /^(?:gh[opusr]_|github_pat_|glpat-|glptt-|gldt-|xox[abpr]-)/i;
+
+/** A login is shown only when it reads as an account name: some helpers store a token as the username, and a long unbroken string can be one. */
+const shownLogin = (login: string | null): string | null =>
+  login && /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/.test(login) && !TOKEN_PREFIX.test(login) && !/^[A-Za-z0-9_-]{30,}$/.test(login) ? login : null;
+
 /** A helper's program only: arguments after it can hold a token, and an inline `!` helper's body can hold one too. */
 function programOf(value: string): string {
   const inline = value.startsWith('!');
@@ -121,8 +127,12 @@ export function describePushCredential(root: string, remote: string): PushCreden
     const entry = at === -1 ? null : configured[at]!;
     return { helper: programOf(entry ? entry.value : cmd), scope: entry?.scope ?? null, origin: entry?.origin ?? null, answered: answered && i === asked.length - 1 };
   });
-  return { url, helpers, username: answered ? username : null,
-    ...(!helpers.length ? { note: 'Git asked no credential helper for this URL.' } : !answered ? { note: 'No credential helper answered when git asked again.' } : {}) };
+  const urlUser = /^https?:\/\/[^@/]+@/i.test(raw);
+  const askpass = process.env.GIT_ASKPASS ? ' GIT_ASKPASS is set (' + programOf(process.env.GIT_ASKPASS) + '), so git may have used it for the refused push.' : '';
+  const note = !helpers.length ? 'Git asked no credential helper for this URL.' + askpass
+    : !answered ? 'No credential helper answered when git asked again.' + askpass
+    : urlUser ? 'The remote URL names its own user, which is not shown because it can be a token.' : undefined;
+  return { url, helpers, username: answered && !urlUser ? shownLogin(username) : null, ...(note ? { note } : {}) };
 }
 
 /** One sentence naming the helpers git asked, in order, with scope and file, and which answered for which login. */
