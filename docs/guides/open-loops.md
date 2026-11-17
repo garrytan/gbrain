@@ -32,7 +32,9 @@ zero LLM, free, always on). For every synced Gmail thread:
 - a forward is judged by the note above the forwarded message. "FYI, see
   below." over someone else's question asks nothing, so it opens no loop (and
   a "Thanks!" answers one sent to you); "Can you take this one?" above the
-  same forward is an ask.
+  same forward is an ask. The note ends at Gmail's "Forwarded message" line
+  or Apple Mail's "Begin forwarded message:"; a forward in any other format
+  (Outlook, a translated separator) is still judged by its whole body.
 - "unanswered" is measured from the oldest unanswered message since the
   last turn flip (the first one addressed to you, or your first question),
   so a nudge or follow-up never restarts the clock — a request that waited
