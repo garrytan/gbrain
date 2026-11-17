@@ -12,6 +12,7 @@ import { inlineBodyBytes } from './get-page-body.ts';
 import { historyQuarantine, pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
 import { parseKnownAsOf, readPageAtTime, remoteMayRead, type PageAtTime, type PageInterval } from '../belief/page-at-time.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
 import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
@@ -90,7 +91,7 @@ async function readable(ctx: OperationContext, read: PageAtTime, intervals: Page
   return out;
 }
 
-function intervalView(ctx: OperationContext, i: GatedInterval, opts: { body: boolean; inlineMax: number }) {
+async function intervalView(ctx: OperationContext, sourceId: string, i: GatedInterval, opts: { body: boolean; inlineMax: number }) {
   const meta = { slug: i.slug, revision: i.revision, deleted: i.deleted, recorded_at: i.event.recorded_at, visible_at: i.event.visible_at, until: i.until,
     source_time: i.event.source_time, event: i.event.type, event_id: i.event.id, origin: i.event.origin, body: i.body,
     ...(i.body_reason ? { body_reason: i.body_reason } : {}), ...(i.version_id != null ? { version_id: i.version_id } : {}),
@@ -100,7 +101,8 @@ function intervalView(ctx: OperationContext, i: GatedInterval, opts: { body: boo
   if (i.body === 'segmented' || bytes > opts.inlineMax) {
     return { ...meta, body_ref: { total_bytes: bytes } };
   }
-  const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
+  const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: i.slug, compiled_truth: i.page.compiled_truth ?? '', timeline: i.page.timeline });
+  const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows });
   // #8042: a third-party page as recorded reaches an untrusted reader quoted, as get_page's current body does.
   const quote = quotesInterval(ctx, i);
   const fence = (s: string | null) => s && quote ? fenceTranscriptText(s, i.slug) : s;
@@ -134,7 +136,7 @@ export async function getPageKnownAsOf(ctx: OperationContext, p: Record<string, 
   const current = read.current && (await readable(ctx, read, [read.current], p.min_trust))[0];
   if (!current || (current.deleted && p.include_deleted !== true)) throw pageNotFoundError(ctx, slug, { includeDeleted: p.include_deleted === true, sourceIdParam: sourceId });
   const ignored = GET_PAGE_UNSUPPORTED.filter(k => p[k] !== undefined && p[k] !== false);
-  return { ...intervalView(ctx, current, { body: p.body !== 'none', inlineMax: await inlineBodyBytes(ctx) }), ...ledgerView(read),
+  return { ...await intervalView(ctx, sourceId, current, { body: p.body !== 'none', inlineMax: await inlineBodyBytes(ctx) }), ...ledgerView(read),
     ...(ignored.length ? { set_aside: { ignored, note: `Read the whole page as recorded at known_as_of; ignored ${ignored.length > 1 ? `${ignored.slice(0, -1).join(', ')} and ${ignored[ignored.length - 1]}` : ignored[0]}, which read the current page. Drop known_as_of to read a window or view of the current page.` } } : {}) };
 }
 
@@ -148,19 +150,21 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
   const intervals = await readable(ctx, read, read.intervals, p.min_trust);
   if (!intervals.length) throw pageNotFoundError(ctx, slug, { includeDeleted: true, sourceIdParam: sourceId });
   const inlineMax = await inlineBodyBytes(ctx);
-  const views = intervals.map((i, n) => {
-    const view: Record<string, unknown> = intervalView(ctx, i, { body: wantBody, inlineMax });
+  const views = await Promise.all(intervals.map(async (i, n) => {
+    const view: Record<string, unknown> = await intervalView(ctx, sourceId, i, { body: wantBody, inlineMax });
     if (p.diff !== true) return view;
     const prev = intervals.slice(0, n).reverse().find(x => x.lifetime === i.lifetime);
     const text = (x: GatedInterval | undefined) => x?.page && x.body !== 'segmented' && !x.quarantined?.body_omitted ? `${x.page.compiled_truth ?? ''}${x.page.timeline ? `\n${x.page.timeline}` : ''}` : null;
     const [a, b] = [prev ? text(prev) : '', text(i)];
-    const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a), ctx.remote === false ? b : sanitizeRemoteBody(b),
+    const held = (x: GatedInterval | undefined, t: string) => x ? heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: x.slug, compiled_truth: t }) : undefined;
+    const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a, { omitRows: await held(prev, a) }),
+      ctx.remote === false ? b : sanitizeRemoteBody(b, { omitRows: await held(i, b) }),
       { oldPath: prev ? `${slug}@${prev.event.recorded_at}` : '/dev/null', newPath: `${slug}@${i.event.recorded_at}` });
     const quote = diff !== null && (quotesInterval(ctx, i) || (prev !== undefined && quotesInterval(ctx, prev)));
     view.diff = quote ? fenceTranscriptText(diff, i.slug) : diff;
     if (quote) view.quoted = 'transcript';
     return view;
-  });
+  }));
   const newest = views.reverse();
   return { slug, ...ledgerView(read), truncated: newest.length > limit, versions: newest.slice(0, limit) };
 }

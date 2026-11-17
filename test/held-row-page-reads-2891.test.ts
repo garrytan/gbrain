@@ -32,6 +32,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { decideTrustProposal } from '../src/core/trust/decide.ts';
+import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
 import { parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -94,7 +95,6 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
       ['get_page section', 'get_page', { slug: p.slug, section: 'Facts' }],
       ['get_page outline', 'get_page', { slug: p.slug, body: 'outline' }],
       ['get_page as_of', 'get_page', { slug: p.slug, as_of: '2099-01-01' }],
-      ['get_page known_as_of', 'get_page', { slug: p.slug, known_as_of: new Date().toISOString() }],
       ['fetch', 'fetch', { id: p.slug }],
       ['search keyword', 'search', { query: p.canary, match: 'keyword', fields: 'full', limit: 20 }],
       ['search', 'search', { query: 'keeps bees ' + p.canary, fields: 'full', limit: 20 }],
@@ -236,6 +236,21 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
         expect(await stored(MAX.claim)).not.toContain('world');
         expect(await call('bob', 'get_page', { slug: MAX.slug, include_content: true })).not.toContain(MAX.canary);
       }
+    }), 300_000);
+
+    test('recorded-time reads (known_as_of) leave a held row out too', async () => withEnv(env, async () => {
+      await enableBeliefLedger(engine, 'default');
+      const at = new Date((await engine.executeRaw<{ t: string }>("SELECT (date_trunc('milliseconds', clock_timestamp()) + interval '1 millisecond')::text AS t"))[0]!.t).toISOString();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const held = shape === 'repo' ? [KIM, MAX] : [KIM];
+      const recorded = (p: Held): Array<[string, Record<string, unknown>]> => [['get_page', { slug: p.slug, known_as_of: at }],
+        ['get_versions', { slug: p.slug, known_as_of: at, include_body: true }], ['get_versions', { slug: p.slug, known_as_of: at, diff: true }]];
+      for (const p of held) for (const who of ['bob', 'unbound']) for (const [op, params] of recorded(p)) {
+        const out = await call(who, op, params);
+        expect(out).not.toContain('"error"');
+        expect({ who, op, params, leaks: out.includes(p.canary) }).toEqual({ who, op, params, leaks: false });
+      }
+      for (const p of held) expect(await call('local', 'get_page', { slug: p.slug, known_as_of: at })).toContain(p.canary);
     }), 300_000);
   });
 }
