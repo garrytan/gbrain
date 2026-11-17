@@ -2061,6 +2061,19 @@ also works on both.
 Explicit-only: `gbrain repair --all`, the maintenance cycle and the doctor
 remediation plan never run it.
 
+### Calls not scoped
+
+`gbrain import --calls` on a brain that serves two or more people keeps each new call to the brain owner plus the teammates its `Attendees:` or `Participants:` line names. When some caller that could be the owner's own would lose the call, the import stays open, exactly as before, and prints the `calls_not_scoped` notice with the reason and the one command that fixes it:
+
+| Reason | What it means | Fix |
+|---|---|---|
+| `owner_unset` | The brain names no owner, so no reader list could name one. | `gbrain access owner set <member>` |
+| `owner_inactive` | The owner member is not enabled. | `gbrain access member enable <owner>` |
+| `unbound_readers` | A token or OAuth client bound to no person still reads the brain (grace, `--reads-unscoped`, or a host that does not enforce binding). | The `gbrain auth rescope ... --member <member>` the notice names, for each one |
+| `stdio_unbound` | A local harness connection bound to nobody still reads the brain. | `gbrain setup <harness> --stdio-member <owner>` |
+
+Then import again. `--readers source` imports open on purpose and prints no notice. Calls imported before are not changed by an upgrade.
+
 ### Stale atoms
 
 `gbrain repair stale-atoms` (explicit-only) retires atoms that drifted from
