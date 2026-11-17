@@ -35,6 +35,9 @@ import {
 const ROOT = resolve(import.meta.dir, '..', '..');
 export const GATE_SHARD_BUDGET_MS = 12 * 60_000;
 export const GATE_UNMEASURED_QUANTILE = 0.95;
+/** GitHub refuses a job matrix over 256 entries; past it the gate re-plans at the old 25-minute budget. */
+export const GATE_MAX_SHARDS = 256;
+export const GATE_FALLBACK_SHARD_BUDGET_MS = 25 * 60_000;
 export const RACE_SHARD_BUDGET_MS = 55 * 60_000;
 export const RACE_BASE_SHARDS = 6;
 export const RACE_MAX_SHARDS = 12;
@@ -117,7 +120,8 @@ export function planGate(root: string, input: GatePlanInput, weights = loadWeigh
   }
   files = withWrappers(root, files);
   const { stress, notStressed } = classify(root, files, weights, GATE_UNMEASURED_QUANTILE);
-  const shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
+  let shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
+  if (shards.length > GATE_MAX_SHARDS) shards = planShards(stress, DEFAULT_ITERATIONS, GATE_FALLBACK_SHARD_BUDGET_MS);
   return {
     ...emptyPlan('gate', stress.length ? `${stress.length} file(s) × ${DEFAULT_ITERATIONS} iterations` : 'no changed test files to stress'),
     run: stress.length > 0, diagnostic, base, head, helpers, notStressed, shards,
