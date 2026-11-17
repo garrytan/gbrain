@@ -200,3 +200,10 @@ for (const backend of testBackends()) {
     } finally { exit.mockRestore(); }
   }, { databaseUrl, setup: seed }), 120_000);
 }
+
+/**
+ * Measured on a generated 24,000-hold PGLite mirror: a real SIGTERM reached the sync handler 19-33 s after the signal while
+ * the pass's progress timers kept firing, and master's generic handler waits as long. Once the handler runs, the row is
+ * saved within milliseconds, which the pglite arms above pin. This names the wait so a fix has a test to turn green.
+ */
+test.todo('GST-2869 follow-up [pglite]: a real SIGTERM reaches the sync handler within the 3 s window while a managed pass writes pages');
