@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { commitAndPush, commitPathsLocked, configuredSourceRoots, notePending, untrackAdmitted } from '../src/core/git/commit-push.ts';
 import { gitChildEnv } from '../src/core/git-env.ts';
+import type { UntrackPageVerdict } from '../src/core/git/untrack-admission.ts';
 
 const env = gitChildEnv();
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env }).trim();
@@ -111,22 +112,24 @@ describe('configuredSourceRoots keeps a source root folder named ..drafts', () =
 
 describe('untrack under a managed root folder named ..x', () => {
   const YML = 'storage:\n  db_only:\n    - arch/\n';
+  /** GST-2964: every managed untrack takes its source root from the brain read; this is that read's answer for a source rooted at `sourceRoot`. */
+  const rootedAt = (sourceRoot: string): UntrackPageVerdict => ({ sourceId: 'default', sourceRoot, slugRoot: 'source-root', checked: new Set(), live: new Set() });
 
   test('the db_only admission reads gbrain.yml from ..x at HEAD, not from the checkout root', () => {
     const { root } = checkout({ '..x/gbrain.yml': YML, '..x/arch/a.md': 'a\n' });
     put(root, '..x/.gitignore', 'arch/\n'); put(root, '.gitignore', 'arch/\n');
     const managed = { root: join(root, '..x'), evidence: 'test' };
-    expect(untrackAdmitted(root, ['..x/arch/a.md'], managed)).toEqual(['..x/arch/a.md']);
+    expect(untrackAdmitted(root, ['..x/arch/a.md'], managed, rootedAt(join(root, '..x')))).toEqual(['..x/arch/a.md']);
   });
 
   test('a file outside the managed root, and a managed root outside the checkout, still refuse untrack_not_db_only', () => {
     const { dir, root } = checkout({ '..x/gbrain.yml': YML, '..x/arch/a.md': 'a\n', 'arch/b.md': 'b\n' });
     put(root, '.gitignore', 'arch/\n');
     const managed = { root: join(root, '..x'), evidence: 'test' };
-    expect(refusalOf(() => untrackAdmitted(root, ['arch/b.md'], managed)).code).toBe('untrack_not_db_only');
+    expect(refusalOf(() => untrackAdmitted(root, ['arch/b.md'], managed, rootedAt(join(root, '..x')))).code).toBe('untrack_not_db_only');
     put(dir, 'outside/gbrain.yml', YML);
-    expect(refusalOf(() => untrackAdmitted(root, ['arch/b.md'], { root: join(dir, 'outside'), evidence: 'test' })).code).toBe('untrack_not_db_only');
-    expect(refusalOf(() => untrackAdmitted(root, ['arch/b.md'], { root: join(dir, 'work2'), evidence: 'test' })).code).toBe('untrack_not_db_only');
+    expect(refusalOf(() => untrackAdmitted(root, ['arch/b.md'], { root: join(dir, 'outside'), evidence: 'test' }, rootedAt(join(dir, 'outside')))).code).toBe('untrack_not_db_only');
+    expect(refusalOf(() => untrackAdmitted(root, ['arch/b.md'], { root: join(dir, 'work2'), evidence: 'test' }, rootedAt(join(dir, 'work2')))).code).toBe('untrack_not_db_only');
   });
 });
 

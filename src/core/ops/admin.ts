@@ -330,7 +330,7 @@ async function remoteVersionSize<V extends { page_id: number; body_storage?: str
   Promise<V | Omit<V, 'body_bytes'> & { total_bytes: number }> {
   if (ctx.remote === false || v.body_storage !== 'segmented') return v;
   const { body_bytes: _stored, ...rest } = v;
-  const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation });
+  const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation, hideHeld: worldOnlyFacts(ctx.remote) });
   return { ...rest, total_bytes: (await segmentedReadDocument(ctx.engine, body)).total };
 }
 

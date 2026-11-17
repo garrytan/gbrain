@@ -35,6 +35,7 @@ import { decideTrustProposal } from '../src/core/trust/decide.ts';
 import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
 import { parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { heldProposalRef } from './helpers/held-proposal.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -137,7 +138,8 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
       await setOwner(engine, OWNER);
       for (const p of shape === 'repo' ? [LIA, MAX] : [LIA]) {
         const res = await call('writer', 'remember', { fact: p.claim, provenance: 'chat', entity: p.slug, request_id: randomUUID() });
-        refs[p.slug] = parseTrustProposalRef(res.match(/tp\d+/)![0])!;
+        expect(res).not.toContain('proposal_ref');
+        refs[p.slug] = parseTrustProposalRef(await heldProposalRef(engine, 'default', p.claim))!;
       }
       const cur = JSON.parse(await call('writer', 'get_page', { slug: KIM.slug, include_content: true }));
       await call('writer', 'put_page', { slug: KIM.slug, content: pageText(KIM.title, [row(1, turin(KIM)), row(2, KIM.claim)]), expected_revision: cur.revision, request_id: randomUUID() });

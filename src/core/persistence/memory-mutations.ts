@@ -27,7 +27,7 @@ import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { ownerReachesFact, readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
-import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted, worldOnlyFacts } from '../search/private-visibility.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
@@ -493,7 +493,7 @@ async function withSimilarActive(ctx: OperationContext, operation: 'forget' | 'f
     const { similarActiveAfterForget } = await import('../facts/similar-active.ts');
     const committed = (response.write_request as { state?: string } | undefined)?.state === 'committed' || response.state === 'committed';
     return { ...response, similar_active: await similarActiveAfterForget(ctx.engine, {
-      sourceId, factId, remote: ctx.remote !== false, committed, semanticReview: p.semantic_review !== false,
+      sourceId, factId, remote: worldOnlyFacts(ctx.remote), committed, semanticReview: p.semantic_review !== false,
       excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote) }) };
   } catch { return response; }
 }
