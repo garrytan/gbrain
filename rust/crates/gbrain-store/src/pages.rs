@@ -36,7 +36,89 @@ const HASH_EPHEMERAL_KEYS: &[&str] = &[
 const NEXT_PAGE_ID: &str = "next_page_id";
 const NEXT_VERSION_ID: &str = "next_version_id";
 
+/// A text column of `pages` that PGLite lets be NULL: `compiled_truth` and `timeline` (migration v248).
+///
+/// Contract (shared item 12, nullable page fields):
+/// - NULL means the page is a segmented shell: its body lives in segment texts, not in the row. PGLite's
+///   `pages_body_storage_chk` makes both body columns NULL exactly when `body_storage = 'segmented'`, and an inline page
+///   always holds a string (`''` for an empty body).
+/// - Stored as JSON `null` or a string. A record written before this type existed holds a string and reads as one, so
+///   FORMAT_VERSION 1 is unchanged.
+/// - As `&str` (through `Deref`) a NULL column reads as `""`, the way PGLite's `rowToStalePage` and chunk paths read
+///   it: an inline reader such as `auto_chunks` makes no chunks from a shell. Use `is_null` or `as_deref` where NULL
+///   and empty differ.
+/// - Equality compares the stored value: NULL is not equal to `""`, so a writer that moves a page between segmented
+///   and inline sees a change. `putPage` never does: it refuses a shell (`assert_body_inline`, shared item 11).
+/// - `to_page` and the version JSON emit NULL as `null`; the TS codec (`store-codec.ts`) turns it back into PGLite's
+///   segmented page shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct PageText(Option<String>);
+
+// The page_body family is the first writer and reader of a NULL column; until it lands only the tests call these.
+#[cfg_attr(not(test), allow(dead_code))]
+impl PageText {
+    /// The NULL column of a segmented shell page.
+    pub(crate) fn null() -> Self {
+        Self(None)
+    }
+
+    /// True for the NULL column of a segmented shell page.
+    pub(crate) fn is_null(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// The stored text, or `None` for NULL.
+    pub(crate) fn as_deref(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl std::ops::Deref for PageText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.0.as_deref().unwrap_or("")
+    }
+}
+
+impl From<String> for PageText {
+    fn from(text: String) -> Self {
+        Self(Some(text))
+    }
+}
+
+impl From<&str> for PageText {
+    fn from(text: &str) -> Self {
+        Self(Some(text.to_owned()))
+    }
+}
+
+impl PartialEq<str> for PageText {
+    fn eq(&self, other: &str) -> bool {
+        self.0.as_deref() == Some(other)
+    }
+}
+
+impl PartialEq<&str> for PageText {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_deref() == Some(*other)
+    }
+}
+
+impl PartialEq<String> for PageText {
+    fn eq(&self, other: &String) -> bool {
+        self.0.as_deref() == Some(other.as_str())
+    }
+}
+
 /// What is stored for a page.
+///
+/// Nullable columns (shared item 12): `compiled_truth` and `timeline` are [`PageText`], NULL exactly on a segmented
+/// shell page. `content_hash` is `None` on a segmented shell page until its body is published, as PGLite's
+/// `createSegmentedPageShell` leaves it; `put_page` always sets it. `chunker_version` is `None` when the store has not
+/// recorded one: `put_page` keeps the stored value and sets none on a new page, and it is not part of `to_page`
+/// (PGLite's `rowToPage` leaves it out). Each new field reads as NULL from a record written before it existed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PageRecord {
     pub id: u64,
@@ -46,10 +128,13 @@ pub(crate) struct PageRecord {
     pub page_type: String,
     pub page_kind: String,
     pub title: String,
-    pub compiled_truth: String,
-    pub timeline: String,
+    pub compiled_truth: PageText,
+    pub timeline: PageText,
     pub frontmatter: Map<String, Value>,
-    pub content_hash: String,
+    #[serde(default)]
+    pub content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunker_version: Option<i16>,
     #[serde(default)]
     pub source_path: Option<String>,
     pub knowledge_revision: String,
@@ -232,20 +317,22 @@ pub struct PageKey {
     pub slug: String,
 }
 
-/// A page snapshot version, as stored.
+/// A page snapshot version, as stored. The body columns and `content_hash` copy the page's, NULL included (PGLite's
+/// `page_versions` columns are nullable since v248); a version written before that reads unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct VersionRecord {
     pub id: u64,
     pub page_id: u64,
-    pub compiled_truth: String,
-    pub timeline: String,
+    pub compiled_truth: PageText,
+    pub timeline: PageText,
     pub title: String,
     #[serde(rename = "type")]
     pub page_type: String,
     pub tags: Vec<String>,
     pub frontmatter: Map<String, Value>,
     pub source_path: Option<String>,
-    pub content_hash: String,
+    #[serde(default)]
+    pub content_hash: Option<String>,
     pub knowledge_revision: String,
     pub is_deleted: bool,
     pub snapshot_at_us: i64,
@@ -267,8 +354,8 @@ impl VersionRecord {
             "snapshot_at": iso(self.snapshot_at_us),
         });
         if include_body {
-            v["compiled_truth"] = Value::String(self.compiled_truth.clone());
-            v["timeline"] = Value::String(self.timeline.clone());
+            v["compiled_truth"] = json!(self.compiled_truth);
+            v["timeline"] = json!(self.timeline);
         }
         v
     }
@@ -620,6 +707,21 @@ fn assert_revision(existing: Option<&PageRecord>, options: &PutPageOptions) -> R
     Ok(())
 }
 
+/// The message of PGLite's `pages_body_storage_chk`, the CHECK that keeps a segmented page's body columns NULL.
+pub(crate) const BODY_STORAGE_CHECK: &str =
+    "new row for relation \"pages\" violates check constraint \"pages_body_storage_chk\"";
+
+/// Segmented guard (shared item 11). `putPage` writes the body as one string, and PGLite's `pages_body_storage_chk`
+/// refuses that over a segmented page, live or soft-deleted: its `ON CONFLICT` update sets `compiled_truth` and leaves
+/// `body_storage = 'segmented'`. A NULL body marks the segmented page here. Runs after the empty-overwrite check, as
+/// PGLite's order is; the write stores nothing.
+fn assert_body_inline(existing: Option<&PageRecord>) -> Result<()> {
+    if existing.is_some_and(|page| page.compiled_truth.is_null()) {
+        return Err(StoreError::new(CONSTRAINT_VIOLATION, BODY_STORAGE_CHECK));
+    }
+    Ok(())
+}
+
 /// Inserts or updates a page inside the caller's write transaction. Returns the stored record.
 pub(crate) fn put_page_in(
     tx: &mut dyn KvWrite,
@@ -654,19 +756,25 @@ pub(crate) fn put_page_in(
         existing.as_ref(),
         input.source_path.as_deref(),
     )?;
+    // A segmented shell's NULL body is not blank: PGLite refuses an empty write over it too.
     if blank(&input.compiled_truth)
         && !options.allow_empty_overwrite
         && let Some(prior) = existing.as_ref().filter(|p| p.deleted_at_us.is_none())
-        && !blank(&prior.compiled_truth)
+        && (prior.compiled_truth.is_null() || !blank(&prior.compiled_truth))
     {
+        let size = if prior.compiled_truth.is_null() {
+            "segmented".to_string()
+        } else {
+            format!("{} chars", prior.compiled_truth.chars().count())
+        };
         return Err(StoreError::new(
             EMPTY_OVERWRITE,
             format!(
-                "putPage: refusing to overwrite non-empty page '{slug}' ({} chars) with an empty body - likely a read-modify-write that read empty. Pass {{ allowEmptyOverwrite: true }} to force, or deletePage to remove it.",
-                prior.compiled_truth.chars().count()
+                "putPage: refusing to overwrite non-empty page '{slug}' ({size}) with an empty body - likely a read-modify-write that read empty. Pass {{ allowEmptyOverwrite: true }} to force, or deletePage to remove it."
             ),
         ));
     }
+    assert_body_inline(existing.as_ref())?;
     let now = env.now_micros();
     let effective_date = input
         .effective_date
@@ -693,10 +801,11 @@ pub(crate) fn put_page_in(
             page_type: input.page_type.clone(),
             page_kind,
             title,
-            compiled_truth,
-            timeline,
+            compiled_truth: compiled_truth.into(),
+            timeline: timeline.into(),
             frontmatter,
-            content_hash: hash,
+            content_hash: Some(hash),
+            chunker_version: None,
             source_path: input.source_path.clone(),
             knowledge_revision: env.new_uuid(),
             text_projection_revision: None,
@@ -732,10 +841,10 @@ pub(crate) fn put_page_in(
                 page_type: input.page_type.clone(),
                 page_kind,
                 title,
-                compiled_truth,
-                timeline,
+                compiled_truth: compiled_truth.into(),
+                timeline: timeline.into(),
                 frontmatter,
-                content_hash: hash,
+                content_hash: Some(hash),
                 knowledge_revision,
                 text_projection_revision: projection,
                 updated_at_us: now,
@@ -1219,6 +1328,210 @@ mod tests {
         read_page(&*store.read().unwrap(), DEFAULT_SOURCE, slug)
             .unwrap()
             .unwrap()
+    }
+
+    /// Turns a stored page into a segmented shell the way PGLite's `createSegmentedPageShell` leaves it: NULL body
+    /// columns and no content hash. The page_body family writes these; the test writes the record directly.
+    fn make_shell(store: &Store, slug: &str) -> PageRecord {
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, slug)?.unwrap();
+                page.compiled_truth = PageText::null();
+                page.timeline = PageText::null();
+                page.content_hash = None;
+                page.chunker_version = Some(0);
+                write_page(tx, &page)?;
+                Ok(page)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_page_record_written_before_nullable_fields_reads_and_writes_back_unchanged() {
+        let legacy = json!({
+            "id": 7, "source_id": "default", "slug": "a", "type": "note", "page_kind": "markdown", "title": "A",
+            "compiled_truth": "body", "timeline": "", "frontmatter": {}, "content_hash": "abc",
+            "source_path": null, "knowledge_revision": "r1", "text_projection_revision": null,
+            "created_at_us": 1, "updated_at_us": 2, "deleted_at_us": null, "effective_date_us": null,
+            "effective_date_source": null, "import_filename": null, "source_kind": null, "source_uri": null,
+            "ingested_via": null, "ingested_at_us": null, "tags": []
+        });
+        let page: PageRecord = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(page.compiled_truth, "body");
+        assert_eq!(page.timeline, "");
+        assert!(!page.timeline.is_null());
+        assert_eq!(page.content_hash.as_deref(), Some("abc"));
+        assert_eq!(page.chunker_version, None);
+        assert_eq!(serde_json::to_value(&page).unwrap(), legacy);
+        let shown = page.to_page();
+        assert_eq!(shown["compiled_truth"], "body");
+        assert_eq!(shown["content_hash"], "abc");
+        assert!(shown.get("chunker_version").is_none());
+
+        let legacy_version = json!({
+            "id": 1, "page_id": 7, "compiled_truth": "body", "timeline": "", "title": "A", "type": "note",
+            "tags": [], "frontmatter": {}, "source_path": null, "content_hash": "abc",
+            "knowledge_revision": "r1", "is_deleted": false, "snapshot_at_us": 3
+        });
+        let version: VersionRecord = serde_json::from_value(legacy_version.clone()).unwrap();
+        assert_eq!(version.compiled_truth, "body");
+        assert_eq!(serde_json::to_value(&version).unwrap(), legacy_version);
+    }
+
+    #[test]
+    fn page_text_reads_null_as_empty_text_but_never_equals_it() {
+        let null = PageText::null();
+        assert!(null.is_null());
+        assert_eq!(null.as_deref(), None);
+        assert_eq!(&*null, "");
+        assert_ne!(null, *"");
+        assert_ne!(null, PageText::from(String::new()));
+        assert_eq!(serde_json::to_value(&null).unwrap(), Value::Null);
+        let text = PageText::from("x");
+        assert_eq!(text, "x");
+        assert_eq!(text, String::from("x"));
+        assert_eq!(
+            serde_json::from_value::<PageText>(Value::Null).unwrap(),
+            null
+        );
+        assert!(crate::chunks::auto_chunks(&PageRecord {
+            compiled_truth: null.clone(),
+            timeline: null,
+            ..serde_json::from_value(json!({
+                "id": 1, "source_id": "default", "slug": "s", "type": "note", "page_kind": "markdown", "title": "S",
+                "compiled_truth": null, "timeline": null, "frontmatter": {}, "knowledge_revision": "r",
+                "created_at_us": 0, "updated_at_us": 0
+            }))
+            .unwrap()
+        })
+        .is_empty());
+    }
+
+    #[test]
+    fn a_segmented_shell_page_reads_back_with_null_body_and_content_hash() {
+        let store = crate::test_support::store();
+        put(&store, "big");
+        let shell = make_shell(&store, "big");
+        let read = store.read().unwrap();
+        let stored = read_page(&*read, DEFAULT_SOURCE, "big").unwrap().unwrap();
+        assert!(stored.compiled_truth.is_null() && stored.timeline.is_null());
+        assert_eq!(stored.content_hash, None);
+        assert_eq!(stored.chunker_version, Some(0));
+        assert_eq!(stored.knowledge_revision, shell.knowledge_revision);
+        drop(read);
+        let snapshot = store
+            .read_page_snapshot("big", &ReadScope::default())
+            .unwrap()
+            .unwrap();
+        let page = &snapshot["page"];
+        assert_eq!(page["content_hash"], Value::Null);
+        assert_eq!(page["compiled_truth"], Value::Null);
+        assert_eq!(page["timeline"], Value::Null);
+        assert!(page.get("chunker_version").is_none());
+        let listed = store.list_pages(&PageFilters::default()).unwrap();
+        assert_eq!(listed[0]["content_hash"], Value::Null);
+        assert_eq!(listed[0]["compiled_truth"], Value::Null);
+    }
+
+    #[test]
+    fn versions_keep_the_nulls_and_put_page_keeps_the_stored_chunker_version() {
+        let store = crate::test_support::store();
+        put(&store, "inline");
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, "inline")?.unwrap();
+                page.chunker_version = Some(3);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        let again = put(&store, "inline");
+        assert_eq!(
+            again.chunker_version,
+            Some(3),
+            "put_page keeps the stored chunker_version"
+        );
+        put(&store, "big");
+        let shell = make_shell(&store, "big");
+        let snapshot = store.create_version("big", None).unwrap();
+        assert_eq!(snapshot["compiled_truth"], Value::Null);
+        let versions = store
+            .get_versions("big", &VersionsOptions::default())
+            .unwrap();
+        let shell_version = versions
+            .iter()
+            .find(|v| v["knowledge_revision"] == shell.knowledge_revision.as_str())
+            .expect("the shell's version is listed");
+        assert_eq!(shell_version["compiled_truth"], Value::Null);
+        assert_eq!(shell_version["timeline"], Value::Null);
+        assert_eq!(shell_version["content_hash"], Value::Null);
+    }
+
+    #[test]
+    fn an_empty_write_over_a_shell_is_refused() {
+        let store = crate::test_support::store();
+        put(&store, "big");
+        make_shell(&store, "big");
+        let empty = PageInput {
+            page_type: "note".into(),
+            title: "big".into(),
+            ..PageInput::default()
+        };
+        let refused = store
+            .put_page("big", &empty, &PutPageOptions::default())
+            .unwrap_err();
+        assert_eq!(refused.code, EMPTY_OVERWRITE);
+        assert!(refused.message.contains("(segmented)"));
+        let allowed = PutPageOptions {
+            allow_empty_overwrite: true,
+            ..PutPageOptions::default()
+        };
+        // Allowed, the write reaches PGLite's body CHECK, which refuses it too (item 11).
+        let checked = store.put_page("big", &empty, &allowed).unwrap_err();
+        assert_eq!(checked.code, CONSTRAINT_VIOLATION);
+        assert_eq!(checked.message, BODY_STORAGE_CHECK);
+        let page = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "big")
+            .unwrap()
+            .unwrap();
+        assert!(page.compiled_truth.is_null());
+    }
+
+    #[test]
+    fn a_body_write_over_a_shell_is_refused_by_the_body_check_and_stores_nothing() {
+        let store = crate::test_support::store();
+        put(&store, "seg");
+        let shell = make_shell(&store, "seg");
+        let body = PageInput {
+            page_type: "note".into(),
+            title: "seg".into(),
+            compiled_truth: "a whole body".into(),
+            ..PageInput::default()
+        };
+        let live = store
+            .put_page("seg", &body, &PutPageOptions::default())
+            .unwrap_err();
+        assert_eq!(live.code, CONSTRAINT_VIOLATION);
+        assert_eq!(live.message, BODY_STORAGE_CHECK);
+        let after = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "seg")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.knowledge_revision, shell.knowledge_revision);
+        assert!(after.compiled_truth.is_null() && after.timeline.is_null());
+        assert_eq!(after.content_hash, None);
+        // A soft-deleted shell refuses too: PGLite's update revives the row and hits the same CHECK.
+        store.soft_delete_page("seg", None).unwrap();
+        let deleted = store
+            .put_page("seg", &body, &PutPageOptions::default())
+            .unwrap_err();
+        assert_eq!(deleted.code, CONSTRAINT_VIOLATION);
+        let still = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "seg")
+            .unwrap()
+            .unwrap();
+        assert!(still.deleted_at_us.is_some() && still.compiled_truth.is_null());
+        // An inline page is unaffected.
+        put(&store, "plain");
+        store
+            .put_page("plain", &body, &PutPageOptions::default())
+            .unwrap();
     }
 
     #[test]
