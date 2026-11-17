@@ -195,7 +195,7 @@ describe('engine parity: lifecycle', () => {
 
   parityTest(
     'withReservedConnection passes the callback value through, propagates errors, and leaves the engine usable',
-    { methods: ['withReservedConnection', 'putPage', 'getPage'] },
+    { methods: ['withReservedConnection', 'putPage', 'getPage'], requires: 'raw_sql' },
     async (engine) => {
       // The connection itself is not queried: ReservedConnection only offers executeRaw (forbidden in cases).
       const value = await engine.withReservedConnection(async (conn) => {
