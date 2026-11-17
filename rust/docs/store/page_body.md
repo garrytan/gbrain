@@ -132,9 +132,12 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 - `stageSegmentChunks` reads occurrence ids, ordinals and byte spans as unsigned numbers; a negative
   one refuses `invalid_argument`. PGLite's columns are signed, but its occurrence ids come from a
   sequence that starts at 1.
-- A segmented page is sealed on PGLite by the text projection, which this engine does not serve.
-  `getChunks` therefore answers `[]` for a page a flip has unsealed, on both engines, until the page
-  is sealed again.
+- When `prepareChunks` refuses a chunk setting inside `stageSegmentChunks`, its message names
+  `upsertChunks`, the member it was written for, not `stageSegmentChunks`. The refusal code is the
+  same.
+- A flip unseals the page's text projection on both engines, so `getChunks` answers `[]` for a
+  segmented page after a flip until a text-projection seal exists. This is parity. The Rust engine
+  cannot seal a segmented page yet: only `replaceChunks` seals, and it drops the segment chunks.
 - The shell's `content_hash`, `compiled_truth` and `timeline` are `''` in the page record, where
   PGLite stores `NULL`. `getPage` hides the body fields on both engines; `content_hash` reads `''`
   on Rust and `null` on PGLite for a shell that was never flipped.
