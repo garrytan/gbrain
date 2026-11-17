@@ -4057,6 +4057,7 @@
           "claim_value?: number | null | undefined",
           "confidence?: number | undefined",
           "context?: string | null | undefined",
+          "dimension?: string | null | undefined",
           "embedding?: Float32Array<ArrayBufferLike> | null | undefined",
           "embedding_model?: string | null | undefined",
           "entity_slug?: string | null | undefined",
@@ -4069,6 +4070,7 @@
           "source_session?: string | null | undefined",
           "valid_from?: Date | undefined",
           "valid_until?: Date | null | undefined",
+          "value?: string | null | undefined",
           "visibility?: FactVisibility | undefined"
         ],
         "name": "NewFact"
