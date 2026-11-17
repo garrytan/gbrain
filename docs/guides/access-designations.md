@@ -19,7 +19,8 @@ Five kinds of caller read a brain:
   sub-agents included, with `gbrain auth rescope --token <name> --member <owner>`. A Claude Code or Codex install
   only the owner uses: `gbrain setup <claude-code|codex> --stdio-member <owner>`, which binds that harness's stdio
   entry on that machine and nothing else (PGLite or Postgres); for a harness several people talk to, one key per
-  person over `gbrain serve --http` (`gbrain auth create <name> --member <id>`). On a single-user brain this is how the owner's own
+  person over `gbrain serve --http` (`gbrain auth create <name> --member <id>`, which mints read and write only; add
+  `--scopes read,write,admin` for a key that also runs admin tools). On a single-user brain this is how the owner's own
   agent reads the whole brain.
 - **Other members**: credentials bound to any other enabled member.
 - **Public or unbound callers**: credentials bound to no member, and audiences that include a guest.
@@ -45,8 +46,10 @@ with the brain's configured embedding provider like any other page. See
 [where text goes](memory-boundaries.md#where-text-goes). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
 reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
 private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
-facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
-every remote caller, the owner included, except that the private-facts grant below adds private facts to `entity` cards.
+facts, the facts on `entity` and `context_pack` cards, the entity and saved facts `search` and `query` attach,
+`extraction_pending`'s unattributed list and `forget`'s `similar_active`, except a fact taken from a page it cannot
+read. For every other remote caller those card facts stay world-only, except that the private-facts grant below adds
+private facts to `entity` cards.
 
 Two grants relax page privacy for callers that are not the owner, and both are operator decisions:
 `gbrain auth rescope --private-pages granted-sources` (private pages in the sources that grant names) and the
@@ -222,7 +225,7 @@ page private only by a privacy alias, a pinned question, a derived type or a pri
 `visibility: private` by any of these writes that states no visibility, and a pinned question keeps its
 `pinned_question`. The revision and the journaled request (`ownerWrite`) name the owner's credential. Readers lists and
 folder rules that leave the owner out still refuse it, a soft-deleted private page stays refused, and every other caller
-is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope (`gbrain auth create <name> --member <owner> --scopes read`; without `--scopes` the token gets full access).
+is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope (`gbrain auth create <name> --member <owner> --scopes read`; without `--scopes` a `--member` token gets read and write, and `--scopes read,write,admin` adds admin).
 
 **The owner opt-in.** `gbrain access owner reads-restricted on` (config `access.owner_reads_restricted`, off by
 default and unchanged on upgrade) lets the owner's credentials read the pages that `readable_by` lists, folder rules

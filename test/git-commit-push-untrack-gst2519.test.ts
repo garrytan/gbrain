@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { acquireCommitLock, commitAndPush, previewUntrack, untrackAdmitted } from '../src/core/git/commit-push.ts';
+import { readUntrackPageVerdict } from '../src/core/git/untrack-admission.ts';
 import { gitChildEnv } from '../src/core/git-env.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
@@ -200,6 +201,8 @@ describe('#7753: --untrack keeps the files on disk', () => {
 const OPTS = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true };
 const D = 'sources/archive-example/', A = `${D}first-example`, B = `${D}sub/second-example`;
 const D2 = 'sources/unignored-example/', C = `${D2}third-example`, PLAIN = 'notes/plain-example';
+/** The brain's answer a managed untrack needs (src/commands/git.ts reads it before the CLI's untrack). */
+const answer = (engine: BrainEngine, root: string, paths: string[]) => readUntrackPageVerdict(engine, { root, sourceId: 'default', evidence: 'test' }, root, paths);
 const syncAll = async (engine: BrainEngine, full = false) => {
   const result = await performManagedSync(engine, { ...OPTS, ...(full ? { full: true } : {}) });
   await drainEffects(engine);
@@ -248,8 +251,9 @@ describe('GST-2519: --untrack in a managed canonical worktree, with a page root 
     put(root, 'brain/.gitignore', `${D}\n`);
     put(root, '.gitignore', `${D}\n`);
     const managed = { root: join(root, 'brain'), evidence: 'test' };
-    expect(untrackAdmitted(root, [`brain/${D.slice(0, -1)}`], managed)).toEqual([`brain/${A}.md`]);
-    expect(refusalOf(() => untrackAdmitted(root, [`${A}.md`], managed)).code).toBe('untrack_not_db_only');
+    const answer = { sourceId: 'default', sourceRoot: join(root, 'brain'), slugRoot: 'source-root' as const, checked: new Set<string>(), live: new Set<string>() };
+    expect(untrackAdmitted(root, [`brain/${D.slice(0, -1)}`], managed, answer)).toEqual([`brain/${A}.md`]);
+    expect(refusalOf(() => untrackAdmitted(root, [`${A}.md`], managed, answer)).code).toBe('untrack_not_db_only');
   });
 });
 
@@ -262,7 +266,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2519: --untrack
       if (mode === 'strict') await strictSource(engine);
       const before = await rows(engine);
       const pushed = tip(bareOf(root));
-      const result = commitAndPush({ repo: root, cwd: root, paths: [D.slice(0, -1)], message: 'untrack the archive', untrack: true });
+      const result = commitAndPush({ repo: root, cwd: root, paths: [D.slice(0, -1)], message: 'untrack the archive', untrack: true, untrackPages: await answer(engine, root, [D.slice(0, -1)]) });
       expect(result).toMatchObject({ outcome: 'committed_local', managed: true, unpublished: 1 });
       expect(changed(root)).toEqual(['D', `${A}.md`, 'D', `${B}.md`]);
       expect(git(root, 'ls-files', '--', D)).toBe('');
@@ -301,17 +305,18 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2519: --untrack
       [[`${D}missing-example.md`], 'commit_paths_invalid', []],
     ];
     for (const [paths, code, refused] of cases) {
-      const real = refusalOf(() => commitAndPush({ repo: root, cwd: root, paths, message: 'untrack', untrack: true })) as { code?: string; detail?: string; docs?: string };
+      const untrackPages = await answer(engine, root, paths);
+      const real = refusalOf(() => commitAndPush({ repo: root, cwd: root, paths, message: 'untrack', untrack: true, untrackPages })) as { code?: string; detail?: string; docs?: string };
       expect(real.code).toBe(code);
       if (refused.length) expect(JSON.parse(real.detail!)).toEqual({ paths: refused });
       if (refused.length) expect(real.docs).toBe('docs/guides/shared-checkout-git.md#untrack');
-      expect(refusalOf(() => previewUntrack(root, paths)).code).toBe(code);
+      expect(refusalOf(() => previewUntrack(root, paths, { untrackPages })).code).toBe(code);
       expect(staged(root)).toBe(index);
       expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
     }
     expect(refusalOf(() => commitAndPush({ repo: root, cwd: root, paths: [`${A}.md`], message: 'm', untrack: true, pending: true })).code).toBe('commit_paths_invalid');
     expect(refusalOf(() => previewUntrack(root, [`${A}.md`], { allowOutsideSourceRoot: true })).code).toBe('commit_paths_invalid');
-    expect(previewUntrack(root, [D.slice(0, -1)])).toEqual([`${A}.md`, `${B}.md`]);
+    expect(previewUntrack(root, [D.slice(0, -1)], { untrackPages: await answer(engine, root, [D.slice(0, -1)]) })).toEqual([`${A}.md`, `${B}.md`]);
     expect(staged(root)).toBe(index);
     await syncAll(engine);
     expect(await rows(engine)).toEqual(before);
@@ -327,9 +332,11 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2519: --untrack
     await strictSource(engine);
     const before = await rows(engine);
     expect(before[slug]).toMatchObject({ deleted: false });
-    expect(refusalOf(() => commitAndPush({ repo: root, cwd: root, paths: [spaced.slice(0, -1)], message: 'untrack', untrack: true })).code).toBe('untrack_not_db_only');
+    const spacedAnswer = await answer(engine, root, [spaced.slice(0, -1)]);
+    expect(refusalOf(() => commitAndPush({ repo: root, cwd: root, paths: [spaced.slice(0, -1)], message: 'untrack', untrack: true, untrackPages: spacedAnswer })).code).toBe('untrack_not_db_only');
     writeFileSync(join(root, 'gbrain.yml'), `storage:\n  db_only:\n    - ${D2}\n`);
-    expect(refusalOf(() => commitAndPush({ repo: root, cwd: root, paths: [D.slice(0, -1)], message: 'untrack', untrack: true })).code).toBe('untrack_not_db_only');
+    const archiveAnswer = await answer(engine, root, [D.slice(0, -1)]);
+    expect(refusalOf(() => commitAndPush({ repo: root, cwd: root, paths: [D.slice(0, -1)], message: 'untrack', untrack: true, untrackPages: archiveAnswer })).code).toBe('untrack_not_db_only');
     expect(git(root, 'ls-files', '--', D).split('\n')).toEqual([`${A}.md`, `${B}.md`]);
     git(root, 'checkout', '--', 'gbrain.yml');
     await syncAll(engine);
