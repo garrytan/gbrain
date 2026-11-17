@@ -6,7 +6,7 @@
  *   - kept_protected_parts: a mirror page whose file-wins result needs protected parts in its file stays held through syncs.
  * PGLite always; Postgres when DATABASE_URL is set. Synthetic content only.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -23,6 +23,8 @@ import { artifactDirectory } from '../src/core/repair/file-drift.ts';
 import { classWindow, previewFileDriftClass, type ClassSelection } from '../src/core/repair/file-drift-class.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
+import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
+import { connectTemplateBrain } from './helpers/brain-template.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -99,13 +101,22 @@ afterEach(() => { classWindow.pages = 200; });
 
 describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)', backend => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  let template: Awaited<ReturnType<typeof persistencePostgresTemplate>> | undefined;
+  beforeAll(async () => { if (databaseUrl) template = await persistencePostgresTemplate(databaseUrl); }, 120_000);
+  afterAll(async () => { await template?.dispose(); });
+  const pgliteClone = async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-whole-class-'));
+    const engine = await connectTemplateBrain(join(dir, 'brain'));
+    return { engine, close: async () => { await engine.disconnect(); rmSync(dir, { recursive: true, force: true }); } };
+  };
+  const db = () => ({ open: template ? template.clone : pgliteClone });
 
   test('B1: a held side-unknown or both page whose file is newer is listed prefer_file by the window preview, not no_drift', () => managedBrain(async ({ engine, root }) => {
     await mirrorHolds(engine, root, names(3), { both: ['notes/n02'] });
     expect(classes(await windowPreview(engine, { held: true, side: 'unknown', prefer: 'file' }))).toEqual({ 'notes/n00': 'prefer_file', 'notes/n01': 'prefer_file' });
     expect(classes(await windowPreview(engine, { held: true, side: 'both', prefer: 'file' }))).toEqual({ 'notes/n02': 'prefer_file' });
     expect(git(root, 'status', '--porcelain')).toBe('');
-  }, { databaseUrl, setup: setup(3) }), 300_000);
+  }, { ...db(), setup: setup(3) }), 300_000);
 
   test('the preview walks every window into one manifest whose totals equal the per-window sums, with no apply command until it completes', () => managedBrain(async ({ engine, root }) => {
     await mirrorHolds(engine, root, names(5), { newerPage: true, protectedPage: true });
@@ -135,7 +146,7 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     expect(existsSync(stopped.class_manifest!.path)).toBe(false);
     const fresh = await preview(engine);
     expect(fresh.class_manifest!.hash).toBe(m.hash);
-  }, { databaseUrl, setup: setup(5, ['notes/newer-page', 'notes/protected']) }), 300_000);
+  }, { ...db(), setup: setup(5, ['notes/newer-page', 'notes/protected']) }), 300_000);
 
   test('class_capacity_exceeded names the bytes and the limit and writes nothing', () => managedBrain(async ({ engine, root }) => {
     await mirrorHolds(engine, root, names(3), { large: true });
@@ -149,7 +160,7 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     expect(error.fix.argv).toEqual(['gbrain', 'config', 'get', 'persistence.limits.brain_recovery_bytes']);
     const dir = artifactDirectory();
     expect(existsSync(dir) ? readdirSync(dir).filter(name => name.startsWith('class-')) : []).toEqual([]);
-  }, { databaseUrl, setup: setup(3) }), 300_000);
+  }, { ...db(), setup: setup(3) }), 300_000);
 
   test('kept_protected_parts: the page stays held with its protected parts as stored through two syncs, and the checkout byte-identical', () => managedBrain(async ({ engine, ctx, root }) => {
     await mirrorHolds(engine, root, names(1), { protectedPage: true });
@@ -166,13 +177,13 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     expect(page!.fm.captured_at).toBe('2026-01-01T00:00:00Z');
     expect(page!.b).toBe('An old database body.');
     expect(checkout(root)).toBe(before);
-  }, { databaseUrl, setup: setup(1, ['notes/protected']) }), 300_000);
+  }, { ...db(), setup: setup(1, ['notes/protected']) }), 300_000);
 
   test('a remote caller cannot reach --whole-class: the preview refuses before reading anything', () => managedBrain(async ({ engine, ctx }) => {
     const scope = await resolveRepairScope(engine, 'default');
     expect(((await previewFileDriftClass(engine, scope, sel(), { remote: true }).then(() => null, e => e)) as any)?.code).toBe('permission_denied');
     expect(((await previewFileDriftClass(engine, scope, sel()).then(() => null, e => e)) as any)?.code).toBe('permission_denied');
-  }, { databaseUrl }), 120_000);
+  }, { ...db() }), 120_000);
 
   test('a repo-less brain has no held pages: the preview says so and refuses nothing', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-whole-class-'));
