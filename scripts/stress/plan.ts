@@ -293,7 +293,7 @@ export function loadWeights(root: string): Weights {
   };
 }
 
-const p75 = (values: number[]) => { const s = [...values].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.ceil(0.75 * s.length) - 1)]! : 30_000; };
+const quantile = (values: number[], q: number) => { const s = [...values].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]! : 30_000; };
 
 /**
  * Per-file median of the stress iterations in `logs` (stress shard job logs: `✓|✗ <file> iteration N (seed S) 12.3s`), in
@@ -313,15 +313,18 @@ export function mineStressIterations(logs: string[]): Map<string, number> {
   }));
 }
 
-/** Measured milliseconds for one iteration of `file` in `profile`: a measured stress iteration first, else the lane's weight, else its p75. */
-export function iterationEstimateMs(file: string, profile: ProfileName, w: Weights): number {
+/**
+ * Measured milliseconds for one iteration of `file` in `profile`: a measured stress iteration first, else the lane's
+ * weight, else the lane's `unmeasured` quantile (p75 unless the caller asks for a more conservative one).
+ */
+export function iterationEstimateMs(file: string, profile: ProfileName, w: Weights, unmeasured = 0.75): number {
   const stressed = w.stress?.get(file);
   if (stressed !== undefined) return stressed;
   switch (profile) {
-    case 'postgres-arm': return w.arms.get(file) ?? p75([...w.arms.values()]);
-    case 'e2e': return w.e2e.get(file) ?? p75([...w.e2e.values()]);
-    case 'serial': return (w.serialSeconds.get(file) ?? p75([...w.serialSeconds.values()])) * 1000;
+    case 'postgres-arm': return w.arms.get(file) ?? quantile([...w.arms.values()], unmeasured);
+    case 'e2e': return w.e2e.get(file) ?? quantile([...w.e2e.values()], unmeasured);
+    case 'serial': return (w.serialSeconds.get(file) ?? quantile([...w.serialSeconds.values()], unmeasured)) * 1000;
     case 'slow': return w.unit.get(file) ?? 120_000;
-    default: return w.unit.get(file) ?? p75([...w.unit.values()]);
+    default: return w.unit.get(file) ?? quantile([...w.unit.values()], unmeasured);
   }
 }

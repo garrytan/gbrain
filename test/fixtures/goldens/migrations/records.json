@@ -5220,10 +5220,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "secret_store",
+        "name": "owner_only_lineage",
         "sql": {
-          "length": 1783,
-          "sha256": "429f1081f3455a9961b9f5735b46fea7f12242a3d21c25674b8c82fe20e2dcde"
+          "length": 2394,
+          "sha256": "3bce883ac217867e891d839a7254747b8aa1d2c1a42ef9f7a123dbc14fd39422"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -32,7 +32,7 @@ async function acceptedChoice(engine: BrainEngine, opts: AddSourceOpts): Promise
 
 /** Folder and Git sources only: connectors keep their own defaults (GitHub and Google federated, meetings and Slack chats out). */
 export async function withDefaultSearchChoice(engine: BrainEngine, opts: AddSourceOpts): Promise<AddSourceOpts> {
-  if (opts.federated != null || opts.github || opts.google || opts.meetings || opts.slack || opts.addedByRemoteCaller) return opts;
+  if (opts.federated != null || opts.github || opts.google || opts.meetings || opts.slack || opts.imessage || opts.addedByRemoteCaller) return opts;
   const accepted = await acceptedChoice(engine, opts);
   if (accepted) return accepted;
   const joins = await newSourceJoinsDefaultSearch(engine);

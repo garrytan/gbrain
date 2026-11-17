@@ -107,6 +107,8 @@ export interface ConnectorPublishCtx {
   /** The kind as people name it in messages ("Meetings", "Slack"), and the lower-case tag in commit subjects and logs. */
   label: string; tag: string;
   record: 'git' | 'database'; dir: string | null;
+  /** An unmanaged import passes the external-untrusted write gate, as every managed connector import does. */
+  gated?: boolean;
 }
 
 export interface ConnectorPage {
@@ -152,7 +154,8 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
       }
     }
     const { importFromContent } = await import('../import-file.ts');
-    const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true });
+    const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true,
+      ...(ctx.gated ? { writeGate: { tier: 'external_untrusted' as const, origin: { channel: `connector:${ctx.tag}`, connector: ctx.tag, source_uri: relPath }, requestId: null } } : {}) });
     if (result.status === 'error' || result.error) throw new Error(result.error ?? `Import failed for ${relPath}`);
     status = result.status === 'imported' ? 'imported' : 'skipped';
     created = !existing;

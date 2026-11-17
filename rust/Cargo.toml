@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# rust/bench is a separate standalone workspace (its own Cargo.lock); it is not part of the addon build.
+exclude = ["bench"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+rust-version = "1.100"
+
+[profile.release]
+# The binding turns a Rust panic into a JavaScript error with catch_unwind, which needs unwinding.
+panic = "unwind"
+lto = "thin"
+codegen-units = 16
