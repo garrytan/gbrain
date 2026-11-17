@@ -6751,6 +6751,8 @@
           "minTrust?: \"user_confirmed\" | \"operator_curated\" | \"tool_observed\" | \"agent_written\" | \"unknown\" | \"external_untrusted\" | undefined",
           "principal?: { kind: \"oauth_client\" | \"legacy_token\"; id: string; } | undefined",
           "privatePages?: { mode: \"granted_sources\"; sources: string[]; } | undefined",
+          "readShared?: boolean | undefined",
+          "readSharedUnresolved?: boolean | undefined",
           "readsUnscoped?: boolean | undefined",
           "scopes: string[]",
           "sourceActive?: boolean | undefined",

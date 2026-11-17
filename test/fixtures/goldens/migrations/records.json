@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 313,
+    "count": 314,
     "gaps": [
       17,
       18,
@@ -72,7 +72,7 @@
       "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
       "failClosedLedgerGuards": "dadd3ceb13286ca7ab969a911a310c87be313de6ec2c2c8e14d3f95b72901481",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
-      "grantFromRow": "e31bd308b413c11f2879ac4393fbc0362a1a974f937196f11029481e4dc64f69",
+      "grantFromRow": "9586c777b944e8010340a1d0240b814fd89e24d01ea92fbde90d9005537a1925",
       "hardenFunctionSearchPaths": "fd4dbb5e6f42931b80b3b041dde4b22100d08a449bd2d8b9c4a6e555e8959dfa",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
       "identityIndexHasSource": "ab7e4cad64ebf233f3a884816c114b0c582f4f2166c3bcf19ed8d92bcfcf3807",
@@ -105,7 +105,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 318,
+    "latest": 319,
     "records": [
       {
         "handler": {
@@ -5203,6 +5203,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 318
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "token_read_shared",
+        "sql": {
+          "length": 173,
+          "sha256": "e277245cb7ddc3d040b7c8a179f8a8b5fe732958eabb5f40c91ce31b0f9ad1df"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 319
       }
     ],
     "versions": [
@@ -5518,7 +5531,8 @@
       315,
       316,
       317,
-      318
+      318,
+      319
     ]
   },
   "normalizer": "migrations-record-v1"
