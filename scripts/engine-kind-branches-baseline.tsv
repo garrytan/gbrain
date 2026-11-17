@@ -114,7 +114,7 @@ src/core/context/resolve-ipc.ts	kind_compare	4
 src/core/cycle.ts	kind_compare	1
 src/core/cycle/facts-drain.ts	kind_compare	1
 src/core/cycle/synthesize.ts	kind_compare	1
-src/core/db-lock.ts	kind_compare	9
+src/core/db-lock.ts	kind_compare	1
 src/core/direct-pool-profile.ts	kind_compare	1
 src/core/embed-concurrency.ts	kind_compare	1
 src/core/embedding-ann-build.ts	kind_compare	1
