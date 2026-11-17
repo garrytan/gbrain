@@ -36,10 +36,14 @@ const git = (...args: string[]) => execFileSync('git', ['-C', ROOT, ...args], { 
 function ensureCommit(ref: string): string {
   const has = spawnSync('git', ['-C', ROOT, 'rev-parse', '--verify', '--quiet', ref + '^{commit}'], { encoding: 'utf8' });
   if (has.status === 0) return has.stdout.trim();
-  const fetch = RELEASE_TAG.test(ref) || ref === 'stable'
-    ? ['fetch', '--quiet', '--no-tags', 'origin', '+refs/tags/' + ref + ':refs/tags/' + ref]
-    : ['fetch', '--quiet', '--no-tags', 'origin', ref];
-  execFileSync('git', ['-C', ROOT, ...fetch], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const refspec = RELEASE_TAG.test(ref) || ref === 'stable' ? '+refs/tags/' + ref + ':refs/tags/' + ref : ref;
+  try {
+    execFileSync('git', ['-C', ROOT, 'fetch', '--quiet', '--no-tags', 'origin', refspec], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    // A fork carries no release tags: the releases this plan lists come from REPO, so fetch the tag from there.
+    if (!RELEASE_TAG.test(ref) && ref !== 'stable') throw error;
+    execFileSync('git', ['-C', ROOT, 'fetch', '--quiet', '--no-tags', `https://github.com/${REPO}.git`, refspec], { stdio: ['ignore', 'pipe', 'pipe'] });
+  }
   return git('rev-parse', ref + '^{commit}');
 }
 

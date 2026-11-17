@@ -578,6 +578,7 @@ function collectLinkTargets(root: string): string[] {
   const walk = (d: string) => {
     for (const entry of readdirSync(d)) {
       if (entry.startsWith('.') || DEFAULT_LINT_EXCLUDE_DIRS.has(entry)) continue;
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- d walks down from the operator's lint target; entry is a directory entry name from readdirSync (no separators)
       const full = join(d, entry);
       if (lstatSync(full).isDirectory()) walk(full);
       else if (entry.endsWith('.md')) out.push(full);

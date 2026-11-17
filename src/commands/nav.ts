@@ -71,6 +71,8 @@ async function listedPages(engine: BrainEngine, sourceId: string, root: string):
   for (const r of rows) {
     const rel = r.source_path!.replace(/\\/g, '/').replace(/^\.\//, '');
     if (r.visibility === 'private') continue;
+    if (rel.split('/').includes('..')) continue; // a recorded path never leaves the source's folder
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- root is the source's own folder from the sources row; rel is a recorded page path with no '..' segment (checked above); existence check only
     if (gitSet ? !gitSet.has(rel) : !existsSync(join(root, rel))) continue;
     if (/^(index|log|hot)\.md$/i.test(rel)) continue;
     pages.push({ slug: r.slug, title: r.title ?? r.slug, type: r.type, body: r.lead ?? '',
@@ -102,6 +104,7 @@ export interface NavResult {
 
 /** Whether gbrain's persistence coordinator owns this folder (a direct file write there is refused). */
 function isManagedFolder(dir: string): boolean {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is the source's own folder; the fixed name index.md is only probed, nothing is written
   try { assertManagedFilesystemWrite(join(dir, 'index.md')); return false; } catch { return true; }
 }
 
@@ -129,6 +132,7 @@ export async function buildNav(engine: BrainEngine, opts: { sourceId?: string; o
   };
   const result: NavResult = { root, out, managed_root: managedRoot, files: [] };
   for (const file of Object.keys(FILES) as NavFile[]) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- out is --out or the source's folder (or ~/.gbrain/nav/<source>); file is one of the three fixed names in FILES
     const path = join(out, file);
     const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
     const merged = mergeNavFile(existing, FILES[file].title, FILES[file].intro, blocks[file]);

@@ -92,6 +92,7 @@ function sourceContext(engine: BrainEngine, logger: Logger, signal: AbortSignal)
 }
 
 function archivedToday(inboxDir: string): number {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the operator's own inbox folder (--dir or ~/.gbrain/inbox) joined with fixed segments (.archived, a YYYY-MM-DD date)
   const dir = join(inboxDir, '.archived', archiveDateFolder(new Date()));
   return existsSync(dir) ? readdirSync(dir).length : 0;
 }
@@ -130,6 +131,7 @@ export async function runInbox(engine: BrainEngine, args: string[]): Promise<voi
         delivery: engine.kind === 'pglite' ? 'written' : 'queued' }, null, 2));
       return;
     }
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- display only: the operator's own inbox folder and the fixed .archived name; nothing is read or written
     console.log(`${r.emitted.length} file(s) ${where}; originals moved to ${join(inboxDir, '.archived')}.`);
     if (r.held.length) console.log(`${r.held.length} file(s) left in the inbox: no processor reads them yet. Convert them to text or markdown first.`);
     if (r.failed.length) console.log(`${r.failed.length} file(s) failed and stay in the inbox; see the messages above, then run this again.`);
