@@ -13,9 +13,15 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
+import { RELEASE_ADDON_TARGETS, RUST_ADDON_MANIFEST_ASSET } from '../src/core/rust-engine/addon-manifest.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const WORKFLOW = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+const RUST_WORKFLOW = readFileSync(join(ROOT, '.github/workflows/rust-engine.yml'), 'utf8');
+
+/** The optional Rust engine addon files a release carries: one per target in the manifest, and the manifest. */
+const RUST_ADDON_ASSETS = ['gbrain-engine-rust-linux-x64.node', 'gbrain-engine-rust-darwin-arm64.node', RUST_ADDON_MANIFEST_ASSET];
+const SKILL_RESOLVER_ASSETS = ['gbrain-skill-resolver.mjs', 'gbrain-skill-resolver.mjs.sha256'];
 
 /** Every platform/arch the self-updater can request an asset for. */
 const EXPECTED_ASSETS = (
@@ -69,7 +75,43 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
   test('idempotency completeness check names every expected asset', () => {
     // The version job only skips when the existing release carries ALL assets;
     // its sorted-join comparison string must stay in sync with the matrix.
-    expect(WORKFLOW).toContain([...EXPECTED_ASSETS].sort().join(','));
+    // Every asset, not just the executables: a release missing the addon is partial and must be repaired.
+    expect(WORKFLOW).toContain([...EXPECTED_ASSETS, ...RUST_ADDON_ASSETS, ...SKILL_RESOLVER_ASSETS].sort().join(','));
+  });
+
+  test('the Rust addon is built by rust-engine.yml, attested here, and attached to the release', () => {
+    const jobs = (name: string, next: string) => WORKFLOW.slice(WORKFLOW.indexOf(`\n  ${name}:\n`), WORKFLOW.indexOf(`\n  ${next}:\n`));
+    const build = jobs('rust-addon', 'rust-addon-attest');
+    expect(build).toContain('uses: ./.github/workflows/rust-engine.yml');
+    expect(build).toContain('for_release: true');
+    expect(build).toContain('ref: ${{ needs.ci-gate.outputs.sha }}');
+    expect(build).toMatch(/needs\.ci-gate\.outputs\.publish == 'true'/);
+    // The attestation is minted in release.yml, so its builder id is the one the loader and the self-updater accept.
+    const attest = jobs('rust-addon-attest', 'skill-resolver-bundle');
+    expect(attest).toContain('actions/attest-build-provenance@');
+    expect(attest).toContain('id-token: write');
+    for (const asset of RUST_ADDON_ASSETS) expect(attest).toContain(`rust-addon/${asset}/${asset}`);
+    const release = WORKFLOW.slice(WORKFLOW.indexOf('\n  release:\n'), WORKFLOW.indexOf('\n  smoke-rust-addon:\n'));
+    expect(release).toMatch(/needs: \[[^\]]*\brust-addon\b[^\]]*\brust-addon-attest\b[^\]]*\]/);
+    for (const asset of RUST_ADDON_ASSETS) expect(release).toContain(`artifacts/${asset}/${asset}`);
+  });
+
+  test('rust-engine.yml names the addon files and targets the loader and the manifest expect', () => {
+    for (const asset of RUST_ADDON_ASSETS.filter((a) => a.endsWith('.node'))) expect(RUST_WORKFLOW).toContain(`asset: ${asset}`);
+    expect(RUST_WORKFLOW).toContain(`name: ${RUST_ADDON_MANIFEST_ASSET}`);
+    const releaseAddon = RUST_WORKFLOW.slice(RUST_WORKFLOW.indexOf('\n  release-addon:\n'), RUST_WORKFLOW.indexOf('\n  release-manifest:\n'));
+    const targets = [...releaseAddon.matchAll(/- target: (\S+)/g)].map((m) => m[1]);
+    expect(targets.sort()).toEqual([...RELEASE_ADDON_TARGETS].sort());
+    // A normal push or PR never builds release files, and a release call never runs the checks.
+    expect(releaseAddon).toContain('if: ${{ inputs.for_release }}');
+    expect(RUST_WORKFLOW.match(/if: \$\{\{ !inputs\.for_release \}\}/g)).toHaveLength(3);
+  });
+
+  test('the post-publish smoke fetches the published addon and runs after the release exists', () => {
+    const smoke = WORKFLOW.slice(WORKFLOW.indexOf('\n  smoke-rust-addon:\n'), WORKFLOW.indexOf('\n  publish-template:'));
+    expect(smoke).toMatch(/needs: \[[^\]]*\brelease\b[^\]]*\]/);
+    expect(smoke).toContain('rust_engine_addon_(missing|mismatch)');
+    expect(smoke).toContain('the Rust engine is not built yet in this release');
   });
 
   test('release tag derives from the VERSION file, v-prefixed', () => {

@@ -9,7 +9,12 @@ name: Rust engine
 #   addon      builds the addon (`bun run rust:build`) and runs the Bun smoke test
 #              (rust/smoke/run.ts, including a `bun build --compile` executable) on Linux x64 and
 #              macOS arm64, then uploads the .node file.
-#   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
+#   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version, then a source
+#              install on PGLite: init, a put/get round trip, and a second install over it.
+#   release-addon, release-manifest  run only when release.yml calls this workflow (for_release):
+#              build the addon for linux-x64 and darwin-arm64 under the names the release publishes,
+#              and write gbrain-engine-rust.sha256.json. release.yml attests and attaches the files.
+#              The three jobs above are skipped in that case.
 #
 # Runs only when something the Rust engine depends on changes (the path list below). The two
 # rust-unit-arms entries start with `**/` because those files arrive in a later change and the
@@ -48,13 +53,26 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - '.github/workflows/rust-engine.yml'
+  # Called by release.yml, which passes the gated release commit as `ref`.
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build the release addon from.
+        type: string
+        default: ''
+      for_release:
+        description: Build and package the release addon instead of running the checks.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# A called workflow reports the caller's name in github.workflow, so the release run keeps its own group:
+# sharing the caller's `release` group would make the called run wait on the run that called it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ inputs.for_release && format('rust-engine-release-{0}', inputs.ref) || format('{0}-{1}', github.workflow, github.event.pull_request.number || github.ref) }}
+  cancel-in-progress: ${{ !inputs.for_release }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -63,6 +81,7 @@ env:
 jobs:
   checks:
     name: Format, clippy, unit tests, cargo-deny
+    if: ${{ !inputs.for_release }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 25
     steps:
@@ -132,6 +151,7 @@ jobs:
 
   addon:
     name: Addon and Bun smoke / ${{ matrix.target }}
+    if: ${{ !inputs.for_release }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -196,6 +216,14 @@ jobs:
           export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
           test -f "$GBRAIN_RUST_ENGINE_ADDON"
           bun rust/smoke/run.ts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        shell: bash
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      - name: Addon loader tests against the real addon
+        timeout-minutes: 10
+        shell: bash
+        run: GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test test/rust-engine-addon-loader.test.ts test/rust-release-addon-script.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}
@@ -205,6 +233,7 @@ jobs:
 
   without-rust:
     name: Builds and runs with no Rust installed
+    if: ${{ !inputs.for_release }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 20
     steps:
@@ -226,8 +255,10 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
-      - name: Remove Rust from PATH, then build and run gbrain
+      - name: Remove Rust from PATH, then build, run and source-install gbrain
         shell: bash
+        env:
+          GBRAIN_NO_AUTOPILOT_INSTALL: '1'
         run: |
           set -euo pipefail
           # Drop every PATH directory that holds cargo, rustc or rustup. System directories are kept;
@@ -262,3 +293,114 @@ jobs:
             exit 1
           fi
           grep -q 'cargo was not found' rust-build.log
+          # A source install on the normal engine, still with no Rust: what an agent does from the README, then what it
+          # does again on upgrade. The Rust engine is opt-in, so nothing here may fetch an addon or create
+          # <gbrain home>/engines.
+          export GBRAIN_HOME="$RUNNER_TEMP/no-rust-home"
+          mkdir -p "$GBRAIN_HOME"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+          bun link
+          command -v gbrain
+          gbrain init --pglite --no-embedding
+          printf -- '---\ntitle: No Rust round trip\n---\n\nwritten without Rust installed\n' | gbrain put people/no-rust-round-trip
+          gbrain get people/no-rust-round-trip | grep -q 'written without Rust installed'
+          # The upgrade path: install over the existing checkout, then use the same brain again.
+          bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+          bun link
+          gbrain get people/no-rust-round-trip | grep -q 'written without Rust installed'
+          if [ -e "$GBRAIN_HOME/.gbrain/engines" ]; then
+            echo "::error::a PGLite brain created $GBRAIN_HOME/.gbrain/engines"
+            exit 1
+          fi
+
+  # The two jobs below run only when release.yml calls this workflow. release.yml then attests the
+  # three files and attaches them to the release; nothing here publishes anything.
+  release-addon:
+    name: Release addon / ${{ matrix.target }}
+    if: ${{ inputs.for_release }}
+    # ubuntu-22.04, not latest: the addon links the runner's glibc, so an older runner runs on more machines.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: linux-x64-glibc
+            runner: ubuntu-22.04
+            asset: gbrain-engine-rust-linux-x64.node
+          - target: darwin-arm64
+            runner: macos-26
+            asset: gbrain-engine-rust-darwin-arm64.node
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # No cargo cache: a release file is built from the checked-out source alone.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf --retry 3 https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+      - name: Build the addon
+        run: bun run rust:build
+      - name: Name the file for the release and record what it reports
+        run: bun rust/scripts/release-addon.ts stage --target "${{ matrix.target }}" --asset "${{ matrix.asset }}" --out release-addon
+      - name: Smoke test the release file under Bun
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GBRAIN_RUST_ENGINE_ADDON="$PWD/release-addon/${{ matrix.asset }}"
+          bun rust/smoke/run.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: ${{ matrix.asset }}
+          path: release-addon/${{ matrix.asset }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: gbrain-engine-rust-meta-${{ matrix.target }}
+          path: release-addon/${{ matrix.asset }}.meta.json
+          if-no-files-found: error
+
+  release-manifest:
+    name: Release addon manifest
+    needs: release-addon
+    if: ${{ inputs.for_release }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          pattern: gbrain-engine-rust-meta-*
+          path: addon-meta
+      - name: Write gbrain-engine-rust.sha256.json
+        run: |
+          set -euo pipefail
+          mkdir -p manifest
+          bun rust/scripts/release-addon.ts manifest --meta-dir addon-meta --version "$(tr -d '[:space:]' < VERSION)" --out manifest/gbrain-engine-rust.sha256.json
+          cat manifest/gbrain-engine-rust.sha256.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: gbrain-engine-rust.sha256.json
+          path: manifest/gbrain-engine-rust.sha256.json
+          if-no-files-found: error

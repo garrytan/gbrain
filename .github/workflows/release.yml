@@ -3,7 +3,11 @@ name: Release
 # Publishes a GitHub release for every VERSION bump that lands on master:
 # tag + title `v<VERSION>`, notes from that version's CHANGELOG.md entry,
 # compiled binaries attached (#3521), plus the skill resolver library bundle
-# for Node adapters (gbrain-skill-resolver.mjs, GBRA-377).
+# for Node adapters (gbrain-skill-resolver.mjs, GBRA-377), plus the optional Rust
+# engine addon for linux-x64 and darwin-arm64 with its SHA-256 manifest. The addon
+# is not inside the executables: gbrain fetches it into the gbrain home the first
+# time the rust engine is selected and checks it against the manifest
+# (src/core/rust-engine/, rust/README.md).
 #
 # Every release is published as a pre-release that never becomes GitHub's
 # "Latest": scripts/promote-stable.ts marks the stable release Latest, with
@@ -73,7 +77,7 @@ jobs:
           # can repair it.
           assets="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '[.assets[].name] | sort | join(",")' 2>/dev/null || true)"
-          if [ "$assets" = "gbrain-darwin-arm64,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256" ]; then
+          if [ "$assets" = "gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release v$version already published with all assets — nothing to do."
           else
@@ -196,6 +200,47 @@ jobs:
           name: ${{ matrix.artifact }}
           path: bin/${{ matrix.artifact }}
 
+  # The optional Rust engine addon, built by rust-engine.yml from the gated SHA. It is attested
+  # here, not there: src/core/binary-self-update.ts accepts only provenance whose builder id is
+  # this workflow (EXPECTED_BUILDER_IDS), and gbrain checks the addon and its manifest the same way.
+  rust-addon:
+    needs: [version, ci-gate]
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/rust-engine.yml
+    with:
+      for_release: true
+      ref: ${{ needs.ci-gate.outputs.sha }}
+
+  rust-addon-attest:
+    needs: [version, ci-gate, rust-addon]
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write      # for attest-build-provenance (Sigstore OIDC)
+      attestations: write  # for attest-build-provenance
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          pattern: gbrain-engine-rust*
+          path: rust-addon
+      - name: List the files to attest
+        run: |
+          set -euo pipefail
+          for f in gbrain-engine-rust-linux-x64.node gbrain-engine-rust-darwin-arm64.node gbrain-engine-rust.sha256.json; do
+            test -s "rust-addon/$f/$f"
+          done
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: |
+            rust-addon/gbrain-engine-rust-linux-x64.node/gbrain-engine-rust-linux-x64.node
+            rust-addon/gbrain-engine-rust-darwin-arm64.node/gbrain-engine-rust-darwin-arm64.node
+            rust-addon/gbrain-engine-rust.sha256.json/gbrain-engine-rust.sha256.json
+
   skill-resolver-bundle:
     # GBRA-377: the skill resolver library as one dependency-free ES module for
     # Node adapters (docs/guides/skill-resolver.md#library). Built from the gated
@@ -226,7 +271,7 @@ jobs:
             bundle/gbrain-skill-resolver.mjs.sha256
 
   release:
-    needs: [version, ci-gate, build, skill-resolver-bundle]
+    needs: [version, ci-gate, build, skill-resolver-bundle, rust-addon, rust-addon-attest]
     if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -282,6 +327,9 @@ jobs:
           files: |
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64
             artifacts/gbrain-linux-x64/gbrain-linux-x64
+            artifacts/gbrain-engine-rust-linux-x64.node/gbrain-engine-rust-linux-x64.node
+            artifacts/gbrain-engine-rust-darwin-arm64.node/gbrain-engine-rust-darwin-arm64.node
+            artifacts/gbrain-engine-rust.sha256.json/gbrain-engine-rust.sha256.json
             artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs
             artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs.sha256
       # [C1 = D6-A] `latest-stable` is the alpha channel's ref: the alpha
@@ -305,6 +353,72 @@ jobs:
         env:
           RELEASE_SHA: ${{ needs.ci-gate.outputs.sha }}
         run: git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"
+
+  # After the release is published: the executable users download, with the rust engine selected,
+  # fetches the addon from that release and checks it against the manifest. The engine itself is
+  # not built yet, so the command must stop at the shell's "not built yet" refusal, which is only
+  # reached after the addon verified and loaded. A rust_engine_addon_missing or _mismatch refusal
+  # here means the release is broken. Unauthenticated attestation lookups are limited by GitHub
+  # (60 an hour per address); a rate-limited run reports missing and can be re-run.
+  smoke-rust-addon:
+    needs: [version, ci-gate, release]
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable: gbrain-linux-x64
+            addon_target: linux-x64-glibc
+          - os: macos-26
+            executable: gbrain-darwin-arm64
+            addon_target: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch the published executable and manifest, select the rust engine, open it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          EXECUTABLE: ${{ matrix.executable }}
+          ADDON_TARGET: ${{ matrix.addon_target }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/rust-addon-smoke"
+          mkdir -p "$work"
+          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$work" \
+            --pattern "$EXECUTABLE" --pattern gbrain-engine-rust.sha256.json
+          chmod +x "$work/$EXECUTABLE"
+          export GBRAIN_HOME="$work/home"
+          mkdir -p "$GBRAIN_HOME/.gbrain"
+          printf '{"engine":"rust","database_path":"%s"}\n' "$GBRAIN_HOME/.gbrain/brain.rust" > "$GBRAIN_HOME/.gbrain/config.json"
+          status=0
+          "$work/$EXECUTABLE" list > "$work/out.log" 2>&1 || status=$?
+          cat "$work/out.log"
+          if [ "$status" = 0 ]; then
+            echo "::error::the rust engine opened, but the shell is not built yet"
+            exit 1
+          fi
+          if grep -Eq 'rust_engine_addon_(missing|mismatch)' "$work/out.log"; then
+            echo "::error::the published executable refused the published addon"
+            exit 1
+          fi
+          grep -q 'the Rust engine is not built yet in this release' "$work/out.log"
+          engine_build="$(jq -r .engine_build "$work/gbrain-engine-rust.sha256.json")"
+          want="$(jq -r --arg t "$ADDON_TARGET" '.targets[$t].sha256' "$work/gbrain-engine-rust.sha256.json")"
+          addon="$GBRAIN_HOME/.gbrain/engines/rust/$engine_build/$ADDON_TARGET.node"
+          test -f "$addon"
+          got="$(shasum -a 256 "$addon" | cut -d' ' -f1)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::fetched addon sha256 $got does not match the manifest's $want"
+            exit 1
+          fi
+          # The refusal comes before any write to the brain.
+          test ! -e "$GBRAIN_HOME/.gbrain/brain.rust"
+          echo "fetched $ADDON_TARGET addon verified: $got"
 
   # [G7/S3#4] Publishes the rendered agent-workspace template repo (the
   # GitHub "Use this template" door) from CI ONLY — no human pushes it by
