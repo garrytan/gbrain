@@ -12,11 +12,15 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
 
 /** The plain managed-mode statement. `group-publish.ts` memoizes this exact text, so every plain reader sends it unchanged. */
 export const MANAGED_MODE_SQL = 'SELECT enabled FROM persistence_brain WHERE singleton=1';
 /** The same read as a scalar subquery (a JSON array of `{enabled}` rows) for a statement that folds it into other work. */
 export const MANAGED_MODE_ROWS_JSON_SQL = `(SELECT COALESCE(json_agg(json_build_object('enabled', b.enabled)), '[]'::json) FROM persistence_brain b WHERE b.singleton = 1)`;
+
+/** `MANAGED_MODE_ROWS_JSON_SQL` as constant fragment text, for a statement that folds the managed-mode rows into other work. */
+export const managedModeRowsJson = trustedSql(MANAGED_MODE_ROWS_JSON_SQL);
 
 /** A local writer's grant: the sources, operations, scopes and slug prefixes its credential may use. */
 export interface LocalGrant { sourceIds: string[]; operations: string[] | null; scopes: string[]; slugPrefixes: string[] | null; }
@@ -44,8 +48,8 @@ export async function readPersistenceBrainId(exec: LegacyUnscopedRead): Promise<
 
 /** The registration row of a local writer, or undefined; `lock` appends `FOR SHARE` so a revocation waits for the reader. */
 export async function readLocalWriterRow(exec: LegacyUnscopedRead, id: string, opts: { lock?: boolean } = {}): Promise<LocalWriterRow | undefined> {
-  const [row] = await exec.executeRaw<LocalWriterRow>(
-    `SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid${opts.lock ? ' FOR SHARE' : ''}`, [id]);
+  const { rows: [row] } = await exec.run<LocalWriterRow>(
+    sqlFragment`SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=${id}::uuid${opts.lock ? trustedSql(' FOR SHARE') : sqlFragment``}`);
   return row;
 }
 

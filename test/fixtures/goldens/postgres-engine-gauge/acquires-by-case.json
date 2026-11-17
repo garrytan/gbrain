@@ -327,11 +327,11 @@
       "tx": 1
     },
     "replaceDerivedLinks#default": {
-      "raw": 13,
+      "raw": 12,
       "tx": 1
     },
     "replaceDerivedLinksBatch#default": {
-      "raw": 13,
+      "raw": 12,
       "tx": 1
     },
     "resolveSlugWithAlias#default": {},

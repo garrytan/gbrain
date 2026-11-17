@@ -3,10 +3,11 @@
  * attribution and trust declarations to the database triggers: one SQL implementation for
  * both engines. Both statements run on the executor they are given, so a transaction engine
  * reads and sets them inside its own transaction. The names are code constants, never user
- * input; they are interpolated into the statement text exactly as the callers did.
+ * input; they are still bound as parameters and checked against the setting-name alphabet.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
+import { sqlFragment } from './fragment.ts';
 
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;
 function assertSettingNames(names: readonly string[]): void {
@@ -16,13 +17,15 @@ function assertSettingNames(names: readonly string[]): void {
 /** The current value of each setting, in `names` order; null where it was never set. */
 export async function readTransactionSettings(exec: LegacyUnscopedRead, names: readonly string[]): Promise<Array<string | null>> {
   assertSettingNames(names);
-  const [row] = await exec.executeRaw<Record<string, string | null>>(
-    `SELECT ${names.map((name, index) => `current_setting('${name}',true) AS s${index}`).join(',')}`);
-  return names.map((_, index) => row?.[`s${index}`] ?? null);
+  if (names.length === 0) return [];
+  const { rows } = await exec.run<{ value: string | null }>(sqlFragment`SELECT current_setting(t.name, true) AS value
+    FROM unnest(${[...names]}::text[]) WITH ORDINALITY AS t(name, position) ORDER BY t.position`);
+  return names.map((_, index) => rows[index]?.value ?? null);
 }
 
 /** Sets each setting to the value at the same index, for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
 export async function applyTransactionSettings(exec: SqlExecutor, names: readonly string[], values: readonly string[]): Promise<void> {
   assertSettingNames(names);
-  await exec.executeRaw(`SELECT ${names.map((name, index) => `set_config('${name}',$${index + 1},true)`).join(',')}`, [...values]);
+  if (names.length === 0) return;
+  await exec.run(sqlFragment`SELECT set_config(t.name, t.value, true) FROM unnest(${[...names]}::text[], ${[...values]}::text[]) AS t(name, value)`);
 }
