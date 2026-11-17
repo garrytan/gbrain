@@ -99,6 +99,7 @@ test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
+test/doctor-guard-ledger-checks.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-purged-page-facts-count.test.ts
@@ -189,6 +190,7 @@ test/graduation-target.test.ts
 test/graduation-verify-sync-freshness.test.ts
 test/graduation-verify.test.ts
 test/grandfather-managed.test.ts
+test/guard-ledger-recreate-errors.test.ts
 test/guest-notes-scoped-role.test.ts
 test/harness-skills-epoch.test.ts
 test/harness-verify-member-credential.test.ts

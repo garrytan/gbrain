@@ -5447,6 +5447,12 @@ CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_de
 ```
 <!-- gbrain:ledger-rls-recipe:end -->
 
+A bulk fact insert (the fence import in `src/core/engine-sql/facts.ts`) defers the withdrawal
+stamp to the end of its statement, so when one of its rows matches a withdrawal the guard
+updates that row in `facts`, and the write role then needs a permissive `UPDATE` policy on
+`facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
+same `writer_coordinator_required` error.
+
 **Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
 the role running it owns. A guard owned by another role is left as it was, so it still lets a
 scoped writer without ledger policies through, and v318 only names it in one stderr line
@@ -5468,7 +5474,10 @@ For a row with `fails_closed = f`, connect as the role in its `owner` column and
 `ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
 `gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
 is missing its check, provided the migrating role owns it. You can also run gbrain once as the
-owning role instead. Run the query again to confirm.
+owning role instead. Run the query again to confirm. On Postgres, `gbrain doctor`
+(`guard_ledger_checks`) runs the same check and names each guard left without its ledger check
+with its owner, and the fix: `gbrain apply-migrations --yes` when the doctor's role may re-create
+it, else the `ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
 
 The segmented storage recipe above already covers the two derivation purge tables for a
 role it applies to. A policy that filters out ledger rows of a source the role writes hides

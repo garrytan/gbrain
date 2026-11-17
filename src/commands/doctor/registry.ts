@@ -44,6 +44,7 @@ import {
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
+import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { postgresTlsEntry } from './checks/postgres-tls.ts';
 import { databaseEncodingEntry } from './checks/database-encoding.ts';
 import { schemaFunctionBodiesEntry } from './checks/schema-function-bodies.ts';
@@ -268,6 +269,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   rlsEntry,
   postgresTlsEntry,
   functionSearchPathEntry,
+  guardLedgerChecksEntry,
   databaseEncodingEntry,
   schemaVersionEntry,
   schemaFunctionBodiesEntry,
