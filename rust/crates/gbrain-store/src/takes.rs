@@ -330,7 +330,7 @@ pub struct EvidenceInput {
 // ---------------------------------------------------------------------------------------------
 // Errors and value checks.
 
-fn not_null(table: &str, column: &str) -> StoreError {
+pub(crate) fn not_null(table: &str, column: &str) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
         format!(
@@ -346,7 +346,7 @@ fn check_failed(table: &str, constraint: &str) -> StoreError {
     )
 }
 
-fn fk_failed(table: &str, constraint: &str) -> StoreError {
+pub(crate) fn fk_failed(table: &str, constraint: &str) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
         format!(
@@ -357,7 +357,7 @@ fn fk_failed(table: &str, constraint: &str) -> StoreError {
 
 /// An `INTEGER` parameter: null stays null; a whole number inside `i32` is the value; anything
 /// else is `invalid_argument`, as Postgres refuses it before any row is read.
-fn int4(value: &Value, op: &str, column: &str) -> Result<Option<i32>> {
+pub(crate) fn int4(value: &Value, op: &str, column: &str) -> Result<Option<i32>> {
     let refused = || {
         StoreError::invalid(format!(
             "{op}: {column} must be an integer in the int4 range, got {value}"
