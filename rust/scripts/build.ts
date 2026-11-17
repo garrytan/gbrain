@@ -55,7 +55,9 @@ if (!target) {
   fail(`no addon target is defined for host ${host}. Add it to TARGETS here and to target() in the crate.`);
 }
 
-const build = Bun.spawnSync(['cargo', 'build', '--release', '-p', 'gbrain-napi'], {
+// Name the output directory, so a CARGO_TARGET_DIR or build.target-dir setting cannot send the
+// build elsewhere while the copy below picks up an older library from rust/target/release.
+const build = Bun.spawnSync(['cargo', 'build', '--release', '-p', 'gbrain-napi', '--target-dir', join(rustDir, 'target')], {
   cwd: rustDir,
   stdout: 'inherit',
   stderr: 'inherit',

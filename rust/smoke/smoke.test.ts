@@ -5,6 +5,8 @@
  * commands the rust-engine.yml addon job runs. It needs cargo and fails, never skips, without it.
  */
 import { describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const repo = resolve(import.meta.dir, '../..');
@@ -27,5 +29,17 @@ describe('rust addon smoke', () => {
     });
     if (smoke.code !== 0) console.error(smoke.out);
     expect(smoke.code).toBe(0);
+  }, 900_000);
+
+  test('a CARGO_TARGET_DIR setting does not make the build package an older library', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'gbrain-cargo-target-'));
+    try {
+      const build = run([process.execPath, 'rust/scripts/build.ts'], { ...process.env, CARGO_TARGET_DIR: elsewhere });
+      expect(build.code).toBe(0);
+      // The build went to rust/target, the directory the script copies from, not to the setting.
+      expect(existsSync(join(elsewhere, 'release'))).toBe(false);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
   }, 900_000);
 });
