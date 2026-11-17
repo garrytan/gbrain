@@ -13,7 +13,7 @@ use crate::sources::DEFAULT_SOURCE;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const NEXT_CHUNK_ID: &str = "next_chunk_id";
 const STATS: &str = "chunk_stats";
@@ -65,6 +65,10 @@ pub(crate) struct ChunkRecord {
     pub length: u32,
     #[serde(default)]
     pub meta: Map<String, Value>,
+    /// Set on a chunk of a segmented body (`append_segment_chunks`); absent on an inline chunk.
+    /// Records written before this field decode as inline chunks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segment: Option<SegmentPlace>,
 }
 
 impl ChunkRecord {
@@ -242,16 +246,90 @@ fn drop_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<Vec<ChunkRecord>> {
     }
     let mut stats = read_stats(&*tx)?;
     for chunk in &old {
-        let (tf, _) = term_frequencies(&chunk.chunk_text);
-        for term in tf.keys() {
-            tx.delete(&keys::posting(term, page_id, chunk.chunk_index))?;
-        }
-        tx.delete(&keys::chunk(page_id, chunk.chunk_index))?;
-        stats.chunks = stats.chunks.saturating_sub(1);
-        stats.total_length = stats.total_length.saturating_sub(u64::from(chunk.length));
+        remove_chunk_record(tx, chunk, &mut stats)?;
     }
     put_json(tx, &keys::meta(STATS), &stats)?;
     Ok(old)
+}
+
+/// `chunk_source` of a write, `compiled_truth` when absent; any other value than the four PGLite
+/// allows is refused.
+fn checked_source(input: &ChunkInput) -> Result<String> {
+    let source = input
+        .chunk_source
+        .clone()
+        .unwrap_or_else(|| "compiled_truth".into());
+    if !matches!(
+        source.as_str(),
+        "compiled_truth" | "timeline" | "fenced_code" | "image_asset"
+    ) {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!(
+                "chunk_source \"{source}\" is not one of compiled_truth, timeline, fenced_code, image_asset"
+            ),
+        ));
+    }
+    Ok(source)
+}
+
+/// The non-null `META_KEYS` fields of a write.
+fn kept_meta(input: &ChunkInput) -> Map<String, Value> {
+    input
+        .rest
+        .iter()
+        .filter(|(k, v)| META_KEYS.contains(&k.as_str()) && !v.is_null())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+/// Writes a chunk record, its postings when the chunk is visible at `view_generation`, and its
+/// share of the stats (the caller stores them).
+fn write_chunk(
+    tx: &mut dyn KvWrite,
+    record: &ChunkRecord,
+    view_generation: u64,
+    stats: &mut ChunkStats,
+) -> Result<()> {
+    put_json(tx, &keys::chunk(record.page_id, record.chunk_index), record)?;
+    if record.visible_at(view_generation) {
+        put_postings(tx, record)?;
+    }
+    stats.chunks += 1;
+    stats.total_length += u64::from(record.length);
+    Ok(())
+}
+
+fn put_postings(tx: &mut dyn KvWrite, record: &ChunkRecord) -> Result<()> {
+    for (term, count) in &term_frequencies(&record.chunk_text).0 {
+        tx.put(
+            &keys::posting(term, record.page_id, record.chunk_index),
+            &count.to_be_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
+fn delete_postings(tx: &mut dyn KvWrite, record: &ChunkRecord) -> Result<()> {
+    for term in term_frequencies(&record.chunk_text).0.keys() {
+        tx.delete(&keys::posting(term, record.page_id, record.chunk_index))?;
+    }
+    Ok(())
+}
+
+/// Deletes a chunk record and its postings (deleting a posting that was never written is a
+/// no-op) and takes its share off the stats (the caller stores them). It does not call the
+/// chunk-delete hook.
+fn remove_chunk_record(
+    tx: &mut dyn KvWrite,
+    chunk: &ChunkRecord,
+    stats: &mut ChunkStats,
+) -> Result<()> {
+    delete_postings(tx, chunk)?;
+    tx.delete(&keys::chunk(chunk.page_id, chunk.chunk_index))?;
+    stats.chunks = stats.chunks.saturating_sub(1);
+    stats.total_length = stats.total_length.saturating_sub(u64::from(chunk.length));
+    Ok(())
 }
 
 /// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
@@ -284,34 +362,16 @@ pub(crate) fn replace_chunks(
         crate::cascade::remove_chunk_rows(tx, page.id, &removed)?;
     }
     let mut stats = read_stats(&*tx)?;
+    let view_generation = segment_view_generation(&*tx, page.id)?;
     for (index, input) in by_index {
-        let source = input
-            .chunk_source
-            .clone()
-            .unwrap_or_else(|| "compiled_truth".into());
-        if !matches!(
-            source.as_str(),
-            "compiled_truth" | "timeline" | "fenced_code" | "image_asset"
-        ) {
-            return Err(StoreError::new(
-                INVALID_ARGUMENT,
-                format!(
-                    "chunk_source \"{source}\" is not one of compiled_truth, timeline, fenced_code, image_asset"
-                ),
-            ));
-        }
+        let source = checked_source(input)?;
         let text = input.chunk_text.replace('\0', "");
-        let (tf, length) = term_frequencies(&text);
+        let length = term_frequencies(&text).1;
         let id = match previous.get(&index) {
             Some(old) => old.id,
             None => next_chunk_id(tx)?,
         };
-        let mut meta: Map<String, Value> = input
-            .rest
-            .iter()
-            .filter(|(k, v)| META_KEYS.contains(&k.as_str()) && !v.is_null())
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let mut meta = kept_meta(input);
         // PGLite's incremental write: a chunk whose text did not change keeps the metadata the
         // new write leaves null (`COALESCE(new, old)`); `token_count` and `model` are the new
         // write's. A chunk whose text changed takes the new write's metadata outright.
@@ -334,13 +394,11 @@ pub(crate) fn replace_chunks(
             modality: input.modality.clone().unwrap_or_else(|| "text".into()),
             length,
             meta,
+            // PGLite's upsert (`ON CONFLICT (page_id, chunk_index) DO UPDATE`) leaves a row's
+            // segment columns as they were.
+            segment: previous.get(&index).and_then(|old| old.segment),
         };
-        put_json(tx, &keys::chunk(page.id, index), &record)?;
-        for (term, count) in &tf {
-            tx.put(&keys::posting(term, page.id, index), &count.to_be_bytes())?;
-        }
-        stats.chunks += 1;
-        stats.total_length += u64::from(length);
+        write_chunk(tx, &record, view_generation, &mut stats)?;
     }
     put_json(tx, &keys::meta(STATS), &stats)?;
     if seal {
@@ -359,6 +417,310 @@ fn next_chunk_id(tx: &mut dyn KvWrite) -> Result<u64> {
     };
     tx.put(&key, &(current + 1).to_be_bytes())?;
     Ok(current)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Segment chunks
+// ---------------------------------------------------------------------------------------------
+//
+// Contract of the segment-chunk helper (the chunk rows of a segmented page body; PGLite's
+// `content_chunks.occurrence_id`, `local_ordinal`, `raw_byte_start`, `raw_byte_end` and
+// `body_generation` columns). Callers are the page-body family (stageSegmentChunks and the
+// generation flip); every function runs inside the caller's write transaction and checks
+// nothing about the page body itself: the caller has already decided the write is allowed.
+//
+// - A segment chunk is a normal chunk record (`K page_id chunk_index`) whose `segment` field is
+//   set. An inline chunk (`segment` absent) is what `upsert_chunks` and `put_page` write; records
+//   written before the field existed decode as inline chunks, so the format version is unchanged.
+// - `append_segment_chunks(tx, page_id, generation, chunks)` writes the chunks at the indexes
+//   after the page's highest existing `chunk_index` (staged, live and retired rows all count, as
+//   PGLite's `COALESCE(MAX(chunk_index), -1) + 1`), in input order, and returns those indexes. It validates `chunk_source` as
+//   `upsert_chunks` does, strips NUL from the text and keeps no vector.
+// - Visibility follows PGLite's `chunkVisibleFilter`: an inline chunk is visible, a segment chunk
+//   is visible when its `body_generation` is at or below the page's body generation. This file
+//   keeps its own copy of that generation, the page's segment view (`publish_segment_chunks`),
+//   because the page body lives in another family; the copy is 0 until the first publish. A page
+//   body hook that reads the generation could replace the copy later.
+// - Keyword postings exist only for visible chunks, so staged chunks are not searchable.
+//   `count_chunks` counts every chunk record, staged and retired included, as PGLite's count does.
+// - `publish_segment_chunks(tx, page_id, generation, offsets)` is called by the flip, in its
+//   transaction: it records the page's new generation and the manifest `byte_start` of each live
+//   occurrence, and writes or removes postings for the chunks whose visibility changed.
+// - `get_chunks` returns the visible chunks in PGLite's document order: segment chunks whose
+//   occurrence has a live offset by (byte_start, local_ordinal, chunk_index), then the rest by
+//   (local_ordinal, inline last, chunk_index). The output has no segment fields, as PGLite's
+//   `getChunks` columns have none. `visible_chunks` gives other families the same list.
+// - `delete_chunks_matching(tx, page_id, pred)` removes the matching chunks and their postings,
+//   updates the stats, and calls `cascade::remove_chunk_rows` once with the sorted ids of the
+//   removed chunks (not at all when none match). `delete_occurrence_chunks` and
+//   `delete_generation_chunks` are its two named forms; `count_chunks_matching` counts first,
+//   for the flip's `retireMaxRows` bound.
+// - `forget_segment_view(tx, page_id)` deletes the view; the page-body family calls it when a page
+//   is deleted for good. `delete_chunks` keeps the view: the page and its generation remain.
+
+const SEGMENT_VIEW: &str = "chunk_segment_view";
+
+/// Where a chunk of a segmented body sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SegmentPlace {
+    pub occurrence_id: u64,
+    /// Order of the chunk inside its occurrence.
+    pub local_ordinal: u32,
+    /// Span relative to the occurrence's segment.
+    pub raw_byte_start: u64,
+    pub raw_byte_end: u64,
+    /// The body generation the chunk was staged for.
+    pub body_generation: u64,
+}
+
+/// `SegmentChunkInput` of `src/core/page-body/types.ts`: a `ChunkInput` without `chunk_index`
+/// (any given is ignored) plus the place of the chunk in its occurrence.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SegmentChunkInput {
+    #[serde(flatten)]
+    pub chunk: ChunkInput,
+    pub occurrence_id: u64,
+    pub local_ordinal: u32,
+    pub raw_byte_start: u64,
+    pub raw_byte_end: u64,
+}
+
+/// A page's segment view: the body generation chunks are visible at, and the manifest
+/// `byte_start` of each live occurrence (document order).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SegmentView {
+    pub generation: u64,
+    #[serde(default)]
+    pub offsets: BTreeMap<u64, u64>,
+}
+
+fn segment_view_key(page_id: u64) -> Vec<u8> {
+    keys::meta(&format!("{SEGMENT_VIEW}/{page_id}"))
+}
+
+pub(crate) fn read_segment_view(read: &dyn KvRead, page_id: u64) -> Result<SegmentView> {
+    Ok(get_json(read, &segment_view_key(page_id))?.unwrap_or_default())
+}
+
+fn segment_view_generation(read: &dyn KvRead, page_id: u64) -> Result<u64> {
+    Ok(read_segment_view(read, page_id)?.generation)
+}
+
+impl ChunkRecord {
+    /// PGLite's `body_generation IS NULL OR body_generation <= page.body_generation`.
+    pub(crate) fn visible_at(&self, generation: u64) -> bool {
+        self.segment
+            .is_none_or(|place| place.body_generation <= generation)
+    }
+}
+
+/// The page's visible chunks in document order (see the contract above).
+pub(crate) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>> {
+    let view = read_segment_view(read, page_id)?;
+    let mut chunks: Vec<ChunkRecord> = read_chunks(read, page_id)?
+        .into_iter()
+        .filter(|c| c.visible_at(view.generation))
+        .collect();
+    // ORDER BY m.byte_start, cc.local_ordinal, cc.chunk_index, NULLs last.
+    chunks.sort_by_key(|c| {
+        let offset = c
+            .segment
+            .and_then(|place| view.offsets.get(&place.occurrence_id).copied());
+        let ordinal = c.segment.map(|place| place.local_ordinal);
+        (
+            offset.is_none(),
+            offset.unwrap_or(0),
+            ordinal.is_none(),
+            ordinal.unwrap_or(0),
+            c.chunk_index,
+        )
+    });
+    Ok(chunks)
+}
+
+/// Writes segment chunks for `generation` after the page's highest chunk index and returns their
+/// indexes in input order.
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn append_segment_chunks(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    generation: u64,
+    chunks: &[SegmentChunkInput],
+) -> Result<Vec<u32>> {
+    if chunks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let first = read_chunks(&*tx, page_id)?
+        .iter()
+        .map(|c| c.chunk_index + 1)
+        .max()
+        .unwrap_or(0);
+    let view_generation = segment_view_generation(&*tx, page_id)?;
+    let mut stats = read_stats(&*tx)?;
+    let mut indexes = Vec::with_capacity(chunks.len());
+    for (offset, input) in chunks.iter().enumerate() {
+        let index = u32::try_from(offset)
+            .ok()
+            .and_then(|offset| first.checked_add(offset))
+            .ok_or_else(|| StoreError::invalid("chunk_index would pass the largest index"))?;
+        let chunk = &input.chunk;
+        let text = chunk.chunk_text.replace('\0', "");
+        let record = ChunkRecord {
+            id: next_chunk_id(tx)?,
+            page_id,
+            chunk_index: index,
+            length: term_frequencies(&text).1,
+            chunk_text: text,
+            chunk_source: checked_source(chunk)?,
+            modality: chunk.modality.clone().unwrap_or_else(|| "text".into()),
+            meta: kept_meta(chunk),
+            segment: Some(SegmentPlace {
+                occurrence_id: input.occurrence_id,
+                local_ordinal: input.local_ordinal,
+                raw_byte_start: input.raw_byte_start,
+                raw_byte_end: input.raw_byte_end,
+                body_generation: generation,
+            }),
+        };
+        write_chunk(tx, &record, view_generation, &mut stats)?;
+        indexes.push(index);
+    }
+    put_json(tx, &keys::meta(STATS), &stats)?;
+    Ok(indexes)
+}
+
+/// Records the page's new body generation and live occurrence offsets, and writes or removes
+/// the postings of the chunks whose visibility changed.
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn publish_segment_chunks(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    generation: u64,
+    offsets: BTreeMap<u64, u64>,
+) -> Result<()> {
+    let before = segment_view_generation(&*tx, page_id)?;
+    if before != generation {
+        for chunk in read_chunks(&*tx, page_id)? {
+            match (chunk.visible_at(before), chunk.visible_at(generation)) {
+                (false, true) => put_postings(tx, &chunk)?,
+                (true, false) => delete_postings(tx, &chunk)?,
+                _ => {}
+            }
+        }
+    }
+    put_json(
+        tx,
+        &segment_view_key(page_id),
+        &SegmentView {
+            generation,
+            offsets,
+        },
+    )
+}
+
+/// Deletes the page's segment view (a page deleted for good).
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn forget_segment_view(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&segment_view_key(page_id))
+}
+
+/// Number of the page's chunks that `pred` matches.
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn count_chunks_matching(
+    read: &dyn KvRead,
+    page_id: u64,
+    pred: &dyn Fn(&ChunkRecord) -> bool,
+) -> Result<usize> {
+    Ok(read_chunks(read, page_id)?
+        .iter()
+        .filter(|c| pred(c))
+        .count())
+}
+
+/// Removes the page's chunks that `pred` matches, with their postings, and calls the chunk-delete
+/// hook once with their sorted ids. Returns those ids.
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn delete_chunks_matching(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    pred: &dyn Fn(&ChunkRecord) -> bool,
+) -> Result<Vec<u64>> {
+    let gone: Vec<ChunkRecord> = read_chunks(&*tx, page_id)?
+        .into_iter()
+        .filter(|c| pred(c))
+        .collect();
+    if gone.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stats = read_stats(&*tx)?;
+    for chunk in &gone {
+        remove_chunk_record(tx, chunk, &mut stats)?;
+    }
+    put_json(tx, &keys::meta(STATS), &stats)?;
+    let mut ids: Vec<u64> = gone.iter().map(|c| c.id).collect();
+    ids.sort_unstable();
+    crate::cascade::remove_chunk_rows(tx, page_id, &ids)?;
+    Ok(ids)
+}
+
+/// The segment chunks of the given occurrences, at or below `max_generation` when it is given.
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn occurrence_match(
+    place: Option<SegmentPlace>,
+    occurrences: &BTreeSet<u64>,
+    max_generation: Option<u64>,
+) -> bool {
+    place.is_some_and(|place| {
+        occurrences.contains(&place.occurrence_id)
+            && max_generation.is_none_or(|max| place.body_generation <= max)
+    })
+}
+
+/// The segment chunks of `generation` whose occurrence is not in `keep`.
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn generation_match(
+    place: Option<SegmentPlace>,
+    generation: u64,
+    keep: &BTreeSet<u64>,
+) -> bool {
+    place.is_some_and(|place| {
+        place.body_generation == generation && !keep.contains(&place.occurrence_id)
+    })
+}
+
+/// Removes the segment chunks of `occurrences` (at or below `max_generation` when given).
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn delete_occurrence_chunks(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    occurrences: &BTreeSet<u64>,
+    max_generation: Option<u64>,
+) -> Result<Vec<u64>> {
+    delete_chunks_matching(tx, page_id, &|c| {
+        occurrence_match(c.segment, occurrences, max_generation)
+    })
+}
+
+/// Removes the segment chunks of `generation` whose occurrence is not in `keep`.
+// The page-body family is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn delete_generation_chunks(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    generation: u64,
+    keep: &BTreeSet<u64>,
+) -> Result<Vec<u64>> {
+    delete_chunks_matching(tx, page_id, &|c| {
+        generation_match(c.segment, generation, keep)
+    })
 }
 
 /// Options of `upsert_chunks`.
@@ -415,7 +777,8 @@ impl Store {
         })
     }
 
-    /// `getChunks(slug, opts)`: the page's chunks in index order, without vectors, while they
+    /// `getChunks(slug, opts)`: the page's visible chunks in document order (inline chunks in
+    /// index order), without vectors, while they
     /// describe the page's current text. PGLite reads a page's chunks only when its
     /// `text_projection_revision` equals its `knowledge_revision` (the chunks are sealed), so a page
     /// that was never sealed, or whose revision moved since (a tag change, a soft delete), reads as
@@ -437,7 +800,7 @@ impl Store {
         if page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str()) {
             return Ok(Vec::new());
         }
-        Ok(read_chunks(&*read, page.id)?
+        Ok(visible_chunks(&*read, page.id)?
             .iter()
             .map(ChunkRecord::to_chunk)
             .collect())
@@ -457,5 +820,309 @@ impl Store {
     /// Number of chunks in the brain (every page, deleted or not).
     pub fn count_chunks(&self) -> Result<u64> {
         Ok(read_stats(&*self.read()?)?.chunks)
+    }
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::*;
+    use crate::pages::{PageInput, PutPageOptions};
+    use crate::search::SearchOptions;
+
+    fn fired() -> Vec<(u64, Vec<u64>)> {
+        crate::cascade::tests::FIRED.with(|fired| fired.borrow_mut().drain(..).collect())
+    }
+
+    /// A sealed page with one inline chunk ("inline body").
+    fn page(store: &Store) -> u64 {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "inline body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("a", &input, &PutPageOptions::default())
+            .unwrap();
+        read_page(&*store.read().unwrap(), "default", "a")
+            .unwrap()
+            .unwrap()
+            .id
+    }
+
+    fn seg(occurrence: u64, ordinal: u32, text: &str) -> SegmentChunkInput {
+        SegmentChunkInput {
+            chunk: ChunkInput {
+                chunk_text: text.into(),
+                ..ChunkInput::default()
+            },
+            occurrence_id: occurrence,
+            local_ordinal: ordinal,
+            raw_byte_start: 0,
+            raw_byte_end: text.len() as u64,
+        }
+    }
+
+    fn texts(store: &Store) -> Vec<String> {
+        store
+            .get_chunks("a", &ReadScope::default())
+            .unwrap()
+            .iter()
+            .map(|c| c["chunk_text"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn hits(store: &Store, term: &str) -> usize {
+        store
+            .search_keyword(term, &SearchOptions::default())
+            .unwrap()
+            .len()
+    }
+
+    fn append(
+        store: &Store,
+        page_id: u64,
+        generation: u64,
+        chunks: &[SegmentChunkInput],
+    ) -> Vec<u32> {
+        store
+            .write(|tx| append_segment_chunks(tx, page_id, generation, chunks))
+            .unwrap()
+    }
+
+    fn publish(store: &Store, page_id: u64, generation: u64, offsets: &[(u64, u64)]) {
+        store
+            .write(|tx| {
+                publish_segment_chunks(tx, page_id, generation, offsets.iter().copied().collect())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn appended_chunks_take_the_indexes_after_the_highest_and_keep_their_place() {
+        let store = crate::test_support::store();
+        let id = page(&store);
+        assert_eq!(read_chunks(&*store.read().unwrap(), id).unwrap().len(), 1);
+        assert_eq!(
+            append(&store, id, 1, &[seg(7, 0, "x"), seg(7, 1, "y")]),
+            vec![1, 2]
+        );
+        assert_eq!(append(&store, id, 1, &[seg(8, 0, "z")]), vec![3]);
+        assert_eq!(append(&store, id, 1, &[]), Vec::<u32>::new());
+        let records = read_chunks(&*store.read().unwrap(), id).unwrap();
+        assert_eq!(
+            records[2].segment,
+            Some(SegmentPlace {
+                occurrence_id: 7,
+                local_ordinal: 1,
+                raw_byte_start: 0,
+                raw_byte_end: 1,
+                body_generation: 1,
+            })
+        );
+        assert_eq!(records[2].chunk_source, "compiled_truth");
+        assert_eq!(records[0].segment, None);
+        // Every record is counted, staged ones included.
+        assert_eq!(store.count_chunks().unwrap(), 4);
+        // chunk_source is checked as upsertChunks checks it, and nothing is written.
+        let mut bad = seg(9, 0, "w");
+        bad.chunk.chunk_source = Some("nope".into());
+        let err = store
+            .write(|tx| append_segment_chunks(tx, id, 1, &[bad.clone()]))
+            .unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT);
+        assert_eq!(store.count_chunks().unwrap(), 4);
+    }
+
+    #[test]
+    fn staged_chunks_are_hidden_from_reads_and_keyword_search_until_published() {
+        let store = crate::test_support::store();
+        let id = page(&store);
+        append(&store, id, 1, &[seg(7, 0, "zebra one")]);
+        assert_eq!(texts(&store), vec!["inline body"]);
+        assert_eq!(hits(&store, "zebra"), 0);
+
+        publish(&store, id, 1, &[(7, 0)]);
+        assert_eq!(texts(&store), vec!["zebra one", "inline body"]);
+        assert_eq!(hits(&store, "zebra"), 1);
+
+        // A chunk staged at the live generation is visible at once; one above it is not.
+        append(&store, id, 1, &[seg(8, 0, "yak")]);
+        append(&store, id, 2, &[seg(9, 0, "walrus")]);
+        assert_eq!(hits(&store, "yak"), 1);
+        assert_eq!(hits(&store, "walrus"), 0);
+        assert_eq!(texts(&store).len(), 3);
+
+        // Publishing back below a generation hides its chunks again.
+        publish(&store, id, 2, &[(7, 0), (9, 10)]);
+        assert_eq!(hits(&store, "walrus"), 1);
+        publish(&store, id, 1, &[(7, 0)]);
+        assert_eq!(hits(&store, "walrus"), 0);
+    }
+
+    #[test]
+    fn reads_follow_document_order() {
+        let store = crate::test_support::store();
+        let id = page(&store);
+        // Index order: b1, b0, a0, c0. Offsets put occurrence 2 (a) before 1 (b); occurrence 3
+        // (c) has no live offset, so it follows the placed rows, before the inline chunk.
+        append(
+            &store,
+            id,
+            1,
+            &[
+                seg(1, 1, "b1"),
+                seg(1, 0, "b0"),
+                seg(2, 0, "a0"),
+                seg(3, 0, "c0"),
+            ],
+        );
+        publish(&store, id, 1, &[(1, 50), (2, 10)]);
+        assert_eq!(texts(&store), vec!["a0", "b0", "b1", "c0", "inline body"]);
+        let read = store.read().unwrap();
+        let visible: Vec<u32> = visible_chunks(&*read, id)
+            .unwrap()
+            .iter()
+            .map(|c| c.chunk_index)
+            .collect();
+        assert_eq!(visible, vec![3, 2, 1, 4, 0]);
+        // The output carries no segment fields, as PGLite's getChunks columns.
+        let chunk = &store.get_chunks("a", &ReadScope::default()).unwrap()[0];
+        assert!(chunk.get("occurrence_id").is_none() && chunk.get("segment").is_none());
+    }
+
+    #[test]
+    fn deletes_by_occurrence_and_by_generation_fire_the_chunk_hook_once() {
+        let store = crate::test_support::store();
+        let id = page(&store);
+        append(&store, id, 1, &[seg(1, 0, "one"), seg(2, 0, "two")]);
+        append(&store, id, 2, &[seg(1, 0, "one again"), seg(3, 0, "three")]);
+        publish(&store, id, 2, &[(1, 0), (3, 5)]);
+        let ids: HashMap<String, u64> = read_chunks(&*store.read().unwrap(), id)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.chunk_text, c.id))
+            .collect();
+        fired();
+
+        // Occurrence 1 at or below generation 1: only its first chunk.
+        let occurrences: BTreeSet<u64> = [1].into();
+        let count = count_chunks_matching(&*store.read().unwrap(), id, &|c| {
+            occurrence_match(c.segment, &occurrences, Some(1))
+        })
+        .unwrap();
+        assert_eq!(count, 1);
+        let gone = store
+            .write(|tx| delete_occurrence_chunks(tx, id, &occurrences, Some(1)))
+            .unwrap();
+        assert_eq!(gone, vec![ids["one"]]);
+        assert_eq!(fired(), vec![(id, vec![ids["one"]])]);
+        assert_eq!(hits(&store, "again"), 1);
+
+        // Generation 2 except occurrence 3: occurrence 1's second chunk.
+        let keep: BTreeSet<u64> = [3].into();
+        let gone = store
+            .write(|tx| delete_generation_chunks(tx, id, 2, &keep))
+            .unwrap();
+        assert_eq!(gone, vec![ids["one again"]]);
+        assert_eq!(fired(), vec![(id, vec![ids["one again"]])]);
+        assert_eq!(hits(&store, "again"), 0);
+        assert_eq!(texts(&store), vec!["three", "two", "inline body"]);
+        assert_eq!(store.count_chunks().unwrap(), 3);
+
+        // Nothing matches: no hook call.
+        assert!(
+            store
+                .write(|tx| delete_generation_chunks(tx, id, 9, &keep))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(fired(), vec![]);
+
+        // One combined predicate, one hook call with sorted ids.
+        let all: BTreeSet<u64> = [2, 3].into();
+        let gone = store
+            .write(|tx| {
+                delete_chunks_matching(tx, id, &|c| {
+                    occurrence_match(c.segment, &all, None)
+                        || generation_match(c.segment, 2, &BTreeSet::new())
+                })
+            })
+            .unwrap();
+        let mut both = vec![ids["two"], ids["three"]];
+        both.sort_unstable();
+        assert_eq!(gone, both);
+        assert_eq!(fired(), vec![(id, both)]);
+        assert_eq!(texts(&store), vec!["inline body"]);
+    }
+
+    #[test]
+    fn delete_chunks_keeps_the_view_and_forget_removes_it() {
+        let store = crate::test_support::store();
+        let id = page(&store);
+        publish(&store, id, 3, &[(1, 0)]);
+        store.delete_chunks("a", None).unwrap();
+        let view = read_segment_view(&*store.read().unwrap(), id).unwrap();
+        assert_eq!(view.generation, 3);
+        store.write(|tx| forget_segment_view(tx, id)).unwrap();
+        assert_eq!(
+            read_segment_view(&*store.read().unwrap(), id).unwrap(),
+            SegmentView::default()
+        );
+    }
+
+    #[test]
+    fn upsert_keeps_the_segment_place_of_an_index_it_rewrites() {
+        let store = crate::test_support::store();
+        let id = page(&store);
+        append(&store, id, 2, &[seg(5, 0, "staged")]);
+        let chunk = ChunkInput {
+            chunk_index: 1,
+            chunk_text: "rewritten".into(),
+            ..ChunkInput::default()
+        };
+        store
+            .upsert_chunks("a", &[chunk], &UpsertChunksOptions::default())
+            .unwrap();
+        let records = read_chunks(&*store.read().unwrap(), id).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].segment.map(|p| p.occurrence_id), Some(5));
+        // Still staged above the view: no posting.
+        assert!(
+            store
+                .read()
+                .unwrap()
+                .get(&keys::posting("rewritten", id, 1))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn records_without_a_segment_decode_and_inline_records_write_none() {
+        let old = json!({
+            "id": 4, "page_id": 2, "chunk_index": 0, "chunk_text": "t",
+            "chunk_source": "compiled_truth", "modality": "text", "length": 1, "meta": {},
+        });
+        let record: ChunkRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(record.segment, None);
+        assert!(record.visible_at(0));
+        let written = serde_json::to_value(&record).unwrap();
+        assert!(written.get("segment").is_none());
+    }
+
+    #[test]
+    fn segment_input_reads_the_typescript_shape() {
+        let input: SegmentChunkInput = serde_json::from_value(json!({
+            "chunk_text": "t", "chunk_source": "timeline", "token_count": 3,
+            "occurrence_id": 11, "local_ordinal": 2, "raw_byte_start": 4, "raw_byte_end": 9,
+        }))
+        .unwrap();
+        assert_eq!(input.occurrence_id, 11);
+        assert_eq!(input.local_ordinal, 2);
+        assert_eq!((input.raw_byte_start, input.raw_byte_end), (4, 9));
+        assert_eq!(input.chunk.chunk_source.as_deref(), Some("timeline"));
+        assert_eq!(input.chunk.rest.get("token_count"), Some(&json!(3)));
+        assert!(input.chunk.rest.get("occurrence_id").is_none());
     }
 }
