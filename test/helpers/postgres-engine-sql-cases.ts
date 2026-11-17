@@ -43,6 +43,7 @@ const OOS = {
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
+  cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -109,8 +110,11 @@ export const DOMAIN_OF: Record<string, string> = {
   'addTimelineEntry': 'timeline', 'addTimelineEntriesBatch': 'timeline', 'getTimeline': 'timeline',
   'getTimelineForDate': 'timeline', 'getSince': 'timeline', 'getOnThisDay': 'timeline', 'getLastSeen': 'timeline',
   'upsertEventProjection': 'timeline',
+  // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
+  'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
+  'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
-  'listAllSources': 'sources', 'updateSourceConfig': 'sources',
+  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
@@ -527,6 +531,7 @@ export const SQL_CASES: SqlCase[] = [
 
   // ── sources ──
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
+  ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
 
   // ── files ──
