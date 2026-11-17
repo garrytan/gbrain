@@ -1272,6 +1272,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "nav": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "notability-eval": {
         "hasSwitchCase": true,
         "phase": "post-connect",

@@ -138,6 +138,9 @@
       "models": [
         "./commands/models.ts"
       ],
+      "nav": [
+        "./commands/nav.ts"
+      ],
       "notability-eval": [
         "./commands/notability-eval.ts"
       ],

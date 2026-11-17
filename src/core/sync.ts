@@ -567,10 +567,12 @@ export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 
 
 /**
  * #5186 (W14 P1.5b): `gbrain harden` scaffolds these at the source root as
- * agent instructions, not brain content. Metafiles at depth 0 only: a
- * `docs/AGENTS.md` is an ordinary page.
+ * agent instructions, not brain content; `gbrain nav` writes `hot.md` there
+ * (next to the root `index.md` / `log.md` it rebuilds, which SYNC_SKIP_FILES
+ * already covers). Metafiles at depth 0 only: a `docs/AGENTS.md` or a
+ * `notes/hot.md` is an ordinary page.
  */
-export const SYNC_ROOT_SKIP_FILES = ['AGENTS.md', 'CLAUDE.md'] as const;
+export const SYNC_ROOT_SKIP_FILES = ['AGENTS.md', 'CLAUDE.md', 'hot.md'] as const;
 
 /**
  * Whether a repo-relative path is named like directory scaffolding (`SYNC_SKIP_FILES` anywhere, `SYNC_ROOT_SKIP_FILES`
