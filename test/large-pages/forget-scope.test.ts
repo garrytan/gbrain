@@ -12,7 +12,7 @@
  *    row unstruck in the segment, or discovery reads only inline bodies.
  * 3. Runs on PGLite, and on Postgres when DATABASE_URL is set.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -195,15 +195,20 @@ ${rows.join('\n')}
     for (const engine of engines) {
       for (const [n, c] of cases.entries()) {
         const results: string[][] = [];
-        for (const big of [false, true]) {
-          const slug = `notes/twins-${n}-${big ? 'segmented' : 'inline'}`;
-          await importFromContent(engine, slug, `---\ntitle: Twins\ntype: note\n---\n\n${fences(big)[c.name]}`, { noEmbed: true, sourceId: 'default' });
-          expect((await segmentedPageRow(engine, slug)).body_storage).toBe(big ? 'segmented' : 'inline');
-          const [fact] = await coordinated(engine, tx => tx.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,fact,entity_slug,visibility,source,source_markdown_slug,row_num)
-            VALUES ('default','Twin row claim',NULL,'world','test',$1,$2) RETURNING id`, [slug, c.rowNum]));
-          await withCoordinatedWrite(engine, ['default'], () => forgetFactInFence(engine, Number(fact!.id), { supersededBy: { rowNum: 9 } }), TEST_WRITE_ATTRIBUTION);
-          const body = big ? (await reconstructedPage(engine, slug)).body : (await engine.getPage(slug, { sourceId: 'default' }))!;
-          results.push([...blocks(body.compiled_truth ?? ''), '<timeline>', ...blocks(body.timeline ?? '')]);
+        setSystemTime(new Date());
+        try {
+          for (const big of [false, true]) {
+            const slug = `notes/twins-${n}-${big ? 'segmented' : 'inline'}`;
+            await importFromContent(engine, slug, `---\ntitle: Twins\ntype: note\n---\n\n${fences(big)[c.name]}`, { noEmbed: true, sourceId: 'default' });
+            expect((await segmentedPageRow(engine, slug)).body_storage).toBe(big ? 'segmented' : 'inline');
+            const [fact] = await coordinated(engine, tx => tx.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,fact,entity_slug,visibility,source,source_markdown_slug,row_num)
+              VALUES ('default','Twin row claim',NULL,'world','test',$1,$2) RETURNING id`, [slug, c.rowNum]));
+            await withCoordinatedWrite(engine, ['default'], () => forgetFactInFence(engine, Number(fact!.id), { supersededBy: { rowNum: 9 } }), TEST_WRITE_ATTRIBUTION);
+            const body = big ? (await reconstructedPage(engine, slug)).body : (await engine.getPage(slug, { sourceId: 'default' }))!;
+            results.push([...blocks(body.compiled_truth ?? ''), '<timeline>', ...blocks(body.timeline ?? '')]);
+          }
+        } finally {
+          setSystemTime();
         }
         expect(results[1]).toEqual(results[0]!);
         expect(results[0]!.indexOf('<timeline>')).toBe(c.name === 'both' ? 2 : 0);

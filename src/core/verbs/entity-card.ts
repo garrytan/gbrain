@@ -588,10 +588,11 @@ async function assembleCard(
   readerRemote: boolean,
 ): Promise<{ card: EntityCard; facts: FactRow[] }> {
   const pageSlug = row.slug;
-  const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
+  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateFactFilterForReader, worldOnlyFacts } = await import('../search/private-visibility.ts');
+  const worldOnly = worldOnlyFacts(remote);
+  const visibility = worldOnly ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
   const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate }).catch(() => [pageSlug]);
-  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateFactFilterForCaller } = await import('../search/private-visibility.ts');
   const inboundPrivacy = (excludePrivate
     ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
     : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;
@@ -663,7 +664,7 @@ async function assembleCard(
         `SELECT COUNT(*) AS n
            FROM facts
           WHERE source_id = $1 AND entity_slug = ANY($2::text[])
-            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}
+            AND expired_at IS NULL${worldOnly ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateFactFilterForReader('facts')}` : ''}
             AND ${projectionEligibleSql('facts', 'facts', eligibility)}`,
         [sourceId, factSlugs],
       )
