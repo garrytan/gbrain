@@ -169,7 +169,8 @@ git log --first-parent --format='%H %(trailers:key=gbrain-reason,valueonly)' <ra
 ```
 
 A commit and file that a purge has tombstoned (below) never gives a reason
-again, not even on a full re-import.
+again, not even on a full re-import, or a sync that read the trailer before
+the purge and saved the page after it.
 
 A source with no Git checkout (a repo-less brain, or a folder imported with
 `gbrain import`) reads no trailers, prints none of these notices and marks no

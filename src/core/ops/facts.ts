@@ -592,6 +592,7 @@ const recall: Operation = {
     const grouped = ranking?.groupByEntity ? groupFactsByEntity(packedFacts, ranking, p, ctx.emitNotice) : null; if (grouped) packedFacts = grouped.rows; // #2953: reorders delivered facts only
     const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults }, recallResultCost(delivery)), contested: ContestedLookup = {};
 
+    let observedUnavailable = false;
     const out = {
       facts: await withDecideContested(ctx.engine, await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6 trust labels; GBRA-216 dp contested
         id: r.id,
@@ -625,10 +626,11 @@ const recall: Operation = {
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}), ...(r.quoted ? { quoted: r.quoted } : {}), ...recallClaimColumns(r),
         ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}), ...(r.collapsed_count ? { collapsed_count: r.collapsed_count } : {}),
         ...(ranking ? { relevance: ranking.relevance.get(r.id), ...(ranking.weighting ? { rank_score: ranking.weighting.rank.get(r.id), confidence_factor: ranking.weighting.factor.get(r.id) } : {}) } : {}),
-      })), f => f.id)), { remote: ctx.remote !== false, excludePrivate, eligibility }, contested),
+      })), f => f.id), { excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged }, () => { observedUnavailable = true; }), { remote: ctx.remote !== false, excludePrivate, eligibility }, contested),
       total: packedFacts.length,
       facts_order: ranking ? 'relevance' : 'newest',
-      ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded || contested.degraded ? { facts_degraded: { ...contested.degraded, ...ranking?.degraded } } : {}),
+      ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded || contested.degraded || observedUnavailable
+        ? { facts_degraded: { ...(observedUnavailable ? { reason: 'fact_observed_date_unavailable' } : {}), ...contested.degraded, ...ranking?.degraded } } : {}),
       ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}), ...(ranking?.belowFloor ? { facts_below_floor: ranking.belowFloor } : {}),
       ...grouped?.fields, ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),

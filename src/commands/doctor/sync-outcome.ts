@@ -10,12 +10,13 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { readLastSyncAttempt, type SyncAttemptState } from '../../core/sync-attempt.ts';
 import { classifyManagedSyncOrphans } from '../../core/persistence/managed-sync-orphans.ts';
 import { isOwnedContentSchemaMissing, staleOwnedContent } from '../../core/shared-skills/content-freshness.ts';
+import { syncNotApplicableError, type SyncContentDirectory } from '../../core/sync-applicability.ts';
 import { agentFix, doctorVerify } from './check-fix.ts';
 
 export interface SyncOutcomeEntry {
   source_id: string;
   code: 'sync_first_run_in_progress' | 'sync_no_successful_sync' | 'content_receipt_stale';
-  reason: 'first_sync_running' | 'receipt_root_moved' | SyncAttemptState;
+  reason: 'first_sync_running' | 'receipt_root_moved' | 'content_directory' | SyncAttemptState;
   last_attempt_at: string | null;
   result: string | null;
   held: number;
@@ -63,6 +64,19 @@ export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, di
     issue: `Source ${display}: no successful sync recorded; ${what}; ${step}`,
     entry: { source_id: sourceId, code: 'sync_no_successful_sync', reason: attempt.state, last_attempt_at: attempt.last_attempt_at, result: attempt.result,
       held: attempt.held, job_id: attempt.job_id, fix },
+  };
+}
+
+/**
+ * A content directory only its content-setup receipt claims (an owned root outside gbrain's own content directory) is
+ * writer-owned only while persistence is on; otherwise it still has no successful sync, but sync refuses it
+ * (`sync_not_applicable`), so the step named is the import that refusal names.
+ */
+export function receiptContentDirectory(dir: SyncContentDirectory, display: string): { issue: string; entry: SyncOutcomeEntry } {
+  const fix = syncNotApplicableError(dir).fix!;
+  return {
+    issue: `Source ${display}: no successful sync recorded; its content-setup receipt makes it a gbrain-owned content directory, where sync does not apply; add files with \`${fix.argv!.join(' ')}\``,
+    entry: { source_id: dir.sourceId, code: 'sync_no_successful_sync', reason: 'content_directory', last_attempt_at: null, result: null, held: 0, job_id: null, fix },
   };
 }
 

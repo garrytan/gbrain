@@ -12,10 +12,23 @@ export const HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE = 100;
 
 /**
  * GBRA-217: what a sync import knows about the write a snapshot records: the reason Git gives for it
- * (`page_versions.change_reason`), and whether the import consumed more than one commit for the page's file, or could
- * not tell (`pages.version_history_gap_at`).
+ * (`page_versions.change_reason`), the commit and repository path that reason came from, and whether the import consumed
+ * more than one commit for the page's file, or could not tell (`pages.version_history_gap_at`).
  */
-export interface VersionHistory { reason?: string | null; historyGap?: boolean }
+export interface VersionHistory { reason?: string | null; reasonSource?: { commit: string; path: string }; historyGap?: boolean }
+
+/**
+ * #8635: a Git reason is read before its publication, so a purge may tombstone its (commit, path) in between. The snapshot
+ * insert reads the tombstone again under the page guard, whose `sources FOR SHARE` waits for a purge holding the source
+ * `FOR UPDATE`: either the purge committed first and this read sees its tombstone, or it waits for this commit and
+ * redacts the stamped reason itself.
+ */
+async function stampableReason(tx: BrainEngine, sourceId: string, history: VersionHistory): Promise<string | null> {
+  if (!history.reason || !history.reasonSource) return history.reason ?? null;
+  const purged = await tx.executeRaw('SELECT 1 FROM reason_purge_tombstones WHERE source_id = $1 AND commit_sha = $2 AND path = $3',
+    [sourceId, history.reasonSource.commit, history.reasonSource.path]);
+  return purged.length ? null : history.reason;
+}
 
 /**
  * Version the same canonical view an API reader receives, including withdrawals.
@@ -26,11 +39,12 @@ export async function createPageVersion(engine: BrainEngine, slug: string, sourc
   const insert = async (tx: BrainEngine, snapshot: PageSnapshot) => {
     const { page, tags, revision } = snapshot;
     if (history.historyGap) await tx.executeRaw('UPDATE pages SET version_history_gap_at = now() WHERE id = $1', [page.id]);
-    if (isSegmentedPage(page)) return insertSegmentedVersion(tx, snapshot, history.reason ?? null);
+    const reason = await stampableReason(tx, sourceId, history);
+    if (isSegmentedPage(page)) return insertSegmentedVersion(tx, snapshot, reason);
     const rows = await tx.executeRaw<PageVersion>(`INSERT INTO page_versions
       (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path,change_reason)
       VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9,$10,$11) RETURNING *`,
-    [page.id, page.compiled_truth, JSON.stringify(page.frontmatter), revision, page.timeline, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, history.reason ?? null]);
+    [page.id, page.compiled_truth, JSON.stringify(page.frontmatter), revision, page.timeline, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, reason]);
     if (isLargePageBytes(Buffer.byteLength(page.compiled_truth ?? '', 'utf-8') + Buffer.byteLength(page.timeline ?? '', 'utf-8'))) {
       const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE page_id = $1 AND id IN (SELECT id FROM page_versions WHERE page_id = $1
         AND octet_length(compiled_truth) + octet_length(COALESCE(timeline, '')) > $2 ORDER BY id DESC OFFSET $3) RETURNING id`,
