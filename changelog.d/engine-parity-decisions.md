@@ -1,8 +1,4 @@
-**The Postgres engine now returns file sizes as plain numbers and runs its shutdown hooks only once, as PGLite already did, and both engines gain a typed way to replace and seal a page's chunks.**
-
-### Fixed
-- `getFile` and `listFilesForPage` on Postgres returned `size_bytes` as a BigInt, while PGLite returned a number. Both engines now return a number. The `gbrain files` CLI and MCP JSON output does not change: that path already converted the value.
-- A second `disconnect()` of an already closed Postgres engine ran the registered shutdown hooks again. It is now a no-op, as on PGLite.
+**Both engines gain a typed way to replace and seal a page's chunks, and the engine parity suite now covers every engine method.**
 
 ### Added
 - `BrainEngine.sealChunks(slug, chunks, { sourceId, expectedRevision })` replaces a page's chunks and seals its search text in one transaction. It refuses a missing or deleted page, a segmented page, an archived source and a stale `expectedRevision`. The engine parity suite seals its fixture chunks through it, so no parity case needs raw SQL.
