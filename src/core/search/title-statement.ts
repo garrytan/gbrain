@@ -31,8 +31,15 @@ export interface SearchTitlesDialect {
   staleProbe: boolean;
   /** chunkManifestReads; unset reads the manifest. */
   chunkManifest?: boolean;
-  /** Match and rank title lexemes only, for local callers too: the OR re-run (#7135) and the cut strict attempt (#7082). */
+  /** Match and rank title lexemes only, for local callers too: the OR re-run whose whole-vector matches do not fit the cap (#7135) and the cut strict attempt (#7082). */
   relaxed?: boolean;
+  /**
+   * A local caller's OR re-run (GST-2899): rank the whole-vector matches only when all of them fit
+   * `titleWholeVectorCandidates()`; a set that does not fit returns no row and the caller runs the title-only
+   * statement. The candidate count has no ORDER BY, since nothing is cut from it: ordered by page id it walked
+   * pages_pkey for a word on a few percent of pages (about 0.8 s at 1,000,000 pages against 40 ms from idx_pages_search).
+   */
+  completeOnly?: boolean;
 }
 
 /**
@@ -134,7 +141,7 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
       JOIN sources s ON s.id = p.source_id
       WHERE ${matchSql}
         ${pageFilters}
-      ORDER BY p.id
+      ${dialect.completeOnly ? '' : 'ORDER BY p.id'}
       LIMIT ${wholeVectorCandidates + 1}
     ),
     ` : ''}top_pages AS (
@@ -144,7 +151,7 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
         ${rankSql} * ${sourceFactorCase} AS score
       FROM ${capped ? `(SELECT id FROM candidates ORDER BY id LIMIT ${wholeVectorCandidates}) c JOIN pages p ON p.id = c.id` : 'pages p'}
       JOIN sources s ON s.id = p.source_id
-      WHERE ${capped ? 'true' : `${matchSql}
+      WHERE ${capped ? (dialect.completeOnly ? `(SELECT count(*) FROM candidates) <= ${wholeVectorCandidates}` : 'true') : `${matchSql}
         ${pageFilters}`}
       ORDER BY exact_title DESC, score DESC, p.id ASC
       LIMIT $3 OFFSET $4
