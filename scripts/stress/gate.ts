@@ -33,7 +33,8 @@ import {
 } from './plan.ts';
 
 const ROOT = resolve(import.meta.dir, '..', '..');
-export const GATE_SHARD_BUDGET_MS = 25 * 60_000;
+export const GATE_SHARD_BUDGET_MS = 12 * 60_000;
+export const GATE_UNMEASURED_QUANTILE = 0.95;
 export const RACE_SHARD_BUDGET_MS = 55 * 60_000;
 export const RACE_BASE_SHARDS = 6;
 export const RACE_MAX_SHARDS = 12;
@@ -63,7 +64,7 @@ function liveKeyOnly(root: string): Set<string> {
   return new Set(existsSync(path) ? readFileSync(path, 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')) : []);
 }
 
-function classify(root: string, files: string[], weights: Weights): { stress: Array<PlanFile & { perIterationMs: number; setupMs: number }>; notStressed: NotStressed[] } {
+function classify(root: string, files: string[], weights: Weights, unmeasured = 0.75): { stress: Array<PlanFile & { perIterationMs: number; setupMs: number }>; notStressed: NotStressed[] } {
   const live = liveKeyOnly(root);
   const stress: Array<PlanFile & { perIterationMs: number; setupMs: number }> = [];
   const notStressed: NotStressed[] = [];
@@ -72,7 +73,7 @@ function classify(root: string, files: string[], weights: Weights): { stress: Ar
     const reason = notStressedReason(file, live);
     if (reason) { notStressed.push({ file, reason }); continue; }
     const profile = profileFor(file, { armed: armMode(root, file).armed, postgres: true });
-    const perIterationMs = iterationEstimateMs(file, profile.name, weights);
+    const perIterationMs = iterationEstimateMs(file, profile.name, weights, unmeasured);
     stress.push({ file, profile: profile.name, iterations: DEFAULT_ITERATIONS, estimateMs: 0, perIterationMs, setupMs: profile.prereq ? 180_000 : 0 });
   }
   return { stress, notStressed };
@@ -115,7 +116,7 @@ export function planGate(root: string, input: GatePlanInput, weights = loadWeigh
     return emptyPlan('gate', 'not a PR event');
   }
   files = withWrappers(root, files);
-  const { stress, notStressed } = classify(root, files, weights);
+  const { stress, notStressed } = classify(root, files, weights, GATE_UNMEASURED_QUANTILE);
   const shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
   return {
     ...emptyPlan('gate', stress.length ? `${stress.length} file(s) × ${DEFAULT_ITERATIONS} iterations` : 'no changed test files to stress'),
