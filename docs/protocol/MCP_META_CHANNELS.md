@@ -200,3 +200,5 @@ The codes in `_meta.degraded.reasons` ([AGENT_OPERATOR_v1.md, Degraded stamp](AG
 | `scan_deadline`, `unreadable_pages` | search_exact | `incomplete_reasons` other than the caller's `limit` |
 | `source_stale`, `held_items` | open_loops | `stale` or `completeness: "partial"` |
 | `link_coverage_behind`, `link_coverage_unread` | rank_entities | `coverage.state` |
+
+On a brain whose embeddings were turned off on purpose (`embedding_disabled`), search, query, find_experts and recall stamp neither `embed_unavailable` (reason `embedding_disabled`) nor `keyword_zero`: keyword-only is how that brain searches, and `_meta.retrieval` still records the run. A brain with no embedding provider configured (reason `no_provider`) is stamped as before.
