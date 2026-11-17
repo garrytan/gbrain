@@ -47,7 +47,7 @@ The interface has a `readonly kind: 'postgres' | 'pglite'` discriminator (:832) 
 Total: 197 callable members, counted by a line regex that accepts optional (`name?(`) and generic (`name<T>(`) members: 194 required and 3 optional. The Lifecycle and Pages CRUD rows include the optional ones. [V] (counted by line range)
 
 Key shape facts [V]:
-- Every method takes slugs, not numeric page IDs (docs/ENGINES.md:24-50 states this as a design choice).
+- Public page operations take slugs, not numeric page IDs (docs/ENGINES.md:24-50 states this as a design choice). Some storage methods take a numeric `pageId`: `readManifest`, `stageSegmentChunks`, `readSegmentDerivations` and `retireSegmentDerivations` (src/core/engine.ts:2437-2456).
 - Two result envelopes: `SearchResult[]` for search (ranking happens above the engine in `src/core/search/hybrid.ts`), and `{ rows, affectedRows }` inside the SQL layer.
 - Limits are clamped by `clampSearchLimit` with `MAX_SEARCH_LIMIT = 100` (:821-828).
 - Engine-level constants that the Rust engine must match (src/core/engine-constants.ts): `DELETE_BATCH_SIZE = 500`, `TRAVERSE_PATH_ROW_CAP = 5000`, `TRAVERSE_WALK_ROW_CAP = 20000`, `LINK_READ_DEFAULT_LIMIT = 500`, `LINK_READ_MAX_LIMIT = 5000`, `LINK_READ_CONTEXT_MAX_CHARS = 2000`.
