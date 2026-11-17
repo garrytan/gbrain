@@ -13,13 +13,15 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
-import { RELEASE_ADDON_TARGETS, RUST_ADDON_MANIFEST_ASSET } from '../src/core/rust-engine/addon-manifest.ts';
+import { RELEASE_ADDON_TARGETS } from '../src/core/rust-engine/addon-manifest.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const WORKFLOW = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
 const RUST_WORKFLOW = readFileSync(join(ROOT, '.github/workflows/rust-engine.yml'), 'utf8');
 
 /** The optional Rust engine addon files a release carries: one per target in the manifest, and the manifest. */
+// The manifest asset rust-engine.yml uploads and the release attaches (addon-manifest.ts describes its shape).
+const RUST_ADDON_MANIFEST_ASSET = 'gbrain-engine-rust.sha256.json';
 const RUST_ADDON_ASSETS = ['gbrain-engine-rust-linux-x64.node', 'gbrain-engine-rust-darwin-arm64.node', RUST_ADDON_MANIFEST_ASSET];
 const SKILL_RESOLVER_ASSETS = ['gbrain-skill-resolver.mjs', 'gbrain-skill-resolver.mjs.sha256'];
 
@@ -115,8 +117,11 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
 
   test('the rust-engine.yml addon job runs the loader and CLI suites against the built addon, required, on both targets', () => {
     const job = RUST_WORKFLOW.slice(RUST_WORKFLOW.indexOf('\n  addon:\n'), RUST_WORKFLOW.indexOf('\n  without-rust:\n'));
-    expect(job).toContain('target: linux-x64-glibc');
-    expect(job).toContain('target: darwin-arm64');
+    // The scope job names the targets (macOS only when a change needs it); the addon job runs one leg per target.
+    const scope = RUST_WORKFLOW.slice(RUST_WORKFLOW.indexOf('\n  scope:\n'), RUST_WORKFLOW.indexOf('\n  checks:\n'));
+    expect(scope).toContain('"target":"linux-x64-glibc"');
+    expect(scope).toContain('"target":"darwin-arm64"');
+    expect(job).toContain('include: ${{ fromJSON(needs.scope.outputs.targets) }}');
     expect(job).not.toMatch(/continue-on-error: true\n\s+run:/);
     const build = job.indexOf('run: bun run rust:build');
     const tests = job.indexOf('GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test test/rust-engine-addon-loader.test.ts test/rust-engine-cli.test.ts');
