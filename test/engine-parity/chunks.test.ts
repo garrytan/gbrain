@@ -111,6 +111,43 @@ describe('engine parity: chunks', () => {
   );
 
   parityTest(
+    'sealChunks rolls back as one unit: a chunk write that fails after the old chunks were deleted leaves the old sealed set searchable',
+    { methods: ['putPage', 'readPageSnapshot', 'sealChunks', 'getChunks', 'searchKeyword'] },
+    async (engine) => {
+      await engine.putPage('notes/rollback', PAGE('Rollback', 'a periwinkle paragraph. a second line.'));
+      await engine.sealChunks('notes/rollback', [chunk(0, 'a periwinkle paragraph.'), chunk(1, 'a second line.')]);
+      const before = view(await engine.getChunks('notes/rollback', { includeUnsealed: true }));
+      const revision = (await engine.readPageSnapshot('notes/rollback'))!.revision;
+
+      // sealChunks deletes the old chunks before it writes the new ones; an embedding of the wrong
+      // width makes that write fail, so only the transaction can bring the old chunks back.
+      let failed = false;
+      try {
+        await engine.sealChunks('notes/rollback', [chunk(0, 'a cerulean replacement.', { embedding: basisEmbedding(0, 8) })]);
+      } catch {
+        failed = true;
+      }
+      const after = view(await engine.getChunks('notes/rollback', { includeUnsealed: true }));
+      const sealedAfter = view(await engine.getChunks('notes/rollback'));
+      const found = (await engine.searchKeyword('periwinkle', { limit: 5 })).map((r) => [r.slug, r.chunk_text]);
+      const leaked = (await engine.searchKeyword('cerulean', { limit: 5 })).map((r) => r.slug);
+      const revisionAfter = (await engine.readPageSnapshot('notes/rollback'))!.revision;
+      expect(failed).toBe(true);
+      expect(after).toEqual(before);
+      expect(sealedAfter).toEqual(before);
+      expect(found).toEqual([['notes/rollback', 'a periwinkle paragraph.']]);
+      expect(leaked).toEqual([]);
+      expect(revisionAfter).toBe(revision);
+
+      // The engine stays usable: a valid seal on the same page still lands.
+      await engine.sealChunks('notes/rollback', [chunk(0, 'a cerulean replacement.')]);
+      const replaced = (await engine.searchKeyword('cerulean', { limit: 5 })).map((r) => [r.slug, r.chunk_text]);
+      expect(replaced).toEqual([['notes/rollback', 'a cerulean replacement.']]);
+      return { before, after, sealedAfter, found, leaked, sameRevision: revisionAfter === revision, replaced };
+    },
+  );
+
+  parityTest(
     'upsertChunks replaces a page chunk set: edited text, new indexes, dropped tail',
     { methods: ['upsertChunks', 'getChunks', 'getChunkPage'] },
     async (engine) => {
