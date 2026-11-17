@@ -26,8 +26,9 @@
  * src/core/engine-sql/** (where SQL belongs; the engine-sql ratchet guards
  * the engines themselves).
  *
- * Baseline: scripts/engine-raw-sql-baseline.tsv, rows path<TAB>metric<TAB>count.
- * Counts only fall (scripts/lib/count-ratchet.ts): a rise or a new file
+ * Baseline: scripts/engine-raw-sql-baseline.tsv, rows path<TAB>metric<TAB>count[<TAB>note].
+ * Counts fall; a raise edits the row in the same PR with a note saying why
+ * (scripts/lib/count-ratchet.ts): a rise or a new file
  * fails, a lower count fails until its row is lowered (`--prune` lowers stale
  * rows and never raises one). `--print` prints the current counts.
  *
@@ -132,7 +133,7 @@ if (import.meta.main) {
     baselineRel: 'scripts/engine-raw-sql-baseline.tsv',
     anchor: 'docs/ci-guards.md#engine-raw-sql-ratchet',
     metrics: METRICS,
-    why: 'raw SQL outside the engines only falls; it moves behind typed engine methods (D6, docs/designs/RUST_ENGINE.md "Track 2 rules").',
+    why: 'raw SQL outside the engines falls, and a raise needs a written reason; it moves behind typed engine methods (D6, docs/designs/RUST_ENGINE.md "Track 2 rules").',
     riseFix: 'call a typed engine method instead (add one: SQL in src/core/engine-sql/<domain>.ts, both engines delegate; CONTRIBUTING.md "Storage method"); a moved file carries its row with it in the same PR',
     scan: scanTree,
   }, ROOT, process.argv);

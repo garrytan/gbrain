@@ -173,6 +173,35 @@ describe('check-engine-raw-sql-ratchet.ts: shrink-only baseline', () => {
     expect(r.out).toContain('malformed row');
   });
 
+  test('a raised row with a note passes; --prune keeps the note; an empty note is malformed', () => {
+    const raised = tree(RAW.baseline, {
+      [RAW.baseline]: '# baseline\nsrc/core/a.ts\texecute_raw\t1\tfix #1: needs one read until links move\n',
+      'src/core/a.ts': site,
+    });
+    expect(run(RAW.guard, raised).code).toBe(0);
+    const stale = tree(RAW.baseline, {
+      [RAW.baseline]: '# baseline\nsrc/core/a.ts\texecute_raw\t3\tfix #1: why\n',
+      'src/core/a.ts': site,
+    });
+    run(RAW.guard, stale, ['--prune']);
+    expect(readFileSync(join(stale, RAW.baseline), 'utf8')).toBe('# baseline\nsrc/core/a.ts\texecute_raw\t1\tfix #1: why\n');
+    const empty = tree(RAW.baseline, {
+      [RAW.baseline]: '# baseline\nsrc/core/a.ts\texecute_raw\t1\t \n',
+      'src/core/a.ts': site,
+    });
+    const r = run(RAW.guard, empty);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('the note column is empty');
+  });
+
+  test('a rise names both ways out: a typed method, or a raised row with a note', () => {
+    const root = tree(RAW.baseline, { 'src/core/a.ts': site });
+    const r = run(RAW.guard, root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('call a typed engine method');
+    expect(r.out).toContain('with a note column saying why');
+  });
+
   test('--print emits the current rows in the baseline format', () => {
     const root = tree(RAW.baseline, { 'src/core/a.ts': site, 'src/b.ts': 'declare const sql: any;\nsql`DELETE FROM pages`;\n' });
     const r = spawnSync('bun', [RAW.guard, '--print'], { encoding: 'utf8', env: { ...process.env, GBRAIN_GUARD_ROOT: root } });
@@ -204,12 +233,35 @@ describe('check-engine-kind-branches.ts', () => {
     ].join('\n')).kind_case;
     expect(exhaustive('{ const unreachable: never = kind; throw new Error(String(unreachable)); }')).toBe(0);
     expect(exhaustive('assertNever(kind);')).toBe(0);
-    expect(exhaustive('throw new Error(String(kind satisfies never));')).toBe(0);
+    expect(exhaustive('kind satisfies never; throw new Error("unreachable");')).toBe(0);
+    expect(exhaustive('return assertNever(kind);')).toBe(0);
+    expect(exhaustive('throw assertNever(kind);')).toBe(0);
     expect(exhaustive('throw new Error("unknown engine");')).toBe(2);
     // A cast or a never check on another value proves nothing.
     expect(exhaustive('void (kind as never);')).toBe(2);
     expect(exhaustive('{ declare const other: never; const x: never = other; }')).toBe(2);
     expect(exhaustive('assertNever(other as never);')).toBe(2);
+    // The check must be the clause's first statement: earlier control flow can
+    // narrow the value to never after an unknown kind has already escaped.
+    expect(exhaustive('{ if (kind) return 2; const unreachable: never = kind; return unreachable; }')).toBe(2);
+    expect(exhaustive('console.log(kind); assertNever(kind);')).toBe(2);
+    expect(exhaustive('throw new Error(String(kind satisfies never));')).toBe(2);
+    // A never check in a nested function, or on a name that shadows the
+    // switched value, says nothing about the outer switch.
+    expect(exhaustive('{ const check = (kind: never) => kind satisfies never; return 2; }')).toBe(2);
+    expect(exhaustive('{ const check = (kind: never) => { const u: never = kind; }; return 2; }')).toBe(2);
+    expect(countKinds([
+      "type Kind = 'pglite' | 'postgres'; declare const kind: Kind;",
+      "switch (kind) { case 'pglite': const kind2 = 1; break; case 'postgres': { break; } default: { const unreachable: never = kind; const kind = 0 as never; } }",
+    ].join('\n')).kind_case).toBe(2);
+    expect(countKinds([
+      "declare const engine: { kind: 'pglite' | 'postgres' };",
+      "switch (engine.kind) { case 'pglite': let engine = { kind: 0 as never }; break; case 'postgres': break; default: const u: never = engine.kind; }",
+    ].join('\n')).kind_case).toBe(2);
+    expect(countKinds([
+      "declare const engine: { kind: 'pglite' | 'postgres' };",
+      "switch (engine.kind) { case 'pglite': break; case 'postgres': break; default: const u: never = engine.kind; }",
+    ].join('\n')).kind_case).toBe(0);
     // A switch that leaves a kind out keeps counting even with a never check that does not compile.
     expect(countKinds("declare const kind: 'pglite' | 'postgres';\nswitch (kind) { case 'pglite': break; default: break; }").kind_case).toBe(1);
     expect(countKinds("declare const kind: string;\nswitch (kind) { case 'pglite': break; case 'postgres': break; }").kind_case).toBe(2);

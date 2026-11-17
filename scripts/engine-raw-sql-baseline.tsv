@@ -1,8 +1,8 @@
 # Raw-SQL ratchet baseline (D6, docs/designs/RUST_ENGINE.md "Track 2 rules"). Enforced by
 # scripts/check-engine-raw-sql-ratchet.ts via `bun run check:engine-raw-sql-ratchet` (in verify).
-# Rows: path<TAB>metric<TAB>count. Raw-SQL call sites per file under src/, outside the engines.
+# Rows: path<TAB>metric<TAB>count[<TAB>note]. Raw-SQL call sites per file under src/, outside the engines.
 # Generated from the tree at its own commit (`bun scripts/check-engine-raw-sql-ratchet.ts --print`).
-# Counts only fall; --prune lowers stale rows and never raises one. docs/ci-guards.md#engine-raw-sql-ratchet
+# Counts fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows. docs/ci-guards.md#engine-raw-sql-ratchet
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2

@@ -343,6 +343,7 @@ test/scripts/e2e-runner.test.ts	second	5	readFileSync
 test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubActions})	9	readFileSync
 test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
+test/scripts/engine-raw-sql-ratchet.test.ts	check-engine-raw-sql-ratchet.ts: shrink-only baseline	10	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
 test/scripts/full-ci-workflow.test.ts	full CI on pull requests	7	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync

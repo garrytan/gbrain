@@ -3,13 +3,17 @@
  * scripts/check-engine-raw-sql-ratchet.ts and scripts/check-engine-kind-branches.ts.
  *
  * A guard supplies a scanner that returns `path<TAB>metric -> count` for the
- * tree. The baseline holds rows `path<TAB>metric<TAB>count`. Counts only fall:
+ * tree. The baseline holds rows `path<TAB>metric<TAB>count[<TAB>note]`. Counts
+ * fall by default:
  *   1. a count above its row (no row = 0)            -> FAIL
  *   2. a count below its row (stale)                 -> FAIL
  *   3. a duplicate or malformed row                  -> FAIL
- * `--prune` lowers stale rows to the actual count and drops rows at zero; it
- * never raises a row or adds one. `--print` writes the current counts as rows
- * to stdout (used once to generate a baseline from the tree at its commit).
+ * A row goes up only by a reviewer-visible edit in the same PR that raises the
+ * count and writes the reason in the note column (as
+ * scripts/module-size-limits.tsv does). `--prune` lowers stale rows to the
+ * actual count, keeps their notes and drops rows at zero; it never raises a row
+ * or adds one. `--print` writes the current counts as rows to stdout (used to
+ * generate a baseline from the tree at its commit).
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -40,19 +44,20 @@ export function tsFiles(dir: string): string[] {
   return out;
 }
 
-interface Row { lineNo: number; key: string; count: number; malformed: string | null }
+interface Row { lineNo: number; key: string; count: number; note: string | undefined; malformed: string | null }
 
 function parseBaseline(text: string, metrics: readonly string[]): Row[] {
   const rows: Row[] = [];
   text.split('\n').forEach((raw, i) => {
     if (raw.trim() === '' || raw.startsWith('#')) return;
     const cols = raw.split('\t');
-    const [path, metric, count] = cols;
+    const [path, metric, count, note] = cols;
     let malformed: string | null = null;
-    if (cols.length !== 3 || !path) malformed = "want 'path<TAB>metric<TAB>count'";
+    if (cols.length < 3 || cols.length > 4 || !path) malformed = "want 'path<TAB>metric<TAB>count' with an optional '<TAB>note'";
+    else if (cols.length === 4 && note.trim() === '') malformed = 'the note column is empty (drop it, or say why the row was raised)';
     else if (!metrics.includes(metric)) malformed = 'unknown metric ' + JSON.stringify(metric) + ' (one of ' + metrics.join(', ') + ')';
     else if (!/^[1-9]\d*$/.test(count)) malformed = 'count must be a positive integer';
-    rows.push({ lineNo: i + 1, key: path + '\t' + metric, count: Number(count), malformed });
+    rows.push({ lineNo: i + 1, key: path + '\t' + metric, count: Number(count), note, malformed });
   });
   return rows;
 }
@@ -69,6 +74,8 @@ export function totals(actual: Map<string, number>, metrics: readonly string[]):
   }
   return { byMetric, all, files: files.size };
 }
+
+const RAISE_HINT = '\n      If the site must stay until its area is converted: raise the row (or add it) in this PR with a note column saying why.';
 
 export function runCountRatchet(guard: CountRatchet, root: string, argv: string[]): never {
   const actual = guard.scan(root);
@@ -107,9 +114,9 @@ export function runCountRatchet(guard: CountRatchet, root: string, argv: string[
     seen.add(row.key);
     const now = actual.get(row.key) ?? 0;
     if (now > row.count) {
-      violations.push('FAIL: ' + path + ' ' + metric + ': baseline ' + row.count + ', actual ' + now + '\n      Fix:  ' + guard.riseFix);
+      violations.push('FAIL: ' + path + ' ' + metric + ': baseline ' + row.count + ', actual ' + now + '\n      Fix:  ' + guard.riseFix + RAISE_HINT);
     } else if (now < row.count) {
-      rewrite.set(row.lineNo, now === 0 ? null : [path, metric, String(now)].join('\t'));
+      rewrite.set(row.lineNo, now === 0 ? null : [path, metric, String(now), ...(row.note === undefined ? [] : [row.note])].join('\t'));
       violations.push('FAIL: ' + where + ' stale row: ' + path + ' ' + metric + ': baseline ' + row.count + ', actual ' + now
         + '\n      Fix:  lower the row to ' + now + (now === 0 ? ' (delete it)' : '') + '; counts only fall ' + pruneHint);
     }
@@ -117,7 +124,7 @@ export function runCountRatchet(guard: CountRatchet, root: string, argv: string[
   for (const [key, now] of actual) {
     if (seen.has(key)) continue;
     const [path, metric] = key.split('\t');
-    violations.push('FAIL: ' + path + ' ' + metric + ': baseline 0, actual ' + now + '\n      Fix:  ' + guard.riseFix);
+    violations.push('FAIL: ' + path + ' ' + metric + ': baseline 0, actual ' + now + '\n      Fix:  ' + guard.riseFix + RAISE_HINT);
   }
 
   if (prune) {

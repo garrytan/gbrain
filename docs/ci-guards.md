@@ -137,13 +137,16 @@ SQL structure is the engine-sql ratchet's test, so comments and prose never
 count. A SQL string held in a variable and passed to `.query(v)` is not seen.
 
 `scripts/engine-raw-sql-baseline.tsv` holds `path<TAB>metric<TAB>count` rows,
-generated from the tree (`--print`). Counts only fall: a higher count or a file
-with no row fails, and so does a lower count until its row is lowered
-(`bun scripts/check-engine-raw-sql-ratchet.ts --prune` lowers stale rows and
-never raises one). Instead of a new site, call a typed engine method, or add
-one with its SQL in `src/core/engine-sql/<domain>.ts` (CONTRIBUTING.md
-"Storage method"). A moved or split file carries its rows with it in the same
-PR, where a reviewer sees the baseline change.
+with an optional fourth `note` column, generated from the tree (`--print`). A
+higher count or a file with no row fails, and so does a lower count until its
+row is lowered (`bun scripts/check-engine-raw-sql-ratchet.ts --prune` lowers
+stale rows, keeps their notes and never raises one). Instead of a new site,
+call a typed engine method, or add one with its SQL in
+`src/core/engine-sql/<domain>.ts` (CONTRIBUTING.md "Storage method"). When a
+fix must add a site before its area is converted, raise the row (or add it) in
+the same PR and write the reason in the note column, as
+`scripts/module-size-limits.tsv` does; a reviewer sees the baseline change. A
+moved or split file carries its rows with it in the same PR.
 
 ### Engine-kind branches
 
@@ -153,11 +156,13 @@ files: `kind_compare` (`x === 'pglite'`, `x !== 'postgres'`, either side,
 where `x` ends in `kind`, `engineKind`, `engine_kind` or `engine`) and
 `kind_case` (`case 'pglite':` in a switch over such `x`). A third engine must
 not fall silently into one of these branches, so new code asks a capability
-question or switches over every engine kind with a `default` clause that
-hands the switched value to a `never` check (`const unreachable: never = kind`,
-`kind satisfies never` or `assertNever(kind)`). Such an exhaustive switch never
-counts: a third engine fails typecheck there instead. A cast (`kind as never`)
-does not exempt a switch. Baseline
+question or switches over every engine kind with a `default` clause whose
+first statement hands the switched value to a `never` check
+(`const unreachable: never = kind;`, `kind satisfies never;`,
+`assertNever(kind);`, or `return` / `throw assertNever(kind);`). Such an
+exhaustive switch never counts: a third engine fails typecheck there instead.
+A check after other statements, inside a nested function, on a shadowing name
+or through a cast (`kind as never`) does not exempt a switch. Baseline
 `scripts/engine-kind-branches-baseline.tsv`, same rules as above.
 
 ### Page body readers
