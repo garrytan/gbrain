@@ -1,0 +1,186 @@
+abort_page_upload: upload_id
+accept_wakeshift_terms: terms_version
+add_link: context from link_source link_type request_id to valid_from valid_until
+add_tag: expected_revision force request_id slug tag
+add_timeline_entry: date detail expected_revision force request_id slug source summary
+advisor: 
+append_page: expected_revision expected_tail_sha256 region request_id separator slug source_id text wait_ms
+assemble_evidence: detail hits min_trust return_unit return_window token_budget
+begin_page_upload: expected_revision mode request_id sha256 slug source_id total_bytes
+cache_stats: 
+cancel_job: id
+cancel_write_request: request_id
+capture: content content_origin depth expected_revision force ingested_via kind local_file request_id slug source_id source_kind source_uri type what where who
+chronicle_backfill: dated_since dry_run limit max_usd recent since yes
+chronicle_day: date limit narrative week
+chronicle_last_seen: asof entity
+chronicle_on_this_day: date limit
+chronicle_since: date kind limit
+code_blast: depth exact max_nodes source_id symbol
+code_callees: all_sources limit source_id symbol
+code_callers: all_sources limit source_id symbol
+code_def: lang limit symbol
+code_flow: depth entry_point exact max_nodes source_id
+code_refs: lang limit symbol
+code_traversal_cache_clear: all_sources source_id
+commit_page_upload: allow_empty allow_shrink content_origin drop_timeline upload_id wait_ms
+confirm_memory: ref
+context_pack: budget_tokens counterparty entities entity_refs include_private include_quarantined intent min_trust prefer_source_id session_id since source_id
+delete_page: expected_revision force purge request_id slug source_id
+delete_skill: expected_revision name pack_id request_id source_id source_incarnation
+delta: beliefs budget_tokens cursor entities include_private min_trust session_id since since_slug
+edit_page: edits expected_revision reason request_id slug source_id within
+entity: name names prefer_source_id source_id variants
+entity_identity_link: canonical confidence entity_id slug source_id
+entity_identity_list: entity_id slug
+entity_identity_unlink: entity_id slug source_id
+extract_entities: source_slug text trusted_extraction
+extract_facts: entity_hints is_dream_generated request_id session_id source_slug turn_text valid_from visibility
+extraction_pending: include limit offset possible_duplicates_cursor since_days unattributed_offset
+fetch: id include_quarantined min_trust
+file_list: slug
+file_upload: page_slug path
+file_url: storage_path
+find_anomalies: lookback_days sigma since
+find_contradictions: limit min_trust severity slug
+find_experts: explain limit source_ids topic
+find_orphans: count_only cursor include_pseudo limit mode offset source_id
+find_pages: limit pattern source_id type types
+find_trajectory: entity_slug kind limit metric since until
+forget: id reason request_id semantic_review
+forget_fact: id reason request_id
+get_active_schema_pack: 
+get_agent_job: id
+get_backlinks: all all_sources as_of cursor group limit slug source_id status type
+get_brain_health: 
+get_brain_identity: 
+get_calibration_profile: holder
+get_chunks: from_index limit min_trust slug
+get_health: 
+get_ingest_log: limit
+get_job: id
+get_job_progress: id
+get_job_stats: queue since_hours
+get_links: all all_sources as_of cursor during limit link_type slug source_id status
+get_memory_settings: 
+get_page: around_chunk_id as_of body bytes content_only context context_lines cursor fuzzy grammar_diagnostics grep include_content include_deleted include_quarantined include_timeline_entries known_as_of lines max_bytes min_trust outline_from section slug source_id view
+get_page_upload: upload_id
+get_raw_data: slug source
+get_recent_salience: days limit recency_bias slugPrefix
+get_skill: expected_brain_id name pack_id qualified_id revision schema_version source_id source_incarnation
+get_skill_asset: expected_brain_id name pack_id path qualified_id revision source_id source_incarnation
+get_skill_policy: source_id
+get_stats: by collapse_aliases since
+get_status_snapshot: 
+get_tags: slug
+get_timeline: after before limit min_trust since slug source_id source_ids until
+get_usage: days
+get_versions: diff include_body known_as_of limit slug source_id
+get_write_attribution: fact slug take timeline versions
+get_write_request: applied request_id
+join_brain: adapter follow_policy
+leave_brain: enrollment_epoch installation_id
+list_brain_skillpack: 
+list_jobs: cursor fields finished_since limit name queue status
+list_link_sources: 
+list_pages: include_deleted limit offset slug_prefix sort source_id source_ids tag type updated_after updated_after_slug where
+list_schema_packs: 
+list_skills: cursor limit query schema_version section source_id
+list_watches: 
+list_write_conflicts: cursor limit source_id
+list_write_requests: before limit source_id
+log_ingest: pages_updated source_ref source_type summary
+loops_close: id note source_id status
+loops_mute: kind source_id value
+loops_unmute: kind source_id value
+memory_conversation_mode: mode
+memory_propose: acting_user context date detail expected_revision idempotency_key kind link_type source summary target to valid_from valid_until
+memory_recall: acting_user max_chars query query_keep source_id source_ids
+memory_write: acting_user facts idempotency_key source_id
+mute_notice: code muted
+ontology_conflicts: min_confidence
+ontology_dimensions: 
+ontology_get: asof entity include_quarantined min_confidence
+ontology_propose: confidence dimension entity source valid_from valid_to value visibility
+open_loops: all_sources as_of counterparty group_by id include_context limit loop_type source_id status
+pause_job: id
+promote_guest_note: guest_source request_id slug source_id to
+put_page: allow_empty allow_shrink content content_origin drop_timeline expected_revision force ingested_via reason request_id slug source_id source_kind source_uri wait_ms
+put_pages: pages request_id source_id wait_ms
+put_raw_data: data slug source
+put_skill: description expected_revision files name pack_id private request_id requirements source_id source_incarnation triggers
+quarantine_list: include_flagged limit max_scan
+query: adaptive_return autocut cross_modal detail embedding_column expand explain explain_target fields image image_mime lang limit min_trust mode near_symbol offset query recency relational return_unit return_window salience since snippet_chars source_id source_ids symbol_kind token_budget types until walk_depth where
+questions_list: include_archived source
+questions_pin: defer id publish question scope wait_ms
+questions_refresh: full id wait_ms
+questions_status: id include_answer
+questions_unpin: id
+rank_entities: direction include_mentions limit link_type source_id types
+rate_answer: answer_id pages rating
+recall: budget_policy budget_tokens entity grep include_expired include_pending limit max_chars min_trust query question return_unit return_window session_id since source_id source_ids supersessions
+reload_schema_pack: pack
+remember: claim_metric claim_period claim_unit claim_value content_origin entity expected_revision fact force infer_entity items kind provenance replaces request_id share source_id ttl valid_from visibility
+remove_link: from link_source link_type request_id to
+remove_tag: expected_revision force request_id slug tag
+replay_job: data_overrides id
+request_tools: surface tools
+resolve_slugs: partial source_id
+restore_page: detach expected_revision force request_id slug source_id
+resume_job: id
+retry_job: id
+revert_version: expected_revision force reason request_id slug source_id version_id
+run_doctor: only tier
+run_onboard: max_usd mode target_score
+run_skillopt: allow_mutate_bundled batch_size benchmark_path dry_run epochs expected_revision held_out_path lr max_cost_usd no_mutate optimizer_mode pack_id reflect_max_tokens request_id shared_skill skill_name source_id source_incarnation
+schema_apply_mutations: force mutations pack
+schema_explain_type: type
+schema_graph: 
+schema_lint: pack
+schema_review_orphans: limit
+schema_stats: 
+search: cursor fields limit match min_trust mode offset query recency return_unit return_window salience snippet_chars source_id source_ids token_budget types where
+search_by_image: image_data image_mime image_path image_url limit offset query source_id
+search_exact: after case_sensitive limit max_seconds min_trust phrase slug_prefix source_id types
+search_modes: 
+search_stats: days
+search_tune: 
+send_job_message: id payload sender
+set_memory_writeback: dry_run mode
+set_skill_policy: expected_policy_epoch policy source_id
+sources_add: clone_dir federated id name path url
+sources_list: include_archived
+sources_remove: confirm_destructive dry_run id keep_storage
+sources_resolve_path: id paths
+sources_status: id
+storage_find: limit query status store
+storage_get: id
+storage_list: limit offset on_source_machine status store
+submit_agent: allowed_slug_prefixes allowed_tools max_turns model prompt queue
+submit_job: data delay lock_duration_ms max_attempts name priority queue timeout_ms
+sync_brain: dry_run full no_embed no_pull repo source_id
+sync_brain_skills: acknowledgment enrollment_epoch installation_id
+synthesize: question since until
+takes_add: claim expected_revision force holder kind local_dir request_id since slug source weight
+takes_calibration: bucket_size holder
+takes_list: active holder kind limit min_trust offset page_slug resolved sort_by
+takes_rebuild: request_id slug
+takes_remove: expected_revision force local_dir request_id row_num slug
+takes_resolve: evidence expected_revision force local_dir quality request_id resolved_by row_num slug unit value
+takes_scorecard: domain_prefix group_by holder min_n since until
+takes_search: limit min_trust query
+takes_supersede: claim expected_revision force holder kind local_dir request_id row_num since slug source weight
+takes_update: expected_revision force local_dir request_id row_num since slug source weight
+think: anchor model question reference_date rounds save since take until
+traverse_graph: all_sources depth direction hops link_type slug source_id
+unwatch: cron job request_id watch
+upload_page_part: part part_sha256 text upload_id
+volunteer_chronicle: days entities limit
+volunteer_context: days max_pages min_confidence min_trust prior_context session_id source_ids stats turn window
+wait_job: id timeout_s
+wanted_pages: count_only limit offset source_id
+watch_cron: conversation_id harness name session_key
+watch_job: conversation_id harness id session_key
+watch_write_request: conversation_id harness request_id session_key
+whoami: 
+whois: query source_id types

@@ -207,6 +207,7 @@
   "test/managed-sync-stale-group-head.test.ts": 8354,
   "test/migration-persistence-request-id-index.test.ts": 6848,
   "test/migration-persistence-request-slug-index.test.ts": 6202,
+  "test/mirror-keep-deleted.test.ts": 22107,
   "test/on-commit-embedding.serial.test.ts": 10151,
   "test/origin-guard-6948.test.ts": 18397,
   "test/origin-twins-6948.test.ts": 1635,

@@ -43,6 +43,7 @@ import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { derivationPrivateSql, effectiveVisibility, folderRestrictedSql, privacyAliasSql, privateSnapshotFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
+import { factProvenanceSlugSql } from '../facts/private-fact-pages.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -207,18 +208,6 @@ export async function planVisibilityRepair(engine: BrainEngine, sourceIds: strin
   const parts = [...(lineage ? [lineage] : []), events, aliased];
   return { changes: parts.flatMap(part => part.changes), chars: new Map(parts.flatMap(part => part.rows).map(row => [Number(row.id), Number(row.chars)])),
     residuals: Object.assign({}, ...parts.map(part => part.residuals)) as Record<string, number> };
-}
-
-/**
- * The page a fact says it came from (not the page holding it): the page-write
- * session (`put_page:<slug>`, `sync:<slug>`), else the slug a page-write or
- * extract_facts lane records first in `context`.
- */
-export function factProvenanceSlugSql(f: string): string {
-  return `regexp_replace(COALESCE(
-    CASE WHEN ${f}.source_session ~ '^(put_page|sync):' THEN regexp_replace(${f}.source_session, '^(put_page|sync):', '') END,
-    CASE WHEN ${f}.source IN ('mcp:put_page','sync:import','file_upload','code_import','hook:writeback','mcp:extract_facts')
-      THEN NULLIF(split_part(btrim(COALESCE(${f}.context,'')), ' ', 1), '') END), '\\.md$', '')`;
 }
 
 /**
