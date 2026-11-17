@@ -614,11 +614,13 @@ export const FENCE_TREND_PAGE = 5_000;
 /** The trend tally of a stamp's range up to `through`, read before its publication (`readFenceTrendPrefix`). */
 export interface FenceTrendPrefix { since: string | null; through: string; tally?: FencesTally }
 
+/** The publication's read has no upper bound (`upTo` null); the prefix reads one range of the sequence index per statement. */
 function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string }, after: string, upTo: string | null) {
+  const range = upTo === null ? 'sequence > $3::bigint' : 'sequence > $3::bigint AND sequence <= $4::bigint';
   return engine.executeRaw<{ path: string | null; fences: Array<{ class: string }> }>(`SELECT intent->>'path' AS path, outcome->'fences_normalized' AS fences
-    FROM persistence_requests WHERE sequence > $3::bigint AND ($4::bigint IS NULL OR sequence <= $4::bigint) AND worktree_id=$1::uuid AND source_id=$2 AND state='committed'
+    FROM persistence_requests WHERE worktree_id=$1::uuid AND source_id=$2 AND ${range} AND state='committed'
       AND intent->>'kind'='managed_sync_import' AND intent->>'passId' IS NOT NULL AND jsonb_typeof(outcome->'fences_normalized')='array' ORDER BY sequence`,
-  [scope.worktreeId, scope.sourceId, after, upTo]);
+  upTo === null ? [scope.worktreeId, scope.sourceId, after] : [scope.worktreeId, scope.sourceId, after, upTo]);
 }
 
 /**
