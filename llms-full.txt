@@ -626,6 +626,7 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain#stable
    ```
+   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
@@ -1534,6 +1535,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGE
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
 >
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](#no-unzip), not an improvised one.
+>
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it. Nothing is created until a person picks the plan and pays. Mention this once in the reply that starts or reports the install, and never wait on an answer before continuing a local install the user already asked for.
@@ -1589,6 +1592,25 @@ bun install -g github:garrytan/gbrain#stable
 
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
+
+Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](#no-unzip), not an improvised one.
+
+<a id="no-unzip"></a>
+
+**No `unzip` and no way to install packages (Linux).** This route puts the same Bun build the official installer would fetch, taken from Bun's own npm package `@oven/bun-linux-<arch>`, into `~/.bun/bin`, the directory the official installer uses, and adds that directory to the PATH of every new login shell. It needs only `curl` and `tar`:
+
+```bash
+arch=$(uname -m); [ "$arch" = x86_64 ] && arch=x64; [ "$arch" = arm64 ] && arch=aarch64
+mkdir -p ~/.bun/bin
+curl -fsSL "https://registry.npmjs.org/@oven/bun-linux-$arch/-/bun-linux-$arch-1.4.4.tgz" | tar -xzO package/bin/bun > ~/.bun/bin/bun
+chmod +x ~/.bun/bin/bun
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.profile
+export PATH="$HOME/.bun/bin:$PATH"
+bun install -g github:garrytan/gbrain#stable
+bash -lc 'gbrain --version'
+```
+
+The PATH line goes in `~/.profile`, which new login shells read. Bash skips `~/.profile` when `~/.bash_profile` or `~/.bash_login` exists, so append the line to that file instead; zsh reads `~/.zprofile`. On Alpine or another musl system, run `arch=$arch-musl` after the first line; on an x64 CPU without AVX2, run `arch=x64-baseline`. The last command must print a version from a fresh shell. Don't install Bun with `npm install -g bun` or run gbrain from a git clone instead: gbrain starts with `#!/usr/bin/env bun`, so it fails in any new shell that can't find `bun` on its PATH.
 
 Next, on Claude Code or Codex: `gbrain setup claude-code` (or `gbrain setup codex`), which needs no API
 key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --pglite --no-embedding` (Step 3).
@@ -4239,6 +4261,8 @@ New releases come out many times a day, but the install command below gives you 
 > # Codex (an existing gbrain entry is kept):
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
+>
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
 >
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
@@ -8944,6 +8968,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 | Symptom | Next step | Who acts | Consent | Verify |
 |---|---|---|---|---|
+| `curl -fsSL https://bun.sh/install \| bash` stops with `error: unzip is required to install bun` | install `unzip` (`apt-get update && apt-get install -y unzip`, `dnf install -y unzip` or `apk add unzip`, with `sudo` unless root) and rerun the installer; with no way to install packages, follow the [no-unzip route](../../INSTALL_FOR_AGENTS.md#no-unzip), never `npm install -g bun` or a bare git clone, which leave `bun` off a new shell's PATH | agent; the user when only they can install packages | `persistent_install` | `bash -lc 'gbrain --version'` prints a version |
 | `gbrain doctor --alert` exits 17 (`doctor_alert_act`, `alert.level: act`) | follow each `alert.items[].fix` in the `--json` document; it is that check's own fix, with its consent and actor ([doctor alert](#doctor-alert-act)) | the item's `fix.actor` | the item's `fix.consent` | `gbrain doctor --alert --json` exits 0 |
 | `gbrain doctor --alert` exits 18 (`doctor_alert_unknown`, `alert.level: unknown`), or an agent cron pages "health unknown twice in a row" | run each `alert.unknown[].fix` (it measures that check alone); a check that keeps running out of time needs `--budget-ms` raised or `gbrain doctor --alert --tier standard --json` ([doctor alert](#doctor-alert-unknown)) | agent | none | `gbrain doctor --alert --json` exits 0 and `alert.consecutive_unknown` is 0 |
 | Doctor's score drops (resolver_health fails, skill_currency warns "new built-in skill(s) available") only when run from an agent's own workspace | nothing to fix: since the W4 scoping both report `not a gbrain skills folder (<path>)` for a skills folder gbrain did not install; to grade it on purpose pass `--skills-dir <path>` ([doctor alert](#doctor-alert)) | agent | none | `gbrain doctor --only resolver_health --json` |

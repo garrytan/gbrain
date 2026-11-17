@@ -535,6 +535,8 @@ gbrain init --mcp-only \
   --oauth-client-secret <their client_secret>
 ```
 
+Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](../../INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+
 The thin-client install creates a local config that knows how to talk to your brain but never opens its own database. From then on, plain CLI commands (`gbrain search`, `gbrain query`, `gbrain think`, `gbrain whoami`, ...) route through your remote server transparently, as that teammate's OAuth client. Local-only commands (`gbrain sync`, `gbrain serve`, `gbrain embed`, ...) are refused with a hint — those run on the brain host, not on teammate laptops.
 
 **2. Their AI client, connected directly to `https://brain.acme-co.com/mcp`.** Each client has its own connection shape; the per-client pages in [`docs/mcp/`](../mcp/) are the reference:
