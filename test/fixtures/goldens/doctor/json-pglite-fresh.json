@@ -1248,6 +1248,16 @@
         },
         {
           "category": "ops",
+          "details": {
+            "closed": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
+          "name": "owner_only_marks_triggers",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite is always UTF8)",
           "name": "database_encoding",

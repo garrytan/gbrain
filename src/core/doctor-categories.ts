@@ -501,6 +501,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'function_search_path',
   // GST-2885: every purge and withdrawal guard carries its row_security_active ledger check (#7632/#7659).
   'guard_ledger_checks',
+  // GST-3032: the owner-only delete triggers that mark rows derived from a removed owner-only origin (v322).
+  'owner_only_marks_triggers',
   // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
   'database_encoding',
   'rls_event_trigger',
