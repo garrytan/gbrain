@@ -1611,6 +1611,10 @@ then `openRustEngine`. Selecting the engine and refusing a missing or mismatched
   `engine_capability_missing` with the capability as `reason` (`raw_sql`, `pages`, `search`, ...), the member in
   `detail`, and `written=nothing`, before any work. `src/core/rust-engine/members.ts` maps every member to its
   capability; the type fails when a new `BrainEngine` member is not classified.
+- **What a refused command leaves.** A refused command writes no store data. Opening a Rust brain elects its owner
+  before any member runs, so it may leave `<database_path>.gbrain-owner.lock` beside the brain and a
+  `<database_path>/` directory that holds only the owner socket's entries (`.gbrain-owner.sock`,
+  `.gbrain-owner.sock.bind.lock`).
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.

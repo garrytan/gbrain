@@ -19,7 +19,7 @@
  * its build step, to fail instead).
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
@@ -28,6 +28,22 @@ const ROOT = join(import.meta.dir, '..');
 const TARGET = detectAddonTarget();
 const BUILT = TARGET ? join(ROOT, 'rust', 'target', 'addon', `gbrain_engine.${TARGET}.node`) : '';
 const HAVE_ADDON = !!TARGET && existsSync(BUILT);
+
+/**
+ * A refused command writes no store data. Opening a Rust brain elects its owner first (owner IPC), which may leave
+ * `<database_path>.gbrain-owner.lock` beside the brain and a `<database_path>/` directory holding only the owner
+ * socket's entries; anything else there is store data.
+ */
+const OWNER_IPC_ENTRIES = new Set(['.gbrain-owner.sock', '.gbrain-owner.sock.bind.lock']);
+function expectNoStoreData(home: string, dbPath: string): void {
+  if (existsSync(dbPath)) {
+    expect(statSync(dbPath).isDirectory()).toBe(true);
+    expect(readdirSync(dbPath).filter((e) => !OWNER_IPC_ENTRIES.has(e))).toEqual([]);
+  }
+  const base = dbPath.slice(dbPath.lastIndexOf('/') + 1);
+  const beside = readdirSync(home).filter((e) => e.startsWith(base) && e !== base && e !== `${base}.gbrain-owner.lock`);
+  expect(beside).toEqual([]);
+}
 if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
   throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT || 'no addon target'} does not exist; run bun run rust:build`);
 }
@@ -92,7 +108,7 @@ describe('selecting the rust engine through the real CLI', () => {
     expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
   }, 60_000);
 
-  withAddon('a verified addon reaches the engine shell, which refuses engine_capability_missing and writes nothing', async () => {
+  withAddon('a verified addon reaches the engine shell, which refuses engine_capability_missing and writes no store data', async () => {
     const { home, dbPath } = rustHome();
     const { out, code } = await runCli(['list'], { GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT });
     expect(code).toBe(1);
@@ -100,7 +116,7 @@ describe('selecting the rust engine through the real CLI', () => {
     expect(out).toContain('the raw_sql capability');
     expect(out).toContain('so nothing ran');
     expect(out).not.toContain('rust_engine_addon_');
-    expect(existsSync(dbPath)).toBe(false);
+    expectNoStoreData(home, dbPath);
   }, 60_000);
 
   withAddon('engine status --probe on a rust brain with a real addon reports the shell\'s capability refusal', async () => {
@@ -109,16 +125,16 @@ describe('selecting the rust engine through the real CLI', () => {
     expect(code).toBe(1);
     const report = JSON.parse(out.slice(out.indexOf('{')));
     expect(report.probe).toMatchObject({ ok: false, note: 'engine_capability_missing', refusal: { code: 'engine_capability_missing', reason: 'raw_sql' } });
-    expect(existsSync(dbPath)).toBe(false);
+    expectNoStoreData(home, dbPath);
   }, 60_000);
 
-  withAddon('a spread of commands on a rust brain all stop at a typed refusal and write no brain', async () => {
+  withAddon('a spread of commands on a rust brain all stop at a typed refusal and write no store data', async () => {
     const { home, dbPath } = rustHome();
     for (const args of [['get', 'x'], ['search', 'x'], ['stats'], ['sources', 'list'], ['config', 'get', 'x'], ['jobs', 'list']]) {
       const { out, code } = await runCli(args, { GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT });
       expect({ args, code, refused: out.includes('Error [engine_capability_missing]') }).toEqual({ args, code: 1, refused: true });
     }
-    expect(existsSync(dbPath)).toBe(false);
+    expectNoStoreData(home, dbPath);
     expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
   }, 120_000);
 

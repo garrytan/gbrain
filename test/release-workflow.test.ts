@@ -147,7 +147,9 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(smoke).toContain('gh attestation verify "$work/$asset" --repo "$GITHUB_REPOSITORY"');
     expect(smoke).toContain('cp "$manifest" "$rust_dir/manifest-$RELEASE_VERSION.json"');
     expect(smoke).toContain('addon="$rust_dir/$engine_build/$ADDON_TARGET.node"');
-    expect(smoke).toContain('test ! -e "$GBRAIN_HOME/.gbrain/brain.rust"');
+    // The refusal writes no store data: only the owner socket's entries may be in the brain directory.
+    expect(smoke).toContain('find "$db" -mindepth 1 ! -name .gbrain-owner.sock ! -name .gbrain-owner.sock.bind.lock -print');
+    expect(smoke).toContain('::error::the refused command wrote store data');
   });
 
   test('release tag derives from the VERSION file, v-prefixed', () => {

@@ -361,7 +361,8 @@ jobs:
   # loader looks: <home>/engines/rust/manifest-<version>.json and <engine_build>/<target>.node.
   # The engine itself is a shell that has no capabilities yet, so the command must stop at the
   # shell's engine_capability_missing refusal, which is only reached after the addon verified and
-  # loaded. A rust_engine_addon_missing or _mismatch refusal here means the release is broken.
+  # loaded, and must write no store data. A rust_engine_addon_missing or _mismatch refusal here
+  # means the release is broken.
   smoke-rust-addon:
     needs: [version, ci-gate, release]
     if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
@@ -426,8 +427,17 @@ jobs:
             echo "::error::published addon sha256 $got does not match the manifest's $want"
             exit 1
           fi
-          # The refusal comes before any write to the brain.
-          test ! -e "$GBRAIN_HOME/.gbrain/brain.rust"
+          # The refusal writes no store data: opening the brain elects its owner first, so the brain
+          # directory may exist, but it holds only the owner socket's entries.
+          db="$GBRAIN_HOME/.gbrain/brain.rust"
+          if [ -e "$db" ]; then
+            test -d "$db"
+            extra="$(find "$db" -mindepth 1 ! -name .gbrain-owner.sock ! -name .gbrain-owner.sock.bind.lock -print)"
+            if [ -n "$extra" ]; then
+              echo "::error::the refused command wrote store data: $extra"
+              exit 1
+            fi
+          fi
           echo "published $ADDON_TARGET addon loaded from the cache: $got"
 
   # [G7/S3#4] Publishes the rendered agent-workspace template repo (the
