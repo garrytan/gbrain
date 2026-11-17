@@ -967,7 +967,6 @@ export const fileDriftRepair: RepairHandler = {
     const windowEnd = Math.min(Date.now() + HELD_WINDOW_BUDGET_MS, opts.deadline ?? Infinity);
     let previewed = 0;
     const [source] = held ? [] : await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
-    const mirror = held && opts.prefer === 'file' ? await sourceMirrorReadOnly(engine, sourceId) : false;
     const newerPages: string[] = [];
     opts.progress?.start('repair.file_drift.preview', targets.length);
     await asLocalCli(engine, async () => {
