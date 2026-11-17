@@ -5464,7 +5464,10 @@ For a row with `fails_closed = f`, connect as the role in its `owner` column and
 `ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
 `gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
 is missing its check, provided the migrating role owns it. You can also run gbrain once as the
-owning role instead. Run the query again to confirm.
+owning role instead. Run the query again to confirm. On Postgres, `gbrain doctor`
+(`guard_ledger_checks`) runs the same check and names each guard left without its ledger check
+with its owner, and the fix: `gbrain apply-migrations --yes` when the doctor's role may re-create
+it, else the `ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
 
 The segmented storage recipe above already covers the two derivation purge tables for a
 role it applies to. A policy that filters out ledger rows of a source the role writes hides
