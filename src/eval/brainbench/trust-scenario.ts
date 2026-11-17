@@ -101,14 +101,14 @@ export interface TrustFixtureRun {
   sourceIds: string[];
   connector?: ConnectorSource;
   repoDir: string;
-  engine: PGLiteEngine;
+  engine: BrainEngine;
   remote: OperationContext;
   local: OperationContext;
   steps: Map<string, StepRecord>;
 }
 
 export interface TrustBrain {
-  engine: PGLiteEngine;
+  engine: BrainEngine;
   root: string;
   close(): Promise<void>;
 }
