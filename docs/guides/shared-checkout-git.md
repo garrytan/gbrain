@@ -188,7 +188,12 @@ mode scans either way.
 
 A finding that is not a secret: add its fingerprint (`sha256:` and 16 hex
 characters, as the preview prints it) as a line of `.gbrain-scan-allow` at the
-checkout root (`#` starts a comment). The scan reads the file from the working
+checkout root (`#` starts a comment). A rule that fires on many harmless values
+in one kind of file takes a rule entry instead, `path:<glob> pattern:<rule>`,
+which allows only that rule in the matching files; the preview lists each hit it
+allowed with the line that allowed it, and names any line that allows nothing
+because it is malformed or names an unknown rule
+([details](write-refusals.md#allowlisting-a-reviewed-false-positive)). The scan reads the file from the working
 tree, so the next push uses it without a commit. That is deliberate: the file is
 the local user's answer to the scan, and writing it takes local write access to
 the checkout, which could push directly anyway. In a managed root below the

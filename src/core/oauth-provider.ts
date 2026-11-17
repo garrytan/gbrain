@@ -926,7 +926,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         ...(rowSurfaceSetBy !== undefined ? { surfaceSetBy: rowSurfaceSetBy } : {}),
         // #5575 (CEO-18): the client's read floor; current_grant is the whole row, so no projection rung needs it.
         ...(storedMinTrust(currentGrant.min_trust) ? { minTrust: storedMinTrust(currentGrant.min_trust) } : {}),
-        // GBRA-156: private pages in the sources the client's grant names (source_id + federated_read), never its bound source.
+        // GBRA-156 / GBRA-575: private pages and private facts in the sources the client's grant names (source_id + federated_read), never its bound source.
         ...(sourcesNone || rowSourceId === undefined ? {} : privatePagesAuth(grantFromClient(grantFromRow({ ...currentGrant, source_id: rowSourceId, federated_read: allowedSources ?? [] })))),
       } as CoreAuthInfo as SdkAuthInfo;
     }

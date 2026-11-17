@@ -112,7 +112,60 @@ export function valueAllowlisted(fullHex: string, allowlist: string[]): boolean 
   return false;
 }
 
+/**
+ * A rule entry, `path:<glob> pattern:<rule>`, allows one named rule in the files the glob matches (the same glob
+ * dialect as a path entry); every other rule still applies there. One rule per line. A line that starts with
+ * `pattern:`, or with `path:` and holds whitespace, is read only as a rule entry: when it is malformed or names an
+ * unknown rule it allows nothing and `allowlistProblems` reports it.
+ */
+const RULE_ENTRY_RE = /^path:(\S+)\s+pattern:([a-z0-9_]+)$/;
+
+function isRuleEntry(entry: string): boolean {
+  return entry.startsWith('pattern:') || (entry.startsWith('path:') && /\s/.test(entry));
+}
+
 /** True when a file path is allowlisted by any glob entry. */
 export function pathAllowlisted(relPath: string, allowlist: string[]): boolean {
-  return allowlist.some((entry) => !isFingerprintEntry(entry) && matchesGlob(entry, relPath));
+  return allowlist.some((entry) => !isFingerprintEntry(entry) && !isRuleEntry(entry) && matchesGlob(entry, relPath));
+}
+
+/** The rule entry that allows `pattern` in `relPath`, or null. */
+export function ruleAllowEntry(relPath: string, pattern: string, allowlist: string[]): string | null {
+  for (const entry of allowlist) {
+    const m = RULE_ENTRY_RE.exec(entry);
+    if (m && m[2] === pattern && matchesGlob(m[1]!, relPath)) return entry;
+  }
+  return null;
+}
+
+/** A finding a rule entry allowed, with the entry that allowed it; never the matched value. */
+export interface AllowedHit { pattern: string; line: number; fingerprint: string; entry: string }
+
+/** `findings` of the file at `relPath` without those a rule entry allows; each allowed one goes to `onAllowed`. */
+export function withoutRuleAllowed<F extends { pattern: string; line: number; fingerprint: string }>(
+  findings: F[], relPath: string, allowlist: string[], onAllowed?: (hit: AllowedHit) => void,
+): F[] {
+  return findings.filter((f) => {
+    const entry = ruleAllowEntry(relPath, f.pattern, allowlist);
+    if (entry === null) return true;
+    onAllowed?.({ pattern: f.pattern, line: f.line, fingerprint: f.fingerprint, entry });
+    return false;
+  });
+}
+
+export interface AllowlistProblem { entry: string; problem: string }
+
+/** Entries that allow nothing, or something other than they seem to: malformed rule entries and unknown rule names. */
+export function allowlistProblems(allowlist: string[], knownRules: readonly string[]): AllowlistProblem[] {
+  const problems: AllowlistProblem[] = [];
+  for (const entry of allowlist) {
+    if (isRuleEntry(entry)) {
+      const m = RULE_ENTRY_RE.exec(entry);
+      if (!m) problems.push({ entry, problem: 'malformed rule entry, so it allows nothing: write path:<glob> pattern:<rule>, one rule per line' });
+      else if (!knownRules.includes(m[2]!)) problems.push({ entry, problem: `unknown rule ${m[2]}, so it allows nothing; the rules are ${knownRules.join(', ')}` });
+    } else if (entry.startsWith('path:')) {
+      problems.push({ entry, problem: 'read as a path glob for files whose name starts with path:, which skips every rule for them; to allow one rule, add a space and pattern:<rule>' });
+    }
+  }
+  return problems;
 }

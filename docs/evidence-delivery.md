@@ -179,12 +179,29 @@ in its entity page's facts fence or taken from a page the caller may not read.
 If that read fails, the header reads `unknown` and the response reports the
 degraded stage `fact_observed_date_unavailable` (`recall`:
 `facts_degraded.reason`). The facts block, the temporal fact reserve and the
-facts arm date their fact rows the same way. `valid`
+facts arm date their fact rows the same way. In the facts block, when the
+question names one date (`questionDate`, the shared temporal grammar), a fact
+said after it ends its header `; told after DATE` and a fact whose `observed`
+is `unknown` ends it `; learn date unknown`:
+`[observed 2026-06-30; valid 2026-02-15 to unknown; told after 2026-04-01]`.
+On a history cue (a word such as before, earlier or previously, or a time the
+question names that has already passed) the block also takes the named
+entity's ended facts, superseded or closed by a past `valid_until`, each with
+its window; a forgotten or withdrawn fact never appears. A fact in a pending
+supersede proposal ends with `(contested by #<id>)` when the caller can read
+the other fact, as `recall` labels it; if that lookup fails the rows carry no
+label and the response reports the degraded stage `contested_unavailable`. `valid`
 starts at the fact's `valid_from`: `remember` sets it from its `valid_from`
 parameter (when the fact was said or became true). A `valid_from` that only
 records the write time (within a minute of `created_at`) reads `unknown`, so a
 header never presents when a fact was written as when it became true. An open
-validity end reads `unknown`. The setting
+validity end reads `unknown`. A conversation fact that states where a person
+lives, who employs them or their role carries a slot (`location`, `employer`
+or `role`), and the facts block and the temporal fact reserve work out its end
+at read time: the start of the next different value for the same person, when
+that value came from the same conversation or its fact says the value changed
+(moved, joined, left and similar words). Otherwise both values stay open and
+the end reads `unknown`. Nothing is written. The setting
 applies to `search`, `query`, `recall`, `think` and `assemble_evidence`.
 
 ### Tail trim

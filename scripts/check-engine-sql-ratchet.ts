@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Engine-sql ratchet (refactor wave 1, goal (a); docs/TESTING.md#engine-sql-ratchet).
+ * Engine-sql ratchet (refactor wave 1, goal (a); docs/ci-guards.md#engine-sql-ratchet).
  *
  * Each storage domain's SQL lives once, in src/core/engine-sql/<domain>.ts,
  * and both engines delegate to it. This guard keeps SQL from growing back
@@ -50,7 +50,7 @@ const tsInternal = ts as typeof ts & { getTokenAtPosition(sourceFile: ts.SourceF
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
 const BASELINE_REL = 'scripts/engine-sql-baseline.tsv';
-const ANCHOR = 'docs/TESTING.md#engine-sql-ratchet';
+const ANCHOR = 'docs/ci-guards.md#engine-sql-ratchet';
 const FACADES = ['src/core/pglite-engine.ts', 'src/core/postgres-engine.ts'];
 const MODULE_DIRS = ['src/core/pglite-engine', 'src/core/postgres-engine'];
 const MARKER = 'engine-sql-ok';

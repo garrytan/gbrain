@@ -499,6 +499,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'postgres_tls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
   'function_search_path',
+  // GST-2885: every purge and withdrawal guard carries its row_security_active ledger check (#7632/#7659).
+  'guard_ledger_checks',
   // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
   'database_encoding',
   'rls_event_trigger',
