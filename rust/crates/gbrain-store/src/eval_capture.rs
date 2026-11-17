@@ -18,12 +18,14 @@
 //! (page_ops) call `remove_retrieved_slugs` to strip the deleted slugs from
 //! `retrieved_slugs`, as PGLite's `scrubPurgedSlugs` does.
 //!
-//! A captured `facts/<id>` slug is kept by PGLite while that fact exists. This engine's
-//! TypeScript member refuses a candidate that carries such a slug (no fact-exists check yet);
-//! the store itself keeps only slugs a page holds.
+//! A captured `facts/<id>` slug (`^facts/[0-9]{1,18}$`) is kept while that fact row exists in
+//! one of the candidate's sources (any source when it names none), as PGLite does: an expired,
+//! superseded or consolidated fact, or one whose page is soft-deleted, still counts
+//! (`facts::fact_exists`).
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::facts::fact_exists;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page, scope_sources};
@@ -254,6 +256,15 @@ fn page_held(read: &dyn KvRead, slug: &str, sources: &[String]) -> Result<bool> 
     Ok(false)
 }
 
+/// The fact id a facts-arm slug names: `^facts/[0-9]{1,18}$` (18 digits always fit a `u64`).
+fn fact_slug_id(slug: &str) -> Option<u64> {
+    let digits = slug.strip_prefix("facts/")?;
+    if digits.is_empty() || digits.len() > 18 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
 /// The `eval_candidates.retrieved_slugs` scrub of PGLite's `scrubPurgedSlugs`, run by page_ops
 /// in the delete's transaction, after the pages of `source_id` named by `slugs` are gone.
 ///
@@ -417,6 +428,14 @@ impl Store {
                     }
                     held
                 };
+                let held = held
+                    || match fact_slug_id(slug) {
+                        // A list of only null sources matches no fact (`f.source_id = ANY`).
+                        Some(id) if named_none || !scope.is_empty() => {
+                            fact_exists(&*tx, id, if named_none { &[] } else { &scope })?
+                        }
+                        _ => false,
+                    };
                 if held {
                     retrieved.push(slug.clone());
                 }
@@ -593,6 +612,48 @@ mod tests {
             .unwrap();
         let row = rows.iter().find(|r| r["id"] == json!(id)).unwrap();
         serde_json::from_value(row["retrieved_slugs"].clone()).unwrap()
+    }
+
+    #[test]
+    fn keeps_a_facts_slug_while_the_fact_row_exists_in_scope() {
+        use crate::facts::{FactRecord, fact_key};
+        let (_dir, store) = open();
+        source(&store, "other");
+        store
+            .write(|tx| {
+                for (id, source_id, expired) in [(7u64, "default", true), (8, "other", false)] {
+                    let fact = FactRecord {
+                        id,
+                        source_id: source_id.into(),
+                        // An expired row still counts: only a deleted row is gone.
+                        expired_at_us: expired.then_some(1),
+                        ..FactRecord::default()
+                    };
+                    put_json(tx, &fact_key(id), &fact)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let slugs = [
+            "facts/7", "facts/8", "facts/9", "facts/", "facts/07", "facts/x7",
+            "facts/1234567890123456789",
+        ];
+        let any = log(&store, &slugs, &[]);
+        let default_only = log(&store, &slugs, &["default"]);
+        let other_only = log(&store, &slugs, &["other"]);
+        // `facts/07` names fact 7 too (`substr(...)::bigint`); 19 digits is no facts slug.
+        assert_eq!(slugs_of(&store, any), vec!["facts/7", "facts/8", "facts/07"]);
+        assert_eq!(slugs_of(&store, default_only), vec!["facts/7", "facts/07"]);
+        assert_eq!(slugs_of(&store, other_only), vec!["facts/8"]);
+        // A source list of only nulls matches no fact.
+        let input: EvalCandidateInput = serde_json::from_value(json!({
+            "tool_name": "query", "query": "q", "retrieved_slugs": ["facts/7"],
+            "retrieved_chunk_ids": [], "source_ids": [null], "vector_enabled": true,
+            "expansion_applied": false, "latency_ms": 1, "remote": false,
+        }))
+        .unwrap();
+        let nulls = store.log_eval_candidate(&input).unwrap();
+        assert!(slugs_of(&store, nulls).is_empty());
     }
 
     #[test]
