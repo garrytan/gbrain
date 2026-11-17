@@ -4,6 +4,8 @@
  *   - The whole-class preview walks every window into one manifest (totals equal the per-window sums; no apply command until it
  *     completes); it refuses past the recovery-bytes limit (class_capacity_exceeded) and on a repo-less brain finds no held pages.
  *   - kept_protected_parts: a mirror page whose file-wins result needs protected parts in its file stays held through syncs.
+ *   - The preview refuses an output path inside a checkout before writing, authorizes each page like the window preview, and a
+ *     resumed walk stops at its deadline after one window.
  * PGLite always; Postgres when DATABASE_URL is set. Synthetic content only.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
@@ -161,7 +163,10 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     expect(stopped.card).toBeUndefined();
     expect(stopped.resume_command).toContain('--whole-class --cursor c1.');
     expect(JSON.parse(readFileSync(stopped.class_manifest!.path, 'utf8')).complete).toBe(false);
-    const cursor = stopped.resume_command!.split('--cursor ')[1]!.trim();
+    const resumed = await preview(engine, 'unknown', { cursor: stopped.resume_command!.split('--cursor ')[1]!.trim(), deadline: Date.now() });
+    expect(resumed.class_manifest!.complete).toBe(false);
+    expect(JSON.parse(readFileSync(resumed.class_manifest!.path, 'utf8')).windows).toBe(2);
+    const cursor = resumed.resume_command!.split('--cursor ')[1]!.trim();
     const done = await preview(engine, 'unknown', { cursor });
     const m = done.class_manifest!;
     expect(Object.keys(m).sort()).toEqual(['complete', 'hash', 'lost_lines_total', 'pages', 'path', 'residual', 'top']);
@@ -195,6 +200,20 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     const dir = artifactDirectory();
     expect(existsSync(dir) ? readdirSync(dir).filter(name => name.startsWith('class-')) : []).toEqual([]);
   }, { ...db(), setup: setup(3) }), 300_000);
+
+  test('the preview refuses an output path inside a checkout before writing, and leaves a page outside the CLI grant out of the class', () => managedBrain(async ({ engine, root }) => {
+    await mirrorHolds(engine, root, ['notes/n00', 'other/o00']);
+    const writer = await registerLocalWriter(engine, 'cli');
+    const scope = await resolveRepairScope(engine, 'default');
+    const inside = await withEnv({ GBRAIN_HOME: root }, () => withVerifiedLocalRegistration(engine, writer, () =>
+      previewFileDriftClass(engine, scope, sel(), { remote: false })).then(() => null, e => e));
+    expect((inside as any)?.code).toBe('permission_denied');
+    expect(existsSync(join(root, '.gbrain'))).toBe(false);
+    const narrow = await registerLocalWriter(engine, 'cli', { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: ['notes/'] }, true);
+    const result = await withVerifiedLocalRegistration(engine, narrow, async () => previewFileDriftClass(engine, await resolveRepairScope(engine, 'default'), sel(), { remote: false }));
+    expect(result.class_manifest!.top.map(page => page.slug)).toEqual(['notes/n00']);
+    expect(result.other).toEqual({ refused_permission_denied: 1 });
+  }, { ...db(), setup: setup(1, ['other/o00']) }), 300_000);
 
   test('kept_protected_parts: the page stays held with its protected parts as stored through two syncs, and the checkout byte-identical', () => managedBrain(async ({ engine, ctx, root }) => {
     await mirrorHolds(engine, root, names(1), { protectedPage: true });
