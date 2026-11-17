@@ -31,7 +31,7 @@ export async function conversationFactsCostCap(
   return undefined;
 }
 
-/** Output tokens one segment's reply takes at most in practice: the extractor's 10-fact cap at about 200 tokens a fact (measured with slots on). */
+/** Output tokens one segment's reply takes at most in practice: the extractor's 10-fact cap at about 200 tokens a fact. */
 export const OUTPUT_TOKENS_PER_SEGMENT = 2000;
 
 export interface ConversationRunEstimate { model: string; segments: number; input_tokens: number; output_tokens: number; usd: number | null }
@@ -44,7 +44,7 @@ export interface ConversationRunEstimate { model: string; segments: number; inpu
  */
 export async function conversationRunEstimate(engine: BrainEngine, segments: number): Promise<ConversationRunEstimate> {
   const model = await getFactsExtractionModel(engine);
-  const system = buildExtractorSystem(true, { ...await getExtractorVariant(engine), slots: true });
+  const system = buildExtractorSystem(true, await getExtractorVariant(engine));
   const perSegment = Math.ceil((system.length + SEGMENT_TEXT_CHAR_LIMIT) / CHAT_INPUT_CHARS_PER_TOKEN);
   const price = usageCostUsd(model, perSegment, OUTPUT_TOKENS_PER_SEGMENT, 'chat', await loadPricingOverrides(engine));
   return { model, segments, input_tokens: segments * perSegment, output_tokens: segments * OUTPUT_TOKENS_PER_SEGMENT, usd: price == null ? null : segments * price };
