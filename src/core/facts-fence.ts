@@ -596,6 +596,9 @@ export function renderFactsTable(facts: ParsedFact[]): string {
  *   - Same rowNum + same claim: the caller already carries the row (e.g.
  *     a full-content write-through) — the incoming version wins, nothing
  *     restored, so the merge is idempotent.
+ *   - GST-2891: `held` names world rows of the existing fence held from the
+ *     writer (a world cell whose fact is stored narrower, which a world-only
+ *     reader never saw). Each is restored like a hidden row, as stored.
  *   - Either side parsing with warnings returns null: re-rendering a
  *     fence we could not fully parse would drop the caller's unparsed
  *     rows. The residual data loss is surfaced by factsGapWarning below.
@@ -607,9 +610,10 @@ export function renderFactsTable(facts: ParsedFact[]): string {
 export function restoreHiddenFactRows(
   incoming: { facts: ParsedFact[]; warnings: string[] },
   existing: { facts: ParsedFact[]; warnings: string[] },
+  held: ReadonlySet<number> = new Set(),
 ): { merged: ParsedFact[]; restored: ParsedFact[]; renumbered: Array<{ from: number; to: number }> } | null {
   if (incoming.warnings.length > 0 || existing.warnings.length > 0) return null;
-  const hidden = existing.facts.filter((f) => f.visibility !== 'world');
+  const hidden = existing.facts.filter((f) => f.visibility !== 'world' || held.has(f.rowNum));
   if (hidden.length === 0) return null;
 
   const incomingByRowNum = new Map(incoming.facts.map((f) => [f.rowNum, f]));

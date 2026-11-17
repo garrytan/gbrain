@@ -156,7 +156,7 @@ export function renderFenceLowTier(rows: readonly FenceLowTierRow[]): FenceOverl
 }
 
 /** World fence rows of a body, every complete block. */
-function worldFenceRows(text: string | null | undefined): ParsedFact[] {
+export function worldFenceRows(text: string | null | undefined): ParsedFact[] {
   if (!text || !text.includes('gbrain:facts:begin')) return [];
   return withdrawalFenceBlocks(text).flatMap(block => block.parsed.warnings.length ? [] : block.parsed.facts.filter(row => row.visibility === 'world'));
 }

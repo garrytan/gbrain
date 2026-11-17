@@ -198,6 +198,7 @@ test/held-move-plan-gst2497.test.ts
 test/held-read-signals.test.ts
 test/held-row-page-reads-2891.test.ts
 test/held-row-review-2891.test.ts
+test/held-row-writeback-2891.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
 test/holding-page-saves-gst2497.test.ts

@@ -3,7 +3,8 @@ import { readPolicyOpts } from './context.ts';
 import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { GET_VERSIONS_DEFAULT_LIMIT, GET_VERSIONS_REMOTE_MAX_LIMIT, pagingLimit, reportVersionPage } from './read-paging.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
-import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
+import { heldRowsForCaller, worldFenceRows } from '../eligibility/fence-overlay.ts';
+import { ALL_SOURCES } from '../source-id.ts';
 import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
 import { historyQuarantine } from './get-page-projection.ts';
 /**
@@ -18,7 +19,7 @@ import { historyQuarantine } from './get-page-projection.ts';
 
 import type { Operation, OperationContext } from './contract.ts';
 import { opError } from './contract.ts';
-import { enforceClientSlugFence, pageNotFoundError, sourceScopeOpts } from './context.ts';
+import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
 import { memoizedHealth } from '../health-memo.ts';
@@ -285,8 +286,10 @@ const get_versions: Operation = {
       // GST-687: so does one whose snapshot tier is below the owner's (a version with no snapshot reads as unknown).
       const quote = quotesStored(v.type, snapshotTiers.get(Number(v.id)));
       const live = lives.find(l => Number(l.id) === Number(v.page_id));
-      if (!live && worldOnlyFacts(ctx.remote)) throw pageNotFoundError(ctx, String(p.slug), { includeDeleted: true });
-      const omitRows = live ? await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: live.source_id, slug: live.slug, compiled_truth: v.compiled_truth, timeline: v.timeline }) : undefined;
+      const sourceId = live?.source_id ?? (ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId);
+      const omitRows = sourceId !== undefined
+        ? await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: live?.slug ?? String(p.slug), compiled_truth: v.compiled_truth, timeline: v.timeline })
+        : worldOnlyFacts(ctx.remote) ? new Set([...worldFenceRows(v.compiled_truth), ...worldFenceRows(v.timeline)].map(row => row.rowNum)) : undefined;
       const body = (text: string) => { const clean = sanitizeRemoteBody(text, { omitRows }); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
       out.push({ ...v, compiled_truth: body(v.compiled_truth), ...reason(v),
         ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });
