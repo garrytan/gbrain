@@ -132,6 +132,16 @@ function migrationsFix(ctx: Pick<OperationContext, 'remote' | 'transport'>): Act
 // --- Upload validators (Fix 1 / B5 / H5 / M4) ---
 
 /**
+ * Strict-mode containment over two realpaths. Separator-aware: `..drafts/` is an
+ * ordinary folder name, while `../`, another drive (Windows), a UNC share and a
+ * sibling sharing the root's name prefix all fall outside. The root itself is
+ * never an uploadable file. Pure, so tests can drive it with `path.win32` shapes.
+ */
+export function uploadPathInsideRoot(real: string, realRoot: string, sepChar: string): boolean {
+  return real !== realRoot && resolvedPrefixContained(real, realRoot, sepChar);
+}
+
+/**
  * Validate an upload path. Two modes:
  *   - strict (remote=true): confines the resolved path to `root` and rejects symlinks.
  *     Used when the caller is untrusted (MCP over stdio/HTTP, agent-facing).
@@ -181,10 +191,7 @@ export function validateUploadPath(filePath: string, root: string, strict = true
     throw opError('invalid_params', `Confinement root not accessible: ${root}`,
       "The upload root (the server's working directory) is unreadable on the brain host; tell the user so its operator can fix that directory.");
   }
-  // Separator-aware containment over the two realpaths: `..drafts/` is an ordinary
-  // folder name, while `../`, another drive and a sibling sharing the root's name
-  // prefix all escape. The root itself is never an uploadable file.
-  if (real === realRoot || !resolvedPrefixContained(real, realRoot, sep)) {
+  if (!uploadPathInsideRoot(real, realRoot, sep)) {
     throw opError('invalid_params', `Upload path must be within the working directory: ${filePath}`,
       "Copy the file under the server's working directory and pass that path; a symlinked parent that resolves outside it is refused too.");
   }
