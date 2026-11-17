@@ -27,3 +27,9 @@ pub(crate) fn remove_chunk_rows(
 ) -> Result<()> {
     Ok(())
 }
+
+/// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
+/// Nothing to delete yet.
+pub(crate) fn remove_source_rows(_tx: &mut dyn KvWrite, _source_id: &str) -> Result<()> {
+    Ok(())
+}

@@ -8,6 +8,11 @@
 //!   `chunks::clear_chunks` calls it with every chunk of the page; `chunks::replace_chunks` with
 //!   the chunks whose index the new set does not keep (a kept index keeps its id). A hard page
 //!   delete calls it before `remove_page_rows`.
+//! - `remove_source_rows`: a source delete (`ON DELETE CASCADE` of `sources.id`), for records keyed
+//!   by source rather than by page. The Rust engine does not serve source delete yet, so nothing
+//!   calls it; when core serves it, core removes each page of the source with
+//!   `pages::remove_page` first (the page and chunk hooks fire for those), then calls this list,
+//!   then deletes the source record, all in one write transaction.
 
 use crate::Result;
 use crate::kv::KvWrite;
@@ -37,6 +42,20 @@ pub(crate) fn remove_chunk_rows(
     crate::code_edges::remove_chunk_rows(tx, page_id, chunk_ids)?;
     crate::vectors::remove_chunk_rows(tx, page_id, chunk_ids)?;
     crate::embeddings::remove_chunk_rows(tx, page_id, chunk_ids)?;
+    Ok(())
+}
+
+// Core's source delete is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    crate::facts::remove_source_rows(tx, source_id)?;
+    crate::aliases::remove_source_rows(tx, source_id)?;
+    crate::code_edges::remove_source_rows(tx, source_id)?;
+    crate::link_queries::remove_source_rows(tx, source_id)?;
+    crate::raw_files::remove_source_rows(tx, source_id)?;
+    crate::page_body::remove_source_rows(tx, source_id)?;
+    crate::takes::remove_source_rows(tx, source_id)?;
+    crate::extraction::remove_source_rows(tx, source_id)?;
     Ok(())
 }
 
@@ -126,5 +145,23 @@ pub(crate) mod tests {
         fired();
         store.delete_page("a", None).unwrap();
         assert_eq!(fired(), vec![(page.id, last)]);
+    }
+
+    #[test]
+    fn the_source_list_runs_and_removes_nothing_while_every_hook_is_empty() {
+        let store = crate::test_support::store();
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("a", &input, &PutPageOptions::default())
+            .unwrap();
+        store
+            .write(|tx| super::remove_source_rows(tx, "default"))
+            .unwrap();
+        assert_eq!(store.count_pages(None).unwrap(), 1);
     }
 }

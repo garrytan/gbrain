@@ -170,8 +170,8 @@ everything under it go together or not at all. Soft delete never cascades: reads
 hook clears the page reference on file rows instead of deleting them.
 
 Facts are not cascaded on page delete (Postgres keys them by slug, not by page id); facts reads hide facts whose page
-is soft deleted. Source delete is not served by the Rust engine yet; when core serves it, core adds a
-`cascade::remove_source_rows` list the same way.
+is soft deleted. Source delete is not served by the Rust engine yet, but its list, `cascade::remove_source_rows`, is
+built ("Core hooks"), so a family with records keyed by source fills in its hook now.
 
 ### Core hooks
 
@@ -277,6 +277,28 @@ already deleted when it runs; the ids are sorted and all belong to `page_id`.
 - **Owners:** code_edges (edges whose from or to chunk is gone). vectors and embeddings are on the list because their
   records hang off chunk ids in this store, while Postgres keeps them on the chunk row; their hooks stay empty if
   they key nothing by chunk id.
+
+#### Source delete (`cascade::remove_source_rows`)
+
+```rust
+// In facts.rs, aliases.rs, code_edges.rs, link_queries.rs, raw_files.rs, page_body.rs, takes.rs and extraction.rs:
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()>;
+```
+
+Postgres deletes every row whose `source_id` references a deleted source (`ON DELETE CASCADE`). This hook is for a
+family's records keyed by source, not by page; records under a page go through the page and chunk hooks.
+
+- **No caller yet.** The Rust engine does not serve source delete (TypeScript deletes sources with raw SQL, which the
+  Rust engine refuses). When core serves it, one write transaction removes each page of the source with
+  `pages::remove_page` (so the page and chunk hooks fire), then calls this list, then deletes the source record.
+- **Owners** (the Postgres tables that cascade on `sources.id`): facts (`facts`, `fact_withdrawals`), aliases
+  (`slug_aliases`, `page_aliases`), code_edges (`code_edges_chunk`, `code_edges_symbol`), link_queries
+  (`wanted_links`), raw_files (`files`), page_body (`page_segment_texts`, `page_body_stagings` and the other segment
+  tables), takes (`take_proposals`, `take_nudge_log`), extraction (`extract_atoms_page_state`).
+- **Not on the list:** eval_capture (`eval_candidates.source_ids` is a text array with no foreign key) and stats
+  (`ingest_log` has no foreign key). A family that is not listed and keys records by source asks core for one line.
+- The stubs in `facts.rs` and `link_queries.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
+  import line in a file that has none yet.
 
 ### Write transactions and the journal
 
@@ -944,4 +966,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
 | transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction |
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
-| Source delete and its `cascade::remove_source_rows` list | nothing | facts and other source-keyed records |
+| Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
+| Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |
