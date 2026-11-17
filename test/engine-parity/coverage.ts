@@ -1,0 +1,199 @@
+/**
+ * BrainEngine parity coverage list generator.
+ *
+ *   bun test/engine-parity/coverage.ts           # print the list
+ *   bun test/engine-parity/coverage.ts --write   # refresh test/engine-parity/coverage.tsv
+ *
+ * Reads the BrainEngine interface (src/core/engine.ts) with the TypeScript
+ * compiler API, reads every `parityTest(name, { methods: [...] }, ...)` call
+ * in test/engine-parity/*.test.ts, and writes one row per callable interface
+ * member: its family, how many parity cases cover it, and whether the legacy
+ * Postgres-gated suite (test/e2e/engine-parity*.test.ts) calls it.
+ * `coverage.test.ts` fails when the checked-in list is stale.
+ *
+ * A method counts as covered only through a harness case: those run on every
+ * arm (PGLite always, Postgres with DATABASE_URL, Rust later) and the harness
+ * proves each declared method was really called.
+ */
+import ts from 'typescript';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+
+const REPO = join(import.meta.dir, '..', '..');
+const PARITY_DIR = import.meta.dir;
+const LEGACY_DIR = join(REPO, 'test', 'e2e');
+// test-reads-source-ok[structural]: the coverage denominator is the declared BrainEngine member list.
+const ENGINE_FILE = join(REPO, 'src', 'core', 'engine.ts');
+export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
+
+/**
+ * Method families (research 01 grouping). Every callable BrainEngine member
+ * must appear exactly once; the generator throws otherwise, so a new engine
+ * method forces a visible family assignment here.
+ */
+export const FAMILIES: Record<string, readonly string[]> = {
+  lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
+    'registerBeforeDisconnect', 'withReservedConnection'],
+  pages: ['getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
+    'deletePage', 'deletePages', 'resolveSlugsByPaths', 'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages',
+    'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs', 'listAllPageRefs', 'listAllSources', 'updateSourceConfig',
+    'listPrefixSampledPages', 'listCorpusSample'],
+  search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
+    'searchKeywordChunks'],
+  chunks: ['upsertChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
+    'setPageEmbeddingSignature', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
+    'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows',
+    'deleteChunks', 'getChunksWithEmbeddings'],
+  extraction: ['countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked',
+    'countStaleFrontmatterKeyPages', 'listStaleFrontmatterKeyPages', 'stripStaleFrontmatterKeys'],
+  links: ['addLink', 'addLinksBatch', 'replaceDerivedLinks', 'replaceDerivedLinksBatch', 'removeLink', 'removeLinksByPagesAndSource',
+    'getLinks', 'getBacklinks', 'listLinkSources', 'findByTitleFuzzy', 'traverseGraph', 'traversePaths', 'traversePathsDetailed',
+    'relationalFanout', 'relationalChainHop', 'getBacklinkCounts', 'getAdjacencyBoosts', 'getContentFlagsByPageIds',
+    'getUnverifiedExtractionPageIds', 'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages'],
+  tags: ['addTag', 'removeTag', 'getTags'],
+  timeline: ['addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay',
+    'getLastSeen', 'upsertEventProjection'],
+  ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
+  raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage'],
+  takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
+    'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',
+    'addSynthesisEvidence', 'listActiveTakesForPages'],
+  dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts'],
+  contradictions: ['writeContradictionsRun', 'loadContradictionsTrend', 'getContradictionCacheEntry', 'putContradictionCacheEntry',
+    'sweepContradictionCache'],
+  facts: ['insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity', 'listFactsSince', 'listFactsKeyset',
+    'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts', 'findCandidateDuplicates', 'consolidateFact',
+    'findTrajectory', 'getFactsHealth'],
+  segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest',
+    'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
+    'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
+  versions: ['createVersion', 'getVersions', 'revertToVersion'],
+  stats_ingest: ['getStats', 'getHealth', 'logIngest', 'getIngestLog'],
+  sync_aliases: ['updateSlug', 'rewriteLinks', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveAliases',
+    'setPageAliases', 'refreshPageBody', 'updatePageContextualRetrievalState', 'migrateFactsToCanonical'],
+  config: ['getConfig', 'setConfig', 'unsetConfig', 'listConfigKeys', 'getAllConfig'],
+  raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
+  code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk'],
+  eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
+    'listEvalCaptureFailures'],
+  salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
+};
+
+/** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */
+export function interfaceMethods(): string[] {
+  const text = readFileSync(ENGINE_FILE, 'utf8'); // test-reads-source-ok[structural]: parse the interface member names only.
+  const sf = ts.createSourceFile(ENGINE_FILE, text, ts.ScriptTarget.Latest, true);
+  const names: string[] = [];
+  sf.forEachChild((node) => {
+    if (!ts.isInterfaceDeclaration(node) || node.name.text !== 'BrainEngine') return;
+    for (const member of node.members) {
+      if (!member.name || !ts.isIdentifier(member.name)) continue;
+      const callable = ts.isMethodSignature(member)
+        || (ts.isPropertySignature(member) && member.type !== undefined && ts.isFunctionTypeNode(member.type));
+      if (callable && !names.includes(member.name.text)) names.push(member.name.text);
+    }
+  });
+  if (names.length === 0) throw new Error('engine-parity coverage: BrainEngine interface not found in src/core/engine.ts');
+  return names;
+}
+
+export interface ParityDeclaration { file: string; name: string; methods: string[] }
+
+function stringValue(node: ts.Node): string | null {
+  return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : null;
+}
+
+/** Every `parityTest(name, { methods: [...] }, fn)` declaration in the parity files. */
+export function parityDeclarations(dir = PARITY_DIR): ParityDeclaration[] {
+  const out: ParityDeclaration[] = [];
+  for (const entry of readdirSync(dir).filter((f) => f.endsWith('.test.ts')).sort()) {
+    const path = join(dir, entry);
+    const sf = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'parityTest') {
+        const [nameArg, optsArg] = node.arguments;
+        const where = `${relative(REPO, path)}:${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+        const methodsProp = optsArg && ts.isObjectLiteralExpression(optsArg)
+          ? optsArg.properties.find((p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'methods')
+          : undefined;
+        if (!methodsProp || !ts.isPropertyAssignment(methodsProp) || !ts.isArrayLiteralExpression(methodsProp.initializer)) {
+          throw new Error(`${where}: parityTest needs an inline { methods: [...] } array literal`);
+        }
+        const methods = methodsProp.initializer.elements.map((e) => {
+          const value = stringValue(e);
+          if (value === null) throw new Error(`${where}: parityTest methods must be string literals`);
+          return value;
+        });
+        out.push({ file: relative(REPO, path), name: (nameArg && stringValue(nameArg)) ?? '<dynamic>', methods });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/** Interface methods the legacy Postgres-gated parity suite calls (`.name(`). */
+export function legacyMethods(methods: readonly string[]): Set<string> {
+  const called = new Set<string>();
+  const files = readdirSync(LEGACY_DIR).filter((f) => /^engine-parity.*\.test\.ts$/.test(f));
+  for (const f of files) {
+    const text = readFileSync(join(LEGACY_DIR, f), 'utf8');
+    for (const m of methods) if (new RegExp(`\\.${m}\\s*[!?]?\\.?\\s*[(<]`).test(text)) called.add(m);
+  }
+  return called;
+}
+
+export interface CoverageReport { methods: string[]; covered: string[]; text: string }
+
+export function buildCoverage(): CoverageReport {
+  const methods = interfaceMethods();
+  const family = new Map<string, string>();
+  for (const [name, members] of Object.entries(FAMILIES)) {
+    for (const m of members) {
+      if (family.has(m)) throw new Error(`engine-parity coverage: ${m} is in two families`);
+      family.set(m, name);
+    }
+  }
+  const unassigned = methods.filter((m) => !family.has(m));
+  const stale = [...family.keys()].filter((m) => !methods.includes(m));
+  if (unassigned.length || stale.length) {
+    throw new Error(`engine-parity coverage: FAMILIES out of date. Unassigned: ${unassigned.join(', ') || '-'}; not in BrainEngine: ${stale.join(', ') || '-'}`);
+  }
+  const cases = new Map<string, number>();
+  for (const decl of parityDeclarations()) {
+    for (const m of decl.methods) {
+      if (!family.has(m)) throw new Error(`${decl.file} "${decl.name}": ${m} is not a BrainEngine method`);
+      cases.set(m, (cases.get(m) ?? 0) + 1);
+    }
+  }
+  const legacy = legacyMethods(methods);
+  const covered = methods.filter((m) => cases.has(m));
+  const familyOrder = Object.keys(FAMILIES);
+  const rows = [...methods].sort((a, b) =>
+    familyOrder.indexOf(family.get(a)!) - familyOrder.indexOf(family.get(b)!) || methods.indexOf(a) - methods.indexOf(b));
+  const perFamily = familyOrder.map((f) => {
+    const members = methods.filter((m) => family.get(m) === f);
+    return `# ${f}: ${members.filter((m) => cases.has(m)).length}/${members.length}`;
+  });
+  const lines = [
+    '# BrainEngine parity coverage. GENERATED by `bun test/engine-parity/coverage.ts --write`; do not edit.',
+    '# covered = called by a test/engine-parity harness case that runs on every engine arm.',
+    '# legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).',
+    `# covered: ${covered.length}/${methods.length}`,
+    ...perFamily,
+    'method\tfamily\tcovered\tparity_cases\tlegacy_e2e',
+    ...rows.map((m) => `${m}\t${family.get(m)}\t${cases.has(m) ? 'yes' : 'no'}\t${cases.get(m) ?? 0}\t${legacy.has(m) ? 'yes' : 'no'}`),
+  ];
+  return { methods, covered, text: `${lines.join('\n')}\n` };
+}
+
+if (import.meta.main) {
+  const report = buildCoverage();
+  if (process.argv.includes('--write')) {
+    writeFileSync(COVERAGE_FILE, report.text);
+    console.log(`wrote ${relative(REPO, COVERAGE_FILE)}: covered ${report.covered.length}/${report.methods.length}`);
+  } else {
+    process.stdout.write(report.text);
+  }
+}
