@@ -4,7 +4,7 @@
  * Shadow mode mirrors a sample of the host brain's reads to the Rust engine in a supervised child process and
  * records whether the answers agree. It is off by default and writes nothing to the brain database, its config
  * table or the brain repo: every file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
- * and needs `--yes --expect <hash>`; the addon is loaded (and fetched on first use) then, in the foreground. The
+ * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. The
  * hidden `__child <dir>` is the child the serving process spawns.
  */
 import { createHash } from 'node:crypto';
@@ -22,7 +22,7 @@ import {
 export interface EngineShadowDeps {
   /** The brain config; default loadConfig() (the host brain). */
   config?: () => Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'> | null;
-  /** The addon loader `start --yes` runs; default the real loader (may fetch on first use). */
+  /** The addon loader `start --yes` runs; default the real loader (installed addon only, no network). */
   loadAddon?: () => Promise<RustEngineAddonLoad>;
   out?: (line: string) => void;
   err?: (line: string) => void;
@@ -161,7 +161,7 @@ async function start(
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
-    out(`  the Rust engine addon is loaded now, and fetched and verified from the gbrain release on first use`);
+    out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
     out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
     return o.plan ? 0 : 3;
