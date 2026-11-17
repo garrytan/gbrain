@@ -18,8 +18,8 @@ Foresights is MIT-licensed and free to self-host, and it starts with no API keys
 | How it connects | Agents |
 |---|---|
 | One command wires memory, hooks and instructions | [Claude Code](docs/mcp/CLAUDE_CODE.md) (`foresights setup claude-code`), [Codex](docs/mcp/CODEX.md) (`foresights setup codex`) |
-| MCP from its guide, then `foresights setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
-| MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
+| MCP from its guide, then `foresights setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-foresights-to-your-ai-client-mcp) |
+| MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-foresights-to-your-ai-client-mcp) |
 | Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
 
 ## Stability
@@ -133,7 +133,7 @@ choices and personal edits. See [shared brain skills](docs/guides/shared-brain-s
 
 ## Choose your setup
 
-1. **Add Foresights to my existing agent — recommended.** Keep your agent's identity and save memory inside its environment. No new personal-agent identity or private repository is required. Start with the guide for **[Grok Bot](docs/guides/grok-bot.md)**, **[Muse](docs/guides/muse.md)**, or **[Codex / Claude Code](docs/tutorials/connect-coding-agent.md)**. [Other harnesses](#connect-gbrain-to-your-ai-client-mcp).
+1. **Add Foresights to my existing agent — recommended.** Keep your agent's identity and save memory inside its environment. No new personal-agent identity or private repository is required. Start with the guide for **[Grok Bot](docs/guides/grok-bot.md)**, **[Muse](docs/guides/muse.md)**, or **[Codex / Claude Code](docs/tutorials/connect-coding-agent.md)**. [Other harnesses](#connect-foresights-to-your-ai-client-mcp).
 2. **Use the brain on my own computer from everywhere.** One command publishes it over MCP on your Tailscale tailnet and keeps it running: `foresights mcp expose` (add `--funnel` for cloud agents such as Grok Bot, Muse and ChatGPT). Follow **[use your brain from anywhere over MCP](docs/guides/remote-mcp.md)**. **Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*.
 3. **Connect my existing hosted brain.** Follow **[hosted harness access](docs/guides/hosted-harness-access.md)** to choose native OAuth or a private machine connection. For dashboard login, clients, and permissions, use **[MCP administration](docs/mcp/ADMIN.md)** with the server's separate owner credential. Delegation is an explicit choice.
 

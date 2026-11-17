@@ -14,7 +14,7 @@ export async function runWakeshiftOpenclawCheck(_ctx: unknown, opts: { bin?: str
   const bin = opts.bin !== undefined ? opts.bin : findOpenclawBin();
   if (!bin) return checks;
   const installed = installedWakeshiftOpenclawVersion(opts.run ?? ((argv) => defaultOpenclawRun(argv, 15_000)), bin);
-  const details = { pinned: WAKESHIFT_OPENCLAW_VERSION, installed, docs: 'docs/mcp/OPENCLAW.md#have-gbrain-report-back-to-this-chat' };
+  const details = { pinned: WAKESHIFT_OPENCLAW_VERSION, installed, docs: 'docs/mcp/OPENCLAW.md#have-foresights-report-back-to-this-chat' };
   if (installed === null) {
     checks.push({ name: 'wakeshift_openclaw', status: 'ok', severity: 'info', message: "Wakeshift's OpenClaw plugin is not installed here (foresights setup openclaw --wakeshift installs it).", details });
   } else if (installed === WAKESHIFT_OPENCLAW_VERSION) {

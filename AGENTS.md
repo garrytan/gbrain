@@ -52,7 +52,7 @@ start here.
 
 ## Memory operating protocol
 
-**Which foresights call for which lookup.** Details and caveats: [brain-first](skills/conventions/brain-first.md#which-gbrain-call-for-which-lookup).
+**Which foresights call for which lookup.** Details and caveats: [brain-first](skills/conventions/brain-first.md#which-foresights-call-for-which-lookup).
 
 <!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
 Ask foresights before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it

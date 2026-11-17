@@ -126,7 +126,7 @@ agent never reads a short list as "nothing else exists".
   (alias `crm`), `organization` and `entity`. Other packs add their own
   `primitive: entity` types.
 - Put the name in the title, or after a prefix: `CRM record: Acme Example`.
-- Declare other names in the body (see [How foresights learns an alias](#how-gbrain-learns-an-alias)).
+- Declare other names in the body (see [How foresights learns an alias](#how-foresights-learns-an-alias)).
 - Or list names in frontmatter `aliases: [Acme, Acme Inc]`.
 
 Names are never linked when they are shorter than 4 characters, a generic word

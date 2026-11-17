@@ -373,7 +373,7 @@ collector has nothing for the loop engine to read, which is not the same as
 an empty inbox. Any Google access path works to fix it: `foresights google setup`
 (BYO OAuth) or `--access command|env` on `sources add` (an existing Google
 CLI or token-minting gateway; see
-[google-connect.md](google-connect.md#other-ways-to-reach-google-no-gbrain-oauth)).
+[google-connect.md](google-connect.md#other-ways-to-reach-google-no-foresights-oauth)).
 A remote caller (MCP) gets no digest, so when its answer is empty and its
 scope holds no google source it gets a `loops_no_google_in_scope` notice
 instead: the answer covered only the sources the call read (named, all inside

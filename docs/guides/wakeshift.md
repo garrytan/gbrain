@@ -119,4 +119,4 @@ On a thin client (`foresights init --mcp-only`), `foresights wakeshift watch job
 
 ## OpenClaw
 
-`foresights setup openclaw --wakeshift` installs Wakeshift's OpenClaw plugin (pinned `@wakeshift/openclaw@1.4.31`) after consent and prints Wakeshift's `allowNetworkHooks` question without answering it ([OpenClaw guide](../mcp/OPENCLAW.md#have-gbrain-report-back-to-this-chat)).
+`foresights setup openclaw --wakeshift` installs Wakeshift's OpenClaw plugin (pinned `@wakeshift/openclaw@1.4.31`) after consent and prints Wakeshift's `allowNetworkHooks` question without answering it ([OpenClaw guide](../mcp/OPENCLAW.md#have-foresights-report-back-to-this-chat)).

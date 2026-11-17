@@ -3620,7 +3620,7 @@ More: [docs/guides/write-refusals.md#on_behalf_of_unknown_member](../../docs/gui
 |---|---|---|---|---|---|---|
 | foresights setup openclaw --wakeshift found no openclaw on PATH, so Wakeshift's OpenClaw plugin was not installed; nothing changed. | The plugin installs through OpenClaw's own installer where the gateway runs, so setup never writes OpenClaw's plugin directory itself. | Run foresights setup openclaw --wakeshift where the OpenClaw gateway runs (in its container, if it is in one). | agent | `repeat the read that failed` | 1 | no |
 
-More: [docs/mcp/OPENCLAW.md#have-gbrain-report-back-to-this-chat](../../docs/mcp/OPENCLAW.md#have-gbrain-report-back-to-this-chat)
+More: [docs/mcp/OPENCLAW.md#have-foresights-report-back-to-this-chat](../../docs/mcp/OPENCLAW.md#have-foresights-report-back-to-this-chat)
 
 ### origin_twin_mass_merge_refused
 

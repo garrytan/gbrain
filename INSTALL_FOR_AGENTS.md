@@ -378,7 +378,7 @@ Use `foresights query` for expanded retrieval only when its provider use is inte
 `--no-expand` opts out of expansion independently of the mode.
 
 Once imported, retrieve through foresights rather than the files
-([brain-first](skills/conventions/brain-first.md#which-gbrain-call-for-which-lookup)):
+([brain-first](skills/conventions/brain-first.md#which-foresights-call-for-which-lookup)):
 
 <!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
 Ask foresights before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it

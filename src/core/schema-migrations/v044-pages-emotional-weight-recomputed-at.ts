@@ -13,7 +13,7 @@ export const v044: Migration = {
   // of any size.
   //
   // The recompute-emotional-weight cycle phase + the new
-  // `foresights backfill emotional_weight` command both stamp this column
+  // `gbrain backfill emotional_weight` command both stamp this column
   // with NOW() alongside the weight write, so existing rows progress
   // out of the backlog naturally as the cycle runs.
   //
