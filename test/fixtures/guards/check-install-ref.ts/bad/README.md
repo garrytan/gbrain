@@ -1,1 +1,1 @@
-Install: `bun install -g github:garrytan/gbrain#master`
+Install: `bun install -g github:aimonk2025/gbrain#master`

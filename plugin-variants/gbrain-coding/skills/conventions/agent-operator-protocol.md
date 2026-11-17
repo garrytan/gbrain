@@ -67,7 +67,7 @@ foresights returns (`isError: true`, the envelope shown parsed):
       "--source",
       "default"
     ],
-    "command": "gbrain list --sort updated --brain host --source default",
+    "command": "foresights list --sort updated --brain host --source default",
     "mcp": {
       "tool": "list_pages",
       "arguments": {
@@ -118,7 +118,7 @@ stdout (`--json`):
   "error": "confirmation_required",
   "code": "confirmation_required",
   "message": "doctor --remediate needs the user's approval before it runs; nothing was changed.",
-  "suggestion": "Ask the user: Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed? If they agree, run: gbrain doctor --remediate --max-usd 0.60 --yes --brain host",
+  "suggestion": "Ask the user: Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed? If they agree, run: foresights doctor --remediate --max-usd 0.60 --yes --brain host",
   "effects": [
     "paid"
   ],
@@ -138,7 +138,7 @@ stdout (`--json`):
       "--brain",
       "host"
     ],
-    "command": "gbrain doctor --remediate --max-usd 0.60 --yes --brain host",
+    "command": "foresights doctor --remediate --max-usd 0.60 --yes --brain host",
     "consent": [
       "paid"
     ],
@@ -165,7 +165,7 @@ stdout (`--json`):
       "--brain",
       "host"
     ],
-    "command": "gbrain doctor --remediation-plan --json --brain host"
+    "command": "foresights doctor --remediation-plan --json --brain host"
   },
   "preapprove_argv": [
     "gbrain",
@@ -193,15 +193,15 @@ risk: Spends up to the cap on embedding calls; no data is deleted.
 consent: paid
 actor: agent
 next: ask_user
-if_yes: gbrain doctor --remediate --max-usd 0.60 --yes --brain host — To stop asking for runs under a limit the user picks: foresights config set consent.preapprove.paid.max_usd_per_run '<usd>'
-if_no: Nothing runs; nothing was changed. To look first (read-only): gbrain doctor --remediation-plan --json --brain host
+if_yes: foresights doctor --remediate --max-usd 0.60 --yes --brain host — To stop asking for runs under a limit the user picks: foresights config set consent.preapprove.paid.max_usd_per_run '<usd>'
+if_no: Nothing runs; nothing was changed. To look first (read-only): foresights doctor --remediation-plan --json --brain host
 [SHOW USER]
 Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?
 [/SHOW USER]
 [/AGENT]
 ```
 
-Nothing ran and the command exited 3. The agent reads `fix.next: ask_user`, relays `user_message` ("Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?") and stops. It may offer the read-only preview `gbrain doctor --remediation-plan --json --brain host`. Only after the user agrees does it run `gbrain doctor --remediate --max-usd 0.60 --yes --brain host`. Passing `--yes` on its own would be a consent violation even though foresights cannot tell the difference.
+Nothing ran and the command exited 3. The agent reads `fix.next: ask_user`, relays `user_message` ("Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?") and stops. It may offer the read-only preview `foresights doctor --remediation-plan --json --brain host`. Only after the user agrees does it run `foresights doctor --remediate --max-usd 0.60 --yes --brain host`. Passing `--yes` on its own would be a consent violation even though foresights cannot tell the difference.
 
 ### 3. An empty recall with a notice: `tell_user_to_run`
 
@@ -224,12 +224,12 @@ foresights returns these content blocks:
 ```text
 [gbrain notice empty_retrieval kind=info]
 why: No pages matched. Search ran keyword-only because embeddings are not configured.
-fix: gbrain doctor --json --brain host
+fix: foresights doctor --json --brain host
 next: tell_user_to_run
 user_message: I found no notes on that topic. Your brain searches keywords only right now.
 ```
 
-`content[0]` is still the bare array `[]`; the second block is the notice. The agent does not tell the user "you have no notes on that". It relays `user_message` ("I found no notes on that topic. Your brain searches keywords only right now."). `fix.next` is `tell_user_to_run` because the fix is the user's to run (`gbrain doctor --json --brain host`) in their terminal, so the agent offers it rather than running it.
+`content[0]` is still the bare array `[]`; the second block is the notice. The agent does not tell the user "you have no notes on that". It relays `user_message` ("I found no notes on that topic. Your brain searches keywords only right now."). `fix.next` is `tell_user_to_run` because the fix is the user's to run (`foresights doctor --json --brain host`) in their terminal, so the agent offers it rather than running it.
 
 ### 4. First run on a keyless brain: one decision bundle, `ask_user` (journey)
 
