@@ -548,7 +548,9 @@ For `shared_skills_unmanifested` (skills in the source's `skills/` folder that n
 `skillpack.json` declares), declare the ones to share in a `skillpack.json` at
 the source's root, or keep the source out with
 `gbrain sources shared-skills <id> off`. Doctor stops warning once the preview
-finds no source in conflict. Don't clear the wedge with `--force-retry` for this:
+has inspected every source and finds none in conflict; a source whose policy it
+could not read (a dropped database connection, for example) keeps the warning.
+Don't clear the wedge with `--force-retry` for this:
 the next `--yes` run would also publish each source's pending shared-skills
 content.
 
