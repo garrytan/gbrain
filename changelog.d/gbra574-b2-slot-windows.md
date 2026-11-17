@@ -8,7 +8,7 @@
 - `gbrain extract-conversation-facts --dry-run` prints an estimate of the paid run: segments, input and output tokens, and dollars at the extraction model's price.
 
 ### Changed
-- `findOntologyConflicts` (the chronicle conflict check) ignores conversation facts, which are never closed in storage. Ontology observations report exactly as before.
+- The ontology (`ontology_get`, `ontology_propose`, the chronicle conflict check, the dimension census and `gbrain repair ontology-facts`) ignores conversation facts, which are never closed in storage, so an extracted slot never shadows, closes or absorbs an owner's observation. A conversation fact that holds the exact key an ontology observation needs gives up its slot and keeps its text. Ontology observations report exactly as before.
 - A re-extraction or a retention purge that keeps a conversation fact as expired history clears its slot, so the slot never blocks the page's next facts.
 
 ### For existing brains
