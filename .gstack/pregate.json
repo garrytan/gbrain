@@ -107,7 +107,13 @@
     "skills/skill-budgets.tsv": ["test/skill-health.test.ts"],
     "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"],
     "scripts/check-migration-projection.ts": ["test/scripts/check-migration-projection.test.ts"],
-    "scripts/migration-projection-baseline.tsv": ["test/scripts/check-migration-projection.test.ts"]
+    "scripts/migration-projection-baseline.tsv": ["test/scripts/check-migration-projection.test.ts"],
+    "rust/Cargo.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/Cargo.lock": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/deny.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/rust-toolchain.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
+    "rust/scripts/**": ["rust/smoke/smoke.test.ts"],
+    "rust/smoke/**": ["rust/smoke/smoke.test.ts"]
   },
   "guards": [
     {
@@ -239,6 +245,14 @@
       ],
       "pattern": "pglite-snapshot-(?:default-)?\\$\\{\\{ runner\\.os \\}\\}-\\$\\{\\{ hashFiles\\('(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+'(?:, '(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+')*\\) \\}\\}$",
       "reason": "GitHub Actions PGLite snapshot cache keys: the whole value is pglite-snapshot-[default-]${{ runner.os }}-${{ hashFiles(<args>) }} and every argument is a lowercase path or glob under src/, test/ or scripts/; an argument with digits, capitals or a ./ prefix is not covered and stays flagged"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "src/core/operation-loaders.generated.ts"
+      ],
+      "pattern": "\\[load_[a-z0-9_]+, \"(?:[a-z][A-Za-z]*Operations|[a-z]+(?:_[a-z]+)+)\"\\],?$",
+      "reason": "generated operation-loader table: each value is a loader identifier and an operations export name, never a credential; an operation named like a secret (reveal_secret) trips the key-name heuristic"
     }
   ]
 }

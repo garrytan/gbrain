@@ -9,7 +9,7 @@
  * "no block injected" — a routing failure never fails the question.
  */
 
-import type { PGLiteEngine } from '../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 import type { TrajectoryPoint } from '../../core/engine.ts';
 import { extractCandidateEntities } from '../../core/think/entity-extract.ts';
 import { resolveEntitySlugWithSource, type ResolutionSource } from '../../core/entities/resolve.ts';
@@ -28,7 +28,7 @@ export interface TrajectoryRoute {
 export const EMPTY_TRAJECTORY_ROUTE: TrajectoryRoute = { block: '', points: 0, entityResolved: null, resolutionSource: null };
 
 export async function routeTrajectory(
-  engine: PGLiteEngine,
+  engine: BrainEngine,
   question: string,
   retrievedSlugs: readonly string[],
   intent: Intent,
