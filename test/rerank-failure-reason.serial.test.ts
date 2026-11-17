@@ -32,7 +32,7 @@ const rows = (): SearchResult[] => ['a', 'b', 'c'].map((s, i) => ({
 } as SearchResult));
 
 let server: ReturnType<typeof Bun.serve>;
-let deadPort: number;
+const deadPort = 1;
 let auditDir: string;
 
 beforeAll(() => {
@@ -45,9 +45,6 @@ beforeAll(() => {
       return new Response('{"detail":"no"}', { status });
     },
   });
-  const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('') });
-  deadPort = probe.port!;
-  probe.stop(true);
   auditDir = mkdtempSync(join(tmpdir(), 'gbrain-rerank-reason-'));
 });
 
