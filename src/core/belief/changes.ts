@@ -60,6 +60,8 @@ export interface BeliefChangesQuery {
   sourceId: string; since: string; until: string; remote: boolean; entities?: readonly string[]; limit?: number;
   /** Remote callers: the take holders they may read (`readHolders`); `['world']` when absent. */
   takesHolders?: readonly string[];
+  /** GST-2957: the reader's fact reads are world-only (worldOnlyFacts); `deltaBeliefs` empties link contexts (withoutLinkContexts). */
+  worldOnly?: boolean;
 }
 
 const SUBJECT_EVENTS = new Set(['fact.asserted', 'fact.revised', 'fact.retracted', 'fact.withdrawn', 'fact.superseded', 'fact.transferred', 'fact.purged',
@@ -346,6 +348,7 @@ const lineCost = (line: string) => estimateTokens(line + '\n');
  */
 export async function deltaBeliefs(engine: BrainEngine, q: BeliefChangesQuery, budget: number | null, text: string, envelope: string): Promise<{ beliefs: BeliefChanges; text: string }> {
   let beliefs = await beliefChanges(engine, q);
+  if (q.worldOnly) beliefs = withoutLinkContexts(beliefs);
   const header = `## Belief changes since ${q.since}`;
   if (budget !== null) {
     const room = budget - lineCost('') - lineCost(header);
@@ -353,6 +356,15 @@ export async function deltaBeliefs(engine: BrainEngine, q: BeliefChangesQuery, b
     if (kept.length < beliefs.changes.length) beliefs = { ...beliefs, changes: kept, truncated: true };
   }
   return { beliefs, text: beliefs.changes.length ? [text || envelope, '', header, ...beliefs.changes.map(renderBeliefChange)].join('\n') : text };
+}
+
+/**
+ * GST-2957: the changes with every link value's carried context emptied, for a delta reader whose fact reads are
+ * world-only (worldOnlyFacts): the context is an excerpt of a page body, past or present, that can hold private rows.
+ */
+export function withoutLinkContexts(b: BeliefChanges): BeliefChanges {
+  const bare = (v: Record<string, unknown> | null) => (v && typeof v.context === 'string' && v.context ? { ...v, context: '' } : v);
+  return { ...b, changes: b.changes.map(c => (c.kind === 'link' ? { ...c, before: bare(c.before), after: bare(c.after) } : c)) };
 }
 
 /** The CLI's text for a whole window: a header, the coverage note, one line per change. */
