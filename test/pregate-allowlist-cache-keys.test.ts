@@ -65,6 +65,7 @@ describe('pregate allowlist: workflow cache keys', () => {
 });
 
 describe('pregate allowlist: generated operation loaders', () => {
+  // test-reads-source-ok[generated-artifact]: the allowlist must cover every line the checked-in generated loader table holds.
   const generated = readFileSync(join(ROOT, LOADERS), 'utf8').split('\n').flatMap(line => {
     const at = line.indexOf('[load_');
     return at < 0 ? [] : [line.slice(at)];
