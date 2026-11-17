@@ -61,6 +61,63 @@ describe('validateUploadPath', () => {
     }
   });
 
+  it('allows a file under a folder whose name starts with two dots', () => {
+    // `..drafts` is an ordinary name, not a parent-dir step: the confinement
+    // check must compare path components, not a `..` string prefix.
+    const dir = join(root, '..drafts');
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, 'report.pdf');
+    writeFileSync(p, 'pdf');
+    try {
+      expect(validateUploadPath(p, root)).toBe(realpathSync(p));
+      expect(validateUploadPath(p, root, true)).toBe(realpathSync(p));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows a file under a folder named exactly ... (three dots)', () => {
+    const dir = join(root, '...');
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, 'note.txt');
+    writeFileSync(p, 'hi');
+    try {
+      expect(validateUploadPath(p, root)).toBe(realpathSync(p));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects the confinement root itself', () => {
+    expect(() => validateUploadPath(root, root)).toThrow(/within the working directory/i);
+  });
+
+  it('rejects a sibling directory that shares the root name as a prefix', () => {
+    const sibling = `${root}-sibling`;
+    mkdirSync(sibling, { recursive: true });
+    const p = join(sibling, 'x.txt');
+    writeFileSync(p, 'x');
+    try {
+      expect(() => validateUploadPath(p, root)).toThrow(/within the working directory/i);
+    } finally {
+      rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a ..-named folder reached through a parent-dir step', () => {
+    // `<root>/../..drafts-escape/x` leaves the root even though the folder
+    // name itself only starts with two dots.
+    const dir = join(root, '..', `..drafts-escape-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, 'x.txt');
+    writeFileSync(p, 'x');
+    try {
+      expect(() => validateUploadPath(p, root)).toThrow(/within the working directory/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects /etc/passwd (absolute path outside root)', () => {
     expect(() => validateUploadPath('/etc/passwd', root)).toThrow(OperationError);
   });

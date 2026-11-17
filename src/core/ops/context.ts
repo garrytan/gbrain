@@ -11,8 +11,9 @@
  */
 
 import { lstatSync, realpathSync } from 'fs';
-import { resolve, relative, sep } from 'path';
+import { resolve, sep } from 'path';
 import { OperationError, opError } from './contract.ts';
+import { resolvedPrefixContained } from '../path-confine.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, paramUse, readFix } from './op-fix.ts';
@@ -172,7 +173,7 @@ export function validateUploadPath(filePath: string, root: string, strict = true
 
   if (!strict) return real;
 
-  // Strict mode: confine to root via realpath + path.relative (catches parent-dir symlinks per B5).
+  // Strict mode: confine to root by realpath on both sides (catches parent-dir symlinks per B5).
   let realRoot: string;
   try {
     realRoot = realpathSync(root);
@@ -180,8 +181,10 @@ export function validateUploadPath(filePath: string, root: string, strict = true
     throw opError('invalid_params', `Confinement root not accessible: ${root}`,
       "The upload root (the server's working directory) is unreadable on the brain host; tell the user so its operator can fix that directory.");
   }
-  const rel = relative(realRoot, real);
-  if (rel === '' || rel.startsWith('..') || rel.startsWith(`..${sep}`) || resolve(realRoot, rel) !== real) {
+  // Separator-aware containment over the two realpaths: `..drafts/` is an ordinary
+  // folder name, while `../`, another drive and a sibling sharing the root's name
+  // prefix all escape. The root itself is never an uploadable file.
+  if (real === realRoot || !resolvedPrefixContained(real, realRoot, sep)) {
     throw opError('invalid_params', `Upload path must be within the working directory: ${filePath}`,
       "Copy the file under the server's working directory and pass that path; a symlinked parent that resolves outside it is refused too.");
   }
