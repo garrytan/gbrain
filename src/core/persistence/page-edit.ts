@@ -29,7 +29,7 @@ import type { StoredRegion } from '../page-body/segmenter.ts';
 import type { BodyReplacement, SplicePage } from '../page-body/splice.ts';
 import { spliceWork } from '../page-body/splice.ts';
 import { isSegmentedPage, withoutBody } from '../page-body/page-shape.ts';
-import { STAGE_BATCH_BYTES } from '../page-body/limits.ts';
+import { stageBatchBytes } from '../page-body/limits.ts';
 import { readEntryState } from '../page-body/entry-state.ts';
 import { hiddenBefore, openSegmentedBody, trustedSegments, type SegmentedBody } from '../page-body/read-range.ts';
 import { ledgerApplies, type BodyLedger } from '../page-body/segment-ledger.ts';
@@ -396,7 +396,7 @@ interface TextSource { sourceId: string; body?: SegmentedBody }
 async function* rowTexts(engine: BrainEngine, sourceId: string, rows: readonly ManifestRow[]): AsyncIterable<[ManifestRow, Uint8Array]> {
   for (let i = 0; i < rows.length;) {
     let j = i, bytes = 0;
-    while (j < rows.length && (j === i || bytes + rows[j]!.byteLen <= STAGE_BATCH_BYTES[engine.kind])) bytes += rows[j++]!.byteLen;
+    while (j < rows.length && (j === i || bytes + rows[j]!.byteLen <= stageBatchBytes(engine.kind))) bytes += rows[j++]!.byteLen;
     const batch = rows.slice(i, j);
     const texts = await engine.readSegmentTexts(sourceId, batch.map(row => row.sha256));
     for (const row of batch) {

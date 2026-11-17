@@ -2573,6 +2573,7 @@
     "embedding_unconfigured": 1,
     "embedding_width_mismatch": 1,
     "enforced_member_refused": 3,
+    "engine_capability_missing": 1,
     "engine_closed": 1,
     "engine_degraded": 1,
     "engine_embedding_mismatch": 1,
