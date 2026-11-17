@@ -45,6 +45,7 @@ import { syncGit } from '../persistence/sync-discovery.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import type { GhostOwner } from '../ghost-pages.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 export const ORIGIN_TWINS_INTENT = 'managed_maintenance_resolve_origin_twin';
 /** Groups one preview lists; a larger set is applied in rounds (preview, apply, preview again). */
@@ -363,7 +364,7 @@ async function applyOriginTwin(tx: BrainEngine, pair: OriginTwinPair, incarnatio
   const merged = await mergeTwinInto(tx, { sourceId: pair.source_id, incarnation, survivor: { page_id: pair.survivor.page_id, slug: pair.survivor.slug }, twin: { page_id: pair.twin.page_id, slug: pair.twin.slug } });
   return { status: 'origin_twin_resolved', ...base, links_moved: merged.links_moved.length, link_ids: merged.links_moved, facts_moved: merged.facts_moved.length,
     transitions_moved: merged.transitions_moved, tags_moved: merged.tags_moved, deduplicated: merged.deduplicated, dropped_frontmatter: dropped, restore_argv: restore,
-    restore_note: `${restore.join(' ')} brings back ${pair.twin.slug}'s own text as a database-only page within ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h; references moved to ${pair.survivor.slug} stay there. `
+    restore_note: `${commandText(restore)} brings back ${pair.twin.slug}'s own text as a database-only page within ${ORIGIN_TWINS_PURGE_FUSE_HOURS} h; references moved to ${pair.survivor.slug} stay there. `
       + `${pair.survivor.slug}'s frontmatter comes from ${pair.source_path}, so each key in dropped_frontmatter (the twin's value) is kept only in the twin's page version; `
       + 'its free-text aliases answer for the survivor until the file is next imported. Add any of them to the file to keep them.' };
 }

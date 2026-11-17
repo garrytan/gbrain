@@ -18,6 +18,7 @@ import { claimSourcesFix, readUnclaimedLegacySources } from '../../../core/trust
 import { TRUST_CLAIM_RESUME_COMMAND, claimedSourceSql, notConnectorSourceSql } from '../../../core/trust/claim-state.ts';
 import { relowerClaimedRows, TRUST_RELOWER_COMMAND, type TrustRelowerReport } from '../../../core/trust/backfill.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const VERIFY = { argv: ['gbrain', 'doctor', '--only', 'trust_sources_unclaimed', '--json'] };
 
@@ -32,7 +33,7 @@ async function runTrustSourcesUnclaimed(ctx: DoctorContext): Promise<Check[]> {
     let owned: Array<{ id: string; claimed: boolean }>;
     if (pending.length) {
       checks.push({ name: 'trust_sources_unclaimed', status: 'warn', details,
-        message: `A claim did not finish lifting ${pending.join(', ')}. Run ${TRUST_CLAIM_RESUME_COMMAND.join(' ')} on the brain host; it continues the confirmed claim and asks nothing.`,
+        message: `A claim did not finish lifting ${pending.join(', ')}. Run ${commandText(TRUST_CLAIM_RESUME_COMMAND)} on the brain host; it continues the confirmed claim and asks nothing.`,
         fix: { argv: [...TRUST_CLAIM_RESUME_COMMAND], consent: [], actor: 'agent', requires_exclusive: false, verify: VERIFY,
           why: 'Finishes the backfill of sources the owner already claimed, in resumable batches; nothing goes above "your notes".' } });
     } else if ((relower = await relowerClaimedRows(engine, { dryRun: true, sources: (owned = await engine.executeRaw<{ id: string; claimed: boolean }>(

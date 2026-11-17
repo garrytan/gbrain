@@ -822,7 +822,7 @@
       "exitCode": 2,
       "stderr": [
         "Error [unknown_flag]: unknown flag --definitely-not-a-flag for 'foresights lint'",
-        "Fix: gbrain lint --help",
+        "Fix: foresights lint --help",
         "Docs: https://github.com/aimonk2025/gbrain/blob/master/docs/guides/error-codes.md#unknown_flag"
       ],
       "stdout": []

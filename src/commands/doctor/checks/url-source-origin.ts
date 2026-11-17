@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
+import { commandText } from '../../../core/brand.ts';
 
 /**
  * Active URL sources in the default clone directory with no record of who added them (`url-source-origin.ts`).
@@ -16,7 +17,7 @@ export async function urlSourceOriginCheck(engine: BrainEngine): Promise<Check> 
     if (!sources.length) return { name: 'url_source_origin', status: 'ok', message: 'Every URL source clone records who added it, or was cloned where only the local CLI can clone.', details };
     return { name: 'url_source_origin', status: 'warn', details,
       message: `${sources.length} URL source(s) have no record of who added them: ${ids.join(', ')}. foresights cannot tell whether a remote caller or the local operator added each one, `
-        + `so their reclones use the clone settings of a local add. Ask the user which ones a remote caller added, preview with ${recordOriginArgv(['<id>...'], 'remote').join(' ')} `
+        + `so their reclones use the clone settings of a local add. Ask the user which ones a remote caller added, preview with ${commandText(recordOriginArgv(['<id>...'], 'remote'))} `
         + '(or --local for the rest), then add --apply.',
       fix: { ask_user: true, argv: recordOriginArgv(ids, 'remote'), consent: [], actor: 'agent', requires_exclusive: false, docs: RECORD_ORIGIN_DOCS, verify: doctorVerify('url_source_origin'),
         why: 'Previews recording these sources as added by a remote caller and changes nothing; drop the ids the user says were added locally and record those with --local.',

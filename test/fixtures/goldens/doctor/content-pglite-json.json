@@ -290,7 +290,7 @@
               "--yes",
               "--no-autopilot-install"
             ],
-            "command": "gbrain apply-migrations --yes --no-autopilot-install",
+            "command": "foresights apply-migrations --yes --no-autopilot-install",
             "consent": [],
             "next": "run",
             "requires_exclusive": true,
@@ -785,7 +785,7 @@
               "--path",
               "<home>/.gbrain/brain.pglite"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
             "consent": [
               "credentials",
               "paid"
@@ -1384,7 +1384,7 @@
               "--path",
               "<home>/.gbrain/brain.pglite"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
             "consent": [
               "credentials",
               "paid"
@@ -1434,7 +1434,7 @@
               "--path",
               "<home>/.gbrain/brain.pglite"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
             "consent": [
               "credentials",
               "paid"
@@ -1548,7 +1548,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain doctor --remediation-plan --json --brain host",
+            "command": "foresights doctor --remediation-plan --json --brain host",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -2452,7 +2452,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain repair frontmatter --source notes --brain host",
+            "command": "foresights repair frontmatter --source notes --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
             "next": "run",
@@ -2511,7 +2511,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain repair frontmatter --source notes --brain host",
+            "command": "foresights repair frontmatter --source notes --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
             "next": "run",
@@ -2909,7 +2909,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain sync --source notes --no-pull --brain host",
+            "command": "foresights sync --source notes --no-pull --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
             "next": "run",
@@ -2927,7 +2927,7 @@
             },
             "why": "No successful sync of notes is recorded; this runs one and stamps last_sync_at when it succeeds."
           },
-          "message": "Source 'notes': no successful sync recorded; no attempt recorded; run `gbrain sync --source notes --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
+          "message": "Source 'notes': no successful sync recorded; no attempt recorded; run `foresights sync --source notes --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
           "name": "sync_freshness",
           "status": "fail"
         },
@@ -2975,7 +2975,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
+            "command": "foresights export --source default --dir '<BACKUP_DIR>/default' --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/operations/backup-check.md",
             "inputs": [
@@ -3417,7 +3417,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain config set auto_chronicle true --brain host",
+            "command": "foresights config set auto_chronicle true --brain host",
             "consent": [
               "paid",
               "egress"
@@ -3438,7 +3438,7 @@
             },
             "why": "Keeping automatic extraction records that the user accepted one paid chat call per eligible page; page text goes to the chat provider."
           },
-          "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `gbrain config set auto_chronicle true` to keep it or `gbrain config set auto_chronicle false` to opt out.",
+          "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `foresights config set auto_chronicle true` to keep it or `foresights config set auto_chronicle false` to opt out.",
           "name": "auto_chronicle_default_on",
           "readiness_state": "ok",
           "severity": "info",
@@ -3562,7 +3562,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain beliefs enable --source default --brain host",
+            "command": "foresights beliefs enable --source default --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check",
             "next": "ask_user",
@@ -4015,7 +4015,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain sources retry-held default --unindexed --brain host",
+            "command": "foresights sources retry-held default --unindexed --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
             "next": "run",
@@ -4031,7 +4031,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sync --source default --no-pull --brain host",
+              "command": "foresights sync --source default --no-pull --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
               "next": "run",
@@ -4210,7 +4210,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
+            "command": "foresights config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
             "consent": [
               "destructive"
             ],
@@ -4611,7 +4611,7 @@
               "--path",
               "<home>/.gbrain/brain.pglite"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "foresights init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
             "consent": [
               "credentials",
               "paid"
@@ -4673,7 +4673,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain config set takes.bootstrap_enabled true --brain host",
+            "command": "foresights config set takes.bootstrap_enabled true --brain host",
             "consent": [
               "paid"
             ],
@@ -4742,7 +4742,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain sync --source notes --no-pull --brain host",
+            "command": "foresights sync --source notes --no-pull --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#sync-freshness-no-successful-sync",
             "next": "run",
@@ -4760,7 +4760,7 @@
             },
             "why": "No successful sync of notes is recorded; this runs one and stamps last_sync_at when it succeeds."
           },
-          "fix": "Source 'notes': no successful sync recorded; no attempt recorded; run `gbrain sync --source notes --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
+          "fix": "Source 'notes': no successful sync recorded; no attempt recorded; run `foresights sync --source notes --no-pull`. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
           "name": "sync_freshness",
           "status": "fail",
           "tier": "root"
@@ -4776,7 +4776,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain doctor --remediation-plan --json --brain host",
+            "command": "foresights doctor --remediation-plan --json --brain host",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -4810,7 +4810,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain repair frontmatter --source notes --brain host",
+            "command": "foresights repair frontmatter --source notes --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
             "next": "run",
@@ -4845,7 +4845,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain repair frontmatter --source notes --brain host",
+            "command": "foresights repair frontmatter --source notes --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#frontmatter",
             "next": "run",

@@ -17,6 +17,7 @@ import { writeCliError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { loadConfig, saveConfig } from '../core/config.ts';
 import { CLEAR_NEVER_INSTALLED_APPLY, findNeverInstalledFailures } from '../core/self-upgrade-recovery.ts';
+import { commandText } from '../core/brand.ts';
 
 /**
  * `foresights self-upgrade --clear-never-installed [--apply] [--json]` (#6828).
@@ -63,7 +64,7 @@ function runClearNeverInstalled(apply: boolean, json: boolean): void {
   }
   if (kept.length > 0) console.log(`Kept (not proven never installed): ${kept.join(', ')}`);
   if (applied) console.log('The auto channel installs them once they are published on its release channel.');
-  else console.log(`Clear them: ${CLEAR_NEVER_INSTALLED_APPLY.join(' ')}`);
+  else console.log(`Clear them: ${commandText(CLEAR_NEVER_INSTALLED_APPLY)}`);
 }
 
 /**

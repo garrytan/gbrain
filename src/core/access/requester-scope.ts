@@ -216,7 +216,7 @@ export async function assertCredentialScoped(engine: Pick<BrainEngine, 'executeR
   const create = kind === 'token' ? ['gbrain', 'auth', 'create', name] : ['gbrain', 'auth', 'register-client', name];
   throw opError('credential_scope_required',
     `This brain serves several people (${why(serves)}), so the ${kind === 'token' ? 'token' : 'OAuth client'} ${name} was not created bound to nobody; nothing was created.`,
-    `Bind it to the person it serves: ${create.join(' ')} --member followed by that member's id (foresights access member list names the members). A shared agent passes --may-act-for <members>; --reads-unscoped --yes creates one that reads every page no rule restricts for any asker.`,
+    `Bind it to the person it serves: ${commandText(create)} --member followed by that member's id (foresights access member list names the members). A shared agent passes --may-act-for <members>; --reads-unscoped --yes creates one that reads every page no rule restricts for any asker.`,
     { fix: { argv: [...create, '--member', '<MEMBER>'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Creates the credential bound to one member, so it reads only what that person may read.',
       inputs: [{ name: 'MEMBER', how: 'The member it serves; foresights access member list names them. Ask the user which person it is.' }],
       verify: { argv: ['gbrain', 'access', 'member', 'list', '--json'] } } });

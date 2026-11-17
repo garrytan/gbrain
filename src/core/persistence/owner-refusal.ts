@@ -151,7 +151,7 @@ export function ownerRefusal(input: OwnerRefusalInput): OwnerRefusal {
       if (minutes === null || minutes < TRANSFER_STALE_MINUTES) return { reason, retryable: true, message: `Source ${sourceId}'s worktree is draining for a writer transfer, so ${work} waits.`,
         why: `A writer transfer of source ${sourceId} is prepared and its worktree is in state draining; until the transfer is accepted or cancelled no host may publish to it. ${never}`,
         fix: wait(`Source ${sourceId}'s worktree is draining for a writer transfer (foresights sources writer transfer prepare was run); the status read shows its state. `
-          + `If no successor will accept it, the owner host ends it with ${cancel.join(' ')} (preview with --dry-run).`) };
+          + `If no successor will accept it, the owner host ends it with ${commandText(cancel)} (preview with --dry-run).`) };
       const accept = `foresights sources writer transfer accept ${sourceId} --path <successor root> --expected-epoch ${epoch} --manifest <manifest digest printed by prepare> --admin-intent writer_transfer_accept --expected-state <admin_state>`;
       const apply = [...cancel, '--admin-intent', 'writer_transfer_cancel', '--expected-state', '<admin_state>'];
       return { reason, retryable: false, message: `Source ${sourceId}'s worktree has been draining for a writer transfer for ${minutes} minutes, so ${work} did not run.`,

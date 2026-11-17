@@ -48,6 +48,7 @@ import { readUncommittedFenceRepairs } from '../../../core/fence-repair/uncommit
 import { STRUCTURED_WRITE_ADVICE } from '../../../core/fence-repair/report.ts';
 import { fencePreviewArgv, readFenceAutoRepair, type FenceAutoRepair } from '../../../core/fence-repair/hold-fix.ts';
 import { dailyLedger, FENCE_REPAIR_LEDGER } from '../../../core/budget/daily-ledger.ts';
+import { commandText } from '../../../core/brand.ts';
 
 /**
  * A source whose writers made Tier 1 normalize this many pages or files in
@@ -204,7 +205,7 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
     const manual = waiting.reduce((sum, c) => sum + c.by_tier.manual, 0);
     sentences.push(`${total} malformed facts or takes fence(s) wait: ${waiting.map(c => sourceLine(c, at)).join('; ')}. `
       + `${manual < total ? `The ${auto.llm ? 'deterministic, resolver and model-tier' : 'deterministic and resolver'} ones are ${automaticRepair(auto)}` : 'All of them need a manual edit'}`
-      + `${manual && manual < total ? `; ${manual} need the manual edit the preview names` : ''}. None of them blocks a sync. Preview: ${waiting.map(c => fencePreviewArgv(c.source_id).join(' ')).join('; ')}.`);
+      + `${manual && manual < total ? `; ${manual} need the manual edit the preview names` : ''}. None of them blocks a sync. Preview: ${waiting.map(c => commandText(fencePreviewArgv(c.source_id))).join('; ')}.`);
     const llm = waiting.reduce((sum, c) => sum + c.by_tier.llm, 0);
     if (llm) sentences.push(modelRepairSentence(caps, today, auto, llm));
   }

@@ -58,7 +58,7 @@ export function validateSchemaPackTrustGate(
     throw new SchemaPackTrustGateError(
       'per-call schema_pack opt is rejected for remote/MCP callers. ' +
       'Pass via gbrain.yml `schema:` section, ~/.gbrain/config.json `schema_pack`, ' +
-      'GBRAIN_SCHEMA_PACK env var, or `gbrain config set schema_pack <name>`. ' +
+      'GBRAIN_SCHEMA_PACK env var, or `foresights config set schema_pack <name>`. ' +
       'CLI callers (ctx.remote === false) can pass per-call.',
     );
   }

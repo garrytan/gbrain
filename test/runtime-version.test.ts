@@ -107,7 +107,7 @@ describe('CLI entrypoint gate', () => {
     expect(exitCode).toBe(1);
     expect(stderr).toEqual([OLD_BUN_REFUSAL]);
     expect(stdout).toHaveLength(1);
-    expect(stdout[0]).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z \[autopilot\] GBrain requires Bun 1\.4\.4 or newer \(found Bun 1\.3\.14\)\./);
+    expect(stdout[0]).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z \[autopilot\] Foresights requires Bun 1\.4\.4 or newer \(found Bun 1\.3\.14\)\./);
   });
 
   test('a supported Bun passes through silently', () => {

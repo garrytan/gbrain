@@ -104,5 +104,5 @@ export function budgetRows(brain: HeldBrain): Promise<BudgetRow[]> {
 /** A printed command's argv, without the leading `gbrain`. */
 export function argvOf(command: string): string[] {
   const argv = command.trim().split(/\s+/);
-  return argv[0] === 'gbrain' ? argv.slice(1) : argv;
+  return (argv[0] === 'gbrain' || argv[0] === 'foresights') ? argv.slice(1) : argv;
 }

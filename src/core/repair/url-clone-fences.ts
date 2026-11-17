@@ -52,6 +52,7 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { resolveSlugForPath } from '../sync.ts';
 import { isOwnedClone, trackedChanges, urlCloneReadOnly, urlCloneRepairPreviewArgv } from '../url-clone.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
+import { commandText } from '../brand.ts';
 
 const DOCS = 'docs/guides/repair.md#url-clone-fences';
 /** preview-approval's command union predates this kind; the store keys on the string alone. */
@@ -66,7 +67,7 @@ interface ClonedFile { source_id: string; incarnation: string; root: string; pat
 type FileItem = RepairItem & { file: ClonedFile; hash?: string; last?: boolean };
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
-const preview = (sourceId: string | undefined) => sourceId ? urlCloneRepairPreviewArgv(sourceId).join(' ') : 'foresights repair url-clone-fences';
+const preview = (sourceId: string | undefined) => sourceId ? commandText(urlCloneRepairPreviewArgv(sourceId)) : 'foresights repair url-clone-fences';
 
 function git(root: string, args: string[]): string {
   return execFileSync('git', ['-C', root, ...args], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }) as string;

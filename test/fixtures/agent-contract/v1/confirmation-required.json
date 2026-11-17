@@ -3,7 +3,7 @@
   "error": "confirmation_required",
   "code": "confirmation_required",
   "message": "doctor --remediate needs the user's approval before it runs; nothing was changed.",
-  "suggestion": "Ask the user: Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed? If they agree, run: gbrain doctor --remediate --max-usd 0.60 --yes --brain host",
+  "suggestion": "Ask the user: Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed? If they agree, run: foresights doctor --remediate --max-usd 0.60 --yes --brain host",
   "effects": [
     "paid"
   ],
@@ -23,7 +23,7 @@
       "--brain",
       "host"
     ],
-    "command": "gbrain doctor --remediate --max-usd 0.60 --yes --brain host",
+    "command": "foresights doctor --remediate --max-usd 0.60 --yes --brain host",
     "consent": [
       "paid"
     ],
@@ -49,7 +49,7 @@
       "--brain",
       "host"
     ],
-    "command": "gbrain doctor --remediation-plan --json --brain host"
+    "command": "foresights doctor --remediation-plan --json --brain host"
   },
   "preapprove_argv": [
     "gbrain",

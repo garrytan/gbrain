@@ -71,7 +71,7 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
       if (record.harness === 'claude-code') {
         const receipt = readSetupReceipt(record.path).setup;
         if (!receipt) continue;
-        rerun = setupRerunArgv('claude-code', receipt).join(' ');
+        rerun = commandText(setupRerunArgv('claude-code', receipt));
         const paths = claudeSetupPaths({ name: receipt.name, scope: receipt.scope, projectDir: receipt.project_dir });
         const owned = new Set([...Object.values(receipt.hooks.owned), ...Object.values(receipt.hooks.pending)]);
         const ours = claudeHookEntries(paths.settingsPath).filter((e) => e[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || owned.has(hookEntryHash(e) ?? '')).map((e) => e.command as string);
@@ -97,7 +97,7 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
       } else if (record.harness === 'codex') {
         const receipt = readCodexSetupReceipt(record.path).setup;
         if (!receipt) continue;
-        rerun = setupRerunArgv('codex', receipt).join(' ');
+        rerun = commandText(setupRerunArgv('codex', receipt));
         const paths = codexSetupPaths(receipt.name);
         const hooks = codexHookCensus(paths.hooksPath).some((g) => g.lane === 'setup' && g.commands.some(needsLauncher));
         const mcp = !receipt.mcp_plugin && launcherLaneFindings().some((f) => f.harness === 'codex' && f.lane === 'mcp' && f.owner === 'setup' && f.detail.startsWith(`[mcp_servers.${receipt.name}]`));

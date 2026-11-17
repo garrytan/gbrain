@@ -218,7 +218,7 @@ describe('eval longmemeval --call-plan', () => {
     const out = join(tmp, 'a b', "it's.jsonl");
     const args = ['--limit', '2', '--output', out, '--search-pin', 'search.metadata_boost_gate=lexical', '--keyword-only'];
     const p = await plan(args);
-    expect(shellWords(p.parsed.gate)).toEqual(['gbrain', 'eval', 'longmemeval', FIXTURE, ...args]);
+    expect(shellWords(p.parsed.gate)).toEqual(['foresights', 'eval', 'longmemeval', FIXTURE, ...args]);
     expect(p.parsed.gate).toContain('--limit 2 --output ');
     expect(gateCommand([FIXTURE, '--call-plan=x.calls', '--call-plan-gate', 'y', '--limit', '1'])).toBe(`foresights eval longmemeval ${shellQuote(FIXTURE)} --limit 1`);
     expect(shellQuote('')).toBe("''");

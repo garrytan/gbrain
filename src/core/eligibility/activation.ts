@@ -21,6 +21,7 @@ import { admitsTrust, minTrust, storedTrustTier, type TrustTier } from '../trust
 import { guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
 import { activationSuppressedSql, type EligibilityTable } from './sql.ts';
 import type { ReadEligibility } from './policy.ts';
+import { commandText } from '../brand.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -116,7 +117,7 @@ export function activationSuppressionNotice(withheld: number, surface: string): 
 /** The wire form proactive results carry alongside their text (DX-10). */
 export interface SuppressionSummary { withheld: number; review: string }
 export function suppressionSummary(withheld: number): SuppressionSummary | undefined {
-  return withheld > 0 ? { withheld, review: TRUST_REVIEW_COMMAND.join(' ') } : undefined;
+  return withheld > 0 ? { withheld, review: commandText(TRUST_REVIEW_COMMAND) } : undefined;
 }
 
 export interface PageKey { source_id: string; slug: string }

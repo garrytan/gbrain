@@ -60,6 +60,7 @@ import {
   readConnectorState,
   writeConnectorState,
 } from './config-keys.ts';
+import { commandText } from '../brand.ts';
 
 export const CONNECTOR_SYNC_VERSION = 1;
 export { QUARANTINE_ATTEMPTS };
@@ -541,7 +542,7 @@ function unresolvedHint(base: ConnectorSyncResult, provider: ConnectorProviderNa
       `(\`foresights connectors status ${provider} --json\` lists them).` +
       (base.held.length
         ? ` ${base.held.length} recorded before their organization was tracked need one full re-sync, which ` +
-          `re-downloads the whole history: ask the user, then run \`${fullSyncArgv(provider, sourceId).join(' ')}\`.`
+          `re-downloads the whole history: ask the user, then run \`${commandText(fullSyncArgv(provider, sourceId))}\`.`
         : ''));
   }
   if (base.pending.length) {

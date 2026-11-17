@@ -36,9 +36,9 @@ describe('autopilot self-upgrade static-shape regressions', () => {
     expect(AUTOPILOT_SRC).not.toMatch(/execvp\s*\(/);
   });
   test('the silent channel does swap-only, never a blocking full post-upgrade in the tick', () => {
-    expect(AUTOPILOT_SRC).toContain("execSync('foresights upgrade --swap-only'");
+    expect(AUTOPILOT_SRC).toContain("execSync('gbrain upgrade --swap-only'");
     // The tick must not invoke the (up-to-30-min) post-upgrade inline.
-    expect(AUTOPILOT_SRC).not.toContain("execSync('foresights post-upgrade'");
+    expect(AUTOPILOT_SRC).not.toContain("execSync('gbrain post-upgrade'");
   });
   test('boot reconciles the breadcrumb and the tick attempts the channel', () => {
     expect(AUTOPILOT_SRC).toContain('reconcileSelfUpgradeAtBoot()');

@@ -38,7 +38,7 @@ export function migrationTimeoutAdvice(record: MigrationTimeoutRecord, verify: {
       message: `${which} ran out of its statement budget while idle-in-transaction session(s) ${pids} were open; they may hold locks on its table. Check them with foresights doctor --locks, end the ones still open once the user agrees, then run foresights apply-migrations --yes.`,
       fix: { ask_user: true, argv: rerun, consent: [], actor: 'agent', requires_exclusive: false, verify,
         why: `Session(s) ${pids} were idle in a transaction for over five minutes when v${record.version} timed out; a session holding a lock on its table would make the work wait. They were sampled then and may be gone or unrelated now.`,
-        user_message: `Migration v${record.version} timed out while database session(s) ${pids} were idle in an open transaction. Run gbrain doctor --locks to see whether they are still open. With your agreement, end the ones that are on the database host (SELECT pg_terminate_backend(<pid>)), then run gbrain apply-migrations --yes. Go ahead?` },
+        user_message: `Migration v${record.version} timed out while database session(s) ${pids} were idle in an open transaction. Run foresights doctor --locks to see whether they are still open. With your agreement, end the ones that are on the database host (SELECT pg_terminate_backend(<pid>)), then run gbrain apply-migrations --yes. Go ahead?` },
     };
   }
   return {

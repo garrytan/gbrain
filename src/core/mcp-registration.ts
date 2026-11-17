@@ -272,7 +272,7 @@ export function openclawThinClientBlock(opts: {
   gbrainHome?: string;
 }): string {
   const home = opts.gbrainHome ? `GBRAIN_HOME=${shellQuote(opts.gbrainHome)}` : '';
-  const init = (home ? `${home} ` : '') + cmdString('gbrain', [
+  const init = (home ? `${home} ` : '') + cmdString('foresights', [
     'init',
     '--mcp-only',
     '--issuer-url', opts.issuerUrl,

@@ -24,6 +24,7 @@ import { promptTypedConfirmation } from '../core/trust/confirm.ts';
 import { TRUST_TIERS, trustLabel } from '../core/trust/tier.ts';
 import { relowerClaimedRows, TRUST_RELOWER_COMMAND, type TierCounts } from '../core/trust/backfill.ts';
 import { reportTrustCliError } from './trust.ts';
+import { commandText } from '../core/brand.ts';
 
 export const TRUST_CLAIM_USAGE = [
   'Usage: foresights trust claim-sources [--dry-run] [--source <id>]... [--resume] [--batch-size N] [--json]',
@@ -89,7 +90,7 @@ export async function runTrustClaimSources(engine: BrainEngine, args: string[], 
           : `Lowered ${report.rows} row(s) a claim lifted above what they say they are:`,
         ...report.tables.filter(t => t.rows > 0).map(t => `  ${t.table}: ${mix(t.to)}`),
         ...report.sample.map(r => `  ${r.source_id}/${r.slug}: ${trustLabel(r.from)} -> ${trustLabel(r.to)}`),
-        ...(dryRun ? [`Apply with: ${TRUST_RELOWER_COMMAND.join(' ')}${named.map(id => ` --source ${id}`).join('')}`] : []),
+        ...(dryRun ? [`Apply with: ${commandText(TRUST_RELOWER_COMMAND)}${named.map(id => ` --source ${id}`).join('')}`] : []),
       ].join('\n'));
       return;
     }

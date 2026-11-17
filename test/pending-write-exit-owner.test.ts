@@ -81,7 +81,7 @@ describe('paused writers and the CLI exit contract', () => {
           expect(JSON.parse(pending.stdout).write_request).toMatchObject({ request_id: id });
           // #6255: the poll command is the envelope's receipt fix, pinned to the brain it ran against.
           expect(pending.stderr).toContain(`Poll: foresights write-request --brain host -- ${id}`);
-          expect(JSON.parse(pending.stdout).poll_command).toBe(JSON.parse(pending.stdout).fix.argv.join(' '));
+          expect(JSON.parse(pending.stdout).poll_command).toBe(JSON.parse(pending.stdout).fix.argv.join(' ').replace(/^gbrain /, 'foresights '));
           const accepted = await cli(['call', 'put_page', JSON.stringify({ slug: 'notes/paused', content: page('Paused body.'), request_id: id }),
             '--wait', '0', '--accept-pending']);
           expect({ code: accepted.code, stderr: accepted.stderr }).toMatchObject({ code: 0 });

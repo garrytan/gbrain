@@ -38,6 +38,7 @@ import { ghostPageNamed, ghostPageNow, scanGhostSource, sourceContext, type Ghos
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import { ghostScanRefusal, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT } from './ghost-pages.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 export const MOVED_PAGES_INTENT = 'managed_maintenance_fold_moved_page';
 export const MOVED_PAGES_PURGE_FUSE_HOURS = GHOST_PURGE_FUSE_HOURS;
@@ -204,7 +205,7 @@ async function applyFold(tx: BrainEngine, pair: MovedPair, incarnation: string):
   return { status: 'moved_page_folded', source_id: pair.source_id, old_slug: pair.old.slug, old_path: pair.old.path, survivor_slug: pair.survivor.slug, survivor_path: pair.survivor.path,
     move_commit: pair.move_commit, old_blob: pair.old_blob, evidence: pair.evidence, links_moved: merged.links_moved.length, link_ids: merged.links_moved, facts_moved: merged.facts_moved.length,
     transitions_moved: merged.transitions_moved, tags_moved: merged.tags_moved, versions_moved: versions.length, deduplicated: merged.deduplicated, hold_cleared: holdCleared, restore_argv: restore,
-    restore_note: `${restore.join(' ')} brings back ${pair.old.slug}'s own text as a database-only page within ${MOVED_PAGES_PURGE_FUSE_HOURS} h; references and versions moved to ${pair.survivor.slug} stay there.` };
+    restore_note: `${commandText(restore)} brings back ${pair.old.slug}'s own text as a database-only page within ${MOVED_PAGES_PURGE_FUSE_HOURS} h; references and versions moved to ${pair.survivor.slug} stay there.` };
 }
 
 /** Folds one pair; a managed brain submits it under `requestId()`. Returns the receipt fields on success. */

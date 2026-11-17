@@ -440,7 +440,7 @@ function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface
     : ' It also writes foresights\'s brain-first instruction block, and records hooks as off (--no-hooks), so foresights\'s per-turn hooks (setup\'s and the plugin\'s) stay off until setup runs again without it. No tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
-    why: `Registers foresights as a stdio MCP server (${serve.join(' ')}, ${advertise ? `listing ${SURFACE_GLOSS[advertise]} and request_tools; ${SURFACE_GLOSS[surface]} stays callable` : SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
+    why: `Registers foresights as a stdio MCP server (${commandText(serve)}, ${advertise ? `listing ${SURFACE_GLOSS[advertise]} and request_tools; ${SURFACE_GLOSS[surface]} stays callable` : SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
     user_message: `I'd like to add foresights's memory tools to ${HARNESS_LABEL[h]} by writing one MCP server entry to ${HARNESS_DESTINATION[h]}. OK?`,
     verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
   };
@@ -483,7 +483,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: MEMORY_VERBS_INSTALL,
-        why: `For Claude Code or Codex, run \`foresights setup claude-code\` or \`foresights setup codex\` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register \`${stdioServeArgv('<absolute path to foresights>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
+        why: `For Claude Code or Codex, run \`foresights setup claude-code\` or \`foresights setup codex\` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register \`${commandText(stdioServeArgv('<absolute path to foresights>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })))}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
         user_message: 'Which agent app should get foresights memory? The install guide has a one-line command for each.' } };
   }
   if (lockOwner?.transport === 'http') {

@@ -36,7 +36,7 @@ export function staleDrainFailures(drained: { linkFailed?: number; linkFailures?
   const first = drained.linkFailures?.[0];
   const notes = [
     ...(first ? [`${drained.linkFailed} page(s) failed link extraction (first: ${first.source_id}:${first.slug}, ${first.code}${first.held ? ', held' : ''}; fix: ${commandText(first.fix.argv!)})`] : []),
-    ...systemic.map(s => `source ${s.source_id} stopped (${s.code}, most often ${s.reason}; fix the shared cause, then run ${s.fix?.argv?.join(' ')})`),
+    ...systemic.map(s => `source ${s.source_id} stopped (${s.code}, most often ${s.reason}; fix the shared cause, then run ${(s.fix?.argv ? commandText(s.fix?.argv) : undefined)})`),
   ];
   return { details: { stale_drain_failed: failed, ...(drained.linkFailed ? { stale_drain_failed_total: drained.linkFailed } : {}),
     ...(systemic.length ? { stale_drain_systemic: systemic.map(s => ({ source_id: s.source_id, code: s.code, reason: s.reason })) } : {}) }, note: `; ${notes.join('; ')}` };

@@ -56,8 +56,10 @@ describe('printed fence config commands', () => {
 
   test('the migration note and the behavior-change rows print every opt-out', () => {
     for (const optOut of OPT_OUTS) {
-      expect(docTexts[MIGRATION_NOTE]).toContain(optOut);
-      expect(notices.some(text => text.includes(optOut))).toBe(true);
+      // The migration note is historical and spells the command it shipped with (gbrain); either name runs it.
+      const spellings = [optOut, optOut.replace(/^foresights /, 'gbrain ')];
+      expect(spellings.some(s => docTexts[MIGRATION_NOTE]!.includes(s))).toBe(true);
+      expect(notices.some(text => spellings.some(s => text.includes(s)))).toBe(true);
     }
   });
 });

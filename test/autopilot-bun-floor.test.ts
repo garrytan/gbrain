@@ -158,7 +158,7 @@ describe('autopilot self-upgrade Bun floor gate (#5855)', () => {
     const h = harness('link-met');
     const r = await tick(h, bunLinkInstall(h, '>=1.4.0'), { FAKE_BUN_VERSION: Bun.version });
     expect(r.out).toContain('EXIT_CALLED 0');
-    expect(r.swaps).toEqual(['foresights upgrade --swap-only']);
+    expect(r.swaps).toEqual(['gbrain upgrade --swap-only']);
     expect(r.su.attempting_version).toBe(TARGET);
   }, 60_000);
 
@@ -179,7 +179,7 @@ describe('autopilot self-upgrade Bun floor gate (#5855)', () => {
     const { driver, bunInstall } = packageInstall(h);
     const env = { FAKE_BUN_VERSION: Bun.version, BUN_INSTALL: bunInstall, FAKE_PACKAGE_BODY: JSON.stringify({ version: TARGET, engines: { bun: '>=1.4.0' } }) };
     const held = await tick(h, driver, { ...env, FAKE_GBRAIN_EXIT: '78' });
-    expect(held.swaps).toEqual(['foresights upgrade --swap-only']);
+    expect(held.swaps).toEqual(['gbrain upgrade --swap-only']);
     expect(held.su.attempting_version).toBeUndefined();
     expect(held.su.failed_versions ?? []).toEqual([]);
     expect(held.audit.at(-1)).toMatchObject({ action: 'unsupported_runtime', outcome: 'skipped', latest: TARGET });

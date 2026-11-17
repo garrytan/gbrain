@@ -157,7 +157,7 @@ const statusFix = (sourceId: string) => readFix(`Shows source ${sourceId}'s cano
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 export const stuckRecoveryPreviewArgv = (sourceIds: string[], requestId?: string) =>
   ['gbrain', 'repair', 'stuck-recovery', ...(sourceIds.length === 1 ? ['--source', sourceIds[0]!] : []), ...(requestId ? ['--request-id', requestId] : [])];
-export const stuckRecoveryPreviewCommand = (sourceIds: string[], requestId?: string) => stuckRecoveryPreviewArgv(sourceIds, requestId).join(' ');
+export const stuckRecoveryPreviewCommand = (sourceIds: string[], requestId?: string) => commandText(stuckRecoveryPreviewArgv(sourceIds, requestId));
 const backupRoot = () => gbrainPath('backups', 'stuck-recovery');
 const fileMode = (mode: number) => mode & 0o777;
 

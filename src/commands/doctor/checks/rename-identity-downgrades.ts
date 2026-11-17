@@ -32,7 +32,7 @@ async function runRenameIdentityDowngrades(ctx: DoctorContext): Promise<Check[]>
     }
     const first = sampled[0]!;
     const unrestorable = [...new Set(open.filter(record => record.restore_available === false).map(record => record.source_id))];
-    const restore = first.restore_available === false ? null : identityRestoreArgv(first).join(' ');
+    const restore = first.restore_available === false ? null : commandText(identityRestoreArgv(first));
     const carry = first.remedy.disposition === 'carry';
     const route = carry
       ? `To carry an old page's identity onto its new page, preview ${commandText(first.remedy.preview_argv)} and, after the user agrees, apply it. `
@@ -42,7 +42,7 @@ async function runRenameIdentityDowngrades(ctx: DoctorContext): Promise<Check[]>
     checks.push({ name: 'rename_identity_downgrades', status: 'warn', details: { ...details, restore_unavailable_sources: unrestorable },
       message: `${open.length} rename(s) did not keep their page identity, so each old page's facts, links and aliases stay on its soft-deleted slug, held from the purge until the pair is settled `
         + `(e.g. ${samples.map(record => `${record.source_id}:${record.from} -> ${record.to}, ${record.facts} fact(s) and ${record.links} link(s) on ${record.old_slug}`).join('; ')}; `
-        + `first: ${identityDowngradeReasonText(first.reason)}). ${identityStatusArgv(first.source_id).join(' ')} lists every pair with its remedy. ${route}`
+        + `first: ${identityDowngradeReasonText(first.reason)}). ${commandText(identityStatusArgv(first.source_id))} lists every pair with its remedy. ${route}`
         + (restore ? `To keep the old page as its own page instead: ${restore}. ` : '')
         + (unrestorable.length ? `A restore is not offered on ${unrestorable.join(', ')} (an unbound Postgres source refuses page writes outside its checkout). ` : '')
         + `The purge holds each old page until ${first.remedy.hold_releases}.`,

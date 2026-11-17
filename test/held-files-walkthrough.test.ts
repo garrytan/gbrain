@@ -60,7 +60,7 @@ afterAll(async () => {
 });
 
 function run(argv: string[]): { out: string; status: number | null } {
-  const [cmd, ...args] = argv[0] === 'gbrain' ? [process.execPath, '--no-env-file', join(REPO, 'src', 'cli.ts'), ...argv.slice(1)] : argv;
+  const [cmd, ...args] = (argv[0] === 'gbrain' || argv[0] === 'foresights') ? [process.execPath, '--no-env-file', join(REPO, 'src', 'cli.ts'), ...argv.slice(1)] : argv;
   const result = spawnSync(cmd!, args, { cwd: REPO, env, encoding: 'utf8', timeout: 120_000 });
   return { out: `${result.stdout ?? ''}${result.stderr ?? ''}`, status: result.status };
 }

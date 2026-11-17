@@ -21,6 +21,7 @@ import {
   sourceIdKey,
 } from '../../core/connectors/config-keys.ts';
 import { fullSyncArgv, readFailedLedger } from '../../core/connectors/failed-ledger.ts';
+import { commandText } from '../../core/brand.ts';
 
 export async function runConnectorStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
@@ -88,7 +89,7 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
     const needsFull = r.unresolved.filter((u) => u.needs_full_sync).length;
     console.log(
       `  ⚠ archive incomplete: ${r.unresolved.length} conversation(s) not archived yet; sync retries them automatically` +
-        (needsFull ? `; ${needsFull} need one full re-sync (re-downloads the whole history; ask first): ${fullSyncArgv(r.provider, r.source_id).join(' ')}` : ''),
+        (needsFull ? `; ${needsFull} need one full re-sync (re-downloads the whole history; ask first): ${commandText(fullSyncArgv(r.provider, r.source_id))}` : ''),
     );
   }
 }

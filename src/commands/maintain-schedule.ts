@@ -34,6 +34,7 @@ import { opError } from '../core/ops/contract.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
 import { getCliOptions } from '../core/cli-options.ts';
+import { commandText } from '../core/brand.ts';
 
 export const SCHEDULE_INTERVAL_HOURS = 6;
 /** What the job runs: one unattended upkeep run, recorded with runner `schedule`. */
@@ -352,7 +353,7 @@ export async function runMaintainSchedule(args: string[], env: ScheduleEnv = def
     return;
   }
   const writes = scheduleWrites(target, paths);
-  const what = `every ${SCHEDULE_INTERVAL_HOURS} hours, ${target === 'macos' ? 'a launchd agent' : target === 'linux-systemd' ? 'a systemd user timer' : 'a crontab line'} runs foresights ${SCHEDULED_RUN_ARGS.join(' ')}`;
+  const what = `every ${SCHEDULE_INTERVAL_HOURS} hours, ${target === 'macos' ? 'a launchd agent' : target === 'linux-systemd' ? 'a systemd user timer' : 'a crontab line'} runs foresights ${commandText(SCHEDULED_RUN_ARGS)}`;
   if (args.includes('--dry-run')) {
     print(json, { status: 'dry_run', target, would_write: writes, interval_hours: SCHEDULE_INTERVAL_HOURS },
       [`foresights maintain --schedule --dry-run: nothing was written. On ${target}, ${what}.`, '  would write:', ...writes.map((w) => `    ${w}`), '  Install: foresights maintain --schedule --yes (after the user agrees).']);

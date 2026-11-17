@@ -23,6 +23,7 @@ import { planPageFence } from '../facts/unfenced-facts.ts';
 import { ensurePageForHeldRows } from '../facts/held-fact-move.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { commandText } from '../brand.ts';
 
 interface ApprovedFact { id: number; value: string; home: string }
 interface HomeItem extends RepairItem { facts: ApprovedFact[]; hash: string }
@@ -79,7 +80,7 @@ export const factsHomeRepair: RepairHandler = {
     if (!scan.strict) {
       return { items: [], preview_hash: previewHash(hashParts(scope, scan, [])), residuals: {},
         warnings: [`Source ${sourceId} is not strict (its pages are not canonical in Git), so the database keeps its facts by design and none is a gap; nothing is listed.`],
-        details: { docs: FACTS_HOME_DOCS, strict: false, verify: gitGapArgv(sourceId).join(' ') } };
+        details: { docs: FACTS_HOME_DOCS, strict: false, verify: commandText(gitGapArgv(sourceId)) } };
     }
     const approved = await approvedFacts(engine, scan);
     const hash = previewHash(hashParts(scope, scan, approved));
@@ -101,7 +102,7 @@ export const factsHomeRepair: RepairHandler = {
     return { items: item(approved, hash), preview_hash: hash, residuals: { ...scan.counts },
       ...(more > 0 ? { warnings: [`${more} more fact(s) can be written than one apply takes (${MAX_PER_APPLY}); apply this set, then preview again for the rest.`] } : {}),
       listing: scan.rows.map(row => ({ item: `${sourceId}:fact ${row.id}`, class: row.group, detail: DETAIL[row.group](row) })),
-      details: { docs: FACTS_HOME_DOCS, counts: scan.counts, verify: gitGapArgv(sourceId).join(' ') } };
+      details: { docs: FACTS_HOME_DOCS, counts: scan.counts, verify: commandText(gitGapArgv(sourceId)) } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { facts, hash, source_id: sourceId } = entry as HomeItem;

@@ -1024,7 +1024,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   const docs = d?.stop_reason ? ERROR_CATALOGUE[STOP_DOCS[d.stop_reason]].docs : undefined;
   if (outcome === 'resumable' && d?.stop_reason === 'capacity_paused') {
     const pause = d.capacity_pause;
-    const raise = pause?.fix?.argv?.join(' ');
+    const raise = (pause?.fix?.argv ? commandText(pause?.fix?.argv) : undefined);
     return { command: resumeCommand, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'capacity_paused',
       why: `The sync paused: ${pause?.message ?? 'a cumulative write cap refused its next admission'} Nothing failed; the cursor and every accepted write are intact. `
         + `${pause?.reason === 'lifetime_ids' ? 'Request ids never free, so ' : ''}${raise ? `the brain host runs ${raise} (reversible)` : 'the brain host raises the cap foresights doctor --only persistence_capacity --json names'}`

@@ -37,7 +37,7 @@ describe('keyless init bulk-load hint', () => {
     mkdirSync(notes);
     writeFileSync(join(notes, 'alice.md'), '---\ntitle: Alice\ntype: person\n---\nAlice is an engineer.\n');
     const argv = hint![1].split(/\s+/).map(a => (a === '<dir>' ? notes : a));
-    expect(argv[0]).toBe('gbrain');
+    expect(argv[0]).toBe('foresights');
     const run = await cli(argv.slice(1));
     expect(run.code, run.stdout + run.stderr).toBe(0);
   }, 120_000);

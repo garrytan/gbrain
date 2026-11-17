@@ -7,6 +7,7 @@ import { validateHarnessArguments } from '../core/harness/arguments.ts';
 import { readHarnessConnectionStatus } from '../core/harness/status.ts';
 import { isSkillLoading, skillsOutcomeFailed, type SkillsBlockOutcome } from '../core/setup/skills-block.ts';
 import { renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
+import { commandText } from '../core/brand.ts';
 
 export async function runHarnessConnect(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -46,7 +47,7 @@ export async function runHarnessConnect(args: string[]): Promise<void> {
     const turnHookError = (result as { turn_hook?: { error?: { message: string; fix: { argv?: string[] } } } }).turn_hook?.error;
     if (skillsOutcomeFailed(skills) || turnHookError) {
       if (skillsOutcomeFailed(skills)) console.error(`skills index: ${skills!.detail}${'remote_membership_pending' in result && result.remote_membership_pending ? ' (remote membership deactivation is also pending; exit 1 outranks its exit 2)' : ''}`);
-      if (turnHookError) console.error(`turn_hook_not_loaded: the per-turn foresights hook is not active: ${turnHookError.message}. Fix: ${turnHookError.fix.argv?.join(' ')}`);
+      if (turnHookError) console.error(`turn_hook_not_loaded: the per-turn foresights hook is not active: ${turnHookError.message}. Fix: ${(turnHookError.fix.argv ? commandText(turnHookError.fix.argv) : undefined)}`);
       setCliExitVerdict(1);
     } else if (result.status === 'pending' || 'remote_membership_pending' in result && result.remote_membership_pending) setCliExitVerdict(2);
   } catch (error) {

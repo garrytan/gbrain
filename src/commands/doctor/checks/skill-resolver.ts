@@ -24,6 +24,7 @@ import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState 
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
 import { describePiSkillView, piSkillView, type PiSkillView } from './skill-resolver-pi.ts';
 import { cursorSkillView, describeCursorSkillView, type CursorSkillView } from './skill-resolver-cursor.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const name = 'skill_resolver';
 const HARNESSES: ResolverHarness[] = ['claude-code', 'codex', 'hermes'];
@@ -119,7 +120,7 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
   }
   const broken = v.harnesses.find((h) => h.on && (h.hook !== 'wired' || !h.catalogs.some((c) => isTurnCatalog(h.harness, c.name))));
   if (broken) {
-    const what = broken.hook === 'outdated' ? `its hook has no SessionStart entry (installed before the compaction reset), so skills offered before a compaction are not offered again; ${setupArgv(broken.harness).join(' ')} adds it`
+    const what = broken.hook === 'outdated' ? `its hook has no SessionStart entry (installed before the compaction reset), so skills offered before a compaction are not offered again; ${commandText(setupArgv(broken.harness))} adds it`
       : `${broken.hook === 'untrusted' ? (broken.harness === 'hermes' ? 'its Hermes hook is not approved in shell-hooks-allowlist.json (hermes hooks doctor shows it)' : 'its Codex hook is not trusted') : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing'}, so no skills block is added`;
     return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}.`, details,
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),

@@ -27,7 +27,7 @@
           "--pglite",
           "--no-embedding"
         ],
-        "command": "gbrain init --pglite --no-embedding",
+        "command": "foresights init --pglite --no-embedding",
         "consent": [],
         "next": "run",
         "requires_exclusive": false,
@@ -41,7 +41,7 @@
       "[foresights] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
       "GBRAIN_DB_ACCESS no_url",
       "Error [no_brain]: No brain configured. Run: foresights init",
-      "Fix: gbrain init --pglite --no-embedding"
+      "Fix: foresights init --pglite --no-embedding"
     ],
     "stdout": "<json>"
   },

@@ -138,7 +138,7 @@ export function coverageRoute(source: HeldCoverage): HoldRepairRoute {
  */
 export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; route?: HoldRepairRoute }>, why: string): Action {
   const frontmatter = sources.filter(source => !source.route || source.route.others > 0).map(source => `'foresights repair frontmatter --source ${source.source_id}'`);
-  const fences = sources.filter(source => source.route && (source.route.fences > 0 || (source.route.slug_conflicts ?? 0) > 0)).map(source => `'${contentRepairArgv(source.source_id).join(' ')}'`);
+  const fences = sources.filter(source => source.route && (source.route.fences > 0 || (source.route.slug_conflicts ?? 0) > 0)).map(source => `'${commandText(contentRepairArgv(source.source_id))}'`);
   const concurrent = sources.filter(source => source.route?.concurrent).map(source => source.source_id);
   const stalled = sources.filter(source => source.route?.stalled).map(source => source.source_id);
   const dirty = sources.filter(source => source.route?.dirty).map(source => source.source_id);

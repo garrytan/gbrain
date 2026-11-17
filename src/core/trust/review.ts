@@ -364,7 +364,7 @@ async function claimView(engine: BrainEngine, sourceId: string, tier: TrustTier,
   if (tier !== 'unknown') return { tier, label: trustLabelWords(fields, { unconfirmed }), ...(isUserSaid(fields) && !unconfirmed ? { user_said: true as const } : {}) };
   const [pending] = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE s.id = $1 AND ${claimPendingSql('s')}`, [sourceId]);
   return pending
-    ? { tier: OWNER_TIER_FLOOR, label: `${trustLabel(OWNER_TIER_FLOOR)} (claimed source; finish with ${TRUST_CLAIM_RESUME_COMMAND.join(' ')})`, claimed_source: 'lift_pending' }
+    ? { tier: OWNER_TIER_FLOOR, label: `${trustLabel(OWNER_TIER_FLOOR)} (claimed source; finish with ${commandText(TRUST_CLAIM_RESUME_COMMAND)})`, claimed_source: 'lift_pending' }
     : { tier, label: trustLabelWords(fields, { unconfirmed }) };
 }
 

@@ -15,6 +15,7 @@ import { residentNotifier } from './resident.ts';
 import { parseOnCommit } from '../commit-notifier.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
 import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readLiveDrainLease, type DrainHolder } from '../persistence/sync-lease.ts';
+import { commandText } from '../brand.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw' | 'kind'>;
 type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig'>;
@@ -185,6 +186,6 @@ export function formatNotifierBlock(sourceId: string, b: NotifierBlock): string 
     : b.recorded_resident ? `none running; ${b.recorded_resident.kind}${b.recorded_resident.pid ? ` (PID ${b.recorded_resident.pid})` : ''} was recorded but holds no live lease${b.recorded_resident.lease_expired_at ? ` (lapsed ${b.recorded_resident.lease_expired_at})` : ''}` : 'none running';
   const state = b.state ? `${b.state}${b.reason ? ` (${b.reason})` : ''}${b.next_retry_at && b.state === 'retry' ? `, next retry ${b.next_retry_at}` : ''}${b.attempts ? `, ${b.attempts} attempt(s)` : ''}` : 'idle';
   const markers = b.pending_markers.length ? `; wanted: ${b.pending_markers.map(m => `${m.intent}${m.wanted_head ? ` ${m.wanted_head.slice(0, 8)}` : ''}`).join(', ')}` : '';
-  const fix = b.fix ? `. Fix: ${b.fix.argv?.join(' ')}` : '';
+  const fix = b.fix ? `. Fix: ${(b.fix.argv ? commandText(b.fix.argv) : undefined)}` : '';
   return `notifier for ${sourceId}: ${who}; ${state}${markers}${b.last_error?.trace_path ? `; trace ${b.last_error.trace_path}` : ''}${fix}`;
 }

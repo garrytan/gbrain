@@ -23,6 +23,7 @@ import { ORIGIN_TWINS_AUTO_RESOLVE_KEY, originTwinsPreviewArgv, readOriginClaima
 import { syncOriginPath } from '../persistence/sync-origin.ts';
 import { groupPairs, massTwins, originGroupVerdict, originOwnerContext, resolveOriginTwin, type OriginTwinGroup } from './origin-twins.ts';
 import { repairRequestId } from './core.ts';
+import { commandText } from '../brand.ts';
 
 export const ORIGIN_HEAL_BUDGET_MS = 60_000;
 export const ORIGIN_HEAL_MAX_FILES = 200;
@@ -71,7 +72,7 @@ function skipReason(skipped: NonNullable<OriginHealReport['skipped']>): string {
 }
 
 function noticeOf(sourceId: string, r: Omit<OriginHealReport, 'notice' | 'preview_argv' | 'opt_out_argv'>): string {
-  const preview = originTwinsPreviewArgv(sourceId).join(' ');
+  const preview = commandText(originTwinsPreviewArgv(sourceId));
   if (r.skipped) return `[sync] ${r.pending} file(s) of source ${sourceId} are recorded by several live pages; sync left them held because ${skipReason(r.skipped)}. Preview the fix with ${preview} (read-only).`;
   const left = Object.values(r.left_by_reason).reduce((a, b) => a + b, 0);
   const more = r.pending ? `; ${r.pending} more wait for the next sync` : '';

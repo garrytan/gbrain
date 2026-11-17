@@ -33,6 +33,7 @@ import { defaultSourceLocalPath } from '../autopilot/install-repo.ts';
 import { gbrainChildCommand } from './in-process.ts';
 import { connectMigrationEngine } from './run-engine.ts';
 import type { OrchestratorOpts, OrchestratorPhaseResult } from './types.ts';
+import { commandText } from '../../core/brand.ts';
 
 export const AUTOPILOT_INSTALL_TODO = 'autopilot-install-needs-repo';
 const REPO_INPUT = 'REPO_PATH';
@@ -54,7 +55,7 @@ export function autopilotInstallArgv(repo: string | null): string[] {
 }
 
 export function autopilotInstallCommand(repo: string | null): string {
-  return repo ? shellQuote(autopilotInstallArgv(repo)) : autopilotInstallArgv(null).join(' ');
+  return repo ? shellQuote(autopilotInstallArgv(repo)) : commandText(autopilotInstallArgv(null));
 }
 
 /** The newest pending install item Phase F recorded, or null. */

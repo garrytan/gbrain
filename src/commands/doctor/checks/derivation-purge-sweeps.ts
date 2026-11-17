@@ -8,6 +8,7 @@
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const SAMPLE = 20;
 
@@ -31,7 +32,7 @@ async function runDerivationPurgeSweeps(ctx: DoctorContext): Promise<Check[]> {
   }
   const sweeps = rows.slice(0, SAMPLE).map(row => ({ request_id: row.request_id, source_id: row.source_id, state: row.stalled ? 'stalled' : 'pending',
     ...(row.stalled ? { reason: row.reason ?? 'statement_timeout' } : row.pending_reason ? { reason: row.pending_reason } : {}), created_at: row.created_at,
-    ...(row.request_id ? { command: continueSweepArgv(row.request_id).join(' ') } : {}) }));
+    ...(row.request_id ? { command: commandText(continueSweepArgv(row.request_id)) } : {}) }));
   const listed = sweeps.map(s => `${s.request_id ?? '(request missing)'} in source ${s.source_id} (${s.state}${s.reason ? `, ${s.reason}` : ''})`).join(', ');
   const first = sweeps.find(s => s.request_id)?.request_id;
   const busy = sweeps.some(s => s.reason === 'scope_lock_busy');

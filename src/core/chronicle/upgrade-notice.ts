@@ -64,7 +64,7 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
       actor: 'user',
       next: 'ask_user',
       if_yes: `Run ${commandText(AUTO_CHRONICLE_KEEP_ARGV)} (records the user's answer). History is paid too; ask before running it. ` +
-        `Preview: ${chronicleBackfillArgv({ since, dryRun: true }).join(' ')}. Guide: docs/guides/life-chronicle.md`,
+        `Preview: ${commandText(chronicleBackfillArgv({ since, dryRun: true }))}. Guide: docs/guides/life-chronicle.md`,
       if_no: `Run ${commandText(AUTO_CHRONICLE_OPT_OUT_ARGV)}.`,
       verify: 'foresights doctor --only auto_chronicle_default_on --json',
     }, {

@@ -153,7 +153,7 @@ describe('#1605 structural guard: schema phases are in-process', () => {
   test('no schema phase still execSyncs `foresights init --migrate-only`', () => {
     for (const f of SCHEMA_PHASE_FILES) {
       const src = readFileSync(join(MIGRATION_DIR, `${f}.ts`), 'utf-8');
-      expect(src).not.toContain("execSync('foresights init --migrate-only'");
+      expect(src).not.toContain("execSync('gbrain init --migrate-only'");
     }
   });
 
@@ -177,7 +177,7 @@ describe('#1605 structural guard: schema phases are in-process', () => {
     const files = readdirSync(MIGRATION_DIR).filter(n => /^v\d/.test(n) && n.endsWith('.ts'));
     for (const n of files) {
       const src = readFileSync(join(MIGRATION_DIR, n), 'utf-8');
-      expect(src).not.toContain("execSync('foresights init --migrate-only'");
+      expect(src).not.toContain("execSync('gbrain init --migrate-only'");
     }
   });
 });

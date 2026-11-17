@@ -5,6 +5,7 @@ import type { WriteRequest } from '../../../core/persistence/model.ts';
 import { OperationError } from '../../../core/ops/contract.ts';
 import { authorizeStoredRequest } from '../../../core/persistence/authority.ts';
 import { indexLockReceiptPath, readIndexLockReclaims } from '../../../core/persistence/index-lock-reclaim.ts';
+import { commandText } from '../../../core/brand.ts';
 
 const RECLAIM_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -79,9 +80,9 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
       ...(stalled.length ? { stalled_catchups: stalled } : {}), ...(reclaims ? { index_lock_reclaims: reclaims } : {}) };
     const conflicts = pushHolds.filter(hold => hold.conflict);
     const pushNote = pushHolds.length ? ' Git backups not pushed: ' + pushHolds.map(hold => `${hold.source_id} ${hold.retrying} retrying, ${hold.parked} parked (${hold.codes.join(', ')})${hold.conflict
-      ? `, CONFLICT in ${hold.conflict.paths.join(', ')}: ask the user which version wins (${hold.fix.argv?.join(' ')})` : hold.parked ? `: ${hold.fix.argv?.join(' ')}` : ''}`).join(' | ') + '.' : '';
+      ? `, CONFLICT in ${hold.conflict.paths.join(', ')}: ask the user which version wins (${(hold.fix.argv ? commandText(hold.fix.argv) : undefined)})` : hold.parked ? `: ${(hold.fix.argv ? commandText(hold.fix.argv) : undefined)}` : ''}`).join(' | ') + '.' : '';
     const stalledNote = stalled.length ? ' Catch-up not progressing: ' + stalled.map(item => `${item.source_id} ${item.stalled_effects} effect(s) have waited on a busy canonical worktree since ${item.busy_since} `
-      + `(${item.busy_effects} waiting now, up to ${item.busy_retries} busy retries); see who holds it: ${item.fix.argv?.join(' ')}`).join(' | ') + '.' : '';
+      + `(${item.busy_effects} waiting now, up to ${item.busy_retries} busy retries); see who holds it: ${(item.fix.argv ? commandText(item.fix.argv) : undefined)}`).join(' | ') + '.' : '';
     if (!count && (conflicts.length || stalled.length)) return { name: 'parked_effects', status: 'warn', details,
       message: `No effect is parked yet, but ${conflicts.length ? 'Git backups are held by a conflict between this machine and the remote' : 'a backlog of effects is not moving'}.${pushNote}${stalledNote}` };
     if (!count) return { name: 'parked_effects', status: 'ok', message: `No Git or withdrawal effect is parked.${pushNote}${reclaims ? reclaimNote(reclaims) : ''}`, details };

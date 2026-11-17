@@ -12,7 +12,7 @@ export function holdLine(item: GitHoldItem, verb: string): string {
   // #6188 (D16): a fence hold names fence, section, rows, columns and its file line (never a cell), then the step its state calls for.
   const fence = item.fence ? ` in ${fenceWhere({ ...item.fence, line: item.line ?? item.fence.line })}${item.reason === 'prepare_time' ? ` (${item.fence.reason})` : ''}` : '';
   const then = item.fix.then?.argv ? `, then ${commandText(item.fix.then.argv)}` : '';
-  const next = item.fix.argv?.join(' ') ?? item.fix.why;
+  const next = (item.fix.argv ? commandText(item.fix.argv) : undefined) ?? item.fix.why;
   const step = item.fence?.auto_retry ? `No action needed: the next maintenance run repairs it. Preview: ${next}`
     : item.fix.consent.includes('paid') ? `Ask the user first, then: ${next}` : item.fix.actor === 'host_admin' ? `On the owner host: ${next}` : `Next: ${next}`;
   return `  ${verb} ${item.path}: ${item.code}${item.reason ? ` (${item.reason})` : ''}${fence}${where ? ` at ${where}` : ''}; ${page}. ${step}${then} (${item.docs})`;

@@ -481,15 +481,18 @@ async function runLive(
     preVersion = await readPgliteSchemaVersion(dbPath);
   }
 
-  // ---- PATH shim: the BRIEF says `foresights …`; make bare `gbrain` resolve to
+  // ---- PATH shim: the BRIEF says `foresights …`; make bare `foresights` and `gbrain` resolve to
   // THIS harness's binary (operator PATH may have none, or a stale global). ----
   const shimDir = join(ctx.runRoot, '.harness-bin');
   mkdirSync(shimDir, { recursive: true });
-  const shimPath = join(shimDir, 'gbrain');
-  // Single-quoted: validateBinPathEnv rejects quote/metacharacter values, so
-  // the interpolation cannot break out of the quoting.
-  writeFileSync(shimPath, `#!/bin/sh\nexec '${gbrainBin}' "$@"\n`, 'utf-8');
-  chmodSync(shimPath, 0o755);
+  // Both command names: briefs and skills say `foresights`, older ones `gbrain`.
+  for (const name of ['gbrain', 'foresights']) {
+    const shimPath = join(shimDir, name);
+    // Single-quoted: validateBinPathEnv rejects quote/metacharacter values, so
+    // the interpolation cannot break out of the quoting.
+    writeFileSync(shimPath, `#!/bin/sh\nexec '${gbrainBin}' "$@"\n`, 'utf-8');
+    chmodSync(shimPath, 0o755);
+  }
 
   const sink = createTranscriptSink(ctx.transcriptPath);
   const env: Record<string, string> = {

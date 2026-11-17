@@ -277,7 +277,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   const connector = status.connector_last_error;
   if (connector) console.log(`  connector: ${connector.stopped ? 'STOPPED, ' : ''}the last ${connector.consecutive} run(s) ended on ${connector.code}${connector.slug ? ` at ${connector.slug}` : ''}: ${connector.message}`);
   for (const notice of notices) console.log(`  [gbrain notice ${notice.code}] ${notice.why}`);
-  if (rendered.next) console.log(`  Next: ${rendered.next.command ?? rendered.next.argv?.join(' ')}\n  Why: ${rendered.next.why}`);
+  if (rendered.next) console.log(`  Next: ${rendered.next.command ?? (rendered.next.argv ? commandText(rendered.next.argv) : undefined)}\n  Why: ${rendered.next.why}`);
   else console.log('  Next: nothing; the source is synced and holds nothing.');
 }
 
@@ -329,6 +329,6 @@ export async function runSyncUnblock(engine: BrainEngine, args: string[]): Promi
     if (entry.action === 'repair' && entry.repair.receipt) console.log(`    receipt: ${Object.entries(entry.repair.receipt).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   }
   for (const entry of outcome.refused) console.log(`  ${entry.path}: ${entry.code} refused (${entry.reason})${entry.needs_human ? ' NEEDS HUMAN' : ''}`);
-  if (rendered.next) console.log(`  Next: ${rendered.next.command ?? rendered.next.argv?.join(' ')}\n  Why: ${rendered.next.why}`);
+  if (rendered.next) console.log(`  Next: ${rendered.next.command ?? (rendered.next.argv ? commandText(rendered.next.argv) : undefined)}\n  Why: ${rendered.next.why}`);
   else console.log('  Next: nothing held.');
 }

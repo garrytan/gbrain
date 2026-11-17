@@ -156,11 +156,11 @@ export async function retryUnindexed(engine: BrainEngine, sourceId: string, opts
   const sync = await gitFollowUpSync(engine, sourceId, []);
   const again = ['gbrain', 'sources', 'retry-held', sourceId, '--unindexed'];
   const count = scan.files.length;
-  const partial = scan.complete ? '' : ` The scan stopped at its time budget after ${scan.scanned} file(s); run ${again.join(' ')} again to continue.`;
+  const partial = scan.complete ? '' : ` The scan stopped at its time budget after ${scan.scanned} file(s); run ${commandText(again)} again to continue.`;
   const waiting = count + scan.scheduled;
   const next = !count ? (scan.complete ? `No unindexed files for ${sourceId}.` : `No unindexed files found so far in ${sourceId}.`)
       + (scan.scheduled ? ` ${scan.scheduled} file(s) already wait for a re-screen; run: ${commandText(sync)}.` : '') + partial
-    : dryRun ? `${count} unindexed file(s) would be scheduled for a re-screen; run: ${again.join(' ')}.${partial}`
+    : dryRun ? `${count} unindexed file(s) would be scheduled for a re-screen; run: ${commandText(again)}.${partial}`
       : `${count} unindexed file(s) scheduled for a re-screen; none has run yet. Run it now with: ${commandText(sync)}, then verify with: ${commandText(UNINDEXED_VERIFY.argv)}. `
         + `Each file that passes imports; each one that refuses is held and listed by foresights sources status ${sourceId}.${partial}`;
   const fix: Action | undefined = dryRun && count

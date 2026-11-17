@@ -11,6 +11,7 @@ import type { BrainEngine } from '../engine.ts';
 import { agentBlock } from '../agent-markers.ts';
 import { CLAIM_USER_MESSAGE, readUnclaimedLegacySources } from './claim.ts';
 import { TRUST_CLAIM_COMMAND, TRUST_CLAIM_RESUME_COMMAND } from './claim-state.ts';
+import { commandText } from '../brand.ts';
 
 export async function trustClaimUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[] | null> {
   const { unclaimed, pending } = await readUnclaimedLegacySources(engine);
@@ -18,7 +19,7 @@ export async function trustClaimUpgradeNotice(engine: Pick<BrainEngine, 'execute
   if (pending.length) {
     return ['', ...agentBlock({
       why: `A claim of ${pending.join(', ')} did not finish lifting its legacy rows.`,
-      actor: 'agent', next: `run: ${TRUST_CLAIM_RESUME_COMMAND.join(' ')}`, verify,
+      actor: 'agent', next: `run: ${commandText(TRUST_CLAIM_RESUME_COMMAND)}`, verify,
     }).trimEnd().split('\n'), ''];
   }
   if (!unclaimed.length) return null;
@@ -26,8 +27,8 @@ export async function trustClaimUpgradeNotice(engine: Pick<BrainEngine, 'execute
   return ['', ...agentBlock({
     why: `${rows} row(s) written before trust tiers in ${unclaimed.length} unclaimed source(s) read as "unverified origin". New agent-written content is already flagged `
       + 'when it reads as instructions; older content is flagged only after the user claims their sources and runs foresights trust scan, which no agent starts.',
-    actor: 'user', next: `tell_user_to_run: ${TRUST_CLAIM_COMMAND.join(' ')}`,
-    if_yes: `The user runs ${TRUST_CLAIM_COMMAND.join(' ')} in a terminal on the brain host; it asks them to type each source id (--yes never claims). Preview: foresights trust claim-sources --dry-run --json.`,
+    actor: 'user', next: `tell_user_to_run: ${commandText(TRUST_CLAIM_COMMAND)}`,
+    if_yes: `The user runs ${commandText(TRUST_CLAIM_COMMAND)} in a terminal on the brain host; it asks them to type each source id (--yes never claims). Preview: foresights trust claim-sources --dry-run --json.`,
     if_no: 'Run nothing; those rows stay "unverified origin" and nothing is flagged unless the user later runs foresights trust scan.',
     verify,
   }, { showUser: CLAIM_USER_MESSAGE }).trimEnd().split('\n'), ''];

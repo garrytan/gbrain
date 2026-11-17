@@ -26,6 +26,7 @@ import type { RepairKindSpec } from '../repair/registry.ts';
 import { CONTENT_REPAIR_KINDS, contentLaneArgv, runContentLane, type ContentLaneResult } from '../repair/content-lane.ts';
 import { FENCE_REPAIR_ENABLED_KEY, fenceRepairEnabled } from '../fence-repair/config.ts';
 import { isUncontainedPhaseError } from './phase-containment.ts';
+import { commandText } from '../brand.ts';
 
 /** The longest one phase run spends on the lane; inside a maintenance job it is also at most a third of the job's remaining time. */
 export const CONTENT_REPAIR_PHASE_BUDGET_MS = 120_000;
@@ -61,7 +62,7 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   const base = { phase: 'content_repair' as const, duration_ms: 0 };
   if (!engine) return { ...base, status: 'skipped', summary: 'no database connected', details: { reason: 'no_database' } };
   const kinds = [...(opts.kinds ?? contentRepairPhaseKinds())];
-  const preview = contentLaneArgv({}).join(' ');
+  const preview = commandText(contentLaneArgv({}));
   if (!kinds.length) {
     return { ...base, status: 'skipped', details: { reason: 'no_kinds', kinds },
       summary: 'no content-repair kind beyond fence_repair is registered in this release, so the phase ran nothing; fence holds were handled by fence_repair.' };

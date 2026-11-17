@@ -16,6 +16,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry, doctorHealth, doctorSourceIds } from '../context.ts';
 import { agentFix, brainScorePlanFix, checkError } from '../check-fix.ts';
 import { ORPHAN_FULL_SCAN_KEY, countLivePages, estimateOrphanRatio, orphanFullScanMaxPages, type OrphanEstimate } from './orphan-estimate.ts';
+import { commandText } from '../../../core/brand.ts';
 
 async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -256,11 +257,11 @@ function estimatedOrphanRatioCheck(est: OrphanEstimate, cutoff: number, srcId: s
   // #7145: a sample with no linkable page estimated nothing; 0/0 is not 0%.
   if (est.sample_linkable === 0) {
     return { name: 'orphan_ratio', status: 'warn', details: { ...details, health: 'unknown', reason: 'empty_sample' },
-      message: `Orphan ratio unknown${srcId ? ` in source '${srcId}'` : ''}: the ${est.sample_pages}-page sample of ${est.live_pages} live pages held no linkable page. Exact figure: ${deep.join(' ')}.`,
+      message: `Orphan ratio unknown${srcId ? ` in source '${srcId}'` : ''}: the ${est.sample_pages}-page sample of ${est.live_pages} live pages held no linkable page. Exact figure: ${commandText(deep)}.`,
       fix: agentFix(deep, 'Read-only: the exact orphan ratio from the full scan.', 'orphan_ratio') };
   }
   const message = `Orphan ratio about ${pct}%${srcId ? ` in source '${srcId}'` : ''} (estimated: ${est.sample_orphans}/${est.sample_linkable} linkable pages in a `
-    + `${est.sample_pages}-page sample of ${est.live_pages} live pages; the full scan runs above ${cutoff} pages only with --tier deep: ${deep.join(' ')}).`;
+    + `${est.sample_pages}-page sample of ${est.live_pages} live pages; the full scan runs above ${cutoff} pages only with --tier deep: ${commandText(deep)}).`;
   if (est.ratio <= 0.5) return { name: 'orphan_ratio', status: 'ok', message, details };
   return { name: 'orphan_ratio', status: est.ratio > 0.8 ? 'fail' : 'warn', details,
     message: `${message} Run: foresights extract links --by-mention --source db${srcId ? ` --source-id ${srcId}` : ''}   (auto-links entity mentions in body text).`,

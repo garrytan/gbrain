@@ -50,7 +50,7 @@ import { commandText } from '../brand.ts';
 
 const DOCS = 'docs/guides/repair.md#rename-identity';
 /** The restore alternative, named only where the source admits a restore (an unbound Postgres source with a checkout does not). */
-const restoreRoute = (record: IdentityDowngrade): string | null => record.restore_available === false ? null : identityRestoreArgv(record).join(' ');
+const restoreRoute = (record: IdentityDowngrade): string | null => record.restore_available === false ? null : commandText(identityRestoreArgv(record));
 
 interface Approved { record: IdentityDowngrade; parts: IdentityRemedyParts; source_id: string }
 interface PairItem extends RepairItem { record: IdentityDowngrade; parts: IdentityRemedyParts; hash: string }
@@ -106,14 +106,14 @@ function factRowsCollide(record: IdentityDowngrade, checks: FenceRowCheck[]): Op
     : `row ${check.row}: "${check.old_claim}" on ${record.old_slug}, "${check.new_claim ?? check.file_claim}" on ${record.new_slug}`);
   return refuse('fact_rows_collide', `Carrying ${record.old_slug} onto ${record.new_slug} would drop facts: ${rows.join('; ')}.`,
     `Nothing was written. Give each old claim its own row in the ## Facts fence of ${record.to} (or keep it at its row number with the same claim), commit and sync, then preview again: `
-      + `${renameIdentityPreviewArgv(record).join(' ')}. ${restoreRoute(record) ? `Or keep the old page as its own page: ${restoreRoute(record)}; or r` : 'Or r'}elease the hold without carrying: ${renameIdentityPreviewArgv(record, { close: true }).join(' ')}.`,
+      + `${commandText(renameIdentityPreviewArgv(record))}. ${restoreRoute(record) ? `Or keep the old page as its own page: ${restoreRoute(record)}; or r` : 'Or r'}elease the hold without carrying: ${commandText(renameIdentityPreviewArgv(record, { close: true }))}.`,
     readFix(`Shows ${record.new_slug}'s page with its facts fence, read-only.`, { argv: ['gbrain', 'get', '--source', record.source_id, '--', record.new_slug!] }));
 }
 
 function managedRemedyUnavailable(record: IdentityDowngrade) {
   const close = renameIdentityPreviewArgv(record, { close: true });
   return { close, message: `Carrying ${record.old_slug}'s identity onto ${record.new_slug} is unavailable on a managed source; nothing was written.`,
-    suggestion: `Release the purge hold without carrying identity: preview ${close.join(' ')}, then, after the user agrees, run the apply command it prints. `
+    suggestion: `Release the purge hold without carrying identity: preview ${commandText(close)}, then, after the user agrees, run the apply command it prints. `
       + (restoreRoute(record) ? `Or keep ${record.old_slug} as its own page: ${restoreRoute(record)}.` : '') };
 }
 
@@ -125,7 +125,7 @@ const managedRemedyRefusal = (record: IdentityDowngrade) => {
 
 const changedSincePreview = (record: IdentityDowngrade, why: string) => refuse('changed_since_preview',
   `The pair ${record.old_slug} -> ${record.new_slug ?? record.to} changed since its preview: ${why}.`,
-  `Nothing was written. Preview again (${renameIdentityPreviewArgv(record).join(' ')}), review the new plan and approve its new hash.`, listFix(record.source_id));
+  `Nothing was written. Preview again (${commandText(renameIdentityPreviewArgv(record))}), review the new plan and approve its new hash.`, listFix(record.source_id));
 
 function describe(record: IdentityDowngrade, disposition: IdentityRemedyDisposition): string {
   return `${record.from} -> ${record.to} (git similarity ${record.similarity}%; ${identityDowngradeReasonText(record.reason)}): ${disposition === 'carry'
@@ -146,10 +146,10 @@ function selectPair(open: IdentityDowngrade[], sourceId: string, opts: RepairPla
   if (!matches.length) throw refuse('invalid_params', `Source ${sourceId} has no open rename-identity pair with ${named}.`,
     `A pair already carried or closed, or whose old page was restored or purged, is no longer open, and nothing was written; list the open pairs with foresights repair rename-identity --source ${sourceId}.`, listFix(sourceId));
   if (matches.length > 1) throw refuse('invalid_params', `${matches.length} open pairs of source ${sourceId} match ${named}.`,
-    `Name the old page too: ${matches.map(record => renameIdentityPreviewArgv(record, { from: true }).join(' ')).join('; ')}.`, listFix(sourceId));
+    `Name the old page too: ${matches.map(record => commandText(renameIdentityPreviewArgv(record, { from: true }))).join('; ')}.`, listFix(sourceId));
   const record = matches[0]!;
   if (!opts.close && !record.new_slug) throw refuse('invalid_params', `The new file ${record.to} of ${record.old_slug} has no page to carry onto.`,
-    `Fix the file and sync so it imports, then preview again; or release the hold now: ${renameIdentityPreviewArgv(record, { close: true }).join(' ')}.`, listFix(sourceId));
+    `Fix the file and sync so it imports, then preview again; or release the hold now: ${commandText(renameIdentityPreviewArgv(record, { close: true }))}.`, listFix(sourceId));
   return record;
 }
 

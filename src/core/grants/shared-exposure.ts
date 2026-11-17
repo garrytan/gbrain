@@ -33,6 +33,7 @@ import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../s
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
 import { brainServes } from '../access/serves.ts';
+import { commandText } from '../brand.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
 export const BOT_HARNESSES: readonly string[] = ['openclaw', 'hermes', 'grok-bot', 'muse'];
@@ -179,11 +180,11 @@ export function remedyText(s: ExposureSubject, census?: ChatCensus | null): stri
   const target = s.kind === 'legacy_token' ? `--token ${s.name}` : s.kind === 'oauth_client' ? `--client ${s.id}` : null;
   const steps: string[] = [target
     ? `bind the credential to the person who uses this agent (foresights auth rescope ${target} --member <id>), or, for one agent several people share, to their audience (foresights auth rescope ${target} --may-act-for <members>; its harness then names each request's audience)`
-    : `label each person and bind this harness's server (${bindArgv(s).join(' ')}; --stdio-member <member> when one person alone uses the harness)`];
+    : `label each person and bind this harness's server (${commandText(bindArgv(s))}; --stdio-member <member> when one person alone uses the harness)`];
   if (splitBySource(census)) {
     steps.push(s.kind === 'stdio'
       ? 'narrowing only, which leaves the server unbound: pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment and running foresights sources unfederate <source> (a federated sibling source stays nameable)'
-      : `narrowing only, which leaves the token unbound: ${narrowArgv(s, census)!.join(' ')} (a new harness grant: foresights mcp grant <name> --source <source> --federated-read <source>)`);
+      : `narrowing only, which leaves the token unbound: ${commandText(narrowArgv(s, census)!)} (a new harness grant: foresights mcp grant <name> --source <source> --federated-read <source>)`);
     steps.push('keep a channel\'s source out of unscoped reads (foresights sources unfederate <id>)');
   } else {
     steps.push(`the chat sits in one source (${census!.chat_sources[0]}), so a source grant cannot separate it`);

@@ -17,7 +17,7 @@
         "incomplete": true,
         "next": {
           "code": "admission_paused",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-admission-paused",
           "eta_seconds": null,
           "fix": {
@@ -29,7 +29,7 @@
               "sync.admission",
               "normal"
             ],
-            "command": "gbrain config set sync.admission normal",
+            "command": "foresights config set sync.admission normal",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
@@ -68,7 +68,7 @@
         },
         "next": {
           "code": "admission_paused",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-admission-paused",
           "eta_seconds": null,
           "fix": {
@@ -80,7 +80,7 @@
               "sync.admission",
               "normal"
             ],
-            "command": "gbrain config set sync.admission normal",
+            "command": "foresights config set sync.admission normal",
             "consent": [],
             "next": "tell_user_to_run",
             "requires_exclusive": false,
@@ -124,7 +124,7 @@
         "incomplete": true,
         "next": {
           "code": "grant_scope",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-grant-scope",
           "eta_seconds": null,
           "fix": {
@@ -175,7 +175,7 @@
         },
         "next": {
           "code": "grant_scope",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-grant-scope",
           "eta_seconds": null,
           "fix": {
@@ -243,7 +243,7 @@
               "default",
               "--no-pull"
             ],
-            "command": "gbrain sync --source default --no-pull",
+            "command": "foresights sync --source default --no-pull",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -287,7 +287,7 @@
           "fix": {
             "actor": "agent",
             "argv": [
-              "foresights",
+              "gbrain",
               "sync",
               "--source",
               "default",
@@ -336,7 +336,7 @@
         "incomplete": true,
         "next": {
           "code": "not_converged",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-not-converged",
           "eta_seconds": null,
           "fix": {
@@ -378,7 +378,7 @@
         },
         "next": {
           "code": "not_converged",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-not-converged",
           "eta_seconds": null,
           "fix": {
@@ -425,7 +425,7 @@
         "incomplete": true,
         "next": {
           "code": "reconcile_host_required",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-host-required",
           "eta_seconds": null,
           "fix": {
@@ -476,7 +476,7 @@
         },
         "next": {
           "code": "reconcile_host_required",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-host-required",
           "eta_seconds": null,
           "fix": {
@@ -532,7 +532,7 @@
         "incomplete": true,
         "next": {
           "code": "reconcile_read_incomplete",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-read-incomplete",
           "eta_seconds": null,
           "fix": {
@@ -574,7 +574,7 @@
         },
         "next": {
           "code": "reconcile_read_incomplete",
-          "command": "gbrain sync status --source default --json",
+          "command": "foresights sync status --source default --json",
           "docs": "docs/guides/write-refusals.md#drain-reconcile-read-incomplete",
           "eta_seconds": null,
           "fix": {

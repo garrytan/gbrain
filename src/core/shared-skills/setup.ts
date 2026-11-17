@@ -16,6 +16,7 @@ import { gitChildEnv } from '../git-env.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { waitForWrite } from '../persistence/service.ts';
 import { isTerminal, type WriteRequest } from '../persistence/model.ts';
+import { commandText } from '../brand.ts';
 
 export async function isNewContentDatabase(engine: BrainEngine): Promise<boolean> {
   const [row] = await engine.executeRaw<{ fresh: boolean }>("SELECT to_regclass('public.pages') IS NULL AND to_regclass('public.config') IS NULL AND to_regclass('public.persistence_brain') IS NULL AS fresh");
@@ -140,9 +141,9 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     if (existingRoot && (!bound || !brain.enabled)) {
       const claim = ['gbrain', 'sources', 'writer', 'claim', sourceId, '--path', root, '--dry-run', '--json'];
       const activate = ['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--shared-skills', '--dry-run', '--json'];
-      const activateStep = `activate writer persistence (preview with ${activate.join(' ')}, then run it without --dry-run with --admin-intent writer_activate --expected-state <admin_state>)`;
+      const activateStep = `activate writer persistence (preview with ${commandText(activate)}, then run it without --dry-run with --admin-intent writer_activate --expected-state <admin_state>)`;
       throw opError('local_conflict', 'The canonical root changed after setup began.',
-        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). foresights repair content-receipt-root lists only sources claimed under activated writer persistence, and this source ${bound ? 'is claimed but persistence is not activated' : 'has no canonical owner'}, so the repair has nothing to list yet. Ask the user, then ${bound ? activateStep : `claim it on this host (preview with ${claim.join(' ')}, then ${unboundBindCommand(sourceId, root)})${brain.enabled ? '' : ` and ${activateStep}`}`}. Then preview foresights repair content-receipt-root --source ${sourceId}, which lists the step that rebinds the checkpoint, and run the migration again.`,
+        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). foresights repair content-receipt-root lists only sources claimed under activated writer persistence, and this source ${bound ? 'is claimed but persistence is not activated' : 'has no canonical owner'}, so the repair has nothing to list yet. Ask the user, then ${bound ? activateStep : `claim it on this host (preview with ${commandText(claim)}, then ${unboundBindCommand(sourceId, root)})${brain.enabled ? '' : ` and ${activateStep}`}`}. Then preview foresights repair content-receipt-root --source ${sourceId}, which lists the step that rebinds the checkpoint, and run the migration again.`,
         { fix: readFix(bound ? 'Previews activating writer persistence with shared skills, read-only.' : `Previews claiming source ${sourceId}'s registered root on this host, read-only.`, { argv: bound ? activate : claim }) });
     }
     if (existingRoot) {

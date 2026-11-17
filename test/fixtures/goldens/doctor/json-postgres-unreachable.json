@@ -23,7 +23,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain db-repair --brain host",
+              "command": "foresights db-repair --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/ENGINES.md#engine-detection-and-access-repair",
               "next": "run",
@@ -64,7 +64,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only schema_version --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only schema_version --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -82,7 +82,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "schema_version did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only schema_version --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "schema_version did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only schema_version --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -102,7 +102,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only schema_missing_tables --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only schema_missing_tables --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -120,7 +120,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "schema_missing_tables did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only schema_missing_tables --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "schema_missing_tables did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only schema_missing_tables --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -140,7 +140,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only minions_migration --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only minions_migration --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -158,7 +158,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "minions_migration did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only minions_migration --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "minions_migration did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only minions_migration --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -178,7 +178,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only persistence_terminal_failures --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only persistence_terminal_failures --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -196,7 +196,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "persistence_terminal_failures did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only persistence_terminal_failures --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "persistence_terminal_failures did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only persistence_terminal_failures --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -216,7 +216,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only persistence_write_stall --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only persistence_write_stall --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -234,7 +234,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "persistence_write_stall did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only persistence_write_stall --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "persistence_write_stall did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only persistence_write_stall --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -254,7 +254,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only runtime_build_skew --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only runtime_build_skew --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -272,7 +272,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "runtime_build_skew did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only runtime_build_skew --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "runtime_build_skew did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only runtime_build_skew --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -292,7 +292,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only managed_sync_blocked --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only managed_sync_blocked --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -310,7 +310,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "managed_sync_blocked did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only managed_sync_blocked --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "managed_sync_blocked did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only managed_sync_blocked --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -330,7 +330,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only managed_sync_not_moving --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only managed_sync_not_moving --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -348,7 +348,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "managed_sync_not_moving did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only managed_sync_not_moving --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "managed_sync_not_moving did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only managed_sync_not_moving --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -368,7 +368,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only global_maintenance_stalled --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only global_maintenance_stalled --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -386,7 +386,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "global_maintenance_stalled did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only global_maintenance_stalled --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "global_maintenance_stalled did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only global_maintenance_stalled --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -406,7 +406,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only jsonb_integrity --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only jsonb_integrity --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -424,7 +424,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "jsonb_integrity did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only jsonb_integrity --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "jsonb_integrity did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only jsonb_integrity --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -444,7 +444,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only rls --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only rls --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -462,7 +462,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "rls did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only rls --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "rls did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only rls --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -482,7 +482,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only dream_paid_loop --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only dream_paid_loop --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -500,7 +500,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "dream_paid_loop did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only dream_paid_loop --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "dream_paid_loop did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only dream_paid_loop --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -520,7 +520,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only dream_write_deferred --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only dream_write_deferred --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -538,7 +538,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "dream_write_deferred did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only dream_write_deferred --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "dream_write_deferred did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only dream_write_deferred --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           },
           {
@@ -558,7 +558,7 @@
                 "--brain",
                 "host"
               ],
-              "command": "gbrain doctor --only embedding_restamp_stalled --budget-ms 0 --json --brain host",
+              "command": "foresights doctor --only embedding_restamp_stalled --budget-ms 0 --json --brain host",
               "consent": [],
               "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
               "next": "run",
@@ -576,7 +576,7 @@
               },
               "why": "Measures only this check now, with no overall budget; read-only."
             },
-            "message": "embedding_restamp_stalled did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only embedding_restamp_stalled --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "message": "embedding_restamp_stalled did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with foresights doctor --only embedding_restamp_stalled --budget-ms 0 --json --brain host, run the full tier (foresights doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
           }
         ]
@@ -903,7 +903,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain db-repair --brain host",
+            "command": "foresights db-repair --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/ENGINES.md#engine-detection-and-access-repair",
             "next": "run",
@@ -944,7 +944,7 @@
               "--brain",
               "host"
             ],
-            "command": "gbrain db-repair --brain host",
+            "command": "foresights db-repair --brain host",
             "consent": [],
             "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/ENGINES.md#engine-detection-and-access-repair",
             "next": "run",

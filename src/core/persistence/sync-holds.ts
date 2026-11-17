@@ -709,10 +709,10 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const frontmatter = ['gbrain', 'repair', 'frontmatter', '--source', sourceId];
   const automatic = !auto ? '' : auto.active ? 'the next maintenance run repairs the fence and slug-conflict holds it can by itself; '
     : `nothing repairs the fence and slug-conflict holds by itself (${auto.enabled ? 'no maintenance run is active' : 'fences.repair.enabled is false'}), so `;
-  const fenceText = `${automatic}preview the content repairs with ${fences.join(' ')} `
+  const fenceText = `${automatic}preview the content repairs with ${commandText(fences)} `
     + '(read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>])'
     + (auto?.active ? '' : ', then run the apply command it prints');
-  const frontmatterText = `preview the frontmatter and other fixes with ${frontmatter.join(' ')} (writes nothing until a hash-bound apply)`;
+  const frontmatterText = `preview the frontmatter and other fixes with ${commandText(frontmatter)} (writes nothing until a hash-bound apply)`;
   const concurrentText = `for each concurrent-write hold, preview the reconciliation with foresights sources reconcile ${sourceId} <slug> --preview `
     + `(foresights sources status ${sourceId} names each slug and the database write that raced the import), resolve and apply it, then run foresights sources retry-held ${sourceId} and foresights sync --source ${sourceId} --no-pull`;
   const stalled = stalledHoldSteps(sourceId);
@@ -720,8 +720,8 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
     + `fix what it names or upgrade foresights, then run ${commandText(stalled.retry)} and the same sync again (${commandText(stalled.sync)} with the run's options)`;
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (foresights sources status ${sourceId} names each file), `
-    + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
-  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which foresights never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if foresights should write the checkout`
+    + `then run ${commandText(unblock)}, which re-screens every held file that is now committed, and the same sync`;
+  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which foresights never writes, so their pages stay live and database-only: list them with ${commandText(heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file'))} (a preview that writes nothing), and turn the mirror flag off only if foresights should write the checkout`
     : `for each file-drift hold, preview the resolution with foresights repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
     + `(foresights sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run foresights sync --source ${sourceId} --no-pull`;
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {

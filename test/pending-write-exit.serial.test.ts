@@ -114,7 +114,7 @@ describe('resident owner: pending-write exit codes', () => {
             expect(body).toMatchObject({ request_id: ID, state: 'running' });
             // #6255: the poll command is the envelope's receipt fix, pinned to the brain it ran against.
             expect(body.poll_command).toBe(`foresights write-request --brain host -- ${ID}`);
-            expect(body.poll_command).toBe(body.fix.argv.join(' '));
+            expect(body.poll_command).toBe(body.fix.argv.join(' ').replace(/^gbrain /, 'foresights '));
             expect(result.stderr).toContain(`Poll: foresights write-request --brain host -- ${ID}`);
           }
         });

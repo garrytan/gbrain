@@ -33,6 +33,7 @@ import {
   readConnectorState,
   sourceIdKey,
 } from '../../../core/connectors/config-keys.ts';
+import { commandText } from '../../../core/brand.ts';
 
 export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check> {
   const name = 'connectors';
@@ -60,7 +61,7 @@ export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check>
       problems.push(
         `${provider}: ${failed.length} unresolved conversation(s) — archive incomplete; sync retries them automatically ` +
           `(\`foresights connectors status ${provider} --json\` lists them)` +
-          (needsFull ? `; ${needsFull} need one full re-sync: ask the user, then run \`${fullSyncArgv(provider, sourceId).join(' ')}\`` : ''),
+          (needsFull ? `; ${needsFull} need one full re-sync: ask the user, then run \`${commandText(fullSyncArgv(provider, sourceId))}\`` : ''),
       );
       if (needsFull && !fix) {
         fix = {

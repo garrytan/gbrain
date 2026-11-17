@@ -530,7 +530,7 @@ const defaultDeps: ConnectDeps = {
     const lines = [describeTurnHookOutcome(outcome).trim()];
     if (!verdict || verdict.ok) return { lines: verdict ? [...lines, `verify   turn hook ${verdict.message}`] : lines, ok: true };
     const fix = turnHookFix(agent, rerun);
-    return { lines: [...lines, `error turn_hook_not_loaded (${verdict.reason}): the per-turn foresights hook is not active: ${verdict.message}. Fix: ${commandText(rerun)}. Verify: ${fix.verify?.argv?.join(' ')}${TURN_HOOK_NATIVE_INSPECT[agent] ? `; the harness's own check: ${TURN_HOOK_NATIVE_INSPECT[agent]}` : ''}.`], ok: false };
+    return { lines: [...lines, `error turn_hook_not_loaded (${verdict.reason}): the per-turn foresights hook is not active: ${verdict.message}. Fix: ${commandText(rerun)}. Verify: ${(fix.verify?.argv ? commandText(fix.verify?.argv) : undefined)}${TURN_HOOK_NATIVE_INSPECT[agent] ? `; the harness's own check: ${TURN_HOOK_NATIVE_INSPECT[agent]}` : ''}.`], ok: false };
   },
   writeOpencodeRemoteEntry: async (name, url, opts) => {
     // The writer's contract: callers hold acquireBootstrapLock on the config

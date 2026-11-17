@@ -57,13 +57,13 @@ describe('v0.13.0 — Frontmatter relationship indexing migration', () => {
     // Schema bring-up is now IN-PROCESS (was execSync('foresights init
     // --migrate-only'), which died with getaddrinfo ENOTFOUND on Windows).
     expect(src).toContain('runMigrateOnlyCore()');
-    expect(src).not.toContain("execSync('foresights init --migrate-only'");
+    expect(src).not.toContain("execSync('gbrain init --migrate-only'");
     // Backfill extract goes through the stderr-capturing wrapper (still bare
     // `gbrain` so the canonical shim on PATH wins).
     expect(src).toContain("runGbrainSubprocess('foresights extract links --source db --include-frontmatter'");
     // Stats readback still shells out (reads stdout), through the running
     // CLI rather than PATH (#5184).
-    expect(src).toContain("execSync(gbrainChildCommand('foresights call get_stats')");
+    expect(src).toContain("execSync(gbrainChildCommand('gbrain call get_stats')");
   });
 
   test('phase commands never reference `bun` or `.ts` paths (Bug 1 regression)', () => {
