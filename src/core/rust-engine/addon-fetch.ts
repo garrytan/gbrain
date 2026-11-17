@@ -154,7 +154,7 @@ export async function fetchManifest(
 
 /**
  * Downloads the addon the manifest names for `target`, checks it, and renames it to
- * `<rustDir>/<engine_build>/<target>.node`. Returns that path.
+ * `<rustDir>/<engine_build>/<target>.node`, setting aside any file already there. Returns both paths.
  */
 export async function fetchAddon(
   rustDir: string,
@@ -162,7 +162,7 @@ export async function fetchAddon(
   assets: ReleaseAsset[],
   target: string,
   deps: AddonFetchDeps,
-): Promise<string> {
+): Promise<FetchedAddon> {
   const entry: RustAddonManifestTarget | undefined = manifest.targets[target];
   if (!entry) throw addonMissing('unsupported_target', `No Rust engine addon is published for ${target} in the gbrain v${manifest.gbrain_version} release.`);
   if (manifest.engine_abi !== RUST_ENGINE_ABI) {
@@ -185,9 +185,43 @@ export async function fetchAddon(
     }
     await attest(deps, staged, entry.asset);
     fsyncFile(staged);
-    renameSync(staged, dest);
-    return dest;
+    // An addon already at `dest` (a release sharing this engine_build, or a copy the cached
+    // manifest no longer matches) is set aside, not overwritten, so a new file that later fails
+    // to load can be removed and the old one put back. See {@link FetchedAddon}.
+    let previous: string | null = null;
+    if (existsSync(dest)) {
+      previous = join(dirname(dest), stagingName(`${target}.previous`));
+      renameSync(dest, previous);
+    }
+    try {
+      renameSync(staged, dest);
+    } catch (err) {
+      if (previous) renameSync(previous, dest);
+      throw err;
+    }
+    return { path: dest, previous };
   });
+}
+
+/**
+ * The addon {@link fetchAddon} put in place. `previous` is the file that was at `path` before, moved aside: the
+ * caller restores it with {@link restorePreviousAddon} when the new file fails to load, or deletes it with
+ * {@link dropPreviousAddon} once the new one is loaded and its manifest written.
+ */
+export interface FetchedAddon {
+  path: string;
+  previous: string | null;
+}
+
+/** Removes the new addon and puts the one it replaced back, so a failed load leaves the cache as it was. */
+export function restorePreviousAddon(fetched: FetchedAddon): void {
+  rmSync(fetched.path, { force: true });
+  if (fetched.previous && existsSync(fetched.previous)) renameSync(fetched.previous, fetched.path);
+}
+
+/** Deletes the replaced addon once the new one loaded and its manifest is written. */
+export function dropPreviousAddon(fetched: FetchedAddon): void {
+  if (fetched.previous) rmSync(fetched.previous, { force: true });
 }
 
 /** Writes the verified manifest beside the addon so the next start can check the cached addon with no network. Atomic. */

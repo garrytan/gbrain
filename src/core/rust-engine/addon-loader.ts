@@ -14,7 +14,7 @@
  * The addon is loaded with process.dlopen from a computed path: a literal `require('x.node')` would be bundled
  * into compiled executables, and the addon must not be inside them.
  */
-import { existsSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { VERSION } from '../../version.ts';
@@ -25,9 +25,11 @@ import { detectAddonTarget } from './addon-target.ts';
 import {
   addonPath,
   defaultAddonFetchDeps,
+  dropPreviousAddon,
   fetchAddon,
   fetchManifest,
   readCachedManifest,
+  restorePreviousAddon,
   writeCachedManifest,
   type AddonFetchDeps,
 } from './addon-fetch.ts';
@@ -142,16 +144,18 @@ export async function loadRustAddon(overrides: Partial<RustAddonLoaderDeps> = {}
   const newDirs = [enginesDir, deps.rustDir].filter((d) => !existsSync(d));
   try {
     const { manifest, text, assets } = await fetchManifest(deps.rustDir, deps.version, deps);
-    const path = await fetchAddon(deps.rustDir, manifest, assets, target, deps);
+    const fetched = await fetchAddon(deps.rustDir, manifest, assets, target, deps);
     let addon: RustAddon;
     try {
-      addon = load(path, { target, manifest }, deps);
+      addon = load(fetched.path, { target, manifest }, deps);
+      writeCachedManifest(deps.rustDir, deps.version, text);
     } catch (err) {
-      // The file hashed and attested correctly yet is not usable here, so it must not stay where the next start would find it.
-      rmSync(path, { force: true });
+      // The file hashed and attested correctly yet is not usable here, so it must not stay where the next start
+      // would find it; an addon it replaced goes back in place.
+      restorePreviousAddon(fetched);
       throw err;
     }
-    writeCachedManifest(deps.rustDir, deps.version, text);
+    dropPreviousAddon(fetched);
     return addon;
   } catch (err) {
     pruneNew([...newDirs]);

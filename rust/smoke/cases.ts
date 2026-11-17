@@ -294,6 +294,39 @@ export const cases: Case[] = [
     },
   },
   {
+    // The refusal above can be fooled where the runtime reports shared memory as a plain
+    // ArrayBuffer and the check falls back to the global constructor. Rust reads and writes the
+    // caller's memory only through atomic cells, so a fooled check still gives a correct result,
+    // never undefined behaviour.
+    name: 'typed arrays: shared memory with SharedArrayBuffer hidden or a swapped prototype is refused or handled correctly',
+    async run(addon) {
+      const realShared = globalThis.SharedArrayBuffer;
+      const shared = new Float32Array(new realShared(12));
+      shared.set([1, 2, 3]);
+      const swapped = new Float32Array(new realShared(12));
+      swapped.set([1, 2, 3]);
+      Object.setPrototypeOf(swapped.buffer, ArrayBuffer.prototype);
+      try {
+        // @ts-expect-error hiding the global on purpose
+        globalThis.SharedArrayBuffer = undefined;
+        for (const [label, values] of [['hidden constructor', shared], ['swapped prototype', swapped]] as const) {
+          let sum: unknown;
+          try {
+            sum = addon.sumF32(values);
+          } catch (error) {
+            assert.equal((error as { code?: string }).code, 'InvalidArg', `${label}: refusal code`);
+            continue;
+          }
+          assert.equal(sum, 6, `${label}: sum`);
+          assert.equal(addon.scaleInPlaceF32(values, 2), 3, `${label}: in-place count`);
+          assert.deepEqual([...values], [2, 4, 6], `${label}: in-place result`);
+        }
+      } finally {
+        globalThis.SharedArrayBuffer = realShared;
+      }
+    },
+  },
+  {
     name: 'sink: a full queue says queue_full, closing says closing, nothing is lost',
     async run(addon) {
       assert.equal(addon.sinkMaxQueueSize, 4);
