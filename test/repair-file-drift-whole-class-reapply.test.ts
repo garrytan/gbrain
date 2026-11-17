@@ -112,11 +112,11 @@ describe('whole-class apply reruns', () => {
     await mirrorHolds(engine, root);
     const m = (await preview(engine)).class_manifest!;
     classWindow.pages = 1;
-    classLock.ttlMs = 600;
+    classLock.ttlMs = 2000;
     let second: unknown;
     const first = await apply(ctx, m.hash, { onWindow: async window => {
       if (window !== 0) return;
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 5000));
       second = await apply(ctx, m.hash).then(result => result, e => e);
     } });
     expect((second as { code?: string })?.code).toBe('class_apply_busy');
