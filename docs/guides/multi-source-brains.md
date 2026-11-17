@@ -114,8 +114,10 @@ A new source added without `--federated` or `--no-federated` is federated on
 a brain only you use (`access.serves` is one, `brain.audience` reads personal,
 and you are not on a thin client). On a shared brain it stays unset, and
 `sources add` and `sync --source <id>` print a `source_not_in_default_search`
-notice whose fix is `gbrain sources federate <id>`. Sources you added before
-this change keep their setting.
+notice whose fix is `gbrain sources federate <id>`, marked `ask_user`: it asks
+whether the source should be shared with every connection that reads default
+search, and a source meant to stay private (a member's personal source, say)
+needs nothing. Sources you added before this change keep their setting.
 
 The seeded `default` source is `federated=true` so single-source brains
 behave as you'd expect — every page appears in search.
