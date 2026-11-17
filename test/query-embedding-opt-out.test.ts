@@ -121,7 +121,7 @@ for (const backend of testBackends()) {
           } else if (params.query === 'zebra flamingo') {
             const empty = notices.find(n => n.code === 'empty_retrieval')!;
             expect(empty.kind).toBe('info');
-            expect(empty.why).toContain('Search was keyword-only because embeddings are off on this brain on purpose, and no page holds these words');
+            expect(empty.why).toContain('Search was keyword-only because embeddings are off on this brain on purpose, and no page this caller can read holds these words');
           } else {
             const retrieval = res._meta?.retrieval as { vector_enabled: boolean; degraded: Array<{ stage: string; reason?: string }> };
             expect(retrieval.vector_enabled).toBe(false);

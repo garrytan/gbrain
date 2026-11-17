@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { Notice } from '../src/core/agent-output.ts';
-import { DEGRADED_STAMP_PREFIX, degradedStampFor, degradedStampLine } from '../src/core/degraded-stamp.ts';
+import { DEGRADED_STAMP_PREFIX, degradedStampFor, degradedStampLine, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../src/core/degraded-stamp.ts';
 import { withDegradedStamp } from '../src/cli/op-notices.ts';
 import { recallInteropNotices } from '../src/core/interop-notices.ts';
 
@@ -150,5 +150,12 @@ describe('the one-line marker and the CLI placement', () => {
   test('no stamp leaves the output untouched', () => {
     expect(withDegradedStamp({ facts: [] }, true, null)).toEqual({ result: { facts: [] } });
     expect(withDegradedStamp([], false, { reasons: [] })).toEqual({ result: [] });
+  });
+});
+
+describe('the empty line on a brain keyless on purpose', () => {
+  test('it scopes the negative to what this caller can read, since restricted pages it cannot read may hold the words', () => {
+    expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).toContain('and no page this caller can read holds these words');
+    expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).not.toContain('and no page holds these words');
   });
 });

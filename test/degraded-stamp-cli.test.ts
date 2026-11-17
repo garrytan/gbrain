@@ -86,7 +86,7 @@ describe('CLI on a brain keyless on purpose (init --no-embedding)', () => {
   test('an empty human search says it was keyword-only on purpose and a true negative, not degraded', async () => {
     const r = await gb(chosen, ['search', 'zebraflamingo']);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('Search was keyword-only because embeddings are off on this brain on purpose, and no page holds these words');
+    expect(r.stdout).toContain('Search was keyword-only because embeddings are off on this brain on purpose, and no page this caller can read holds these words');
     expect(r.stdout).not.toContain('degraded:');
   }, 60_000);
 
