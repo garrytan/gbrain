@@ -8253,7 +8253,9 @@ Save ONE fact with mandatory attribution.
   `share: true`, and its `visibility: "world"` is refused; the brain owner's
   own credential saves as above (shared by default, `private` on its member
   page when it asks or the page or default keeps facts private). The response
-  names the `page` and `visibility` the fact got.
+  names the `page` and `visibility` the fact got. Facts saved `private` before
+  the default became `world` stay private until the operator runs
+  `gbrain repair open-facts` on the brain host (no remote verb opens them).
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —
@@ -9804,8 +9806,12 @@ seconds and comes back with only vector hits; search metadata carries
 statement timeout` (SQLSTATE 57014). Keyword-mode paging and the strict page
 count rank every matching page, so their cost grows with how common the terms
 are. Hybrid search's keyword arm ranks at most 50,000 matching chunks (its metadata
-carries `keyword_candidates_incomplete` when that bound applies). A local
-caller's statement usually stops reading matches at that bound. A remote MCP
+carries `keyword_candidates_incomplete` when that bound applies). For a local
+caller, hybrid search's title step ranks at most 5,000 of the pages whose title
+or timeline matches (the lowest page ids) and reports the same
+`keyword_candidates_incomplete` when it cuts; a remote caller's title step
+matches titles only. A local
+caller's keyword statement usually stops reading matches at the 50,000 bound. A remote MCP
 caller's arm stops there when the call sets no type, frontmatter or date filter
 and no source scope narrower than every live source; with such a filter it
 can still read every match before ranking. (A remote caller's arm used to read

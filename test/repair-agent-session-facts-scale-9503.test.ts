@@ -6,7 +6,8 @@
  * the old per-fact table scan ran past the 5 minute statement timeout); the owner-twin classification is unchanged.
  * The test counts fingerprint evaluations with a counting copy of gbrain_fact_fingerprint that returns the same hash, and
  * prices sequential scans out so a table this small takes the index path the planner picks on a real-size brain. The
- * take lookup groups contributing facts in one pass over the table instead of scanning it once per take.
+ * take lookup groups contributing facts in one pass over the table instead of scanning it once per take, and reads only
+ * the listed sources' facts, so its cost does not grow with facts in other sources.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -19,6 +20,7 @@ import { agentSessionTakes, classifyAgentSessionFacts } from '../src/core/repair
 const ALICE = 'people/alice-example';
 const UNLISTED_FACTS = 200;
 const TAKES = 30;
+const OTHER_SOURCE_FACTS = 400;
 
 describe('agent-session-facts classification cost follows the suspect facts (#9503)', () => {
   let engine: PGLiteEngine;
@@ -104,5 +106,32 @@ describe('agent-session-facts classification cost follows the suspect facts (#95
     const read = (await factsRead()) - before;
     expect(takes.map(t => t.claim)).toEqual(Array.from({ length: TAKES }, (_, i) => `Agent claim ${i + 1}`));
     expect(read).toBeLessThanOrEqual(2 * total);
+  });
+
+  test('the take lookup reads only the facts of the sources it lists', async () => {
+    const factsRead = async () => {
+      await engine.executeRaw('SELECT pg_stat_force_next_flush()');
+      const [row] = await engine.executeRaw<{ n: string }>(
+        "SELECT (COALESCE(seq_tup_read, 0) + COALESCE(idx_tup_fetch, 0))::text AS n FROM pg_stat_user_tables WHERE relname='facts'");
+      return Number(row!.n);
+    };
+    const lookup = async () => {
+      await engine.executeRaw('ANALYZE facts');
+      const before = await factsRead();
+      const takes = await agentSessionTakes(engine, ['default'], new Set());
+      return { read: (await factsRead()) - before, takes: takes.length };
+    };
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT DO NOTHING");
+    await engine.executeRaw("INSERT INTO pages (source_id, slug, type, title, compiled_truth) VALUES ('source-b', $1, 'person', 'Alice Example', '')", [ALICE]);
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug=$1 AND source_id='source-b'", [ALICE]);
+    const [take] = await engine.executeRaw<{ id: number }>(`INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, source, active)
+      VALUES ($1, 1, 'Other source claim', 'fact', 'self', 0.8, '2026-10-01', 'hook:writeback', true) RETURNING id`, [page!.id]);
+    const small = await lookup();
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, source_session, attributed_to, consolidated_into, consolidated_at)
+      SELECT 'source-b', $1, 'Other source claim ' || g, 'preference', 'private', 'hook:writeback', 'sess-b-' || g, 'user', $2, now() - interval '1 minute'
+      FROM generate_series(1, $3::int) g`, [ALICE, take!.id, OTHER_SOURCE_FACTS]);
+    const large = await lookup();
+    expect(large.takes).toBe(small.takes);
+    expect(large.read - small.read).toBeLessThan(OTHER_SOURCE_FACTS / 10);
   });
 });

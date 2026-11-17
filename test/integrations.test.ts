@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { resolve, sep } from 'node:path';
@@ -19,6 +19,17 @@ import { __setDnsLookupForTests } from '../src/core/ssrf-validate.ts';
 const RECIPES_DIR = resolve(import.meta.dir, '..', 'recipes');
 
 // --- parseRecipe tests ---
+
+describe('retrieval-reflex recipe health check (#9228)', () => {
+  test('runs only its own doctor check, a name doctor --only can select', async () => {
+    const recipe = parseRecipe(readFileSync(join(RECIPES_DIR, 'retrieval-reflex.md'), 'utf8'), 'retrieval-reflex.md')!;
+    expect(recipe.frontmatter.health_checks).toEqual([
+      expect.objectContaining({ type: 'command', argv: ['gbrain', 'doctor', '--only', 'retrieval_reflex_health', '--json'] }),
+    ]);
+    const { DOCTOR_CHECK_REGISTRY } = await import('../src/commands/doctor/registry.ts');
+    expect(DOCTOR_CHECK_REGISTRY.some((entry) => entry.emits.includes('retrieval_reflex_health'))).toBe(true);
+  });
+});
 
 describe('parseRecipe', () => {
   test('parses valid recipe with full frontmatter', () => {

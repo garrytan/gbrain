@@ -2451,7 +2451,7 @@ export class PGLiteEngine implements BrainEngine {
     return factsImpl.insertFact(this.engineSql, undefined, input, ctx);
   }
 
-  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date; successorFrom?: Date }): Promise<boolean> {
     return factsImpl.expireFact(this.engineSql, id, opts);
   }
 

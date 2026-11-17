@@ -31,9 +31,23 @@ export interface SearchTitlesDialect {
   staleProbe: boolean;
   /** chunkManifestReads; unset reads the manifest. */
   chunkManifest?: boolean;
-  /** The relaxed (OR) re-run: match and rank title lexemes only, for local callers too (#7135). */
+  /** Match and rank title lexemes only, for local callers too: the OR re-run (#7135) and the cut strict attempt (#7082). */
   relaxed?: boolean;
 }
+
+/**
+ * #7082: a local caller's strict attempt matches the whole vector (title plus
+ * timelines, timeline_entries rows included), and a very common word matched
+ * most pages, so ranking read every matching vector until the statement timeout.
+ * It now ranks at most this many matching pages, the ones with the lowest page
+ * ids, so a cut keeps the same pages on every call for the same data; a term
+ * that matches fewer is ranked exactly as before, and a cut attempt is
+ * completed by the title-only statement (engine-sql/titles.ts).
+ */
+let wholeVectorCandidates = 5000;
+export function titleWholeVectorCandidates(): number { return wholeVectorCandidates; }
+/** Test seam: lower the cap so a small fixture can be cut. */
+export function __setTitleWholeVectorCandidatesForTests(n: number): void { wholeVectorCandidates = n; }
 
 export interface SearchTitlesStatement {
   sql: string;
@@ -110,18 +124,28 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
     ? `CASE WHEN tp.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te
          WHERE te.page_id = tp.page_id) THEN true ELSE false END`
     : 'false';
+  const pageFilters = `${filters}
+        ${hardExcludeClause}
+        ${visibilityClause}`;
+  const capped = !titleOnly;
   const sql = `
-    WITH top_pages AS (
+    WITH ${capped ? `candidates AS MATERIALIZED (
+      SELECT p.id FROM pages p
+      JOIN sources s ON s.id = p.source_id
+      WHERE ${matchSql}
+        ${pageFilters}
+      ORDER BY p.id
+      LIMIT ${wholeVectorCandidates + 1}
+    ),
+    ` : ''}top_pages AS (
       SELECT p.slug, p.id AS page_id, p.title, p.type, p.source_id,
         p.effective_date, p.effective_date_source, p.updated_at, p.body_storage, p.body_generation,
         (lower(btrim(p.title, ' "''' || chr(160))) = $2) AS exact_title,
         ${rankSql} * ${sourceFactorCase} AS score
-      FROM pages p
+      FROM ${capped ? `(SELECT id FROM candidates ORDER BY id LIMIT ${wholeVectorCandidates}) c JOIN pages p ON p.id = c.id` : 'pages p'}
       JOIN sources s ON s.id = p.source_id
-      WHERE ${matchSql}
-        ${filters}
-        ${hardExcludeClause}
-        ${visibilityClause}
+      WHERE ${capped ? 'true' : `${matchSql}
+        ${pageFilters}`}
       ORDER BY exact_title DESC, score DESC, p.id ASC
       LIMIT $3 OFFSET $4
     )
@@ -132,7 +156,8 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
       COALESCE(rep.chunk_text, '') AS chunk_text,
       COALESCE(rep.chunk_source, 'compiled_truth') AS chunk_source,
       tp.score,
-      ${staleSql} AS stale
+      ${staleSql} AS stale,
+      ${capped ? `(SELECT count(*) FROM candidates) > ${wholeVectorCandidates}` : 'false'} AS candidates_cut
     FROM top_pages tp
     LEFT JOIN LATERAL (
       SELECT cc.id, cc.chunk_index, cc.chunk_text, cc.chunk_source
