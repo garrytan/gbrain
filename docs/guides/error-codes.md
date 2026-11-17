@@ -4908,6 +4908,46 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
 
+### secret_reveal_forbidden
+
+<a id="secret_reveal_forbidden"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This connection may not read originals from the secret store: its grant does not name reveal_secret, or it cannot read any page that holds the marker. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/secret-store.md#reading-an-original](../../docs/guides/secret-store.md#reading-an-original)
+
+### secret_store_key_mismatch
+
+<a id="secret_store_key_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A secret store entry did not authenticate under its key: the row was changed or moved, so its original is not returned. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
+
+### secret_store_key_missing
+
+<a id="secret_store_key_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The secret store key an entry was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here. | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
+
+### secret_store_unwritable
+
+<a id="secret_store_unwritable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The secret store could not keep an original value, so nothing that would have lost it was written. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/secret-store.md](../../docs/guides/secret-store.md)
+
 ### segmented_mirror_writer_gate
 
 <a id="segmented_mirror_writer_gate"></a>

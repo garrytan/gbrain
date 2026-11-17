@@ -25,6 +25,7 @@ const gapsFor = (scopes: string[], allowedOperations: string[] | null) =>
 const diagnose = (gaps: Awaited<ReturnType<typeof gapsFor>>, hasSnapshot: boolean, target = { kind: 'legacy_token', flag: ['--token', 't'] } as const) =>
   describeGrantDiagnosis(gaps, { hasSnapshot, provenance: null, clientSurface: null, clientSurfaceSetBy: null, serverSurface: null, target: target as never });
 const MEMBERSHIP = ['join_brain', 'leave_brain', 'sync_brain_skills'];
+const APPROVAL_ONLY = [...MEMBERSHIP, 'reveal_secret'].sort();
 
 describe('execution prerequisite table', () => {
   test('names registered operations and the enforcement it describes', () => {
@@ -35,7 +36,7 @@ describe('execution prerequisite table', () => {
     const membershipSource = readFileSync(join(resolve(import.meta.dir, '..'), 'src/core/shared-skills/membership.ts'), 'utf8');
     const enforced = [...membershipSource.matchAll(/memberAuthority\(\w+, '([a-z_]+)'\)/g)].map(m => m[1]).sort();
     expect(enforced).toEqual(MEMBERSHIP);
-    expect(Object.keys(EXECUTION_PREREQUISITES).filter(requiresExplicitApproval).sort()).toEqual(MEMBERSHIP);
+    expect(Object.keys(EXECUTION_PREREQUISITES).filter(requiresExplicitApproval).sort()).toEqual(APPROVAL_ONLY);
   });
 });
 
@@ -66,16 +67,16 @@ describe('#6663 membership operations on a grant with no snapshot', () => {
   test('are unreachable, named, and get a refresh repair', async () => {
     const scopes = ['read', 'skills_member_self'];
     const gaps = await gapsFor(scopes, null);
-    expect(gaps.approvalExcluded.sort()).toEqual(MEMBERSHIP);
-    for (const op of MEMBERSHIP) expect(gaps.unreachable).toContain(op);
-    expect(gaps.unreachable).toHaveLength(MEMBERSHIP.length);
+    expect(gaps.approvalExcluded.sort()).toEqual(APPROVAL_ONLY);
+    for (const op of APPROVAL_ONLY) expect(gaps.unreachable).toContain(op);
+    expect(gaps.unreachable).toHaveLength(APPROVAL_ONLY.length);
     let gate = 'allowed';
     try {
       await memberAuthority({ remote: true, auth: { scopes, principal: { kind: 'legacy_token', id: 't1' }, allowedOperations: undefined }, engine: { executeRaw: async () => [] } } as never, 'join_brain');
     } catch (e) { gate = (e as { code?: string }).code ?? String(e); }
     expect(gate).toBe('permission_denied');
     const d = diagnose(gaps, false);
-    expect(d.blockers).toContainEqual({ blocker: 'explicit_approval', excluded_count: MEMBERSHIP.length });
+    expect(d.blockers).toContainEqual({ blocker: 'explicit_approval', excluded_count: APPROVAL_ONLY.length });
     expect(d.fix?.argv).toEqual(['gbrain', 'auth', 'rescope', '--token', 't', '--refresh-operations']);
     expect(d.fix?.then_argv).toEqual(['gbrain', 'auth', 'rescope', '--token', 't', '--refresh-operations', '--add', '<OPERATIONS>']);
     const client = diagnose(gaps, false, { kind: 'oauth_client', id: 'c1' } as never);
@@ -103,14 +104,14 @@ describe('D17: --refresh-operations --add on a token with no snapshot', () => {
     expect(preview.written).toBe(false);
     expect(preview.after.operations).toBe('unrestricted');
     expect(preview.refresh).toMatchObject({ materialized: true, added: [] });
-    expect([...preview.refresh!.available].sort()).toEqual(MEMBERSHIP);
+    expect([...preview.refresh!.available].sort()).toEqual(APPROVAL_ONLY);
 
     await expect(rescopeLegacyToken(engine, { ...base, allNew: true, dryRun: false })).rejects.toThrow(/name each one with --add/);
 
     const applied = await rescopeLegacyToken(engine, { ...base, add: ['join_brain'], dryRun: false });
     expect(applied.written).toBe(true);
     const granted = applied.after.operations as string[];
-    const reachable = operations.filter(op => !op.localOnly && operationScopesAllowed(scopes, op) && !MEMBERSHIP.includes(op.name)).map(op => op.name);
+    const reachable = operations.filter(op => !op.localOnly && operationScopesAllowed(scopes, op) && !APPROVAL_ONLY.includes(op.name)).map(op => op.name);
     expect([...granted].sort()).toEqual([...reachable, 'join_brain'].sort());
     expect(granted).not.toContain('sync_brain_skills');
     expect(granted).not.toContain('leave_brain');

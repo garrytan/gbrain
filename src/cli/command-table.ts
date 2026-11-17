@@ -341,6 +341,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: gbrain repair prints REPAIR_HELP (kinds + dry-run/apply contract).
   // thin client: Wave 2 repair core: repairs publish coordinated writes on the brain host.
   { name: 'repair', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/repair.ts') },
+  // GST-2988: the secret store (reveal, restore, keys); trusted local CLI on the brain host.
+  { name: 'secrets', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/secrets.ts') },
   { name: 'diag', phase: 'post-connect', thinClient: 'refuse', json: 'document', read_only: true, slowRead: () => 'the diagnostic bundle', help: () => import('./help/diag.ts'), load: () => import('./commands/diag.ts') },
   { name: 'orphans', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, slowRead: () => 'orphan pages', load: () => import('./commands/orphans.ts') },
   // selfHelp: maintain (#3015) prints its own usage block (modes + not-auto-applied list).

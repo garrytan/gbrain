@@ -33,7 +33,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { executeRawJsonb, type SqlQuery } from '../sql-query.ts';
 import { TOKEN_ID_RE } from '../token-mint.ts';
 import { isUndefinedColumnError } from '../utils.ts';
-import { requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
+import { addedOnlyByName, requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
 import {
   GrantError, LEGACY_GRANT_AXES, grantFromTokenRow, permissionsMirror, tokenGrantColumnValues, tokenGrantFromColumns,
   tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant, type PrivateFactsGrant, type PrivatePagesGrant,
@@ -290,7 +290,7 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
         + `Preview with gbrain auth rescope ${'id' in args.target ? `--id ${args.target.id}` : `--token ${args.target.name}`} --refresh-operations, then name each one with --add`);
     }
     const available = grantable.filter(op => !granted.includes(op));
-    const added = args.allNew ? available : args.add ?? [];
+    const added = args.allNew ? available.filter(op => !addedOnlyByName(op)) : args.add ?? [];
     const notAvailable = added.filter(op => !available.includes(op));
     if (notAvailable.length) throw new GrantError('invalid_grant', `Not a new operation for this token: ${notAvailable.join(', ')} (run --refresh-operations alone to preview)`);
     if (added.length) next.allowedOperations = [...granted, ...added];

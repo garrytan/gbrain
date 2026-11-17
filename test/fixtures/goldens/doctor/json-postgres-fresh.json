@@ -1224,7 +1224,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 185/185 public tables",
+          "message": "RLS enabled on 187/187 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -4057,7 +4057,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "No retrieval-affecting files changed in working tree.",
+          "message": "1 retrieval-affecting file(s) changed since HEAD: src/core/operations.ts. Re-run `gbrain eval run-all` after committing these changes.",
           "name": "eval_drift",
           "status": "ok"
         },

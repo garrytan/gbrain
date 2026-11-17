@@ -1694,6 +1694,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "secrets": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "self-upgrade": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
