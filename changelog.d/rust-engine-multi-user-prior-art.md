@@ -3,5 +3,5 @@
 ### Documentation
 - New `docs/research/rust-engine/multi-user-prior-art.md` compares about 40 databases, storage engines, search indexes and access-control systems on concurrency, crash safety, replication, access control, backup, multi-process use and proof of correctness.
 - It recommends optimistic, serializable transactions checked at commit (the FoundationDB design) over a small proven store, with redb leading the bake-off, and deterministic simulation testing from the start.
-- It maps each Postgres lock and queue pattern gbrain uses today (job claims with `SKIP LOCKED`, advisory locks, row locks, TTL leases, `LISTEN/NOTIFY`, RLS) to a replacement in the Rust engine that holds no lock while the caller works.
+- It maps each Postgres lock and queue pattern gbrain uses today (job claims with `SKIP LOCKED`, advisory locks, row locks, TTL leases, `LISTEN/NOTIFY`, RLS) to a Rust engine replacement without PGLite-style whole-brain locking, and lists what may still wait.
 - It finds that the Rust rewrite of Postgres is not a fit as a dependency: it keeps the Postgres lock model, is AGPL-licensed and is not yet production-ready.

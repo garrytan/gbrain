@@ -32,12 +32,12 @@ Top 10 findings:
 4. **redb is the strongest storage base for the bake-off.** It is stable, its file format is stable, it has checksummed dual commit slots (a one-phase commit with a checksum and one fsync by default, two-phase as an option), and its fuzzing injects I/O errors. Its single writer is fine underneath an optimistic layer: callers never hold the redb writer; one ordered commit pipeline validates write sets and applies them in batches.
 5. **Turso's `BEGIN CONCURRENT` is the closest Rust multi-writer engine, but it is not ready.** It gives snapshot isolation, not serializability. A conflict returns `SQLITE_BUSY`. MVCC mode has no multi-process access, and correctness issues are still open. Watch it; do not adopt it.
 6. **Snapshot isolation is not enough for gbrain.** Quotas, caps and single claims break under write skew. Jepsen found anomalies in PostgreSQL 12.3 at `SERIALIZABLE` and lost updates in TiDB 2.1.7. Use serializable validation, or make each invariant a write to one conflict key.
-7. **Every lock and queue call site has a counterpart in a proven system that holds no lock while the caller works.** `SKIP LOCKED` claims become claim operations on a ready index with fencing tokens. TTL leases become epoch-fenced leases (SlateDB, FoundationDB). Advisory locks become conflict keys. `LISTEN/NOTIFY` becomes a commit-log subscription (Convex).
+7. **Every lock and queue call site has a counterpart in a proven system without PGLite-style whole-brain locking.** `SKIP LOCKED` claims become claim operations on a ready index with fencing tokens. TTL leases become epoch-fenced leases (SlateDB, FoundationDB). Advisory locks become conflict keys. `LISTEN/NOTIFY` becomes a commit-log subscription (Convex).
 8. **RLS becomes a typed scope capability plus physical partitioning.** Only the authentication boundary can build the scope object, and every method takes it. Indexes are partitioned per source or tenant, and BM25 statistics are kept per tenant. Cedar (Rust, Apache-2.0, proofs in Lean) can make the policy decision. A SpiceDB-style token gives read-your-writes. Avoid Oso (archived) and OpenFGA (no consistency token).
 9. **Search indexes need their own concurrency rules.** tantivy allows one writer per index, so one engine task must own it. Concurrent HNSW insert and search is unsafe by default (usearch #735, a YugabyteDB fix). Use an immutable base, a delta that readers never see half-built, and tombstones, and pin every index to the same version as the records (Lance manifests, ParadeDB's MVCC directory).
 10. **Replication can wait, but the format cannot.** Write a commit log now so a follower can read it later. openraft is the best Rust Raft library for M3/M4; avoid raft-rs (its last release was 2023, with open safety issues). Copy Neon's PITR design: a restore point is a log position, not a copy.
 
-**We learned that the bulletproof systems do not hold locks while callers work; they validate at commit and test in simulation.
+**We learned that the bulletproof systems avoid whole-brain locks; they validate at one ordered commit step and test in simulation.
 You should build gbrain's own optimistic, serializable transaction layer (FoundationDB's design) over a
 proven embedded store (redb is the front-runner), with deterministic simulation from day one.**
 
@@ -89,8 +89,8 @@ project's own unit tests.
 | Fjall | OCC multi-writer, serializable | ok | weak | n/a | weak | weak: forbidden | weak | adopt candidate (bake-off) |
 | LMDB / heed | single writer, lock-free readers | strong | weak | n/a | ok: hot copy | strong | ok: long production use | adopt candidate (bake-off fallback); copy lock-free readers |
 | RocksDB | pessimistic or optimistic transactions | strong | weak: secondary instances | n/a | ok: checkpoints | weak: one writer process | ok: heavy production use | copy (C++ weight) |
-| FoundationDB | OCC, conflict ranges, strict serializable | strong | strong | n/a | ok: continuous backup agent (details not checked) | strong: cluster | strong: nightly DST, paper | copy (design to follow) |
-| TiKV | Percolator, optimistic + pessimistic, SI | strong | strong: multi-Raft | n/a | ok: external BR tool (not checked) | strong: cluster | ok: Jepsen found lost updates (2019, fixed) | copy |
+| FoundationDB | OCC, conflict ranges, strict serializable | strong | strong | n/a | not checked: a continuous backup agent exists | strong: cluster | strong: nightly DST, paper | copy (design to follow) |
+| TiKV | Percolator, optimistic + pessimistic, SI | strong | strong: multi-Raft | n/a | not checked: external BR tool | strong: cluster | ok: Jepsen found lost updates (2019, fixed) | copy |
 | CockroachDB | serializable, HLC, parallel commits | strong | strong | ok: roles and privileges | ok: BACKUP/RESTORE with PITR (license tier not checked) | strong | ok: Jepsen 2017, TLA+ | avoid (license), copy TLA+ |
 | TigerBeetle | single-threaded state machine, strict serializable | strong | strong: VSR | n/a | not checked | strong | strong: Jepsen 2025, VOPR DST | copy test discipline |
 | openraft | Raft log | n/a | strong: production use | n/a | ok: snapshots | n/a | ok: own DST + Jepsen-style suite | adopt for M3/M4 |
@@ -114,8 +114,8 @@ How the axes rank the designs, best first, for gbrain's case:
   used in production) > Neon (Paxos WAL quorum) > raft-rs (stalled) > embedded stores (none).
 - **Access control (RLS replacement):** Cedar (policy proofs) + typed scope > SpiceDB (consistency token) >
   Postgres RLS (pitfalls listed below) > OpenFGA (stale checks) > Oso (archived).
-- **Backup / PITR:** Neon (restore point = log position) > Lance (version travel) > FoundationDB backup (not checked in detail) >
-  per-node snapshots (Qdrant).
+- **Backup / PITR:** Neon (restore point = log position) > Lance (version travel) > per-node snapshots (Qdrant). FoundationDB,
+  TiKV and TigerBeetle backup were not checked, so they are not ranked.
 - **Multi-process on one machine:** a server or owner process (FoundationDB, pgrust, gbrain's owner) > LMDB
   and SQLite WAL (shared memory) > redb (file range locks) > Fjall and Turso MVCC (not supported).
 - **Proven correctness:** TigerBeetle (Jepsen plus simulation) and FoundationDB (nightly simulation) > SQLite
