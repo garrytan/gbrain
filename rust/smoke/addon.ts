@@ -113,6 +113,20 @@ export interface Brain {
   deleteChunks(slug: string, options?: { sourceId?: string }): Promise<null>;
   countChunks(): Promise<number>;
   searchKeyword(query: string, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
+  addLink(from: string, to: string, options?: Record<string, any>): Promise<null>;
+  addLinksBatch(links: Array<Record<string, any>>): Promise<number>;
+  removeLink(from: string, to: string, options?: Record<string, any>): Promise<number>;
+  getLinks(slug: string, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
+  getBacklinks(slug: string, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
+  traverseGraph(slug: string, depth?: number, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
+  traversePaths(slug: string, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
+  traversePathsDetailed(
+    slug: string,
+    options?: Record<string, any>,
+  ): Promise<{ paths: Array<Record<string, any>>; truncated: boolean }>;
+  addTimelineEntry(slug: string, entry: Record<string, any>, options?: Record<string, any>): Promise<boolean>;
+  addTimelineEntriesBatch(entries: Array<Record<string, any>>): Promise<number>;
+  getTimeline(slug: string, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
   getBrainIdentity(): Promise<{ brain_id: string }>;
   registerLocalWriter(writer: { id: string; lane: 'cli' | 'stdio'; credentialHash: string; grantCeiling?: Record<string, any> }): Promise<Record<string, any>>;
   readLocalWriter(id: string): Promise<Record<string, any> | null>;

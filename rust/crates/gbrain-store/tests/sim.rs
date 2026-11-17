@@ -23,10 +23,17 @@ use gbrain_store::chunks::{ChunkInput, tokenize};
 use gbrain_store::env::uuid_from_bytes;
 use gbrain_store::journal::{FinishWrite, PageMutation, Principal, WriteAdmission};
 use gbrain_store::kv::scan_prefix;
+use gbrain_store::links::{
+    AddLinkOptions, LinkBatchInput, LinkScope, RemoveLinkOptions, TraverseGraphOptions,
+};
 use gbrain_store::pages::{PageInput, PutPageOptions, ReadScope};
 use gbrain_store::redb_kv::RedbKv;
+use gbrain_store::timeline::{
+    AddTimelineOptions, TimelineBatchInput, TimelineInput, TimelineOptions,
+};
 use gbrain_store::{Env, FileBackend, Kv, KvRead, KvWrite, OpenOptions, Store, StoreError, keys};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -202,6 +209,7 @@ const JOURNALED: [&str; 6] = [
 /// Pages that only direct writes touch, so `delete_page` never removes a page a committed journal
 /// request names.
 const SCRATCH: [&str; 3] = ["scratch/one", "scratch/two", "scratch/three"];
+const LINK_TYPES: [&str; 3] = ["", "cites", "works_at"];
 const WORDS: [&str; 12] = [
     "alpha", "beta", "gamma", "delta", "ledger", "harbor", "quartz", "meridian", "orchid",
     "falcon", "ember", "cobalt",
@@ -259,7 +267,7 @@ impl World {
         let roll = rng.below(100);
         let scope = ReadScope::default();
         match roll {
-            0..=34 => {
+            0..=29 => {
                 let slug = pick(rng, &JOURNALED);
                 let request = rand_uuid(rng);
                 let long = rng.below(4) == 0;
@@ -287,7 +295,7 @@ impl World {
                 }
                 ("submit".into(), result)
             }
-            35..=44 => {
+            30..=37 => {
                 if self.history.is_empty() {
                     return ("replay-none".into(), Ok(Value::Null));
                 }
@@ -306,7 +314,7 @@ impl World {
                 }
                 ("replay".into(), result)
             }
-            45..=54 => {
+            38..=45 => {
                 let slug = any_slug(rng);
                 let long = rng.below(4) == 0;
                 let input: PageInput = serde_json::from_value(
@@ -319,7 +327,7 @@ impl World {
                         .put_page(slug, &input, &PutPageOptions::default()),
                 )
             }
-            55..=61 => {
+            46..=50 => {
                 let slug = any_slug(rng);
                 let tag = pick(rng, &["red", "green", "blue"]);
                 if rng.below(3) == 0 {
@@ -331,7 +339,7 @@ impl World {
                     ("tag".into(), json_of(self.store.add_tag(slug, tag, None)))
                 }
             }
-            62..=67 => {
+            51..=55 => {
                 let slug = any_slug(rng);
                 if rng.below(2) == 0 {
                     (
@@ -345,11 +353,11 @@ impl World {
                     )
                 }
             }
-            68..=71 => {
+            56..=59 => {
                 let slug = pick(rng, &SCRATCH);
                 ("delete".into(), json_of(self.store.delete_page(slug, None)))
             }
-            72..=79 => {
+            60..=66 => {
                 let slug = any_slug(rng);
                 let Ok(Some(page)) = self.store.read_page_snapshot(slug, &scope) else {
                     return ("chunks-skip".into(), Ok(Value::Null));
@@ -366,11 +374,11 @@ impl World {
                     json_of(self.store.upsert_chunks(slug, &chunks, &options)),
                 )
             }
-            80..=84 => {
+            67..=70 => {
                 let slug = any_slug(rng);
                 ("version".into(), self.store.create_version(slug, None))
             }
-            85..=91 => {
+            71..=76 => {
                 let request = rand_uuid(rng);
                 let admission: WriteAdmission = serde_json::from_value(json!({
                     "principal": {"kind": "application", "id": "app-1"},
@@ -386,6 +394,8 @@ impl World {
                 }
                 ("admit".into(), result)
             }
+            83..=91 => self.link_op(rng),
+            92..=99 => self.timeline_op(rng),
             _ => {
                 if self.outstanding.is_empty() {
                     return ("finish-none".into(), Ok(Value::Null));
@@ -403,6 +413,115 @@ impl World {
                     self.store.finish_write(&app(), &request, &finish),
                 )
             }
+        }
+    }
+
+    /// A link write (add, batch add, remove) or a graph read between any of the pages, so
+    /// links reach soft-deleted and deleted pages and `delete_page` cascades over them.
+    fn link_op(&mut self, rng: &mut SimRng) -> (String, Result<Value, StoreError>) {
+        let (from, to) = (any_slug(rng), any_slug(rng));
+        let link_type = pick(rng, &LINK_TYPES);
+        let link_source = pick(rng, &["markdown", "manual", "frontmatter"]);
+        match rng.below(8) {
+            0..=2 => {
+                let mut options = json!({
+                    "context": body(rng, false),
+                    "linkType": link_type,
+                    "linkSource": link_source,
+                });
+                if link_source == "frontmatter" {
+                    options["originSlug"] = json!(any_slug(rng));
+                    options["originField"] = json!(link_type);
+                }
+                let options: AddLinkOptions = serde_json::from_value(options).unwrap();
+                (
+                    "link".into(),
+                    json_of(self.store.add_link(from, to, &options)),
+                )
+            }
+            3 => {
+                let links: Vec<LinkBatchInput> = (0..1 + rng.below(4))
+                    .map(|_| {
+                        serde_json::from_value(json!({
+                            "from_slug": any_slug(rng),
+                            "to_slug": any_slug(rng),
+                            "link_type": pick(rng, &LINK_TYPES),
+                            "link_source": "markdown",
+                        }))
+                        .unwrap()
+                    })
+                    .collect();
+                (
+                    "link-batch".into(),
+                    json_of(self.store.add_links_batch(&links)),
+                )
+            }
+            4..=5 => {
+                let options: RemoveLinkOptions = serde_json::from_value(match rng.below(3) {
+                    0 => json!({}),
+                    1 => json!({"linkType": link_type}),
+                    _ => json!({"linkType": link_type, "linkSource": link_source}),
+                })
+                .unwrap();
+                (
+                    "unlink".into(),
+                    json_of(self.store.remove_link(from, to, &options)),
+                )
+            }
+            6 => {
+                let depth = 1 + rng.below(3) as i64;
+                let options = TraverseGraphOptions::default();
+                (
+                    "walk".into(),
+                    json_of(self.store.traverse_graph(from, Some(depth), &options)),
+                )
+            }
+            _ => (
+                "backlinks".into(),
+                json_of(self.store.get_backlinks(to, &LinkScope::default())),
+            ),
+        }
+    }
+
+    /// A timeline write (one entry or a batch, duplicates included) or a timeline read.
+    fn timeline_op(&mut self, rng: &mut SimRng) -> (String, Result<Value, StoreError>) {
+        let slug = any_slug(rng);
+        let entry = |rng: &mut SimRng| {
+            json!({
+                "date": format!("2026-0{}-1{}", 1 + rng.below(3), rng.below(3)),
+                "summary": pick(rng, &WORDS),
+                "source": pick(rng, &["", "cal", "mail"]),
+            })
+        };
+        match rng.below(5) {
+            0..=2 => {
+                let input: TimelineInput = serde_json::from_value(entry(rng)).unwrap();
+                (
+                    "timeline".into(),
+                    json_of(self.store.add_timeline_entry(
+                        slug,
+                        &input,
+                        &AddTimelineOptions::default(),
+                    )),
+                )
+            }
+            3 => {
+                let entries: Vec<TimelineBatchInput> = (0..1 + rng.below(4))
+                    .map(|_| {
+                        let mut e = entry(rng);
+                        e["slug"] = json!(any_slug(rng));
+                        serde_json::from_value(e).unwrap()
+                    })
+                    .collect();
+                (
+                    "timeline-batch".into(),
+                    json_of(self.store.add_timeline_entries_batch(&entries)),
+                )
+            }
+            _ => (
+                "timeline-read".into(),
+                json_of(self.store.get_timeline(slug, &TimelineOptions::default())),
+            ),
         }
     }
 }
@@ -625,6 +744,113 @@ fn integrity(kv: &dyn Kv) -> Result<Vec<String>, StoreError> {
         if !pages.contains_key(&page_id) || record(&value)["page_id"].as_u64() != Some(page_id) {
             bad.push(format!("a version of page {page_id} has no page"));
         }
+    }
+
+    // links: the record under its from page, and its three index keys
+    let mut link_index: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    for (key, value) in entries(read, keys::LINK)? {
+        let link = record(&value);
+        let (id, from, to) = (
+            link["id"].as_u64().unwrap_or(0),
+            link["from_page_id"].as_u64().unwrap_or(0),
+            link["to_page_id"].as_u64().unwrap_or(0),
+        );
+        let origin = link["origin_page_id"].as_u64();
+        if key != keys::link(from, id) {
+            bad.push(format!("link {id} is stored under the wrong key"));
+        }
+        for (end, page) in [("from", Some(from)), ("to", Some(to)), ("origin", origin)] {
+            if let Some(page) = page
+                && !pages.contains_key(&page)
+            {
+                bad.push(format!(
+                    "link {id} has a {end} page {page} that is not there"
+                ));
+            }
+        }
+        let unique = keys::link_unique(
+            from,
+            to,
+            link["link_type"].as_str().unwrap_or(""),
+            link["link_source"].as_str(),
+            origin,
+        );
+        let mut expect = vec![
+            (keys::link_to(to, id), from.to_be_bytes().to_vec()),
+            (unique, id.to_be_bytes().to_vec()),
+        ];
+        if let Some(origin) = origin {
+            expect.push((keys::link_origin(origin, id), from.to_be_bytes().to_vec()));
+        }
+        for (index, want) in expect {
+            if read.get(&index)?.as_ref() != Some(&want) {
+                bad.push(format!(
+                    "link {id} is missing the index key {:?}",
+                    index[0] as char
+                ));
+            }
+            link_index.insert(index, want);
+        }
+    }
+    for tag in [keys::LINK_TO, keys::LINK_UNIQUE, keys::LINK_ORIGIN] {
+        for (key, value) in entries(read, tag)? {
+            if link_index.get(&key) != Some(&value) {
+                bad.push(format!("a {:?} link index key names no link", tag as char));
+            }
+        }
+    }
+
+    // timeline: the entry under its page and date, its dedup key, and the page's newest time
+    let mut dedup_index: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut newest: BTreeMap<u64, i64> = BTreeMap::new();
+    for (key, value) in entries(read, keys::TIMELINE)? {
+        let entry = record(&value);
+        let (id, page_id) = (
+            entry["id"].as_u64().unwrap_or(0),
+            entry["page_id"].as_u64().unwrap_or(0),
+        );
+        let date = entry["date"].as_str().unwrap_or("");
+        if key != keys::timeline(page_id, date, id) {
+            bad.push(format!("timeline entry {id} is stored under the wrong key"));
+        }
+        if !pages.contains_key(&page_id) {
+            bad.push(format!(
+                "timeline entry {id} belongs to a page that is not there"
+            ));
+        }
+        let digest: [u8; 32] =
+            Sha256::digest(entry["summary"].as_str().unwrap_or("").as_bytes()).into();
+        let dedup = keys::timeline_dedup(
+            page_id,
+            date,
+            &digest,
+            entry["source"].as_str().unwrap_or(""),
+        );
+        if read.get(&dedup)? != Some(id.to_be_bytes().to_vec()) {
+            bad.push(format!("timeline entry {id} has no dedup key"));
+        }
+        dedup_index.insert(dedup, id.to_be_bytes().to_vec());
+        let created = entry["created_at_us"].as_i64().unwrap_or(i64::MIN);
+        let max = newest.entry(page_id).or_insert(i64::MIN);
+        *max = (*max).max(created);
+    }
+    for (key, value) in entries(read, keys::TIMELINE_DEDUP)? {
+        if dedup_index.get(&key) != Some(&value) {
+            bad.push("a timeline dedup key names no entry".into());
+        }
+    }
+    let mut latest: BTreeMap<u64, i64> = BTreeMap::new();
+    for (key, value) in entries(read, keys::TIMELINE_LATEST)? {
+        let page_id = keys::be8(&key[1..]).unwrap_or(0);
+        let micros = <[u8; 8]>::try_from(value.as_slice())
+            .map(i64::from_be_bytes)
+            .unwrap_or(i64::MIN);
+        latest.insert(page_id, micros);
+    }
+    if latest != newest {
+        bad.push(format!(
+            "the newest-entry times {latest:?} are not the entries' newest created_at {newest:?}"
+        ));
     }
 
     // journal
@@ -1007,10 +1233,35 @@ fn an_honest_run_matches_its_recorded_commits_and_is_sound() {
 
 #[test]
 fn the_integrity_check_sees_damage() {
-    let disk = SimDisk::new(7, FaultPlan::none());
-    let run = workload(&disk, 7, None).unwrap();
-    assert_eq!(integrity(&*run.kv).unwrap(), Vec::<String>::new());
-    let state = read_state(&*run.kv).unwrap();
+    // The first seed from 7 whose final state holds a record of every damaged kind.
+    let wanted = [
+        keys::PAGE_ID,
+        keys::POSTING,
+        keys::CHUNK,
+        keys::REQUEST_ID,
+        keys::LINK,
+        keys::LINK_TO,
+        keys::LINK_UNIQUE,
+        keys::TIMELINE,
+        keys::TIMELINE_DEDUP,
+        keys::TIMELINE_LATEST,
+    ];
+    let (run, state) = (7..64)
+        .find_map(|seed| {
+            let disk = SimDisk::new(seed, FaultPlan::none());
+            let run = workload(&disk, seed, None).unwrap();
+            assert_eq!(
+                integrity(&*run.kv).unwrap(),
+                Vec::<String>::new(),
+                "seed {seed}"
+            );
+            let state = read_state(&*run.kv).unwrap();
+            wanted
+                .iter()
+                .all(|tag| state.keys().any(|k| k[0] == *tag))
+                .then_some((run, state))
+        })
+        .expect("no seed from 7 to 63 leaves a record of every kind");
     let first = |tag: u8| {
         state
             .keys()
@@ -1024,6 +1275,16 @@ fn the_integrity_check_sees_damage() {
         ("a posting", first(keys::POSTING), None),
         ("a chunk", first(keys::CHUNK), None),
         ("an idempotency index entry", first(keys::REQUEST_ID), None),
+        ("a link", first(keys::LINK), None),
+        ("a backlink index key", first(keys::LINK_TO), None),
+        ("a link uniqueness key", first(keys::LINK_UNIQUE), None),
+        ("a timeline entry", first(keys::TIMELINE), None),
+        ("a timeline dedup key", first(keys::TIMELINE_DEDUP), None),
+        (
+            "a newest-entry time",
+            first(keys::TIMELINE_LATEST),
+            Some(0i64.to_be_bytes().to_vec()),
+        ),
         (
             "the chunk totals",
             keys::meta("chunk_stats"),

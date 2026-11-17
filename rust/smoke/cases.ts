@@ -495,6 +495,43 @@ export const cases: Case[] = [
       });
     },
   },
+  {
+    name: 'store: links, graph walks, timeline and the stale flag',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const brain = new addon.Brain(pool);
+        await brain.open(dir);
+        for (const slug of ['g/a', 'g/b', 'g/c']) {
+          await brain.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} zebra` });
+        }
+        assert.equal(await brain.addLink('g/a', 'g/b', { linkType: 'cites', context: 'ab' }), null);
+        assert.equal(await brain.addLinksBatch([{ from_slug: 'g/b', to_slug: 'g/c', link_type: 'cites' }]), 1);
+        assert.deepEqual((await brain.getLinks('g/a')).map(l => [l.to_slug, l.link_type, l.context]), [['g/b', 'cites', 'ab']]);
+        assert.deepEqual((await brain.getBacklinks('g/c')).map(l => l.from_slug), ['g/b']);
+        assert.deepEqual((await brain.traverseGraph('g/a', 1)).map(n => [n.slug, n.depth]), [['g/a', 0], ['g/b', 1]]);
+        assert.deepEqual((await brain.traverseGraph('g/a')).map(n => n.slug), ['g/a', 'g/b', 'g/c'], 'default depth');
+        const paths = await brain.traversePathsDetailed('g/c', { depth: 2, direction: 'in' });
+        assert.deepEqual(paths.paths.map(p => [p.from_slug, p.to_slug, p.depth]), [['g/b', 'g/c', 1], ['g/a', 'g/b', 2]]);
+        assert.equal(paths.truncated, false);
+        assert.equal((await brain.traversePaths('g/a', { depth: 1 })).length, 1);
+        const refused = await rejection(brain.addLink('g/a', 'g/c', { linkSource: 'Bad_Source' }));
+        assert.equal(refused.code, 'constraint_violation');
+        assert.equal((await rejection(brain.addLink('g/a', 'g/none'))).code, 'page_not_found');
+        assert.equal(await brain.removeLink('g/a', 'g/b', { linkType: 'cites' }), 1);
+
+        assert.equal((await brain.searchKeyword('zebra', { type: 'note' })).find(r => r.slug === 'g/a')!.stale, false);
+        assert.equal(await brain.addTimelineEntry('g/a', { date: '2026-01-02', summary: 'met' }), true);
+        assert.equal(await brain.addTimelineEntry('g/a', { date: '2026-01-02', summary: 'met' }), false);
+        assert.equal(await brain.addTimelineEntriesBatch([{ slug: 'g/a', date: '2026-01-03', summary: 'again' }]), 1);
+        assert.deepEqual((await brain.getTimeline('g/a')).map(e => [e.date, e.summary]), [['2026-01-03', 'again'], ['2026-01-02', 'met']]);
+        assert.equal((await rejection(brain.addTimelineEntry('g/a', { date: 'soon', summary: 'x' }))).code, 'invalid_argument');
+        assert.equal((await brain.searchKeyword('zebra')).find(r => r.slug === 'g/a')!.stale, true, 'an entry after the last write');
+        await brain.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
 ];
 
 /** The cases that make sense inside a compiled executable (everything in-process and quick). */

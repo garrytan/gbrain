@@ -541,6 +541,165 @@ impl Brain {
         })
     }
 
+    /// `addLink(from, to, { context?, linkType?, linkSource?, originSlug?, originField?,
+    /// fromSourceId?, toSourceId?, originSourceId? }?)`: the positional arguments of the engine
+    /// method as one object. Resolves `null`; `page_not_found` names the missing endpoint.
+    #[napi]
+    pub fn add_link<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+        to: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.add_link(&from, &to, &arg(options, "addLink options")?)
+        })
+    }
+
+    /// `addLinksBatch(links)`: resolves the number of links inserted.
+    #[napi]
+    pub fn add_links_batch<'env>(
+        &self,
+        env: &'env Env,
+        links: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let links: Vec<gbrain_store::links::LinkBatchInput> =
+                required(links, "addLinksBatch links")?;
+            s.add_links_batch(&links)
+        })
+    }
+
+    /// `removeLink(from, to, { linkType?, linkSource?, fromSourceId?, toSourceId? }?)`: resolves
+    /// the number of links deleted. A key set to `null` is a `null` filter, not a missing one.
+    #[napi]
+    pub fn remove_link<'env>(
+        &self,
+        env: &'env Env,
+        from: String,
+        to: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.remove_link(&from, &to, &arg(options, "removeLink options")?)
+        })
+    }
+
+    /// `getLinks(slug, { sourceId?, sourceIds? }?)`: `Link[]` in link id order.
+    #[napi]
+    pub fn get_links<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_links(&slug, &arg(options, "getLinks options")?)
+        })
+    }
+
+    /// `getBacklinks(slug, { sourceId?, sourceIds? }?)`: `Link[]` in link id order.
+    #[napi]
+    pub fn get_backlinks<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_backlinks(&slug, &arg(options, "getBacklinks options")?)
+        })
+    }
+
+    /// `traverseGraph(slug, depth?, { sourceId?, sourceIds?, frontierCap? }?)`: `GraphNode[]`.
+    /// `depth` and `frontierCap` must be integers.
+    #[napi]
+    pub fn traverse_graph<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        depth: Option<Value>,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let depth: Option<i64> = arg(depth, "traverseGraph depth")?;
+            s.traverse_graph(&slug, depth, &arg(options, "traverseGraph options")?)
+        })
+    }
+
+    /// `traversePaths(slug, { depth?, linkType?, direction?, sourceId?, sourceIds? }?)`:
+    /// `GraphPath[]`.
+    #[napi]
+    pub fn traverse_paths<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.traverse_paths(&slug, &arg(options, "traversePaths options")?)
+        })
+    }
+
+    /// `traversePathsDetailed(slug, opts?)`: `{ paths, truncated }`.
+    #[napi]
+    pub fn traverse_paths_detailed<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.traverse_paths_detailed(&slug, &arg(options, "traversePathsDetailed options")?)
+        })
+    }
+
+    /// `addTimelineEntry(slug, { date, source?, summary, detail? }, { skipExistenceCheck?,
+    /// sourceId? }?)`: resolves true when it inserted, false for a duplicate.
+    #[napi]
+    pub fn add_timeline_entry<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        entry: Value,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let entry: gbrain_store::timeline::TimelineInput =
+                required(entry, "addTimelineEntry entry")?;
+            s.add_timeline_entry(&slug, &entry, &arg(options, "addTimelineEntry options")?)
+        })
+    }
+
+    /// `addTimelineEntriesBatch(entries)`: resolves the number of entries inserted.
+    #[napi]
+    pub fn add_timeline_entries_batch<'env>(
+        &self,
+        env: &'env Env,
+        entries: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let entries: Vec<gbrain_store::timeline::TimelineBatchInput> =
+                required(entries, "addTimelineEntriesBatch entries")?;
+            s.add_timeline_entries_batch(&entries)
+        })
+    }
+
+    /// `getTimeline(slug, { limit?, sourceId?, sourceIds?, after?, before? }?)`: newest first.
+    /// `date` is `YYYY-MM-DD` and `created_at` an ISO string; the shell makes them `Date`s.
+    #[napi]
+    pub fn get_timeline<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.get_timeline(&slug, &arg(options, "getTimeline options")?)
+        })
+    }
+
     /// `getBrainIdentity()`: `{ brain_id }`.
     #[napi]
     pub fn get_brain_identity<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

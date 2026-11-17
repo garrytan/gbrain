@@ -230,7 +230,7 @@ does, so a tag change, soft delete or restore hides a page from search until a `
 | `brain.getChunks(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `Chunk[]` in index order, `embedding: null` | `getChunks` |
 | `brain.deleteChunks(slug, { sourceId? }?)` | `null`; the page stays | `deleteChunks` |
 | `brain.countChunks()` | number of chunks in the brain | none |
-| `brain.searchKeyword(query, opts?)` | `SearchResult[]` (`slug, page_id, title, type, source_id, chunk_text, chunk_source, chunk_id, chunk_index, score, stale: false`, plus `effective_date` when set) | `searchKeyword` |
+| `brain.searchKeyword(query, opts?)` | `SearchResult[]` (`slug, page_id, title, type, source_id, chunk_text, chunk_source, chunk_id, chunk_index, score, stale`, plus `effective_date` when set). `stale` is PGLite's rule: the page's `updated_at` is older than the newest `created_at` of its timeline entries | `searchKeyword` |
 
 `searchKeyword` is not parity with PGLite. Ranking is BM25 over chunks with index-wide statistics
 (`k1` 1.2, `b` 0.75), not the Postgres `ts_rank`, so scores and order differ. There is no stemming;
@@ -244,6 +244,63 @@ archived sources and image chunks are hidden, `test/`, `attachments/` and `.raw/
 and `symbolKind` filter. `where`, `afterDate` and `beforeDate` reject `invalid_argument` instead of
 being ignored. A query reads the posting list of every term, so cost grows with the number of
 matching chunks.
+
+### Links, graph and timeline
+
+Links and timeline entries are typed key-value records with their own index keys. Every write
+changes a record and all of its index keys in one transaction, so a crash keeps all of them or
+none (the simulation below checks this). The new key tags are additive; `FORMAT_VERSION` stays 1.
+
+| Key | Value | Mirrors |
+| --- | --- | --- |
+| `L from_page_id link_id` | the link record (JSON) | a `links` row, stored under the page it leaves |
+| `l to_page_id link_id` | `from_page_id` | the backlink index |
+| `O origin_page_id link_id` | `from_page_id` | the links a page authored (`origin_page_id`) |
+| `U from to link_type \0 link_source origin` | `link_id` | `UNIQUE NULLS NOT DISTINCT (from_page_id, to_page_id, link_type, link_source, origin_page_id)`; a NULL source or origin has its own encoding |
+| `E page_id date entry_id` | the entry record (JSON) | a `timeline_entries` row; one reverse scan is `ORDER BY date DESC, id DESC` |
+| `D page_id date sha256(summary) source` | `entry_id` | the `(page_id, date, md5(summary), source)` dedup index (another digest, the same rule) |
+| `G page_id` | newest `created_at` of the page's entries | what `stale` compares with |
+
+Ids are integers from a counter, like a Postgres serial. A timeline add that hits the dedup key still
+takes an id, as `INSERT .. ON CONFLICT DO NOTHING` does, so the ids `getTimeline` returns match
+PGLite. `deletePage` removes the links that leave or reach the page and its timeline entries
+(`ON DELETE CASCADE`) and clears the origin of links it authored (`ON DELETE SET NULL`). When that
+clear would collide with another link, `deletePage` rejects `constraint_violation` and changes
+nothing, as PGLite does. A soft-deleted page hides every edge it touches, as an endpoint or as
+the origin.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.addLink(from, to, { context?, linkType?, linkSource?, originSlug?, originField?, fromSourceId?, toSourceId?, originSourceId? }?)` | `null`. The positional arguments of `addLink` in one object. Repeating a link updates its context. `page_not_found` for a missing endpoint; `constraint_violation` for a `linkSource` outside PGLite's CHECK; a missing origin is dropped (`origin_slug` `null`, `origin_field` kept) | `addLink` |
+| `brain.addLinksBatch(links)` | inserted count; rows with a missing endpoint are skipped | `addLinksBatch` |
+| `brain.removeLink(from, to, { linkType?, linkSource?, fromSourceId?, toSourceId? }?)` | removed count. An absent filter matches every value; `null` matches nothing, as `= NULL` does | `removeLink` |
+| `brain.getLinks(slug, { sourceId?, sourceIds? }?)` / `brain.getBacklinks(...)` | `{ from_slug, from_source_id, to_slug, to_source_id, link_type, context, link_source, origin_slug, origin_source_id, origin_field }[]`; slugs match exactly | `getLinks` / `getBacklinks` |
+| `brain.traverseGraph(slug, depth?, { sourceId?, sourceIds?, frontierCap? }?)` | `{ slug, source_id, title, type, depth, links: [{ to_slug, link_type }] }[]`, outgoing walk, default depth 5, each page once at its shallowest depth, at most 20,000 pages | `traverseGraph` |
+| `brain.traversePaths(slug, { depth?, direction?, linkType?, sourceId?, sourceIds? }?)` | `{ from_slug, from_source_id, to_slug, to_source_id, link_type, context, depth }[]`; `direction` `out` (default), `in` or `both`; each edge once | `traversePaths` |
+| `brain.traversePathsDetailed(slug, opts?)` | `{ paths, truncated }`; at most 5,000 edges, `truncated` when more exist | `traversePathsDetailed` |
+| `brain.addTimelineEntry(slug, { date, summary, source?, detail? }, { sourceId?, skipExistenceCheck? }?)` | `true` when a row was written, `false` for a duplicate (same page, date, summary and source) | `addTimelineEntry` |
+| `brain.addTimelineEntriesBatch(entries)` | inserted count; entries of missing pages are skipped | `addTimelineEntriesBatch` |
+| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
+
+Where this engine differs from PGLite:
+
+- `traversePathsDetailed` orders by `(depth, from_slug, to_slug, from_source_id, to_source_id)` as
+  PGLite does, then by `link_type` and link id where PGLite's order is undefined. Two links that
+  differ only in origin show once, the one with the lowest id.
+- Dates: `YYYY-MM-DD` or `YYYY/MM/DD`, optionally followed by `T` or a space and a time that is
+  ignored (`2026-01-05T23:30:00-05:00` is `2026-01-05`, as in PGLite). Other spellings Postgres
+  casts are refused `invalid_argument`, as is a date that does not exist.
+- `getTimeline` rows carry the `TimelineEntry` fields only, not the write-provenance and
+  `trust_tier` columns of the table (PGLite returns them `null` and `"unknown"` for these writes).
+- `excludePrivate: true`, `temporal`, `page` (keyset paging of paths) and `eligibility` reject
+  `invalid_argument` instead of being ignored. The TypeScript shell must not send them here.
+
+`crates/gbrain-store/tests/graph_parity.rs` replays PGLite's own results for links, the graph
+walks at depth 0 to 3 and past (cycles, direction, scope, soft delete, caps), timeline writes and
+reads, and `stale`, and compares every step exactly. The fixture is
+`tests/fixtures/graph-parity.json`, written by `bun rust/scripts/graph-parity-golden.ts` from the
+repository root; `--check` fails when it is stale. Rebuild it when PGLite's behavior changes. The
+fixture is part of the build hash; `rust/scripts/` is not.
 
 ### The write journal
 
@@ -283,11 +340,13 @@ this engine does not have.
 
 `crates/gbrain-store/tests/sim.rs` runs the store on redb over `gbrain-sim`'s fault-injecting disk. A
 seed fixes three simulated clients (put, journaled write, replay, tag, soft delete, restore, delete,
-chunks, version, admit, finish), the clock and ids the store sees, and where the disk crashes, tears
+chunks, version, admit, finish, link, batch link, unlink, walk, backlinks, timeline entry, timeline
+batch, timeline read), the clock and ids the store sees, and where the disk crashes, tears
 a write, fails an fsync or lies about one. After a reboot the recovered records must equal the
 replay of a prefix of the acknowledged commits (nothing lost, the batch in flight all or nothing),
 and the store's own invariants must hold: id index, chunks against postings, index totals, journal
-index and outstanding counters. A control run (every fsync lies, the checker is told the disk was
+index and outstanding counters, each link against its three index keys and its pages, and each
+timeline entry against its dedup key, its page and the page's newest-entry time. A control run (every fsync lies, the checker is told the disk was
 honest) must report violations, or the harness is blind.
 
 ```sh
@@ -315,7 +374,8 @@ Errors from the addon are real `Error` objects with a `code`:
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
-| `page_not_found` | `addTag` or `createVersion` named a page that does not exist. |
+| `page_not_found` | `addTag`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
+| `constraint_violation` | A write breaks a table constraint PGLite enforces: a `linkSource` outside its CHECK, or a `deletePage` whose origin clear collides with another link. |
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
 | `empty_overwrite` | A blank body would replace a page that has content. |
