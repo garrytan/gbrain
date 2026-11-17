@@ -17,7 +17,7 @@ import {
   isRetryableConnError,
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
-import { hardenFunctionSearchPaths } from './function-search-path.ts';
+import { hardenFailureLine, hardenFunctionSearchPaths } from './function-search-path.ts';
 import { resumePageRevisionBackfill } from './page-state/revision-backfill-schema.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
@@ -464,7 +464,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
           + 'ALTER FUNCTION needs the owner. Run gbrain doctor for the SQL to run as that role.\n');
       }
     } catch (e) {
-      process.stderr.write(`  search_path: pg_temp not restored on gbrain functions (${e instanceof Error ? e.message : String(e)}); gbrain doctor (function_search_path) names them\n`);
+      process.stderr.write(hardenFailureLine(e));
     }
   };
   if (pending.length === 0) {

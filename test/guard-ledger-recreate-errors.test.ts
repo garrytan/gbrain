@@ -2,12 +2,13 @@
  * hardenFunctionSearchPaths re-creates every purge or withdrawal guard left without its ledger check (GST-2885,
  * #7632/#7659). Only a guard another role owns stays silent (SQLSTATE 42501, the next run of its owner re-creates it,
  * and doctor's guard_ledger_checks names it); any other failure of the re-create propagates to the migration run,
- * which reports it, instead of leaving a guard that lets a purged or withdrawn write through.
+ * which reports it (naming guard_ledger_checks), instead of leaving a guard that lets a purged or withdrawn write
+ * through. A concurrent pg_proc update is retried, and a failed re-create never skips the pg_temp hardening.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { hardenFunctionSearchPaths } from '../src/core/function-search-path.ts';
+import { LedgerGuardRecreateError, hardenFailureLine, hardenFunctionSearchPaths } from '../src/core/function-search-path.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -15,29 +16,46 @@ import { testBackends } from './helpers/test-backends.ts';
 const backends = testBackends();
 const ROLLBACK = 'guard-recreate-rollback';
 
-/** The guard listing names one stale guard the role owns; its CREATE OR REPLACE then fails with `failure`. */
-function stubEngine(failure: Error & { code?: string }) {
-  let call = 0;
-  return {
+const STALE_ROW = [{ name: 'gbrain_refuse_purged_fact', sig: 'gbrain_refuse_purged_fact()', owned: true, role: 'writer' }];
+
+/** Each executeRaw call takes the next step (rows, or an error to throw); later calls read []. Counts the hardening's transactions. */
+function stubEngine(steps: Array<unknown[] | Error>) {
+  const state = { transactions: 0 };
+  const engine = {
     kind: 'pglite',
     executeRaw: async () => {
-      call++;
-      if (call === 1) return [{ name: 'gbrain_refuse_purged_fact', sig: 'gbrain_refuse_purged_fact()', owned: true, role: 'writer' }];
-      if (call === 2) throw failure;
-      return [];
+      const step = steps.shift() ?? [];
+      if (step instanceof Error) throw step;
+      return step;
+    },
+    transaction: async (fn: (tx: unknown) => Promise<void>) => {
+      state.transactions++;
+      await fn({ executeRaw: async () => [], runMigration: async () => {} });
     },
   } as unknown as BrainEngine;
+  return { engine, state };
 }
 
 describe('the guard re-create in hardenFunctionSearchPaths', () => {
   test('another role owning the guard (42501) stays silent', async () => {
     const owner = Object.assign(new Error('must be owner of function gbrain_refuse_purged_fact'), { code: '42501' });
-    expect(await hardenFunctionSearchPaths(stubEngine(owner))).toEqual([]);
+    expect(await hardenFunctionSearchPaths(stubEngine([STALE_ROW, owner]).engine)).toEqual([]);
   });
 
-  test('any other failure propagates', async () => {
+  test('any other failure propagates, naming guard_ledger_checks, after the pg_temp hardening has run', async () => {
     const broken = Object.assign(new Error('connection terminated'), { code: '08006' });
-    await expect(hardenFunctionSearchPaths(stubEngine(broken))).rejects.toBe(broken);
+    const { engine, state } = stubEngine([STALE_ROW, broken, [{ sig: 'gbrain_try_jsonb(text)' }]]);
+    const failure = await hardenFunctionSearchPaths(engine).then(() => 'resolved', (error: unknown) => error);
+    expect(failure).toBeInstanceOf(LedgerGuardRecreateError);
+    expect(failure).toMatchObject({ code: '08006', cause: broken });
+    expect(hardenFailureLine(failure)).toBe('  guards: purge or withdrawal guards not re-created (connection terminated); gbrain doctor (guard_ledger_checks) names the ones left without their ledger check\n');
+    expect(hardenFailureLine(broken)).toContain('pg_temp not restored');
+    expect(state.transactions).toBe(1);
+  });
+
+  test('a concurrent pg_proc update during the re-create is retried', async () => {
+    const concurrent = new Error('tuple concurrently updated');
+    expect(await hardenFunctionSearchPaths(stubEngine([STALE_ROW, concurrent, STALE_ROW, []]).engine)).toEqual([]);
   });
 });
 
