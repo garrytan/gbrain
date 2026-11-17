@@ -30,6 +30,7 @@ else.
 |---|---|---|
 | Store | `rust/crates/gbrain-store/src/<module>.rs` | `impl Store { pub fn ... }` methods, the family's record structs, key builders for the bytes after its tag, and its unit tests. |
 | Page delete | the same file, `remove_page_rows` | Only for families that keep records under a page (the "Cascade" column below). Deletes those records when a page is hard deleted. |
+| Core hooks | the same file, the hook functions core put there | Only for families that core's hooks call ("Core hooks" below). Fill in the body; never change the signature. |
 | Binding | `rust/crates/gbrain-napi/src/families/<module>.rs` | One `#[napi] impl Brain { ... }` block. Each method decodes its arguments and calls one `Store` method through `self.run`. |
 | TypeScript | `src/core/rust-engine/store-members/<file>.ts` | One exported `StoreMember` per BrainEngine member the family serves, named after the member. Row decoders and helpers stay unexported. |
 | Expected differences | `test/rust-expected-divergence/<family>.tsv` | Only if a parity case may differ from PGLite. Create the file; never edit another family's file. |
@@ -51,7 +52,7 @@ refused member must still end on that refusal.
 These files belong to core. If a family needs a change in one of them, it asks core for the change in a separate,
 small commit. Every other file in the table at the end belongs to exactly one family.
 
-- `rust/crates/gbrain-store/src/{lib.rs,keys.rs,kv.rs,redb_kv.rs,env.rs,error.rs,format.rs,cascade.rs}`
+- `rust/crates/gbrain-store/src/{lib.rs,keys.rs,kv.rs,redb_kv.rs,env.rs,error.rs,format.rs,cascade.rs,page_columns.rs,test_support.rs}`
 - `rust/crates/gbrain-store/src/{pages.rs,sources.rs,config.rs,chunks.rs,search.rs,links.rs,timeline.rs,journal.rs}`
   (the families core already built)
 - `rust/crates/gbrain-napi/src/{lib.rs,store_binding.rs,binding.rs,error.rs,pool.rs}` and `families/mod.rs`
@@ -61,8 +62,8 @@ small commit. Every other file in the table at the end belongs to exactly one fa
 - `test/engine-parity/{harness.ts,rust-arm.ts,coverage.ts}`, `test/rust-engine-shell.test.ts`,
   `test/rust-engine-store.test.ts`, `test/rust-arm-harness.test.ts`
 
-The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, the reserved block in `keys.rs`) already name
-every planned family once, so no family edits them.
+The list files (`lib.rs`, `families/mod.rs`, `index.ts`, `cascade.rs`, `page_columns.rs`, the reserved block in
+`keys.rs`) already name every planned family once, so no family edits them.
 
 ## Shared contracts (frozen)
 
@@ -123,7 +124,10 @@ Rules:
   `links.rs`). If the helper does not exist, ask core; never write a core tag directly.
 - **Per-page state goes under the family's tag, keyed by page id**, not into the core page record. Examples:
   extraction stamps (`e <page id>`), emotional weight (`s <page id>`), alias rows (`k ...`). The family reads the
-  page record and joins its own record. A value `getPage` must return (such as `emotional_weight`) needs the core page-columns hook ("What stays with core"); until it exists, the family keeps the value under its own tag and the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). The hook lets the store fill those fields from family records, so no family edits `PAGE_ROW_DEFAULTS` or `pages.rs`.
+  page record and joins its own record. A value `getPage` must return (such as `emotional_weight`) goes out through
+  the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
+  column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
+  `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
 - **Format.** `FORMAT_VERSION` 1, `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
   an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core.
@@ -167,6 +171,42 @@ hook clears the page reference on file rows instead of deleting them.
 Facts are not cascaded on page delete (Postgres keys them by slug, not by page id); facts reads hide facts whose page
 is soft deleted. Source delete is not served by the Rust engine yet; when core serves it, core adds a
 `cascade::remove_source_rows` list the same way.
+
+### Core hooks
+
+Core calls each hook below from its own write or read path, in the same transaction or snapshot, through one list
+file that names every family that needs the hook. Each listed family already has the hook function in its own
+file, with an empty body. A family fills in only its own body, and never changes a signature or a list. A family
+that is not on a list and needs the hook asks core for a one-line addition to the list.
+
+All hooks are empty today, so they change no answer: every served member reads and writes exactly as before.
+
+#### Page columns (`page_columns.rs`)
+
+```rust
+// In salience.rs, aliases.rs, extraction.rs and page_body.rs:
+pub(crate) fn page_columns(read: &dyn KvRead, page: &PageRecord, columns: &mut PageColumns) -> Result<()>;
+// PageColumns:
+pub(crate) fn set(&mut self, name: &str, value: Value);
+```
+
+- **When it runs:** `getPage`, `readPageSnapshot` (its `page`) and `listPages`, once per page returned, on the same
+  read snapshot. `putPage` does not run it: PGLite's `RETURNING` list names no family column.
+- **What a family does:** read its own record for `page.id` and call `columns.set(name, value)` for each column it
+  owns. Add nothing for a page that has no record; the TypeScript decoder then fills the default from
+  `PAGE_ROW_DEFAULTS`.
+- **Rules:** a family sets only a `Page` column (`src/core/types.ts`) that PGLite's `rowToPage` returns and the page
+  record does not hold. Setting a field core writes, or a column another family set, is a bug: debug builds and the
+  unit tests panic on it, and a release build keeps the first value. Dates go as ISO strings (`env::iso`); the
+  decoder turns every `Page` date column into a `Date`, including `salience_touched_at`. Numbers go as JSON numbers
+  (round `emotional_weight` to `f32` first, as Postgres `REAL` does).
+- **Owners:** salience (`emotional_weight`, `salience_touched_at`), aliases (`contextual_retrieval_mode`), page_body
+  (`body_storage` and `body_bytes` of a segmented page). Extraction is on the list too, but PGLite's `getPage`
+  returns no extraction stamp, so its hook stays empty unless a parity case shows one. `withheld_source_path` has no
+  owner yet and stays `null`.
+- **Cost:** one read per listed family per page returned. A family whose record is absent for most pages does one
+  failed `get` each.
+- **Tests:** a store-level unit test can open a store in memory with `crate::test_support::store()`.
 
 ### Write transactions and the journal
 
@@ -341,7 +381,7 @@ Slug renames and page aliases.
 - **Members (6), capability:** `pages` (6).
 - **Store and binding:** `updateSlug` (`update_slug`), `resolveSlugWithAlias` (`resolve_slug_with_alias`), `resolveSlugWithAliasDetailed` (`resolve_slug_with_alias_detailed`), `resolveAliases` (`resolve_aliases`), `setPageAliases` (`set_page_aliases`), `updatePageContextualRetrievalState` (`update_page_contextual_retrieval_state`).
 - **Postgres tables:** `slug_aliases` (no FK to pages), `pages.slug` (rename), `pages.contextual_retrieval_mode`.
-- **Keys:** `k 0x01 <source> 0x00 <alias slug>` to the target slug and page id; `k 0x02 <page id> 0x00 <alias slug>` to list a page's aliases; `k 0x03 <page id>` for the contextual retrieval state. Removed by `remove_page_rows`.
+- **Keys:** `k 0x01 <source> 0x00 <alias slug>` to the target slug and page id; `k 0x02 <page id> 0x00 <alias slug>` to list a page's aliases; `k 0x03 <page id>` for the contextual retrieval state. Removed by `remove_page_rows`. `getPage` returns `contextual_retrieval_mode` from that record through this family's `page_columns` hook (built).
 - **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one. That is a core page write: ask core for a `pages::rename_page(tx, page, new_slug)` helper before you start `updateSlug`. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
@@ -542,7 +582,7 @@ Emotional weight and salience of pages.
 - **Store and binding:** `batchLoadEmotionalInputs` (`batch_load_emotional_inputs`), `setEmotionalWeightBatch` (`set_emotional_weight_batch`), `getRecentSalience` (`get_recent_salience`), `getSalienceScores` (`get_salience_scores`).
 - **Postgres tables:** `pages.emotional_weight`, `pages.salience_touched_at`; reads `tags` and `takes`.
 - **Keys:** `s <page id>` holds emotional weight (`f32`) and the touched time. Removed by `remove_page_rows`.
-- **Depends on:** takes (take counts and active takes; same group). `getPage` returns `emotional_weight`, so this family needs the core page-columns hook.
+- **Depends on:** takes (take counts and active takes; same group). `getPage` returns `emotional_weight` and `salience_touched_at`: fill in this family's `page_columns` hook (built; "Core hooks").
 - **Estimate:** about 1 to 2 days.
 - **Notes:** `setEmotionalWeightBatch` counts changed rows only. Round to `f32` before comparing, as Postgres `REAL` does.
 - **Parity cases (3, in `code-eval-salience.test.ts`, `links.test.ts`):**
@@ -823,7 +863,7 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 
 | Core item | Waits on | Needed by |
 |---|---|---|
-| Page-columns hook: family values that `getPage` returns (`emotional_weight`, extraction stamps, `contextual_retrieval_mode`) | nothing; build first | salience, extraction, aliases |
+| Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields) | built | salience, aliases, page_body; extraction listed, likely unused |
 | `pages::rename_page` helper | nothing | aliases (`updateSlug`) |
 | Chunk-delete hook (`cascade::remove_chunk_rows`) | nothing | code_edges |
 | Index hooks in `write_page` and `timeline.rs` if a family needs one | a family asking | page_ops, keyword, timeline_queries |

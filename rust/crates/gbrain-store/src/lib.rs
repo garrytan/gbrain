@@ -18,10 +18,13 @@ pub mod journal;
 pub mod keys;
 pub mod kv;
 pub mod links;
+mod page_columns;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
 pub mod sources;
+#[cfg(test)]
+mod test_support;
 pub mod timeline;
 
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
