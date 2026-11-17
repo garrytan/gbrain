@@ -193,7 +193,7 @@ risk: Spends up to the cap on embedding calls; no data is deleted.
 consent: paid
 actor: agent
 next: ask_user
-if_yes: gbrain doctor --remediate --max-usd 0.60 --yes --brain host — To stop asking for runs under a limit the user picks: gbrain config set consent.preapprove.paid.max_usd_per_run '<usd>'
+if_yes: gbrain doctor --remediate --max-usd 0.60 --yes --brain host — To stop asking for runs under a limit the user picks: foresights config set consent.preapprove.paid.max_usd_per_run '<usd>'
 if_no: Nothing runs; nothing was changed. To look first (read-only): gbrain doctor --remediation-plan --json --brain host
 [SHOW USER]
 Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?

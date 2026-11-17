@@ -78,7 +78,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The member a credential (access token, OAuth client or stdio binding) is bound to could not be looked up, so the request was refused and nothing was read or written. | Reading the binding failed with a database error, or with a lock or statement timeout or a dropped connection while the request was submitted. Reading the credential as unbound instead would open every unlabelled page to a labelled-only member, so the request stops, and the same request succeeds once the database answers. | Retry the same request in a few seconds (a write with the same request_id); if it keeps failing, ask the brain operator to run foresights doctor --json on the brain host. Run: gbrain whoami --json | provider | `gbrain whoami --json` | 1 | yes |
+| The member a credential (access token, OAuth client or stdio binding) is bound to could not be looked up, so the request was refused and nothing was read or written. | Reading the binding failed with a database error, or with a lock or statement timeout or a dropped connection while the request was submitted. Reading the credential as unbound instead would open every unlabelled page to a labelled-only member, so the request stops, and the same request succeeds once the database answers. | Retry the same request in a few seconds (a write with the same request_id); if it keeps failing, ask the brain operator to run foresights doctor --json on the brain host. Run: foresights whoami --json | provider | `foresights whoami --json` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#access_identity_unavailable](../../docs/guides/write-refusals.md#access_identity_unavailable)
 
@@ -116,7 +116,7 @@ More: [docs/guides/write-refusals.md#access_member_disabled](../../docs/guides/w
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The member id was removed earlier and member ids are never reused, so nothing was created or enabled. | Pages and audit history may still name a removed id; reusing it would hand that history to a different person. | Choose a new member id. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
+| The member id was removed earlier and member ids are never reused, so nothing was created or enabled. | Pages and audit history may still name a removed id; reusing it would hand that history to a different person. | Choose a new member id. Run: foresights access member list --all --json | agent | `foresights access member list --all --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides/write-refusals.md#access_member_id_retired)
 
@@ -126,7 +126,7 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, or a declared member email is invalid, taken or ambiguous, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with foresights access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
+| A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, or a declared member email is invalid, taken or ambiguous, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with foresights access member list --all, or add the member first. Run: foresights access member list --all --json | agent | `foresights access member list --all --json` | 1 | no |
 
 Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`.
 
@@ -138,7 +138,7 @@ More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A folder-rule edit on a git-backed source with no folder-rule revision yet was refused before anything was written: the first sync after it rebuilds the rules from the committed history of .gbrain/access.yml, and this checkout cannot give that history (a shallow clone, or a partial clone that lacks its Git objects), so that sync would read the whole source as nobody. | A rebuild replays every committed version of the policy file so a narrowing removed by a plain commit stays applied; without the full history it can only fail closed, so the edit refuses up front and the source keeps its current reads. | In the checkout, fetch the full history (git fetch --unshallow) or the missing objects of a partial clone, then run the same foresights access rule command again. Run: gbrain access rule status --source '{source_id}' --json | user | `foresights doctor --json` | 1 | no |
+| A folder-rule edit on a git-backed source with no folder-rule revision yet was refused before anything was written: the first sync after it rebuilds the rules from the committed history of .gbrain/access.yml, and this checkout cannot give that history (a shallow clone, or a partial clone that lacks its Git objects), so that sync would read the whole source as nobody. | A rebuild replays every committed version of the policy file so a narrowing removed by a plain commit stays applied; without the full history it can only fail closed, so the edit refuses up front and the source keeps its current reads. | In the checkout, fetch the full history (git fetch --unshallow) or the missing objects of a partial clone, then run the same foresights access rule command again. Run: foresights access rule status --source '{source_id}' --json | user | `foresights doctor --json` | 1 | no |
 
 ### access_policy_invalid
 
@@ -146,7 +146,7 @@ More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source's folder-rule policy (the committed .gbrain/access.yml, or a file given to foresights access rule import) does not validate, so it was not applied: the last applied rules stay in force and every prefix the bad file names reads as nobody (the whole source when its prefixes cannot be read). | A typo in an access file must never open a folder: an unreadable revision keeps the previous rules and hides what it touches until it is fixed. | Show each problem with its line (foresights access rule list --source <id>). Fix the file, commit it with foresights git commit-push and sync the source (foresights sync --source <id> --no-pull). Run: gbrain access rule list --source '{source_id}' --json | user | `foresights doctor --json` | 1 | no |
+| A source's folder-rule policy (the committed .gbrain/access.yml, or a file given to foresights access rule import) does not validate, so it was not applied: the last applied rules stay in force and every prefix the bad file names reads as nobody (the whole source when its prefixes cannot be read). | A typo in an access file must never open a folder: an unreadable revision keeps the previous rules and hides what it touches until it is fixed. | Show each problem with its line (foresights access rule list --source <id>). Fix the file, commit it with foresights git commit-push and sync the source (foresights sync --source <id> --no-pull). Run: foresights access rule list --source '{source_id}' --json | user | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#access_policy_invalid](../../docs/guides/write-refusals.md#access_policy_invalid)
 
@@ -156,7 +156,7 @@ More: [docs/guides/write-refusals.md#access_policy_invalid](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A narrowing change to a source's folder rules is still being applied to its pages, so the prefixes it touches read as nobody until it finishes; pages under other prefixes keep the last applied rules. | Pages under a newly restricted folder are restamped in batches; until the last batch and its re-check pass land, they read as nobody instead of under the old rules. | Retry shortly. If it stays pending, the apply was interrupted: the brain host finishes it with foresights access resume --source <id> (database store); a git store finishes with foresights sync --source <id> --no-pull. Run: gbrain access rule status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | yes |
+| A narrowing change to a source's folder rules is still being applied to its pages, so the prefixes it touches read as nobody until it finishes; pages under other prefixes keep the last applied rules. | Pages under a newly restricted folder are restamped in batches; until the last batch and its re-check pass land, they read as nobody instead of under the old rules. | Retry shortly. If it stays pending, the apply was interrupted: the brain host finishes it with foresights access resume --source <id> (database store); a git store finishes with foresights sync --source <id> --no-pull. Run: foresights access rule status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/write-refusals.md#access_policy_pending)
 
@@ -166,7 +166,7 @@ More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source's persisted folder-rule store (sources.config.access_store) disagrees with what this host sees (a git store with no visible work tree, or a database store whose root became a repository), so the persisted store and its applied rules stay in force and nothing switches on its own. | Inferring the store per host would let a missing checkout or a stray git init change which rules apply; only foresights access rule migrate moves them, and neither direction widens. | On the brain host, preview the move with foresights access rule migrate --source <id>, then apply it by adding --yes. Run: gbrain access rule status --source '{source_id}' --json | user | `foresights doctor --json` | 1 | no |
+| A source's persisted folder-rule store (sources.config.access_store) disagrees with what this host sees (a git store with no visible work tree, or a database store whose root became a repository), so the persisted store and its applied rules stay in force and nothing switches on its own. | Inferring the store per host would let a missing checkout or a stray git init change which rules apply; only foresights access rule migrate moves them, and neither direction widens. | On the brain host, preview the move with foresights access rule migrate --source <id>, then apply it by adding --yes. Run: foresights access rule status --source '{source_id}' --json | user | `foresights doctor --json` | 1 | no |
 
 ### access_policy_widening_held
 
@@ -174,7 +174,7 @@ More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A change to a source's folder rules widens who may read (a rule removed, readers added, the old folder of a moved prefix), so it is recorded but held: the previous rules stay in force until an operator previews it with foresights access apply --source <id> and approves the printed plan with --yes --expect <plan_hash> on the brain host. | Write access to the policy (a git commit or a rule edit) must not be enough to open a folder; widening needs a host-side preview and an explicit approval. | Ask the user whether to approve the widening; the brain host previews it with foresights access apply --source <id>. Run: gbrain access apply --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
+| A change to a source's folder rules widens who may read (a rule removed, readers added, the old folder of a moved prefix), so it is recorded but held: the previous rules stay in force until an operator previews it with foresights access apply --source <id> and approves the printed plan with --yes --expect <plan_hash> on the brain host. | Write access to the policy (a git commit or a rule edit) must not be enough to open a folder; widening needs a host-side preview and an explicit approval. | Ask the user whether to approve the widening; the brain host previews it with foresights access apply --source <id>. Run: foresights access apply --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
 
 ### access_rule_invalid
 
@@ -248,7 +248,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `sync.admission` is not `normal`, so a managed sync's destructive write (a delete or a keep_db DB-wins reconcile) was not admitted, or was cancelled before it published; nothing was written. | `sync.admission` (`imports_only` or `classify_only`) is the brain-wide switch that pauses what managed sync writes. It is read when the pass pins, inside every admission transaction and again when a destructive write publishes, so a change takes effect at the next group and no destructive write lands after it. | Restore admission with `foresights config set sync.admission normal` when the pause is no longer wanted; the next plain sync admits the paused paths again. Run: gbrain sync status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
+| `sync.admission` is not `normal`, so a managed sync's destructive write (a delete or a keep_db DB-wins reconcile) was not admitted, or was cancelled before it published; nothing was written. | `sync.admission` (`imports_only` or `classify_only`) is the brain-wide switch that pauses what managed sync writes. It is read when the pass pins, inside every admission transaction and again when a destructive write publishes, so a change takes effect at the next group and no destructive write lands after it. | Restore admission with `foresights config set sync.admission normal` when the pause is no longer wanted; the next plain sync admits the paused paths again. Run: foresights sync status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
 
 ### ambient_capture_off
 
@@ -358,7 +358,7 @@ More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversati
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The OpenClaw Gateway refused the credential the conversation archive used, so no OpenClaw conversation was read this run; the archive ledger is unchanged. | The Gateway token or device pairing belongs to the user; foresights never mints or edits one. | Ask the user to give foresights the Gateway token (GBRAIN_OPENCLAW_GATEWAY_TOKEN, or gateway.auth in the OpenClaw config on this machine), then rerun foresights transcripts archive run. Run: gbrain transcripts archive status --json | user | `foresights doctor --json` | 1 | no |
+| The OpenClaw Gateway refused the credential the conversation archive used, so no OpenClaw conversation was read this run; the archive ledger is unchanged. | The Gateway token or device pairing belongs to the user; foresights never mints or edits one. | Ask the user to give foresights the Gateway token (GBRAIN_OPENCLAW_GATEWAY_TOKEN, or gateway.auth in the OpenClaw config on this machine), then rerun foresights transcripts archive run. Run: foresights transcripts archive status --json | user | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
 
@@ -368,7 +368,7 @@ More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversat
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The OpenClaw Gateway answered the conversation archive with an error, so no OpenClaw conversation was read this run; the archive ledger is unchanged. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Rerun foresights transcripts archive run; if it repeats, report the redacted message from foresights transcripts archive status --json. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+| The OpenClaw Gateway answered the conversation archive with an error, so no OpenClaw conversation was read this run; the archive ledger is unchanged. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Rerun foresights transcripts archive run; if it repeats, report the redacted message from foresights transcripts archive status --json. Run: foresights transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
 
@@ -378,7 +378,7 @@ More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversat
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The conversation archive could not reach the OpenClaw Gateway, so no OpenClaw conversation was read this run; the archive ledger is unchanged, so the next run retries safely. | Current OpenClaw keeps live sessions in SQLite owned by its Gateway, and foresights reads them only through the Gateway's documented RPCs (openclaw gateway call), never the file. | Start the Gateway (openclaw gateway) or point foresights at it with GBRAIN_OPENCLAW_GATEWAY_URL, then rerun foresights transcripts archive run. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+| The conversation archive could not reach the OpenClaw Gateway, so no OpenClaw conversation was read this run; the archive ledger is unchanged, so the next run retries safely. | Current OpenClaw keeps live sessions in SQLite owned by its Gateway, and foresights reads them only through the Gateway's documented RPCs (openclaw gateway call), never the file. | Start the Gateway (openclaw gateway) or point foresights at it with GBRAIN_OPENCLAW_GATEWAY_URL, then rerun foresights transcripts archive run. Run: foresights transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
 
@@ -388,7 +388,7 @@ More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversat
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| On a shared brain the conversation archive held every day and wrote nothing, because no owner member is named and an archive page without readable_by would be open to the whole source. | Only the operator of the brain host can change what blocks this. | Ask the user which enabled member owns the brain, run foresights access owner set <member>, then rerun the archive; held days are written then. Run: gbrain access owner | user | `foresights doctor --json` | 1 | no |
+| On a shared brain the conversation archive held every day and wrote nothing, because no owner member is named and an archive page without readable_by would be open to the whole source. | Only the operator of the brain host can change what blocks this. | Ask the user which enabled member owns the brain, run foresights access owner set <member>, then rerun the archive; held days are written then. Run: foresights access owner | user | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
 
@@ -398,7 +398,7 @@ More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversati
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Redaction failed for a conversation, so the conversation archive held its days instead of writing them; the next run retries them. | Archive pages are written only after redaction succeeded over the whole session; a day is never written unredacted and never dropped. | Rerun foresights transcripts archive run; if the day stays held, check the user redaction pattern file named in the held message. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+| Redaction failed for a conversation, so the conversation archive held its days instead of writing them; the next run retries them. | Archive pages are written only after redaction succeeded over the whole session; a day is never written unredacted and never dropped. | Rerun foresights transcripts archive run; if the day stays held, check the user redaction pattern file named in the held message. Run: foresights transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
 
@@ -408,7 +408,7 @@ More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversati
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Another conversation archive run holds this source, so this run read and wrote nothing. | A run decides each day from the archive ledger it read when it started, so two runs at once could publish older history over newer; runs on one source take turns on a database lease. | Wait for the other run to finish, then rerun foresights transcripts archive run. Run: gbrain status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
+| Another conversation archive run holds this source, so this run read and wrote nothing. | A run decides each day from the archive ledger it read when it started, so two runs at once could publish older history over newer; runs on one source take turns on a database lease. | Wait for the other run to finish, then rerun foresights transcripts archive run. Run: foresights status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
 
@@ -418,7 +418,7 @@ More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversat
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An atom drain (`foresights dream --drain`) stopped with atoms still to extract, or with its backlog count unknown; the batches it finished stay committed and running it again continues. | The drain is bounded by its window, batch cap, per-run budget, job deadline and the cycle lock, and a backlog count that fails is never read as drained; each of these stops can clear on the next run. | Run the printed resume_command again (a budget stop also names the cap it hit). Run: gbrain doctor --only extract_atoms_backlog --json | agent | `gbrain doctor --only extract_atoms_backlog --json` | 11 | yes |
+| An atom drain (`foresights dream --drain`) stopped with atoms still to extract, or with its backlog count unknown; the batches it finished stay committed and running it again continues. | The drain is bounded by its window, batch cap, per-run budget, job deadline and the cycle lock, and a backlog count that fails is never read as drained; each of these stops can clear on the next run. | Run the printed resume_command again (a budget stop also names the cap it hit). Run: foresights doctor --only extract_atoms_backlog --json | agent | `foresights doctor --only extract_atoms_backlog --json` | 11 | yes |
 
 Reasons: `window`, `deadline`, `lock_lost`, `aborted`, `max_batches`, `budget`, `count_unavailable`.
 
@@ -428,7 +428,7 @@ Reasons: `window`, `deadline`, `lock_lost`, `aborted`, `max_batches`, `budget`, 
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An atom drain batch extracted nothing and the backlog count did not fall, so the drain stopped instead of spending in a loop; batches it finished earlier stay committed. | What is left is failing, skipped or ineligible, so running the drain unchanged repeats the same empty batch. | Do not rerun this drain unchanged. Run foresights doctor --json on the brain host and ask the operator to resolve the reported extraction blocker; earlier successful batches remain committed. Run: gbrain doctor --json | host_admin | `gbrain doctor --only extract_atoms_backlog --json` | 1 | no |
+| An atom drain batch extracted nothing and the backlog count did not fall, so the drain stopped instead of spending in a loop; batches it finished earlier stay committed. | What is left is failing, skipped or ineligible, so running the drain unchanged repeats the same empty batch. | Do not rerun this drain unchanged. Run foresights doctor --json on the brain host and ask the operator to resolve the reported extraction blocker; earlier successful batches remain committed. Run: foresights doctor --json | host_admin | `foresights doctor --only extract_atoms_backlog --json` | 1 | no |
 
 ### atom_drain_provider_failure
 
@@ -436,7 +436,7 @@ Reasons: `window`, `deadline`, `lock_lost`, `aborted`, `max_batches`, `budget`, 
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Every item an atom drain batch attempted failed at the model provider, so the drain stopped; batches it finished earlier stay committed. An item whose atom write did not commit never reached the provider and is not counted here (#7514): its record names the request id and refusal code, and it is held after 3 such failures (held_failed). | An auth, billing, unknown-model or content-block failure repeats on every retry until someone changes the key, plan, model or content, so it is not retryable. A rate limit or a transient failure (5xx, timeout, network, or a cause the provider did not name) can clear by itself, so those reasons stay retryable on exit 11. | For auth, billing or model_not_found, ask the operator to fix the provider key, plan or model named in last_error, then run the drain again; content_block items are skipped once they fail repeatedly. For rate_limit or transient, run the drain again later. Run: gbrain models --json | agent | `gbrain doctor --only extract_atoms_backlog --json` | 1 | no |
+| Every item an atom drain batch attempted failed at the model provider, so the drain stopped; batches it finished earlier stay committed. An item whose atom write did not commit never reached the provider and is not counted here (#7514): its record names the request id and refusal code, and it is held after 3 such failures (held_failed). | An auth, billing, unknown-model or content-block failure repeats on every retry until someone changes the key, plan, model or content, so it is not retryable. A rate limit or a transient failure (5xx, timeout, network, or a cause the provider did not name) can clear by itself, so those reasons stay retryable on exit 11. | For auth, billing or model_not_found, ask the operator to fix the provider key, plan or model named in last_error, then run the drain again; content_block items are skipped once they fail repeatedly. For rate_limit or transient, run the drain again later. Run: foresights models --json | agent | `foresights doctor --only extract_atoms_backlog --json` | 1 | no |
 
 Reasons: `auth`, `billing`, `model_not_found`, `content_block`, `rate_limit`, `transient`.
 
@@ -474,7 +474,7 @@ Override: reason `transient`: retryable, exit 11, retryable.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights backup create` could not dump the PGLite data dir: an entry PGLite cannot read (a socket, FIFO or symlink that is not a dead foresights socket) is still inside it. | The backup removes only foresights's own IPC sockets, and only when nothing listens on them; a live foresights socket, a foreign socket or FIFO, or a symlink is left in place and named in the message, because the database lock proves no other PGLite owner, not who owns an arbitrary endpoint. | Stop the process that uses each named entry (or move the entry out of the data dir), then rerun the same `foresights backup create` command. Do not delete an entry something is still listening on. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | no |
+| `foresights backup create` could not dump the PGLite data dir: an entry PGLite cannot read (a socket, FIFO or symlink that is not a dead foresights socket) is still inside it. | The backup removes only foresights's own IPC sockets, and only when nothing listens on them; a live foresights socket, a foreign socket or FIFO, or a symlink is left in place and named in the message, because the database lock proves no other PGLite owner, not who owns an arbitrary endpoint. | Stop the process that uses each named entry (or move the entry out of the data dir), then rerun the same `foresights backup create` command. Do not delete an entry something is still listening on. Run: foresights doctor --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database](../../docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database)
 
@@ -484,7 +484,7 @@ More: [docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database](../.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights backup create` refused before writing anything: the PGLite brain's estimated archive size is over the 8 GiB backup-archive cap. | The archive format holds at most 8 GiB of payload and the dump is materialized in memory; refusing up front avoids a long dump that cannot be published. | Take a quiesced physical copy of the data directory instead (stop writers, copy, open the copy in an isolated GBRAIN_HOME, verify with foresights doctor --json). Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | no |
+| `foresights backup create` refused before writing anything: the PGLite brain's estimated archive size is over the 8 GiB backup-archive cap. | The archive format holds at most 8 GiB of payload and the dump is materialized in memory; refusing up front avoids a long dump that cannot be published. | Take a quiesced physical copy of the data directory instead (stop writers, copy, open the copy in an isolated GBRAIN_HOME, verify with foresights doctor --json). Run: foresights doctor --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/in-agent-setup.md#large-or-non-standard-brains-quiesced-physical-copy](../../docs/guides/in-agent-setup.md#large-or-non-standard-brains-quiesced-physical-copy)
 
@@ -714,7 +714,7 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A Google source's configured calendar returned HTTP 403 or 404 to its account, so its sync imports no events. | Without the typed result an unreadable calendar looks exactly like an empty one. The calendar sweep records it in the source's connector state (the run is not failed); `foresights doctor` (google_calendar_readable) reads it with no network call and `foresights google status` probes it live. | List the calendars the account can read with `foresights google calendars --account <email>`, then point the source at one with `foresights sources set-calendar <source> <calendar-id>` and run `foresights sync --source <source>`. Run: gbrain google calendars --json | agent | `gbrain doctor --only google_calendar_readable --json` | 1 | no |
+| A Google source's configured calendar returned HTTP 403 or 404 to its account, so its sync imports no events. | Without the typed result an unreadable calendar looks exactly like an empty one. The calendar sweep records it in the source's connector state (the run is not failed); `foresights doctor` (google_calendar_readable) reads it with no network call and `foresights google status` probes it live. | List the calendars the account can read with `foresights google calendars --account <email>`, then point the source at one with `foresights sources set-calendar <source> <calendar-id>` and run `foresights sync --source <source>`. Run: foresights google calendars --json | agent | `foresights doctor --only google_calendar_readable --json` | 1 | no |
 
 More: [docs/guides/google-connect.md#unreadable-calendar](../../docs/guides/google-connect.md#unreadable-calendar)
 
@@ -820,7 +820,7 @@ More: [docs/guides/life-chronicle.md#skip-and-failure-codes](../../docs/guides/l
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Live pages have body text but no chunk rows, so search cannot read their body. | A page written without the chunking step (an enrichment stub, an interrupted write) has nothing for search to match; `foresights embed --stale` chunks it first, which makes paid embedding calls. | List them with `foresights pages unsearchable --state chunkless_healable --json`, then run `foresights embed --stale --catch-up --yes` once embedding spend is approved. Run: gbrain pages unsearchable --state chunkless_healable --json | agent | `gbrain doctor --only embedding_state --json` | 1 | no |
+| Live pages have body text but no chunk rows, so search cannot read their body. | A page written without the chunking step (an enrichment stub, an interrupted write) has nothing for search to match; `foresights embed --stale` chunks it first, which makes paid embedding calls. | List them with `foresights pages unsearchable --state chunkless_healable --json`, then run `foresights embed --stale --catch-up --yes` once embedding spend is approved. Run: foresights pages unsearchable --state chunkless_healable --json | agent | `foresights doctor --only embedding_state --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/troubleshooting.md#embedding-state)
 
@@ -840,7 +840,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Schema setup (initSchema, which foresights init, init --migrate-only and upgrade run, and apply-migrations before its orchestrators) refused because the brain's schema version is newer than this foresights binary's newest migration; nothing in its schema ran and nothing changed. | initSchema replays the binary's whole schema, CREATE OR REPLACE FUNCTION included, before it runs migrations. An older binary sharing the database with a newer one (another host, a lagging cron running apply-migrations or upgrade) used to reinstall its own superseded function bodies, the writer-fence guards among them, over the newer ones and then apply nothing (#7776). Reads do not run schema setup and keep working on the older binary; doctor schema_function_bodies names bodies an older replay already reverted. | Upgrade foresights on this host (foresights upgrade) to the release that migrated the database or newer, then rerun the command. Run: gbrain doctor --only schema_version --json | host_admin | `foresights doctor --json` | 1 | no |
+| Schema setup (initSchema, which foresights init, init --migrate-only and upgrade run, and apply-migrations before its orchestrators) refused because the brain's schema version is newer than this foresights binary's newest migration; nothing in its schema ran and nothing changed. | initSchema replays the binary's whole schema, CREATE OR REPLACE FUNCTION included, before it runs migrations. An older binary sharing the database with a newer one (another host, a lagging cron running apply-migrations or upgrade) used to reinstall its own superseded function bodies, the writer-fence guards among them, over the newer ones and then apply nothing (#7776). Reads do not run schema setup and keep working on the older binary; doctor schema_function_bodies names bodies an older replay already reverted. | Upgrade foresights on this host (foresights upgrade) to the release that migrated the database or newer, then rerun the command. Run: foresights doctor --only schema_version --json | host_admin | `foresights doctor --json` | 1 | no |
 
 ### client_json_unreadable
 
@@ -868,7 +868,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| No OAuth client with this id is registered on this brain, so nothing was read or changed. | A client id is matched exactly; a revoked, deleted or mistyped id has no grant to read or edit. | List the clients with `foresights auth clients --json` and retry with an existing client id. Do not register a replacement client or rotate credentials for a lookup miss. Run: gbrain auth clients --json | agent | `gbrain auth clients --json` | 1 | no |
+| No OAuth client with this id is registered on this brain, so nothing was read or changed. | A client id is matched exactly; a revoked, deleted or mistyped id has no grant to read or edit. | List the clients with `foresights auth clients --json` and retry with an existing client id. Do not register a replacement client or rotate credentials for a lookup miss. Run: foresights auth clients --json | agent | `foresights auth clients --json` | 1 | no |
 
 ### client_shape_invalid
 
@@ -1054,7 +1054,7 @@ More: [docs/guides/write-refusals.md#concurrent_write](../../docs/guides/write-r
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The database refused a write as read-only (SQLSTATE 25006): the server connection defaults to read-only transactions, so nothing was written. | default_transaction_read_only is on for that server connection: session state another client set on a connection a transaction-mode pooler shares, a role or database default, or a read-only server. foresights opens its transactions READ WRITE and runs a refused autocommit statement once more inside one, so a session default alone no longer stops it; a read-only server (a hot standby) still refuses. | Ask the database operator to reset the pooler's server connections (PgBouncer: RECONNECT, or server_reset_query = DISCARD ALL with server_reset_query_always = 1), find the client that issues session-level SET through the pooler (read-only audits belong in BEGIN READ ONLY ... COMMIT), and check ALTER ROLE / ALTER DATABASE ... SET default_transaction_read_only; then retry. Run: gbrain doctor --json | host_admin | `foresights doctor --json` | 1 | no |
+| The database refused a write as read-only (SQLSTATE 25006): the server connection defaults to read-only transactions, so nothing was written. | default_transaction_read_only is on for that server connection: session state another client set on a connection a transaction-mode pooler shares, a role or database default, or a read-only server. foresights opens its transactions READ WRITE and runs a refused autocommit statement once more inside one, so a session default alone no longer stops it; a read-only server (a hot standby) still refuses. | Ask the database operator to reset the pooler's server connections (PgBouncer: RECONNECT, or server_reset_query = DISCARD ALL with server_reset_query_always = 1), find the client that issues session-level SET through the pooler (read-only audits belong in BEGIN READ ONLY ... COMMIT), and check ALTER ROLE / ALTER DATABASE ... SET default_transaction_read_only; then retry. Run: foresights doctor --json | host_admin | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#connection_inherited_read_only](../../docs/guides/write-refusals.md#connection_inherited_read_only)
 
@@ -1084,7 +1084,7 @@ More: [docs/guides/meeting-and-slack-sources.md#connector_access_denied](../../d
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The connector credential resolves to a different account than the source is pinned to. | A connector source is pinned to the account it first synced, so a swapped credential can never import another account's mail, calendar or repositories into it. The refused run records the mismatch, and autopilot skips the source (unavailable-path) instead of retrying it every interval (#6803). | Restore the credential for the pinned account and run foresights sync --source <id> (it clears the skip once the account check passes), or add a new source for the new account and archive this one with foresights sources archive <id>. foresights doctor --only connector_account_mismatch lists every affected source. Run: gbrain doctor --only connector_account_mismatch --json | agent | `repeat the read that failed` | 1 | no |
+| The connector credential resolves to a different account than the source is pinned to. | A connector source is pinned to the account it first synced, so a swapped credential can never import another account's mail, calendar or repositories into it. The refused run records the mismatch, and autopilot skips the source (unavailable-path) instead of retrying it every interval (#6803). | Restore the credential for the pinned account and run foresights sync --source <id> (it clears the skip once the account check passes), or add a new source for the new account and archive this one with foresights sources archive <id>. foresights doctor --only connector_account_mismatch lists every affected source. Run: foresights doctor --only connector_account_mismatch --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#connector-account-changed](../../docs/guides/write-refusals.md#connector-account-changed)
 
@@ -1168,7 +1168,7 @@ More: [docs/guides/meeting-and-slack-sources.md#connector_shape_drift](../../doc
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A paid step is waiting for the user's opt-in, so it was skipped and nothing was spent. | A dream-cycle phase that a database-config schema pack newly declares (extract_atoms, synthesize_concepts) did not run before this release; resolving the pack correctly must not start paid model calls on its own (#6393). | Ask the user; with their agreement run foresights config set cycle.<phase>.enabled true (the phase skip names the exact command). Run: gbrain schema active --json | agent | `repeat the read that failed` | 1 | no |
+| A paid step is waiting for the user's opt-in, so it was skipped and nothing was spent. | A dream-cycle phase that a database-config schema pack newly declares (extract_atoms, synthesize_concepts) did not run before this release; resolving the pack correctly must not start paid model calls on its own (#6393). | Ask the user; with their agreement run foresights config set cycle.<phase>.enabled true (the phase skip names the exact command). Run: foresights schema active --json | agent | `repeat the read that failed` | 1 | no |
 
 ### consent_timeout
 
@@ -1186,7 +1186,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Running write claims on this host are stamped by a process that writes no `persistence_consumers` heartbeat row, so its liveness and mode cannot be read. | Every full consumer on this release renews a heartbeat row every 10 s; a claim owner with no row is a foresights process from before the heartbeat table (an older `serve`, jobs worker or sync CLI), which also never defers to the resident consumer, so the host may run two full consumers until it is upgraded. | Upgrade and restart the process whose pid the check names (its kind and foresights version come from the claim stamp); until then the host runs its consumer beside the resident one. Run: gbrain sources writer status --json | agent | `gbrain doctor --only consumers_without_heartbeat --json` | 1 | no |
+| Running write claims on this host are stamped by a process that writes no `persistence_consumers` heartbeat row, so its liveness and mode cannot be read. | Every full consumer on this release renews a heartbeat row every 10 s; a claim owner with no row is a foresights process from before the heartbeat table (an older `serve`, jobs worker or sync CLI), which also never defers to the resident consumer, so the host may run two full consumers until it is upgraded. | Upgrade and restart the process whose pid the check names (its kind and foresights version come from the claim stamp); until then the host runs its consumer beside the resident one. Run: foresights sources writer status --json | agent | `foresights doctor --only consumers_without_heartbeat --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/guides/troubleshooting.md#consumers-without-heartbeat)
 
@@ -1216,7 +1216,7 @@ More: [docs/guides/write-refusals.md#content_null_bytes](../../docs/guides/write
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A gbrain-owned content source's shared-skills content receipt names another root than the source and its owner binding, so doctor sync_freshness cannot exempt it and sync does not apply. | A writer transfer or relocation an older release ran (or a sources set-path still to run after a transfer accept) moved the canonical root but left the receipt (config shared_skills.content.v1.<source>.<incarnation>) on the old one. Current accepts and set-paths rebind it in their own transaction. | Preview foresights repair content-receipt-root --source <id> on the owner host and apply it with the hash it prints, or do what it names first (sources set-path, or a self-transfer). Run: gbrain repair content-receipt-root --source '{source_id}' | agent | `foresights doctor --json` | 1 | no |
+| A gbrain-owned content source's shared-skills content receipt names another root than the source and its owner binding, so doctor sync_freshness cannot exempt it and sync does not apply. | A writer transfer or relocation an older release ran (or a sources set-path still to run after a transfer accept) moved the canonical root but left the receipt (config shared_skills.content.v1.<source>.<incarnation>) on the old one. Current accepts and set-paths rebind it in their own transaction. | Preview foresights repair content-receipt-root --source <id> on the owner host and apply it with the hash it prints, or do what it names first (sources set-path, or a self-transfer). Run: foresights repair content-receipt-root --source '{source_id}' | agent | `foresights doctor --json` | 1 | no |
 
 Reasons: `receipt_root_moved`.
 
@@ -1236,7 +1236,7 @@ More: [docs/guides/repair.md#content-receipt-root](../../docs/guides/repair.md#c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The content-repair model could not decide whether a held file and the page its frontmatter `slug:` names are the same page, so nothing was written and a person decides which keeps the slug. | A `frontmatter_slug_conflict` hold that the deterministic rules cannot clear (the named page exists and shares a type or a title word with the file) goes to the judgment model; `needs_human` is its answer when the shown frontmatter, headings, opening lines and cross-mentions do not decide identity. Removing the `slug:` line on a guess would mint a second page for the same thing, and merging on a guess would fold two different things together, so foresights records the verdict on the hold as codes and slugs, retries nothing until the file changes, and the rest of the source keeps syncing. | Show the user the paragraph foresights sources status <id> --json renders for the hold (the path and the two slugs). If the two differ, remove the slug: line of the file; if they are one page, merge the unique sections into the page that keeps the slug and delete the other file; then commit and run foresights sync --source <id> --no-pull. Run: gbrain sources status '{source_id}' --json | user | `gbrain sources status '{source_id}' --json` | 1 | no |
+| The content-repair model could not decide whether a held file and the page its frontmatter `slug:` names are the same page, so nothing was written and a person decides which keeps the slug. | A `frontmatter_slug_conflict` hold that the deterministic rules cannot clear (the named page exists and shares a type or a title word with the file) goes to the judgment model; `needs_human` is its answer when the shown frontmatter, headings, opening lines and cross-mentions do not decide identity. Removing the `slug:` line on a guess would mint a second page for the same thing, and merging on a guess would fold two different things together, so foresights records the verdict on the hold as codes and slugs, retries nothing until the file changes, and the rest of the source keeps syncing. | Show the user the paragraph foresights sources status <id> --json renders for the hold (the path and the two slugs). If the two differ, remove the slug: line of the file; if they are one page, merge the unique sections into the page that keeps the slug and delete the other file; then commit and run foresights sync --source <id> --no-pull. Run: foresights sources status '{source_id}' --json | user | `foresights sources status '{source_id}' --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#content_repair_needs_human](../../docs/guides/write-refusals.md#content_repair_needs_human)
 
@@ -1246,7 +1246,7 @@ More: [docs/guides/write-refusals.md#content_repair_needs_human](../../docs/guid
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Claude Code continued an answer past its output cap and foresights could not prove the full text, so the claude-cli call returned no text and no tool calls and finished as length. | Print mode reports only the text after an automatic continuation; parsing or dispatching that tail as a complete answer would act on a fragment. The caller retries or escalates as for any capped answer; the gateway does not resend it to a fallback model. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: gbrain config set '<KEY>' '<TOKENS>' | agent | `repeat the read that failed` | 1 | yes |
+| Claude Code continued an answer past its output cap and foresights could not prove the full text, so the claude-cli call returned no text and no tool calls and finished as length. | Print mode reports only the text after an automatic continuation; parsing or dispatching that tail as a complete answer would act on a fragment. The caller retries or escalates as for any capped answer; the gateway does not resend it to a fallback model. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: foresights config set '<KEY>' '<TOKENS>' | agent | `repeat the read that failed` | 1 | yes |
 
 Reasons: `events_missing`, `no_assistant_events`, `segments_unmatched`.
 
@@ -1258,7 +1258,7 @@ More: [docs/ai-providers/claude-cli.md#claude-cli-troubleshooting](../../docs/ai
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The read-only convergence shadow (`foresights sync --dry-run --json`'s `convergence`, `sync status --detail`, doctor `managed_sync_convergence`) could not read the source's level, so it reports `status: unavailable` instead of counts. | The shadow only predicts what the level-triggered pass would do; the dry run, status and doctor results around it are unaffected and nothing was written. | Read the receipt's message, then rerun the read-only status; report it with foresights doctor --json if it repeats. Run: gbrain sync status --source '{source_id}' --detail --json | agent | `foresights doctor --json` | 1 | no |
+| The read-only convergence shadow (`foresights sync --dry-run --json`'s `convergence`, `sync status --detail`, doctor `managed_sync_convergence`) could not read the source's level, so it reports `status: unavailable` instead of counts. | The shadow only predicts what the level-triggered pass would do; the dry run, status and doctor results around it are unaffected and nothing was written. | Read the receipt's message, then rerun the read-only status; report it with foresights doctor --json if it repeats. Run: foresights sync status --source '{source_id}' --detail --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes](../../docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes)
 
@@ -1278,7 +1278,7 @@ More: [docs/guides/git-canonical.md#review-list-and-decisions](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The write would push always-loaded core memory over its brain-wide character budget or page limit. | Core pages enter every session's prompt in every harness, so their total size is capped on the write path. | Correct the request using the message above, then retry. Run: gbrain core status --json | agent | `repeat the read that failed` | 1 | no |
+| The write would push always-loaded core memory over its brain-wide character budget or page limit. | Core pages enter every session's prompt in every harness, so their total size is capped on the write path. | Correct the request using the message above, then retry. Run: foresights core status --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/core-memory.md#budget](../../docs/guides/core-memory.md#budget)
 
@@ -1318,7 +1318,7 @@ More: [docs/guides/core-memory.md#remote-edits](../../docs/guides/core-memory.md
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The sweep's corpus pass stopped because the extraction model is not servable in this process; the captured session files stay pending (no `.ingested` sidecar), so nothing was lost. | No servable model is a state of the extracting process, not of the transcript. Before #6786 it was recorded as a finished file with zero facts, and retention later deleted the text. | Configure the extraction model (foresights models shows it) or run the sweep from a process that has its key; the next sweep extracts the pending files. Run: gbrain models --json | agent | `foresights doctor --json` | 1 | no |
+| The sweep's corpus pass stopped because the extraction model is not servable in this process; the captured session files stay pending (no `.ingested` sidecar), so nothing was lost. | No servable model is a state of the extracting process, not of the transcript. Before #6786 it was recorded as a finished file with zero facts, and retention later deleted the text. | Configure the extraction model (foresights models shows it) or run the sweep from a process that has its key; the next sweep extracts the pending files. Run: foresights models --json | agent | `foresights doctor --json` | 1 | no |
 
 ### corpus_window_backoff
 
@@ -1326,7 +1326,7 @@ More: [docs/guides/core-memory.md#remote-edits](../../docs/guides/core-memory.md
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A corpus window failed after its model call and waits out its retry delay (the next sweep, then 10, 20 and 40 minutes) before the sweep pays for it again. | Without a delay a write that fails after extraction (#6785) was paid for again on every drain. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: gbrain sweep --retry-failed --json | agent | `repeat the read that failed` | 1 | yes |
+| A corpus window failed after its model call and waits out its retry delay (the next sweep, then 10, 20 and 40 minutes) before the sweep pays for it again. | Without a delay a write that fails after extraction (#6785) was paid for again on every drain. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: foresights sweep --retry-failed --json | agent | `repeat the read that failed` | 1 | yes |
 
 ### corpus_window_dead_lettered
 
@@ -1334,7 +1334,7 @@ More: [docs/guides/core-memory.md#remote-edits](../../docs/guides/core-memory.md
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A corpus window failed after its model call on every allowed attempt, so the sweep stopped paying for it; its file stays pending until an operator retries it. | A window that can never commit was re-extracted forever before #6785. The count is per window and source incarnation; tail growth and changing error codes do not reset it, and one extraction-config change (model, provider, key presence) retries it once. | Fix the cause the last code names (for writer_coordinator_required: foresights sources writer status <source>), then ask the user before foresights sweep --retry-failed --apply: the retry pays for the extraction again. Run: gbrain sweep --retry-failed --json | agent | `repeat the read that failed` | 1 | no |
+| A corpus window failed after its model call on every allowed attempt, so the sweep stopped paying for it; its file stays pending until an operator retries it. | A window that can never commit was re-extracted forever before #6785. The count is per window and source incarnation; tail growth and changing error codes do not reset it, and one extraction-config change (model, provider, key presence) retries it once. | Fix the cause the last code names (for writer_coordinator_required: foresights sources writer status <source>), then ask the user before foresights sweep --retry-failed --apply: the retry pays for the extraction again. Run: foresights sweep --retry-failed --json | agent | `repeat the read that failed` | 1 | no |
 
 ### cost_cap_exceeded
 
@@ -1382,7 +1382,7 @@ More: [docs/guides/repair.md#coverage-gap](../../docs/guides/repair.md#coverage-
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights auth create or foresights auth register-client was asked for a credential bound to no member on a brain that serves several people, so nothing was created. | A credential bound to nobody on such a brain is refused on every read (requester_scope_required); creating one would hand out a key that cannot work, or one that reads everyone's unmarked notes. | Bind it to the person it serves: foresights auth create <name> --member <id> (foresights access member list names the members). A shared agent passes --may-act-for <members> instead; --reads-unscoped --yes creates one that reads every page no rule restricts for any asker, on purpose. Run: gbrain access member list --json | agent | `repeat the read that failed` | 1 | no |
+| foresights auth create or foresights auth register-client was asked for a credential bound to no member on a brain that serves several people, so nothing was created. | A credential bound to nobody on such a brain is refused on every read (requester_scope_required); creating one would hand out a key that cannot work, or one that reads everyone's unmarked notes. | Bind it to the person it serves: foresights auth create <name> --member <id> (foresights access member list names the members). A shared agent passes --may-act-for <members> instead; --reads-unscoped --yes creates one that reads every page no rule restricts for any asker, on purpose. Run: foresights access member list --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#credential_scope_required](../../docs/guides/write-refusals.md#credential_scope_required)
 
@@ -1392,7 +1392,7 @@ More: [docs/guides/write-refusals.md#credential_scope_required](../../docs/guide
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An unfinished managed sync cursor of this source was recorded under a source incarnation the source no longer has (it was re-pointed at a new checkout, or removed and added again), so no current sync selects or resumes it. | The cursor key digests the incarnation; every incarnation-joined reader drops the old rows while the local ledger mirror and the source-id-only cursor read still showed them. Retiring the bookkeeping says nothing about whether the current source's files are imported. | Preview foresights repair managed-sync-orphans --source <id> and apply it with the hash it prints; then foresights sync status --source <id> --json shows the current cursor, if any. Run: gbrain repair managed-sync-orphans --source '{source_id}' | agent | `repeat the read that failed` | 1 | no |
+| An unfinished managed sync cursor of this source was recorded under a source incarnation the source no longer has (it was re-pointed at a new checkout, or removed and added again), so no current sync selects or resumes it. | The cursor key digests the incarnation; every incarnation-joined reader drops the old rows while the local ledger mirror and the source-id-only cursor read still showed them. Retiring the bookkeeping says nothing about whether the current source's files are imported. | Preview foresights repair managed-sync-orphans --source <id> and apply it with the hash it prints; then foresights sync status --source <id> --json shows the current cursor, if any. Run: foresights repair managed-sync-orphans --source '{source_id}' | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#managed-sync-orphans)
 
@@ -1446,7 +1446,7 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Chunks of pages soft-deleted longer than the purge window (72h), which the purge would remove, are still stored. | Search never reads them; the purge lifecycle (`foresights pages purge-deleted`, the autopilot purge phase) hard-deletes such pages and their chunks. Pages its holds keep (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair, a parked derived-page origin, an archived source) are not counted. The purge is brain-wide and irreversible, so it needs the user. | Preview with `foresights pages purge-deleted --dry-run --json`, then run `foresights pages purge-deleted --yes` once the user agrees. Run: gbrain pages purge-deleted --dry-run --json | agent | `gbrain doctor --only embedding_state --json` | 1 | no |
+| Chunks of pages soft-deleted longer than the purge window (72h), which the purge would remove, are still stored. | Search never reads them; the purge lifecycle (`foresights pages purge-deleted`, the autopilot purge phase) hard-deletes such pages and their chunks. Pages its holds keep (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair, a parked derived-page origin, an archived source) are not counted. The purge is brain-wide and irreversible, so it needs the user. | Preview with `foresights pages purge-deleted --dry-run --json`, then run `foresights pages purge-deleted --yes` once the user agrees. Run: foresights pages purge-deleted --dry-run --json | agent | `foresights doctor --only embedding_state --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/troubleshooting.md#embedding-state)
 
@@ -1514,7 +1514,7 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights doctor --alert` found a page-class check that needs someone now (database unreachable, writes failing or stalled, migrations pending or wedged, more than one build running, sync or maintenance stalled, corrupt rows, a public schema exposed, or a tripped paid-loop breaker). | Only page-class checks page; skill, advisory and coaching checks never do, so health_score warnings alone exit 0. Each item in --json alert.items keeps that check's own fix, consent, actor and verify. | Read alert.items in the --json document and follow each fix.next; page the operator for items whose fix needs them. Run: gbrain doctor --alert --json | agent | `foresights doctor --json` | 17 | no |
+| `foresights doctor --alert` found a page-class check that needs someone now (database unreachable, writes failing or stalled, migrations pending or wedged, more than one build running, sync or maintenance stalled, corrupt rows, a public schema exposed, or a tripped paid-loop breaker). | Only page-class checks page; skill, advisory and coaching checks never do, so health_score warnings alone exit 0. Each item in --json alert.items keeps that check's own fix, consent, actor and verify. | Read alert.items in the --json document and follow each fix.next; page the operator for items whose fix needs them. Run: foresights doctor --alert --json | agent | `foresights doctor --json` | 17 | no |
 
 More: [docs/guides/troubleshooting.md#doctor-alert-act](../../docs/guides/troubleshooting.md#doctor-alert-act)
 
@@ -1524,7 +1524,7 @@ More: [docs/guides/troubleshooting.md#doctor-alert-act](../../docs/guides/troubl
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights doctor --alert` found nothing to act on, but at least one page-class check did not run fresh in this run, so the brain's health is unknown, not clear. | A check that timed out, errored, was reported from its last known result or was skipped by the tier proves nothing; reading it as healthy would hide an outage. alert.consecutive_unknown counts the alert runs in a row that ended unknown, and agent crons page on the second. | Run each alert.unknown item fix (it measures that check alone); if a check keeps running out of time, raise --budget-ms or run foresights doctor --alert --tier standard --json. Run: gbrain doctor --alert --budget-ms 0 --json | agent | `repeat the read that failed` | 18 | yes |
+| `foresights doctor --alert` found nothing to act on, but at least one page-class check did not run fresh in this run, so the brain's health is unknown, not clear. | A check that timed out, errored, was reported from its last known result or was skipped by the tier proves nothing; reading it as healthy would hide an outage. alert.consecutive_unknown counts the alert runs in a row that ended unknown, and agent crons page on the second. | Run each alert.unknown item fix (it measures that check alone); if a check keeps running out of time, raise --budget-ms or run foresights doctor --alert --tier standard --json. Run: foresights doctor --alert --budget-ms 0 --json | agent | `repeat the read that failed` | 18 | yes |
 
 Reasons: `budget`, `bound`, `errored`, `last_known`, `not_run`.
 
@@ -1536,7 +1536,7 @@ More: [docs/guides/troubleshooting.md#doctor-alert-unknown](../../docs/guides/tr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The remote serve cannot answer this doctor tier or check for this client, so the thin client ran nothing. | A serve older than the doctor ops tier does not advertise run_doctor's tier and only parameters or get_brain_health, and a token without admin scope cannot call run_doctor; the thin client never falls back to the full report. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: gbrain doctor --tier ops --json | host_admin | `foresights doctor --json` | 1 | no |
+| The remote serve cannot answer this doctor tier or check for this client, so the thin client ran nothing. | A serve older than the doctor ops tier does not advertise run_doctor's tier and only parameters or get_brain_health, and a token without admin scope cannot call run_doctor; the thin client never falls back to the full report. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: foresights doctor --tier ops --json | host_admin | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#doctor-ops-tier](../../docs/guides/troubleshooting.md#doctor-ops-tier)
 
@@ -1566,7 +1566,7 @@ More: [docs/guides/on-commit-sync.md#notifier-stalled](../../docs/guides/on-comm
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed sync drain stopped `blocked` because its head write made no progress (no committed receipt and no step advance) for the whole stall window. | A renewed lease is not progress: the detector keys on the head claim's phase and step. With a live owner on this host the drain prints `stalled <N>s on <step>` from the allowance (budget plus 30 s) and keeps going; it stops only when `persistence.preparation_ceiling_ms` passes without the root being released, or when that owner's heartbeat row reads wedged (`cause: owner_wedged_here`, with the owner's kind, pid and nonce and `retry_after_ms` to the ceiling, after which the owner frees the root and the next pass holds the entry). A lapsed claim (`owner_missing`) stops at once unless this host owns the checkout and a live full consumer can reclaim it, which gets one more window. `drain.stall.cause` names which. | Inspect the writer with foresights sources writer status --source <id> --json (read-only: the owner process, its step and what it waits on, and the next action). Before the ceiling (`next.safe_to_loop` true) rerun next.command after retry_after_ms; past it, or with a wedged owner, restart the named owner process on the brain host and rerun the same sync. Run: gbrain sources writer status --source '{source_id}' --json | host_admin | `gbrain doctor --only managed_sync_not_moving --json` | 1 | no |
+| A managed sync drain stopped `blocked` because its head write made no progress (no committed receipt and no step advance) for the whole stall window. | A renewed lease is not progress: the detector keys on the head claim's phase and step. With a live owner on this host the drain prints `stalled <N>s on <step>` from the allowance (budget plus 30 s) and keeps going; it stops only when `persistence.preparation_ceiling_ms` passes without the root being released, or when that owner's heartbeat row reads wedged (`cause: owner_wedged_here`, with the owner's kind, pid and nonce and `retry_after_ms` to the ceiling, after which the owner frees the root and the next pass holds the entry). A lapsed claim (`owner_missing`) stops at once unless this host owns the checkout and a live full consumer can reclaim it, which gets one more window. `drain.stall.cause` names which. | Inspect the writer with foresights sources writer status --source <id> --json (read-only: the owner process, its step and what it waits on, and the next action). Before the ceiling (`next.safe_to_loop` true) rerun next.command after retry_after_ms; past it, or with a wedged owner, restart the named owner process on the brain host and rerun the same sync. Run: foresights sources writer status --source '{source_id}' --json | host_admin | `foresights doctor --only managed_sync_not_moving --json` | 1 | no |
 
 Reasons: `owner_wedged_here`, `owner_missing`, `preparation_overdue`, `publication_overdue`, `no_progress`, `owner_restart_required`.
 
@@ -1578,7 +1578,7 @@ More: [docs/guides/write-refusals.md#drain-stalled](../../docs/guides/write-refu
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A dream synthesize or patterns submission died (or, for patterns, was cancelled at its timeout after paid work) the breaker limit of times within 24 hours, so it was not submitted again. | A run that keeps dying keeps paying; the breaker stops resubmitting until the cause is fixed and the key is reset. Patterns count per source (`dream:patterns:source:<id>`) whatever reflections each run read, and a completed run resets that count. | A required capability is not available on this brain. Run `foresights doctor --json` to see what is missing. Run: gbrain doctor --only dream_paid_loop --json | agent | `foresights doctor --json` | 1 | no |
+| A dream synthesize or patterns submission died (or, for patterns, was cancelled at its timeout after paid work) the breaker limit of times within 24 hours, so it was not submitted again. | A run that keeps dying keeps paying; the breaker stops resubmitting until the cause is fixed and the key is reset. Patterns count per source (`dream:patterns:source:<id>`) whatever reflections each run read, and a completed run resets that count. | A required capability is not available on this brain. Run `foresights doctor --json` to see what is missing. Run: foresights doctor --only dream_paid_loop --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions](../../docs/operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions)
 
@@ -1596,7 +1596,7 @@ More: [docs/operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source's automatic embed-backfill failed the same way several times with nothing embedded, so automatic backfill for it backs off and then stops. | The only remaining work sits on pages whose text projection cannot be rebuilt (a rebuild_failed projection, or an image page: foresights projections drain seals the importer-attested ones, the rest need their importer). Each identical run spent a worker slot and dead-lettered; after three, automatic submission stops until the blocked pages or the stale chunks change, or a run embeds something (#6803). Explicit foresights embed --stale and foresights jobs submit embed-backfill are not gated. | Run foresights doctor --only embed_backfill_stalled to see the blocked pages, preview the repair with foresights projections drain --dry-run, then run foresights projections drain; it names each page that still fails and its next step, and foresights doctor --only text_projection_readiness --json counts the image pages by class. Run: gbrain doctor --only embed_backfill_stalled --json | agent | `foresights doctor --json` | 1 | no |
+| A source's automatic embed-backfill failed the same way several times with nothing embedded, so automatic backfill for it backs off and then stops. | The only remaining work sits on pages whose text projection cannot be rebuilt (a rebuild_failed projection, or an image page: foresights projections drain seals the importer-attested ones, the rest need their importer). Each identical run spent a worker slot and dead-lettered; after three, automatic submission stops until the blocked pages or the stale chunks change, or a run embeds something (#6803). Explicit foresights embed --stale and foresights jobs submit embed-backfill are not gated. | Run foresights doctor --only embed_backfill_stalled to see the blocked pages, preview the repair with foresights projections drain --dry-run, then run foresights projections drain; it names each page that still fails and its next step, and foresights doctor --only text_projection_readiness --json counts the image pages by class. Run: foresights doctor --only embed_backfill_stalled --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/repair.md#embed-backfill-stalled](../../docs/guides/repair.md#embed-backfill-stalled)
 
@@ -1668,7 +1668,7 @@ More: [docs/guides/write-refusals.md#embedding_auth_failed](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The brain's embedding_model config row names a model with no provider prefix, so managed fact extraction cannot verify its embedding identity. | Rows from older installs stored the bare model name. The managed facts resolver reads only the DB row and `config set` refuses to change it, so the supported rewrite is `foresights migrate embeddings --to <provider:model>`, which re-embeds active facts (paid). | Preview the rewrite with `foresights migrate embeddings --to <provider:model> --dry-run`, show the user its cost, and apply it only with their paid authorization. Run: gbrain doctor --only embedding_identity_unqualified --json | agent | `repeat the read that failed` | 1 | no |
+| The brain's embedding_model config row names a model with no provider prefix, so managed fact extraction cannot verify its embedding identity. | Rows from older installs stored the bare model name. The managed facts resolver reads only the DB row and `config set` refuses to change it, so the supported rewrite is `foresights migrate embeddings --to <provider:model>`, which re-embeds active facts (paid). | Preview the rewrite with `foresights migrate embeddings --to <provider:model> --dry-run`, show the user its cost, and apply it only with their paid authorization. Run: foresights doctor --only embedding_identity_unqualified --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#embedding-identity-unqualified](../../docs/guides/troubleshooting.md#embedding-identity-unqualified)
 
@@ -1694,7 +1694,7 @@ More: [docs/guides/troubleshooting.md#embedding-identity-unqualified](../../docs
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The ops tier could not count embedding state: the active embedding column has no covering partial index, and the ops tier never scans. | Without an index on `WHERE <active column> IS NULL`, counting vector-less chunks means a full table scan, which the bounded ops tier refuses. | Run the standard tier (`foresights doctor --only embedding_state --json`) for exact counts. Run: gbrain doctor --only embedding_state --json | agent | `gbrain doctor --only embedding_state --json` | 1 | no |
+| The ops tier could not count embedding state: the active embedding column has no covering partial index, and the ops tier never scans. | Without an index on `WHERE <active column> IS NULL`, counting vector-less chunks means a full table scan, which the bounded ops tier refuses. | Run the standard tier (`foresights doctor --only embedding_state --json`) for exact counts. Run: foresights doctor --only embedding_state --json | agent | `foresights doctor --only embedding_state --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/troubleshooting.md#embedding-state)
 
@@ -1766,7 +1766,7 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An engine opened from settings names an embedding model or width that differs from the one its database already records, so initSchema changed nothing. | The vector column has one width and the brain one embedding model; seeding another over it would make every stored and future embedding unreadable. Changing it is an explicit re-embed the user decides on. | Pass the database's recorded model and width in settings.embedding, or read the recorded identity with foresights migrate embeddings --status on the brain host and preview a migration from there. Run: gbrain migrate embeddings --status --json | user | `foresights doctor --json` | 1 | no |
+| An engine opened from settings names an embedding model or width that differs from the one its database already records, so initSchema changed nothing. | The vector column has one width and the brain one embedding model; seeding another over it would make every stored and future embedding unreadable. Changing it is an explicit re-embed the user decides on. | Pass the database's recorded model and width in settings.embedding, or read the recorded identity with foresights migrate embeddings --status on the brain host and preview a migration from there. Run: foresights migrate embeddings --status --json | user | `foresights doctor --json` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
@@ -1858,7 +1858,7 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A link or timeline write lost during extraction (after the engine's own retries) left its pages unstamped, so they stay due; pages whose writes landed were stamped. | Stamping links_extracted_at for a page whose rows were dropped would hide the loss from every later extraction; leaving it due lets extract --stale, or the cycle's stale drain, write it again. | Run the retry command the message names (foresights extract --stale with the source id); it re-extracts only the pages still due. Run: gbrain doctor --only links_extraction_lag --json | agent | `gbrain doctor --only links_extraction_lag --json` | 1 | yes |
+| A link or timeline write lost during extraction (after the engine's own retries) left its pages unstamped, so they stay due; pages whose writes landed were stamped. | Stamping links_extracted_at for a page whose rows were dropped would hide the loss from every later extraction; leaving it due lets extract --stale, or the cycle's stale drain, write it again. | Run the retry command the message names (foresights extract --stale with the source id); it re-extracts only the pages still due. Run: foresights doctor --only links_extraction_lag --json | agent | `foresights doctor --only links_extraction_lag --json` | 1 | yes |
 
 ### extraction_failed
 
@@ -1926,7 +1926,7 @@ More: [docs/guides/write-refusals.md#facts_absorb_write_refused](../../docs/guid
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A page write queued no automatic fact extraction; the receipt's `facts_backstop.skipped` reason says why (a `kind:<type>` reason names a page type that is not extracted). | A capability this request needs is not configured or not reachable on this brain. | Nothing failed. `opted_out` means the page frontmatter sets `facts_backstop: false`; remove that line and save the page to extract it. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `foresights doctor --json` | 1 | no |
+| A page write queued no automatic fact extraction; the receipt's `facts_backstop.skipped` reason says why (a `kind:<type>` reason names a page type that is not extracted). | A capability this request needs is not configured or not reachable on this brain. | Nothing failed. `opted_out` means the page frontmatter sets `facts_backstop: false`; remove that line and save the page to extract it. Run: foresights get --source '{source_id}' -- '{slug}' | agent | `foresights doctor --json` | 1 | no |
 
 Reasons: `opted_out`, `quarantined`, `body_unchanged`, `extraction_disabled`, `dream_generated`, `subagent_namespace`, `too_short`, `no_parsed_page`, `slug_bound_client`, `operation_bound_client`, `not_imported`, `conversation_pipeline`, `backstop_error`.
 
@@ -1938,7 +1938,7 @@ More: [docs/guides/concurrent-writes.md#facts-backstop](../../docs/guides/concur
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The automatic facts drain left queued facts-absorb jobs waiting; `reason` says why and `fix`, when present, is the next step. Nothing is dropped: the jobs run on a later drain. | A capability this request needs is not configured or not reachable on this brain. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: gbrain doctor --only facts_drain --json | agent | `foresights doctor --json` | 1 | no |
+| The automatic facts drain left queued facts-absorb jobs waiting; `reason` says why and `fix`, when present, is the next step. Nothing is dropped: the jobs run on a later drain. | A capability this request needs is not configured or not reachable on this brain. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: foresights doctor --only facts_drain --json | agent | `foresights doctor --json` | 1 | no |
 
 Reasons: `no_key`, `extraction_unavailable`, `budget_exhausted`, `daily_budget_exhausted`, `job_over_budget`, `no_pricing`, `provider_halted`, `drain_error`.
 
@@ -1950,7 +1950,7 @@ More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#de
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A facts-absorb job failed inside the automatic facts drain; it retries with backoff until its attempts run out. | The server failed; this is not a caller mistake. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: gbrain doctor --only facts_drain --json | agent | `foresights doctor --json` | 1 | no |
+| A facts-absorb job failed inside the automatic facts drain; it retries with backoff until its attempts run out. | The server failed; this is not a caller mistake. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: foresights doctor --only facts_drain --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#deferrals)
 
@@ -1998,7 +1998,7 @@ Reasons: `row_missing`, `struck`, `empty`, `visibility`, `text`, `held_row_edite
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A legacy fact row was not adopted into its page's facts fence because the fence codec reads the rendered row back as something other than the stored fact. | The fence trims a claim, folds CRLF to LF, reads `~~x~~` as a struck row and `<br>` as a line break; a claim the codec would change by more than whitespace cannot be written into the fence without changing what it says, so the row stays a legacy row (active and searchable, nothing is lost) and is counted by doctor fence_integrity as unrenderable_legacy_facts. The same code names a planned adoption whose rendered fence does not read back as its facts; that is a foresights planning defect, not caller input. | Nothing to fix in the page: the rows stay active and searchable. Report the page slug and the reason class with the foresights version; do not forget or expire a row to clear this count. Run: gbrain doctor --only fence_integrity --json | agent | `foresights doctor --json` | 1 | no |
+| A legacy fact row was not adopted into its page's facts fence because the fence codec reads the rendered row back as something other than the stored fact. | The fence trims a claim, folds CRLF to LF, reads `~~x~~` as a struck row and `<br>` as a line break; a claim the codec would change by more than whitespace cannot be written into the fence without changing what it says, so the row stays a legacy row (active and searchable, nothing is lost) and is counted by doctor fence_integrity as unrenderable_legacy_facts. The same code names a planned adoption whose rendered fence does not read back as its facts; that is a foresights planning defect, not caller input. | Nothing to fix in the page: the rows stay active and searchable. Report the page slug and the reason class with the foresights version; do not forget or expire a row to clear this count. Run: foresights doctor --only fence_integrity --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#fence_unrenderable](../../docs/guides/write-refusals.md#fence_unrenderable)
 
@@ -2038,7 +2038,7 @@ More: [docs/guides/write-refusals.md#file_drift](../../docs/guides/write-refusal
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights repair file-drift --held selected held pages of more than one Decision (side, or deleted state), so nothing was previewed: one --prefer must not resolve differently shaped drift in bulk. | Each side and deleted state is its own Decision with its own meaning of --prefer file and --prefer database; resolving them together would apply one choice to questions the user answered differently, or not at all. | Preview one Decision at a time with the narrower commands the message names (--held --side <side>, plus --state <state> for --side deleted), or narrow with --only / --skip. Run: gbrain sources status '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+| foresights repair file-drift --held selected held pages of more than one Decision (side, or deleted state), so nothing was previewed: one --prefer must not resolve differently shaped drift in bulk. | Each side and deleted state is its own Decision with its own meaning of --prefer file and --prefer database; resolving them together would apply one choice to questions the user answered differently, or not at all. | Preview one Decision at a time with the narrower commands the message names (--held --side <side>, plus --state <state> for --side deleted), or narrow with --only / --skip. Run: foresights sources status '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#file-drift](../../docs/guides/repair.md#file-drift)
 
@@ -2048,7 +2048,7 @@ More: [docs/guides/repair.md#file-drift](../../docs/guides/repair.md#file-drift)
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights repair file-drift --held for deleted-side drift needs --state (tombstone_edited, purged_differs or file_gone); nothing was previewed. | In each deleted state --prefer file and --prefer database do opposite things (tombstone_edited: restore and import, or keep the deletion and remove the file; purged_differs: import as a new page, or remove the file; file_gone: soft-delete the page, or recreate the file), so the state is always named explicitly. | Rerun the preview with --side deleted --state <state>, choosing the state foresights sources status <source> --json lists for the held files. Run: gbrain sources status '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+| foresights repair file-drift --held for deleted-side drift needs --state (tombstone_edited, purged_differs or file_gone); nothing was previewed. | In each deleted state --prefer file and --prefer database do opposite things (tombstone_edited: restore and import, or keep the deletion and remove the file; purged_differs: import as a new page, or remove the file; file_gone: soft-delete the page, or recreate the file), so the state is always named explicitly. | Rerun the preview with --side deleted --state <state>, choosing the state foresights sources status <source> --json lists for the held files. Run: foresights sources status '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#file-drift](../../docs/guides/repair.md#file-drift)
 
@@ -2182,7 +2182,7 @@ More: [docs/architecture/generations.md#publishing](../../docs/architecture/gene
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A derived result was recorded as held instead of published, so nothing it would have retired was retired. | A model-produced result at or below the input-relative shrink floor (shrunk), one over generations.max_items (oversize), one over the run window retirement budget (valve), an empty result without a proof the input is really empty (no_proof, fence_absent), repeated failed attempts on one input (attempts_exhausted) a segmented page the ledger cannot keep a copy of (segmented_unsupported) or a ranked result whose cut is ambiguous (tie) would retire live items on evidence the primitive does not accept (GBRA-161 D4/D5). | Preview the held set with foresights repair generations --kind <kind> --mode release-held --held --since <restore_days>d. shrunk, valve and attempts_exhausted publish once with --apply --expect <hash> --yes after the user agrees; oversize needs foresights config set generations.max_items first; no_proof, fence_absent, segmented_unsupported and tie clear only when the input or the producer result changes. Run: gbrain doctor --only generation_held --json | agent | `repeat the read that failed` | 1 | no |
+| A derived result was recorded as held instead of published, so nothing it would have retired was retired. | A model-produced result at or below the input-relative shrink floor (shrunk), one over generations.max_items (oversize), one over the run window retirement budget (valve), an empty result without a proof the input is really empty (no_proof, fence_absent), repeated failed attempts on one input (attempts_exhausted) a segmented page the ledger cannot keep a copy of (segmented_unsupported) or a ranked result whose cut is ambiguous (tie) would retire live items on evidence the primitive does not accept (GBRA-161 D4/D5). | Preview the held set with foresights repair generations --kind <kind> --mode release-held --held --since <restore_days>d. shrunk, valve and attempts_exhausted publish once with --apply --expect <hash> --yes after the user agrees; oversize needs foresights config set generations.max_items first; no_proof, fence_absent, segmented_unsupported and tie clear only when the input or the producer result changes. Run: foresights doctor --only generation_held --json | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `shrunk`, `oversize`, `valve`, `no_proof`, `fence_absent`, `attempts_exhausted`, `segmented_unsupported`, `tie`.
 
@@ -2204,7 +2204,7 @@ More: [docs/architecture/generations.md#publishing](../../docs/architecture/gene
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights repair ghost-pages refused to soft-delete more than half of a source's file-backed pages; nothing was changed. | The sync mass-delete valve (#2828) applied to ghost pages: that many missing canonical files almost always means the checkout is the wrong path, unmounted or half-cloned, not that the files were deleted. | Check the source checkout on its owner host first. If removing these pages is genuinely intended, ask the user, then rerun the same apply command with GBRAIN_ALLOW_MASS_RECONCILE=1. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+| foresights repair ghost-pages refused to soft-delete more than half of a source's file-backed pages; nothing was changed. | The sync mass-delete valve (#2828) applied to ghost pages: that many missing canonical files almost always means the checkout is the wrong path, unmounted or half-cloned, not that the files were deleted. | Check the source checkout on its owner host first. If removing these pages is genuinely intended, ask the user, then rerun the same apply command with GBRAIN_ALLOW_MASS_RECONCILE=1. Run: foresights sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-pages)
 
@@ -2214,7 +2214,7 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Ghost pages of a source cannot be classified because its canonical checkout cannot be read reliably; nothing was listed or changed. | A page is never reported or removed as a ghost while its file may only be unreadable: a missing or non-directory root (storage_unavailable), or a stat error, an invalid gbrain.yml or an inconclusive page check (ambiguous_storage), fails closed. | Inspect the source checkout on its owner host (writer status shows its root), fix it, then preview foresights repair ghost-pages --source <id> again. Run: gbrain sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
+| Ghost pages of a source cannot be classified because its canonical checkout cannot be read reliably; nothing was listed or changed. | A page is never reported or removed as a ghost while its file may only be unreadable: a missing or non-directory root (storage_unavailable), or a stat error, an invalid gbrain.yml or an inconclusive page check (ambiguous_storage), fails closed. | Inspect the source checkout on its owner host (writer status shows its root), fix it, then preview foresights repair ghost-pages --source <id> again. Run: foresights sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
 
 Reasons: `storage_unavailable`, `ambiguous_storage`.
 
@@ -2390,7 +2390,7 @@ More: [docs/guides/write-refusals.md#git_protocol_required](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A strict (canonical: git) write's file changed on disk while it was being committed, so nothing was committed and the write was not published. | The door commits exactly the bytes the write published, and checks the file's hash against them before and after Git stores it. An edit landing in between would otherwise be committed while the database records other content; recovery leaves the changed file as it is. | When the file holds neither the write's bytes nor the version before it, the write is held in recovery (blocked reason unexpected_file_bytes) and the source's later writes wait behind it; when it holds the version before the write, nothing is held and the write failed; when it holds the write's own bytes again by the time recovery runs, recovery restores the version before the write and the write failed, with nothing held. After a failure, read the page before resubmitting it with a new request_id. To resolve a held write, preview with foresights repair stuck-recovery --source <id> --json, ask the user which version to keep, then run foresights repair stuck-recovery --source <id> --keep disk\|prior --apply --expect <preview_hash> --yes (disk keeps the edit). Run: gbrain sources writer status --json | user | `repeat the read that failed` | 1 | no |
+| A strict (canonical: git) write's file changed on disk while it was being committed, so nothing was committed and the write was not published. | The door commits exactly the bytes the write published, and checks the file's hash against them before and after Git stores it. An edit landing in between would otherwise be committed while the database records other content; recovery leaves the changed file as it is. | When the file holds neither the write's bytes nor the version before it, the write is held in recovery (blocked reason unexpected_file_bytes) and the source's later writes wait behind it; when it holds the version before the write, nothing is held and the write failed; when it holds the write's own bytes again by the time recovery runs, recovery restores the version before the write and the write failed, with nothing held. After a failure, read the page before resubmitting it with a new request_id. To resolve a held write, preview with foresights repair stuck-recovery --source <id> --json, ask the user which version to keep, then run foresights repair stuck-recovery --source <id> --keep disk\|prior --apply --expect <preview_hash> --yes (disk keeps the edit). Run: foresights sources writer status --json | user | `repeat the read that failed` | 1 | no |
 
 ### git_target_ignored
 
@@ -2706,7 +2706,7 @@ More: [docs/guides/write-refusals.md#guest_source_database_only](../../docs/guid
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A harness hook carrier wires one Claude Code event more than once with this install's own entries (marked or not), so the hook fires twice per event. | Claude Code can drop the `_gbrain` marker when it rewrites settings.json; installs before wave 11 then appended a second set on every re-run. | Correct the request using the message above, then retry. Run: gbrain doctor --only bootstrap_harness_health --json | agent | `repeat the read that failed` | 1 | no |
+| A harness hook carrier wires one Claude Code event more than once with this install's own entries (marked or not), so the hook fires twice per event. | Claude Code can drop the `_gbrain` marker when it rewrites settings.json; installs before wave 11 then appended a second set on every re-run. | Correct the request using the message above, then retry. Run: foresights doctor --only bootstrap_harness_health --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/bootstrap.md#harness_hook_duplicates](../../docs/guides/bootstrap.md#harness_hook_duplicates)
 
@@ -2716,7 +2716,7 @@ More: [docs/guides/bootstrap.md#harness_hook_duplicates](../../docs/guides/boots
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A hook entry looks like foresights's harness hook but is not this install's exact command, so foresights left it in place. | An unmarked entry is deleted only when its command is exactly what this install (or its receipt) wrote; an edited command or another install's launcher is never removed, and removal is not reported complete while it remains. | Correct the request using the message above, then retry. Run: gbrain bootstrap harness --status | agent | `repeat the read that failed` | 1 | no |
+| A hook entry looks like foresights's harness hook but is not this install's exact command, so foresights left it in place. | An unmarked entry is deleted only when its command is exactly what this install (or its receipt) wrote; an edited command or another install's launcher is never removed, and removal is not reported complete while it remains. | Correct the request using the message above, then retry. Run: foresights bootstrap harness --status | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/bootstrap.md#harness_hook_unowned](../../docs/guides/bootstrap.md#harness_hook_unowned)
 
@@ -2726,7 +2726,7 @@ More: [docs/guides/bootstrap.md#harness_hook_unowned](../../docs/guides/bootstra
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The queued write at the head of a managed source cannot be claimed by any consumer, and its blocker needs an operator; a managed sync drain stops `drain_stalled` with `cause: head_blocked` and `blocked_by` names the predicate. | #6543: the drain used to wait the whole no-progress window and print a constant `claimable here: no`. The head probe evaluates each predicate of the claim query for the head itself. Only intervention-required blockers stop the drain, after one governor tick of confirmation: a refresh fence no refresh process holds, or a running request ahead held by a process that reports restart_required. Live blockers (a foreground publication, a lapsed lease, a refresh or recovery making progress) keep the progress-aware wait. | Run next.fix: for refresh_fence resume the refresh (foresights sources refresh <source> --resume); for zombie_publication restart the named foresights process on the brain host. Then rerun the same sync. Run: gbrain sources writer status --source '{source_id}' --json | host_admin | `foresights doctor --json` | 1 | no |
+| The queued write at the head of a managed source cannot be claimed by any consumer, and its blocker needs an operator; a managed sync drain stops `drain_stalled` with `cause: head_blocked` and `blocked_by` names the predicate. | #6543: the drain used to wait the whole no-progress window and print a constant `claimable here: no`. The head probe evaluates each predicate of the claim query for the head itself. Only intervention-required blockers stop the drain, after one governor tick of confirmation: a refresh fence no refresh process holds, or a running request ahead held by a process that reports restart_required. Live blockers (a foreground publication, a lapsed lease, a refresh or recovery making progress) keep the progress-aware wait. | Run next.fix: for refresh_fence resume the refresh (foresights sources refresh <source> --resume); for zombie_publication restart the named foresights process on the brain host. Then rerun the same sync. Run: foresights sources writer status --source '{source_id}' --json | host_admin | `foresights doctor --json` | 1 | no |
 
 Reasons: `refresh_fence`, `zombie_publication`.
 
@@ -2738,7 +2738,7 @@ More: [docs/guides/write-refusals.md#head-blocked](../../docs/guides/write-refus
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed atom origin (a page or transcript) failed atom extraction 3 times on the same content, or its atom write did not commit 3 times, so the drain stopped retrying it; doctor `extract_atoms_held_failed` lists it with its last request id. | Every automatic attempt is a paid model call. After MAX_DETERMINISTIC_FAILURES completed failures of one content the origin leaves the atom backlog instead of being paid for every cycle; a batch whose write did not commit is struck each time the drain meets it, with no model call, and held at the same bound (#7514). Editing the content starts a new count, and an explicit retry runs it again. | A required capability is not available on this brain. Run `foresights doctor --json` to see what is missing. Run: gbrain doctor --only extract_atoms_held_failed --json | agent | `foresights doctor --json` | 1 | no |
+| A managed atom origin (a page or transcript) failed atom extraction 3 times on the same content, or its atom write did not commit 3 times, so the drain stopped retrying it; doctor `extract_atoms_held_failed` lists it with its last request id. | Every automatic attempt is a paid model call. After MAX_DETERMINISTIC_FAILURES completed failures of one content the origin leaves the atom backlog instead of being paid for every cycle; a batch whose write did not commit is struck each time the drain meets it, with no model call, and held at the same bound (#7514). Editing the content starts a new count, and an explicit retry runs it again. | A required capability is not available on this brain. Run `foresights doctor --json` to see what is missing. Run: foresights doctor --only extract_atoms_held_failed --json | agent | `foresights doctor --json` | 1 | no |
 
 ### held_out_overlaps_benchmark
 
@@ -2762,7 +2762,7 @@ More: [docs/guides/write-refusals.md#head-blocked](../../docs/guides/write-refus
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A foresights hook or stdio MCP entry (setup, the turn-rule lane, foresights bootstrap's lanes) starts foresights in the session's directory, or the hook launcher it names would not run. | Script-mode foresights is a Bun script, and Bun runs the working directory's bunfig.toml preload and loads its .env before foresights starts; harnesses run hooks and stdio MCP servers in the session directory, so a cloned repository could run code on every prompt or session. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+| A foresights hook or stdio MCP entry (setup, the turn-rule lane, foresights bootstrap's lanes) starts foresights in the session's directory, or the hook launcher it names would not run. | Script-mode foresights is a Bun script, and Bun runs the working directory's bunfig.toml preload and loads its .env before foresights starts; harnesses run hooks and stdio MCP servers in the session directory, so a cloned repository could run code on every prompt or session. | Correct the request using the message above, then retry. Run: foresights doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `session_cwd`, `missing`, `stale`, `foreign`.
 
@@ -2774,7 +2774,7 @@ More: [docs/guides/repair.md#hook-session-cwd](../../docs/guides/repair.md#hook-
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| This process's `host.json` identity differs from the identity that owns the binding although both resolve on this machine, so writes that need the owner read it as another host. | Host identity is a file under the persistence home: a job worker or container launched with a different `HOME` or `GBRAIN_HOME` mints a new `host.json` and sees the binding as another host's (`owner_unavailable`, `host_mismatch`), so its maintenance writes never reach the owner. The check names both files and the environment each was minted under (`minted_under`, `unknown` for a file minted before it was recorded); re-deriving the identity would re-own every existing binding, so the fix is the environment, never the file. | Set GBRAIN_HOME on the supervisor of the process to the owner's home (the value the check prints; config appends .gbrain itself) and restart it; never edit or delete a host.json. Run: gbrain doctor --only host_identity_mismatch --json | host_admin | `gbrain doctor --only host_identity_mismatch --json` | 1 | no |
+| This process's `host.json` identity differs from the identity that owns the binding although both resolve on this machine, so writes that need the owner read it as another host. | Host identity is a file under the persistence home: a job worker or container launched with a different `HOME` or `GBRAIN_HOME` mints a new `host.json` and sees the binding as another host's (`owner_unavailable`, `host_mismatch`), so its maintenance writes never reach the owner. The check names both files and the environment each was minted under (`minted_under`, `unknown` for a file minted before it was recorded); re-deriving the identity would re-own every existing binding, so the fix is the environment, never the file. | Set GBRAIN_HOME on the supervisor of the process to the owner's home (the value the check prints; config appends .gbrain itself) and restart it; never edit or delete a host.json. Run: foresights doctor --only host_identity_mismatch --json | host_admin | `foresights doctor --only host_identity_mismatch --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#host-identity-mismatch](../../docs/guides/troubleshooting.md#host-identity-mismatch)
 
@@ -3030,7 +3030,7 @@ More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guid
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The brain's local IPC socket path is longer than the operating system allows, even after the per-user run-dir fallback, so hooks and local commands cannot reach foresights serve. | A Unix-domain socket path must fit sockaddr_un (107 bytes on Windows afunix, 103 on macOS); on Windows a long PGLite data-dir path already moves to %USERPROFILE%\.gbrain\run, and only a profile path too long for that is reported. | Stop foresights serve, move the brain to a shorter path (`foresights config set database_path <shorter path>` after moving the data directory), then restart serve. Run: gbrain doctor --only ipc_socket_path --json | agent | `gbrain doctor --only ipc_socket_path --json` | 1 | no |
+| The brain's local IPC socket path is longer than the operating system allows, even after the per-user run-dir fallback, so hooks and local commands cannot reach foresights serve. | A Unix-domain socket path must fit sockaddr_un (107 bytes on Windows afunix, 103 on macOS); on Windows a long PGLite data-dir path already moves to %USERPROFILE%\.gbrain\run, and only a profile path too long for that is reported. | Stop foresights serve, move the brain to a shorter path (`foresights config set database_path <shorter path>` after moving the data directory), then restart serve. Run: foresights doctor --only ipc_socket_path --json | agent | `foresights doctor --only ipc_socket_path --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#ipc-path-too-long](../../docs/guides/troubleshooting.md#ipc-path-too-long)
 
@@ -3040,7 +3040,7 @@ More: [docs/guides/troubleshooting.md#ipc-path-too-long](../../docs/guides/troub
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Most items of one per-item loop failed (or many failed with one code, or none succeeded), so the failure is systemic and no item was held; the unit stopped instead of skipping every item. | A per-item loop holds a bad item and continues (GBRA-130), but a run where most items fail points at a shared cause, and holding every item would hide it. | Fix the shared cause the first failures name, then rerun the same command; run foresights doctor --json if the cause is unclear. Run: gbrain doctor --json | agent | `foresights doctor --json` | 1 | no |
+| Most items of one per-item loop failed (or many failed with one code, or none succeeded), so the failure is systemic and no item was held; the unit stopped instead of skipping every item. | A per-item loop holds a bad item and continues (GBRA-130), but a run where most items fail points at a shared cause, and holding every item would hide it. | Fix the shared cause the first failures name, then rerun the same command; run foresights doctor --json if the cause is unclear. Run: foresights doctor --json | agent | `foresights doctor --json` | 1 | no |
 
 ### keyword_candidates_incomplete
 
@@ -3048,7 +3048,7 @@ More: [docs/guides/troubleshooting.md#ipc-path-too-long](../../docs/guides/troub
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Hybrid search's keyword arm returned a bounded result on a large corpus (the CJK arm's deadline or candidate cap, or a common-word match ranked from a sample), so some keyword matches can be missing. | The CJK fallback is an unindexed LIKE scan, and a query whose words match hundreds of thousands of chunks ranks a bounded sample of them (an OR retry also keeps only its rarer words); each bound keeps a large brain from stalling every hybrid search. An incomplete keyword search is not evidence of absence. | Add a rarer word or an exact "phrase", or narrow the search with --source-id (MCP source_id) or --types; for CJK text, ask the user to raise search.cjk_keyword_deadline_ms. Run: gbrain config get search.cjk_keyword_deadline_ms | agent | `foresights doctor --json` | 1 | no |
+| Hybrid search's keyword arm returned a bounded result on a large corpus (the CJK arm's deadline or candidate cap, or a common-word match ranked from a sample), so some keyword matches can be missing. | The CJK fallback is an unindexed LIKE scan, and a query whose words match hundreds of thousands of chunks ranks a bounded sample of them (an OR retry also keeps only its rarer words); each bound keeps a large brain from stalling every hybrid search. An incomplete keyword search is not evidence of absence. | Add a rarer word or an exact "phrase", or narrow the search with --source-id (MCP source_id) or --types; for CJK text, ask the user to raise search.cjk_keyword_deadline_ms. Run: foresights config get search.cjk_keyword_deadline_ms | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/multi-language-fts.md#cjk-keyword-budget](../../docs/guides/multi-language-fts.md#cjk-keyword-budget)
 
@@ -3058,7 +3058,7 @@ More: [docs/guides/multi-language-fts.md#cjk-keyword-budget](../../docs/guides/m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Hybrid search's Postgres keyword arm skipped a statement that hit the keyword statement timeout within the negative-cache TTL; the search reports keyword_arm_failed with reason skipped_after_timeout and the vector arm still answers. | Running the same broad keyword statement again would hold a backend for the whole search.keyword_statement_timeout_ms and fail the same way. The skip covers that exact statement and scope only, lasts search.keyword_timeout_negative_cache_seconds (default 600, 0 turns it off) and is per serving process. A skipped keyword arm is not evidence of absence. | Narrow the search (source_id, types, since or until) to run keyword search now, or wait for the entry to expire; the user may raise search.keyword_statement_timeout_ms or change the TTL. Run: gbrain doctor --only keyword_plan --json | agent | `gbrain doctor --only keyword_plan --json` | 1 | no |
+| Hybrid search's Postgres keyword arm skipped a statement that hit the keyword statement timeout within the negative-cache TTL; the search reports keyword_arm_failed with reason skipped_after_timeout and the vector arm still answers. | Running the same broad keyword statement again would hold a backend for the whole search.keyword_statement_timeout_ms and fail the same way. The skip covers that exact statement and scope only, lasts search.keyword_timeout_negative_cache_seconds (default 600, 0 turns it off) and is per serving process. A skipped keyword arm is not evidence of absence. | Narrow the search (source_id, types, since or until) to run keyword search now, or wait for the entry to expire; the user may raise search.keyword_statement_timeout_ms or change the TTL. Run: foresights doctor --only keyword_plan --json | agent | `foresights doctor --only keyword_plan --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain](../../docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain)
 
@@ -3068,7 +3068,7 @@ More: [docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Retired: an older foresights stopped a managed sync that kept re-freezing a page cancelled only because another page of the same sync did not commit. This build never cancels a page for another page's failure, so the stop is superseded. | Since #6712 each page of a sync has its own fate: a page that does not commit is held or stops the run on its own, and the pages after it still publish. A ledger row or receipt with this code was written by an older build. | Rerun the same plain foresights sync --source <id> --no-pull; it resumes the stopped entry under a fresh request. foresights sync status --source <id> --json shows what remains. Run: gbrain sync status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
+| Retired: an older foresights stopped a managed sync that kept re-freezing a page cancelled only because another page of the same sync did not commit. This build never cancels a page for another page's failure, so the stop is superseded. | Since #6712 each page of a sync has its own fate: a page that does not commit is held or stops the run on its own, and the pages after it still publish. A ledger row or receipt with this code was written by an older build. | Rerun the same plain foresights sync --source <id> --no-pull; it resumes the stopped entry under a fresh request. foresights sync status --source <id> --json shows what remains. Run: foresights sync status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/sync-unblock-runbook.md#decision-table](../../docs/guides/sync-unblock-runbook.md#decision-table)
 
@@ -3132,7 +3132,7 @@ More: [docs/ENGINES.md#legacy-pglite-lock](../../docs/ENGINES.md#legacy-pglite-l
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights repair legacy-twins refused to merge legacy twin pairs that are more than half of a source's file-backed pages; nothing was changed. | The sync mass-delete valve (#2828) applied to legacy twins: each merge soft-deletes a file-backed twin, and that many twins at once almost always means a re-import under another slug fold or the wrong checkout, not a backlog of forked pairs. | Check the source and its checkout on the owner host first. If merging these pairs is genuinely intended, ask the user, then rerun the same apply command with GBRAIN_ALLOW_MASS_RECONCILE=1. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+| foresights repair legacy-twins refused to merge legacy twin pairs that are more than half of a source's file-backed pages; nothing was changed. | The sync mass-delete valve (#2828) applied to legacy twins: each merge soft-deletes a file-backed twin, and that many twins at once almost always means a re-import under another slug fold or the wrong checkout, not a backlog of forked pairs. | Check the source and its checkout on the owner host first. If merging these pairs is genuinely intended, ask the user, then rerun the same apply command with GBRAIN_ALLOW_MASS_RECONCILE=1. Run: foresights sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-twins)
 
@@ -3142,7 +3142,7 @@ More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-tw
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Legacy twin pairs of a source cannot be checked because its canonical root is missing or is not a readable directory; nothing was listed or changed. | Whether a twin's file is still there and agrees with it is only known from the checkout, so the repair fails closed rather than merge on a guess. | Inspect the source checkout on its owner host (writer status shows its root), fix it, then preview foresights repair legacy-twins --source <id> again. Run: gbrain sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
+| Legacy twin pairs of a source cannot be checked because its canonical root is missing or is not a readable directory; nothing was listed or changed. | Whether a twin's file is still there and agrees with it is only known from the checkout, so the repair fails closed rather than merge on a guess. | Inspect the source checkout on its owner host (writer status shows its root), fix it, then preview foresights repair legacy-twins --source <id> again. Run: foresights sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
 
 Reasons: `storage_unavailable`.
 
@@ -3154,7 +3154,7 @@ More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-tw
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A get_links / get_backlinks cursor was not one this listing returned: it belongs to another slug, direction, source scope or filter set, or is not a cursor. | A cursor is a link-id position bound to the exact listing that issued it; continuing a different listing from it could skip or repeat edges without saying so. Nothing was read. | Restart the listing with the same slug and filters and no cursor, then pass each next_cursor unchanged. Run: gbrain links '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| A get_links / get_backlinks cursor was not one this listing returned: it belongs to another slug, direction, source scope or filter set, or is not a cursor. | A cursor is a link-id position bound to the exact listing that issued it; continuing a different listing from it could skip or repeat edges without saying so. Nothing was read. | Restart the listing with the same slug and filters and no cursor, then pass each next_cursor unchanged. Run: foresights links '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### link_dates_unattributed
 
@@ -3188,7 +3188,7 @@ Reasons: `several_rows`, `dates_do_not_fit`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A Google sweep or the managed catch-up queued no paid loop extraction; the sync summary's `skipped_reason` says why. Nothing failed and the email pages still imported. | Extraction is gated before any model call: a kill switch, a missing chat provider, the day's spend cap (`loops.extraction_max_usd_per_day`, default $2.00; `spend_cap_zero` means the user set it to 0), or an exclusion label (`g_loops_exclude_labels` / `loops.extraction_exclude_labels`) that did not resolve against the account's labels, which fails closed until a sweep resolves it. | Read the reason. `daily_spend_cap` clears at the next UTC day or when the user raises `loops.extraction_max_usd_per_day`; `excluded_label_unresolved` names the label token to fix in `foresights sources status <id>` or `foresights config get loops.extraction_exclude_labels`; the threads are extracted on their next touch or by `foresights sync --source <id> --full`. Run: gbrain sync status --source '{source_id}' --json | agent | `gbrain config get loops.extraction_max_usd_per_day` | 1 | no |
+| A Google sweep or the managed catch-up queued no paid loop extraction; the sync summary's `skipped_reason` says why. Nothing failed and the email pages still imported. | Extraction is gated before any model call: a kill switch, a missing chat provider, the day's spend cap (`loops.extraction_max_usd_per_day`, default $2.00; `spend_cap_zero` means the user set it to 0), or an exclusion label (`g_loops_exclude_labels` / `loops.extraction_exclude_labels`) that did not resolve against the account's labels, which fails closed until a sweep resolves it. | Read the reason. `daily_spend_cap` clears at the next UTC day or when the user raises `loops.extraction_max_usd_per_day`; `excluded_label_unresolved` names the label token to fix in `foresights sources status <id>` or `foresights config get loops.extraction_exclude_labels`; the threads are extracted on their next touch or by `foresights sync --source <id> --full`. Run: foresights sync status --source '{source_id}' --json | agent | `foresights config get loops.extraction_max_usd_per_day` | 1 | no |
 
 Reasons: `no_candidates`, `extraction_disabled`, `chat_unavailable`, `enqueue_failed`, `daily_spend_cap`, `spend_cap_zero`, `excluded_label`, `excluded_label_unresolved`.
 
@@ -3200,7 +3200,7 @@ More: [docs/guides/open-loops.md#two-detectors](../../docs/guides/open-loops.md#
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Managed maintenance stopped admitting requests because this writer's outstanding requests, reserved receipt bytes or permanent request ids would pass 80% of their limit; nothing more was submitted. | Each page of a maintenance run publishes as its own request under the local CLI writer the user's own CLI writes share. Stopping at 80% leaves room for those writes: reserved receipt bytes free only when receipts compact, request ids never. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: gbrain sources writer status --source '{source_id}' --json | agent | `gbrain doctor --only persistence_capacity --json` | 12 | yes |
+| Managed maintenance stopped admitting requests because this writer's outstanding requests, reserved receipt bytes or permanent request ids would pass 80% of their limit; nothing more was submitted. | Each page of a maintenance run publishes as its own request under the local CLI writer the user's own CLI writes share. Stopping at 80% leaves room for those writes: reserved receipt bytes free only when receipts compact, request ids never. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: foresights sources writer status --source '{source_id}' --json | agent | `foresights doctor --only persistence_capacity --json` | 12 | yes |
 
 More: [docs/guides/write-refusals.md#maintenance_backpressure](../../docs/guides/write-refusals.md#maintenance_backpressure)
 
@@ -3218,7 +3218,7 @@ More: [docs/guides/write-refusals.md#maintenance_backpressure](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source-scoped dream cycle skipped its brain-wide phases because another cycle (usually autopilot maintenance) holds the shared gbrain-cycle lease; its source phases still ran. | Brain-wide phases (synthesize, patterns, embed, purge and the other mixed or global phases) must not run twice at once, so a cycle that cannot take gbrain-cycle runs only the phases its own source lease covers. | Nothing is lost: the holder runs those phases itself. To run one now, wait until the lease is released, then re-run `foresights dream --phase <phase>` (LLM-backed phases spend; ask the user first). Run: gbrain status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
+| A source-scoped dream cycle skipped its brain-wide phases because another cycle (usually autopilot maintenance) holds the shared gbrain-cycle lease; its source phases still ran. | Brain-wide phases (synthesize, patterns, embed, purge and the other mixed or global phases) must not run twice at once, so a cycle that cannot take gbrain-cycle runs only the phases its own source lease covers. | Nothing is lost: the holder runs those phases itself. To run one now, wait until the lease is released, then re-run `foresights dream --phase <phase>` (LLM-backed phases spend; ask the user first). Run: foresights status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/cron-schedule.md#dream-beside-autopilot](../../docs/guides/cron-schedule.md#dream-beside-autopilot)
 
@@ -3272,7 +3272,7 @@ More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed source refuses --skip-failed and --include-gitignored, and a strict (git-canonical) source also refuses --working-tree: managed sync keeps every failed-receipt and ignored-file guard and a strict source indexes commits only, so the run was refused before anything ran. | --skip-failed would acknowledge a failed receipt instead of retrying it, and --include-gitignored would import files Git ignores; neither has a managed meaning. `detail` names the flag. | Rerun the same foresights sync command without the named flag; fix a failed file and the plain sync retries it, or commit an ignored file to sync it. Run: gbrain sources status --json | agent | `gbrain sources status --json` | 1 | no |
+| A managed source refuses --skip-failed and --include-gitignored, and a strict (git-canonical) source also refuses --working-tree: managed sync keeps every failed-receipt and ignored-file guard and a strict source indexes commits only, so the run was refused before anything ran. | --skip-failed would acknowledge a failed receipt instead of retrying it, and --include-gitignored would import files Git ignores; neither has a managed meaning. `detail` names the flag. | Rerun the same foresights sync command without the named flag; fix a failed file and the plain sync retries it, or commit an ignored file to sync it. Run: foresights sources status --json | agent | `foresights sources status --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#managed_sync_flag_refused](../../docs/guides/write-refusals.md#managed_sync_flag_refused)
 
@@ -3282,7 +3282,7 @@ More: [docs/guides/write-refusals.md#managed_sync_flag_refused](../../docs/guide
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed source has unfinished sync work and a live consumer on its owner host, but no committed `managed_sync_*` receipt and no head step advance for longer than `persistence.preparation_ceiling_ms`. | Process liveness is not data movement: `/health` ok, a live pid and `sync_running: true` all held while one deployment moved nothing for weeks. `sources status --json` carries `data_moving`, `not_moving_since` and `movement_state` per source (`parked` when no drain or full consumer is live, informational), doctor warns with this code and counts it against the score, `serve` prints one notice when a source flips, and `foresights sources writer movement` judges a window after a restart and exits 1 with this code (`reason: movement_check`) when pending work does not move. | Run foresights sources writer status --source <id> --json (read-only): its next_action names the owner process, the step it is parked on and whether to wait or restart it. After the fix, foresights sources writer movement proves the data moves again. Run: gbrain sources writer status --source '{source_id}' --json | host_admin | `gbrain doctor --only managed_sync_not_moving --json` | 1 | no |
+| A managed source has unfinished sync work and a live consumer on its owner host, but no committed `managed_sync_*` receipt and no head step advance for longer than `persistence.preparation_ceiling_ms`. | Process liveness is not data movement: `/health` ok, a live pid and `sync_running: true` all held while one deployment moved nothing for weeks. `sources status --json` carries `data_moving`, `not_moving_since` and `movement_state` per source (`parked` when no drain or full consumer is live, informational), doctor warns with this code and counts it against the score, `serve` prints one notice when a source flips, and `foresights sources writer movement` judges a window after a restart and exits 1 with this code (`reason: movement_check`) when pending work does not move. | Run foresights sources writer status --source <id> --json (read-only): its next_action names the owner process, the step it is parked on and whether to wait or restart it. After the fix, foresights sources writer movement proves the data moves again. Run: foresights sources writer status --source '{source_id}' --json | host_admin | `foresights doctor --only managed_sync_not_moving --json` | 1 | no |
 
 Reasons: `movement_check`.
 
@@ -3294,7 +3294,7 @@ More: [docs/guides/troubleshooting.md#managed-sync-not-moving](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An automatic remediation run (`foresights onboard --auto`, `doctor --remediate`, MCP `run_onboard`, autopilot) did not submit a manual-only step: the schema-pack upgrade (`unify-types`) or the paid takes bootstrap (`extract-takes-from-pages`). | A pack upgrade retypes pages and switches the brain's schema pack, and the takes bootstrap pays a model per page; both are the user's one-time decision, so only the user submits them. A job of that kind an earlier run already queued is listed in `queued_jobs` and still runs unless cancelled. | Show the user the step and its `fix.command` (`foresights jobs submit <job> --follow`, with `--params` when the step has them); the user runs it after reviewing `foresights onboard --check`. Cancel a listed queued job with `foresights jobs cancel <id>` if the user does not want it. Run: gbrain jobs list --status waiting | user | `repeat the read that failed` | 1 | no |
+| An automatic remediation run (`foresights onboard --auto`, `doctor --remediate`, MCP `run_onboard`, autopilot) did not submit a manual-only step: the schema-pack upgrade (`unify-types`) or the paid takes bootstrap (`extract-takes-from-pages`). | A pack upgrade retypes pages and switches the brain's schema pack, and the takes bootstrap pays a model per page; both are the user's one-time decision, so only the user submits them. A job of that kind an earlier run already queued is listed in `queued_jobs` and still runs unless cancelled. | Show the user the step and its `fix.command` (`foresights jobs submit <job> --follow`, with `--params` when the step has them); the user runs it after reviewing `foresights onboard --check`. Cancel a listed queued job with `foresights jobs cancel <id>` if the user does not want it. Run: foresights jobs list --status waiting | user | `repeat the read that failed` | 1 | no |
 
 ### membership_inactive
 
@@ -3332,7 +3332,7 @@ More: [docs/guides/ambient-writeback.md#reading-and-changing-it-remotely](../../
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The content-repair model judged a held file and the page its frontmatter `slug:` names to be the same page, so foresights recommends merging them instead of removing the slug line; nothing was written. | A `frontmatter_slug_conflict` hold whose two sides describe the same person, company or topic is a duplicate, and the deterministic repair (delete the `slug:` line) would mint a second page for it. foresights does not merge pages by itself yet (a lossless merge needs a coordinated two-page write with both revisions, withdrawal and metadata preservation; it ships separately), so the lane records the recommendation on the hold as codes and slugs (`meta.content_repair`: the canonical slug that keeps the page), `foresights sync status` renders a paragraph for a person, and nothing retries it until the file changes. | Show the user the paragraph foresights sources status <id> --json renders for the hold (the path, the canonical slug and the recommendation). After they agree, merge the unique sections of the duplicate into the canonical page, delete the duplicate file, commit, and run foresights sync --source <id> --no-pull; the hold clears on that sync. Run: gbrain sources status '{source_id}' --json | user | `gbrain sources status '{source_id}' --json` | 1 | no |
+| The content-repair model judged a held file and the page its frontmatter `slug:` names to be the same page, so foresights recommends merging them instead of removing the slug line; nothing was written. | A `frontmatter_slug_conflict` hold whose two sides describe the same person, company or topic is a duplicate, and the deterministic repair (delete the `slug:` line) would mint a second page for it. foresights does not merge pages by itself yet (a lossless merge needs a coordinated two-page write with both revisions, withdrawal and metadata preservation; it ships separately), so the lane records the recommendation on the hold as codes and slugs (`meta.content_repair`: the canonical slug that keeps the page), `foresights sync status` renders a paragraph for a person, and nothing retries it until the file changes. | Show the user the paragraph foresights sources status <id> --json renders for the hold (the path, the canonical slug and the recommendation). After they agree, merge the unique sections of the duplicate into the canonical page, delete the duplicate file, commit, and run foresights sync --source <id> --no-pull; the hold clears on that sync. Run: foresights sources status '{source_id}' --json | user | `foresights sources status '{source_id}' --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#merge_recommended](../../docs/guides/write-refusals.md#merge_recommended)
 
@@ -3368,7 +3368,7 @@ Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `pr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A migration's mechanical checkpoint is recorded, but its stored report still names host work (for v0.53.0 a source's inventory, writer, projection or publication-policy stage, or a brain-level pending action); apply-migrations --list shows it applied_pending_host_work. | The ledger row is complete so the schema work never reruns, and v0.53.0 records apply_migrations_pending on every run because member enrollment is never verified, so the stored report decides (#6796): unenrolled members and sources that opted out are not host work. The next apply-migrations --yes re-check rewrites the report once the work is done. | Run the read-only inventory `foresights apply-migrations --migration <version> --dry-run --json` on the brain host, do each source's next step it names (ask the user before publishing or activating), then run `foresights apply-migrations --yes`. Run: gbrain apply-migrations --list --json | agent | `foresights doctor --json` | 1 | no |
+| A migration's mechanical checkpoint is recorded, but its stored report still names host work (for v0.53.0 a source's inventory, writer, projection or publication-policy stage, or a brain-level pending action); apply-migrations --list shows it applied_pending_host_work. | The ledger row is complete so the schema work never reruns, and v0.53.0 records apply_migrations_pending on every run because member enrollment is never verified, so the stored report decides (#6796): unenrolled members and sources that opted out are not host work. The next apply-migrations --yes re-check rewrites the report once the work is done. | Run the read-only inventory `foresights apply-migrations --migration <version> --dry-run --json` on the brain host, do each source's next step it names (ask the user before publishing or activating), then run `foresights apply-migrations --yes`. Run: foresights apply-migrations --list --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/shared-brain-skills.md#migrate-an-existing-brain](../../docs/guides/shared-brain-skills.md#migrate-an-existing-brain)
 
@@ -3438,7 +3438,7 @@ More: [docs/guides/repair.md#moved-pages](../../docs/guides/repair.md#moved-page
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights sources writer movement` could not read the managed sync backlog, so whether sync work is pending is unknown. | A failed backlog read is not an empty backlog: reading it as `nothing_pending` turned a stalled sync into an all-clear. The movement reader reports `movement_state: unknown` (`unknown.reason: backlog_read_failed`) on every surface, doctor warns, and the movement command exits 1 with this code instead of `managed_sync_not_moving`. | Rerun foresights sources writer movement <id>; if the backlog read keeps failing, run foresights doctor --json. Run: gbrain sources writer movement '{source_id}' --json | agent | `gbrain doctor --only managed_sync_not_moving --json` | 1 | yes |
+| `foresights sources writer movement` could not read the managed sync backlog, so whether sync work is pending is unknown. | A failed backlog read is not an empty backlog: reading it as `nothing_pending` turned a stalled sync into an all-clear. The movement reader reports `movement_state: unknown` (`unknown.reason: backlog_read_failed`) on every surface, doctor warns, and the movement command exits 1 with this code instead of `managed_sync_not_moving`. | Rerun foresights sources writer movement <id>; if the backlog read keeps failing, run foresights doctor --json. Run: foresights sources writer movement '{source_id}' --json | agent | `foresights doctor --only managed_sync_not_moving --json` | 1 | yes |
 
 Reasons: `backlog_read_failed`.
 
@@ -3458,7 +3458,7 @@ More: [docs/guides/troubleshooting.md#managed-sync-not-moving](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The model has a known price but no known context-token ceiling, so a user-set cost cap cannot bound one call; the job stopped before any provider call. | A user cap is enforced per provider attempt by reserving the most that attempt could cost: its input ceiling times the input price plus its output ceiling times the output price. Some providers (OpenRouter) declare no ceiling for their models, so the reservation has no bound even though the price is registered. | Do not retry unchanged and do not re-register the price. Ask the user whether to rerun without the user cap (the model then runs unmetered under the default cap), or to give the model's context size to the brain-host operator. Run: gbrain pricing list --json | agent | `foresights doctor --json` | 1 | no |
+| The model has a known price but no known context-token ceiling, so a user-set cost cap cannot bound one call; the job stopped before any provider call. | A user cap is enforced per provider attempt by reserving the most that attempt could cost: its input ceiling times the input price plus its output ceiling times the output price. Some providers (OpenRouter) declare no ceiling for their models, so the reservation has no bound even though the price is registered. | Do not retry unchanged and do not re-register the price. Ask the user whether to rerun without the user cap (the model then runs unmetered under the default cap), or to give the model's context size to the brain-host operator. Run: foresights pricing list --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#no_context_ceiling](../../docs/guides/write-refusals.md#no_context_ceiling)
 
@@ -3556,7 +3556,7 @@ More: [docs/guides/write-refusals.md#drain-not-converged](../../docs/guides/writ
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| This host does not own the source's active canonical worktree, so ghost pages (live pages whose canonical file is missing) cannot be checked or removed here; nothing was changed. | Whether a page's canonical file is missing is only known on the host that holds the source's checkout; another host would read its own disk. | Run foresights repair ghost-pages --source <id> in a terminal on the source's canonical owner host (writer status names it). Run: gbrain sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
+| This host does not own the source's active canonical worktree, so ghost pages (live pages whose canonical file is missing) cannot be checked or removed here; nothing was changed. | Whether a page's canonical file is missing is only known on the host that holds the source's checkout; another host would read its own disk. | Run foresights repair ghost-pages --source <id> in a terminal on the source's canonical owner host (writer status names it). Run: foresights sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
 
 Reasons: `not_owner_host`, `not_applicable`.
 
@@ -3646,7 +3646,7 @@ More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-tw
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The ownership marker (`.gbrain-owner.json`) is missing from a managed source's checkout root while the reservation beside the checkout still names this owner, so no write publishes there. | The marker binds the checkout directory to its owner. A cleanup or a restore that drops dotfiles removes it; a retry never brings it back, so a write refused with this code ends terminally and releases its outstanding-request slot. The verified self-transfer re-creates it for the same root on the owner host; creating or copying it by hand is refused. | On the brain host: foresights sources writer status --source <id> --json (note admin_state), then foresights sources writer transfer prepare <id> --self-transfer and transfer accept with the manifest it prints; then run the same foresights sync again (a sync stops blocked_by_failures on the refused file, with no hold). Run: gbrain sources writer status --source '{source_id}' --json | host_admin | `foresights doctor --json` | 1 | no |
+| The ownership marker (`.gbrain-owner.json`) is missing from a managed source's checkout root while the reservation beside the checkout still names this owner, so no write publishes there. | The marker binds the checkout directory to its owner. A cleanup or a restore that drops dotfiles removes it; a retry never brings it back, so a write refused with this code ends terminally and releases its outstanding-request slot. The verified self-transfer re-creates it for the same root on the owner host; creating or copying it by hand is refused. | On the brain host: foresights sources writer status --source <id> --json (note admin_state), then foresights sources writer transfer prepare <id> --self-transfer and transfer accept with the manifest it prints; then run the same foresights sync again (a sync stops blocked_by_failures on the refused file, with no hold). Run: foresights sources writer status --source '{source_id}' --json | host_admin | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#owner_marker_missing](../../docs/guides/write-refusals.md#owner_marker_missing)
 
@@ -3678,7 +3678,7 @@ More: [docs/guides/windowed-reads.md#page_body_rows_unreadable](../../docs/guide
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| This page's body is stored in segments, and the path that hit it reads or writes the whole body as one string, so it stopped before reading or changing anything. | With pages.segmented_storage on, a page over 1 MiB keeps its body in segments instead of the page row; a whole-body path would otherwise see an empty body and could overwrite the page or drop the unread rest. Windowed reads and segment-aware writers replace these paths. | Retrying refuses the same way. Read the page in pieces: get_page body: 'auto' returns its outline and first window, and body: 'window' reads any lines or bytes. Run: gbrain get --source '{source_id}' --body auto -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| This page's body is stored in segments, and the path that hit it reads or writes the whole body as one string, so it stopped before reading or changing anything. | With pages.segmented_storage on, a page over 1 MiB keeps its body in segments instead of the page row; a whole-body path would otherwise see an empty body and could overwrite the page or drop the unread rest. Windowed reads and segment-aware writers replace these paths. | Retrying refuses the same way. Read the page in pieces: get_page body: 'auto' returns its outline and first window, and body: 'window' reads any lines or bytes. Run: foresights get --source '{source_id}' --body auto -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/windowed-reads.md#page_body_segmented](../../docs/guides/windowed-reads.md#page_body_segmented)
 
@@ -3688,7 +3688,7 @@ More: [docs/guides/windowed-reads.md#page_body_segmented](../../docs/guides/wind
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The page was deleted or replaced while the operation ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The page was deleted or replaced while the operation ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: foresights get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### page_not_found
 
@@ -3696,7 +3696,7 @@ More: [docs/guides/windowed-reads.md#page_body_segmented](../../docs/guides/wind
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| No page with that slug exists in the selected source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| No page with that slug exists in the selected source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: foresights get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### page_projection_conflict
 
@@ -3724,7 +3724,7 @@ More: [docs/guides/windowed-reads.md#page_projection_stale](../../docs/guides/wi
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| put_page refused to replace a large page with content much smaller than the stored body; nothing was written. | Above the inline read size (mcp.inline_body_bytes, 256 KB) a get_page read returns a window, not the body, so a replacement far smaller than the page is most often a window sent back as the whole page, which would delete the unread rest. | Change part of the page with edit_page (revision from get_page body: 'none'). Pass allow_shrink: true only when the smaller content is the intended complete page. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| put_page refused to replace a large page with content much smaller than the stored body; nothing was written. | Above the inline read size (mcp.inline_body_bytes, 256 KB) a get_page read returns a window, not the body, so a replacement far smaller than the page is most often a window sent back as the whole page, which would delete the unread rest. | Change part of the page with edit_page (revision from get_page body: 'none'). Pass allow_shrink: true only when the smaller content is the intended complete page. Run: foresights get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/windowed-reads.md#page_shrink_refused](../../docs/guides/windowed-reads.md#page_shrink_refused)
 
@@ -3734,7 +3734,7 @@ More: [docs/guides/windowed-reads.md#page_shrink_refused](../../docs/guides/wind
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The whole page does not fit one result on this connection, so get_page did not return its body. | A result is measured as the complete encoded frame; a body over the connection's cap (mcp.max_result_bytes_stdio, 4 MiB; mcp.max_result_bytes_http, 1 MiB) would be cut or rejected by the client. Nothing was truncated: windowed reads cover the whole page in pieces. | Read the outline (body: 'outline'), then windows (body: 'window' with lines, bytes, around_chunk_id or the returned next_cursor). To replace the page, edit it with edit_page and the revision from body: 'none'. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The whole page does not fit one result on this connection, so get_page did not return its body. | A result is measured as the complete encoded frame; a body over the connection's cap (mcp.max_result_bytes_stdio, 4 MiB; mcp.max_result_bytes_http, 1 MiB) would be cut or rejected by the client. Nothing was truncated: windowed reads cover the whole page in pieces. | Read the outline (body: 'outline'), then windows (body: 'window' with lines, bytes, around_chunk_id or the returned next_cursor). To replace the page, edit it with edit_page and the revision from body: 'none'. Run: foresights get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/windowed-reads.md#page_too_large_for_inline](../../docs/guides/windowed-reads.md#page_too_large_for_inline)
 
@@ -3804,7 +3804,7 @@ More: [docs/guides/write-refusals.md#path_not_utf8](../../docs/guides/write-refu
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An existing pattern page is waiting on the rewrite that de-duplicates its claim sources, so no patterns child was submitted this run. | The patterns child reads existing pattern pages; until their claim records reference one shared reflection list, the pages can overflow the model's window and the run pays for nothing. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: gbrain write-requests --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
+| An existing pattern page is waiting on the rewrite that de-duplicates its claim sources, so no patterns child was submitted this run. | The patterns child reads existing pattern pages; until their claim records reference one shared reflection list, the pages can overflow the model's window and the run pays for nothing. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: foresights write-requests --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
 
 ### patterns_min_interval
 
@@ -3812,7 +3812,7 @@ More: [docs/guides/write-refusals.md#path_not_utf8](../../docs/guides/write-refu
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An in-cycle dream patterns run was skipped because the partition's last completed patterns run ended less than dream.patterns.min_interval_hours ago; nothing was submitted. | Every maintenance pass writes new reflections, so the evidence watermark alone re-ran a paid patterns child on each pass. The skip names next_eligible_at; a direct `foresights dream --phase patterns` or `--once` is not held to the interval, and `foresights config set dream.patterns.min_interval_hours 0` turns it off. | Wait for next_eligible_at, or, with the user's paid authorization, run `foresights dream --phase patterns` now. Run: gbrain dream --phase patterns | agent · paid | `repeat the read that failed` | 1 | no |
+| An in-cycle dream patterns run was skipped because the partition's last completed patterns run ended less than dream.patterns.min_interval_hours ago; nothing was submitted. | Every maintenance pass writes new reflections, so the evidence watermark alone re-ran a paid patterns child on each pass. The skip names next_eligible_at; a direct `foresights dream --phase patterns` or `--once` is not held to the interval, and `foresights config set dream.patterns.min_interval_hours 0` turns it off. | Wait for next_eligible_at, or, with the user's paid authorization, run `foresights dream --phase patterns` now. Run: foresights dream --phase patterns | agent · paid | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/dream-patterns.md#cadence](../../docs/guides/dream-patterns.md#cadence)
 
@@ -3876,7 +3876,7 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed write request has held its claim longer than persistence.max_claim_ms, so later writes on its root wait behind it. | The owner renews a claim for as long as its work is unsettled, so a preparation or publication that hangs never lets the lease lapse; doctor names the stuck phase, the root, the claim's age and whether the same request resumes on its own. | Inspect the request with the command in fix, then restart the foresights serve that owns the root; attach that status output when reporting the hang. Run: gbrain sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
+| A managed write request has held its claim longer than persistence.max_claim_ms, so later writes on its root wait behind it. | The owner renews a claim for as long as its work is unsettled, so a preparation or publication that hangs never lets the lease lapse; doctor names the stuck phase, the root, the claim's age and whether the same request resumes on its own. | Inspect the request with the command in fix, then restart the foresights serve that owns the root; attach that status output when reporting the hang. Run: foresights sources writer status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides/troubleshooting.md#persistence-write-stall)
 
@@ -3886,7 +3886,7 @@ More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A Postgres connection the driver retired after an incident (stuck, desynced, or closed under running statements) could not reconnect; statements waiting for it failed with the connect error. | The database or pooler refused or dropped the new connection (unreachable host, exhausted connection slots, rotated credentials). The next statement retries the connect, and the connection stays marked until one succeeds, so a repeating line means the pool is not recovering on its own. | Check the database and pooler from the serve host (foresights doctor --only pool_reap_health --json); a serve that keeps logging this line needs the database reachable again, then a restart if the pool never recovers. Run: gbrain doctor --only pool_reap_health --json | agent | `repeat the read that failed` | 1 | yes |
+| A Postgres connection the driver retired after an incident (stuck, desynced, or closed under running statements) could not reconnect; statements waiting for it failed with the connect error. | The database or pooler refused or dropped the new connection (unreachable host, exhausted connection slots, rotated credentials). The next statement retries the connect, and the connection stays marked until one succeeds, so a repeating line means the pool is not recovering on its own. | Check the database and pooler from the serve host (foresights doctor --only pool_reap_health --json); a serve that keeps logging this line needs the database reachable again, then a restart if the pool never recovers. Run: foresights doctor --only pool_reap_health --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/ENGINES.md#pg-connection-recovery-failed](../../docs/ENGINES.md#pg-connection-recovery-failed)
 
@@ -3896,7 +3896,7 @@ More: [docs/ENGINES.md#pg-connection-recovery-failed](../../docs/ENGINES.md#pg-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A pooled Postgres statement ran past its in-flight budget (the pool's statement_timeout plus grace, or the longer statement_timeout its operation declared) with nothing coming back from the server (reason=idle) or while bytes kept arriving (reason=age), so the driver retired that connection; the statement and everything queued behind it failed with CONNECTION_STUCK. | Nothing arriving for that long usually means the connection is wedged: a pipeline the server and client no longer agree on, a transaction-mode pooler that swallowed a CancelRequest and left the backend in ClientRead, or a dead peer. It is not proof: behind a transaction-mode pooler the startup statement_timeout never applies (SHOW statement_timeout reads 0), so a legitimately slow statement can reach the budget too. reason=age is a statement that kept streaming rows or notices past its budget (#6543); an operation that needs longer declares it with SET LOCAL statement_timeout (0 for no limit), which the driver tracks per statement. Before #6383 such a connection held its queue forever while /health answered 200. The pool reconnects on its own; the warn line names the pool, the age, the queue depth and the statement by keyword and table. | Retry the failed call. If the line repeats, run foresights doctor --json and report the warn lines with the operations that preceded them; GBRAIN_PG_STUCK_GRACE_MS raises the grace, and off disables the watchdog. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+| A pooled Postgres statement ran past its in-flight budget (the pool's statement_timeout plus grace, or the longer statement_timeout its operation declared) with nothing coming back from the server (reason=idle) or while bytes kept arriving (reason=age), so the driver retired that connection; the statement and everything queued behind it failed with CONNECTION_STUCK. | Nothing arriving for that long usually means the connection is wedged: a pipeline the server and client no longer agree on, a transaction-mode pooler that swallowed a CancelRequest and left the backend in ClientRead, or a dead peer. It is not proof: behind a transaction-mode pooler the startup statement_timeout never applies (SHOW statement_timeout reads 0), so a legitimately slow statement can reach the budget too. reason=age is a statement that kept streaming rows or notices past its budget (#6543); an operation that needs longer declares it with SET LOCAL statement_timeout (0 for no limit), which the driver tracks per statement. Before #6383 such a connection held its queue forever while /health answered 200. The pool reconnects on its own; the warn line names the pool, the age, the queue depth and the statement by keyword and table. | Retry the failed call. If the line repeats, run foresights doctor --json and report the warn lines with the operations that preceded them; GBRAIN_PG_STUCK_GRACE_MS raises the grace, and off disables the watchdog. Run: foresights doctor --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/ENGINES.md#pg-connection-stuck](../../docs/ENGINES.md#pg-connection-stuck)
 
@@ -3906,7 +3906,7 @@ More: [docs/ENGINES.md#pg-connection-stuck](../../docs/ENGINES.md#pg-connection-
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Postgres pool of a resident foresights process has had connections checked out or statements waiting for one across two 30 s ticks without completing a single statement. | One slow statement is one quiet tick; two in a row with nothing settled means every checked-out connection is waiting on the server at once, which is what a wedged pool or an unreachable database looks like from inside the process. With the in-flight watchdog on, the stall ends within statement_timeout plus grace and a pg_pool_recovered line follows; with it off this line is the only trace. | Wait one more tick for pg_pool_recovered or pg_connection_stuck; if the line keeps repeating, check the database and pooler (gbrain doctor --json) and restart the process if the pool never recovers. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+| The Postgres pool of a resident foresights process has had connections checked out or statements waiting for one across two 30 s ticks without completing a single statement. | One slow statement is one quiet tick; two in a row with nothing settled means every checked-out connection is waiting on the server at once, which is what a wedged pool or an unreachable database looks like from inside the process. With the in-flight watchdog on, the stall ends within statement_timeout plus grace and a pg_pool_recovered line follows; with it off this line is the only trace. | Wait one more tick for pg_pool_recovered or pg_connection_stuck; if the line keeps repeating, check the database and pooler (gbrain doctor --json) and restart the process if the pool never recovers. Run: foresights doctor --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/ENGINES.md#pg-pool-stalled](../../docs/ENGINES.md#pg-pool-stalled)
 
@@ -3940,7 +3940,7 @@ More: [docs/ENGINES.md#legacy-pglite-lock](../../docs/ENGINES.md#legacy-pglite-l
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A PGLite vector (HNSW) index build was refused before it started because its in-memory graph would not fit PGLite's WebAssembly heap. | pglite.wasm caps memory at 2 GiB and pgvector keeps the whole HNSW graph in memory while it builds; a build past the budget used to run out of memory or fall back to hours of on-disk inserts. Vector search keeps working with exact scans. | Preview a move to Postgres (read-only): foresights migrate --to postgres --plan --json Run: gbrain migrate --to postgres --plan --json | agent | `foresights doctor --json` | 1 | no |
+| A PGLite vector (HNSW) index build was refused before it started because its in-memory graph would not fit PGLite's WebAssembly heap. | pglite.wasm caps memory at 2 GiB and pgvector keeps the whole HNSW graph in memory while it builds; a build past the budget used to run out of memory or fall back to hours of on-disk inserts. Vector search keeps working with exact scans. | Preview a move to Postgres (read-only): foresights migrate --to postgres --plan --json Run: foresights migrate --to postgres --plan --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/ENGINES.md#pglite-vector-index-ceiling](../../docs/ENGINES.md#pglite-vector-index-ceiling)
 
@@ -3986,7 +3986,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| TLS was required by default for a non-local Postgres host, and the server does not accept TLS connections, so foresights did not connect. | foresights connects with sslmode=require to any Postgres host that is not on this machine (localhost, 127.0.0.0/8, ::1 or a Unix socket) unless the database URL names an sslmode, so the password and page contents never cross a network in plaintext without an explicit choice. Brains whose URL had no sslmode connected in plaintext before this default. | Turn TLS on at the database server and keep the default (sslmode=require encrypts; sslmode=verify-full with the server CA also verifies the certificate). To keep connecting without TLS on a network you trust, add sslmode=disable to the database URL. Run: gbrain engine status --probe --json | user | `gbrain doctor --only postgres_tls --json` | 1 | no |
+| TLS was required by default for a non-local Postgres host, and the server does not accept TLS connections, so foresights did not connect. | foresights connects with sslmode=require to any Postgres host that is not on this machine (localhost, 127.0.0.0/8, ::1 or a Unix socket) unless the database URL names an sslmode, so the password and page contents never cross a network in plaintext without an explicit choice. Brains whose URL had no sslmode connected in plaintext before this default. | Turn TLS on at the database server and keep the default (sslmode=require encrypts; sslmode=verify-full with the server CA also verifies the certificate). To keep connecting without TLS on a network you trust, add sslmode=disable to the database URL. Run: foresights engine status --probe --json | user | `foresights doctor --only postgres_tls --json` | 1 | no |
 
 ### preparation_stalled
 
@@ -3994,7 +3994,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed write's preparation was cut off at its deadline persistence.max_preparation_attempts times (default 2), so the owner finished it failed instead of claiming it again. | One request whose preparation never finished used to hold its root for as long as its owner renewed the claim; now each attempt has a budget, a cut-off attempt is counted (a kill mid-preparation included), and at the limit the request is terminal so the rest of the root keeps moving. A sync holds that file with the same code; the receipt names the last recorded step and what it was waiting on. | Inspect the owner with foresights sources writer status --source <id> --json (the step and its wait cause), fix or report the cause, then foresights sources retry-held <id> and the same foresights sync with the same options; a foreground write needs a new request_id. Run: gbrain sources status '{source_id}' --json | host_admin | `foresights doctor --json` | 1 | no |
+| A managed write's preparation was cut off at its deadline persistence.max_preparation_attempts times (default 2), so the owner finished it failed instead of claiming it again. | One request whose preparation never finished used to hold its root for as long as its owner renewed the claim; now each attempt has a budget, a cut-off attempt is counted (a kill mid-preparation included), and at the limit the request is terminal so the rest of the root keeps moving. A sync holds that file with the same code; the receipt names the last recorded step and what it was waiting on. | Inspect the owner with foresights sources writer status --source <id> --json (the step and its wait cause), fix or report the cause, then foresights sources retry-held <id> and the same foresights sync with the same options; a foreground write needs a new request_id. Run: foresights sources status '{source_id}' --json | host_admin | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#preparation_stalled](../../docs/guides/write-refusals.md#preparation_stalled)
 
@@ -4136,7 +4136,7 @@ More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundari
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A page purge's in-transaction journal lookup hit the publication transaction's statement budget, so the purge failed terminally; nothing was removed, tombstoned or redacted, and later writes to the source move again. | The lookup is deterministic on a large request table, not contention: retrying it as `database_contention` requeued the same purge forever and held every later write to its source behind it. The substring search for the page's claims now runs at preparation under the preparation budget; this code is for the lookups that still run inside the transaction (the slug lookup, the tail and pending re-checks, the locking read). | Do not assume the requested content was erased. If the receipt names the slug index as missing or INVALID, run foresights repair request-indexes --apply first; then submit the purge again with a new request_id (a retry with the same id returns this failure). Run: gbrain repair request-indexes --json | host_admin | `repeat the read that failed` | 1 | no |
+| A page purge's in-transaction journal lookup hit the publication transaction's statement budget, so the purge failed terminally; nothing was removed, tombstoned or redacted, and later writes to the source move again. | The lookup is deterministic on a large request table, not contention: retrying it as `database_contention` requeued the same purge forever and held every later write to its source behind it. The substring search for the page's claims now runs at preparation under the preparation budget; this code is for the lookups that still run inside the transaction (the slug lookup, the tail and pending re-checks, the locking read). | Do not assume the requested content was erased. If the receipt names the slug index as missing or INVALID, run foresights repair request-indexes --apply first; then submit the purge again with a new request_id (a retry with the same id returns this failure). Run: foresights repair request-indexes --json | host_admin | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#purge_lookup_timeout](../../docs/guides/write-refusals.md#purge_lookup_timeout)
 
@@ -4352,7 +4352,7 @@ More: [docs/guides/write-refusals.md#drain-reconcile-host-required](../../docs/g
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A Git listing the managed-sync reconcile reads (`ls-tree`, `ls-files`, `diff-tree`) did not finish cleanly: Git exited non-zero, was killed by a signal or its time or size cap, or its output did not end at a record boundary. | A partial listing would make files look deleted or new, so the level is refused rather than classified. In PR 4a only the read-only convergence shadow reads it, and it reports `status: unavailable` with this code. | Check the checkout with git -C <dir> status, then rerun the read-only status; report it with foresights doctor --json if it repeats. Run: gbrain sync status --source '{source_id}' --detail --json | agent | `foresights doctor --json` | 1 | no |
+| A Git listing the managed-sync reconcile reads (`ls-tree`, `ls-files`, `diff-tree`) did not finish cleanly: Git exited non-zero, was killed by a signal or its time or size cap, or its output did not end at a record boundary. | A partial listing would make files look deleted or new, so the level is refused rather than classified. In PR 4a only the read-only convergence shadow reads it, and it reports `status: unavailable` with this code. | Check the checkout with git -C <dir> status, then rerun the read-only status; report it with foresights doctor --json if it repeats. Run: foresights sync status --source '{source_id}' --detail --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes](../../docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes)
 
@@ -4576,7 +4576,7 @@ Reasons: `rename_source_changed`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A `foresights repair failed-writes` preview read ran past the database statement timeout, so the preview stopped; nothing was saved, no approval checkpoint was written and no page changed. | The preview classes every refused caller write against the write journal (replay attempts, later requests of the same page, recovered fact requests) in a few set reads. They use the `persistence_requests_replay_id` and `persistence_requests_slug_sequence` indexes; when either is missing or INVALID, or the journal is large enough that a set read outlasts the timeout, the server ends the read. | Build the request indexes with foresights repair request-indexes --apply, then run the same preview again; if it stops again with the indexes valid, run it once with a longer statement timeout on the brain host. Run: gbrain repair request-indexes --json | agent | `repeat the read that failed` | 1 | no |
+| A `foresights repair failed-writes` preview read ran past the database statement timeout, so the preview stopped; nothing was saved, no approval checkpoint was written and no page changed. | The preview classes every refused caller write against the write journal (replay attempts, later requests of the same page, recovered fact requests) in a few set reads. They use the `persistence_requests_replay_id` and `persistence_requests_slug_sequence` indexes; when either is missing or INVALID, or the journal is large enough that a set read outlasts the timeout, the server ends the read. | Build the request indexes with foresights repair request-indexes --apply, then run the same preview again; if it stops again with the indexes valid, run it once with a longer statement timeout on the brain host. Run: foresights repair request-indexes --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#repair-preview-timeout](../../docs/guides/troubleshooting.md#repair-preview-timeout)
 
@@ -4682,7 +4682,7 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights upgrade` (or `--restart-only`) found a foresights process on this host it cannot restart onto the new build (a serve or worker started by hand, an autopilot started outside its service by a launcher foresights does not know, a running sync, or an MCP server an agent harness started), so it restarted nothing and, before a swap, installed nothing. | A process keeps the build it started with, so restarting only some of them leaves serve, workers and MCP servers on different builds; the upgrade refuses instead of leaving that skew. Each process is named with the exact step that restarts it. | Handle each listed process as the message says (MCP servers only: rerun with --stop-mcp after the user agrees), then run the same command again; `foresights upgrade --no-restart` installs without restarting. Run: gbrain upgrade --restart-only --dry-run --json | user | `repeat the read that failed` | 3 | no |
+| `foresights upgrade` (or `--restart-only`) found a foresights process on this host it cannot restart onto the new build (a serve or worker started by hand, an autopilot started outside its service by a launcher foresights does not know, a running sync, or an MCP server an agent harness started), so it restarted nothing and, before a swap, installed nothing. | A process keeps the build it started with, so restarting only some of them leaves serve, workers and MCP servers on different builds; the upgrade refuses instead of leaving that skew. Each process is named with the exact step that restarts it. | Handle each listed process as the message says (MCP servers only: rerun with --stop-mcp after the user agrees), then run the same command again; `foresights upgrade --no-restart` installs without restarting. Run: foresights upgrade --restart-only --dry-run --json | user | `repeat the read that failed` | 3 | no |
 
 More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
 
@@ -4692,7 +4692,7 @@ More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-a
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| After `foresights upgrade` restarted this host's foresights processes, one of them still runs another build, did not come back, or the warm CLI socket refused the new build. | The restart is done only when every foresights process on the host reports the installed build and serve's warm CLI socket accepts it; anything less is the version skew the restart exists to remove. | Restart each process the message lists with the command the plan printed, then run `foresights upgrade --restart-only` again. Run: gbrain upgrade --restart-only --dry-run --json | agent | `gbrain doctor --only runtime_build_skew --json` | 1 | no |
+| After `foresights upgrade` restarted this host's foresights processes, one of them still runs another build, did not come back, or the warm CLI socket refused the new build. | The restart is done only when every foresights process on the host reports the installed build and serve's warm CLI socket accepts it; anything less is the version skew the restart exists to remove. | Restart each process the message lists with the command the plan printed, then run `foresights upgrade --restart-only` again. Run: foresights upgrade --restart-only --dry-run --json | agent | `foresights doctor --only runtime_build_skew --json` | 1 | no |
 
 More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
 
@@ -4702,7 +4702,7 @@ More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-a
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The tool's result is larger than this connection can carry in one response, so it was replaced by this error; nothing was cut. | Results are measured as the complete encoded JSON-RPC frame (every block, notice and escape). A frame over the connection's cap (mcp.max_result_bytes_stdio, 4 MiB; mcp.max_result_bytes_http, 1 MiB) would be rejected or silently cut by the client. | Ask for less in one call: a window (get_page body: 'window'), a page of rows (limit / from_index), or metadata only (get_versions include_body: false). Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The tool's result is larger than this connection can carry in one response, so it was replaced by this error; nothing was cut. | Results are measured as the complete encoded JSON-RPC frame (every block, notice and escape). A frame over the connection's cap (mcp.max_result_bytes_stdio, 4 MiB; mcp.max_result_bytes_http, 1 MiB) would be rejected or silently cut by the client. | Ask for less in one call: a window (get_page body: 'window'), a page of rows (limit / from_index), or metadata only (get_versions include_body: false). Run: foresights get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/windowed-reads.md#result_too_large](../../docs/guides/windowed-reads.md#result_too_large)
 
@@ -4720,7 +4720,7 @@ More: [docs/guides/windowed-reads.md#result_too_large](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The page was written before page revisions existed and the revision backfill has not reached it, so it has no revision a write or preview can bind to. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain apply-migrations --force-schema | agent | `repeat the read that failed` | 1 | no |
+| The page was written before page revisions existed and the revision backfill has not reached it, so it has no revision a write or preview can bind to. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: foresights apply-migrations --force-schema | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#revision-backfill](../../docs/guides/write-refusals.md#revision-backfill)
 
@@ -4730,7 +4730,7 @@ More: [docs/guides/write-refusals.md#revision-backfill](../../docs/guides/write-
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The page changed since the cursor or chunk id was issued, so that position no longer names the same text. | Cursors and chunk positions are bound to one page revision; reading on from them after an edit could skip or repeat text without saying so. | Read again from the position in fix (the same byte offset at the current revision), or start over with body: 'outline'. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The page changed since the cursor or chunk id was issued, so that position no longer names the same text. | Cursors and chunk positions are bound to one page revision; reading on from them after an edit could skip or repeat text without saying so. | Read again from the position in fix (the same byte offset at the current revision), or start over with body: 'outline'. Run: foresights get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowed-reads.md#revision_changed)
 
@@ -4740,7 +4740,7 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The target changed since it was read; the expected revision no longer matches. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The target changed since it was read; the expected revision no longer matches. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: foresights get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### revision_required
 
@@ -4748,7 +4748,7 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The target already exists and the write named no revision: supply the expected revision read from the page (or the policy epoch) before replacing it. | Without the revision the write cannot tell an intentional replacement from an overwrite of an edit it never saw; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The target already exists and the write named no revision: supply the expected revision read from the page (or the policy epoch) before replacing it. | Without the revision the write cannot tell an intentional replacement from an overwrite of an edit it never saw; nothing was changed. | Correct the request using the message above, then retry. Run: foresights get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### revision_unavailable
 
@@ -4764,7 +4764,7 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Long-running foresights processes on this host run different builds, or one runs an older build than its install holds on disk: serve, the jobs supervisor, worker parents (in memory) and the job children they spawn from the install (on disk). | A process keeps the code it loaded at start, and `foresights jobs run-child` spawns a fresh process from the install on disk for every job, so after a checkout reset or an upgrade on disk newer job code runs under an older worker and next to an older serve until each process restarts. | Restart the process the check names (serve with its service command, the supervisor with `foresights jobs supervisor stop` then `foresights jobs supervisor start --detach`, a worker by stopping its pid so its supervisor respawns it), then each other listed process on an older build; nothing restarts automatically. Run: gbrain doctor --only runtime_build_skew --json | agent | `gbrain doctor --only runtime_build_skew --json` | 1 | no |
+| Long-running foresights processes on this host run different builds, or one runs an older build than its install holds on disk: serve, the jobs supervisor, worker parents (in memory) and the job children they spawn from the install (on disk). | A process keeps the code it loaded at start, and `foresights jobs run-child` spawns a fresh process from the install on disk for every job, so after a checkout reset or an upgrade on disk newer job code runs under an older worker and next to an older serve until each process restarts. | Restart the process the check names (serve with its service command, the supervisor with `foresights jobs supervisor stop` then `foresights jobs supervisor start --detach`, a worker by stopping its pid so its supervisor respawns it), then each other listed process on an older build; nothing restarts automatically. Run: foresights doctor --only runtime_build_skew --json | agent | `foresights doctor --only runtime_build_skew --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/troubleshooting.md#runtime-build-skew)
 
@@ -4792,7 +4792,7 @@ Reasons: `windows`, `container`, `mount`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A schema step (the schema.sql replay in init/upgrade, or one migration) waited its lock_timeout for a table lock another session holds and stopped instead of hanging. | Every ALTER TABLE in the replay takes an ACCESS EXCLUSIVE lock even as a no-op, so one open transaction in another client (idle in transaction, a stuck job) blocked gbrain init and upgrade forever with no output. The wait is now bounded (GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS, default 60) and the refusal names the blocking sessions by pid, application and state, sampled while the wait was active; query text is never shown. The cancelled step changed nothing. | Let the named session finish or, with the user's agreement, end it on the database host with SELECT pg_terminate_backend(<pid>), then rerun the same gbrain command; init retries a few times on its own with a short backoff. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | yes |
+| A schema step (the schema.sql replay in init/upgrade, or one migration) waited its lock_timeout for a table lock another session holds and stopped instead of hanging. | Every ALTER TABLE in the replay takes an ACCESS EXCLUSIVE lock even as a no-op, so one open transaction in another client (idle in transaction, a stuck job) blocked gbrain init and upgrade forever with no output. The wait is now bounded (GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS, default 60) and the refusal names the blocking sessions by pid, application and state, sampled while the wait was active; query text is never shown. The cancelled step changed nothing. | Let the named session finish or, with the user's agreement, end it on the database host with SELECT pg_terminate_backend(<pid>), then rerun the same gbrain command; init retries a few times on its own with a short backoff. Run: foresights doctor --json | agent | `foresights doctor --json` | 1 | yes |
 
 More: [docs/ENGINES.md#schema-lock-blocked](../../docs/ENGINES.md#schema-lock-blocked)
 
@@ -4812,7 +4812,7 @@ More: [docs/guides/repair.md#missing-tables](../../docs/guides/repair.md#missing
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A pack mutation refused to write because the YAML it emitted did not read back as the manifest it holds; the pack file on disk is unchanged. | The write boundary parses its own output and compares it to the manifest as normalized structures, so an emitter/parser asymmetry can no longer corrupt a pack silently. | Re-run the mutation on the current release; if it refuses again, run `foresights schema validate <pack>` and report the named key with `foresights doctor --json`. Run: gbrain schema active --json | agent | `foresights doctor --json` | 1 | no |
+| A pack mutation refused to write because the YAML it emitted did not read back as the manifest it holds; the pack file on disk is unchanged. | The write boundary parses its own output and compares it to the manifest as normalized structures, so an emitter/parser asymmetry can no longer corrupt a pack silently. | Re-run the mutation on the current release; if it refuses again, run `foresights schema validate <pack>` and report the named key with `foresights doctor --json`. Run: foresights schema active --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/architecture/schema-packs.md#oversized-pack](../../docs/architecture/schema-packs.md#oversized-pack)
 
@@ -4822,7 +4822,7 @@ More: [docs/architecture/schema-packs.md#oversized-pack](../../docs/architecture
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The schema pack file is larger than the load bound, so it was not read; a pack this large is almost always a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation. | Loading a pack of that size took every CLI process to tens of GB of memory. The original text cannot be recovered automatically: after N doublings only the author knows the intended regex, so the fix is a hand edit of the grown lines. | Open the pack file named in the message, restore the grown quoted lines (usually `inference.regex` under `link_types`) to their intended text, save, and re-run. `GBRAIN_SCHEMA_PACK_MAX_BYTES` raises the bound for one command when a pack is legitimately large. Run: gbrain schema active --json | user | `foresights doctor --json` | 1 | no |
+| The schema pack file is larger than the load bound, so it was not read; a pack this large is almost always a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation. | Loading a pack of that size took every CLI process to tens of GB of memory. The original text cannot be recovered automatically: after N doublings only the author knows the intended regex, so the fix is a hand edit of the grown lines. | Open the pack file named in the message, restore the grown quoted lines (usually `inference.regex` under `link_types`) to their intended text, save, and re-run. `GBRAIN_SCHEMA_PACK_MAX_BYTES` raises the bound for one command when a pack is legitimately large. Run: foresights schema active --json | user | `foresights doctor --json` | 1 | no |
 
 More: [docs/architecture/schema-packs.md#oversized-pack](../../docs/architecture/schema-packs.md#oversized-pack)
 
@@ -4892,7 +4892,7 @@ More: [docs/guides/write-refusals.md#segmented_mirror_writer_gate](../../docs/gu
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A live `serve` or resident worker on this host runs an older foresights build than this checkout: its `persistence_consumers` heartbeat `version` is below this binary's VERSION. | Upgrading or pulling the checkout does not restart the processes already running from it, so one-shot commands from the checkout (`foresights sync`, `bun run src/cli.ts`) run newer code against the older consumer until serve and its workers restart. A serve older than the heartbeat table writes no row; `consumers_without_heartbeat` names it. | Restart serve with the command the check prints (`systemctl --user restart gbrain-serve.service`, `launchctl kickstart -k gui/<uid>/com.gbrain.serve`, or stop the named pid and start it again), then restart each other listed worker; nothing restarts automatically. Run: gbrain sources writer status --json | agent | `gbrain doctor --only serve_build_drift --json` | 1 | no |
+| A live `serve` or resident worker on this host runs an older foresights build than this checkout: its `persistence_consumers` heartbeat `version` is below this binary's VERSION. | Upgrading or pulling the checkout does not restart the processes already running from it, so one-shot commands from the checkout (`foresights sync`, `bun run src/cli.ts`) run newer code against the older consumer until serve and its workers restart. A serve older than the heartbeat table writes no row; `consumers_without_heartbeat` names it. | Restart serve with the command the check prints (`systemctl --user restart gbrain-serve.service`, `launchctl kickstart -k gui/<uid>/com.gbrain.serve`, or stop the named pid and start it again), then restart each other listed worker; nothing restarts automatically. Run: foresights sources writer status --json | agent | `foresights doctor --only serve_build_drift --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#serve-build-drift](../../docs/guides/troubleshooting.md#serve-build-drift)
 
@@ -4940,7 +4940,7 @@ More: [docs/ENGINES.md#serve-unhealthy-exit](../../docs/ENGINES.md#serve-unhealt
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed sync settled a file at the same level in three consecutive passes, but the next round never classified it settled, so the file is held instead of being re-imported every pass; the rest of the source synced. | A pass records the level it settled each path at and the next round expects the same path to classify settled at that level. A path that keeps coming back unsettled at one level points to a broken writer, a stuck effect or a damaged record, not to the file; re-importing it every pass would spend work without converging, so after three passes sync holds it and stamps the rest. | Run foresights doctor --json and foresights sources writer status --source <id> --json (both read-only), fix or report what they name with the foresights version, then foresights sources retry-held <id> and foresights sync --source <id> --no-pull. Run: gbrain doctor --json | agent | `foresights doctor --json` | 1 | no |
+| A managed sync settled a file at the same level in three consecutive passes, but the next round never classified it settled, so the file is held instead of being re-imported every pass; the rest of the source synced. | A pass records the level it settled each path at and the next round expects the same path to classify settled at that level. A path that keeps coming back unsettled at one level points to a broken writer, a stuck effect or a damaged record, not to the file; re-importing it every pass would spend work without converging, so after three passes sync holds it and stamps the rest. | Run foresights doctor --json and foresights sources writer status --source <id> --json (both read-only), fix or report what they name with the foresights version, then foresights sources retry-held <id> and foresights sync --source <id> --no-pull. Run: foresights doctor --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#settle_mismatch](../../docs/guides/write-refusals.md#settle_mismatch)
 
@@ -4950,7 +4950,7 @@ More: [docs/guides/write-refusals.md#settle_mismatch](../../docs/guides/write-re
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights setup does not wire this harness yet; its guide has the manual connection steps. | Only harnesses with a supported row in the setup capability table are wired automatically, so setup never guesses another host's config format. | Correct the request using the message above, then retry. Run: gbrain setup --help | agent | `repeat the read that failed` | 2 | no |
+| foresights setup does not wire this harness yet; its guide has the manual connection steps. | Only harnesses with a supported row in the setup capability table are wired automatically, so setup never guesses another host's config format. | Correct the request using the message above, then retry. Run: foresights setup --help | agent | `repeat the read that failed` | 2 | no |
 
 More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair.md#setup-harness-unsupported)
 
@@ -4960,7 +4960,7 @@ More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| This machine already reaches a hosted brain, so foresights setup will not create a second, local brain. | A new local brain would split memory: sessions would read and write the empty local brain while useful memory stays on the hosted one. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+| This machine already reaches a hosted brain, so foresights setup will not create a second, local brain. | A new local brain would split memory: sessions would read and write the empty local brain while useful memory stays on the hosted one. | Correct the request using the message above, then retry. Run: foresights doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.md#setup-hosted-connection)
 
@@ -4970,7 +4970,7 @@ More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Another owner holds what foresights setup would change: a live server owns this PGLite brain, or the harness configuration holds an entry setup did not write. | A PGLite brain has one writer, so a second server would fail on its lock; an entry setup did not record by hash is the user's or another install's and is never overwritten. | Correct the request using the message above, then retry. Run: gbrain setup claude-code --dry-run --json | agent | `repeat the read that failed` | 1 | no |
+| Another owner holds what foresights setup would change: a live server owns this PGLite brain, or the harness configuration holds an entry setup did not write. | A PGLite brain has one writer, so a second server would fail on its lock; an entry setup did not record by hash is the user's or another install's and is never overwritten. | Correct the request using the message above, then retry. Run: foresights setup claude-code --dry-run --json | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
 
@@ -4982,7 +4982,7 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights setup for one person was run on a brain that serves several people, and neither this harness's entry (--stdio-member) nor config mcp.stdio_member binds its stdio connection, so setup wrote nothing. | On a brain that serves several people an unbound connection reads every page no rule restricts, for whoever is asking; setup never writes one. | Run foresights setup <harness> --serves several --members <id,...> to label each person; add --stdio-member <member> only for a harness that one person alone uses. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
+| foresights setup for one person was run on a brain that serves several people, and neither this harness's entry (--stdio-member) nor config mcp.stdio_member binds its stdio connection, so setup wrote nothing. | On a brain that serves several people an unbound connection reads every page no rule restricts, for whoever is asking; setup never writes one. | Run foresights setup <harness> --serves several --members <id,...> to label each person; add --stdio-member <member> only for a harness that one person alone uses. Run: foresights access serves --json | agent | `repeat the read that failed` | 1 | no |
 
 ### setup_serves_unreadable
 
@@ -4990,7 +4990,7 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| foresights setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run foresights access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
+| foresights setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run foresights access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: foresights access serves --json | agent | `repeat the read that failed` | 1 | no |
 
 ### shared_skills_unavailable
 
@@ -5038,7 +5038,7 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The skill catalog was built from a different skill list than the caller expects (expected_catalog_hash / --expect-catalog), so no suggestion was made and no session state was committed. | A block built from another skill list could name skills the harness cannot load. | Rebuild the catalog from the current skill list (an adapter passes its new snapshot to foresights skills index build --from-json -), then retry. Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | no |
+| The skill catalog was built from a different skill list than the caller expects (expected_catalog_hash / --expect-catalog), so no suggestion was made and no session state was committed. | A block built from another skill list could name skills the harness cannot load. | Rebuild the catalog from the current skill list (an adapter passes its new snapshot to foresights skills index build --from-json -), then retry. Run: foresights skills index status --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_catalog_mismatch](../../docs/guides/skill-resolver.md#skill_catalog_mismatch)
 
@@ -5058,7 +5058,7 @@ More: [docs/guides/skill-resolver.md#skill_catalog_too_large](../../docs/guides/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The catalog name is not valid, or no catalog was named while several exist. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass --catalog with a name from foresights skills index status (a-z, 0-9, _ and -, up to 64 characters). Run: gbrain skills index status --json | agent | `repeat the read that failed` | 2 | no |
+| The catalog name is not valid, or no catalog was named while several exist. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass --catalog with a name from foresights skills index status (a-z, 0-9, _ and -, up to 64 characters). Run: foresights skills index status --json | agent | `repeat the read that failed` | 2 | no |
 
 More: [docs/guides/skill-resolver.md#skill_catalog_unknown](../../docs/guides/skill-resolver.md#skill_catalog_unknown)
 
@@ -5068,7 +5068,7 @@ More: [docs/guides/skill-resolver.md#skill_catalog_unknown](../../docs/guides/sk
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The skill index is damaged or was built by an incompatible foresights (another index format, ranker or tokenizer), so it was not read. | The request itself was wrong or no longer matches the brain; nothing was changed. | Rebuild the catalog with the command its receipt recorded (foresights skills index status shows it); a catalog an adapter built from stdin is rebuilt by that adapter. Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | no |
+| The skill index is damaged or was built by an incompatible foresights (another index format, ranker or tokenizer), so it was not read. | The request itself was wrong or no longer matches the brain; nothing was changed. | Rebuild the catalog with the command its receipt recorded (foresights skills index status shows it); a catalog an adapter built from stdin is rebuilt by that adapter. Run: foresights skills index status --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_index_incompatible](../../docs/guides/skill-resolver.md#skill_index_incompatible)
 
@@ -5078,7 +5078,7 @@ More: [docs/guides/skill-resolver.md#skill_index_incompatible](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Another process holds the skill-index lease for this catalog (a build, or a remove racing it), so this call gave up after its bounded wait. | Builds are serialized per catalog; a crashed holder is reclaimed only when its lease expires, never because its pid looks dead. | Retry after the holder finishes or its lease expires (foresights skills index status names the holder). Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | yes |
+| Another process holds the skill-index lease for this catalog (a build, or a remove racing it), so this call gave up after its bounded wait. | Builds are serialized per catalog; a crashed holder is reclaimed only when its lease expires, never because its pid looks dead. | Retry after the holder finishes or its lease expires (foresights skills index status names the holder). Run: foresights skills index status --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/skill-resolver.md#skill_index_locked](../../docs/guides/skill-resolver.md#skill_index_locked)
 
@@ -5088,7 +5088,7 @@ More: [docs/guides/skill-resolver.md#skill_index_locked](../../docs/guides/skill
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The named skill catalog (or any catalog, when none was named) has not been built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Build it: foresights skills index build --catalog <name> --dir <skills dir> (or --bundled, or --from-json <file>). Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | no |
+| The named skill catalog (or any catalog, when none was named) has not been built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Build it: foresights skills index build --catalog <name> --dir <skills dir> (or --bundled, or --from-json <file>). Run: foresights skills index status --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_index_missing](../../docs/guides/skill-resolver.md#skill_index_missing)
 
@@ -5156,7 +5156,7 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| config.json exists but cannot be read or parsed, so the skill resolver lane stays silent and setup writes none of its keys (the file is never rewritten). | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix or move config.json in the foresights config directory (GBRAIN_HOME/.gbrain, else ~/.gbrain; it must be a JSON object), then run foresights doctor --only skill_resolver. Run: gbrain doctor --only skill_resolver --json | agent | `repeat the read that failed` | 1 | no |
+| config.json exists but cannot be read or parsed, so the skill resolver lane stays silent and setup writes none of its keys (the file is never rewritten). | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix or move config.json in the foresights config directory (GBRAIN_HOME/.gbrain, else ~/.gbrain; it must be a JSON object), then run foresights doctor --only skill_resolver. Run: foresights doctor --only skill_resolver --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
 
@@ -5186,7 +5186,7 @@ More: [docs/guides/skill-resolver.md#skill_resolver_host_not_local](../../docs/g
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The skill resolver failed unexpectedly; a scrubbed trace (no turn text) was written under skill-index/logs/. | The server failed; this is not a caller mistake. | Run foresights skills index status and report the trace if it repeats. Run: gbrain skills index status --json | agent | `foresights doctor --json` | 1 | no |
+| The skill resolver failed unexpectedly; a scrubbed trace (no turn text) was written under skill-index/logs/. | The server failed; this is not a caller mistake. | Run foresights skills index status and report the trace if it repeats. Run: foresights skills index status --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_internal](../../docs/guides/skill-resolver.md#skill_resolver_internal)
 
@@ -5344,7 +5344,7 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A skillpack update backup does not hash to the journal's pre-update hash, so restore will not write it. | Restore only writes bytes it can prove are the file's pre-update content. Side effects: files restored before this one stay restored; this file and the rest are untouched. | Leave the file as it is, or compare it with foresights skillpack reference <skill> and edit it by hand. Run: gbrain skillpack restore --list --json | agent | `foresights doctor --json` | 2 | no |
+| A skillpack update backup does not hash to the journal's pre-update hash, so restore will not write it. | Restore only writes bytes it can prove are the file's pre-update content. Side effects: files restored before this one stay restored; this file and the rest are untouched. | Leave the file as it is, or compare it with foresights skillpack reference <skill> and edit it by hand. Run: foresights skillpack restore --list --json | agent | `foresights doctor --json` | 2 | no |
 
 More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
 
@@ -5354,7 +5354,7 @@ More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../..
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| No skillpack update backup has that id. | Backups live under ~/.gbrain/skillpack-backups/<id>/ and are kept 30 days or the newest 10. Side effects: none. | List the backups with foresights skillpack restore --list. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | no |
+| No skillpack update backup has that id. | Backups live under ~/.gbrain/skillpack-backups/<id>/ and are kept 30 days or the newest 10. Side effects: none. | List the backups with foresights skillpack restore --list. Run: foresights skillpack restore --list --json | agent | `repeat the read that failed` | 2 | no |
 
 More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
 
@@ -5364,7 +5364,7 @@ More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../..
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A file changed after the skillpack update it would restore, so restore refused. | Restore never overwrites an edit made after the update. Side effects: nothing was restored (a file that changes mid-restore stops the run; files already restored stay restored and a rerun is a no-op for them). | Keep the later edit and restore the rest: foresights skillpack restore <id> --skip <file>. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | no |
+| A file changed after the skillpack update it would restore, so restore refused. | Restore never overwrites an edit made after the update. Side effects: nothing was restored (a file that changes mid-restore stops the run; files already restored stay restored and a rerun is a no-op for them). | Keep the later edit and restore the rest: foresights skillpack restore <id> --skip <file>. Run: foresights skillpack restore --list --json | agent | `repeat the read that failed` | 2 | no |
 
 More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
 
@@ -5374,7 +5374,7 @@ More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../..
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Another foresights skillpack command holds the lock on ~/.gbrain/skillpack-state.json. | Scaffold, update, pin and restore read-modify-write the state file one at a time. Side effects: nothing was written by this command. A lock left by a crash is reclaimed after 10 minutes. | Wait for the other command to finish and run this one again. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | yes |
+| Another foresights skillpack command holds the lock on ~/.gbrain/skillpack-state.json. | Scaffold, update, pin and restore read-modify-write the state file one at a time. Side effects: nothing was written by this command. A lock left by a crash is reclaimed after 10 minutes. | Wait for the other command to finish and run this one again. Run: foresights skillpack restore --list --json | agent | `repeat the read that failed` | 2 | yes |
 
 More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
 
@@ -5384,7 +5384,7 @@ More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../..
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An earlier skillpack update of this skills root did not finish (a crash left its journal pending), so no new update runs. | Some files of the interrupted skill may hold the new version and others the old. Side effects: nothing was changed by this run; --dry-run still previews. | Run foresights skillpack restore <id> (named in the message), then update again. Run: gbrain doctor --only skillpack_update_incomplete --json | agent | `repeat the read that failed` | 2 | no |
+| An earlier skillpack update of this skills root did not finish (a crash left its journal pending), so no new update runs. | Some files of the interrupted skill may hold the new version and others the old. Side effects: nothing was changed by this run; --dry-run still previews. | Run foresights skillpack restore <id> (named in the message), then update again. Run: foresights doctor --only skillpack_update_incomplete --json | agent | `repeat the read that failed` | 2 | no |
 
 More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
 
@@ -5394,7 +5394,7 @@ More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../..
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Another foresights skillpack command holds this workspace's writer lock (.gbrain-skillpack.lock). | One writer per skills root keeps an update and a restore from interleaving. Side effects: nothing was written. A lock left by a crash is reclaimed after 10 minutes. | Wait for the other command to finish and run this one again. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | yes |
+| Another foresights skillpack command holds this workspace's writer lock (.gbrain-skillpack.lock). | One writer per skills root keeps an update and a restore from interleaving. Side effects: nothing was written. A lock left by a crash is reclaimed after 10 minutes. | Wait for the other command to finish and run this one again. Run: foresights skillpack restore --list --json | agent | `repeat the read that failed` | 2 | yes |
 
 More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
 
@@ -5404,7 +5404,7 @@ More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../..
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Managed sync files a held file as a page whose slug the file does not carry as written, so removing its frontmatter `slug:` line would not clear the `frontmatter_slug_conflict` hold; nothing was written. | The content-repair lane judges a held file with the screen managed sync froze it with (#6696). Sync keys a file to the page that records it as its origin (or its path-derived slug) and accepts a `slug:` line only when it equals the path-derived slug or that page's slug as written. When the page's slug differs from the path-derived slug (an older import that honored the line, or a source in a subdirectory of its Git repository), or the line reaches the page only through an alias, neither removing the line nor keeping it imports the file, so the lane records `slug_page_mismatch` with both slugs instead of a generic `still_invalid`. | Make the slug: line of the held file name the page it is filed as exactly (the hold slug in foresights sources status <id> --json), or move the file to the path that derives that slug; commit and run foresights sync --source <id> --no-pull. foresights repair content --source <id> --only <path> previews the current state read-only. Run: gbrain sources status '{source_id}' --json | agent | `gbrain sources status '{source_id}' --json` | 1 | no |
+| Managed sync files a held file as a page whose slug the file does not carry as written, so removing its frontmatter `slug:` line would not clear the `frontmatter_slug_conflict` hold; nothing was written. | The content-repair lane judges a held file with the screen managed sync froze it with (#6696). Sync keys a file to the page that records it as its origin (or its path-derived slug) and accepts a `slug:` line only when it equals the path-derived slug or that page's slug as written. When the page's slug differs from the path-derived slug (an older import that honored the line, or a source in a subdirectory of its Git repository), or the line reaches the page only through an alias, neither removing the line nor keeping it imports the file, so the lane records `slug_page_mismatch` with both slugs instead of a generic `still_invalid`. | Make the slug: line of the held file name the page it is filed as exactly (the hold slug in foresights sources status <id> --json), or move the file to the path that derives that slug; commit and run foresights sync --source <id> --no-pull. foresights repair content --source <id> --only <path> previews the current state read-only. Run: foresights sources status '{source_id}' --json | agent | `foresights sources status '{source_id}' --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write-refusals.md#slug_page_mismatch)
 
@@ -5414,7 +5414,7 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A managed sync of a subdirectory source ran under one slug-root mode while the source pins the other (sources.config.slug_root_mode), so its checkpoint did not advance. | At a subdirectory the two modes give different slugs (git-root keeps the subdirectory prefix, source-root does not), and the pin exists so a later sync never re-namespaces the source; the pages this run wrote already carry its mode. The pin changed after the run was discovered. A source rooted at its repository root never gets this code: both modes give it identical slugs, and its checkpoint keeps the pin it has. Older releases reported this refusal as revision_conflict. | Ask the user which mode the source keeps. To keep the mode the run used, set sources.config.slug_root_mode back to it and run foresights sync --no-pull --source <id>; the refused checkpoint is retried by itself. To keep the new pin, preview foresights repair managed-sync-orphans --source <id> (it lists the refused cursor as slug_mode_refused), apply it with the hash it prints, and run foresights sync --no-pull --source <id>, which discovers the source again under the pin; the pages the refused run wrote keep their old slugs beside the new ones. Run: gbrain sync status --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
+| A managed sync of a subdirectory source ran under one slug-root mode while the source pins the other (sources.config.slug_root_mode), so its checkpoint did not advance. | At a subdirectory the two modes give different slugs (git-root keeps the subdirectory prefix, source-root does not), and the pin exists so a later sync never re-namespaces the source; the pages this run wrote already carry its mode. The pin changed after the run was discovered. A source rooted at its repository root never gets this code: both modes give it identical slugs, and its checkpoint keeps the pin it has. Older releases reported this refusal as revision_conflict. | Ask the user which mode the source keeps. To keep the mode the run used, set sources.config.slug_root_mode back to it and run foresights sync --no-pull --source <id>; the refused checkpoint is retried by itself. To keep the new pin, preview foresights repair managed-sync-orphans --source <id> (it lists the refused cursor as slug_mode_refused), apply it with the hash it prints, and run foresights sync --no-pull --source <id>, which discovers the source again under the pin; the pages the refused run wrote keep their old slugs beside the new ones. Run: foresights sync status --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
 
 ### source_binding_required
 
@@ -5486,7 +5486,7 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A retried source remove or purge was superseded: its source has since been removed, replaced or changed by another lifecycle operation; nothing was changed. | A remove or purge records the source incarnation it was admitted against before it deletes its first page, so a retry of its request id can never delete the pages of a source re-added under the same ID, and a later lifecycle change to the source (such as a restore) abandons the request. A request refused this way stays refused. | Do not retry this request id. Read the source's current state; removing the current source is a new decision for the user, made with a new request id. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+| A retried source remove or purge was superseded: its source has since been removed, replaced or changed by another lifecycle operation; nothing was changed. | A remove or purge records the source incarnation it was admitted against before it deletes its first page, so a retry of its request id can never delete the pages of a source re-added under the same ID, and a later lifecycle change to the source (such as a restore) abandons the request. A request refused this way stays refused. | Do not retry this request id. Read the source's current state; removing the current source is a new decision for the user, made with a new request id. Run: foresights sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
 
 ### source_root_conflict
 
@@ -5556,7 +5556,7 @@ More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-h
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Retired: an older foresights could not name the stable release from the repository's tags alone. This build resolves stable from the published evidence record and reports stable_missing, stable_invalid or stable_unreadable instead. | Since GBRA-224 the stable channel is the default and accepts only a release whose evidence record proves its gates passed on that exact tree; a message with this code came from an older build. | Rerun foresights self-upgrade --check-only --json on this build; it names the current stable code and its fix. Run: gbrain self-upgrade --check-only --json | agent | `foresights doctor --json` | 1 | no |
+| Retired: an older foresights could not name the stable release from the repository's tags alone. This build resolves stable from the published evidence record and reports stable_missing, stable_invalid or stable_unreadable instead. | Since GBRA-224 the stable channel is the default and accepts only a release whose evidence record proves its gates passed on that exact tree; a message with this code came from an older build. | Rerun foresights self-upgrade --check-only --json on this build; it names the current stable code and its fix. Run: foresights self-upgrade --check-only --json | agent | `foresights doctor --json` | 1 | no |
 
 Reasons: `unreadable`, `no_stable`, `no_release_tag`.
 
@@ -5734,7 +5734,7 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#the-model](../../docs/designs/GIT_CA
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `sync.admission` is not `normal`, so managed sync admits less than it classifies: `imports_only` admits no deletes and no keep_db writes (they wait as `paused_deletes` and `paused_keep_db`), and `classify_only` writes and stamps nothing. | The owner sets the switch on the brain host (`foresights config set`; it is never settable remotely) as the first response to a suspected sync bug. A pass reads it at pin and in every group's admission, and a destructive request re-reads it at publication, so the change applies at the next group; `sync status --json` reports `admission: {value, set_at, effective}`, where `effective` turns true once no pass pinned before `set_at` holds the lease and no delete or keep_db reconcile admitted before it is unpublished. Doctor warns, with the value's age, for as long as it stays restricted. | Tell the user how long ago the switch was set and ask whether its reason still holds. Only they restore it: foresights config set sync.admission normal on the brain host; the next sync admits what waited. Run: gbrain config set sync.admission normal | user | `gbrain doctor --only sync_admission_restricted --json` | 1 | no |
+| `sync.admission` is not `normal`, so managed sync admits less than it classifies: `imports_only` admits no deletes and no keep_db writes (they wait as `paused_deletes` and `paused_keep_db`), and `classify_only` writes and stamps nothing. | The owner sets the switch on the brain host (`foresights config set`; it is never settable remotely) as the first response to a suspected sync bug. A pass reads it at pin and in every group's admission, and a destructive request re-reads it at publication, so the change applies at the next group; `sync status --json` reports `admission: {value, set_at, effective}`, where `effective` turns true once no pass pinned before `set_at` holds the lease and no delete or keep_db reconcile admitted before it is unpublished. Doctor warns, with the value's age, for as long as it stays restricted. | Tell the user how long ago the switch was set and ask whether its reason still holds. Only they restore it: foresights config set sync.admission normal on the brain host; the next sync admits what waited. Run: foresights config set sync.admission normal | user | `foresights doctor --only sync_admission_restricted --json` | 1 | no |
 
 ### sync_anchor_relative
 
@@ -5760,7 +5760,7 @@ More: [docs/guides/troubleshooting.md#relative-source-path](../../docs/guides/tr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A foresights sync reached its progress-aware deadline having committed nothing (no page written, deleted or renamed, no cursor advanced), so it stopped as a stall instead of extending. | The deadline extends only while a run commits work. Screening unchanged files, held files and legacy-sweep slices are not progress, so a run that spends its whole deadline on them reports a stall with its cause instead of "still progressing" or a clean resumable stop; rerunning the same way commits nothing again. | Run foresights sync status --source <id> --json (read-only): it names the step, holds and last error the source is stuck on. Fix what it names, then rerun the same sync. Run: gbrain sync status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
+| A foresights sync reached its progress-aware deadline having committed nothing (no page written, deleted or renamed, no cursor advanced), so it stopped as a stall instead of extending. | The deadline extends only while a run commits work. Screening unchanged files, held files and legacy-sweep slices are not progress, so a run that spends its whole deadline on them reports a stall with its cause instead of "still progressing" or a clean resumable stop; rerunning the same way commits nothing again. | Run foresights sync status --source <id> --json (read-only): it names the step, holds and last error the source is stuck on. Fix what it names, then rerun the same sync. Run: foresights sync status --source '{source_id}' --json | agent | `foresights doctor --json` | 1 | no |
 
 ### sync_drain_lease_held
 
@@ -5848,7 +5848,7 @@ More: [docs/guides/write-refusals.md#tag_too_long](../../docs/guides/write-refus
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The end of the page no longer has the sha256 the append expected, so nothing was appended. | append_page's expected_tail_sha256 binds an append to the tail its caller read; another write changed it, and appending anyway could interleave text with a tail the caller never saw. | Read the page again (get_page body: 'none' returns tail_sha256), check whether the text is still missing, and append against the current tail with a new request_id. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The end of the page no longer has the sha256 the append expected, so nothing was appended. | append_page's expected_tail_sha256 binds an append to the tail its caller read; another write changed it, and appending anyway could interleave text with a tail the caller never saw. | Read the page again (get_page body: 'none' returns tail_sha256), check whether the text is still missing, and append against the current tail with a new request_id. Run: foresights get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### tail_exposure_approval
 
@@ -5918,7 +5918,7 @@ More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Imported conversation pages may still carry a typed credential from before the labeled-credential detector, or the last audit found some; pages are never rewritten automatically. | Re-ingest skips unchanged sessions, so pages imported before the detector keep any password typed in prose until someone reviews them. | Run the read-only audit to list affected slugs (never values), then review, edit or (after asking the user) remove each page, and ask the user to rotate any real credential. Run: gbrain transcripts audit-secrets --json | agent | `gbrain doctor --only transcript_secret_exposure --json` | 1 | no |
+| Imported conversation pages may still carry a typed credential from before the labeled-credential detector, or the last audit found some; pages are never rewritten automatically. | Re-ingest skips unchanged sessions, so pages imported before the detector keep any password typed in prose until someone reviews them. | Run the read-only audit to list affected slugs (never values), then review, edit or (after asking the user) remove each page, and ask the user to rotate any real credential. Run: foresights transcripts audit-secrets --json | agent | `foresights doctor --only transcript_secret_exposure --json` | 1 | no |
 
 More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/data-ingestion.md#credential-redaction)
 
@@ -5938,7 +5938,7 @@ Reasons: `corpus_source_other`, `corpus_source_unresolved`, `corpus_legacy_unsta
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Dream triage did not re-judge a transcript because its last judge verdict was truncated, refused or unparseable and its backoff has not ended. | An unreliable verdict is never cached, so without a backoff the same input was paid for every cycle; it waits 24h, doubling per repeat up to 7 days, and a content or triage-model change re-judges at once. | Leave it (it is retried after the backoff), or ask the user before `foresights dream retriage --force`, which re-judges every transcript now and pays per file. Run: gbrain dream retriage --dry-run --json | agent | `repeat the read that failed` | 1 | yes |
+| Dream triage did not re-judge a transcript because its last judge verdict was truncated, refused or unparseable and its backoff has not ended. | An unreliable verdict is never cached, so without a backoff the same input was paid for every cycle; it waits 24h, doubling per repeat up to 7 days, and a content or triage-model change re-judges at once. | Leave it (it is retried after the backoff), or ask the user before `foresights dream retriage --force`, which re-judges every transcript now and pays per file. Run: foresights dream retriage --dry-run --json | agent | `repeat the read that failed` | 1 | yes |
 
 ### trust_raise_refused
 
@@ -5962,7 +5962,7 @@ Reasons: `corpus_source_other`, `corpus_source_unresolved`, `corpus_legacy_unsta
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The per-turn hook that puts "check foresights first" next to every user turn is missing, untrusted, or does not load in the harness. | Agents use the brain when that rule reaches them on every turn; registering the MCP server or writing an instruction file alone leaves them answering without it. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+| The per-turn hook that puts "check foresights first" next to every user turn is missing, untrusted, or does not load in the harness. | Agents use the brain when that rule reaches them on every turn; registering the MCP server or writing an instruction file alone leaves them answering without it. | Correct the request using the message above, then retry. Run: foresights doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `missing`, `untrusted`, `hook_failed`, `no_rule`, `not_loaded`.
 
@@ -5974,7 +5974,7 @@ More: [docs/guides/repair.md#turn-hook-not-loaded](../../docs/guides/repair.md#t
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Two resident foresights processes on this host (`serve`, `sync`, `jobs`, `autopilot` or `mcp`) have each run a full persistence consumer for longer than 30 s, so both claim writes on the same roots. | One full consumer per host is a preference, not a fenced role: a `serve` always starts full, every other resident kind defers to the first live full consumer it finds in `persistence_consumers`, and two processes that start within one renewal of each other, or a CLI that took its consumer before the `serve` started, both stay full until one exits. Every observed `preparing` wedge had two consumers alive on the host. Short-lived commands (`put`, `import`, `dream`, `cli`) and rows younger than 30 s are listed, never warned. | Let the shorter-lived of the two finish (a sync CLI run ends on its own) or restart it so it defers; with persistence.single_consumer off, this is the configured behavior. Run: gbrain sources writer status --json | agent | `gbrain doctor --only two_consumers_on_host --json` | 1 | no |
+| Two resident foresights processes on this host (`serve`, `sync`, `jobs`, `autopilot` or `mcp`) have each run a full persistence consumer for longer than 30 s, so both claim writes on the same roots. | One full consumer per host is a preference, not a fenced role: a `serve` always starts full, every other resident kind defers to the first live full consumer it finds in `persistence_consumers`, and two processes that start within one renewal of each other, or a CLI that took its consumer before the `serve` started, both stay full until one exits. Every observed `preparing` wedge had two consumers alive on the host. Short-lived commands (`put`, `import`, `dream`, `cli`) and rows younger than 30 s are listed, never warned. | Let the shorter-lived of the two finish (a sync CLI run ends on its own) or restart it so it defers; with persistence.single_consumer off, this is the configured behavior. Run: foresights sources writer status --json | agent | `foresights doctor --only two_consumers_on_host --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#two-consumers-on-host](../../docs/guides/troubleshooting.md#two-consumers-on-host)
 
@@ -5992,7 +5992,7 @@ More: [docs/guides/troubleshooting.md#two-consumers-on-host](../../docs/guides/t
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A fence has no end marker and text follows its table, and the repair model read that tail as table rows written without pipes or could not tell, so foresights will not choose where the fence ends; nothing was written. | Closing after the wrong row would hide rows behind the privacy boundary or expose text; a deterministic rule cannot place the end marker and the model declined to, so a person decides. The attempt memo keeps the same bytes from costing a second model call. | Read the page (foresights get --source <id> -- <slug>), add the end marker after the last real row of the named fence (moving any rows the tail holds into the table), commit, then foresights sync --source <id> --no-pull. The preview (foresights repair fences --source <id> --only <path>, read-only) names the fence, section and last row. Run: gbrain repair fences --source '{source_id}' | user | `gbrain sources status '{source_id}' --json` | 1 | no |
+| A fence has no end marker and text follows its table, and the repair model read that tail as table rows written without pipes or could not tell, so foresights will not choose where the fence ends; nothing was written. | Closing after the wrong row would hide rows behind the privacy boundary or expose text; a deterministic rule cannot place the end marker and the model declined to, so a person decides. The attempt memo keeps the same bytes from costing a second model call. | Read the page (foresights get --source <id> -- <slug>), add the end marker after the last real row of the named fence (moving any rows the tail holds into the table), commit, then foresights sync --source <id> --no-pull. The preview (foresights repair fences --source <id> --only <path>, read-only) names the fence, section and last row. Run: foresights repair fences --source '{source_id}' | user | `foresights sources status '{source_id}' --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/write-refusals.md#unclosed_ambiguous_tail)
 
@@ -6002,7 +6002,7 @@ More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A canonical file a write was publishing (or its file mode) matches neither its recorded prior nor its published bytes, so recovery left it untouched and its worktree stays blocked. | Something outside foresights edited, split or restored the file while its write was publishing or recovering; foresights never overwrites bytes it cannot account for. | Do not delete the file to unblock it. Inspect the owner (foresights sources writer status --json shows the request and its blocked reason) and ask the user which version to keep: the bytes on disk, or the request's recorded prior or published bytes. Run: gbrain sources writer status --json | user | `foresights doctor --json` | 1 | no |
+| A canonical file a write was publishing (or its file mode) matches neither its recorded prior nor its published bytes, so recovery left it untouched and its worktree stays blocked. | Something outside foresights edited, split or restored the file while its write was publishing or recovering; foresights never overwrites bytes it cannot account for. | Do not delete the file to unblock it. Inspect the owner (foresights sources writer status --json shows the request and its blocked reason) and ask the user which version to keep: the bytes on disk, or the request's recorded prior or published bytes. Run: foresights sources writer status --json | user | `foresights doctor --json` | 1 | no |
 
 ### unexpected_staging_bytes
 
@@ -6074,7 +6074,7 @@ More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights backup create` refused before writing anything: the PGLite data directory is not the managed `<root>/.gbrain/brain.pglite` (a flat config home, or a path reached through a symlink). | The archive records the managed root it can restore into and refuses to follow a symlink out of it, so a flat or aliased layout cannot be archived without risking a restore into the wrong place. | Take a quiesced physical copy into a new managed root (`<new-home>/.gbrain/brain.pglite`); the copy is then a normal layout that `foresights backup create` accepts while it is under the 8 GiB cap. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | no |
+| `foresights backup create` refused before writing anything: the PGLite data directory is not the managed `<root>/.gbrain/brain.pglite` (a flat config home, or a path reached through a symlink). | The archive records the managed root it can restore into and refuses to follow a symlink out of it, so a flat or aliased layout cannot be archived without risking a restore into the wrong place. | Take a quiesced physical copy into a new managed root (`<new-home>/.gbrain/brain.pglite`); the copy is then a normal layout that `foresights backup create` accepts while it is under the 8 GiB cap. Run: foresights doctor --json | agent | `foresights doctor --json` | 1 | no |
 
 More: [docs/guides/in-agent-setup.md#large-or-non-standard-brains-quiesced-physical-copy](../../docs/guides/in-agent-setup.md#large-or-non-standard-brains-quiesced-physical-copy)
 
@@ -6092,7 +6092,7 @@ More: [docs/guides/in-agent-setup.md#large-or-non-standard-brains-quiesced-physi
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The configured decide model has no price, so its spend cannot be metered; nothing was sent. | A `typesafe:<model>` id that foresights ships no tariff for (a gateway-fronted or self-hosted Jev) would otherwise be admitted as $0 against `decide.budget.daily_usd` and its remote share, and the spend ledger would record $0 for a real bill (#5980). | Register the price the endpoint bills with `foresights pricing set typesafe:<model> --rate <usd-per-1M-input-tokens> --source <pricing-page-url>`, then `foresights decide probe`. Run: gbrain pricing list --json | agent | `gbrain config get pricing.overrides` | 1 | no |
+| The configured decide model has no price, so its spend cannot be metered; nothing was sent. | A `typesafe:<model>` id that foresights ships no tariff for (a gateway-fronted or self-hosted Jev) would otherwise be admitted as $0 against `decide.budget.daily_usd` and its remote share, and the spend ledger would record $0 for a real bill (#5980). | Register the price the endpoint bills with `foresights pricing set typesafe:<model> --rate <usd-per-1M-input-tokens> --source <pricing-page-url>`, then `foresights decide probe`. Run: foresights pricing list --json | agent | `foresights config get pricing.overrides` | 1 | no |
 
 More: [docs/guides/system-one.md#unpriced_model](../../docs/guides/system-one.md#unpriced_model)
 
@@ -6246,7 +6246,7 @@ More: [docs/ENGINES.md#vector-index-prewarm](../../docs/ENGINES.md#vector-index-
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `foresights embeddings prewarm` was refused before reading anything because the brain's HNSW indexes are larger than half of shared_buffers. | Prewarm loads the indexes into shared_buffers, the cache Postgres sizes and keeps; past half of it the prewarm would evict heap and keyword-index pages other reads need, so the next searches would pay first-touch reads on those instead. effective_cache_size does not decide: it is a planner hint, not memory the server holds. | Raise shared_buffers on the database host to at least twice the index size the message names and restart Postgres, or leave the indexes cold; read the fit with foresights embeddings prewarm --dry-run --json. Run: gbrain embeddings prewarm --dry-run --json | host_admin | `foresights doctor --json` | 1 | no |
+| `foresights embeddings prewarm` was refused before reading anything because the brain's HNSW indexes are larger than half of shared_buffers. | Prewarm loads the indexes into shared_buffers, the cache Postgres sizes and keeps; past half of it the prewarm would evict heap and keyword-index pages other reads need, so the next searches would pay first-touch reads on those instead. effective_cache_size does not decide: it is a planner hint, not memory the server holds. | Raise shared_buffers on the database host to at least twice the index size the message names and restart Postgres, or leave the indexes cold; read the fit with foresights embeddings prewarm --dry-run --json. Run: foresights embeddings prewarm --dry-run --json | host_admin | `foresights doctor --json` | 1 | no |
 
 More: [docs/ENGINES.md#vector-index-prewarm](../../docs/ENGINES.md#vector-index-prewarm)
 
@@ -6274,7 +6274,7 @@ More: [docs/guides/write-refusals.md#visibility_noncanonical](../../docs/guides/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A page write asked for visibility: private, but the page would have stayed world-readable, so nothing was written. | A write that reports success while the page stays world-readable leaves the caller believing it is hidden. Page privacy reads only the exact lowercase key and value visibility: private (#7841). When the frontmatter is unreadable or ambiguous, the write is refused invalid_frontmatter instead. | Read the page and its revision, write visibility: private on its own frontmatter line (lowercase key and value), then submit again with a new request_id. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| A page write asked for visibility: private, but the page would have stayed world-readable, so nothing was written. | A write that reports success while the page stays world-readable leaves the caller believing it is hidden. Page privacy reads only the exact lowercase key and value visibility: private (#7841). When the frontmatter is unreadable or ambiguous, the write is refused invalid_frontmatter instead. | Read the page and its revision, write visibility: private on its own frontmatter line (lowercase key and value), then submit again with a new request_id. Run: foresights get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `noncanonical_value`, `not_kept`.
 
@@ -6400,7 +6400,7 @@ More: [docs/guides/write-refusals.md#worktree_refreshing](../../docs/guides/writ
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A background producer (maintenance, conversation facts, an autopilot phase or an autopilot catch-up sync) stopped admitting writes because a cumulative write cap is past `persistence.capacity.background_pause_pct` (default 80); interactive writes keep the rest. Nothing was submitted and no receipt was written. | Near a cumulative cap the remaining request ids and receipt bytes are kept for the user's own writes (remember, put_page, edit_page, operator sync, approved repair). Request ids are never freed, so past the line on ids only the brain host's config raise resumes background work; receipt bytes also free as receipts compact. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: gbrain doctor --only persistence_capacity --json | agent | `gbrain doctor --only persistence_capacity --json` | 12 | no |
+| A background producer (maintenance, conversation facts, an autopilot phase or an autopilot catch-up sync) stopped admitting writes because a cumulative write cap is past `persistence.capacity.background_pause_pct` (default 80); interactive writes keep the rest. Nothing was submitted and no receipt was written. | Near a cumulative cap the remaining request ids and receipt bytes are kept for the user's own writes (remember, put_page, edit_page, operator sync, approved repair). Request ids are never freed, so past the line on ids only the brain host's config raise resumes background work; receipt bytes also free as receipts compact. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: foresights doctor --only persistence_capacity --json | agent | `foresights doctor --only persistence_capacity --json` | 12 | no |
 
 More: [docs/guides/write-refusals.md#write_capacity_backpressure](../../docs/guides/write-refusals.md#write_capacity_backpressure)
 
@@ -6410,7 +6410,7 @@ More: [docs/guides/write-refusals.md#write_capacity_backpressure](../../docs/gui
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A cumulative write cap is at or past 80% or runs out within `persistence.capacity.warn_days` (30) days at its 7-day rate; writes still work. | Request ids are permanent and receipt bytes free only as receipts compact, so the cap is raised before admission refuses. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: gbrain doctor --only persistence_capacity --json | agent | `gbrain doctor --only persistence_capacity --json` | 1 | no |
+| A cumulative write cap is at or past 80% or runs out within `persistence.capacity.warn_days` (30) days at its 7-day rate; writes still work. | Request ids are permanent and receipt bytes free only as receipts compact, so the cap is raised before admission refuses. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: foresights doctor --only persistence_capacity --json | agent | `foresights doctor --only persistence_capacity --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#write_capacity_low](../../docs/guides/write-refusals.md#write_capacity_low)
 
@@ -6448,7 +6448,7 @@ Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `dete
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The database kept ending this managed write's statements (SQLSTATE 57014, a statement timeout or cancel, or 0A000, a plan cached before a migration changed the table), or its publication kept running past persistence.publication_ceiling_ms and was cancelled, after persistence.max_transient_retries retries with backoff (default 5), so the owner finished it failed instead of preparing it again; nothing was published. | Each such interruption throws the write's preparation away. It is load or latency, not the write's content, so it has its own retry budget: the request is claimed again after a backoff (1 s, 2 s, 4 s, 8 s, then 15 s; no claim is held while it waits) up to persistence.max_transient_retries times, and the next interruption ends it instead of preparing it again without limit. It never charges persistence.max_preparation_attempts, which preparations cut off at their deadline keep. Contention with other transactions (lock timeout, serialization failure, deadlock), a dropped connection and a restarting database are never counted. The receipt names the interruptions (attempts), the retry limit, the cause and the SQLSTATE. | Inspect the owner with foresights sources writer status --source <id> --json (read-only), then submit the write again with a new request_id once the database is less loaded; a held sync file needs foresights sources retry-held <id> and the same sync. If the same write ends this way again, report its request id with foresights doctor --json. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+| The database kept ending this managed write's statements (SQLSTATE 57014, a statement timeout or cancel, or 0A000, a plan cached before a migration changed the table), or its publication kept running past persistence.publication_ceiling_ms and was cancelled, after persistence.max_transient_retries retries with backoff (default 5), so the owner finished it failed instead of preparing it again; nothing was published. | Each such interruption throws the write's preparation away. It is load or latency, not the write's content, so it has its own retry budget: the request is claimed again after a backoff (1 s, 2 s, 4 s, 8 s, then 15 s; no claim is held while it waits) up to persistence.max_transient_retries times, and the next interruption ends it instead of preparing it again without limit. It never charges persistence.max_preparation_attempts, which preparations cut off at their deadline keep. Contention with other transactions (lock timeout, serialization failure, deadlock), a dropped connection and a restarting database are never counted. The receipt names the interruptions (attempts), the retry limit, the cause and the SQLSTATE. | Inspect the owner with foresights sources writer status --source <id> --json (read-only), then submit the write again with a new request_id once the database is less loaded; a held sync file needs foresights sources retry-held <id> and the same sync. If the same write ends this way again, report its request id with foresights doctor --json. Run: foresights sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#write_interrupted](../../docs/guides/write-refusals.md#write_interrupted)
 
@@ -6476,7 +6476,7 @@ More: [docs/guides/write-refusals.md#write_outcome_unknown](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A write cap (permanent request ids, reserved receipt bytes, staged upload bytes or open upload sessions, for the principal or the brain) is full, so the write was not admitted and nothing changed. | Request ids are permanent replay protection and a receipt keeps its bytes until it compacts, so waiting does not free the cap; the brain host raises it with foresights config set (reversible). | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: gbrain doctor --only persistence_capacity --json | agent | `gbrain doctor --only persistence_capacity --json` | 12 | no |
+| A write cap (permanent request ids, reserved receipt bytes, staged upload bytes or open upload sessions, for the principal or the brain) is full, so the write was not admitted and nothing changed. | Request ids are permanent replay protection and a receipt keeps its bytes until it compacts, so waiting does not free the cap; the brain host raises it with foresights config set (reversible). | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: foresights doctor --only persistence_capacity --json | agent | `foresights doctor --only persistence_capacity --json` | 12 | no |
 
 Reasons: `lifetime_ids`, `terminal_bytes`, `staged_bytes`, `open_uploads`.
 
@@ -6488,7 +6488,7 @@ More: [docs/guides/write-refusals.md#write_quota_exhausted](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A bulk run (managed sync catch-up, reclone or a repair) estimated more new receipts than the remaining write capacity allows before its producer's pause line, so it did not start; other writes still work. | Starting a run that the cap would stop part way leaves a long tail of pending pages; the preflight refuses up front with the config raise that covers the run. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: gbrain doctor --only persistence_capacity --json | agent | `gbrain doctor --only persistence_capacity --json` | 12 | no |
+| A bulk run (managed sync catch-up, reclone or a repair) estimated more new receipts than the remaining write capacity allows before its producer's pause line, so it did not start; other writes still work. | Starting a run that the cap would stop part way leaves a long tail of pending pages; the preflight refuses up front with the config raise that covers the run. | Only the brain host's operator can resolve this. Tell the user the message and run `foresights doctor --json` on the brain host. Run: foresights doctor --only persistence_capacity --json | agent | `foresights doctor --only persistence_capacity --json` | 12 | no |
 
 Reasons: `lifetime_ids`, `terminal_bytes`.
 
