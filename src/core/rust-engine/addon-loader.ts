@@ -7,7 +7,7 @@
  *   1. GBRAIN_RUST_ENGINE_ADDON (an absolute path to a build you made with `bun run rust:build`) is the development
  *      override. It skips only the release checksum pin; engine_abi and target are still checked.
  *   2. An addon already at `<home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest
- *      of this gbrain version loads with no network.
+ *      of this gbrain version loads with no network. It is checked and loaded under the addon cache lock.
  *   3. Otherwise it is fetched (addon-fetch.ts), checked, and loaded.
  *
  * Every failure is `rust_engine_addon_missing` or `rust_engine_addon_mismatch`, raised before the brain is touched.
@@ -127,18 +127,17 @@ export async function loadRustAddon(overrides: Partial<RustAddonLoaderDeps> = {}
     throw addonMissing('unsupported_target', `No Rust engine addon is published for ${target ?? 'this platform'}; releases carry ${RELEASE_ADDON_TARGETS.join(' and ')}.`);
   }
 
-  // An addon already in place that matches the cached manifest loads with no network call.
-  const ready = loadCached(target, deps);
-  if (ready) return ready;
-
   const enginesDir = dirname(deps.rustDir);
   const newDirs = [enginesDir, deps.rustDir].filter((d) => !existsSync(d));
   try {
-    // One process at a time replaces, loads and rolls back the cached addon (see withAddonCacheLock).
+    // One process at a time checks, replaces, loads and rolls back the cached addon (see withAddonCacheLock). The
+    // cached addon is checked and loaded under the lock too: another process may rename a release with the same
+    // engine_build over that path, and outside the lock that could land between the digest check and the load.
     return await withAddonCacheLock(deps.rustDir, async () => {
-      // Another process may have fetched it while this one waited for the lock.
-      const fetchedMeanwhile = loadCached(target, deps);
-      if (fetchedMeanwhile) return fetchedMeanwhile;
+      // An addon already in place (or fetched by another process while this one waited) that matches the cached
+      // manifest loads with no network call.
+      const ready = loadCached(target, deps);
+      if (ready) return ready;
       const { manifest, text, assets } = await fetchManifest(deps.rustDir, deps.version, deps);
       const fetched = await fetchAddon(deps.rustDir, manifest, assets, target, deps);
       let addon: RustAddon;

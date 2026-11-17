@@ -8,7 +8,8 @@
  * 2. Credible regressions: skipping the digest or attestation check; renaming before verifying; leaving the staging
  *    file or a half-written addon behind; refetching when a verified addon is cached; GBRAIN_RUST_ENGINE_ADDON
  *    skipping the engine_abi or target checks too; loadRustEngineAddon swallowing an error that is not a refusal;
- *    two starts sharing one gbrain home interleaving a replace and its rollback.
+ *    two starts sharing one gbrain home interleaving a replace and its rollback; checking a cached addon outside the
+ *    cache lock, so another process's replacement lands between the digest check and the load.
  * 3. Why not already covered: nothing else exercises the addon loader in src/core/rust-engine/.
  * 4. Production seam: AddonFetchDeps (the same shape binary-self-update.ts injects) plus `dlopen`, `target` and
  *    `rustDir`; no production caller needs them to differ, tests do.
@@ -434,6 +435,47 @@ describe('one start at a time per gbrain home', () => {
     });
     const addon = (await waiter) as { engineBuild: string };
     expect(addon.engineBuild).toBe(rel.manifest.engine_build);
+    expect(rel.calls).toEqual({ release: 0, download: 0, attestation: 0 });
+  });
+
+  test('a cached addon is checked and loaded under the cache lock, so a replacement cannot land between the two', async () => {
+    const rel = fakeRelease();
+    const target = rel.deps.target!;
+    const dest = join(rel.rustDir, rel.manifest.engine_build, `${target}.node`);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, HAVE_ADDON ? readFileSync(BUILT) : Buffer.from('not a real addon'));
+    writeFileSync(join(rel.rustDir, `manifest-${VERSION_UNDER_TEST}.json`), JSON.stringify(rel.manifest));
+    // Another gbrain process that obeys the cache lock and renames different bytes over the same path, the way
+    // fetchAddon does for a release that shares this engine_build. It gives up if the lock stays held.
+    const script = join(rel.home, 'replace.ts');
+    writeFileSync(script,
+      `import { renameSync, writeFileSync } from 'node:fs';\n` +
+      `import { withAddonCacheLock } from ${JSON.stringify(join(ROOT, 'src', 'core', 'rust-engine', 'addon-fetch.ts'))};\n` +
+      `const dest = ${JSON.stringify(dest)};\n` +
+      `try {\n` +
+      `  await withAddonCacheLock(${JSON.stringify(rel.rustDir)}, async () => {\n` +
+      `    writeFileSync(dest + '.next', 'another release with the same engine_build');\n` +
+      `    renameSync(dest + '.next', dest);\n` +
+      `  }, 500);\n` +
+      `  console.log('replaced');\n` +
+      `} catch (err) { console.log(err.reason ?? String(err)); }\n`);
+    let replacer = '';
+    const digest = rel.deps.computeDigest;
+    rel.deps.computeDigest = (path) => {
+      const d = digest(path);
+      // The other process gets its chance right after this one hashed the file and before it loads it.
+      if (!replacer) replacer = Bun.spawnSync([process.execPath, script]).stdout.toString().trim();
+      return d;
+    };
+    let loaded = '';
+    rel.deps.dlopen = (path) => {
+      loaded = sha256(readFileSync(path));
+      return fakeAddon(rel)();
+    };
+    await loadRustAddon(rel.deps);
+    // The bytes loaded are the bytes whose digest matched the manifest; the other process had to wait.
+    expect(loaded).toBe(rel.manifest.targets[target]!.sha256);
+    expect(replacer).toBe('cache_busy');
     expect(rel.calls).toEqual({ release: 0, download: 0, attestation: 0 });
   });
 
