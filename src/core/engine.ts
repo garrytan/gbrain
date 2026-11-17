@@ -8,10 +8,12 @@ import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './
 import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
+import type { ChunkMove } from './page-state/chunk-moves.ts';
+import type { DerivedAliasRow } from './engine-sql/pages.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
+  Chunk, ChunkInput, ChunkReuseRow, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts, ResolvedColumn,
   Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts, ChainHopOpts, ChainHopEdge,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -1428,6 +1430,23 @@ export interface BrainEngine {
    * the wrong row count in multi-source brains.
    */
   deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * Delete a page's chunks except the rows in `keepIds` (the import's reused vectors). Unlike `deleteChunks` it does
+   * not clear the page's text seal; the caller reseals. An empty `keepIds` deletes them all.
+   */
+  deleteChunksExcept(slug: string, keepIds: readonly number[], opts?: { sourceId?: string }): Promise<void>;
+  /** Stamp `pages.chunker_version` on one page (a page with no chunks counts as sealed once stamped). */
+  setChunkerVersion(slug: string, version: number, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * Seal a page's text projection at `revision` and rebuild its `search_vector` from its title and `timeline` (the
+   * sanitized timeline the caller indexes). Writes nothing once the page's revision has moved on. Callers use the
+   * `sealPageTextProjection` helper, which reads the page's snapshot first.
+   */
+  writeTextProjectionSeal(slug: string, opts: { sourceId: string; revision: string; timeline: string }): Promise<void>;
+  /** Move kept chunk rows to new `chunk_index` values in place, one UPDATE per wave (keeps their vectors). */
+  moveChunkIndexes(pageId: number, waves: readonly (readonly ChunkMove[])[]): Promise<void>;
+  /** A page's stored chunks with the flags the import's vector-reuse gate reads (recorded input hash, text-only, unembedded). */
+  getChunkReuseRows(slug: string, opts?: { sourceId?: string }): Promise<ChunkReuseRow[]>;
 
   // ============================================================
   // v0.42.7 (#1696): link/timeline extraction freshness watermark.
@@ -1858,6 +1877,10 @@ export interface BrainEngine {
    */
   addTag(slug: string, tag: string, opts?: { sourceId?: string; tagSource?: 'frontmatter' }): Promise<void>;
   removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void>;
+  /** Delete a page's frontmatter-owned tags that are not in `keep`; explicitly added and legacy NULL-source tags stay. */
+  pruneFrontmatterTags(slug: string, keep: readonly string[], opts?: { sourceId?: string }): Promise<void>;
+  /** Add many tags to one page by its id in one statement (same claim rules as `addTag`); the caller holds the page guard. */
+  addPageTagsById(pageId: number, tags: readonly string[], opts?: { tagSource?: 'frontmatter' }): Promise<void>;
   /**
    * #2200: getTags ALSO accepts a federated `sourceIds[]` read grant (precedence
    * over scalar `sourceId`); it unions tags across the matched same-slug pages
@@ -2592,6 +2615,18 @@ export interface BrainEngine {
     /** #5984: `inline` writes in the caller's page transaction, without a savepoint. */
     opts?: { inline?: boolean },
   ): Promise<void>;
+  /**
+   * Replace a page's derived alias rows (origin declared/subject, written by the mention pass) with `aliases`; an
+   * empty list only deletes. Frontmatter rows are untouched. Runs on the transaction engine it is called on.
+   */
+  replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void>;
+  /**
+   * A live, unsegmented page's stored `chunker_version` by page id, or null when the page is gone, deleted or
+   * segmented. The import reads it to see whether the stored chunks predate the safe-chunk fence.
+   */
+  getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null>;
+  /** Record where a live page's file lives (`source_path`, and `source_uri` when given); a page already holding both writes nothing. */
+  refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
