@@ -95,6 +95,19 @@ pub(crate) fn remove_source_rows(
     Ok(())
 }
 
+/// Moves this family's records keyed by `(source, slug)` from `old_slug` to `new_slug` when a page
+/// is renamed (`cascade::rename_slug_rows`, PGLite `moveSlugBindings`): fact withdrawals by
+/// `subject`, facts by `entity_slug` and by `source_markdown_slug`, dropping the rows the new slug
+/// already holds as PGLite does. Nothing to move yet.
+pub(crate) fn rename_slug_rows(
+    _tx: &mut dyn crate::kv::KvWrite,
+    _source_id: &str,
+    _old_slug: &str,
+    _new_slug: &str,
+) -> crate::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

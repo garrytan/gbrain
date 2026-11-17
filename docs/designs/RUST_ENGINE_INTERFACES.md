@@ -106,6 +106,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 | `W` | local writers | core (journal) |
 | `L` / `l` / `U` / `O` | links from / to / unique key / origin | core (links) |
 | `E` / `D` / `G` | timeline entries / dedup / latest | core (timeline) |
+| `o` | live page origins: `o <source> 0x00 <source_path> 0x00 <page id>` | core (pages) |
 
 Rules:
 
@@ -180,7 +181,9 @@ file that names every family that needs the hook. Each listed family already has
 file, with an empty body. A family fills in only its own body, and never changes a signature or a list. A family
 that is not on a list and needs the hook asks core for a one-line addition to the list.
 
-All hooks are empty today, so they change no answer: every served member reads and writes exactly as before.
+All hooks are empty today, so they change no answer: every served member reads and writes exactly as before. The
+page origin rule at the end of this section is not a hook: it is core page behavior that lets `putPage` store
+`source_path`.
 
 #### Page columns (`page_columns.rs`)
 
@@ -299,6 +302,74 @@ family's records keyed by source, not by page; records under a page go through t
   (`ingest_log` has no foreign key). A family that is not listed and keys records by source asks core for one line.
 - The stubs in `facts.rs` and `link_queries.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
   import line in a file that has none yet.
+
+#### Rename slug rows (`cascade::rename_slug_rows`)
+
+```rust
+// In facts.rs (full paths, so the file needs no import line):
+pub(crate) fn rename_slug_rows(tx: &mut dyn KvWrite, source_id: &str, old_slug: &str, new_slug: &str) -> Result<()>;
+```
+
+Records keyed by a page's `(source, slug)` rather than its id do not follow a rename by themselves. PGLite's
+`updateSlug` moves them in the rename transaction with `moveSlugBindings` (`src/core/page-state/rename-alias.ts`),
+after the page row moves and the rename alias is recorded, and only when a row moved and the slug changed. This list
+is the store's `moveSlugBindings`.
+
+- **Caller:** the aliases family's `update_slug`, in the rename transaction, after `pages::rename_page` and the alias
+  record, only when the slug changed. Core does not call it: `rename_page` moves only the page. A refusal from a
+  listed family is returned from the write closure, so the rename keeps nothing.
+- **On the list:** facts (`fact_withdrawals`, `facts`). page_aliases rows belong to the aliases family, which moves
+  them in `aliases.rs` itself, so aliases is not on the list.
+- **Keyed by** `(source_id, old_slug, new_slug)`, not by page id. A family moves every record of `source_id` keyed by
+  `old_slug`, whether or not a page with that slug was live.
+- **PGLite statements, in order** (`$1` source, `$2` old slug, `$3` new slug). The first runs as written; each later
+  one runs in its own savepoint, and a missing `facts` or `page_aliases` table, or a missing `dimension` or
+  `value_hash` column, skips that statement. The store has every family's records, so it skips nothing.
+  1. `fact_withdrawals`: delete the rows with `subject = $2`, and insert each again with `subject = $3`
+     (`ON CONFLICT DO NOTHING`: a withdrawal the new subject already holds stays as it was).
+  2. `dropRekeyDuplicates` for facts with `entity_slug = $2`, as if their entity were `$3`: take the moving rows
+     with a non-null `dimension` and the rows already at the new key, group them by `(entity_slug,
+     source_markdown_slug, dimension, value_hash, valid_from)` (each part non-null), and keep the first of each
+     group: rows outside the conversation slot first, then unexpired rows, then rows not moving, then the lower id. A loser's `superseded_by` pointers move to the kept row (the kept row's own pointer
+     to a loser becomes NULL); a conversation-slot loser keeps its row with `dimension`, `value`, `value_hash` and
+     `dim_status` cleared; every other loser is deleted.
+  3. `UPDATE facts SET entity_slug = $3 WHERE source_id = $1 AND entity_slug = $2`.
+  4. Delete the facts with `source_markdown_slug = $3` and a non-null `row_num` that a fact with
+     `source_markdown_slug = $2` holds the same `row_num` for (the old page's fence wins).
+  5. `dropRekeyDuplicates` for facts with `source_markdown_slug = $2`, as if their `source_markdown_slug` were `$3`.
+  6. `UPDATE facts SET source_markdown_slug = $3 WHERE source_id = $1 AND source_markdown_slug = $2`.
+  7. page_aliases (aliases family): delete the rows at `slug = $3` that a row at `$2` holds with the same
+     `alias_norm` and `origin`.
+  8. page_aliases (aliases family): `UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`.
+- Sync's rename paths (`commands/sync/renames.ts`, `rename-collision.ts`) call `moveSlugBindings` too; they run
+  through `executeRaw`, which the Rust engine refuses.
+
+#### Page origin (`source_path` on `putPage`)
+
+A page's origin is the file it records (`source_path`). PGLite allows one live page per origin in a source
+(`assertOriginUnclaimed` in `persistence/origin-guard.ts`, the partial unique index `pages_live_origin_key`). The
+store keeps the same rule in `pages.rs`.
+
+- **What is stored.** `putPage` stores `source_path` on the page record. A write without one keeps the stored path
+  (`COALESCE`). `getPage`, `readPageSnapshot` and `listPages` return it; the page `putPage` returns does not, as in
+  PGLite.
+- **The refusal.** A write that leaves a page live refuses when another live page of the same source records the
+  same origin. The origin is the path the write sends, else the path the page already has (so a write that revives a
+  soft-deleted page is checked too). A live page that already records the origin is not checked again, and an empty
+  path is never checked. `restorePage` checks every page it would revive, in source order, before it revives any.
+- **The error.** The store returns `origin_claimed` with a JSON message (`source_id`, `source_path`, `holders`,
+  `slug`). `store-errors.ts` maps it to PGLite's error: `page_identity_changed`, detail `origin_already_claimed`, with
+  the same message, hint and fix. The write transaction returns the error, so a refused write stores nothing.
+- **Comparison.** Paths compare as written. On Windows, `\` reads as `/` and case is folded, as PGLite does.
+- **Index.** Core key `o` holds one entry per live page with a non-empty path. `write_page` reads the page as stored
+  before it writes and moves the entry; `remove_page` deletes it. So a soft delete frees the origin and a rename keeps
+  it. A family that writes a page through `write_page` keeps the index right with no extra step.
+- **Still refused.** A source in source-root slug mode whose directory is below its repository root also matches
+  the older repository-root spelling of a path. Only the files on disk settle that (`sameSyncOrigin`), so
+  `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
+- **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
+  time, so it needs none.
+- **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 ### Write transactions and the journal
 
@@ -474,7 +545,7 @@ Slug renames and page aliases.
 - **Store and binding:** `updateSlug` (`update_slug`), `resolveSlugWithAlias` (`resolve_slug_with_alias`), `resolveSlugWithAliasDetailed` (`resolve_slug_with_alias_detailed`), `resolveAliases` (`resolve_aliases`), `setPageAliases` (`set_page_aliases`), `updatePageContextualRetrievalState` (`update_page_contextual_retrieval_state`).
 - **Postgres tables:** `slug_aliases` (no FK to pages), `pages.slug` (rename), `pages.contextual_retrieval_mode`.
 - **Keys:** `k 0x01 <source> 0x00 <alias slug>` to the target slug and page id; `k 0x02 <page id> 0x00 <alias slug>` to list a page's aliases; `k 0x03 <page id>` for the contextual retrieval state. Removed by `remove_page_rows`. `getPage` returns `contextual_retrieval_mode` from that record through this family's `page_columns` hook (built).
-- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias and moves its own slug bindings. Links, chunks, tags, timeline and versions follow the page id and need no change.
+- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias, moves its own slug bindings (`page_aliases`, statements 7 and 8 of "Rename slug rows"), and calls `cascade::rename_slug_rows` for the facts records. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
 - **Parity cases (6, in `sync-aliases.test.ts`):**
@@ -515,7 +586,7 @@ Facts and their supersession chains.
 - **Store and binding:** `insertFact` (`insert_fact`), `insertFacts` (`insert_facts`), `deleteFactsForPage` (`delete_facts_for_page`), `expireFact` (`expire_fact`), `listFactsByEntity` (`list_facts_by_entity`), `listFactsSince` (`list_facts_since`), `listFactsKeyset` (`list_facts_keyset`), `listFactsBySession` (`list_facts_by_session`), `listSupersessions` (`list_supersessions`), `countUnconsolidatedFacts` (`count_unconsolidated_facts`), `findCandidateDuplicates` (`find_candidate_duplicates`), `consolidateFact` (`consolidate_fact`), `findTrajectory` (`find_trajectory`), `getFactsHealth` (`get_facts_health`), `migrateFactsToCanonical` (`migrate_facts_to_canonical`).
 - **Postgres tables:** `facts` (also the rows ontology reads; `superseded_by` is SET NULL on delete).
 - **Keys:** `F 0x01 <fact id>` row; indexes under `F 0x02 <source> 0x00 <entity> 0x00 <valid_from us> <id>`, `F 0x03 <source> 0x00 <session> ...`, `F 0x04 <source> <created_at us> <id>` (keyset), `F 0x05 <source> 0x00 <source_markdown_slug> 0x00 <row_num>` (fence key, unique). `M next_fact_id`. Offer `pub(crate)` row reads and writes to the ontology family.
-- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade").
+- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
 - **Parity cases (22, in `facts.test.ts`, `sync-aliases.test.ts`):**
@@ -968,3 +1039,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
 | Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |
+| `putPage` with `source_path`, and the one-live-page-per-origin refusal (`o` key) | built | page_ops (`resolveSlugsByPaths`) |
+| Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |
