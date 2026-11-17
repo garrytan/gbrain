@@ -5290,7 +5290,11 @@ whose snapshot was written before snapshots recorded their operation catalog
 says "this grant's snapshot excludes N currently eligible operations;
 original intent unknown", and only a grant with recorded catalog provenance
 says it predates operations. Operations outside the grant's scopes are never
-counted, so a writer is not told about admin-only operations.
+counted, so a writer is not told about admin-only operations. A snapshot the
+owner narrowed on purpose (catalog provenance recorded, and every operation it
+leaves out existed when it was written, as with a guest broker's
+`--operations` list) blocks nothing by mistake, so the notice comes only with a
+refused call, never on a call the grant can make.
 
 It arrives once per session: once per (principal, transport session) on
 stdio and HTTP, and for a stateless HTTP call with no session id once per
