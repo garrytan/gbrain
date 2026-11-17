@@ -329,7 +329,10 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
     if (!isThinClient(cfg) && (statSync(parsed.filePath, { throwIfNoEntry: false })?.size ?? 0) > PAGE_MAX_BYTES) {
       try {
         const streamed = await (await import('../cli/commands/append.ts')).streamLocalCapture(parsed.filePath, parsed, async () => engine ??= await options.getEngine!());
-        if (streamed) return printReceipt({ ...streamed, written: false, source_kind: 'capture-cli', captured_at: new Date().toISOString() }, parsed.quiet ?? false, parsed.json ?? false);
+        if (streamed) {
+          const { captured_at, ...receipt } = streamed;
+          return printReceipt({ ...receipt, written: false, source_kind: 'capture-cli', captured_at }, parsed.quiet ?? false, parsed.json ?? false);
+        }
       } catch (error) {
         if (await reportPersistenceCliError(error, parsed.json ?? false)) return;
         console.error(`gbrain capture: ${error instanceof Error ? error.message : String(error)}`);

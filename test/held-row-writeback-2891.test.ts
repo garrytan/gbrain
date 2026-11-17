@@ -23,6 +23,7 @@ import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { decideTrustProposal } from '../src/core/trust/decide.ts';
 import { parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { heldProposalRef } from './helpers/held-proposal.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { importSegmented, pageContent } from './helpers/segmented-privacy-fixture.ts';
@@ -67,7 +68,8 @@ for (const kind of testBackends()) {
       for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', ['default', held.slug]))
         await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier='user_confirmed' WHERE id=$1", [r.id])), TEST_WRITE_ATTRIBUTION));
       const res = await call('writer', 'remember', { fact: held.claim, provenance: 'chat', entity: held.slug, request_id: randomUUID() });
-      const tp = parseTrustProposalRef(res.match(/tp\d+/)![0])!;
+      expect(res).not.toContain('proposal_ref');
+      const tp = parseTrustProposalRef(await heldProposalRef(engine, 'default', held.claim))!;
       expect(await stored(held.slug)).toContain('| 3 | ' + held.claim + ' |');
       expect((await page('writer', held.slug)).content).not.toContain(canary);
       return { ...held, tp };
@@ -161,7 +163,8 @@ for (const kind of testBackends()) {
         await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier='user_confirmed' WHERE id=$1", [r.id])), TEST_WRITE_ATTRIBUTION));
       const before = await page('writer', h.slug);
       const restated = JSON.parse(await put('writer', h.slug, pageText(h.title, [row(1, h.turin), row(2, h.claim)]), before.revision)) as { contested?: { proposal_ref: string } };
-      const tp = parseTrustProposalRef(restated.contested!.proposal_ref)!;
+      expect(restated.contested).toBeUndefined();
+      const tp = parseTrustProposalRef(await heldProposalRef(engine, 'default', h.claim))!;
       expect(await stored(h.slug)).toContain('| 2 | ' + h.claim + ' | fact | 1.0 | world |');
       const live = async () => (await facts(h.slug)).filter(f => f.fact === h.claim && !f.expired).map(f => f.visibility);
       const liveBefore = await live();

@@ -45,8 +45,10 @@ with the brain's configured embedding provider like any other page. See
 [where text goes](memory-boundaries.md#where-text-goes). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
 reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
 private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
-facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
-every remote caller, the owner included, except that the private-facts grant below adds private facts to `entity` cards.
+facts, the facts on `entity` and `context_pack` cards, the entity and saved facts `search` and `query` attach,
+`extraction_pending`'s unattributed list and `forget`'s `similar_active`, except a fact taken from a page it cannot
+read. For every other remote caller those card facts stay world-only, except that the private-facts grant below adds
+private facts to `entity` cards.
 
 Two grants relax page privacy for callers that are not the owner, and both are operator decisions:
 `gbrain auth rescope --private-pages granted-sources` (private pages in the sources that grant names) and the
