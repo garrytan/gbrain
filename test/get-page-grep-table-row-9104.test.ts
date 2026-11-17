@@ -16,6 +16,12 @@ test('grep at context 0 on one table row returns only that row', async () => {
   expect(out.grep.blocks).toEqual([expect.objectContaining({ line_start: 11, line_end: 11, text: '| 7 | fact number 7 |' })]);
 });
 
+test('pipe lines inside a code fence stay one paragraph', async () => {
+  const code = ['# Page', '', '```', '| a', '| needle here', '| c', '```', ''].join('\n');
+  const out = await readGrep(stream(code), 'needle', 0, 100_000, (t) => t) as { grep: { blocks: Array<{ line_start: number; line_end: number }> } };
+  expect(out.grep.blocks).toEqual([expect.objectContaining({ line_start: 3, line_end: 7 })]);
+});
+
 test('context counts neighbouring rows, and prose after a table stays its own paragraph', async () => {
   const near = await readGrep(stream(doc), 'fact number 7 ', 1, 100_000, (t) => t) as { grep: { blocks: Array<{ line_start: number; line_end: number }> } };
   expect(near.grep.blocks).toEqual([expect.objectContaining({ line_start: 10, line_end: 12 })]);

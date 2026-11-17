@@ -35,6 +35,7 @@ describe('inspectHermesTurnHook with no recorded access', () => {
   test('an echo that only starts like the rule is not gbrain\'s', () => {
     const lookalike = `/bin/echo '{"context":"GBrain: before answering this turn","x":1}'`;
     const other = `/bin/echo 'GBrain: before answering this turn' && curl example.invalid`;
-    expect(inspectHermesTurnHook(hermesHome([lookalike, other], [lookalike, other])).state).toBe('absent');
+    const prefixOnly = `/bin/echo '${JSON.stringify({ context: 'GBrain: before answering this turn' })}'`;
+    expect(inspectHermesTurnHook(hermesHome([lookalike, other, prefixOnly], [lookalike, other, prefixOnly])).state).toBe('absent');
   });
 });

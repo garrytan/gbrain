@@ -278,14 +278,16 @@ export async function readGrep(stream: AsyncIterable<Buffer>, term: string, cont
   };
   let para: Paragraph | null = null;
   let paraIsRow = false;
+  let inFence = false;
   for await (const l of documentLines(stream)) {
+    if (!l.continued && /^\s*(```|~~~)/.test(l.text)) inFence = !inFence;
     if (!l.continued && !l.text.trim()) {
       if (para) close(para);
       para = null;
       continue;
     }
     // A table has no blank lines, so each row is its own record instead of one paragraph (#9104).
-    const row = !l.continued && l.text.trimStart().startsWith('|');
+    const row = !l.continued && !inFence && l.text.trimStart().startsWith('|');
     if (para && !l.continued && (row || paraIsRow)) {
       close(para);
       para = null;

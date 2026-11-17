@@ -41,7 +41,8 @@ function isTurnRuleEcho(command: string): boolean {
   if (!m) return false;
   let context: unknown;
   try { context = (JSON.parse(m[1]!) as { context?: unknown }).context; } catch { return false; }
-  return typeof context === 'string' && context.startsWith('GBrain: before answering this turn')
+  return typeof context === 'string' && context.startsWith('GBrain: before answering this turn, check GBrain first (')
+    && context.includes(') for the people, companies, projects, meetings and decisions it touches.')
     && command === `/bin/echo '${JSON.stringify({ context }).replace(/'/g, '\\u0027')}'`;
 }
 
