@@ -141,17 +141,22 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
  * creates, a brain with no open pages and a brain already shared are not refused.
  */
 export function historyRefusal(status: ServesStatus | null, preview: ServesReceipt | null, flags: ServesFlags, harness: string, roster: string[], owner: ServesOwner | undefined): OperationError | null {
-  if (flags.serves !== 'several' || flags.labelledOnly || flags.openHistory || status?.serves !== 'one' || !preview || !('members' in preview)) return null;
-  const open = preview.open_pages;
+  if (flags.serves !== 'several' || flags.labelledOnly || flags.openHistory || status?.serves !== 'one') return null;
+  const counted = preview && 'members' in preview ? preview : null;
+  const open = counted?.open_pages;
   if (open && !open.total) return null;
   const parts = open ? [open.sensitive ? `${open.sensitive} of them DMs, chat or mail` : '', open.archive ? `${open.archive} in the conversation archive` : ''].filter(Boolean) : [];
   const holds = open ? `${open.total} page(s) no rule or readable_by restricts${parts.length ? ` (${parts.join(', ')})` : ''}`
-    : `pages setup could not count (${preview.open_pages_error?.code ?? 'open_pages_failed'})`;
-  const argv = ['gbrain', 'setup', harness, '--serves', 'several', '--members', roster.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(owner?.from === 'flag' ? ['--owner', owner.id] : [])];
+    : `pages setup could not count (${counted ? counted.open_pages_error?.code ?? 'open_pages_failed' : 'the preview failed'})`;
+  const labelled = roster.filter(m => m !== owner?.id);
+  const argvFor = (members: string[]) => ['gbrain', 'setup', harness, '--serves', 'several', '--members', members.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(owner?.from === 'flag' ? ['--owner', owner.id] : [])];
+  const keep = [...argvFor(labelled.length ? labelled : roster), '--labelled-only'];
+  const share = [...argvFor(roster), '--open-history'];
+  const ownerOut = owner && labelled.length && labelled.length < roster.length ? `; the owner ${owner.id} reads the whole brain, so it is never labelled-only and stays out of that run's --members` : '';
   return opError('setup_history_choice_required',
     `This brain serves one person and holds ${holds}; turned shared as asked, every member's key would read them. Nothing was written. Run setup again with --labelled-only to keep that history private, or with --open-history to let every member read it.`,
-    `Pick one: ${[...argv, '--labelled-only'].join(' ')} keeps that history private (each member reads only pages labelled for them; with the company shape, setup adds one company/ rule so they read the company pages), or ${[...argv, '--open-history'].join(' ')} lets every member read it.`,
-    { fix: { argv: [...argv, '--labelled-only'], consent: ['credentials'], actor: 'user', ask_user: true, requires_exclusive: false,
+    `Pick one: ${keep.join(' ')} keeps that history private (each member reads only pages labelled for them; with the company shape, setup adds one company/ rule so they read the company pages${ownerOut}), or ${share.join(' ')} lets every member read it.`,
+    { fix: { argv: keep, consent: ['credentials'], actor: 'user', ask_user: true, requires_exclusive: false,
       why: 'Keeps the existing pages from the members; ask the user, who may instead choose --open-history so the members read them.',
       verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
 }

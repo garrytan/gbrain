@@ -450,3 +450,28 @@ describe('C: gbrain setup --shape company --labelled-only gives labelled-only me
     }
   }, 480_000);
 });
+
+
+test('C: a preview that failed or could not count the pages still refuses (fail closed)', () => {
+  const status = { serves: 'one', from: 'derived', enabled_members: [], since: null, owner: null, stdio_member: null } as never;
+  const flags = { serves: 'several' as const, dryRun: false };
+  const failed = historyRefusal(status, null, flags, 'claude-code', ROSTER, undefined);
+  expect(failed).toMatchObject({ code: 'setup_history_choice_required' });
+  expect(failed!.message).toContain('pages setup could not count (the preview failed)');
+  const uncounted = historyRefusal(status, { members: [], open_pages: null, open_pages_error: { code: 'open_pages_timeout', message: 'x', retry: 'y' } } as never, flags, 'claude-code', ROSTER, undefined);
+  expect(uncounted!.message).toContain('pages setup could not count (open_pages_timeout)');
+  expect(historyRefusal(status, null, { ...flags, labelledOnly: true }, 'claude-code', ROSTER, undefined)).toBeNull();
+});
+
+test('C: the --labelled-only choice leaves the owner out of --members, so following it is not blocked', () => {
+  const status = { serves: 'one', from: 'derived', enabled_members: [], since: null, owner: null, stdio_member: null } as never;
+  const preview = { members: [], open_pages: { total: 3, sensitive: 0, archive: 0 } } as never;
+  const flags = { serves: 'several' as const, dryRun: false };
+  for (const owner of [{ id: 'alice-example', from: 'login' as const }, { id: 'alice-example', from: 'flag' as const }]) {
+    const refusal = historyRefusal(status, preview, flags, 'claude-code', ROSTER, owner)!;
+    const argv = (refusal.fix as { argv: string[] }).argv;
+    expect(argv.slice(argv.indexOf('--members'), argv.indexOf('--members') + 2)).toEqual(['--members', 'bob-example']);
+    expect(argv).toContain('--labelled-only');
+    expect(refusal.message + refusal.suggestion).toContain('--members alice-example,bob-example');
+  }
+});
