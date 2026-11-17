@@ -79,7 +79,8 @@ describe('auth list member status (GBRA-582 item 9d)', () => {
 
   test('the text table prints refused for an active token whose member cannot read', async () => {
     const rows = (await auth(['list'])).split('\n');
-    const status = (name: string) => rows.find(r => r.includes(` ${name} `))!.split(/\s{2,}/).at(-2);
+    const at = rows.find(r => r.startsWith('ID '))!.indexOf('Status');
+    const status = (name: string) => rows.find(r => r.includes(` ${name} `))!.slice(at, at + 7).trim();
     expect(status('owner-key')).toBe('active');
     expect(status('alice-key')).toBe('active');
     expect(status('unbound-key')).toBe('active');
