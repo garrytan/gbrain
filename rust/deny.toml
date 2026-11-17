@@ -1,0 +1,40 @@
+# cargo-deny policy for the Rust engine workspace. Run with `cargo deny check` from rust/.
+# `advisories` downloads the RustSec database, so that check needs network access.
+
+[graph]
+# Check what ships on the platforms the addon is built for, not every target cargo knows.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Licenses of the dependencies in Cargo.lock today. Adding one here is a review decision.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
