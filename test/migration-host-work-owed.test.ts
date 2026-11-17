@@ -387,6 +387,26 @@ describe('doctor, connected, reads which sources are in conflict now', () => {
     await live.executeRaw("DELETE FROM sources WHERE id = 'source-b'");
     expect(await owedChecks()).toEqual([]);
   }, 120_000);
+
+  test('a source whose policy read fails is not inspected, so doctor keeps the warning with the inspect step', async () => {
+    await live.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2)', ['source-b', realpathSync(pack)]);
+    const executeRaw = live.executeRaw.bind(live);
+    live.executeRaw = (async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith('SELECT config FROM sources WHERE id=$1')) throw new Error('Connection terminated unexpectedly');
+      return executeRaw(sql, params as any);
+    }) as typeof live.executeRaw;
+    try {
+      const [row] = await owedChecks();
+      expect(row?.status).toBe('warn');
+      expect(row!.message).toContain(INSPECT.join(' '));
+      expect(row!.message).not.toContain('nothing waits on a person');
+      expect((row!.details as any).conflicts).toBeUndefined();
+      expectInspectFix(row!.fix);
+    } finally {
+      live.executeRaw = executeRaw;
+      await live.executeRaw("DELETE FROM sources WHERE id = 'source-b'");
+    }
+  }, 120_000);
 });
 
 describe('the advice for each conflict code', () => {

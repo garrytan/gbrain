@@ -41,8 +41,12 @@ export async function hostWorkMigrations(engine: BrainEngine): Promise<Set<strin
   return new Set(work.sources.length || work.pending_actions ? [SHARED_SKILLS_HOST_WORK_VERSION] : []);
 }
 
-/** Every source stage a migration report marks `conflict`, with its code and reason. */
-export function owedConflicts(report: Pick<SharedMigrationReport, 'sources'> | null | undefined): OwedConflict[] {
+/**
+ * Every source stage a migration report marks `conflict`, with its code and reason. Null (unknown) when the report
+ * could not inspect a source because its policy read failed, so an empty list always means every source was inspected.
+ */
+export function owedConflicts(report: Pick<SharedMigrationReport, 'sources'> | null | undefined): OwedConflict[] | null {
+  if (report?.sources?.some(row => row.policy_unverified)) return null;
   return (report?.sources ?? []).flatMap(row => row.stages.filter(stage => stage.status === 'conflict')
     .map(stage => ({ source_id: row.source_id, code: stage.code ?? 'local_conflict', reason: stage.reason ?? '' })));
 }

@@ -31,6 +31,8 @@ export interface SharedSourceMigration {
   status: 'complete' | 'action_required' | 'conflict' | 'planned';
   member_installations?: SharedMemberMigration[];
   parked?: SharedSourceParked;
+  /** The source's policy could not be read, so the migration preserved its files without inspecting them. */
+  policy_unverified?: true;
 }
 /**
  * A source whose pack exceeds an inventory bound. Later runs skip it without
@@ -133,6 +135,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       await persist();
     };
     if (sourcePolicy.mode === 'preserve_files') {
+      if (sourcePolicy.unverified) row.policy_unverified = true;
       row.member_installations = await inspectSharedMemberMigration(ctx.engine, source.id, source.incarnation);
       await pending('projection', sourcePolicy.reason);
       continue;
