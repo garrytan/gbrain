@@ -956,7 +956,7 @@ export function privateTimelineEventFilterForCaller(timelineAlias: string): stri
  * every other page that is not a member page as the reader, and an owner read an audience member's page too. The
  * provenance page is judged as an origin: a raw-only rule (covers_derived false) does not hide the facts from its pages.
  */
-export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
+export function privateProvenanceFilterUnderPolicy(factAlias: string, perCandidate = false): string {
   const access = currentCallerAccess();
   const hide = !callerRelaxesPrivacy();
   const member = access.actor?.member ?? (access.audienceIdentities.length ? null : access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length));
@@ -969,7 +969,7 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds, true)} ELSE ${otherwise} END`
     : otherwise;
-  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)}${labelledOnlyFactSql(factAlias)})`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias, perCandidate)}${labelledOnlyFactSql(factAlias)})`;
 }
 
 /**
@@ -1019,7 +1019,7 @@ export function privateFactFilterForCaller(factAlias: string, perCandidate = fal
  * private page it reads, while member access still applies; every other caller keeps privateFactFilterForCaller.
  */
 export function privateFactFilterForReader(factAlias: string, perCandidate = false): string {
-  return callerIsOwner() ? privateProvenanceFilterUnderPolicy(factAlias) : privateFactFilterForCaller(factAlias, perCandidate);
+  return callerIsOwner() ? privateProvenanceFilterUnderPolicy(factAlias, perCandidate) : privateFactFilterForCaller(factAlias, perCandidate);
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
