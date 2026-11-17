@@ -18,6 +18,7 @@ import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { runAccessRules } from './access-rules.ts';
 import { runAccessServes } from './access-serves.ts';
 import { disableReadByNobodyLines, readByNobodyNote } from './access-read-by-nobody.ts';
+import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
 import { opError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
@@ -326,7 +327,8 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
   const id = positionals(args)[0];
   switch (sub) {
     case 'add': {
-      const r = await addMember(engine, id, { name: flagValue(args, '--name'), email: flagValue(args, '--email'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token'), kind: flagValue(args, '--kind'), remote: false });
+      const r = await addMember(engine, id, { name: flagValue(args, '--name'), email: flagValue(args, '--email'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token'), kind: flagValue(args, '--kind'), remote: false, beforeWrite: () => rescopeArchiveBefore(engine, id, 'add') });
+      await rescopeArchiveAfter(engine);
       return print(json, r, () => [`Member added: ${r.member.id}`, memberLine(r.member),
         ...(r.groups_created.length ? [`  Groups created: ${r.groups_created.join(', ')}`] : []),
         ...(r.bound ? [`  Bound token: ${r.bound.name} (${r.bound.id})`] : ['  Bind a credential: gbrain auth rescope --token <name> --member ' + r.member.id]),
@@ -350,7 +352,9 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
     }
     case 'disable':
     case 'enable': {
+      if (sub === 'enable') await rescopeArchiveBefore(engine, id, 'enable');
       const m = await (sub === 'disable' ? disableMember : enableMember)(engine, id);
+      if (sub === 'enable') await rescopeArchiveAfter(engine);
       const stranded = sub === 'disable' && !json ? await disableReadByNobodyLines(engine, m.id).catch((e: unknown) =>
         [`Could not check which pages naming it no enabled member reads (${e instanceof Error ? e.message : String(e)}); the disable stands. gbrain access who-can-read <slug> shows who reads a page.`]) : [];
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
@@ -464,6 +468,7 @@ async function ownerCmd(engine: BrainEngine, sub: string | undefined, args: stri
     }
     case 'set': {
       const v = await setOwner(engine, positionals(args)[0]);
+      await rescopeArchiveAfter(engine);
       return print(json, v, () => ownerLines(v));
     }
     case 'clear': {
