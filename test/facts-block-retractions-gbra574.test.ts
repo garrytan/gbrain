@@ -22,6 +22,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { forgetFactInFence } from '../src/core/facts/forget.ts';
 import { valueHash } from '../src/core/chronicle/ontology.ts';
 import { applyFactsBlock, QUERY_FACTS_BLOCK_SHARE } from '../src/core/search/facts-arm.ts';
+import { laterRetractions, type FactCandidate } from '../src/core/search/fact-relevance.ts';
 import { resultTokens } from '../src/core/search/token-budget.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -32,7 +33,7 @@ import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts'
 type Row = { result_type?: string; chunk_text?: string };
 const CONVERSATION = 'cli:extract-conversation-facts:v1';
 const day = (i: number) => new Date(Date.UTC(2025, 0, 1) + i * 3 * 86_400_000).toISOString().slice(0, 10);
-const PEOPLE = ['alice', 'bob', 'dana', 'erin', 'gwen', 'hal', 'ivy', 'kim', 'nina', 'olga', 'pia'].map(n => ['people/' + n + '-example', n[0]!.toUpperCase() + n.slice(1) + ' Example'] as const);
+const PEOPLE = ['alice', 'bob', 'dana', 'erin', 'gwen', 'hal', 'ivy', 'kim', 'nina', 'olga', 'pia', 'quinn', 'rosa', 'rita', 'sara', 'tess', 'uma'].map(n => ['people/' + n + '-example', n[0]!.toUpperCase() + n.slice(1) + ' Example'] as const);
 const ACME = 'companies/acme-example';
 
 for (const backend of testBackends()) {
@@ -70,6 +71,14 @@ for (const backend of testBackends()) {
       const rows = await withCallerAccess({ identity: ['member:' + member] }, () => applyFactsBlock(engine, query, [],
         { sourceIds: [sourceId], remote: true, readScope: { sourceIds: [sourceId], excludePrivate: true }, budget: 5500, tokenBudget: 5500, rowCap: async () => 50 }));
       return (rows as Row[]).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '');
+    };
+    /** The later facts laterRetractions pairs with one fact, oldest first. */
+    const pairedWith = async (key: string) => {
+      const rows = await engine.executeRaw<FactCandidate>(
+        `SELECT id, fact, kind, entity_slug, source_id, source, valid_from, valid_until, created_at, claim_metric, claim_period, source_markdown_slug, visibility, attributed_to, dimension, value_hash
+         FROM facts WHERE id = $1`, [ids[key]]);
+      const paired = await laterRetractions(engine, { sourceIds: [sourceId], worldOnly: false, excludePrivate: false }, rows);
+      return (paired.get(ids[key]!) ?? []).map(r => r.fact);
     };
     const local = async (query: string, budget: number, rowCap: number) =>
       ((await applyFactsBlock(engine, query, [], { sourceIds: [sourceId], remote: false, budget, tokenBudget: budget, rowCap: async () => rowCap })) as Row[])
@@ -135,6 +144,26 @@ for (const backend of testBackends()) {
       await fact('p_hamster', 'Pia Example adopted a hamster.', 'people/pia-example', 15);
       await fact('p_off', 'The Bern trip for Pia Example fell through.', 'people/pia-example', 20);
 
+      await fact('q_move', 'Quinn Example relocated to Hamburg.', 'people/quinn-example', 10);
+      await fact('q_job', 'Quinn Example works as a nurse.', 'people/quinn-example', 15);
+      await fact('q_concert', "Quinn Example's Hamburg concert tickets were cancelled by the venue.", 'people/quinn-example', 20);
+      await fact('r_trip', 'Rosa Example plans a trip to Seville in October.', 'people/rosa-example', 10);
+      await fact('r_lang', 'Rosa Example is learning Spanish.', 'people/rosa-example', 15);
+      await fact('r_confirm', 'Rosa Example confirmed the Seville trip is not cancelled.', 'people/rosa-example', 20);
+      await fact('ri_trip', 'Rita Example plans a trip to Tallinn.', 'people/rita-example', 10);
+      await fact('ri_ferret', 'Rita Example adopted a ferret.', 'people/rita-example', 20);
+      await fact('ri_off', 'The Rita Example trip to Tallinn in August fell through.', 'people/rita-example', 30);
+      await fact('s_trip', 'Sara Example plans a trip to Vienna.', 'people/sara-example', 10);
+      await fact('s_off', "Sara Example's trip fell through.", 'people/sara-example', 20);
+      await fact('t_trip', 'Tess Example plans a trip to Vienna.', 'people/tess-example', 10);
+      await fact('t_neg1', "Tess Example's Vienna trip wasn't called off.", 'people/tess-example', 12);
+      await fact('t_neg2', 'The Vienna trip for Tess Example was never cancelled.', 'people/tess-example', 14);
+      await fact('t_neg3', "The Vienna trip for Tess Example isn't a rumour.", 'people/tess-example', 16);
+      await fact('u_trip', 'Uma Example plans a trip to Vienna.', 'people/uma-example', 10);
+      await fact('u_off1', 'The Vienna trip for Uma Example is not happening.', 'people/uma-example', 12);
+      await fact('u_off2', 'The Vienna trip for Uma Example never happened.', 'people/uma-example', 14);
+      await fact('u_off3', 'The Vienna trip for Uma Example is no longer planned.', 'people/uma-example', 16);
+
       await fact('k_off', 'The Madrid trip for Kim Example fell through.', 'people/kim-example', 30, { visibility: 'private', page: 'memory/members/alice-example' });
     }, 300_000);
     afterAll(async () => {
@@ -176,7 +205,36 @@ for (const backend of testBackends()) {
       });
     });
 
+    describe('pairing precision', () => {
+      test('a negated cue never pairs: "not cancelled"', async () => {
+        expect(await pairedWith('r_trip')).toEqual([]);
+        expect(order(await block('Is Rosa Example going to Seville?'), ['plans a trip to Seville', 'learning Spanish', 'is not cancelled'])).toEqual([0, 1, 2]);
+      });
+      test('a cue a word or two after not, never, no or an n\'t contraction never pairs', async () => {
+        expect(await pairedWith('t_trip')).toEqual([]);
+      });
+      test('a cue that starts with a negation still pairs: not happening, never happened, no longer planned', async () => {
+        expect(await pairedWith('u_trip')).toEqual([
+          'The Vienna trip for Uma Example is not happening.', 'The Vienna trip for Uma Example never happened.', 'The Vienna trip for Uma Example is no longer planned.']);
+      });
+      test('one shared term with terms of its own does not pair: the concert stays off the move', async () => {
+        expect(await pairedWith('q_move')).toEqual([]);
+        expect(order(await block('Where does Quinn Example live?'), ['relocated to Hamburg', 'works as a nurse', 'concert tickets'])).toEqual([0, 1, 2]);
+      });
+      test('a retraction whose every term is in the fact pairs: "the trip fell through"', async () => {
+        expect(await pairedWith('s_trip')).toEqual(["Sara Example's trip fell through."]);
+      });
+      test('a retraction sharing two terms pairs, even with terms of its own', async () => {
+        expect(await pairedWith('ri_trip')).toEqual(['The Rita Example trip to Tallinn in August fell through.']);
+      });
+    });
+
     describe('the block budget', () => {
+      test('a two-term retraction that ranks above its fact moves under it, once', async () => {
+        const rows = await block('Is Rita Example going to Tallinn in August?');
+        expect(order(rows, ['plans a trip to Tallinn', 'trip to Tallinn in August fell through', 'adopted a ferret'])).toEqual([0, 1, 2]);
+        expect(rows.filter(r => r.includes('fell through')).length).toBe(1);
+      });
       test('a retraction that ranks above its fact moves under it, once', async () => {
         const rows = await block('Is Nina Example going to Riga in June?');
         expect(order(rows, ['Nina Example plans a trip.', 'trip to Riga in June fell through', 'adopted a parrot'])).toEqual([0, 1, 2]);
