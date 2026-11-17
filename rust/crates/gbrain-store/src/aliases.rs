@@ -23,9 +23,8 @@
 //! The alias rows hang off `(source, slug)`, not the page id: neither PGLite table has a foreign
 //! key to `pages`, so its rows outlive a hard delete of the page and answer again for a page
 //! created later at the same slug. [`remove_page_rows`] therefore removes only the contextual
-//! retrieval state, which is a column of the page row. Both tables cascade from `sources`; this
-//! engine has no source delete yet, so the rows of a deleted source are a follow-up for core's
-//! source cascade.
+//! retrieval state, which is a column of the page row. Both tables cascade from `sources`:
+//! [`remove_source_rows`] removes every row of a deleted source.
 //!
 //! Only `setPageAliases` writes page aliases here, so every row has origin `frontmatter`; the
 //! `declared` and `subject` rows of the mention pass have no typed writer. `resolveAliases` still
@@ -300,6 +299,32 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     tx.delete(&cr_key(page.id))
 }
 
+/// Deletes this family's records of a source that is deleted (`cascade::remove_source_rows`), as
+/// Postgres's `ON DELETE CASCADE` on `slug_aliases` and `page_aliases` does: every slug alias and
+/// page alias of the source, and the contextual retrieval state of any page still in it (core
+/// removes the source's pages first, which already drops theirs through [`remove_page_rows`]).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    if has_nul(&[source_id]) {
+        return Ok(());
+    }
+    for sub in [
+        SLUG_ALIAS,
+        SLUG_ALIAS_BY_CANONICAL,
+        PAGE_ALIAS,
+        PAGE_ALIAS_BY_SLUG,
+    ] {
+        for (key, _) in scan_tails(&*tx, &prefix(sub, &[source_id]))? {
+            tx.delete(&key)?;
+        }
+    }
+    for page in all_pages(&*tx)? {
+        if page.source_id == source_id {
+            tx.delete(&cr_key(page.id))?;
+        }
+    }
+    Ok(())
+}
+
 /// Adds this family's `getPage` columns to a page (`page_columns::add_page_columns`):
 /// `contextual_retrieval_mode` when the page has a state. A page with none reads as its
 /// `PAGE_ROW_DEFAULTS` value, `null` (`store-codec.ts`).
@@ -563,6 +588,7 @@ fn live_titles(read: &dyn KvRead) -> Result<BTreeMap<String, Vec<(String, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn keys_keep_each_part_apart() {
@@ -573,6 +599,66 @@ mod tests {
             tail(b"k\x03s\0p\0al\0frontmatter", 6),
             ["al", "frontmatter"]
         );
+    }
+
+    /// Every key of this family, as `(sub tag, rest)`, in key order.
+    fn family_keys(store: &Store) -> Vec<Vec<u8>> {
+        let read = store.read().unwrap();
+        let mut out = Vec::new();
+        scan_prefix(&*read, &[keys::ALIAS], false, &mut |k, _| {
+            out.push(k.to_vec());
+            true
+        })
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn a_source_delete_removes_every_record_of_that_source_only() {
+        use crate::pages::{PageInput, PutPageOptions};
+        use crate::sources::SourceInput;
+        let store = crate::test_support::store();
+        // `other` is a prefix of `other2`: the scan must stop at the separator.
+        for id in ["other", "other2"] {
+            let input: SourceInput =
+                serde_json::from_value(json!({ "id": id, "name": id, "config": {} })).unwrap();
+            store.upsert_source(&input).unwrap();
+        }
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        let fill = |source: &str| {
+            let options: PutPageOptions =
+                serde_json::from_value(json!({ "sourceId": source })).unwrap();
+            store.put_page("a", &input, &options).unwrap();
+            store
+                .set_page_aliases("a", source, &["ay".to_string()])
+                .unwrap();
+            store
+                .update_page_contextual_retrieval_state("a", source, "title", None)
+                .unwrap();
+            assert_eq!(store.update_slug("a", "b", Some(source)).unwrap(), 1);
+        };
+        fill("default");
+        let kept = family_keys(&store);
+        assert_eq!(kept.len(), 5);
+        fill("other2");
+        let both = family_keys(&store);
+        fill("other");
+        assert_eq!(family_keys(&store).len(), 15);
+        store.write(|tx| remove_source_rows(tx, "other")).unwrap();
+        assert_eq!(family_keys(&store), both);
+        store
+            .write(|tx| {
+                remove_source_rows(tx, "other2")?;
+                remove_source_rows(tx, "nowhere")?;
+                remove_source_rows(tx, "a\0b")
+            })
+            .unwrap();
+        assert_eq!(family_keys(&store), kept);
     }
 
     #[test]
