@@ -149,16 +149,15 @@ const reasonOf = async (engine: BrainEngine, id: number) => (await engine.execut
 interface Leak { sourceId: string; claim: string; fact: number; pushed: string; root: string }
 
 /** Classic sync, as master runs it today: the pass reads the trailers, the purge commits, the import stores the reason. */
-async function classicLeak(engine: BrainEngine): Promise<Leak> {
+async function classicLeak(engine: BrainEngine, sourceId = `leak-classic-${serial + 1}`, firstReason?: string): Promise<Leak> {
   const n = ++serial;
   const claim = `Vault code is ${7100 + n}`;
-  const sourceId = `leak-classic-${n}`;
   const root = newRepo({ 'notes/a.md': page('A one.'), 'notes/b.md': page('B one.') });
   await runSources(engine, ['add', sourceId, '--path', root, '--no-federated']);
   const sync = () => performSync(engine, { repoPath: root, sourceId, noPull: true, noEmbed: true, noExtract: true, concurrency: 1 });
   await sync();
   write(root, { 'notes/a.md': page('A two.'), 'notes/b.md': page('B two.') });
-  const pushed = commit(root, 'edit', [`notes/a.md: Changed after ${claim} was rotated.`, `notes/b.md: ${SIBLING}`]);
+  const pushed = commit(root, 'edit', [...(firstReason ? [`notes/a.md: ${firstReason}`] : []), `notes/a.md: Changed after ${claim} was rotated.`, `notes/b.md: ${SIBLING}`]);
   const fact = await seedFact(engine, sourceId, `people/vault-example-${n}`, claim);
   const purged = purgeAfterNextScan(() => purge(engine, sourceId, fact));
   await sync();
@@ -273,9 +272,10 @@ for (const backend of ['pglite', 'postgres'] as const) {
       expect(rerun.details.brain_total).toBe(0);
     }), 300_000);
 
-    test.skipIf(skip)('consent, a stale hash, a row changed since the preview, the same text under another path, and a missing checkout', async () => inHome(async () => {
+    // The source id is one an object prototype holds, so a per-source tally kept in a plain object would break.
+    test.skipIf(skip)('consent, a stale hash, a row changed since the preview, the same text under another path, a missing checkout, and a source named constructor', async () => inHome(async () => {
       const engine = engineOf();
-      const leak = await classicLeak(engine);
+      const leak = await classicLeak(engine, 'constructor');
       await asBeforeTheFix(engine, leak);
       const leaked = await latestVersion(engine, leak.sourceId, 'notes/a');
       const elsewhere = await latestVersion(engine, leak.sourceId, 'notes/b');
@@ -291,8 +291,12 @@ for (const backend of ['pglite', 'postgres'] as const) {
       expect(lastJson(blind.out).residuals).toMatchObject({ unreadable_commit: 1 });
       expect(lastJson(blind.out).details.brain_total).toBe(0);
 
+      const human = await repairCli(engine, ['purged-change-reasons', '--source', leak.sourceId]);
+      expect(human.out).toContain('1 leaked change reason(s) in 1 source(s) of this brain');
+      expect(human.out).toContain('constructor:notes/a@v');
       const planned = lastJson((await cli()).out);
       expect(planned.details.brain_total).toBe(1);
+      expect(planned.details.by_source).toEqual({ constructor: 1 });
       expect(planned.residuals).toMatchObject({ path_mismatch: 1, unreadable_commit: 0, sources_without_checkout: 0 });
 
       const previous = process.exitCode;
@@ -317,6 +321,18 @@ for (const backend of ['pglite', 'postgres'] as const) {
       expect(await reasonOf(engine, leaked.id)).toBe('[purged]');
       expect(await reasonOf(engine, elsewhere.id)).toBe('[purged]');
       expect(lastJson((await cli('--include-ambiguous')).out).details.brain_total).toBe(0);
+    }), 300_000);
+
+    // Sync stores the first reason a commit gives a file; when the commit gives that file two, the purge may have matched the other one.
+    test.skipIf(skip)('a commit with two reasons for one file: the stored first reason is kept as path_mismatch, not redacted', async () => inHome(async () => {
+      const engine = engineOf();
+      const leak = await classicLeak(engine, undefined, 'Benign first note.');
+      const row = await latestVersion(engine, leak.sourceId, 'notes/a');
+      expect(row.reason).toBeNull();
+      await engine.executeRaw('UPDATE page_versions SET change_reason = $1 WHERE id = $2', ['Benign first note.', row.id]);
+      const planned = lastJson((await repairCli(engine, ['purged-change-reasons', '--source', leak.sourceId, '--json'])).out);
+      expect(planned.details.brain_total).toBe(0);
+      expect(planned.residuals).toMatchObject({ path_mismatch: 1, unreadable_commit: 0 });
     }), 300_000);
 
     // A repo-less source has no trailers and no tombstones; the preview says so and exits clean.

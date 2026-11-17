@@ -2657,18 +2657,22 @@ change reason is that same text:
 
 - **evidenced**: the version's file is that file. Redacted by default.
 - **path_mismatch**: the same text on a version of another file, or on a
-  version with no file recorded. Kept, and redacted only with
-  `--include-ambiguous` on both the preview and the apply.
+  version with no file recorded, or a commit that gives the file more than one
+  reason (the purge may have matched the other one). Kept, and redacted only
+  with `--include-ambiguous` on both the preview and the apply.
 
 The preview never prints the reason text, only counts and items such as
 `source-a:notes/a@v42`. It also counts `unreadable_commit` (the checkout is
 gone or the commit can no longer be read; nothing is found for those) and
-`sources_without_checkout`. A repo-less source never stored a reason from Git,
-so it has nothing to check and the preview still succeeds.
+`sources_without_checkout`. A preview that finds 0 is only complete when
+`unreadable_commit` is 0 too: run it on the brain host, where the checkouts
+are. A repo-less source never stored a reason from Git, so it has nothing to
+check and the preview still succeeds.
 
 The apply needs the preview's hash and your consent (`--yes`, or a terminal
-prompt). It locks the source as a purge does and sets exactly the previewed
-versions whose reason is still the same text to `[purged]`, the value a purge
+prompt). It reads the reasons from Git again, locks the source as a purge
+does and sets exactly the previewed versions whose reason is still the same
+text to `[purged]`, the value a purge
 writes; anything else is reported as `changed_since_preview` and kept. Pages,
 files and Git history are not changed; a commit message keeps its text, as
 after any purge. Running the preview again after the apply finds nothing.
@@ -4781,7 +4785,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 | `The OpenAI embedding provider rejected its key (HTTP 401)` | [`embedding_auth_failed`](write-refusals.md#embedding_auth_failed) | `gbrain doctor` (`embedding_key_source`, `embedding_provider`) | the printed fix for the key source in effect, then `gbrain embed --stale` | `gbrain doctor` shows `embedding_provider` ok | user (owns the key) | `credentials`; `paid` for `embed --stale` |
 | Conversation facts missing from recall after managed writes | `extractor_facts_expired` | `gbrain repair extractor-facts` | `gbrain repair extractor-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | `destructive` (rewrites expired facts) |
 | Recall still returns claims from a page you purged; doctor `purged_page_facts` warns | `purged_page_facts` ([purged page facts](#purged-page-facts)) | `gbrain repair purged-page-facts` | `gbrain repair purged-page-facts --apply --expect <hash> --yes` (no purge record: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | destructive (`--yes`) |
-| Page history still shows a change reason quoting a claim you purged before upgrading | none (run the preview; [purged change reasons](#purged-change-reasons)) | `gbrain repair purged-change-reasons` | `gbrain repair purged-change-reasons --apply --expect <hash> --yes` (same text under another path: add `--include-ambiguous` to both) | the preview again finds 0 | brain host, after the user agrees | destructive (`--yes`) |
+| Page history still shows a change reason quoting a claim you purged before upgrading | none (run the preview; [purged change reasons](#purged-change-reasons)) | `gbrain repair purged-change-reasons` | `gbrain repair purged-change-reasons --apply --expect <hash> --yes` (same text under another path: add `--include-ambiguous` to both) | the preview again finds 0, with `unreadable_commit` 0 | brain host, after the user agrees | destructive (`--yes`) |
 | Facts missing from recall after a page write or `extract_facts` run, although no fence of their page held them; doctor `unwithdrawn_facts` warns | `unwithdrawn_facts` ([unwithdrawn facts](#unwithdrawn-facts)) | `gbrain repair unwithdrawn-facts` | `gbrain repair unwithdrawn-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | none |
 | Recall returns conversation facts such as "Date said …" or "Attendees said …", or facts dated 1970-01-01; doctor `conversation_label_facts` warns; the upgrade banner prints `conversation_label_facts: N (explicit_kind_required; …)` | `gbrain repair conversation-labels` (ambiguous: add `--include-ambiguous`) | `gbrain repair conversation-labels --apply --expect <hash> --yes`, then the printed `gbrain extract-conversation-facts --slugs … --dry-run` | `gbrain doctor --only conversation_label_facts --json` | brain host, after the user agrees | `destructive` (retires facts; no model calls) |
 
