@@ -5,6 +5,9 @@
  * Postgres. No real addon exists yet, so the tests pass a plain object as the verified addon.
  */
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openRustEngine, RustEngine, rustMemberCapability } from '../src/core/rust-engine.ts';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
@@ -60,7 +63,8 @@ describe('openRustEngine', () => {
   });
 
   test('connect, reconnect and disconnect run the lifecycle; disconnect runs every registered stop once', async () => {
-    const engine = open();
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-'));
+    const engine = openRustEngine({ addon, databasePath: join(dir, 'brain.rust') });
     let stopped = 0;
     engine.registerBeforeDisconnect(async () => { stopped++; });
     const unregister = engine.registerBeforeDisconnect(async () => { stopped += 100; });
@@ -68,14 +72,17 @@ describe('openRustEngine', () => {
     engine.registerBeforeDisconnect(async () => { throw new Error('a failing stop never blocks shutdown'); });
     await engine.reconnect(); // never connected: nothing to restore
     expect(engine.connected).toBe(false);
-    await engine.connect({ engine: 'pglite', database_path: '/var/brains/test.rust' });
+    await engine.connect({ engine: 'pglite', database_path: join(dir, 'brain.rust') });
     expect(engine.connected).toBe(true);
+    expect(engine.ownerRole).toBe('owner');
     await engine.reconnect();
     expect(engine.connected).toBe(true);
     expect(stopped).toBe(1);
     await engine.disconnect();
     expect(engine.connected).toBe(false);
+    expect(engine.ownerRole).toBeNull();
     expect(stopped).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test('a partial or unknown outcome says what may have been written', () => {

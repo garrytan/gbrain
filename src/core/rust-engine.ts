@@ -7,12 +7,20 @@
  * the loader, not here. The shell reports an empty capability set, so every BrainEngine member except the lifecycle
  * ones rejects with a typed `engine_capability_missing` naming the capability it needs (rust-engine/members.ts), before
  * any work. Later Rust PRs replace those refusals with typed methods one capability at a time.
+ *
+ * One process owns a Rust brain at a time (rust-engine/owner-ipc/). `connect` takes the brain's owner lock and serves
+ * this engine on the owner socket, or, when another process holds the lock, makes this engine a client of that owner:
+ * its data members then run on the owner, and the members that need a transaction refuse (owner-ipc/routes.ts).
  */
 import type { BrainEngine } from './engine.ts';
 import type { Capability, EngineCapabilities } from './engine-capabilities.ts';
 import type { EngineConfig } from './types.ts';
 import { capabilityMissing } from './rust-engine/errors.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
+import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
+import { installOwnerClient } from './rust-engine/owner-ipc/client.ts';
+import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
+import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 
 /** The loaded, verified addon exports. Opaque to the shell: the typed methods later PRs add call into it. */
 export type RustEngineAddonHandle = object;
@@ -22,6 +30,8 @@ export interface OpenRustEngineOptions {
   addon: RustEngineAddonHandle;
   /** Absolute path of the brain's store directory (the config's database_path). */
   databasePath: string;
+  /** How long `connect` waits to become the owner or reach it (owner-ipc/election.ts); tests shorten it. */
+  ownerWaitMs?: number;
 }
 
 /** Builds the Rust engine around an addon the loader has already verified. Nothing is opened or written yet. */
@@ -42,17 +52,32 @@ export class RustEngine implements BrainEngine {
   private _savedConfig: EngineConfig | null = null;
   private _connected = false;
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
+  private readonly _ownerWaitMs: number | undefined;
+  private _owner: OwnerRole | null = null;
+  private _leaveOwner: (() => void) | null = null;
 
   constructor(opts: OpenRustEngineOptions) {
     this.addon = opts.addon;
     this.databasePath = opts.databasePath;
+    this._ownerWaitMs = opts.ownerWaitMs;
   }
 
   /** True between `connect()` and `disconnect()`. */
   get connected(): boolean { return this._connected; }
 
+  /** `owner` when this process owns the brain, `client` when it reaches the owner, null before connect. */
+  get ownerRole(): 'owner' | 'client' | null { return this._owner?.role ?? null; }
+
+  /** The owner's call pool, when this process owns the brain. */
+  ownerStats(): OwnerServerStats | null { return this._owner?.role === 'owner' ? this._owner.server.stats() : null; }
+
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config;
+    const role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
+      wholeOperations: ownerWholeOperations(), ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
+    });
+    this._owner = role;
+    if (role.role === 'client') this._leaveOwner = installOwnerClient(this, role.connection);
     this._connected = true;
   }
 
@@ -61,6 +86,14 @@ export class RustEngine implements BrainEngine {
     this._beforeDisconnect.clear();
     for (const stop of stops) {
       try { await stop(); } catch { /* a stop barrier never blocks shutdown */ }
+    }
+    const owner = this._owner;
+    this._owner = null;
+    this._leaveOwner?.();
+    this._leaveOwner = null;
+    if (owner?.role === 'owner') {
+      await owner.server.close();
+      await owner.lock.release();
     }
     this._connected = false;
   }
