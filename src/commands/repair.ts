@@ -39,6 +39,9 @@ import { resolveSecretRules } from '../core/secret-spans.ts';
 import { normalizeSeatLabel } from '../core/context/seat.ts';
 import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
 import { fileDriftConsentText } from '../core/repair/file-drift.ts';
+import { loadConfig } from '../core/config.ts';
+import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
+import type { OperationContext } from '../core/ops/contract.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
 import { openFactsLedger, openFactsUndoLedger, readFactIdsFile } from './repair-open-facts.ts';
 import { createdBeforeRequired, memberModeRefused } from '../core/repair/open-facts.ts';
@@ -503,11 +506,12 @@ export function parseRepairArgs(args: string[]): RepairArgs {
 /**
  * `gbrain repair file-drift --held --side <side> --prefer file --whole-class [--apply --expect <hash> --yes]` (file-drift-class.ts):
  * the preview prints the manifest summary (`details.class_manifest`) and, once complete, the data-loss card and the apply command;
- * the apply of a manifest is not available yet.
+ * the apply asks for the user's consent on the hash, stops after the current page on SIGTERM or SIGHUP, and a stopped apply
+ * prints its resume command first and exits 1.
  */
 async function runFileDriftClassCommand(engine: BrainEngine, a: { apply: boolean; json: boolean; source?: string; expect?: string; only: string[]; skip: string[]; slugs: string[];
   requests: string[]; allDrifted: boolean; held: boolean; side?: string; state?: string; provenance?: string; cursor?: string; prefer?: string; args: string[] }): Promise<void> {
-  const { assertWholeClassSelection, classPreviewArgv, previewFileDriftClass } = await import('../core/repair/file-drift-class.ts');
+  const { applyFileDriftClass, assertWholeClassSelection, classApplyLines, classConsentText, classPreviewArgv, previewFileDriftClass } = await import('../core/repair/file-drift-class.ts');
   assertWholeClassSelection({ ...a, sourceId: a.source });
   if (!a.source) throw invalid('gbrain repair file-drift --whole-class needs exactly one --source.', 'Name the source: gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class');
   const scope = await resolveRepairScope(engine, a.source);
@@ -533,8 +537,26 @@ async function runFileDriftClassCommand(engine: BrainEngine, a: { apply: boolean
     console.log(lines.join('\n'));
     return;
   }
-  throw invalid('--whole-class --apply is not available yet: this change adds the whole-class preview only.', `Review the preview, or settle the held pages one window at a time without --whole-class: gbrain repair file-drift --source ${a.source} --held --side ${a.side} --prefer file`,
+  if (!a.expect) throw invalid('gbrain repair file-drift --whole-class --apply applies only the manifest a complete preview printed.', `Preview first: ${shellQuote(classPreviewArgv(sel))}, then run the apply command it prints after the user agrees.`,
     [...classPreviewArgv(sel), '--json']);
+  const consent = classConsentText(a.expect);
+  const auth = await consentGate({ command: 'repair file-drift', effects: ['destructive'], actor: 'agent', ...consent,
+    argv: [...classPreviewArgv(sel), '--apply', '--expect', a.expect, ...(a.json ? ['--json'] : [])], preview_argv: [...classPreviewArgv(sel), '--json'], plan_hash: a.expect, args: a.args },
+    { json: a.json, env: engineConsentEnv(engine) });
+  if (!auth) return;
+  const stop = new AbortController();
+  const release = registerSignalOwner('repair apply', signal => {
+    if (!stop.signal.aborted) { process.stderr.write(`[repair] ${signal}: stopping after the current page; send it again to exit now\n`); stop.abort(signal); return; }
+    release(); process.kill(process.pid, signal);
+  });
+  const ctx = { engine, config: loadConfig() ?? { engine: engine.kind }, logger: { info: console.error, warn: console.error, error: console.error }, dryRun: false, remote: false,
+    sourceId: a.source, writeWaitMs: currentCliWriteWait().waitMs } as OperationContext;
+  const result = await applyFileDriftClass(ctx, scope, sel, a.expect, { stop: stop.signal }).finally(release);
+  clearHealthMemo(engine);
+  if (!result.complete) setCliExitVerdict(1);
+  if (a.json) { console.log(JSON.stringify({ scope, mode: 'apply', results: [{ kind: 'file-drift', ...result }] }, null, 2)); return; }
+  const lines = classApplyLines(result);
+  console.log(lines.join('\n'));
 }
 
 export function renderRepairResult(result: RepairResult, opts: { diff: boolean } = { diff: false }): string {

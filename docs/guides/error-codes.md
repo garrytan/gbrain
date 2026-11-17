@@ -834,6 +834,16 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### class_apply_busy
+
+<a id="class_apply_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another apply of the same whole-class file-drift manifest is running, so this run wrote nothing. | One whole-class apply per manifest at a time keeps its progress record and request ids consistent; a second apply would race the first over the same pages. | Wait for the running apply to finish. If it was stopped, rerun the same apply command once its lock expires (the message names when); it resumes at the next window and applies no page twice. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/repair.md#whole-class](../../docs/guides/repair.md#whole-class)
+
 ### class_capacity_exceeded
 
 <a id="class_capacity_exceeded"></a>
@@ -841,6 +851,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A whole-class file-drift preview found that the reconcile backups its apply would retain exceed the brain's recovery-bytes limit, so nothing was written. | Every page the apply replaces keeps a private reconcile backup, and those backups are bounded by persistence.limits.brain_recovery_bytes; an apply that ran out of room would stop partway through the class. | Show the user the bytes needed and the limit the message names. Raising persistence.limits.brain_recovery_bytes is their call; otherwise settle a smaller class with --only / --skip. Run: gbrain config get persistence.limits.brain_recovery_bytes | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#whole-class](../../docs/guides/repair.md#whole-class)
+
+### class_manifest_stale
+
+<a id="class_manifest_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The whole-class file-drift manifest no longer matches the hash passed with --expect or the pins its preview saved, so nothing was written. | The apply replaces exactly the pages the user approved; a manifest that was edited, partly written, removed, or previewed for another selection is not that approval. | Run the fresh preview the message prints, show the user its card, and apply its new hash after they agree. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#whole-class](../../docs/guides/repair.md#whole-class)
 

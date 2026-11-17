@@ -165,6 +165,7 @@ Every hold and error has three fields, from one table
 | `rename_identity_unreadable` | page | none | yes | always: the file title or id holds characters the database cannot compare |
 | `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
 | `file_drift_unknown` | page | reconcile | yes | always: the file and the page differ and no import record says which changed |
+| `file_drift` on a read-only mirror | page | reconcile ([whole class](repair.md#whole-class)) | yes | always: the user approves the whole-class preview's hash; pages listed `kept_newer_page` or `kept_protected_parts` stay held for a person |
 | `file_drift_mirror_database_only` | page | none | no | never: the page stays live and database-only because gbrain never writes a read-only mirror |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
 | `page_identity_decision` | page | none | yes | always: only a person decides which page the file is |

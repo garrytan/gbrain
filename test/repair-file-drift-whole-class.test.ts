@@ -4,28 +4,34 @@
  *   - The whole-class preview walks every window into one manifest (totals equal the per-window sums; no apply command until it
  *     completes); it refuses past the recovery-bytes limit (class_capacity_exceeded) and on a repo-less brain finds no held pages.
  *   - kept_protected_parts: a mirror page whose file-wins result needs protected parts in its file stays held through syncs.
+ *   - The apply binds pins, never timestamps (a sync that rewrote the holds keeps the approval), imports database-only on a mirror
+ *     (a page version first, revert restores it, the checkout byte-identical), resumes after a kill without applying a page twice,
+ *     refuses a concurrent apply (class_apply_busy), an edited manifest (class_manifest_stale) and a remote caller.
  * PGLite always; Postgres when DATABASE_URL is set. Synthetic content only.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
-import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { FILE_DRIFT_VERSION, requestGitHoldRetry, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { resolveRepairScope, type RepairPlanOptions } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { artifactDirectory } from '../src/core/repair/file-drift.ts';
-import { classWindow, previewFileDriftClass, type ClassSelection } from '../src/core/repair/file-drift-class.ts';
+import { applyFileDriftClass, classApplyLines, classWindow, CLASS_PROGRESS_OP, previewFileDriftClass, type ClassSelection } from '../src/core/repair/file-drift-class.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { connectTemplateBrain } from './helpers/brain-template.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -46,6 +52,8 @@ const sel = (side = 'unknown'): ClassSelection => ({ sourceId: 'default', side, 
 const asCli = <T>(engine: BrainEngine, run: () => Promise<T>) => registerLocalWriter(engine, 'cli').then(writer => withVerifiedLocalRegistration(engine, writer, run));
 const preview = (engine: BrainEngine, side = 'unknown', opts: Parameters<typeof previewFileDriftClass>[3] = {}) =>
   asCli(engine, async () => previewFileDriftClass(engine, await resolveRepairScope(engine, 'default'), sel(side), { remote: false, ...opts }));
+const apply = (ctx: OperationContext, hash: string, opts: Parameters<typeof applyFileDriftClass>[4] = {}, side = 'unknown') =>
+  asCli(ctx.engine, async () => applyFileDriftClass({ ...ctx, remote: false }, await resolveRepairScope(ctx.engine, 'default'), sel(side), hash, opts));
 async function windowPreview(engine: BrainEngine, opts: Partial<RepairPlanOptions>) {
   return asCli(engine, async () => (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', ...opts } as never));
 }
@@ -162,13 +170,14 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     expect(existsSync(dir) ? readdirSync(dir).filter(name => name.startsWith('class-')) : []).toEqual([]);
   }, { ...db(), setup: setup(3) }), 300_000);
 
-  test('kept_protected_parts: the page stays held with its protected parts as stored through two syncs, and the checkout byte-identical', () => managedBrain(async ({ engine, ctx, root }) => {
+  test('kept_protected_parts: the apply leaves the page held and its protected parts as stored through two syncs, and the checkout byte-identical', () => managedBrain(async ({ engine, ctx, root }) => {
     await mirrorHolds(engine, root, names(1), { protectedPage: true });
     const before = checkout(root);
     const m = (await preview(engine)).class_manifest!;
     expect([m.pages, m.residual.kept_protected_parts.count]).toEqual([1, 1]);
     const window = await windowPreview(engine, { held: true, side: 'unknown', prefer: 'file' });
     expect(classes(window)['notes/protected']).toBe('kept_protected_parts');
+    expect((await apply(ctx, m.hash)).complete).toBe(true);
     await performManagedSync(engine, OPTS);
     await performManagedSync(engine, OPTS);
     const held = (await holdRows(engine)).find(h => h.path === 'notes/protected.md')!;
@@ -179,10 +188,99 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     expect(checkout(root)).toBe(before);
   }, { ...db(), setup: setup(1, ['notes/protected']) }), 300_000);
 
-  test('a remote caller cannot reach --whole-class: the preview refuses before reading anything', () => managedBrain(async ({ engine, ctx }) => {
+  test('the apply imports database-only: a page version first, revert restores it, the checkout byte-identical, and the next sync releases the holds', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root, names(2), { newerPage: true });
+    const before = checkout(root);
+    const m = (await preview(engine)).class_manifest!;
+    const result = await apply(ctx, m.hash);
+    expect([result.complete, result.applied, result.skipped]).toEqual([true, 2, 0]);
+    expect(await body(engine, 'notes/n00')).toContain('A newer file body of notes/n00.');
+    expect(await body(engine, 'notes/newer-page')).toBe('A newer database body.');
+    expect(checkout(root)).toBe(before);
+    const [version] = await engine.executeRaw<{ id: number; b: string }>("SELECT v.id, v.compiled_truth AS b FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.slug='notes/n00' ORDER BY v.id DESC LIMIT 1");
+    expect(version!.b).toBe('An old database body.');
+    await performManagedSync(engine, OPTS);
+    expect((await holdRows(engine)).map(h => h.path)).toEqual(['notes/newer-page.md']);
+    const current = await engine.readPageSnapshot('notes/n00', { sourceId: 'default' });
+    const requestId = randomUUID();
+    await submitPageMutation(ctx, { operation: 'revert_version', params: { slug: 'notes/n00', version_id: version!.id, request_id: requestId, expected_revision: current!.revision } });
+    await waitFor(async () => (await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]))[0]?.state === 'committed', { timeoutMs: 20_000, label: 'revert commits' });
+    expect(await body(engine, 'notes/n00')).toBe('An old database body.');
+    expect(checkout(root)).toBe(before);
+  }, { ...db(), setup: setup(2, ['notes/newer-page']) }), 300_000);
+
+  test('a sync that rewrites the hold records between preview and apply keeps the approval: unchanged pages still apply', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root, names(3));
+    const [{ i }] = await engine.executeRaw<{ i: string }>("SELECT incarnation::text AS i FROM sources WHERE id='default'");
+    const rehold = async () => { await requestGitHoldRetry(engine, 'default', i, names(3).map(slug => `${slug}.md`)); await performManagedSync(engine, OPTS); };
+    await rehold();
+    const m = (await preview(engine)).class_manifest!;
+    expect(m.pages).toBe(3);
+    const seen = Object.fromEntries((await holdRows(engine)).map(h => [h.path, h]));
+    await rehold();
+    const after = await holdRows(engine);
+    expect(after.map(h => h.path)).toEqual(Object.keys(seen));
+    expect(after.every(h => h.observed_at !== seen[h.path]!.observed_at && h.upstream_version === seen[h.path]!.upstream_version && h.meta.side === 'unknown')).toBe(true);
+    const result = await apply(ctx, m.hash);
+    expect(result.skipped_pages).toEqual([]);
+    expect([result.complete, result.applied, result.skipped]).toEqual([true, 3, 0]);
+  }, { ...db(), setup: setup(3) }), 300_000);
+
+  test('an apply killed after window 1 resumes at window 2 and applies no page twice; the stopped result leads with its resume command', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root, names(4));
+    classWindow.pages = 2;
+    const m = (await preview(engine)).class_manifest!;
+    const killed = await apply(ctx, m.hash, { onWindow: window => { if (window === 0) throw new Error('killed'); } });
+    expect([killed.complete, killed.applied, killed.remaining]).toEqual([false, 2, 2]);
+    expect(killed.stopped?.code).toBe('unexpected_error');
+    expect(existsSync(killed.trace!)).toBe(true);
+    const lines = classApplyLines(killed);
+    expect(lines[0]).toBe(`Resume: ${killed.resume_command}`);
+    expect(lines[1]).toContain('applied 2, skipped 0, remaining 2');
+    const windows: number[] = [];
+    const resumed = await apply(ctx, m.hash, { onWindow: window => { windows.push(window); } });
+    expect([resumed.complete, resumed.applied, resumed.skipped]).toEqual([true, 4, 0]);
+    expect(windows).toEqual([1]);
+    const versions = await engine.executeRaw<{ slug: string; n: number }>("SELECT p.slug, count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id GROUP BY p.slug ORDER BY p.slug");
+    expect(versions).toEqual(names(4).map(slug => ({ slug, n: 1 })));
+  }, { ...db(), setup: setup(4) }), 300_000);
+
+  test('a second concurrent apply of one manifest is refused class_apply_busy', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root, names(2));
+    classWindow.pages = 1;
+    const m = (await preview(engine)).class_manifest!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const inside = new Promise<void>(resolve => { entered = resolve; });
+    const first = apply(ctx, m.hash, { onWindow: async window => { if (window === 0) { entered(); await gate; } } });
+    await inside;
+    const second: any = await apply(ctx, m.hash).then(() => null, e => e);
+    expect(second?.code).toBe('class_apply_busy');
+    release();
+    expect((await first).complete).toBe(true);
+  }, { ...db(), setup: setup(2) }), 300_000);
+
+  test('an edited manifest is refused class_manifest_stale with what changed and the fresh preview; nothing is written', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root, names(2));
+    const m = (await preview(engine)).class_manifest!;
+    const manifest = JSON.parse(readFileSync(m.path, 'utf8'));
+    manifest.pages[0].lost_lines = 0;
+    manifest.pages[0].revision = randomUUID();
+    writeFileSync(m.path, JSON.stringify(manifest));
+    const error: any = await apply(ctx, m.hash).then(() => null, e => e);
+    expect(error?.code).toBe('class_manifest_stale');
+    expect(error.message).toContain('1 page(s) or their pins differ');
+    expect(error.suggestion).toContain('gbrain repair file-drift --source default --held --side unknown --prefer file --whole-class');
+    expect(await body(engine, 'notes/n00')).toBe('An old database body.');
+    expect((await engine.executeRaw('SELECT 1 FROM op_checkpoints WHERE op=$1', [CLASS_PROGRESS_OP])).length).toBe(0);
+  }, { ...db(), setup: setup(2) }), 300_000);
+
+  test('a remote caller cannot reach --whole-class: preview and apply refuse before reading anything', () => managedBrain(async ({ engine, ctx }) => {
     const scope = await resolveRepairScope(engine, 'default');
     expect(((await previewFileDriftClass(engine, scope, sel(), { remote: true }).then(() => null, e => e)) as any)?.code).toBe('permission_denied');
     expect(((await previewFileDriftClass(engine, scope, sel()).then(() => null, e => e)) as any)?.code).toBe('permission_denied');
+    expect(((await applyFileDriftClass({ ...ctx, remote: true }, scope, sel(), 'a'.repeat(64)).then(() => null, e => e)) as any)?.code).toBe('permission_denied');
   }, { ...db() }), 120_000);
 
   test('a repo-less brain has no held pages: the preview says so and refuses nothing', async () => {

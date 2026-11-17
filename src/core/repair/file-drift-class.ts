@@ -1,5 +1,5 @@
 /**
- * `gbrain repair file-drift --source <id> --held --side unknown|database|both --prefer file --whole-class`:
+ * `gbrain repair file-drift --source <id> --held --side unknown|database|both --prefer file --whole-class [--apply --expect <hash> --yes]`:
  * settle one whole class of held `file_drift` pages with one approval. A `--held` preview covers one window of 200 pages; a
  * large read-only mirror holds thousands, so approving it window by window was not practical.
  *
@@ -14,32 +14,45 @@
  *   - `kept_protected_parts`: on a read-only mirror, letting the file win would append gbrain's protected parts to the file,
  *     and the checkout is never written, so the page stays held.
  *
- * The apply of a complete manifest (`--apply --expect <hash> --yes`) is not part of this change: the CLI refuses it for now.
+ * The apply (trusted local CLI only, the user's yes on the preview hash) re-reads each page and applies it only when its pins
+ * (revision, file blob, hold code, side, upstream version, mirror flag) still hold and its lost lines did not grow; it binds
+ * no timestamp, so a sync that only rewrote hold records keeps the approval. Each page goes through the reconcile apply,
+ * which saves the replaced page as a page version (`gbrain revert`) and keeps reconcile's private backup; on a read-only mirror
+ * the file's bytes are imported into the page database-only and the checkout is never written. One apply per manifest at a
+ * time (a lock in the progress record); progress is saved per window under the manifest hash, request ids derive from the hash
+ * and the slug, so a rerun after a kill applies no page twice and resumes at the next window.
  */
-import { existsSync, lstatSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
-import { OperationError, opError } from '../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { shellQuote } from '../agent-output.ts';
 import { VERSION } from '../../version.ts';
 import { digest, stableJson } from '../persistence/digest.ts';
-import { previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { clearApprovedSet, loadApprovedSet, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { journalLimitKey, readJournalLimits } from '../persistence/limits.ts';
-import { FILE_DRIFT_VERSION, fileDriftSide, GIT_HOLD_OP, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { FILE_DRIFT_VERSION, fileDriftSide, GIT_HOLD_OP, readGitHold, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { runReconcileApply } from '../persistence/reconcile.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { fileCommitEvidenceBatch, heldLiveDrift, readDriftEvidence, type CommitEvidence } from './file-drift-compare.ts';
 import { artifactDirectory, asLocalCli, HELD_WINDOW_PAGES, keptProtectedPartsDetail, prepareDriftPage, selectedByGlobs, writeArtifact } from './file-drift.ts';
 import type { RepairScope } from './core.ts';
 
+/** The progress record of a whole-class apply, keyed by the manifest hash (`op_checkpoints`). */
+export const CLASS_PROGRESS_OP = 'file-drift-class-progress';
 /** The window a whole-class walk and its apply step by; tests make it small. */
 export const classWindow = { pages: HELD_WINDOW_PAGES };
 export const CLASS_SIDES = ['unknown', 'database', 'both'] as const;
 const CLASS_TOP = 50;
+const LOCK_TTL_MS = 120_000;
 const RECONCILE_ARTIFACT_VERSION = 1;
 const CURSOR_PREFIX = 'c1.';
 const APPROVAL_PREFIX = 'class:';
@@ -55,6 +68,8 @@ export interface ClassManifest { format_version: 1; kind: 'file-drift-class'; gb
 export interface ClassManifestSummary { path: string; hash: string; complete: boolean; pages: number; lost_lines_total: number;
   top: Array<{ slug: string; path: string; lost_lines: number }>; residual: { kept_newer_page: { count: number; next: string }; kept_protected_parts: { count: number; next: string } } }
 export interface ClassPreviewResult { none: boolean; class_manifest?: ClassManifestSummary; other: Record<string, number>; resume_command?: string; apply_command?: string; card?: string[] }
+export interface ClassApplyResult { complete: boolean; applied: number; skipped: number; remaining: number; skipped_pages: Array<{ slug: string; reason: string }>;
+  resume_command?: string; stopped?: { code: string; message: string }; trace?: string; next?: string }
 
 const argvSelection = (sel: ClassSelection) => [...sel.only.flatMap(glob => ['--only', glob]), ...sel.skip.flatMap(glob => ['--skip', glob])];
 export const classPreviewArgv = (sel: ClassSelection, cursor?: string) =>
@@ -63,6 +78,10 @@ const classApplyArgv = (sel: ClassSelection, hash: string) => [...classPreviewAr
 const compareArgv = (sel: ClassSelection) => ['gbrain', 'repair', 'file-drift', '--source', sel.sourceId, '--held', '--side', sel.side, ...argvSelection(sel), '--json'];
 const manifestPath = (hash: string) => join(artifactDirectory(), `class-${hash}.json`);
 const manifestHash = (manifest: ClassManifest) => previewHash({ kind: 'file-drift-class-v1', manifest });
+const requestIdFor = (hash: string, slug: string) => {
+  const h = digest(['file-drift-class-request-v1', hash, slug]);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+};
 
 /** The whole-class refusals of a selection the CLI parsed; nothing was read or written when one throws. */
 export function assertWholeClassSelection(opts: { held?: boolean; side?: string; state?: string; provenance?: string; prefer?: string; slugs?: string[]; requests?: string[]; allDrifted?: boolean; sourceId?: string }): void {
@@ -89,6 +108,19 @@ function readManifest(hash: string): ClassManifest | null {
   } catch { return null; }
 }
 
+/** The consent wording of a whole-class apply, from its manifest when it is readable (the apply itself refuses a stale one). */
+export function classConsentText(hash: string): { what: string; why: string; risk: string; user_message: string } {
+  const manifest = /^[0-9a-f]{64}$/.test(hash) ? readManifest(hash) : null;
+  const pages = Array.isArray(manifest?.pages) ? manifest.pages : [];
+  const lost = pages.reduce((sum, page) => sum + (page.lost_lines ?? 0), 0);
+  const where = manifest ? ` of source ${manifest.source_id} (held file drift, side ${manifest.side})` : '';
+  return {
+    what: `Replace ${pages.length} held page(s)${where} with their upstream files${manifest?.mirror ? ', database-only: the read-only mirror\'s checkout is never written' : ''}.`,
+    why: `The whole-class preview ${hash} listed each page, its pins and the ${lost} line(s) the replaced pages hold that their files do not carry.`,
+    risk: 'Each replaced page is saved as a page version first (gbrain revert restores it) and reconcile keeps a private backup; a page that changed since the preview is skipped and stays held. A large page whose older versions are pruned survives only in the private backup.',
+    user_message: `Apply the whole-class file-drift repair (preview ${hash.slice(0, 12)})? It replaces ${pages.length} page(s)${where} with their files and drops ${lost} line(s) the pages hold; each page is saved as a version first.`,
+  };
+}
 
 function removeManifest(hash: string | null | undefined): void {
   if (!hash) return;
@@ -240,4 +272,161 @@ async function classifyPage(engine: BrainEngine, sel: ClassSelection, hold: GitH
     if (!(error instanceof OperationError) || ['owner_unavailable', 'writer_registration_required'].includes(error.code)) throw error;
     return { kept: `refused_${error.code}`, slug, next: '' };
   }
+}
+
+/** G1: the manifest no longer matches its hash or the approved pins; nothing was written. */
+function staleManifest(sel: ClassSelection, hash: string, why: string): OperationError {
+  return opError('class_manifest_stale', `The whole-class manifest ${hash.slice(0, 12)} no longer matches what was previewed: ${why}.`,
+    `Nothing was written. Preview the class again and approve its new hash: ${shellQuote(classPreviewArgv(sel))}`,
+    { fix: readFix('Previews the whole class again, writing only a new private manifest; it prints a new hash and apply command.', { argv: [...classPreviewArgv(sel), '--json'] }) });
+}
+
+interface Lock { token: string; pid: number; host: string; expires_at: number }
+interface Progress { hash: string; window: number; applied: number; skipped: number; complete?: boolean; lock?: Lock | null; last_error?: string }
+
+function lockLive(lock: Lock | null | undefined): boolean {
+  if (!lock || lock.expires_at <= Date.now()) return false;
+  if (lock.host !== hostname()) return true;
+  try { process.kill(lock.pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+/** The per-manifest lock: one apply of a manifest at a time (`class_apply_busy`). */
+async function acquireLock(engine: BrainEngine, sel: ClassSelection, hash: string, token: string): Promise<Progress> {
+  return engine.transaction(async tx => {
+    await tx.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT(op,fingerprint) DO NOTHING',
+      [CLASS_PROGRESS_OP, hash, JSON.stringify([{ hash, window: 0, applied: 0, skipped: 0 }])]);
+    const [row] = await tx.executeRaw<{ completed_keys: Progress[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR UPDATE', [CLASS_PROGRESS_OP, hash]);
+    const progress = row!.completed_keys[0]!;
+    if (lockLive(progress.lock)) throw opError('class_apply_busy', `Another apply of whole-class manifest ${hash.slice(0, 12)} is running (process ${progress.lock!.pid} on ${progress.lock!.host}).`,
+      `Nothing was written by this run. Wait for that apply to finish; if it was stopped, rerun the same command once its lock expires (${new Date(progress.lock!.expires_at).toISOString()}), and it resumes at the next window: ${shellQuote(classApplyArgv(sel, hash))}`,
+      { fix: readFix('Shows the source\'s held pages and sync state, read-only.', { argv: ['gbrain', 'sources', 'status', sel.sourceId, '--json'] }) });
+    const next = { ...progress, lock: { token, pid: process.pid, host: hostname(), expires_at: Date.now() + LOCK_TTL_MS } };
+    await tx.executeRaw('UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now() WHERE op=$1 AND fingerprint=$2', [CLASS_PROGRESS_OP, hash, JSON.stringify([next])]);
+    return next;
+  });
+}
+
+/** Saves the progress record, but only while this run holds its lock. */
+async function writeProgress(engine: BrainEngine, hash: string, token: string, update: Partial<Progress>): Promise<void> {
+  await engine.transaction(async tx => {
+    const [row] = await tx.executeRaw<{ completed_keys: Progress[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR UPDATE', [CLASS_PROGRESS_OP, hash]);
+    const progress = row?.completed_keys?.[0];
+    if (!progress || progress.lock?.token !== token) return;
+    await tx.executeRaw('UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now() WHERE op=$1 AND fingerprint=$2',
+      [CLASS_PROGRESS_OP, hash, JSON.stringify([{ ...progress, ...update }])]);
+  });
+}
+
+type PageOutcome = { applied: true } | { applied: false; reason: string };
+
+/** D1: one page re-read and applied only when every pin still holds and its lost lines did not grow. */
+async function applyPage(engine: BrainEngine, sel: ClassSelection, manifest: ClassManifest, hash: string, pin: ClassPin, incarnation: string, mirror: boolean): Promise<PageOutcome> {
+  const requestId = requestIdFor(hash, pin.slug);
+  const [prior] = await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+  if (prior?.state === 'committed') return { applied: true };
+  if (prior && !['conflict', 'failed', 'cancelled'].includes(prior.state)) {
+    throw opError('write_pending', `The apply of ${pin.slug} (request ${requestId}) has not settled yet.`, `Wait for it (gbrain write-request ${requestId}), then rerun the apply; it resumes where it stopped.`);
+  }
+  if (prior) return { applied: false, reason: `refused_${prior.state}` };
+  if (mirror !== manifest.mirror) return { applied: false, reason: 'mirror_changed' };
+  const hold = await readGitHold(engine, sel.sourceId, incarnation, pin.path);
+  if (!hold || hold.code !== pin.hold_code || (fileDriftSide(hold.meta) ?? '') !== pin.side || (hold.upstream_version ?? null) !== pin.upstream_version || hold.slug !== pin.slug) {
+    return { applied: false, reason: 'hold_changed' };
+  }
+  const assessmentAt = new Date().toISOString();
+  const live = await heldLiveDrift(engine, sel.sourceId, pin.slug, { hold, mirror });
+  if (live.still_present !== true) return { applied: false, reason: 'changed_since_preview' };
+  const evidence = await readDriftEvidence(engine, sel.sourceId, pin.slug, assessmentAt);
+  if (evidence.newer === 'database' && evidence.differs !== 'none') return { applied: false, reason: 'changed_since_preview' };
+  const page = await prepareDriftPage(engine, sel.sourceId, pin.slug, 'file', assessmentAt);
+  if (page.preview.preconditions.revision !== pin.revision || page.preview.preconditions.raw_file_hash !== pin.file_blob || page.lost_lines > pin.lost_lines
+    || (mirror && page.file_appended) || page.discards) return { applied: false, reason: 'changed_since_preview' };
+  try {
+    await runReconcileApply(engine, { source_id: sel.sourceId, slug: pin.slug, preview: page.preview, request_id: requestId, keep_file_bytes: true });
+    return { applied: true };
+  } catch (error) {
+    if (acceptedPendingReceipt(error) || !(error instanceof OperationError) || ['owner_unavailable', 'writer_lock_unavailable', 'writer_busy', 'write_pending', 'queue_capacity'].includes(error.code)) throw error;
+    const changed = ['revision_conflict', 'page_identity_changed', 'page_not_found', 'source_changed'].includes(error.code);
+    return { applied: false, reason: changed ? 'changed_since_preview' : `refused_${error.code}` };
+  }
+}
+
+/**
+ * The whole-class apply of the manifest the user approved (`--expect <hash>`). Trusted local CLI only. It stops (complete false,
+ * a resume command) on a stop signal, the deadline, or an error that is not one page's refusal; a rerun resumes at the window
+ * that was running, and the request ids derived from the hash and slug keep a page from applying twice.
+ */
+export async function applyFileDriftClass(ctx: OperationContext, scope: RepairScope, sel: ClassSelection, expect: string,
+  opts: { deadline?: number; stop?: AbortSignal; onWindow?: (window: number) => Promise<void> | void } = {}): Promise<ClassApplyResult> {
+  if (ctx.remote !== false) throw trustedCliRequired('gbrain repair file-drift --whole-class --apply runs only for the trusted local CLI on the brain host.');
+  const engine = ctx.engine;
+  assertWholeClassSelection({ held: true, side: sel.side, prefer: 'file', sourceId: sel.sourceId });
+  const manifest = /^[0-9a-f]{64}$/.test(expect) ? readManifest(expect) : null;
+  if (!manifest) throw staleManifest(sel, expect, 'no manifest file with that hash is left in the preview directory');
+  if (manifest.source_id !== sel.sourceId || manifest.side !== sel.side || manifest.brain_id !== scope.brain_id || digest([manifest.only, manifest.skip]) !== digest([sel.only, sel.skip])) {
+    throw staleManifest(sel, expect, 'it was previewed for another selection');
+  }
+  const approved = await loadApprovedSet<ClassPin>(engine, { command: 'file-drift', hash: APPROVAL_PREFIX + expect, previewCommand: shellQuote(classPreviewArgv(sel)) }).catch(() => null);
+  if (!approved) throw staleManifest(sel, expect, 'no complete preview is saved under that hash (or it is older than 7 days)');
+  if (!manifest.complete || !Array.isArray(manifest.pages) || manifestHash(manifest) !== expect) {
+    const saved = new Map(approved.items.map(pin => [pin.slug, digest(pin)]));
+    const now = new Map((Array.isArray(manifest.pages) ? manifest.pages : []).map(pin => [pin.slug, digest(pin)]));
+    const changed = [...new Set([...saved.keys(), ...now.keys()])].filter(slug => saved.get(slug) !== now.get(slug)).length;
+    throw staleManifest(sel, expect, changed ? `${changed} page(s) or their pins differ from the approved set` : 'its versions, mirror flag or kept pages differ from the approved preview');
+  }
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sel.sourceId]);
+  const mirror = await sourceMirrorReadOnly(engine, sel.sourceId);
+  const token = randomUUID();
+  const progress = await acquireLock(engine, sel, expect, token);
+  const result: ClassApplyResult = { complete: false, applied: progress.applied, skipped: progress.skipped, remaining: 0, skipped_pages: [] };
+  const size = Math.max(1, classWindow.pages);
+  const windows = Math.ceil(manifest.pages.length / size);
+  let window = progress.window;
+  let finished = false;
+  try {
+    await asLocalCli(engine, async () => {
+      for (; window < windows; window++) {
+        for (const pin of manifest.pages.slice(window * size, (window + 1) * size)) {
+          if (opts.stop?.aborted) throw opError('interrupted', 'The whole-class apply was stopped by a signal.', 'Rerun the resume command; it continues at the window that was running.');
+          if (opts.deadline !== undefined && Date.now() >= opts.deadline) throw opError('interrupted', 'The whole-class apply reached its deadline.', 'Rerun the resume command; it continues at the window that was running.');
+          const outcome = await applyPage(engine, sel, manifest, expect, pin, source!.incarnation, mirror);
+          if (outcome.applied) result.applied++;
+          else { result.skipped++; result.skipped_pages.push({ slug: pin.slug, reason: outcome.reason }); }
+          await writeProgress(engine, expect, token, { lock: { token, pid: process.pid, host: hostname(), expires_at: Date.now() + LOCK_TTL_MS } });
+        }
+        await writeProgress(engine, expect, token, { window: window + 1, applied: result.applied, skipped: result.skipped });
+        await opts.onWindow?.(window);
+      }
+    });
+    finished = true;
+  } catch (error) {
+    result.stopped = { code: error instanceof OperationError ? error.code : 'unexpected_error', message: error instanceof Error ? error.message : String(error) };
+    if (!(error instanceof OperationError)) {
+      const trace = join(artifactDirectory(), `class-${expect}.trace.txt`);
+      try { writeFileSync(trace, `${new Date().toISOString()} ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`, { mode: 0o600 }); result.trace = trace; } catch { /* the message still names the error */ }
+    }
+  } finally {
+    await writeProgress(engine, expect, token, { lock: null, ...(finished ? { complete: true } : { last_error: result.stopped?.message ?? '' }) });
+  }
+  if (finished) {
+    result.complete = true;
+    await clearApprovedSet(engine, { command: 'file-drift', hash: APPROVAL_PREFIX + expect });
+    removeManifest(expect);
+    result.next = `The next gbrain sync --source ${sel.sourceId} re-screens each applied file and releases its hold.`;
+    return result;
+  }
+  const saved = (await engine.executeRaw<{ completed_keys: Progress[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CLASS_PROGRESS_OP, expect]))[0]?.completed_keys?.[0];
+  result.remaining = Math.max(0, manifest.pages.length - (saved?.window ?? 0) * size);
+  result.resume_command = shellQuote(classApplyArgv(sel, expect));
+  return result;
+}
+
+/** I1: the text lines of an apply result; a stopped apply leads with its resume command, then what it applied, skipped and left. */
+export function classApplyLines(result: ClassApplyResult): string[] {
+  const lines = result.complete ? [`file-drift --whole-class: applied ${result.applied}, skipped ${result.skipped}, complete`]
+    : [`Resume: ${result.resume_command}`, `file-drift --whole-class STOPPED: applied ${result.applied}, skipped ${result.skipped}, remaining ${result.remaining}`,
+      `  ${result.stopped?.code}: ${result.stopped?.message}`, ...(result.trace ? [`  trace: ${result.trace}`] : [])];
+  for (const page of result.skipped_pages.slice(0, 50)) lines.push(`  skipped ${page.slug} (${page.reason}); it stays held`);
+  if (result.next) lines.push(`  ${result.next}`);
+  return lines;
 }

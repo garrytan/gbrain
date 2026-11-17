@@ -3700,7 +3700,7 @@ matches reads `release_hold`, and only a page whose file is gone reads
 carries `evidence` (null when nothing was read). The window previews read the
 same way, so `--held --side unknown --prefer file` lists a page whose file is
 newer `prefer_file`; the comparison names the [whole-class](#whole-class)
-preview of the side, which lists every such page under one hash and never
+preview of the side, which settles every such page with one approval and never
 writes the mirror's checkout.
 
 <a id="whole-class"></a>**Whole class.** `--whole-class` previews every window
@@ -3710,6 +3710,7 @@ thousands of pages, and a window preview covers 200.
 
 ```bash
 gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class          # read-only: writes only a private manifest
+gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class --apply --expect <hash> --yes   # after the user agrees
 ```
 
 The preview writes `repair-previews/file-drift/class-<hash>.json` under the
@@ -3725,12 +3726,20 @@ on a read-only mirror, `kept_protected_parts` (the file would need gbrain's
 protected keys, takes or private facts appended). A preview that stops early
 says `complete: false`, prints a resume command and no apply command.
 
-Only the trusted local CLI runs it, and an apply of the manifest is not
-available yet: `--whole-class --apply` refuses. Refusals:
-`whole_class_prefer_unsupported` (`--prefer database` or `--side deleted`; use the
-window preview) and `class_capacity_exceeded` (the backups would pass
-`persistence.limits.brain_recovery_bytes`; raising it is the user's call). A
-brain with no repository has no held pages: the preview says so and exits 0.
+The apply needs the user's yes on the hash and the trusted local CLI. Each page
+is re-read: it applies only while its revision, file blob, hold code, side,
+upstream version and mirror flag still match and its lost lines did not grow,
+so a sync that only rewrote hold records keeps the approval; anything else is
+skipped and stays held. On a read-only mirror the file is imported into the
+page database-only, and the next sync releases each hold. A stopped apply
+prints its resume command first, then applied, skipped and remaining, and
+exits 1; a rerun resumes at the next window and applies no page twice.
+Refusals: `whole_class_prefer_unsupported` (`--prefer database` or `--side
+deleted`; use the window preview), `class_capacity_exceeded` (the backups would
+pass `persistence.limits.brain_recovery_bytes`; raising it is the user's call),
+`class_manifest_stale` (the manifest no longer matches its hash; preview again)
+and `class_apply_busy` (another apply of the same manifest is running). A brain
+with no repository has no held pages: the preview says so and exits 0.
 
 <a id="file-drift-kept-newer"></a>`--prefer file` never drops a page edited after its file's last commit in
 bulk. A `--held`, `--all-drifted` or `--request` preview lists such a page
