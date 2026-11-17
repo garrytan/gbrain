@@ -19,6 +19,8 @@
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
+mod parser;
+mod stem;
 mod trgm;
 
 #[allow(unused_imports)]
