@@ -35,6 +35,17 @@ const MARKERS: BlockMarkers = { begin: '# gbrain:turn-rule:begin', end: '# gbrai
 const EVENT = 'pre_llm_call';
 const ALLOWLIST = 'shell-hooks-allowlist.json';
 
+/** Exactly the echo hermesTurnHookCommand writes, for any access: one {context} key holding gbrain's rule text (#8846). */
+function isTurnRuleEcho(command: string): boolean {
+  const m = /^\/bin\/echo '([^']*)'$/.exec(command);
+  if (!m) return false;
+  let context: unknown;
+  try { context = (JSON.parse(m[1]!) as { context?: unknown }).context; } catch { return false; }
+  return typeof context === 'string' && context.startsWith('GBrain: before answering this turn, check GBrain first (')
+    && context.includes(') for the people, companies, projects, meetings and decisions it touches.')
+    && command === `/bin/echo '${JSON.stringify({ context }).replace(/'/g, '\\u0027')}'`;
+}
+
 export interface HermesTurnHookOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip'; path: string; detail: string; snippet?: string }
 
 /** `/bin/echo '<json>'`: Hermes splits the command without a shell (and checks the first path, /bin/echo, exists), and a quote in the rule is a JSON escape. */
@@ -230,9 +241,11 @@ export function inspectHermesTurnHook(hermesHome: string, access?: BrainFirstAcc
     const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
     const probe = probeBlock(MARKERS, text);
     const printed = access && probe.state === 'absent' ? hermesTurnHookCommand(access) : null;
-    const pasted = printed ? (loadBoundedYaml(text) as { hooks?: Record<string, unknown> } | null)?.hooks?.[EVENT] : undefined;
+    const pasted = probe.state === 'absent' ? (loadBoundedYaml(text) as { hooks?: Record<string, unknown> } | null)?.hooks?.[EVENT] : undefined;
+    // With no recorded access, a hand-added entry counts when it is exactly gbrain's rule echo.
+    const ours = (c: unknown): c is string => typeof c === 'string' && (printed ? c === printed : isTurnRuleEcho(c));
     const command = probe.state === 'present' ? commandIn(probe.interior)
-      : Array.isArray(pasted) && pasted.some((e) => (e as { command?: unknown } | null)?.command === printed) ? printed : null;
+      : Array.isArray(pasted) ? pasted.map((e) => (e as { command?: unknown } | null)?.command).find(ours) ?? null : null;
     if (!command) return { state: 'absent', path };
     return { state: readAllowlist(join(hermesHome, ALLOWLIST)).approvals.some((e) => approves(e, command)) ? 'approved' : 'unapproved', path, command };
   } catch {
