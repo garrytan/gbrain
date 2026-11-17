@@ -115,6 +115,46 @@ remain. Rows only shrink. The guard fails on:
 When a domain moves, delete its members' rows and add its `migrated` row in
 the same commit.
 
+### Engine raw-SQL ratchet
+
+`scripts/check-engine-raw-sql-ratchet.ts` (`bun run check:engine-raw-sql-ratchet`,
+in `bun run verify`) keeps raw SQL outside the engines from growing while it
+moves behind typed engine methods (D6 in `docs/designs/RUST_ENGINE.md`, "Track 2
+rules"). It parses every `.ts` file under `src/` except the engines
+(`src/core/engine.ts`, `src/core/pglite-engine.ts`, `src/core/postgres-engine.ts`,
+`src/core/pglite-engine/`, `src/core/postgres-engine/` and
+`src/core/engine-sql/`) and counts, per file:
+
+- `execute_raw`: calls named `executeRaw`, `executeRawDirect` or
+  `executeRawJsonb`, whatever the receiver (the engine, a transaction, a helper
+  that takes `Pick<BrainEngine, 'executeRaw'>`, an executor);
+- `sql_template`: tagged templates whose literal text has SQL structure;
+- `driver_call`: `.unsafe(...)`, and `.query(...)` or `.exec(...)` with an
+  argument whose literal text has SQL structure.
+
+SQL structure is the engine-sql ratchet's test, so comments and prose never
+count. A SQL string held in a variable and passed to `.query(v)` is not seen.
+
+`scripts/engine-raw-sql-baseline.tsv` holds `path<TAB>metric<TAB>count` rows,
+generated from the tree (`--print`). Counts only fall: a higher count or a file
+with no row fails, and so does a lower count until its row is lowered
+(`bun scripts/check-engine-raw-sql-ratchet.ts --prune` lowers stale rows and
+never raises one). Instead of a new site, call a typed engine method, or add
+one with its SQL in `src/core/engine-sql/<domain>.ts` (CONTRIBUTING.md
+"Storage method"). A moved or split file carries its rows with it in the same
+PR, where a reviewer sees the baseline change.
+
+### Engine-kind branches
+
+`scripts/check-engine-kind-branches.ts` (`bun run check:engine-kind-branches`,
+in `bun run verify`) counts two-way engine branches per file over the same
+files: `kind_compare` (`x === 'pglite'`, `x !== 'postgres'`, either side,
+where `x` ends in `kind`, `engineKind`, `engine_kind` or `engine`) and
+`kind_case` (`case 'pglite':` in a switch over such `x`). A third engine must
+not fall silently into one of these branches, so new code asks a capability
+question or switches over every engine kind. Baseline
+`scripts/engine-kind-branches-baseline.tsv`, same rules as above.
+
 ### Page body readers
 
 `bun run check:page-body-readers` (in verify): every site that reads or writes
