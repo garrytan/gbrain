@@ -41,7 +41,13 @@
  * A dominates); their OR re-run matches titles only, like remote callers,
  * because matching the whole vector let a date in a question pull every dated
  * timeline into `ts_rank_cd`: 3-5 s on a large brain (#7135, diagnosed by
- * @veltri-23 in #7136).
+ * @veltri-23 in #7136). The strict attempt ranks at most
+ * `titleWholeVectorCandidates()` matching pages (#7082: a very common word
+ * otherwise read every matching vector until the statement timeout). The whole
+ * vector is the only lexical path to timeline_entries rows no chunk holds, so a
+ * rarer term keeps its exact result; a cut attempt reports
+ * `keyword_candidates_incomplete` and puts the title-only statement's rows
+ * first, so title and exact-title matches never depend on which pages the cut kept.
  */
 import type { SearchOpts, SearchResult } from '../types.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
@@ -80,7 +86,7 @@ export async function searchTitles(
   const statementFor = (chunkManifest: boolean, relaxed = false) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed });
   const statement = statementFor(true);
   /** One scoped read running the statement once per query text ($1), in order. */
-  const run = (queryTexts: string[], relaxed: boolean) => {
+  const run = (queryTexts: string[], relaxed: boolean, top?: number) => {
     const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
     const settings = {
       ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
@@ -90,14 +96,21 @@ export async function searchTitles(
     return scoped(async exec => {
       const sql = statementFor(await dialect.chunkManifest?.(exec) ?? true, relaxed).sql;
       const lists = [];
-      for (const text of queryTexts) lists.push((await exec.unsafe(sql, [text, ...statement.params.slice(1)])).rows);
+      for (const text of queryTexts) lists.push((await exec.unsafe(sql, [text, statement.params[1], ...(top === undefined ? statement.params.slice(2, 4) : [top, 0]), ...statement.params.slice(4)])).rows);
       return lists;
     }, Object.keys(settings).length ? settings : undefined);
   };
 
   const strictQuery = statement.params[0] as string;
-  const [rows] = await run([strictQuery], false);
-  if (rows.length > 0) return rows.map(rowToSearchResult);
+  const limit = statement.params[2] as number, offset = statement.params[3] as number;
+  const [rows] = await run([strictQuery], false, offset + limit);
+  if (rows.length > 0 && rows[0].candidates_cut === true) {
+    opts?.onKeywordIncomplete?.('candidate_budget');
+    const [titleRows] = await run([strictQuery], true, offset + limit);
+    const titled = new Set(titleRows.map(r => r.page_id));
+    return [...titleRows, ...rows.filter(r => !titled.has(r.page_id))].slice(offset, offset + limit).map(rowToSearchResult);
+  }
+  if (rows.length > offset) return rows.slice(offset).map(rowToSearchResult);
   const orQuery = buildOrFallbackWebsearchQuery(strictQuery);
   if (!orQuery) return [];
   const terms = orFallbackTokens(strictQuery);
