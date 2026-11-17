@@ -337,6 +337,36 @@ describe('refusals', () => {
     const err = await refusal(loadRustAddon(rel.deps));
     expect(err).toMatchObject({ code: 'rust_engine_addon_mismatch', reason: 'load_failed' });
   });
+
+  test('a fetched addon that fails to load puts back the addon it replaced, and leaves no staging file', async () => {
+    const rel = fakeRelease();
+    const target = rel.deps.target!;
+    const dir = join(rel.rustDir, rel.manifest.engine_build);
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, `${target}.node`);
+    // An addon from another release that shares this engine_build (the cached manifest does not match it).
+    writeFileSync(dest, 'previous addon');
+    rel.deps.dlopen = () => { throw new Error('invalid ELF header'); };
+    expect(await refusal(loadRustAddon(rel.deps))).toMatchObject({ code: 'rust_engine_addon_mismatch', reason: 'load_failed' });
+    expect(readFileSync(dest, 'utf8')).toBe('previous addon');
+    expect(readdirSync(dir)).toEqual([`${target}.node`]);
+    expect(existsSync(join(rel.rustDir, `manifest-${VERSION_UNDER_TEST}.json`))).toBe(false);
+  });
+
+  test('a fetched addon that loads replaces the old file and removes it', async () => {
+    const rel = fakeRelease();
+    const target = rel.deps.target!;
+    const dir = join(rel.rustDir, rel.manifest.engine_build);
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, `${target}.node`);
+    writeFileSync(dest, 'previous addon');
+    rel.deps.dlopen = () => ({ target, engineAbi: RUST_ENGINE_ABI, engineBuild: rel.manifest.engine_build, catalogVersion: 1, formatVersions: [] });
+    const addon = await loadRustAddon(rel.deps);
+    expect(addon.engineBuild).toBe(rel.manifest.engine_build);
+    expect(readFileSync(dest, 'utf8')).not.toBe('previous addon');
+    expect(readdirSync(dir)).toEqual([`${target}.node`]);
+    expect(existsSync(join(rel.rustDir, `manifest-${VERSION_UNDER_TEST}.json`))).toBe(true);
+  });
 });
 
 describe('GBRAIN_RUST_ENGINE_ADDON (development override)', () => {
