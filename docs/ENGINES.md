@@ -1572,6 +1572,23 @@ The real backstop is `test/e2e/op-checkpoint-jsonb-parity.test.ts` +
 `test/e2e/jsonb-roundtrip.test.ts`, which round-trip writes through real Postgres
 and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
+## The Rust engine shell
+
+The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PGLite and Postgres behave exactly
+as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
+(`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
+addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
+when the `rust` config value lands with the loader. Selecting the engine and refusing a missing or mismatched addon
+belong to the loader, not the shell.
+
+- **Capabilities.** The shell declares no capabilities. Each `BrainEngine` member it does not implement refuses
+  `engine_capability_missing` with the capability as `reason` (`raw_sql`, `pages`, `search`, ...), the member in
+  `detail`, and `written=nothing`, before any work. `src/core/rust-engine/members.ts` maps every member to its
+  capability; the type fails when a new `BrainEngine` member is not classified.
+- **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
+  embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
+  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`
@@ -1585,7 +1602,9 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
    engines do. Declare its capabilities honestly. The binding matrix
    (`test/helpers/executor-binding-matrix.ts`) and the engine-sql contract
    tests tell you whether the adapter binds, counts, fails and cancels like the
-   others. A non-SQL engine implements every method itself.
+   others. A non-SQL engine implements typed methods instead of a `SqlExecutor`:
+   it declares no `raw_sql` capability, and each member it cannot serve yet
+   refuses `engine_capability_missing` (see "The Rust engine shell" above).
 4. Store engine type in `~/.gbrain/config.json`: `{ "engine": "myengine", ... }`
 5. Add tests. The test suite should be engine-agnostic where possible... same test cases, different engine constructor.
 6. Document in this file + add a design doc in `docs/`

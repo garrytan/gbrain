@@ -20,7 +20,7 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { applySegmentedBody, sealSegmentedPage } from '../persistence/segmented-apply.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { openSegmentedStaging, segmentWriteScope, stageOccurrenceChunks } from './ingest.ts';
-import { readPageBodyPolicy, STAGE_BATCH_BYTES } from './limits.ts';
+import { readPageBodyPolicy, stageBatchBytes } from './limits.ts';
 import { SEGMENTED_CHUNKER_VERSION } from './segment-chunks.ts';
 import type { JsonObject, ManifestRow, SegmentChunkInput } from './types.ts';
 
@@ -199,7 +199,7 @@ async function rechunkPage(engine: BrainEngine, id: number, apply: boolean, reti
   };
   const ref = { id: first.id, sourceId: first.source_id, slug: first.slug };
   const fenceBudget = newFenceChunkBudget();
-  const batchBytes = STAGE_BATCH_BYTES[engine.kind];
+  const batchBytes = stageBatchBytes(engine.kind);
   const batches: ManifestRow[][] = [];
   for (let start = 0; start < rows.length;) {
     let end = start, bytes = 0;
