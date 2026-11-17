@@ -118,3 +118,21 @@ test('the shipped admin ignore file parses and every entry has a date', () => {
     expect(v.reason.length).toBeGreaterThan(20);
   }
 });
+
+test('an ignore entry without ignoreUntil blocks as audit_ignore_expired and is not ignored', async () => {
+  const path = join(tmpdir(), `audit-ignore-${process.pid}-nodate.toml`);
+  writeFileSync(path, '[[IgnoredVulns]]\nid = "GHSA-0000-0000-0000"\nreason = "test"\n');
+  const run = await audit([298], { AUDIT_IGNORE_FILE: path, AUDIT_TODAY: '2026-11-17' });
+  expect(run.status).toBe(1);
+  expect(run.out).toContain('::error::audit_ignore_expired');
+  expect(run.out).toContain('GHSA-0000-0000-0000 has no ignoreUntil date');
+  expect(run.out).toContain('::error::bun audit found advisories');
+});
+
+test('an unreadable ignore file fails as audit_ignore_unreadable', async () => {
+  const path = join(tmpdir(), `audit-ignore-${process.pid}-bad.toml`);
+  writeFileSync(path, '[[IgnoredVulns]\nid = ');
+  const run = await audit([200], { AUDIT_IGNORE_FILE: path });
+  expect(run.status).toBe(1);
+  expect(run.out).toContain('::error::audit_ignore_unreadable');
+});
