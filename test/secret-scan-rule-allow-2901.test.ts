@@ -125,4 +125,18 @@ describe('the publish scan', () => {
     expect(result.allowlist_problems?.map(p => p.entry)).toEqual(['path:mail/*.html pattern:jwtt']);
     expect(rangeSecretRefusal(root, base, head, result)!.suggestion).toContain('Check these .gbrain-scan-allow lines: path:mail/*.html pattern:jwtt (unknown rule jwtt, so it allows nothing');
   });
+
+  test('the refusal detail keeps the first 10 allowed hits and their total, however many a rule entry allowed', () => {
+    const { root, base } = repo('path:mail/*.html pattern:jwt\n');
+    writeFileSync(join(root, 'mail/archive.html'), MAILER.repeat(30));
+    git(root, 'add', '.');
+    git(root, 'commit', '-q', '-m', 'archive');
+    const head = git(root, 'rev-parse', 'HEAD');
+    const result = scanRange(root, base, head);
+    expect(result.allowed).toHaveLength(31);
+    const detail = JSON.parse(rangeSecretRefusal(root, base, head, result)!.detail!);
+    expect(detail.findings.map((f: { path: string }) => f.path)).toEqual(['notes.md']);
+    expect(detail.allowed).toHaveLength(10);
+    expect(detail.allowed_total).toBe(31);
+  });
 });

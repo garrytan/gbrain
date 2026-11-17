@@ -400,7 +400,7 @@ export function rangeSecretRefusal(root: string, base: string, target: string, s
   return opError('publish_secret_found',
     `${named.length} item(s) in the local commits ${range} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
     `Remove the value from those commits (rewriting unpushed local commits is the user's call), or add a false positive's fingerprint to .gbrain-scan-allow (or, for a rule that misfires on a whole kind of file, a path:<glob> pattern:<rule> line), then retry. Never publish them with a command that skips this scan.${scan.allowlist_problems?.length ? ` Check these .gbrain-scan-allow lines: ${scan.allowlist_problems.map(p => `${p.entry} (${p.problem})`).join('; ')}.` : ''}${base ? '' : ' The remote has no such branch, so this covered the branch\'s whole history, which may include commits published elsewhere before: review it, and push the branch yourself once it is safe.'}${scan.gate_changes.length ? ` A commit that changes .gbrain-scan-allow or a .gitattributes is never published automatically, because it changes what the scan sees: review it and push it yourself (git -C ${root} push), then retry.` : ''}`,
-    { detail: JSON.stringify(scan),
+    { detail: JSON.stringify(scan.allowed && scan.allowed.length > 10 ? { ...scan, allowed: scan.allowed.slice(0, 10), allowed_total: scan.allowed.length } : scan),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'log', '--stat', base ? `${base}..${target}` : target],
         why: 'Lists the unpublished commits the scan refused; read-only. A secret pushed to the remote stays in its history.',
