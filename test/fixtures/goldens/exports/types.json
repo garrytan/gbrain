@@ -191,7 +191,7 @@
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
           "readonly capabilities: EngineCapabilities",
-          "readonly kind: \"postgres\" | \"pglite\"",
+          "readonly kind: \"postgres\" | \"pglite\" | \"rust\"",
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
           "registerBeforeDisconnect: (stop: () => Promise<void>) => () => void",
@@ -596,7 +596,7 @@
         "members": [
           "database_path?: string | undefined",
           "database_url?: string | undefined",
-          "engine?: \"postgres\" | \"pglite\" | undefined",
+          "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
           "pool_max?: number | undefined"
@@ -2807,7 +2807,7 @@
           "embedding_model?: string | undefined",
           "embedding_multimodal?: boolean | undefined",
           "embedding_multimodal_model?: string | undefined",
-          "engine: \"postgres\" | \"pglite\"",
+          "engine: \"postgres\" | \"pglite\" | \"rust\"",
           "eval?: { capture?: boolean; scrub_pii?: boolean; } | undefined",
           "expansion_model?: string | undefined",
           "google_api_key?: string | undefined",
@@ -3766,7 +3766,7 @@
           "readSegmentDerivations: (pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[]; }) => Promise<SegmentDerivationRow[]>",
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
           "readonly capabilities: EngineCapabilities",
-          "readonly kind: \"postgres\" | \"pglite\"",
+          "readonly kind: \"postgres\" | \"pglite\" | \"rust\"",
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
           "registerBeforeDisconnect: (stop: () => Promise<void>) => () => void",
@@ -9712,7 +9712,7 @@
         "members": [
           "database_path?: string | undefined",
           "database_url?: string | undefined",
-          "engine?: \"postgres\" | \"pglite\" | undefined",
+          "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
           "pool_max?: number | undefined"
