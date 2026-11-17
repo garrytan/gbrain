@@ -17,7 +17,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { runAccessRules } from './access-rules.ts';
 import { runAccessServes } from './access-serves.ts';
-import { rescopeArchiveAfter } from './archive-rescope.ts';
+import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
 import { opError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
@@ -323,6 +323,7 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
   const id = positionals(args)[0];
   switch (sub) {
     case 'add': {
+      await rescopeArchiveBefore(engine, id, 'add', { bindToken: flagValue(args, '--bind-token') });
       const r = await addMember(engine, id, { name: flagValue(args, '--name'), email: flagValue(args, '--email'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token'), kind: flagValue(args, '--kind'), remote: false });
       await rescopeArchiveAfter(engine);
       return print(json, r, () => [`Member added: ${r.member.id}`, memberLine(r.member),
@@ -348,6 +349,7 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
     }
     case 'disable':
     case 'enable': {
+      if (sub === 'enable') await rescopeArchiveBefore(engine, id, 'enable');
       const m = await (sub === 'disable' ? disableMember : enableMember)(engine, id);
       if (sub === 'enable') await rescopeArchiveAfter(engine);
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),

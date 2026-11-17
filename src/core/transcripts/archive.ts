@@ -449,6 +449,26 @@ export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array
   return out;
 }
 
+/**
+ * Before a member change that adds an enabled member (gbrain access member add, or member enable of a disabled one)
+ * and so may make the brain shared: keeps the archive pages written while personal to the owner first, so the member's
+ * credentials never read them, even for the moment between the change and rescopeArchiveOnShared. The audience is not
+ * recorded here; rescopeArchiveOnShared does that once the change has committed. Throws when the re-scope fails, so the
+ * caller makes no change.
+ */
+export async function rescopeArchiveBeforeJoin(engine: BrainEngine, memberId: string): Promise<void> {
+  const rows = await engine.executeRaw<{ key: string }>("SELECT key FROM config WHERE key LIKE $1 AND value = 'personal' ORDER BY key", [AUDIENCE_PREFIX + '%']);
+  if (!rows.length) return;
+  let privacy = await resolvePrivacy(engine);
+  if (!privacy.shared) {
+    const enabled = (await listMembers(engine)).filter(m => m.status === 'enabled').map(m => m.id);
+    if (enabled.includes(memberId) || enabled.length + 1 < 2) return;
+    const view = await ownerView(engine);
+    privacy = { shared: true, owner: view.owner ?? (view.inactive?.value === memberId ? memberId : null) };
+  }
+  for (const { key } of rows) await reconcileAudience(engine, key.slice(AUDIENCE_PREFIX.length), privacy, false);
+}
+
 /** Why the owner-only re-scope (reconcileAudience) has not run on a brain that became shared, or null. */
 export async function archiveRescopeSkipped(engine: BrainEngine, sourceId?: string): Promise<ArchiveRescopeSkip | null> {
   const configured = await configuredSource(engine, sourceId);

@@ -19,7 +19,8 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
-import { addMember, bindCredential, disableMember } from '../src/core/access/members.ts';
+import { addMember, bindCredential, disableMember, getMember } from '../src/core/access/members.ts';
+import * as policy from '../src/core/access/policy.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -204,5 +205,88 @@ for (const kind of testBackends()) {
         }, 240_000);
       }
     });
+  }
+}
+
+/**
+ * Order: access member add (--bind-token) and member enable keep the personal-era pages to the owner before the member
+ * is added, enabled or bound, so its credentials never read them; a re-scope that throws leaves the member not enabled
+ * and the token not bound. proposeRevision is the step that writes the owner-only rules.
+ */
+class Exited extends Error {}
+
+for (const kind of testBackends()) {
+  for (const door of ['member add --bind-token', 'member enable'] as const) {
+    for (const mode of ['rules before the member', 'a failed re-scope changes nothing'] as const) {
+      describe('archive re-scope order: ' + door + ', ' + mode + ' (' + kind + ')', () => {
+        let engine: BrainEngine;
+        let close: () => Promise<void>;
+        let tokenId = '';
+        const home = emptyHome();
+
+        beforeAll(async () => {
+          if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+          else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+          await engine.setConfig('maintenance.auto', 'false');
+          await engine.setConfig(ARCHIVE_TIMEZONE_KEY, 'UTC');
+          await setArchiveEnabled(engine, true);
+          await addMember(engine, OWNER);
+          await setOwner(engine, OWNER);
+          const reader = staticReader('openclaw', [conversation('openclaw', 'agent:main:main', [['user', '2026-10-01T10:00:00.000Z', 'harbor planning notes ' + CANARIES[0]]], { chatType: 'direct', verified: true })]);
+          await withEnv({ GBRAIN_HOME: home }, () => runTranscriptArchive(engine, { mode: 'backfill', from: '2026-10-01', to: '2026-10-01', readers: [reader], now: new Date('2026-10-05T00:00:00Z') }));
+          const minted = await mintLegacyToken(engine, { name: 'tok-other', scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] });
+          tokenId = minted.id;
+          if (door === 'member enable') {
+            await addMember(engine, OTHER);
+            await bindCredential(engine, { kind: 'token', id: minted.id }, { member: OTHER });
+            await disableMember(engine, OTHER);
+          }
+        }, 240_000);
+
+        afterAll(async () => {
+          await disposePersistenceConsumer(engine).catch(() => {});
+          await close?.();
+        }, 60_000);
+
+        const boundTo = async () => (await engine.executeRaw<{ member_id: string | null }>('SELECT member_id FROM access_tokens WHERE id::text = $1', [tokenId]))[0]?.member_id ?? null;
+        const argv = door === 'member enable' ? ['member', 'enable', OTHER] : ['member', 'add', OTHER, '--bind-token', 'tok-other'];
+
+        test(mode, async () => {
+          const original = policy.proposeRevision;
+          const seen: Array<{ status: string | null; bound: string | null }> = [];
+          const revision = spyOn(policy, 'proposeRevision').mockImplementation((async (...a: Parameters<typeof original>) => {
+            seen.push({ status: (await getMember(engine, OTHER))?.status ?? null, bound: await boundTo() });
+            if (mode === 'a failed re-scope changes nothing') throw new Error('rule store unavailable');
+            return original(...a);
+          }) as typeof original);
+          const exit = spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Exited(String(code)); }) as never);
+          const stderr = spyOn(console, 'error').mockImplementation(() => {});
+          let exited: unknown = null;
+          try {
+            await withEnv({ GBRAIN_HOME: home }, () => runAccess(engine, argv));
+          } catch (e) {
+            exited = e;
+          } finally {
+            revision.mockRestore();
+            exit.mockRestore();
+            stderr.mockRestore();
+          }
+          expect(seen.length).toBeGreaterThan(0);
+          expect(seen[0]).toEqual(door === 'member enable' ? { status: 'disabled', bound: OTHER } : { status: null, bound: null });
+          if (mode === 'rules before the member') {
+            expect(exited).toBeNull();
+            expect((await getMember(engine, OTHER))?.status).toBe('enabled');
+            expect(await boundTo()).toBe(OTHER);
+            expect(await withEnv({ GBRAIN_HOME: home }, () => archiveRescopeSkipped(engine))).toBeNull();
+            return;
+          }
+          expect(exited).toBeInstanceOf(Exited);
+          expect((exited as Exited).message).not.toBe('0');
+          expect((await getMember(engine, OTHER))?.status ?? null).toBe(door === 'member enable' ? 'disabled' : null);
+          expect(await boundTo()).toBe(door === 'member enable' ? OTHER : null);
+          expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('personal');
+        }, 240_000);
+      });
+    }
   }
 }

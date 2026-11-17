@@ -1,10 +1,29 @@
 /**
  * The commands that can turn a brain shared (gbrain access member add and member enable, gbrain access owner set,
- * gbrain config set brain.audience) call this after their change, so conversation archive pages written while the
- * brain was personal are kept to the owner before the command returns (rescopeArchiveOnShared).
+ * gbrain config set brain.audience) keep conversation archive pages written while the brain was personal to the owner
+ * before they return. member add and member enable do it before the member is added or enabled
+ * (rescopeArchiveBefore), so the member's credentials never read those pages; every command then records it
+ * (rescopeArchiveAfter, rescopeArchiveOnShared).
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { assertAccessId, getMember, legacyTokenByName } from '../core/access/members.ts';
+
+/**
+ * Before gbrain access member add or member enable: when the member will be newly enabled, keeps the personal-era archive
+ * pages to the owner first. A failure throws before the member is added, enabled or bound, so nothing changes.
+ */
+export async function rescopeArchiveBefore(engine: BrainEngine, rawId: unknown, change: 'add' | 'enable', opts: { bindToken?: string } = {}): Promise<void> {
+  const id = assertAccessId(rawId);
+  const member = await getMember(engine, id);
+  if (change === 'add' ? member !== null : member?.status !== 'disabled') return;
+  if (opts.bindToken) await legacyTokenByName(engine, opts.bindToken);
+  try {
+    await (await import('../core/transcripts/archive.ts')).rescopeArchiveBeforeJoin(engine, id);
+  } catch (e) {
+    throw new Error('Nothing was changed: keeping the conversation archive pages written while this brain was personal to the owner failed before ' + id + ' was ' + (change === 'add' ? 'added' : 'enabled') + ' (' + (e instanceof Error ? e.message : String(e)) + '). Fix the cause, then rerun the command.');
+  }
+}
 
 /** Runs the owner-only archive re-scope and says what happened on stderr, so stdout and --json stay the command's own. */
 export async function rescopeArchiveAfter(engine: BrainEngine): Promise<void> {

@@ -164,7 +164,9 @@ private conversations never land in the shared repository.
 Pages archived while the brain was personal name no readers. Until they are kept to the owner, every member reads
 them. The command that makes the brain shared does that before it returns: `gbrain access member add` or
 `gbrain access member enable` when it makes two or more enabled members, `gbrain config set brain.audience shared`,
-and `gbrain access owner set` on a brain that is already shared. Each prints one line on stderr per archive source,
+and `gbrain access owner set` on a brain that is already shared. `member add` and `member enable` do it before the
+member is added, enabled or bound to a token, so its credentials never read those pages; if that step fails, the
+command changes nothing and exits non-zero. Each prints one line on stderr per archive source,
 saying the pages are now kept to the owner or why they still wait (the codes below); `--json` output is unchanged.
 When the brain turns shared some other way, the next archive run (`gbrain transcripts archive run`) or maintenance pass
 does it, also before it writes anything. That includes members added or enabled from the admin page over HTTP or by
