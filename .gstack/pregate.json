@@ -245,7 +245,7 @@
       "paths": [
         "src/core/operation-loaders.generated.ts"
       ],
-      "pattern": "\\[load_[a-z0-9_]+, \"[a-z][A-Za-z]*Operations\"\\],?$",
+      "pattern": "\\[load_[a-z0-9_]+, \"(?:[a-z][A-Za-z]*Operations|[a-z]+(?:_[a-z]+)+)\"\\],?$",
       "reason": "generated operation-loader table: each value is a loader identifier and an operations export name, never a credential; an operation named like a secret (reveal_secret) trips the key-name heuristic"
     }
   ]
