@@ -406,9 +406,11 @@ Private facts and takes are embedded on their own, so the provider receives
 their text too. When contextual retrieval runs at the synopsis tier, the chat
 model also receives the page's title and text (with private fact rows and takes
 removed). GBrain cannot tell a local endpoint from a remote one, because a
-recipe's base URL can point anywhere. To keep restricted text off outside
-services, run a self-hosted embedding provider (and synopsis model) on hardware
-you control.
+recipe's base URL can point anywhere. A self-hosted embedding provider (and
+synopsis model) on hardware you control keeps restricted text in house for
+embedding and contextual retrieval only. Every other enabled provider, such as
+a reranker, a chat model or a decision provider, can still receive restricted
+text, so self-host or turn off each one that must not.
 
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
 job's, write request's or cron's id, status and times (and a removed member's
