@@ -94,6 +94,28 @@ async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant
   }
 }
 
+/**
+ * GST-2898: who reads a source once it is federated, for the `sources federate` message: every live token and
+ * OAuth client split into those whose resolved read set (credentialReadSources) now includes it and those whose does
+ * not. Tokens with no source list and switched keys read it; clients with no source list and explicit lists without
+ * the switch do not, unless they name it.
+ */
+export async function federateReaders(engine: BrainEngine, sourceId: string): Promise<{ tokens: { read: string[]; not: string[] }; clients: { read: string[]; not: string[] } }> {
+  const { grantFromTokenRow, grantFromRow, grantFromClient } = await import('./model.ts');
+  const out = { tokens: { read: [] as string[], not: [] as string[] }, clients: { read: [] as string[], not: [] as string[] } };
+  const member = (row: Record<string, unknown>) => typeof row.member_id === 'string' ? row.member_id : null;
+  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY name, id')) {
+    const reads = await credentialReadSources(engine, grantFromTokenRow(row), member(row));
+    out.tokens[reads.includes(sourceId) ? 'read' : 'not'].push(String(row.name));
+  }
+  for (const row of await engine.executeRaw<Record<string, unknown>>("SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_name, client_id")) {
+    const grant = grantFromRow(row);
+    const reads = await credentialReadSources(engine, grantFromClient(grant), member(row));
+    out.clients[reads.includes(sourceId) ? 'read' : 'not'].push(grant.clientName || grant.clientId);
+  }
+  return out;
+}
+
 /** What a local stdio server reads with no per-call source_ids (src/mcp/server.ts resolveMcpStdioSourceScope). */
 export async function stdioReadSources(engine: BrainEngine, cwd = process.cwd()): Promise<string[]> {
   const resolved = await resolveSourceWithTier(engine, null, cwd).catch(() => ({ source_id: 'default', tier: 'seed_default' as const }));

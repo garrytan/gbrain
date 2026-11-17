@@ -1201,6 +1201,16 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     return before;
   });
   say(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
+  // GST-2898: name the keys that now read it and those that do not, tokens and clients apart (message only).
+  if (value && !wasFederated) {
+    const who = await (await import('../core/grants/shared-exposure.ts')).federateReaders(engine, id).catch(() => null);
+    const names = (list: string[]) => list.length ? `${list.slice(0, 8).join(', ')}${list.length > 8 ? ` and ${list.length - 8} more` : ''}` : 'none';
+    if (who) {
+      say(`  Tokens that read it now (no source list, or read-shared on): ${names(who.tokens.read)}. Tokens that do not (an explicit source list): ${names(who.tokens.not)}.`);
+      say(`  OAuth clients that read it now (read-shared on, or listing it): ${names(who.clients.read)}. Clients that do not (no source list, or a list without read-shared): ${names(who.clients.not)}.`);
+      if (who.tokens.not.length || who.clients.not.length) say('  To add it to a key, run gbrain auth rescope --token <name> --read-shared on (or --client <id>), which also reads every source shared later.');
+    }
+  }
   const exposure = await import('../core/access/federation-exposure.ts');
   const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !wasFederated);
   if (exposed) console.error(exposure.pagesExposedLines(id, exposed).join('\n'));
