@@ -64,6 +64,8 @@ export interface SyncEntry { path: string; sourcePath: string; action: 'import' 
   driftHistory?: string[];
   /** GST-2843: the pass re-checks this held path because the hold's basis or drift moved; a hold the entry gets is marked `basis_moved`. */
   basisMoved?: true;
+  /** GST-2869: the pass re-checks this held path only because a retry was requested (`sources retry-held`, `sync unblock`); a hold the entry gets is marked `retry_only`. */
+  retryOnly?: true;
   /** #6727: live pages with no recorded origin whose slugs fold to this file's slug, several or one the importer cannot write; the freeze holds it `legacy_slug_conflict`. */
   legacySlugs?: string[];
   /** #6729 x #6727: the one legacy page carries an explicit frontmatter id that differs from the file's, so it is another document; held `legacy_slug_conflict` (`explicit_id_conflict`). */

@@ -10,7 +10,7 @@ import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
-import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
 import { heldRowsInVersions, prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
@@ -378,6 +378,21 @@ export async function verifyMaintenanceOutputs(engine: BrainEngine, authority: M
 }
 
 export interface FactSnapshot { id: number; value: Record<string, unknown>; }
+
+/**
+ * Which members of a chronological consolidation cluster end, and at which later member's valid_from: the first one
+ * that says something else. A restatement (the same claim text and typed value said again later) is the value still
+ * holding, so it never ends the member before it, and a member with no differing successor stays open. A cluster's typed
+ * members already share metric, unit and period, so the value is the typed part that can differ under the same text.
+ */
+export function consolidationCloses<T>(chronological: readonly T[], claim: (member: T) => { text: string; value: unknown }): Array<{ member: T; next: T }> {
+  const key = (member: T) => { const { text, value } = claim(member); return JSON.stringify([normalizeClaimWhitespace(text), value == null ? null : Number(value)]); };
+  return chronological.flatMap((member, i) => {
+    const own = key(member);
+    const next = chronological.slice(i + 1).find(later => key(later) !== own);
+    return next ? [{ member, next }] : [];
+  });
+}
 interface EvidencePage { slug: string; revision: string; id: number; }
 
 /** Whole fact rows as comparable snapshots; `lock` takes FOR UPDATE inside a transaction. */
@@ -755,7 +770,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   // take on this page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database.
   // A fenced fact whose fence is on another page stays open: this publication does not write that file.
   const chronological = [...facts].sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
-  const closes = chronological.slice(0, -1).map((fact, i) => ({ fact, until: String(chronological[i + 1].value.valid_from) }));
+  const closes = consolidationCloses(chronological, f => ({ text: String(f.value.fact), value: f.value.claim_value })).map(({ member, next }) => ({ fact: member, until: String(next.value.valid_from) }));
   const fenceCloses = new Map(closes.filter(c => c.fact.value.row_num !== null && c.fact.value.source_markdown_slug === row.slug)
     .map(c => [Number(c.fact.value.row_num), c]));
   const databaseCloses = closes.filter(c => c.fact.value.row_num === null);
