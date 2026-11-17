@@ -245,6 +245,40 @@ and `symbolKind` filter. `where`, `afterDate` and `beforeDate` reject `invalid_a
 being ignored. A query reads the posting list of every term, so cost grows with the number of
 matching chunks.
 
+### The write journal
+
+`submitPageMutation` is the write path for pages: admit, apply and commit in one transaction, so a
+page, its chunks and postings, the version snapshot of what it replaced and the committed request
+are all there after a crash or none of them are. It ports the semantics of
+`src/core/persistence/` (`journal.ts`, `page-mutations.ts`, `identity.ts`), not its SQL. There are no
+leases, claims, recovery records, worktree fences or refresh deferral: one process owns the brain
+and one write runs at a time, and nothing here publishes files.
+
+A request is identified by `(principal.kind, principal.id, requestId)`. `requestId` is a UUID (absent:
+the store mints one; a client's non-UUID id goes in `clientRequestId`). Repeating a request with the same
+content returns the stored receipt and writes nothing; other content is `idempotency_conflict`. The
+digest covers the operation, source, slug and the page and options as sent. Each principal may have 100
+unfinished requests and the brain 1000 (`admission_refused`; `limits` overrides them). A request ends
+once, in `committed`, `conflict`, `failed` or `cancelled`; `deferred` and `recovering` are accepted
+states a receipt reader may meet but nothing here enters them.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.submitPageMutation({ principal, requestId?, clientRequestId?, sourceIncarnation?, slug, page, options?, authority? }, limits?)` | the receipt. `state: "committed"` with `status` (`created`, `updated`, `unchanged`), `slug`, `page_id`, `source_id`, `knowledge_revision`, `content_hash`, `chunks`, `version_id`. A write that fails on its own terms (`revision_conflict`, `revision_required` end `conflict`; `empty_overwrite`, a bad chunk or date end `failed`) changes nothing, resolves a receipt with `write_error` and `write_error_message`, and returns that same receipt when repeated. `invalid_argument`, `invalid_slug`, `source_not_found`, `source_changed`, `idempotency_conflict`, `admission_refused` and `store_*` reject and record nothing | `submitPageMutation` |
+| `brain.admitWrite(admission, limits?)` | the stored `WriteRequest` (`id, principal_kind, principal_id, request_id, client_request_id, operation, source_id, source_incarnation, page_id, slug, digest, intent, authority, sequence, state, outcome, error_code, error_message, blocked_reason, compacted, created_at, updated_at, completed_at`); `queued` when new, the stored one when repeated | `admitWrite` |
+| `brain.getWriteRequest(principal, requestId)` | the `WriteRequest` or `null` | `getWriteRequest` |
+| `brain.getWriteReceipt(principal, requestId)` | the receipt (`outcome` fields, `outcome`, `request_id`, `client_request_id?`, `state`, `write_error?`, `write_error_message?`, `blocked_reason?`, `created_at`, `updated_at`) or `null` | `receiptFor` |
+| `brain.finishWrite(principal, requestId, { state, outcome?, errorCode?, errorMessage?, blockedReason? })` | the receipt; `invalid_state` for a request that already ended or a non-terminal state | none |
+| `brain.journalOutstanding()` | `{ brain, principals }`, unfinished requests | none |
+| `brain.getBrainIdentity()` | `{ brain_id }` | `readBrainIdentity` |
+| `brain.registerLocalWriter({ id, lane, credentialHash, grantCeiling? })` | the writer row `{ id, lane, credential_hash, grant_ceiling, created_at, revoked_at }`. Idempotent; `writer_rejected` for a revoked row, another lane or credential under the id, or a credential registered under another id | `registerLocalWriterValue` |
+| `brain.readLocalWriter(id)` | the writer row or `null` | `verifyLocalWriter` read |
+| `brain.revokeLocalWriter(id)` | `true` when the registration exists | `revokeLocalWriter` |
+
+The credential itself never reaches the store: callers pass its SHA-256. `write_error_message` and
+`journalOutstanding` are additions; the TypeScript receipt keeps a separate failure detail row that
+this engine does not have.
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:
@@ -259,7 +293,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_closed` | The brain is not open on this handle. |
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
-| `invalid_state` | The call does not fit the handle's state (`open` on an open handle). |
+| `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
@@ -267,6 +301,11 @@ Errors from the addon are real `Error` objects with a `code`:
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
 | `empty_overwrite` | A blank body would replace a page that has content. |
+| `source_changed` | `sourceIncarnation` is not the source's current incarnation. |
+| `idempotency_conflict` | A request id was used for different content. |
+| `admission_refused` | The principal or the brain has too many unfinished writes. |
+| `writer_rejected` | A local writer registration is revoked, or its lane or credential does not match. |
+| `writer_not_initialized` | The brain has no persistence identity. |
 
 A typed-array argument of the wrong type, or a view of a `SharedArrayBuffer`, throws the
 standard Node-API `InvalidArg` error before any Rust code reads it. Rust reads and writes these

@@ -13,6 +13,7 @@ pub mod config;
 pub mod env;
 pub mod error;
 pub mod format;
+pub mod journal;
 pub mod keys;
 pub mod kv;
 pub mod pages;

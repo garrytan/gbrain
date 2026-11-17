@@ -87,3 +87,18 @@ pub fn be8(bytes: &[u8]) -> Option<u64> {
 pub fn be4(bytes: &[u8]) -> Option<u32> {
     Some(u32::from_be_bytes(bytes.try_into().ok()?))
 }
+
+/// `J request-uuid`
+pub fn request(id: &str) -> Vec<u8> {
+    text(REQUEST, &[id])
+}
+
+/// `j principal-kind \0 principal-id \0 request_id`: the idempotency index.
+pub fn request_by_principal(kind: &str, principal_id: &str, request_id: &str) -> Vec<u8> {
+    text(REQUEST_ID, &[kind, principal_id, request_id])
+}
+
+/// `W writer-id`
+pub fn writer(id: &str) -> Vec<u8> {
+    text(WRITER, &[id])
+}

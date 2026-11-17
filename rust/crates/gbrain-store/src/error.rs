@@ -37,6 +37,8 @@ pub const ADMISSION_REFUSED: &str = "admission_refused";
 pub const WRITER_NOT_INITIALIZED: &str = "writer_not_initialized";
 /// A local writer registration was revoked, or its lane or credential does not match.
 pub const WRITER_REJECTED: &str = "writer_rejected";
+/// The source was replaced (its incarnation changed) after the caller read it.
+pub const SOURCE_CHANGED: &str = "source_changed";
 /// A journal request is not in a state that allows the call.
 pub const INVALID_STATE: &str = "invalid_state";
 

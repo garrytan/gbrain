@@ -113,6 +113,32 @@ export interface Brain {
   deleteChunks(slug: string, options?: { sourceId?: string }): Promise<null>;
   countChunks(): Promise<number>;
   searchKeyword(query: string, options?: Record<string, any>): Promise<Array<Record<string, any>>>;
+  getBrainIdentity(): Promise<{ brain_id: string }>;
+  registerLocalWriter(writer: { id: string; lane: 'cli' | 'stdio'; credentialHash: string; grantCeiling?: Record<string, any> }): Promise<Record<string, any>>;
+  readLocalWriter(id: string): Promise<Record<string, any> | null>;
+  revokeLocalWriter(id: string): Promise<boolean>;
+  admitWrite(admission: Record<string, any>, limits?: { principalOutstanding?: number; brainOutstanding?: number }): Promise<Record<string, any>>;
+  getWriteRequest(principal: { kind: string; id: string }, requestId: string): Promise<Record<string, any> | null>;
+  getWriteReceipt(principal: { kind: string; id: string }, requestId: string): Promise<Record<string, any> | null>;
+  finishWrite(
+    principal: { kind: string; id: string },
+    requestId: string,
+    finish: { state: string; outcome?: Record<string, any>; errorCode?: string; errorMessage?: string; blockedReason?: string },
+  ): Promise<Record<string, any>>;
+  journalOutstanding(): Promise<{ brain: number; principals: Record<string, number> }>;
+  submitPageMutation(
+    mutation: {
+      principal: { kind: string; id: string };
+      requestId?: string;
+      clientRequestId?: string;
+      sourceIncarnation?: string;
+      slug: string;
+      page: Record<string, any>;
+      options?: Record<string, any>;
+      authority?: Record<string, any>;
+    },
+    limits?: { principalOutstanding?: number; brainOutstanding?: number },
+  ): Promise<Record<string, any>>;
 }
 
 export interface Addon {

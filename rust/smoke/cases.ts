@@ -441,6 +441,60 @@ export const cases: Case[] = [
       });
     },
   },
+  {
+    name: 'store: a journaled write is idempotent, conflicts are receipts, a second open refuses',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const brain = new addon.Brain(pool);
+        await brain.open(dir);
+        const principal = { kind: 'local_cli', id: 'smoke' };
+        const request = '11111111-1111-4111-8111-111111111111';
+        const mutation = {
+          principal,
+          requestId: request,
+          slug: 'notes/first',
+          page: { type: 'note', title: 'First note', compiled_truth: 'The journal keeps one receipt per request.' },
+        };
+        const receipt = await brain.submitPageMutation(mutation);
+        assert.equal(receipt.state, 'committed');
+        assert.equal(receipt.status, 'created');
+        assert.deepEqual(await brain.submitPageMutation(mutation), receipt, 'the same request returns the same receipt');
+        const other = await rejection(
+          brain.submitPageMutation({ ...mutation, page: { ...mutation.page, compiled_truth: 'different' } }),
+        );
+        assert.equal(other.code, 'idempotency_conflict');
+        const stale = await brain.submitPageMutation({
+          principal,
+          requestId: '22222222-2222-4222-8222-222222222222',
+          slug: 'notes/first',
+          page: { type: 'note', title: 'x', compiled_truth: 'y' },
+          options: { expectedRevision: '00000000-0000-4000-8000-000000000000' },
+        });
+        assert.equal(stale.state, 'conflict');
+        assert.equal(stale.write_error, 'revision_conflict');
+        assert.deepEqual((await brain.searchKeyword('receipt per request')).map(r => r.slug), ['notes/first']);
+        assert.deepEqual(await brain.journalOutstanding(), { brain: 0, principals: {} });
+        const writer = await brain.registerLocalWriter({
+          id: '33333333-3333-4333-8333-333333333333',
+          lane: 'cli',
+          credentialHash: 'a'.repeat(64),
+        });
+        assert.equal(writer.lane, 'cli');
+        assert.equal((await brain.getBrainIdentity()).brain_id, (await brain.info()).brain_id);
+
+        const second = new addon.Brain(pool);
+        assert.equal((await rejection(second.open(dir))).code, 'store_locked');
+        await brain.close();
+        const again = new addon.Brain(pool);
+        await again.open(dir);
+        assert.deepEqual(await again.submitPageMutation(mutation), receipt, 'the receipt survives a reopen');
+        assert.equal((await again.getWriteRequest(principal, request))!.sequence, 1);
+        await again.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
 ];
 
 /** The cases that make sense inside a compiled executable (everything in-process and quick). */
