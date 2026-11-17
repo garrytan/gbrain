@@ -541,7 +541,8 @@ export function runDoctorRegistry(ctx: DoctorContext, entries: readonly DoctorEn
             checks.push(...later.emits.filter((n) => !ctx.only || ctx.only.has(n)).map((n) => budgetUnknownCheck(n, ctx.connectError instanceof DoctorBudgetError ? ctx.connectError.elapsedMs : 0, ctx.deadline?.budgetMs ?? 0, 'overall')));
           }
         }
-        return ctx.only ? onlyResult(checks, ctx.only, true) : checks;
+        // An engine-free --only run stops at the database gate by design: only a failed or skipped connect stopped the database checks early.
+        return ctx.only ? onlyResult(checks, ctx.only, ctx.connectError !== undefined || ctx.connectionFailed === true || ctx.fastMode) : checks;
       }
       const pastDeadline = ctx.deadline?.deadlineAt != null && Date.now() >= ctx.deadline.deadlineAt;
       const produced = result.map((c) => {
