@@ -467,7 +467,7 @@ src/core/facts/contested-claims.ts	execute_raw	1
 src/core/facts/conversation-entity-hints.ts	execute_raw	1
 src/core/facts/conversation-incremental.ts	execute_raw	1
 src/core/facts/conversation-memo.ts	execute_raw	4
-src/core/facts/conversation-publication.ts	execute_raw	21
+src/core/facts/conversation-publication.ts	execute_raw	24
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	6
 src/core/facts/dead-absorb-retry.ts	execute_raw	2
@@ -480,10 +480,10 @@ src/core/facts/fence-write.ts	execute_raw	2
 src/core/facts/file-body-guard.ts	execute_raw	2
 src/core/facts/forget.ts	execute_raw	4
 src/core/facts/fts-index.ts	execute_raw	3
-src/core/facts/gone-page-facts.ts	execute_raw	3
+src/core/facts/gone-page-facts.ts	execute_raw	4
 src/core/facts/held-fact-move.ts	execute_raw	12
 src/core/facts/meta-hook.ts	execute_raw	1
-src/core/facts/ontology-rekey.ts	execute_raw	3
+src/core/facts/ontology-rekey.ts	execute_raw	4
 src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
 src/core/facts/purge-overlay.ts	execute_raw	3
@@ -895,6 +895,7 @@ src/core/persistence/sync-freshness.ts	execute_raw	3
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
+src/core/persistence/sync-holds-carried.ts	execute_raw	1
 src/core/persistence/sync-holds.ts	execute_raw	31
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
@@ -983,7 +984,7 @@ src/core/repair/fact-claim-dates.ts	execute_raw	3
 src/core/repair/facts-rehome.ts	execute_raw	4
 src/core/repair/failed-writes.ts	execute_raw	19
 src/core/repair/fences.ts	execute_raw	4
-src/core/repair/file-drift.ts	execute_raw	5
+src/core/repair/file-drift.ts	execute_raw	6
 src/core/repair/frontmatter.ts	execute_raw	8
 src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
@@ -1072,7 +1073,7 @@ src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2
 src/core/search/exact-scan.ts	execute_raw	2
-src/core/search/fact-relevance.ts	execute_raw	11
+src/core/search/fact-relevance.ts	execute_raw	12
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
