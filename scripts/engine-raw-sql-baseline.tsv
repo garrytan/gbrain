@@ -423,7 +423,7 @@ src/core/eligibility/explain.ts	execute_raw	4
 src/core/eligibility/fence-overlay.ts	execute_raw	1
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	7
-src/core/eligibility/stamp.ts	execute_raw	4
+src/core/eligibility/stamp.ts	execute_raw	5	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2
@@ -648,6 +648,7 @@ src/core/ops/admin.ts	execute_raw	4
 src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
+src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/extraction.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
@@ -665,6 +666,7 @@ src/core/ops/persistence.ts	execute_raw	4
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/request-tools.ts	execute_raw	2
+src/core/ops/search-exact.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/search-type-filter.ts	execute_raw	1
 src/core/ops/search.ts	execute_raw	2
 src/core/ops/skills-catalog.ts	execute_raw	2
