@@ -1652,9 +1652,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   afterwards cannot cause a false difference. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
   comparison.
-- **No network in the background.** `start --yes` loads the addon in the foreground and may download it. The child
+- **No network in the background.** gbrain downloads no addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one they record `addon_unavailable`
-  (`rust_engine_addon_missing`, reason `not_installed`) and fetch nothing.
+  (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the Rust store is not
   seeded from your brain yet, and writes and the readiness decision come in later phases of the plan
