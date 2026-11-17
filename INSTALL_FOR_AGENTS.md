@@ -82,8 +82,7 @@ Bun's installer needs `unzip` and stops with `error: unzip is required to instal
 ```bash
 arch=$(uname -m); [ "$arch" = x86_64 ] && arch=x64; [ "$arch" = arm64 ] && arch=aarch64
 mkdir -p ~/.bun/bin
-curl -fsSL "https://registry.npmjs.org/@oven/bun-linux-$arch/-/bun-linux-$arch-1.4.4.tgz" | tar -xzO package/bin/bun > ~/.bun/bin/bun
-chmod +x ~/.bun/bin/bun
+curl -fsSL "https://registry.npmjs.org/@oven/bun-linux-$arch/-/bun-linux-$arch-1.4.4.tgz" | tar -xzO package/bin/bun > ~/.bun/bin/bun.new && chmod +x ~/.bun/bin/bun.new && ~/.bun/bin/bun.new --version && mv ~/.bun/bin/bun.new ~/.bun/bin/bun
 echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.profile
 export PATH="$HOME/.bun/bin:$PATH"
 bun install -g github:garrytan/gbrain#stable
