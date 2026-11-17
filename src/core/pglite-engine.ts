@@ -1,4 +1,5 @@
 import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
+import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
@@ -737,6 +738,7 @@ export class PGLiteEngine implements BrainEngine {
   private _chunkWritesInTransaction = false;
   private _checkpointGuard: PgliteCheckpointGuard | undefined;
   readonly kind = 'pglite' as const;
+  readonly capabilities: EngineCapabilities = capabilitiesForEngineKind('pglite');
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
   /** Graduation custody: a kernel lock this process already holds, adopted by the next open instead of acquired. */
