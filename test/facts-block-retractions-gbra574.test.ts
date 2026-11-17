@@ -21,7 +21,8 @@ import { handleToolCall } from '../src/mcp/server.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { forgetFactInFence } from '../src/core/facts/forget.ts';
 import { valueHash } from '../src/core/chronicle/ontology.ts';
-import { applyFactsBlock } from '../src/core/search/facts-arm.ts';
+import { applyFactsBlock, QUERY_FACTS_BLOCK_SHARE } from '../src/core/search/facts-arm.ts';
+import { resultTokens } from '../src/core/search/token-budget.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
@@ -31,7 +32,7 @@ import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts'
 type Row = { result_type?: string; chunk_text?: string };
 const CONVERSATION = 'cli:extract-conversation-facts:v1';
 const day = (i: number) => new Date(Date.UTC(2025, 0, 1) + i * 3 * 86_400_000).toISOString().slice(0, 10);
-const PEOPLE = ['alice', 'bob', 'dana', 'erin', 'gwen', 'hal', 'ivy', 'kim'].map(n => ['people/' + n + '-example', n[0]!.toUpperCase() + n.slice(1) + ' Example'] as const);
+const PEOPLE = ['alice', 'bob', 'dana', 'erin', 'gwen', 'hal', 'ivy', 'kim', 'nina', 'olga', 'pia'].map(n => ['people/' + n + '-example', n[0]!.toUpperCase() + n.slice(1) + ' Example'] as const);
 const ACME = 'companies/acme-example';
 
 for (const backend of testBackends()) {
@@ -70,6 +71,9 @@ for (const backend of testBackends()) {
         { sourceIds: [sourceId], remote: true, readScope: { sourceIds: [sourceId], excludePrivate: true }, budget: 5500, tokenBudget: 5500, rowCap: async () => 50 }));
       return (rows as Row[]).filter(r => r.result_type === 'fact').map(r => r.chunk_text ?? '');
     };
+    const local = async (query: string, budget: number, rowCap: number) =>
+      ((await applyFactsBlock(engine, query, [], { sourceIds: [sourceId], remote: false, budget, tokenBudget: budget, rowCap: async () => rowCap })) as Row[])
+        .filter(r => r.result_type === 'fact');
 
     beforeAll(async () => {
       if (backend === 'postgres') {
@@ -121,6 +125,16 @@ for (const backend of testBackends()) {
 
       await fact('k_trip', 'Kim Example plans a trip to Madrid.', 'people/kim-example', 10);
       await fact('k_dog', 'Kim Example adopted a dog.', 'people/kim-example', 20);
+      await fact('n_trip', 'Nina Example plans a trip.', 'people/nina-example', 10);
+      await fact('n_parrot', 'Nina Example adopted a parrot.', 'people/nina-example', 20);
+      await fact('n_off', 'The Nina Example trip to Riga in June fell through.', 'people/nina-example', 30);
+
+      await fact('o_gala', 'Olga Example plans a gala.', 'people/olga-example', 1);
+      for (let i = 0; i < 60; i++) await fact('o_cancel' + i, 'Olga Example cancelled order ' + (i + 100) + '.', 'people/olga-example', 40 + i);
+      await fact('p_trip', 'Pia Example plans a spring trip to Bern.', 'people/pia-example', 10);
+      await fact('p_hamster', 'Pia Example adopted a hamster.', 'people/pia-example', 15);
+      await fact('p_off', 'The Bern trip for Pia Example fell through.', 'people/pia-example', 20);
+
       await fact('k_off', 'The Madrid trip for Kim Example fell through.', 'people/kim-example', 30, { visibility: 'private', page: 'memory/members/alice-example' });
     }, 300_000);
     afterAll(async () => {
@@ -159,6 +173,29 @@ for (const backend of testBackends()) {
         const [src] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
         expect(src!.local_path).toBeNull();
         expect(order(await block('Where is Alice Example travelling in May?'), ['plans a trip to Lisbon', 'fell through'])).toEqual([0, 1]);
+      });
+    });
+
+    describe('the block budget', () => {
+      test('a retraction that ranks above its fact moves under it, once', async () => {
+        const rows = await block('Is Nina Example going to Riga in June?');
+        expect(order(rows, ['Nina Example plans a trip.', 'trip to Riga in June fell through', 'adopted a parrot'])).toEqual([0, 1, 2]);
+        expect(rows.filter(r => r.includes('fell through')).length).toBe(1);
+      });
+      test('a retraction never takes a row past the row count', async () => {
+        const rows = await local('Where is Alice Example travelling in May?', 5500, 1);
+        expect(rows.map(r => r.chunk_text!.split('\n').pop())).toEqual(['Alice Example plans a trip to Lisbon in May.']);
+      });
+      test('a retraction that does not fit the share is left out, and its fact stays', async () => {
+        const [first] = await local('Where is Alice Example travelling in May?', 5500, 50);
+        const rows = await local('Where is Alice Example travelling in May?', Math.ceil((resultTokens(first as never) + 1) / QUERY_FACTS_BLOCK_SHARE), 50);
+        expect(rows.map(r => r.chunk_text!.split('\n').pop())).toEqual(['Alice Example plans a trip to Lisbon in May.']);
+      });
+      test('an entity with many newer cue facts does not crowd out another entity\'s retraction', async () => {
+        const rows = await block('What are Pia Example and Olga Example planning with the hamster this spring?');
+        const [trip, off, hamster] = order(rows, ['spring trip to Bern', 'Bern trip for Pia Example fell through', 'adopted a hamster']);
+        expect(trip).toBeGreaterThanOrEqual(0);
+        expect([off, hamster]).toEqual([trip! + 1, trip! + 2]);
       });
     });
 

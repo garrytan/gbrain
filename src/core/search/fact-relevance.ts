@@ -379,15 +379,15 @@ export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, sl
 const CALLED_OFF = String.raw`rumour|rumor|called off|cancelled|canceled|fell through|not happening|never happened|no longer planned`;
 const CALL_OFF_SQL = String.raw`\m(${RETRACTION}|${CALLED_OFF})\M`;
 const CALL_OFF_WORDS = new RegExp(String.raw`\b(${RETRACTION}|${CALLED_OFF})\b`, 'gi');
-/** Cue facts read per block at most, the newest first. */
+/** Cue facts read per entity at most, the newest first. */
 const CALL_OFF_DEPTH = 50;
 
 /**
  * GBRA-574 B5: for each fact, the later facts that retract it or call it off, oldest first. One read of the cue facts
- * about the facts' entities under exactly the pool's read policy (active rows only, so a withdrawn, forgotten or
- * superseded fact never comes back, nor one the caller cannot read). A cue fact answers a fact when it is about the same
- * entity in the same source, is dated strictly after it, and shares a content term with it other than the entity's
- * name and the cue words, or carries the same slot (dimension and value_hash).
+ * about the facts' entities, the newest CALL_OFF_DEPTH per entity, under exactly the pool's read policy (active rows
+ * only, so a withdrawn, forgotten or superseded fact never comes back, nor one the caller cannot read). A cue fact
+ * answers a fact when it is about the same entity in the same source, is dated strictly after it, and shares a content
+ * term with it other than the entity's name and the cue words, or carries the same slot (dimension and value_hash).
  */
 export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope, facts: readonly FactCandidate[]): Promise<Map<number, FactCandidate[]>> {
   const out = new Map<number, FactCandidate[]>();
@@ -397,9 +397,10 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
   const { where, params } = poolPredicate(scope, undefined);
   const n = params.length;
   const cues = await engine.executeRaw<FactCandidate>(
-    `SELECT ${COLS} FROM facts f WHERE ${where} AND f.fact ~* $${n + 1}
-       AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($${n + 2}::text[], $${n + 3}::text[]))
-     ORDER BY f.valid_from DESC, f.id DESC LIMIT $${n + 4}`,
+    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY f.valid_from DESC, f.id DESC) AS call_off_rank
+       FROM facts f WHERE ${where} AND f.fact ~* $${n + 1}
+         AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($${n + 2}::text[], $${n + 3}::text[]))) f
+     WHERE f.call_off_rank <= $${n + 4}`,
     [...params, CALL_OFF_SQL, pairs.map(f => f.source_id), pairs.map(f => f.entity_slug), CALL_OFF_DEPTH]);
   const time = (v: Date | string) => new Date(v).getTime();
   const terms = (slug: string, text: string) => {
