@@ -1305,6 +1305,7 @@
           "private poisonedDiscards",
           "private poolHealth",
           "private poolIncidents",
+          "private preparationRead",
           "private readTransaction",
           "private resolveFactsEmbeddingCast",
           "private rlsScopeBindingEnabled",

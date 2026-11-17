@@ -79,6 +79,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'engineSqlOn': OOS.helper,
   'rlsScopeBindingEnabled': OOS.helper,
   'withScopedReadTransaction': OOS.helper,
+  'preparationRead': OOS.helper,
   'jitOffRead': OOS.helper,
   'readTransaction': OOS.helper,
   'connect': OOS.lifecycle,

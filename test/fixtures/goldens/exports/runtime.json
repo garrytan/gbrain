@@ -423,6 +423,7 @@
         "openBodyStaging",
         "pageCollapseFacts",
         "pagesLinkingTo",
+        "preparationRead",
         "pruneFrontmatterTags",
         "purgeDeletedPages",
         "putContradictionCacheEntry",

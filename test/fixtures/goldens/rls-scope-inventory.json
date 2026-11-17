@@ -3989,6 +3989,7 @@
         "openBodyStaging": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
+        "preparationRead": "none",
         "pruneFrontmatterTags": "none",
         "purgeDeletedPages": "none",
         "putContradictionCacheEntry": "none",

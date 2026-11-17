@@ -87,6 +87,15 @@ export function isSharedReadFailure(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { [SHARED_READ]?: true })[SHARED_READ] === true;
 }
 
+/**
+ * Typed engine reads that replaced a preparer's `executeRaw` statement (Track 2). Master bounded those statements
+ * through the `executeRaw` hook above; the Postgres engine now ends each of these at the clock's deadline when it runs
+ * under `withReadDeadline` (postgres-engine.ts `preparationRead`), so every preparer view wraps them, with or without
+ * `engineReads`. The label stands in for the statement text on the claim stamp's `last_sql`.
+ */
+export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
+  'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState']);
+
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {
   const deadlineAt = clock?.deadlineAt;
@@ -113,8 +122,10 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     };
     const value = Reflect.get(target, key, target);
     if (typeof value !== 'function') return value;
-    if (!opts.engineReads) return value.bind(target);
+    const typedRead = typeof key === 'string' && TYPED_PREPARATION_READS.has(key);
+    if (!opts.engineReads && !typedRead) return value.bind(target);
     return (...args: unknown[]) => {
+      if (typedRead) recordClaimSql(clock, `SELECT FROM ${String(key)}`);
       const result = withReadDeadline(deadlineAt, () => value.apply(target, args));
       return result instanceof Promise ? result.catch(error => {
         const refused = error instanceof ReadDeadlineError;
