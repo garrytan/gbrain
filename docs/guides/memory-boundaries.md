@@ -401,14 +401,15 @@ whatever memory its harness includes in context, even on a keyless GBrain setup.
 Access designations decide who reads a page, not which configured providers
 process it. A page with `readable_by`, a folder rule or `visibility: private`,
 a private fact, and a take on a restricted page are embedded like every other
-page: the configured embedding provider receives their text, and the
-contextual retrieval chat model receives their titles and, at the synopsis tier,
-their text. GBrain cannot tell a local endpoint from a remote one, because a
-recipe's base URL can point anywhere. To keep restricted text off outside
-services, run a self-hosted embedding provider (and synopsis model) on hardware
-you control. System One decisions are the one exception: they send no private
-page unless the owner sets `decide.egress.private allow`
-([System One](system-one.md)).
+page: the configured embedding provider receives their text and titles, and at
+the synopsis tier of contextual retrieval the chat model receives them too.
+GBrain cannot tell a local endpoint from a remote one, because a recipe's base
+URL can point anywhere. To keep restricted text off outside services, run a
+self-hosted embedding provider (and synopsis model) on hardware you control.
+System One decisions have the only private-page gate: the TypeSafe provider
+receives no private page unless the owner sets `decide.egress.private allow`,
+but an `llm:` decision provider, or an `llm:` fallback for refused items,
+follows ordinary chat rules and does receive them ([System One](system-one.md)).
 
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
 job's, write request's or cron's id, status and times (and a removed member's
