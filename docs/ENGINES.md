@@ -1646,12 +1646,14 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   capability (`revertToVersion`, `getChunkPage`, `searchTitles`, `getBacklinkCounts`, `getTimelineForDate`, ...) still refuse.
 
 A served member never drops what it cannot keep. An option or input the store has no home for refuses
-`engine_capability_missing` and writes nothing: a chunk that carries a vector (the store keeps no vectors), a
-`getChunks` read of unsealed chunks or embeddings, a keyword search with an offset, `where` or a date window, and a
-link batch that sets a link kind or resolution. Ranking-only options of `searchKeyword` are accepted and
-ignored, because Rust ranks with BM25 and this is not parity with PGLite (design D5). Its scores and tie order differ
-from PGLite's, and it does not read the `quarantine` frontmatter key, so a quarantined page can match. The expected
-differences are listed in `test/rust-expected-divergence.tsv`.
+`engine_capability_missing` and writes nothing: a chunk that carries a vector, a `getChunks` read of unsealed chunks or
+embeddings, a keyword search with an offset, `where` or a date window, and a link batch that sets a link kind or
+resolution. Vectors are refused with that typed code for now and arrive later: the store keeps no vectors yet, so a
+Rust brain has no vector search and no embeddings until it does. Keyword search hides what PGLite hides: soft-deleted
+pages, archived sources, and pages that carry a `quarantine` or `pinned_question` frontmatter key, whatever its value.
+Ranking-only options of `searchKeyword` are accepted and ignored, because Rust ranks with BM25 and this is not parity
+with PGLite (design D5). Its scores and tie order differ from PGLite's. The expected difference is listed in
+`test/rust-expected-divergence.tsv`.
 
 The parity suite checks this: with `GBRAIN_TEST_RUST_ARM=1` each `test/engine-parity/` file adds a Rust arm. A case that
 reaches a member Rust refuses must stop on that typed refusal; any other case must return what PGLite returns, unless

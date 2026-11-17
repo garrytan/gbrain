@@ -4,7 +4,7 @@
 //! and order differ from the TypeScript engines (parity is a later design item, D5). What it
 //! shares with them is the contract: every query term must match (AND), a page is represented
 //! by its best chunk, results order by `score DESC, page_id ASC, chunk_id ASC`, soft-deleted
-//! pages, archived sources, image chunks and pages whose chunks are not sealed to the current
+//! pages, quarantined and pinned-question pages, archived sources, image chunks and pages whose chunks are not sealed to the current
 //! text never appear, and `test/`, `attachments/` and `.raw/` slugs are hidden unless the
 //! caller opts back in.
 
@@ -22,6 +22,10 @@ const DEFAULT_LIMIT: usize = 20;
 /// `MAX_SEARCH_LIMIT` of `src/core/engine.ts`.
 pub const MAX_SEARCH_LIMIT: usize = 100;
 const DEFAULT_HARD_EXCLUDES: &[&str] = &["test/", "attachments/", ".raw/"];
+/// Frontmatter keys that hide a page from keyword search whatever their value is, as the JSONB
+/// `?` test of `buildVisibilityClause` does: `quarantine` (junk the content gate caught) and
+/// `pinned_question` (a pinned question's page is read through the questions API, never ranked).
+const HIDING_FRONTMATTER_KEYS: &[&str] = &["quarantine", "pinned_question"];
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
 /// Words dropped from a query (the English full-text config drops them too). A query made only
@@ -209,6 +213,9 @@ impl Store {
             };
             let Some(page) = entry else { continue };
             if page.deleted_at_us.is_some()
+                || HIDING_FRONTMATTER_KEYS
+                    .iter()
+                    .any(|key| page.frontmatter.contains_key(*key))
                 || page.text_projection_revision.as_deref()
                     != Some(page.knowledge_revision.as_str())
                 || hidden_by_slug(&page.slug, &excludes, &exact)

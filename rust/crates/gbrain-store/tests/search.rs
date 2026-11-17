@@ -486,3 +486,49 @@ fn chunks_and_search_survive_a_reopen() {
     put(&store, "people/cy", "durable again");
     assert_eq!(slugs(&find(&store, "durable")).len(), 2);
 }
+
+#[test]
+fn quarantined_and_pinned_question_pages_are_hidden_whatever_the_key_holds() {
+    let dir = TempDir::new("search-quarantine");
+    let store = open(&dir);
+    put(&store, "notes/visible", "glimmerwort marker");
+    let hidden = |slug: &str, frontmatter: Value| {
+        let page: PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "glimmerwort marker", "frontmatter": frontmatter
+        }))
+        .unwrap();
+        store
+            .put_page(slug, &page, &PutPageOptions::default())
+            .unwrap();
+    };
+    hidden(
+        "notes/quarantined",
+        json!({"quarantine": {"reason": "junk"}}),
+    );
+    hidden("notes/quarantined-null", json!({"quarantine": null}));
+    hidden("notes/pinned", json!({"pinned_question": true}));
+    // content_flag warns but does not hide
+    hidden(
+        "notes/flagged",
+        json!({"content_flag": {"reason": "oversized"}}),
+    );
+    assert_eq!(
+        slugs(&find(&store, "glimmerwort")),
+        ["notes/visible", "notes/flagged"]
+    );
+    // opting a slug prefix back in does not unhide a quarantined page
+    let opted = store
+        .search_keyword(
+            "glimmerwort",
+            &search_opts(json!({"include_slug_prefixes": ["notes/"]})),
+        )
+        .unwrap();
+    assert_eq!(slugs(&opted), ["notes/visible", "notes/flagged"]);
+    // the page is still stored and readable
+    assert!(
+        store
+            .read_page_snapshot("notes/quarantined", &ReadScope::default())
+            .unwrap()
+            .is_some()
+    );
+}
