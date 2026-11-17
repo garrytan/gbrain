@@ -23,13 +23,13 @@ app="$work/GBrain Helper.app"
 bundle_id="io.gbrain.apple-helper"
 program="gbrain-apple-helper"
 report="$work/report.md"
-saved_keychains=""
+saved_keychains=()
 trusted=0
 outcome=""
 
 cleanup() {
-  if [ -n "$saved_keychains" ]; then
-    eval "security list-keychains -d user -s $saved_keychains" || true
+  if [ "${#saved_keychains[@]}" -gt 0 ]; then
+    security list-keychains -d user -s "${saved_keychains[@]}" || true
   fi
   if [ "$trusted" = 1 ]; then
     sudo security remove-trusted-cert -d "$work/cert.pem" >/dev/null 2>&1 || true
@@ -120,8 +120,15 @@ attempt() {
 }
 
 if ! attempt "A (untrusted certificate, keychain named with --keychain)"; then
-  saved_keychains="$(security list-keychains -d user | tr '\n' ' ')"
-  eval "security list-keychains -d user -s \"\$keychain\" $saved_keychains"
+  while IFS= read -r entry; do
+    entry="${entry#"${entry%%[![:space:]]*}"}"
+    entry="${entry#\"}"
+    entry="${entry%\"}"
+    [ -n "$entry" ] && saved_keychains+=("$entry")
+  done <<KEYCHAINS
+$(security list-keychains -d user)
+KEYCHAINS
+  security list-keychains -d user -s "$keychain" ${saved_keychains[@]+"${saved_keychains[@]}"}
   if ! attempt "B (untrusted certificate, keychain on the search list)"; then
     if limited sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$work/cert.pem"; then
       trusted=1

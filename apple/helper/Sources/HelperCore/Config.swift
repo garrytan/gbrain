@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum HelperIdentity {
@@ -92,9 +93,64 @@ public struct Config: Codable, Equatable {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let temp = path + ".tmp"
-        FileManager.default.createFile(atPath: temp, contents: try encoder.encode(self), attributes: [.posixPermissions: 0o600])
-        guard rename(temp, path) == 0 else { throw ConfigError(description: "could not write \(path)") }
+        let data = try encoder.encode(self)
+        let temp = path + ".tmp-\(getpid())-\(UUID().uuidString)"
+        let fd = Darwin.open(temp, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw ConfigError(description: "could not write \(path)") }
+        let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        let synced = fsync(fd) == 0
+        close(fd)
+        guard written == data.count, synced, rename(temp, path) == 0 else {
+            unlink(temp)
+            throw ConfigError(description: "could not write \(path)")
+        }
+    }
+}
+
+public final class LiveGrants {
+    let path: String
+    let lock = NSLock()
+    var loaded = false
+    var stamp: FileStamp?
+    var grants: [TokenGrant] = []
+
+    public init(path: String) {
+        self.path = path
+    }
+
+    public func current() -> [TokenGrant] {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = FileStamp(path: path)
+        if loaded && now == stamp { return grants }
+        loaded = true
+        stamp = now
+        do {
+            grants = try Config.load(path: path).validated().grants
+            Log.line("config loaded: \(grants.count) token(s)")
+        } catch {
+            grants = []
+            Log.line("config unreadable, refusing every token until it is fixed: \(error)")
+        }
+        return grants
+    }
+}
+
+struct FileStamp: Equatable {
+    let device: Int64
+    let inode: UInt64
+    let size: Int64
+    let seconds: Int
+    let nanoseconds: Int
+
+    init?(path: String) {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        device = Int64(info.st_dev)
+        inode = UInt64(info.st_ino)
+        size = Int64(info.st_size)
+        seconds = Int(info.st_mtimespec.tv_sec)
+        nanoseconds = Int(info.st_mtimespec.tv_nsec)
     }
 }
 

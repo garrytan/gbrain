@@ -22,7 +22,8 @@ public struct Row {
 
     public func text(_ index: Int32) -> String? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL, let pointer = sqlite3_column_text(statement, index) else { return nil }
-        return String(cString: pointer)
+        let count = Int(sqlite3_column_bytes(statement, index))
+        return String(decoding: UnsafeBufferPointer(start: pointer, count: count), as: UTF8.self)
     }
 
     public func blob(_ index: Int32) -> [UInt8]? {

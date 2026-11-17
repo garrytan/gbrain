@@ -12,7 +12,7 @@ swift build
 swift test
 ```
 
-Needs the Xcode Command Line Tools (`xcode-select --install`) and macOS 13 or newer.
+The helper runs on macOS 13 or newer. Building it needs the Xcode Command Line Tools (`xcode-select --install`), and `swift test` needs Swift 6 (Xcode 16 or its Command Line Tools, macOS 14.5 or newer) because the tests use Swift Testing.
 
 ## Layout
 
@@ -69,7 +69,7 @@ gbrain-apple-helper serve
 gbrain-apple-helper --version
 ```
 
-Every command takes `--config <path>`. `token add` takes the token's SHA-256, never the token. `check` prints counts only.
+Every command takes `--config <path>`. `token add` takes the token's SHA-256, never the token. A running `serve` picks up `token add` and `token remove` on its next request, and refuses every token while the config can't be read. `check` prints counts only.
 
 ## Errors
 
@@ -77,7 +77,7 @@ Errors are RFC 9457 problem responses (`application/problem+json`) with `code`, 
 
 ### bad_param
 
-A query parameter is missing, repeated or out of range. The detail names it.
+A query parameter is missing or out of range. The detail names it. A repeated parameter keeps its first value.
 
 ### unauthorized
 

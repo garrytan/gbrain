@@ -23,6 +23,13 @@ import Testing
         #expect(group.lastMessage?.from == "+15550111")
     }
 
+    @Test func keepsTextPastAnEmbeddedNull() throws {
+        let fixture = Fixture.standard()
+        fixture.exec("UPDATE message SET text = CAST(X'6265666F7265006166746572' AS TEXT) WHERE ROWID = 1")
+        let page = try #require(try reader(fixture).getThread(.identifier("+15550100"), sinceRowid: nil, since: nil, limit: 50, includeReactions: false))
+        #expect(page.data.messages[0].text == "before\u{0}after")
+    }
+
     @Test func listLimits() throws {
         let fixture = Fixture.standard()
         #expect(try reader(fixture).listThreads(limit: 2, includeLastMessage: false).data.count == 2)

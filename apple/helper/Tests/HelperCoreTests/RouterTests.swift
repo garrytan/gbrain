@@ -272,3 +272,15 @@ func sources(_ routed: Routed) -> [[String: Any]] {
         #expect(Token.verifier(fromHex: Token.hexDigest(token).uppercased()) == Token.verifier(fromHex: Token.hexDigest(token)))
     }
 }
+
+@Suite struct LiveGrantTests {
+    @Test func aRemovedTokenStopsWorkingOnTheNextRequest() {
+        let fixture = Fixture.standard()
+        var current = grants()
+        let settings = RouterSettings(listener: .loopback, liveGrants: { current }, sources: [IMessageSource(dbPath: fixture.path)], enabled: ["imessage"], version: "test")
+        let r = Router(settings: settings, localAddresses: { [macTailnet] })
+        #expect(send(r, request("/v1/sources")).response.status == 200)
+        current = []
+        #expect(code(send(r, request("/v1/sources"))) == "unauthorized")
+    }
+}

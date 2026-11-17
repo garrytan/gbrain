@@ -71,6 +71,10 @@ case "validate-config":
     print("config ok")
 
 case "token":
+    _ = loadConfig()
+    let lockPath = configPath + ".lock"
+    let lockFile = Darwin.open(lockPath, O_CREAT | O_RDWR, 0o600)
+    guard lockFile >= 0, flock(lockFile, LOCK_EX) == 0 else { fail("could not lock \(lockPath)", code: 75) }
     var config = loadConfig().0
     guard let tokenName = value("--name") else { fail(usage, code: 64) }
     switch arguments.dropFirst().first {
@@ -110,19 +114,27 @@ case "check":
     }
 
 case "serve":
-    let config = loadConfig().1
     do {
         try Log.open(path: Log.defaultPath)
     } catch {
         Log.line("logging to stderr: \(error)")
     }
-    let settings = RouterSettings(listener: .loopback, grants: config.grants, sources: [IMessageSource(dbPath: config.dbPath)],
+    let config: ValidatedConfig
+    do {
+        config = try Config.load(path: configPath).validated()
+    } catch {
+        Log.line("not serving: \(error)")
+        exit(78)
+    }
+    let grants = LiveGrants(path: configPath)
+    let settings = RouterSettings(listener: .loopback, liveGrants: grants.current, sources: [IMessageSource(dbPath: config.dbPath)],
                                   enabled: config.enabled, version: version)
     let server = Server(host: IPv4.parse("127.0.0.1")!, port: config.port, router: Router(settings: settings))
     do {
         try server.start()
     } catch {
-        fail("\(error)", code: 75)
+        Log.line("not serving: \(error)")
+        exit(75)
     }
     Log.line("serving \(name) \(version) on 127.0.0.1:\(server.boundPort)")
     server.serveForever()

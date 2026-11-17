@@ -7,14 +7,18 @@ public enum Listener: Equatable {
 
 public struct RouterSettings {
     public let listener: Listener
-    public let grants: [TokenGrant]
+    public let grants: () -> [TokenGrant]
     public let sources: [SourceModule]
     public let enabled: Set<String>
     public let version: String
 
     public init(listener: Listener, grants: [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String) {
+        self.init(listener: listener, liveGrants: { grants }, sources: sources, enabled: enabled, version: version)
+    }
+
+    public init(listener: Listener, liveGrants: @escaping () -> [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String) {
         self.listener = listener
-        self.grants = grants
+        self.grants = liveGrants
         self.sources = sources
         self.enabled = enabled
         self.version = version
@@ -70,7 +74,7 @@ public final class Router {
         if request.path == "/health" {
             return Routed(response: .json(200, Health(ok: true, version: settings.version)), route: route, rows: 0)
         }
-        guard let grant = Token.grant(authorization: request.headers["authorization"], grants: settings.grants) else { return fail(.unauthorized) }
+        guard let grant = Token.grant(authorization: request.headers["authorization"], grants: settings.grants()) else { return fail(.unauthorized) }
         if request.path == "/v1/sources" {
             let statuses = settings.sources.map { status($0) }
             return Routed(response: .json(200, Envelope(data: statuses, meta: SourcesMeta(count: statuses.count))), route: route, rows: 0)

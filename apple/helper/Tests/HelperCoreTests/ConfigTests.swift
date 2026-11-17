@@ -52,6 +52,26 @@ import Testing
         #expect(try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int == 0o700)
         let text = try String(contentsOfFile: path, encoding: .utf8)
         #expect(!text.contains(token))
+        try config(tokens: []).write(path: path)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["config.json"])
+    }
+
+    @Test func liveGrantsFollowTheConfigFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("helper-config-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("config.json").path
+        let live = LiveGrants(path: path)
+        #expect(live.current().isEmpty)
+        try config().write(path: path)
+        #expect(live.current().map(\.name) == ["gbrain"])
+        try config(tokens: []).write(path: path)
+        #expect(live.current().isEmpty)
+        try config().write(path: path)
+        #expect(live.current().map(\.name) == ["gbrain"])
+        #expect(FileManager.default.createFile(atPath: path, contents: Data("not json".utf8)))
+        #expect(live.current().isEmpty)
+        try FileManager.default.removeItem(atPath: path)
+        #expect(live.current().isEmpty)
     }
 
     @Test func defaultPathsUseTheHelperNames() {
