@@ -328,8 +328,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-26, windows-latest]
         bun: ['1.4.4']
-        # Every supported Bun version on every OS, with one named exception
-        # (docs/ci-event-parity.md#macos-runners): the macos-26 cell is left
+        # Event parity: every supported Bun version on every OS, with one named
+        # exception (docs/ci-event-parity.md#macos-runners): the macos-26 cell is left
         # out of a pull request's cheap tier and of a master push that reuses
         # a passed full run of its exact tree. The full-ci dispatch, every
         # other push, the nightly and the merge queue run it.
