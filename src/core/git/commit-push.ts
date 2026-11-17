@@ -25,10 +25,10 @@
  * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
  * over MCP (it pushes with host credentials).
  */
-import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { literalPathspecs } from '../git-env.ts';
 import { git, gitOk, type GitRun } from './git-run.ts';
 export type { SkippedPath } from './skipped-paths.ts';
@@ -629,9 +629,12 @@ function untrackTargets(root: string, rel: string[]): string[] {
 
 /**
  * GST-2519: the files an untrack in a managed canonical worktree would remove, each under a storage.db_only dir that
- * gbrain.yml at HEAD declares (the database row is canonical there, so sync keeps the page when its file leaves Git)
- * and ignored by .gitignore (so no later commit adds it back). Anything else refuses `untrack_not_db_only` before the
- * index is touched: untracking any other page file would delete that page at the next sync.
+ * gbrain.yml at HEAD and on disk declares (the database row is canonical there, so sync keeps the page when its file
+ * leaves Git) and ignored by .gitignore (so no later commit adds it back). GST-2964: a file is matched by its path under
+ * the declared dir, whatever its extension; a file sync may import as a page (Markdown, code) also needs its slug under a
+ * declared dir, since sync keeps a page by slug. A tracked symlink pointing out of the dir, or a file reached through a
+ * symlinked directory on disk, is refused. Anything else refuses `untrack_not_db_only` before the index is touched:
+ * untracking any other page file would delete that page at the next sync.
  */
 export function untrackAdmitted(root: string, rel: string[], managed: ManagedFilesystemRoot): string[] {
   const files = untrackTargets(root, rel);
@@ -648,19 +651,54 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
     } catch { return null; }
   };
   const committed = config(yml.code === 0 ? yml.stdout : null, `HEAD:${prefix}gbrain.yml`), onDisk = config(disk, join(managed.root, 'gbrain.yml'));
+  const declaredDir = (path: string) => committed?.db_only.find(dir => isDeclaredDbOnlySlug(path.toLowerCase(), { ...committed, db_only: [dir] }));
+  const declared = (path: string) => isDeclaredDbOnlySlug(path.toLowerCase(), committed) && isDeclaredDbOnlySlug(path.toLowerCase(), onDisk);
   const ignored = new Set(git(root, ['check-ignore', '--no-index', '-z', '--stdin'], { input: files.map(f => `${f}\0`).join('') }).stdout.split('\0').filter(Boolean));
-  const refused = files.filter(file => {
-    if (!file.startsWith(prefix) || !ignored.has(file)) return true;
-    const slug = resolveSlugForPath(file.slice(prefix.length));
-    return !isDeclaredDbOnlySlug(slug, committed) || !isDeclaredDbOnlySlug(slug, onDisk);
-  });
-  if (refused.length) {
-    const list = `${refused.slice(0, 10).join(', ')}${refused.length > 10 ? ', ...' : ''}`;
-    throw opError('untrack_not_db_only', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}, and ${refused.length} file(s) to untrack are not under a storage.db_only dir that gbrain.yml declares both at HEAD and on disk (matched by page slug, as sync matches it), or .gitignore does not ignore them: ${list}. Nothing was untracked.`,
-      `Declare the folder first: add it under storage.db_only in gbrain.yml and its <dir>/ line to .gitignore, commit both (gbrain git commit-push -m <msg> -- gbrain.yml .gitignore), then rerun the untrack.`,
-      { detail: JSON.stringify({ paths: refused }), docs: 'docs/guides/shared-checkout-git.md#untrack' });
+  const links = new Map(git(root, ['ls-tree', '-r', '-z', 'HEAD', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean)
+    .map(entry => /^(\d+) \w+ ([0-9a-f]+)\t([\s\S]*)$/.exec(entry)).filter(m => m?.[1] === '120000').map(m => [m![3]!, m![2]!] as const));
+  const escapes = (file: string, dir: string): boolean => {
+    const parts = file.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      try { if (lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink()) return true; } catch { break; }
+    }
+    const oid = links.get(file);
+    if (!oid) return false;
+    const target = git(root, ['cat-file', 'blob', oid]).stdout;
+    const resolved = posix.normalize(posix.join(posix.dirname(file.slice(prefix.length)), target));
+    return posix.isAbsolute(target) || !resolved.toLowerCase().startsWith(dir.toLowerCase());
+  };
+  const pageKind = (path: string) => isSyncable(path, { strategy: 'markdown', includeHidden: ['**'], metafilePage: () => true });
+  const refusals: Record<'undeclared' | 'unignored' | 'link' | 'slug', string[]> = { undeclared: [], unignored: [], link: [], slug: [] };
+  const slugs = new Map<string, string>();
+  for (const file of files) {
+    const path = file.slice(prefix.length);
+    const dir = file.startsWith(prefix) && declared(path) ? declaredDir(path) : undefined;
+    if (!dir) { refusals.undeclared.push(file); continue; }
+    if (escapes(file, dir)) { refusals.link.push(file); continue; }
+    if (!ignored.has(file)) { refusals.unignored.push(file); continue; }
+    if (!pageKind(path)) continue;
+    const slug = resolveSlugForPath(path);
+    if (!isDeclaredDbOnlySlug(slug, committed) || !isDeclaredDbOnlySlug(slug, onDisk)) { refusals.slug.push(file); slugs.set(file, slug); }
   }
-  return files;
+  const refused = files.filter(file => Object.values(refusals).some(list => list.includes(file)));
+  if (!refused.length) return files;
+  const list = (paths: string[], label = (p: string) => p) => `${paths.slice(0, 10).map(label).join(', ')}${paths.length > 10 ? ', ...' : ''}`;
+  const slugDirs = [...new Set([...slugs.values()].filter(slug => slug.includes('/')).map(slug => `${posix.dirname(slug)}/`))];
+  const groups: Array<[string[], string, string]> = [
+    [refusals.undeclared, 'not under a storage.db_only dir that gbrain.yml declares both at HEAD and on disk',
+      'Declare the folder first: add it under storage.db_only in gbrain.yml and its <dir>/ line to .gitignore, commit both (gbrain git commit-push -m <msg> -- gbrain.yml .gitignore), then rerun the untrack.'],
+    [refusals.unignored, 'under a declared storage.db_only dir that .gitignore does not ignore',
+      'Add the folder\'s <dir>/ line to .gitignore and commit it (gbrain git commit-push -m <msg> -- .gitignore), then rerun the untrack.'],
+    [refusals.link, 'symbolic links pointing out of the declared dir, or reached through a symbolic link on disk',
+      'Untrack only real files inside the folder: a symbolic link that leaves it, or a folder reached through a symbolic link, is refused; name the other files, or replace the link with the file it points to.'],
+    [refusals.slug, 'page files whose page slug, which sync keeps a page by, falls outside the declared dir',
+      slugDirs.length ? `Declare the slug spelling too: add ${slugDirs.join(', ')} under storage.db_only in gbrain.yml and commit it (gbrain git commit-push -m <msg> -- gbrain.yml), then rerun the untrack.`
+        : 'These files are pages whose slug has no folder (a code file on a code or auto strategy source), so they cannot leave Git as database-only; untrack the folder\'s other files by name.'],
+  ];
+  const hit = groups.filter(([paths]) => paths.length);
+  throw opError('untrack_not_db_only', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}, and ${refused.length} file(s) to untrack cannot leave Git as database-only: ${hit.map(([paths, why]) => `${why}: ${list(paths, p => slugs.has(p) ? `${p} (slug ${slugs.get(p)})` : p)}`).join('; ')}. Nothing was untracked.`,
+    hit.map(([, , fix]) => fix).join(' '),
+    { detail: JSON.stringify({ paths: refused }), docs: 'docs/guides/shared-checkout-git.md#untrack' });
 }
 
 /** The source roots a dry run checks paths against; a managed canonical worktree refuses --allow-outside-source-root as its real run does. */
