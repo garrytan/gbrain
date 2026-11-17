@@ -127,6 +127,110 @@ describe('runHarvest — happy path', () => {
   });
 });
 
+describe('runHarvest — paired source in a sibling folder that starts with the slug', () => {
+  // A skill `foo` may pair a source under `skills/foo-extra/`. That folder is
+  // NOT the skill folder, so the file must take the paired-source path
+  // (copied to the same relative path) instead of the skill-folder path,
+  // whose confinement to `skills/foo/` refuses it.
+  function hostWithSiblingSource(): string {
+    const root = mkdtempSync(join(tmpdir(), 'sp-h-sibling-'));
+    created.push(root);
+    mkdirSync(join(root, 'skills', 'foo'), { recursive: true });
+    mkdirSync(join(root, 'skills', 'foo-extra'), { recursive: true });
+    writeFileSync(
+      join(root, 'skills', 'foo', 'SKILL.md'),
+      '---\nname: foo\ntriggers:\n  - trigger\nsources:\n  - skills/foo-extra/x.ts\n---\n# foo\n\nGeneric placeholder content.\n',
+    );
+    writeFileSync(join(root, 'skills', 'foo-extra', 'x.ts'), 'export const x = 1;\n');
+    return root;
+  }
+
+  it('harvests the skill and copies the sibling-folder source', () => {
+    const hostRoot = hostWithSiblingSource();
+    const gbrainRoot = scratchGbrain();
+
+    const result = runHarvest({ slug: 'foo', hostRepoRoot: hostRoot, gbrainRoot });
+
+    expect(result.status).toBe('harvested');
+    expect(result.pairedSources).toEqual(['skills/foo-extra/x.ts']);
+    expect(readFileSync(join(gbrainRoot, 'skills', 'foo', 'SKILL.md'), 'utf-8')).toContain('# foo');
+    expect(readFileSync(join(gbrainRoot, 'skills', 'foo-extra', 'x.ts'), 'utf-8')).toBe(
+      'export const x = 1;\n',
+    );
+  });
+
+  it('dry-run accepts the sibling-folder source and writes nothing', () => {
+    const hostRoot = hostWithSiblingSource();
+    const gbrainRoot = scratchGbrain();
+
+    const result = runHarvest({ slug: 'foo', hostRepoRoot: hostRoot, gbrainRoot, dryRun: true });
+
+    expect(result.status).toBe('harvested');
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo'))).toBe(false);
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo-extra'))).toBe(false);
+  });
+
+  it('privacy-lint rollback also removes the sibling-folder source', () => {
+    const hostRoot = hostWithSiblingSource();
+    writeFileSync(join(hostRoot, 'skills', 'foo-extra', 'x.ts'), '// contact: alice@example.com\n');
+    const gbrainRoot = scratchGbrain();
+
+    const result = runHarvest({ slug: 'foo', hostRepoRoot: hostRoot, gbrainRoot });
+
+    expect(result.status).toBe('lint_failed');
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo'))).toBe(false);
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo-extra', 'x.ts'))).toBe(false);
+  });
+
+  it('a symlink in the sibling folder is still refused', () => {
+    const hostRoot = hostWithSiblingSource();
+    const outside = mkdtempSync(join(tmpdir(), 'sp-h-outside-'));
+    created.push(outside);
+    writeFileSync(join(outside, 'secret.txt'), 'PRIVATE\n');
+    rmSync(join(hostRoot, 'skills', 'foo-extra', 'x.ts'));
+    symlinkSync(join(outside, 'secret.txt'), join(hostRoot, 'skills', 'foo-extra', 'x.ts'));
+    const gbrainRoot = scratchGbrain();
+    const manifestBefore = readFileSync(join(gbrainRoot, 'openclaw.plugin.json'), 'utf-8');
+
+    try {
+      runHarvest({ slug: 'foo', hostRepoRoot: hostRoot, gbrainRoot, noLint: true });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HarvestError);
+      expect((err as HarvestError).code).toBe('symlink_rejected');
+    }
+    // Refused before any write: no half-copied skill dir blocks a retry
+    // with slug_collision, and the manifest is untouched.
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo'))).toBe(false);
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo-extra', 'x.ts'))).toBe(false);
+    expect(readFileSync(join(gbrainRoot, 'openclaw.plugin.json'), 'utf-8')).toBe(manifestBefore);
+  });
+
+  it('a sibling folder that links outside the host repo is refused', () => {
+    // The file itself is ordinary; only its folder is a link. The paired
+    // batch must still stay inside the host repo.
+    const hostRoot = hostWithSiblingSource();
+    const outside = mkdtempSync(join(tmpdir(), 'sp-h-outside-dir-'));
+    created.push(outside);
+    writeFileSync(join(outside, 'x.ts'), 'PRIVATE\n');
+    rmSync(join(hostRoot, 'skills', 'foo-extra'), { recursive: true });
+    symlinkSync(outside, join(hostRoot, 'skills', 'foo-extra'));
+    const gbrainRoot = scratchGbrain();
+    const manifestBefore = readFileSync(join(gbrainRoot, 'openclaw.plugin.json'), 'utf-8');
+
+    try {
+      runHarvest({ slug: 'foo', hostRepoRoot: hostRoot, gbrainRoot, noLint: true });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HarvestError);
+      expect((err as HarvestError).code).toBe('path_traversal');
+    }
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo'))).toBe(false);
+    expect(existsSync(join(gbrainRoot, 'skills', 'foo-extra', 'x.ts'))).toBe(false);
+    expect(readFileSync(join(gbrainRoot, 'openclaw.plugin.json'), 'utf-8')).toBe(manifestBefore);
+  });
+});
+
 describe('runHarvest — error paths', () => {
   it('host_skill_missing when --from points at the wrong place', () => {
     const hostRoot = scratchHost();

@@ -50,7 +50,7 @@ afterAll(() => {
 describe('gbrain takes extract --from-pages --json (#3962)', () => {
   test('emits the extraction result as parseable JSON', async () => {
     const stdout = await captureStdout(() =>
-      runTakes(engine, ['extract', '--from-pages', '--dry-run', '--json']));
+      runTakes(engine, ['extract', '--from-pages', '--dry-run', '--yes', '--json']));
 
     expect(JSON.parse(stdout)).toEqual({
       pages_scanned: 0,
@@ -72,7 +72,7 @@ describe('gbrain takes extract --from-pages --json (#3962)', () => {
     queries.length = 0;
     const cursorTs = '2031-07-08 09:10:11.654321-05';
     await captureStdout(() =>
-      runTakes(engine, ['extract', '--from-pages', '--json', '--dry-run', '--before', `${cursorTs},977`, '--source-id', 'default']));
+      runTakes(engine, ['extract', '--from-pages', '--json', '--dry-run', '--yes', '--before', `${cursorTs},977`, '--source-id', 'default']));
     const pageQuery = queries.find((q) => q.sql.includes('FROM pages'));
     expect(pageQuery).toBeDefined();
     expect(pageQuery!.sql).not.toContain(cursorTs);
@@ -85,7 +85,7 @@ describe('gbrain takes extract --from-pages --json (#3962)', () => {
 
   test('negative control: without --before the page query carries no cursor condition', async () => {
     queries.length = 0;
-    await captureStdout(() => runTakes(engine, ['extract', '--from-pages', '--json', '--dry-run']));
+    await captureStdout(() => runTakes(engine, ['extract', '--from-pages', '--json', '--dry-run', '--yes']));
     const pageQuery = queries.find((q) => q.sql.includes('FROM pages'));
     expect(pageQuery!.sql).not.toContain('(updated_at, id) <');
     expect(pageQuery!.params).toEqual([]);
@@ -130,7 +130,7 @@ describe('takes extract --before cursor validation (#5059)', () => {
         ? [{ id: 9, slug: 'concepts/short', source_id: 'default', type: 'concept', compiled_truth: 'too short', updated_at: new Date('2030-01-02T03:04:05.123Z'), resume_at: '2030-01-02 03:04:05.123456+00,9' }]
         : sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [],
     } as unknown as BrainEngine;
-    const stdout = await captureStdout(() => runTakes(pageEngine, ['extract', '--from-pages', '--dry-run']));
+    const stdout = await captureStdout(() => runTakes(pageEngine, ['extract', '--from-pages', '--dry-run', '--yes']));
     expect(stdout).toContain("next: --before '2030-01-02 03:04:05.123456+00,9'");
   });
 });

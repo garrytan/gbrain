@@ -74,3 +74,6 @@ abef0b6d4b3c475ab8a6ab991744562f1f579a4f:test/transcripts-openclaw-gateway-argv.
 abef0b6d4b3c475ab8a6ab991744562f1f579a4f:test/transcripts-openclaw-gateway-argv.test.ts:generic-api-key:124
 5cdad604afa992a5af330606719f41299d05c29f:test/transcripts-openclaw-gateway-argv.test.ts:generic-api-key:34
 8d727757c32db0479ebc33e48c3ac6cb8a7f023c:test/transcripts-archive-redaction.test.ts:generic-api-key:31
+# Rust engine research maps (PR 9595): history-only false positives (one prose line, and this file's own first comment) read as generic-api-key; not secrets.
+0b3539ac8cbbcab5308016a53b3559276449854f:docs/research/rust-engine/gbrain-evals/brainbench-categories.md:generic-api-key:242
+ef56be48bd4bca977ed5eee7012070573039b142:.gitleaksignore:generic-api-key:77
