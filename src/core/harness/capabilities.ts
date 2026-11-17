@@ -6,7 +6,7 @@ import { TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, normalizeGrantBrain, vali
 import { shellQuote } from '../mcp-registration.ts';
 import type { CatalogProvenance } from '../grants/profiles.ts';
 import type { Action, Notice } from '../agent-output.ts';
-import { EXECUTION_PREREQUISITES, requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
+import { EXECUTION_PREREQUISITES, addedOnlyByName, requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
 
 type GrantSurface = 'verbs' | 'starter' | 'full';
 
@@ -103,7 +103,8 @@ export async function grantOperationGaps(input: GrantGapInput): Promise<GrantGap
     import('../operations.ts'), import('../../mcp/surface.ts'),
   ]);
   const fence = { boundSlugPrefixes: input.boundSlugPrefixes, fenceProjectionDegraded: input.fenceProjectionDegraded, grantProjectionDegraded: input.grantProjectionDegraded };
-  const eligible = operations.filter(op => !op.localOnly && !input.disabled.has(op.name)
+  const named = new Set(input.allowedOperations ?? []);
+  const eligible = operations.filter(op => !op.localOnly && !input.disabled.has(op.name) && (!addedOnlyByName(op.name) || named.has(op.name))
     && operationScopesAllowed([...input.scopes], op) && opAllowedForBoundClient(fence, op));
   const outside = (surface: GrantSurface | null): string[] => {
     if (!surface || surface === 'full') return [];

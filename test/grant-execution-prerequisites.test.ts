@@ -67,16 +67,16 @@ describe('#6663 membership operations on a grant with no snapshot', () => {
   test('are unreachable, named, and get a refresh repair', async () => {
     const scopes = ['read', 'skills_member_self'];
     const gaps = await gapsFor(scopes, null);
-    expect(gaps.approvalExcluded.sort()).toEqual(APPROVAL_ONLY);
-    for (const op of APPROVAL_ONLY) expect(gaps.unreachable).toContain(op);
-    expect(gaps.unreachable).toHaveLength(APPROVAL_ONLY.length);
+    expect(gaps.approvalExcluded.sort()).toEqual(MEMBERSHIP);
+    for (const op of MEMBERSHIP) expect(gaps.unreachable).toContain(op);
+    expect(gaps.unreachable).toHaveLength(MEMBERSHIP.length);
     let gate = 'allowed';
     try {
       await memberAuthority({ remote: true, auth: { scopes, principal: { kind: 'legacy_token', id: 't1' }, allowedOperations: undefined }, engine: { executeRaw: async () => [] } } as never, 'join_brain');
     } catch (e) { gate = (e as { code?: string }).code ?? String(e); }
     expect(gate).toBe('permission_denied');
     const d = diagnose(gaps, false);
-    expect(d.blockers).toContainEqual({ blocker: 'explicit_approval', excluded_count: APPROVAL_ONLY.length });
+    expect(d.blockers).toContainEqual({ blocker: 'explicit_approval', excluded_count: MEMBERSHIP.length });
     expect(d.fix?.argv).toEqual(['gbrain', 'auth', 'rescope', '--token', 't', '--refresh-operations']);
     expect(d.fix?.then_argv).toEqual(['gbrain', 'auth', 'rescope', '--token', 't', '--refresh-operations', '--add', '<OPERATIONS>']);
     const client = diagnose(gaps, false, { kind: 'oauth_client', id: 'c1' } as never);
@@ -88,6 +88,26 @@ describe('#6663 membership operations on a grant with no snapshot', () => {
     expect(gaps.approvalExcluded).toEqual([]);
     expect(gaps.unreachable).not.toContain('join_brain');
     expect(gaps.prerequisites.map(p => p.operation)).not.toContain('join_brain');
+  });
+});
+
+describe('GST-2988 reveal_secret is opt-in by name, never a blocked operation', () => {
+  test('grants that do not name it, with or without a snapshot, report nothing blocked because of it', async () => {
+    for (const snapshot of [null, ['get_page', 'search']]) {
+      const gaps = await gapsFor(['read', 'write'], snapshot);
+      expect(gaps.unreachable).not.toContain('reveal_secret');
+      expect(gaps.approvalExcluded).not.toContain('reveal_secret');
+      expect(gaps.snapshotExcluded).not.toContain('reveal_secret');
+      expect(gaps.prerequisites.map(p => p.operation)).not.toContain('reveal_secret');
+    }
+    const plain = diagnose(await gapsFor(['read', 'write'], null), false);
+    expect(plain.blockers.filter(b => b.blocker === 'explicit_approval')).toEqual([]);
+  });
+
+  test('a snapshot that names it reaches it', async () => {
+    const gaps = await gapsFor(['read'], ['get_page', 'reveal_secret']);
+    expect(gaps.unreachable).not.toContain('reveal_secret');
+    expect(gaps.prerequisites.map(p => p.operation)).not.toContain('reveal_secret');
   });
 });
 

@@ -19,7 +19,7 @@ export const v320: Migration = {
   sql: `
 CREATE TABLE IF NOT EXISTS secret_store (
   id TEXT PRIMARY KEY CHECK (id ~ '^ss_[0-9a-f]{12}$'),
-  source_id TEXT NOT NULL,
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   rule TEXT NOT NULL CHECK (rule ~ '^[a-z0-9_]{1,64}$'),
   ciphertext TEXT NOT NULL,
   nonce TEXT NOT NULL,

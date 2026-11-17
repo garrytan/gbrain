@@ -1273,7 +1273,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 185 table(s) the applied migrations create exist.",
+          "message": "All 187 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -4057,7 +4057,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "1 retrieval-affecting file(s) changed since HEAD: src/core/operations.ts. Re-run `gbrain eval run-all` after committing these changes.",
+          "message": "No retrieval-affecting files changed in working tree.",
           "name": "eval_drift",
           "status": "ok"
         },

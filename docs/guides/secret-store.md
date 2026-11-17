@@ -64,6 +64,13 @@ Each host keeps a keyring at `~/.gbrain/secret-store/keys/`: one `<key_id>.key` 
 The database holds only ciphertext, the key id, and an HMAC of the value under a key derived from the store key, so a
 copy of the database or of a backup does not reveal originals without the key file.
 
+## When an original cannot be kept
+
+A redaction writes its marker only after the original is sealed in the store. When the store cannot be written (a
+read-only database, a full disk), `gbrain repair secret-spans --apply` stops with `secret_store_unwritable` and changes
+nothing, so no value is lost and none is left in the clear by this command. Fix what the error names, then run the
+preview again.
+
 ## What it does not do
 
 - It does not rotate or revoke credentials.
