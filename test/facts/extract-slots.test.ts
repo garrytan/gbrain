@@ -5,6 +5,7 @@
  * preferences and ideas on two public dev worlds), so the call's system prompt stays byte-identical to the historical one
  * for every variant (pinned by hash), its schema has no slot field, and a slot the model returns anyway is never stored.
  * Regression: a conversation extraction call that carries slot text or a slot field.
+ * Slots come from the separate tagging call (slot-tagging.test.ts); the stub answers it with no slot.
  * Seams: gateway chat transport stub (no provider call), PGLite with no git repository.
  */
 import { createHash } from 'node:crypto';
@@ -12,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'b
 import { runExtractConversationFactsCore } from '../../src/commands/extract-conversation-facts.ts';
 import { __setChatTransportForTests, resetGateway, type ChatOpts, type ChatResult } from '../../src/core/ai/gateway.ts';
 import { buildExtractorSystem } from '../../src/core/facts/extract.ts';
+import { SLOT_TAG_SYSTEM } from '../../src/core/facts/slot-tagging.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -57,6 +59,8 @@ describe('conversation extraction main call', () => {
   test('sends the historical prompt and a schema with no slot, and stores no slot the model returns anyway', async () => {
     const seen: ChatOpts[] = [];
     __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      if (opts.system === SLOT_TAG_SYSTEM) return { text: '{"slots":[]}', blocks: [{ type: 'text', text: '{"slots":[]}' }], stopReason: 'end', model: 'test:stub',
+        providerId: 'test', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } } as ChatResult;
       seen.push(opts);
       const text = JSON.stringify({ facts: [
         { fact: 'Alice Example joined Acme Example as head of design.', kind: 'fact', entity: 'people/alice-example', confidence: 1,
