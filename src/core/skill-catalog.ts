@@ -48,6 +48,7 @@ import {
   type SkillsDirSource,
 } from './repo-root.ts';
 import { loadOrDeriveManifest, type ManifestEntry } from './skill-manifest.ts';
+import { relativeEscapesRoot } from './path-confine.ts';
 import { loadSkillTriggerIndex, FRONTMATTER_SECTION } from './skill-trigger-index.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 import { oneLineDescription } from './skill-description.ts';
@@ -287,7 +288,7 @@ export function confineManifestPath(skillsDir: string, entry: ManifestEntry): st
     throw new OperationError('page_not_found', `Skill file not found: ${entry.name}`, `The skills manifest lists ${entry.name} but its SKILL.md is missing on the brain host. Call list_skills for the skills that are available; the host's operator restores the file or regenerates the manifest.`);
   }
   const rel = relative(realRoot, realCandidate);
-  if (rel.startsWith('..') || resolve(realRoot, rel) !== realCandidate) {
+  if (relativeEscapesRoot(rel) || resolve(realRoot, rel) !== realCandidate) { // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- rel comes from relative() of two realpaths; resolve only re-joins it to confirm containment, no file is opened here
     throw new OperationError('invalid_params', `Skill path escapes skills dir: ${entry.name}`,
       `The manifest entry for ${entry.name} points outside the skills directory, so it is refused. Pick another skill from list_skills; the brain host's operator fixes the manifest.`);
   }

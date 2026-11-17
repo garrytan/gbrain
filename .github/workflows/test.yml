@@ -319,8 +319,8 @@ jobs:
 
   # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   security-regressions:
-    needs: [dynamic-ci]
-    if: ${{ !cancelled() && needs.dynamic-ci.outputs.security-regressions != 'false' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
+    needs: [changes, dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.security-regressions != 'false' && needs.changes.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubicloud-standard-2-ubuntu-2404' || matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -328,9 +328,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-26, windows-latest]
         bun: ['1.4.4']
-        # Event parity: every event, pull requests and merge-queue runs
-        # included, runs every supported Bun version on every OS
-        # (docs/TESTING.md#event-parity).
+        # Event parity: every supported Bun version on every OS, with one named
+        # exception (docs/ci-event-parity.md#macos-runners): the macos-26 cell is left
+        # out of a pull request's cheap tier and of a master push that reuses
+        # a passed full run of its exact tree. The full-ci dispatch, every
+        # other push, the nightly and the merge queue run it.
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' || needs.changes.outputs.reuse == 'true') && '[{"os":"macos-26"}]' || '[]') }}
     steps:
       - id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4

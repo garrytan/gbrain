@@ -179,6 +179,43 @@ other pages no rule or `readable_by` restricts, which every member's key still r
 by folder, with the commands that label them; `--labelled-only` keeps each member to
 the pages labelled for it instead (never the owner). See
 [pages every member's key can read](access-designations.md#pages-every-members-key-can-read).
+When the brain serves one person and already holds such pages (a journal, DMs, chat,
+mail, the conversation archive), setup asks for that choice before it writes anything:
+it refuses with `setup_history_choice_required`, naming the count, how many are DMs,
+chat or mail and how many are in the conversation archive, until you pass
+`--labelled-only` (keep that history private) or `--open-history` (every member reads
+it). It also refuses when it could not count them, and the `--labelled-only` command it
+suggests leaves the owner out of `--members`, since the owner reads the whole brain. When the brain has the `company` source (`--shape company`), a `--labelled-only` run
+also adds one folder rule, `company/` in source `company`, readable by the owner, the
+run's members and every member who is not labelled-only, so the members still read the
+company pages and imported calls; only keys bound to those members read pages under
+`company/`. A re-run adds new members to that rule and never removes one; because that
+widens it, the new readers wait for `gbrain access apply --source company` (preview, then
+the `--yes --expect` line it prints). A run without `--labelled-only` adds no such rule. A
+new brain, one with no such pages and one that already serves several people are not asked.
+On a brain with no owner, setup also names one: `--owner <id>`, or by default your
+login name as a member id. It adds that member and runs `gbrain access owner set`;
+the preview shows it first, and an owner that is already set is kept. No key is
+rebound: the receipt lists each live token or OAuth client bound to no member with
+the `gbrain auth rescope --token|--client <name> --member <owner>` command that
+binds it, so you bind your own keys on purpose.
+Each key setup mints writes to the run's source and reads a fixed list: that source,
+the `company` source when it exists (`--shape company`), and every source federated
+when the key is minted. The preview names the list and how many pages `company` holds,
+how many of them are imported calls, and that every member reads them all, calls they
+did not attend included. A source federated later reaches these keys only when you run
+setup again: a re-run adds sources to a key setup minted with a list and never removes
+one, but only while the key's list is still the one setup gave it. A key you changed by
+hand (`gbrain auth rescope`) is skipped: the receipt names it, with `action: skipped` on
+its `keys` row under `--json`, and the rescope command that adds the new sources. A
+source archived since the key was minted is dropped from its list; when that source is
+the key's write source, setup blocks the key instead and names the commands that repoint
+or revoke it. Unfederating a source does not take it away from these keys either:
+`gbrain sources unfederate <id>` lists each member key that still reads it, with the
+`gbrain auth rescope --token <name> --sources <ids>` command that drops it.
+Keys minted before this (the default grant) are never changed. When the same run
+adds the `company` source (`--shape company`), setup labels the people first and then
+gives their new keys `company`; `company` itself stays out of default search.
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
 For a Claude Code or Codex install only one person uses, bind that harness alone:
@@ -213,6 +250,25 @@ a brain setup cannot read refuses (`setup_serves_unreadable`).
 `people/<name>/` folder with pages and no rule naming its readers.
 `gbrain access serves several --members ...` does the labelling alone (preview, then
 `--yes`).
+
+### A member's key into their harness
+
+A member key (`member-keys/<member>.key`) is a plain bearer key for
+`gbrain serve --http`. Hand the file to its member privately; on their machine they
+put it into Claude Code, Codex or opencode with the bearer-token form of
+`gbrain connect`, which reads the key from `GBRAIN_REMOTE_TOKEN` so it never lands in
+shell history:
+
+```bash
+GBRAIN_REMOTE_TOKEN="$(cat alice-example.key)" \
+  gbrain connect https://brain.example.com/mcp --agent claude-code --install
+# --agent codex or --agent opencode for those harnesses
+```
+
+`gbrain whoami` over that connection names the member. `--harness` and
+`--credentials-file` take only the credential handoff that `gbrain mcp grant`
+writes, never a member key; given one, `gbrain connect` refuses and prints the
+command above.
 
 On such a brain every remote read must say whom it reads for. A token, OAuth
 client or stdio server bound to no member is refused with

@@ -1,0 +1,4 @@
+---
+kind: default
+---
+gbrain setup <harness> --serves several and gbrain access serves several now mint each member key with a fixed source list instead of the default grant: it writes to the run's source and reads that source, the company source when it exists (gbrain setup --shape company), and every source federated when the key is minted. So members read the company pages and imported calls, including calls they did not attend, without federating company, which stays out of default search. A source federated later reaches these keys only when you run setup again (a re-run adds sources to such a key and never removes one); before, a member key read every federated source as soon as it was federated. A key for a named --source now also reads the federated sources and company. Keys minted before this release, and any key setup did not mint with a list, are not changed. The preview names the list and how many pages company holds.

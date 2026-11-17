@@ -22,7 +22,7 @@ import { assembleTrustCell, runTrustSuites, type RunTrustSuitesOpts } from '../s
 import { TRUST_SUITES, type LoadedFixture, type TrustStep, type TrustSuite } from '../src/eval/brainbench/types.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { __setWriteGateDetectorForTests } from '../src/core/write-gate.ts';
-import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const ROOT = join(import.meta.dir, '..', 'evals', 'brainbench');
@@ -40,7 +40,7 @@ const SLICE = {
 type Metrics = Partial<Record<TrustSuite, Record<string, number>>>;
 
 interface Mutation {
-  setup?: (engine: PGLiteEngine) => Promise<void>;
+  setup?: (engine: BrainEngine) => Promise<void>;
   beforeStep?: RunTrustSuitesOpts['beforeStep'];
   fixtures?: (lf: LoadedFixture) => LoadedFixture;
 }
@@ -71,7 +71,7 @@ async function runSlice(suites: readonly TrustSuite[], mutation: Mutation = {}):
 afterEach(() => __setWriteGateDetectorForTests(null));
 
 /** The default-mode poisoning arm (shipped defaults: flag / allow) with `setup` applied to its brain. */
-async function runDefaultSlice(setup: (engine: PGLiteEngine) => Promise<void>): Promise<Record<string, number> | undefined> {
+async function runDefaultSlice(setup: (engine: BrainEngine) => Promise<void>): Promise<Record<string, number> | undefined> {
   const fixtures = SLICE.poisoning.map(id => byId.get(id)!);
   // One brain open per GBRAIN_HOME at a time: the protection brain runTrustSuites opens nests inside this one and closes first.
   const defaultBrain = await createTrustBrain({ protections: false });
@@ -170,7 +170,7 @@ describe('poisoning default mode: break the labels and flags it guarantees', () 
 });
 
 describe('poisoning: turn each defense off', () => {
-  const config = (key: string, value: string) => async (engine: PGLiteEngine) => { await engine.setConfig(key, value); };
+  const config = (key: string, value: string) => async (engine: BrainEngine) => { await engine.setConfig(key, value); };
 
   test('external gate off: external payloads persist', async () => {
     const m = await runSlice(['poisoning'], { setup: config('write_gate.external_mode', 'off') });

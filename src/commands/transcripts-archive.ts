@@ -56,9 +56,13 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
 
   if (sub === 'status') {
     const status = await archive.archiveStatus(engine, { sourceId });
+    const { resolveArchiveEnabled } = await import('../core/transcripts/archive-default.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    const why = json ? null : await resolveArchiveEnabled(engine, { config: (() => { try { return loadConfig(); } catch { return null; } })() }).then(e => e.reason, () => null);
     const upkeepOff = !json && status.enabled && !await (await import('../core/maintenance/run.ts')).upkeepEnabled(engine);
     out(status, () => {
       console.log('conversation archive: ' + (status.enabled ? 'on' : 'off') + ' (source: ' + status.source_id + ', timezone: ' + (status.timezone ?? status.configured_timezone + ', pinned at the first run') + ')');
+      if (why) console.log('  why: ' + why);
       for (const h of status.harnesses) {
         const read = h.read_at ? h.conversations + ' conversation(s) read by the last ' + (h.read_mode ?? 'run') + ' (' + h.read_at + '), newest session day ' + (h.newest_session_day ?? '-') : 'not read by an archive run yet';
         console.log('  ' + h.reader.padEnd(18) + ' ' + (h.info ?? read + ', newest archived day ' + (h.newest_archived_day ?? '-')));

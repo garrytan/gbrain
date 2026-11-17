@@ -26,6 +26,7 @@ import { readSyncImportProvenance } from './sync-holds.ts';
 import { syncOriginPath } from './sync-origin.ts';
 import type { SyncDeleteCaps, SyncDeleteTrip } from '../sync-reconcile.ts';
 import { SYNC_DELETES_WITHHELD_OP, SYNC_ORIGIN_DELETED_OP, passFingerprint } from './sync-pass-row.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -66,7 +67,7 @@ function originGitPaths(root: string | null, slugMode: string | null, sourcePath
   const gitRoot = toplevel.stdout.toString('utf8').trim();
   let scope: string;
   try { scope = relative(realpathSync.native(gitRoot), realpathSync.native(root)).split(sep).join('/'); } catch { return null; }
-  if (scope.startsWith('..')) return null;
+  if (relativeEscapesRoot(scope)) return null;
   const candidates = new Set<string>();
   if (slugMode !== 'git-root') candidates.add(scope ? `${scope}/${sourcePath}` : sourcePath);
   if (slugMode !== 'source-root' && (!scope || sourcePath.startsWith(`${scope}/`))) candidates.add(sourcePath);
