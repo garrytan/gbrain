@@ -26,7 +26,7 @@ use crate::Store;
 use crate::env::{iso, parse_iso};
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::keys;
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::timeline::{TimelineRecord, parse_date};
 use serde::Deserialize;
@@ -402,6 +402,12 @@ impl Store {
             None => json!({ "last_date": null, "last_event_slug": null }),
         })
     }
+}
+
+/// Core hook: `pages::remove_page` calls this when it hard deletes a page. Projections are not
+/// written by this family yet, so there is nothing to remove.
+pub(crate) fn remove_event_projections(_tx: &mut dyn KvWrite, _event_page_id: u64) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]

@@ -111,6 +111,14 @@ impl PageRecord {
             "ingested_at": opt_iso(self.ingested_at_us),
         })
     }
+
+    /// `to_page` plus the columns families add (`page_columns::add_page_columns`): the page
+    /// `getPage`, `readPageSnapshot` and `listPages` return.
+    pub(crate) fn to_page_with_columns(&self, read: &dyn KvRead) -> Result<Value> {
+        let mut page = self.to_page();
+        crate::page_columns::add_page_columns(read, self, &mut page)?;
+        Ok(page)
+    }
 }
 
 /// `PageInput` of `src/core/types.ts`. Dates are ISO strings. `tags` is read only for the content
@@ -676,7 +684,7 @@ impl Store {
         let mut tags = page.tags.clone();
         tags.sort();
         Ok(Some(json!({
-            "page": page.to_page(),
+            "page": page.to_page_with_columns(&*read)?,
             "tags": tags,
             "revision": page.knowledge_revision,
             "sourceIncarnation": incarnation,
@@ -722,7 +730,9 @@ impl Store {
             .map(String::as_str)
             .filter(|p| !p.is_empty())
             .collect();
-        let mut pages: Vec<PageRecord> = all_pages(&*self.read()?)?
+        // One snapshot serves the page scan and the family columns.
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
             .into_iter()
             .filter(|p| {
                 (filters.include_deleted || p.deleted_at_us.is_none())
@@ -765,12 +775,12 @@ impl Store {
             }),
             _ => pages.sort_by(|a, b| cmp_updated(b, a)),
         }
-        Ok(pages
+        pages
             .iter()
             .skip(offset)
             .take(limit)
-            .map(PageRecord::to_page)
-            .collect())
+            .map(|page| page.to_page_with_columns(&*read))
+            .collect()
     }
 
     /// Number of live pages, optionally in one source.
@@ -998,6 +1008,7 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     clear_chunks(tx, page.id)?;
     crate::links::remove_page_links(tx, page.id)?;
     crate::timeline::remove_page_timeline(tx, page.id)?;
+    crate::timeline_queries::remove_event_projections(tx, page.id)?;
     crate::cascade::remove_page_rows(tx, page)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
