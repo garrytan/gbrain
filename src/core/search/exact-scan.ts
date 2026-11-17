@@ -46,7 +46,7 @@ export const EXACT_DEFAULT_SECONDS = 30;
 export const EXACT_MAX_SECONDS = 120;
 export const EXACT_MAX_PHRASE_CHARS = 500;
 export const EXACT_SNIPPETS_PER_PAGE = 3;
-const SNIPPET_CONTEXT = 80;
+export const EXACT_SNIPPET_CONTEXT = 80;
 const BATCH_PAGES = 2000;
 const GAP_SAMPLE = 20;
 
@@ -119,7 +119,7 @@ export function buildExactBatchStatement(opts: ExactScanOpts, after: number, bat
   const limitP = add(batchPages);
   const flags = opts.caseSensitive ? "''" : "'i'";
   const re = add(pattern.regex);
-  const snippetRe = add('.{0,' + SNIPPET_CONTEXT + '}' + pattern.regex + '.{0,' + SNIPPET_CONTEXT + '}');
+  const snippetRe = add('.{0,' + EXACT_SNIPPET_CONTEXT + '}' + pattern.regex + '.{0,' + EXACT_SNIPPET_CONTEXT + '}');
   const like = add('%' + escapeLikePattern(pattern.longest) + '%');
   const op = opts.caseSensitive ? '~' : '~*';
   const likeOp = opts.caseSensitive ? 'LIKE' : 'ILIKE';
