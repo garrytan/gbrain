@@ -22,6 +22,8 @@ import { runRepairCommand } from '../src/commands/repair.ts';
 import { agentSessionFactsCheck } from '../src/commands/doctor/checks/agent-session-facts.ts';
 import { runWaveChecks } from '../src/commands/doctor/wave-checks.ts';
 import { writeSpeakerSidecar, speakerContextNote } from '../src/core/context/session-speaker.ts';
+import { speakerFileName } from '../src/core/context/corpus-segments.ts';
+import { classifyAgentSessionFacts } from '../src/core/repair/agent-session-facts.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -181,6 +183,40 @@ describe('gbrain repair agent-session-facts, unmanaged repo-less brain', () => {
     expect(listed[harnessOnly]).toBeUndefined();
     expect(listed[unattended]).toBe('ambiguous');
     expect(listed[template]).toBe('ambiguous');
+  }, 120_000);
+
+  test('#9521: sessions with a speaker sidecar that replay an owner opening do not make the owner session repeated_opening', async () => {
+    const opening = 'Walk me through why the quarterly export job got slower this week, step by step.';
+    const write = (id: string) => writeFileSync(join(corpus, `${id}.txt`), `[user]\n${opening}\n\n[assistant]\nSure.`);
+    write('sess-original');
+    for (const n of [1, 2, 3, 4]) {
+      write(`sess-replay${n}`);
+      writeSpeakerSidecar(corpus, `sess-replay${n}`, { principal: 'agent-launched', source: 'detected' }, 'claude');
+    }
+    const ownerFact = await insert('Prefers short export logs', 'sess-original');
+    const replayFact = await insert('Prefers verbose export logs', 'sess-replay1');
+    const template = await insert('Prefers tidy branches', 'sess-t1');
+    const listed = classes(await repair(engine, []));
+    expect(listed[ownerFact]).toBeUndefined();
+    expect(listed[replayFact]).toBe('evidenced');
+    expect(listed[template]).toBe('ambiguous');
+  }, 120_000);
+
+  test('#9521: a speaker sidecar removed between pages of one run leaves its session classified instead of throwing', async () => {
+    const opening = 'Walk me through why the nightly import job got slower this week, step by step.';
+    const write = (id: string) => writeFileSync(join(corpus, `${id}.txt`), `[user]\n${opening}\n\n[assistant]\nSure.`);
+    for (const n of [1, 2, 3]) {
+      write(`sess-replay${n}`);
+      writeSpeakerSidecar(corpus, `sess-replay${n}`, { principal: 'agent-launched', source: 'detected' }, 'claude');
+    }
+    const replayFact = await insert('Prefers verbose import logs', 'sess-replay1');
+    const indexes = new Map();
+    const first = await classifyAgentSessionFacts(engine, ['default'], { corpusDir: corpus, ids: [replayFact], indexes });
+    expect(first.candidates.map(c => c.class)).toEqual(['evidenced']);
+    rmSync(join(corpus, speakerFileName('sess-replay1')));
+    const second = await classifyAgentSessionFacts(engine, ['default'], { corpusDir: corpus, ids: [replayFact], indexes });
+    expect(second.candidates).toEqual([]);
+    expect(second.not_suspect).toBe(1);
   }, 120_000);
 
   test('apply re-attributes, adds the note, retires only all-agent takes, deletes nothing; ambiguous needs --include-ambiguous', async () => {

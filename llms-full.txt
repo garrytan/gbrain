@@ -2764,6 +2764,8 @@ grants.
   writing/originals page content to your configured chat model (default
   Anthropic Haiku). Refuses to run unless `takes.bootstrap_enabled=true`
   is set in config AND `--yes` is passed. Two-gate opt-in by design.
+  `--dry-run` without `--yes` only lists the candidate pages and sends
+  nothing to the model.
 - Autopilot's auto-apply tier for takes-bootstrap is `manual_only`
   (do not bypass).
 

@@ -231,6 +231,7 @@ function completedKey(sourceId: string, slug: string): string {
 // Default synthesis via the gateway.
 // ---------------------------------------------------------------------------
 
+/** No prompt cache: the system prompt is below the smallest cacheable prefix, so a cache would only mark this page's evidence (#9541). */
 export const defaultSynthesize: SynthesizeFn = async ({ system, user, model, abortSignal }) => {
   const res = await chat({
     model,
@@ -238,7 +239,6 @@ export const defaultSynthesize: SynthesizeFn = async ({ system, user, model, abo
     messages: [{ role: 'user', content: user }],
     maxTokens: isThinkingModel(model) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : 2048,
     abortSignal,
-    cacheSystem: true,
   });
   return res.text;
 };

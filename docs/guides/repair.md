@@ -2781,7 +2781,7 @@ gbrain doctor
 | Class | Meaning | Re-attributed |
 | --- | --- | --- |
 | `evidenced` | The fact's session has a speaker sidecar (`<session>.speaker.json` in the corpus directory, its `sourced/` spool or beside the session's corpus files), you named it with `--session <id>`, or its `<session>.source.json` records a working directory under a `--cwd <prefix>` you passed (compared on whole path segments after resolving symlinks). | By `--apply --expect <hash> --yes` |
-| `ambiguous` | The session's first message (spaces collapsed, lowercased, at least 40 characters) matches the first 160 characters of the first message of at least 3 other sessions: a template brief. A heuristic, so it is listed in every preview but applied only on request. | Only with `--include-ambiguous` and that preview's hash |
+| `ambiguous` | The session's first message (spaces collapsed, lowercased, at least 40 characters) matches the first 160 characters of the first message of at least 3 other sessions that have no speaker sidecar: a template brief. A heuristic, so it is listed in every preview but applied only on request. | Only with `--include-ambiguous` and that preview's hash |
 | `excluded:owner_also_said` | The same claim and entity also has an active fact attributed to you from a session that is not suspect, so you said it too. | Never |
 
 Only active capture-lane facts (`hook:writeback`, `hook:compact`,
