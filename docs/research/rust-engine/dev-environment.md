@@ -2,7 +2,8 @@
 
 One script sets up an Ubuntu machine for Rust engine parity work: the right
 Bun, a local Postgres with pgvector, the Rust toolchain and the napi-rs CLI.
-The plan this serves is [docs/designs/RUST_ENGINE.md](../../designs/RUST_ENGINE.md).
+It serves the Rust engine plan (`docs/designs/RUST_ENGINE.md`, proposed in
+https://github.com/garrytan/gbrain/pull/9593 and not yet merged).
 
 ## Run it
 
@@ -22,12 +23,12 @@ only starts Postgres again. It ends with one line per step and
 
 | Step | What happens |
 |---|---|
-| `preflight` | Checks for Ubuntu and sudo. Installs `curl`, `unzip`, `git`, `pkg-config`, `python3`, `procps` and a C compiler if they are missing. The e2e wrapper needs `python3` and `pgrep`. |
+| `preflight` | Checks for Ubuntu and sudo. Installs `ca-certificates`, `curl`, `unzip`, `git`, `pkg-config`, `python3`, `procps` and a C compiler if they are missing. The e2e wrapper needs `python3` and `pgrep`. |
 | `bun` | Installs the Bun version in `package.json` `engines.bun` (1.4.4 today) into `~/.bun`, and links `bun` and `bunx` into `/usr/local/bin`, so it wins over an older system Bun in every shell. |
 | `postgres` | Installs `postgresql-16` and `postgresql-16-pgvector` from the PostgreSQL apt archive if they are missing. `pg_trgm` and `pgcrypto` come with the server. |
 | `pg-start` | Creates the `16/main` cluster if there is none and starts it. It uses `pg_ctlcluster`, so it works without systemd. |
 | `pg-database` | Creates the role `gbrain` (password `gbrain`, superuser) and the database `gbrain_test`, and enables `vector`, `pg_trgm` and `pgcrypto` in it. |
-| `rust` | Installs rustup with the stable toolchain, `rustfmt` and `clippy`, and links `cargo`, `rustc` and `rustup` into `/usr/local/bin`. |
+| `rust` | Installs rustup with the stable toolchain, `rustfmt` and `clippy`, and links `cargo`, `rustc`, `rustup`, `rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver` and `rustdoc` into `/usr/local/bin`. |
 | `napi-cli` | Installs the napi-rs CLI (`@napi-rs/cli` 3.x) as a global Bun tool, plus a small `napi` wrapper in `~/.gbrain-rust-dev/bin` that runs it on Bun. Node is not needed: Ubuntu's Node 18 is too old for the CLI. Nothing is added to `package.json`. |
 | `bun-install` | Runs `bun install --frozen-lockfile` in the repository. |
 | `env-file` | Writes `~/.gbrain-rust-dev.env` (mode 600). |
@@ -97,8 +98,8 @@ On 2026-11-17, at master `0d78dcfa2e`, 8 CPUs:
 | `test/pglite-engine.test.ts`, same VM | 110 pass, 0 fail | 5 s |
 | `test/e2e/engine-parity.test.ts`, same VM, Postgres 16.14 + pgvector 0.8.2 | 76 pass, 0 fail | 53 s |
 
-In the fresh container, most of the 42 s went to apt: base packages 16 s,
-Postgres 13 s. Rust took 8 s.
+In the fresh container, most of the 52 s went to apt: base packages 20 s,
+Postgres 17 s. Rust took 8 s.
 
 ## Known problems
 
@@ -111,3 +112,12 @@ Postgres 13 s. Rust took 8 s.
 - The script installs the Rust stable toolchain. When the Rust workspace adds
   `rust/rust-toolchain.toml`, cargo will pick that pin up by itself.
 - Ubuntu only. macOS and other Linux distributions are not supported.
+- On a shared machine, keep the log folder private. If you set
+  `GBRAIN_DEV_LOG_DIR`, point it at a folder only you can write to. The script
+  does not tighten the mode of a folder that already exists.
+- Run the script, and the tests, with `PGHOST`, `PGHOSTADDR` and `PGSERVICE`
+  unset. The script does not clear them, so the database step and the test
+  connection could reach a different server.
+- The database step sets the password and superuser flag of the `gbrain` role
+  each time it runs. If the local cluster already has a `gbrain` role that
+  something else uses, pick another name with `GBRAIN_DEV_PG_USER`.
