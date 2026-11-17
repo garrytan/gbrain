@@ -23,7 +23,7 @@ import type { Cursor, RetryWait } from './sync-run.ts';
 import { getWriteRequestById } from './journal.ts';
 import type { WriteRequest } from './model.ts';
 import { managedSyncWriteDiagnostic } from './sync-write-diagnostic.ts';
-import { recordedStop, replaysUnchangedRefusal, resumableRowStop } from './sync-stop-class.ts';
+import { abortStop, recordedStop, replaysUnchangedRefusal, resumableRowStop } from './sync-stop-class.ts';
 import { adoptLegacyPage, incomingId, partialCloneTreeRefusal, syncExcludePatterns, syncGit, type LegacyIdentity, type ManagedSyncContext, type SyncDiscovery, type SyncEntry, type SyncFileRefusal, type SyncSlugCollision } from './sync-discovery.ts';
 import { assertSyncDispatchActive, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import { recordPassFenceTrend, type PassStamp, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
@@ -831,7 +831,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     pass: { pass_id: passId, kind, round: value.telemetry.round, outcome: value.telemetry.outcome, stop_reason: value.telemetry.stop_reason, candidates: candidatesFirst,
       settled: S.size + yieldSettled, remaining: value.telemetry.remaining, not_converged_streak: value.obligations.not_converged_streak } });
   // A caller abort records the stop on the pass row (the pin it rolled back is replaced).
-  if (await pinPassRow(engine, value, input)) { await save('resumable', 'timeout', true).catch(() => undefined); return result('partial', 'timeout'); }
+  if (await pinPassRow(engine, value, input)) { await save('resumable', abortStop(input.signal), true).catch(() => undefined); return result('partial', 'timeout'); }
   assertActive();
   registerPassCost(passId, { sourceId, incarnation, scope: costScope, pricePerMTok: currentEmbeddingPricePerMTok() });
   /** The batch cursor sync-run.ts drains: the discovery shape with no cursor row behind it. */
@@ -884,7 +884,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     const outcome: PassOutcome = drained.status === 'blocked_by_failures' ? 'blocked' : 'resumable';
     const blockedOn = drained.managedWrite?.path ? drained.managedWrite.write_request.request_id : null;
     if (outcome === 'blocked' && blockedOn && obligations.blocked?.request_id !== blockedOn) obligations.blocked = { request_id: blockedOn, pass_id: passId };
-    await save(outcome, drained.reason ?? (outcome === 'blocked' ? 'blocked_by_failures' : null));
+    await save(outcome, drained.reason === 'timeout' ? abortStop(input.signal) : drained.reason ?? (outcome === 'blocked' ? 'blocked_by_failures' : null));
     const { runId: _run, managedCursor: _cursor, ...rest } = drained;
     return { ...rest, ...result(drained.status, drained.reason) };
   };
@@ -1043,7 +1043,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     if (input.signal?.aborted && error instanceof Error && error.name === 'AbortError') {
       // A folded stamp with nothing since ended the pass: the abort stops nothing it owes.
       if (folded?.done === doneKey()) return synced(true);
-      await save('resumable', 'timeout', false, true, true).catch(() => undefined); return result('partial', 'timeout');
+      await save('resumable', abortStop(input.signal), false, true, true).catch(() => undefined); return result('partial', 'timeout');
     }
     // A Git listing that did not finish cleanly classifies nothing (design v3.2 §9): the pass stops blocked, having written nothing for that round.
     if (error instanceof SyncTreeReadIncomplete) { await save('blocked', 'reconcile_read_incomplete').catch(() => undefined); const refusal = partialCloneTreeRefusal(context.gitRoot, sourceId, head); if (refusal) throw refusal; return result('blocked_by_failures', 'reconcile_read_incomplete'); }
