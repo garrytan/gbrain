@@ -150,17 +150,17 @@ describe('R4a — chronological valid_until writeback', () => {
     // embeddings via unitVec()). Past the 24h "oldest age" gate.
     const idOlder = await insertFact({
       entity_slug: 'cdx4-acme-mrr',
-      text: 'MRR claim',
+      text: 'MRR claim A',
       valid_from: olderDay,
     });
     const idMid = await insertFact({
       entity_slug: 'cdx4-acme-mrr',
-      text: 'MRR claim',
+      text: 'MRR claim B',
       valid_from: midDay,
     });
     const idNewest = await insertFact({
       entity_slug: 'cdx4-acme-mrr',
-      text: 'MRR claim',
+      text: 'MRR claim C',
       valid_from: newest,
     });
 
@@ -188,9 +188,9 @@ describe('R4a — chronological valid_until writeback', () => {
   test('same-day cluster (3 facts, identical valid_from): id tiebreaker establishes chronological order', async () => {
     await seedPage('cdx4-acme-sameday');
     const sameDay = new Date(Date.now() - 30 * 60 * 60 * 1000);
-    const idA = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day', valid_from: sameDay });
-    const idB = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day', valid_from: sameDay });
-    const idC = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day', valid_from: sameDay });
+    const idA = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day A', valid_from: sameDay });
+    const idB = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day B', valid_from: sameDay });
+    const idC = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day C', valid_from: sameDay });
 
     await runPhaseConsolidate(engine, {});
 

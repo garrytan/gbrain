@@ -107,6 +107,11 @@ export function isClaudeCodeRemoteControlStateFile(path: string): boolean {
 
 const SESSION_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** True for Claude Code's per-project session index (`sessions-index.json`), which lists sessions and holds no turns. */
+export function isClaudeCodeSessionsIndexFile(path: string): boolean {
+  return (path.split(/[/\\]/).pop() ?? '') === 'sessions-index.json';
+}
+
 /** Keys that mark a Claude Code project transcript. */
 function looksLikeClaudeLine(obj: Record<string, unknown>): boolean {
   if (
