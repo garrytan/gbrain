@@ -206,7 +206,8 @@ export async function legacyTokenByName(engine: BrainEngine, name: string): Prom
 
 export interface AddMemberResult { member: MemberRecord; groups_created: string[]; bound: CredentialRef | null }
 
-export async function addMember(engine: BrainEngine, rawId: unknown, opts: { name?: string; email?: unknown; groups?: readonly string[]; bindToken?: string; kind?: unknown; remote?: boolean } = {}): Promise<AddMemberResult> {
+/** beforeWrite runs once every input check has passed and before anything is written; a throw from it changes nothing. */
+export async function addMember(engine: BrainEngine, rawId: unknown, opts: { name?: string; email?: unknown; groups?: readonly string[]; bindToken?: string; kind?: unknown; remote?: boolean; beforeWrite?: () => Promise<void> } = {}): Promise<AddMemberResult> {
   const id = assertAccessId(rawId);
   const kind = opts.kind === undefined ? 'person' : assertMemberKind(opts.kind);
   if (kind !== 'person') assertLocalKindChange(opts, id, kind);
@@ -224,6 +225,7 @@ export async function addMember(engine: BrainEngine, rawId: unknown, opts: { nam
   }
   if (email !== null) await assertEmailFree(engine, email, id);
   const bindTarget = opts.bindToken ? await legacyTokenByName(engine, opts.bindToken) : null;
+  await opts.beforeWrite?.();
   let created: string[] = [];
   await engine.transaction(async tx => {
     await tx.executeRaw('INSERT INTO access_members (id, display_name, email, kind) VALUES ($1, $2, $3, $4)', [id, opts.name ?? null, email, kind]);

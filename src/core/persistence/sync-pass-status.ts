@@ -8,7 +8,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import type { SyncAdmissionStatus } from './sync-admission.ts';
 import { digest } from './digest.ts';
-import { EVERY_PASS_RESCREEN_CODES, fileDriftSide, GIT_HOLD_OP, holdRescreenDue, type GitHoldRecord } from './sync-holds.ts';
+import { EVERY_PASS_RESCREEN_CODES, fileDriftSide, GIT_HOLD_OP, holdRescreenDue, outOfAttemptsHold, type GitHoldRecord } from './sync-holds.ts';
+import { HOLD_ATTEMPTS_NEEDS_HUMAN } from './sync-fault-class.ts';
 import { readDeletesWithheld, type DeletesWithheld } from './sync-markers.ts';
 import { ABANDONED_QUIET_MS, ABANDONED_REPORT_STREAK, MANAGED_SYNC_PASS_OP, NOT_CONVERGED_REPORT_STREAK, passHealth, passReadClock, transientEnding, type PassRoundSummary,
   type PassRow } from './sync-pass-row.ts';
@@ -70,6 +71,10 @@ export async function passConvergence(engine: Pick<BrainEngine, 'executeRaw'>, i
     duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null };
 }
 
+/** GST-2869: the rewrite was the attempt that exhausted a transient hold's retries, so the hold now waits on a person. */
+const reachedAttemptCap = (record: GitHoldRecord) => (record.meta.attempts ?? 1) === HOLD_ATTEMPTS_NEEDS_HUMAN
+  && (outOfAttemptsHold(record.code) || (record.code === 'page_write_failed' && record.meta.write_failure?.origin === 'freeze'));
+
 /** GST-2843: how many of a pass's rewritten holds `passBanked` reads per page while it looks for one that settled its re-screen. */
 const RESCREEN_PAGE = 500;
 
@@ -81,6 +86,8 @@ const RESCREEN_PAGE = 500;
  * leaves the hold due (a code every pass re-screens) is not progress, so passes that only re-hold those still build the streak.
  * Nor is a rewrite marked `basis_moved`: the pass re-checked the path because its page or file moved again, so passes that
  * only re-hold a page that keeps moving build the streak too.
+ * GST-2869: nor is a rewrite marked `retry_only` (re-checked only because `sync unblock` or `sources retry-held` asked, with
+ * nothing due), nor one that brought a transient hold to its attempt cap: both leave the path where it was, waiting on a person.
  */
 export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, telemetry: { pass_id: string; started_at: string }): Promise<boolean> {
   const [row] = await engine.executeRaw<{ banked: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_source_bindings b ON b.worktree_id=r.worktree_id
@@ -94,9 +101,10 @@ export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, source
     const rewritten = await engine.executeRaw<{ fingerprint: string; record: GitHoldRecord; revision: string | null }>(`SELECT h.fingerprint, h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
       FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
       WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz
-        AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) AND h.completed_keys->0->'meta'->'basis_moved' IS NULL AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
+        AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) AND h.completed_keys->0->'meta'->'basis_moved' IS NULL
+        AND h.completed_keys->0->'meta'->'retry_only' IS NULL AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
     [sourceId, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.pass_id, telemetry.started_at, [...EVERY_PASS_RESCREEN_CODES], after, RESCREEN_PAGE]);
-    if (rewritten.some(({ record, revision }) => !holdRescreenDue(record, false)
+    if (rewritten.some(({ record, revision }) => !holdRescreenDue(record, false) && !reachedAttemptCap(record)
       && (record.code !== 'file_drift' || record.page_id == null || (record.meta.page_revision ?? null) === revision))) return true;
     if (rewritten.length < RESCREEN_PAGE) return false;
     after = rewritten.at(-1)!.fingerprint;
