@@ -5,8 +5,9 @@
  * src/cli/command-table.ts.
  */
 import type { BrainEngine } from '../../core/engine.ts';
+import type { CliDispatchContext } from '../command-table.ts';
 
-export async function run(engine: BrainEngine, args: string[]): Promise<void> {
+export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchContext): Promise<void> {
   const { runConnectors } = await import('../../commands/connectors/index.ts');
-  await runConnectors(engine, args);
+  await runConnectors(engine, args, { makeContext: ctx.makeContext });
 }

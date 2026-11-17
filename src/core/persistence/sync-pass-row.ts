@@ -164,9 +164,11 @@ export const passReadClock = (row: PassRow): number => row.read_at ? Date.parse(
 /**
  * #7982: a pass that ended on a transient stop (`unrecordedStop`: a statement timeout, a lost connection, write back-pressure, a refresh fence).
  * One that recurs every pass stops every pass, so these endings build the abandoned streak as a pass left open does.
+ * GST-2869: so does a pass a termination signal stopped (`terminated`), as it did when it was left open, in every reader:
+ * the next pin's carry, abandonedPasses and sync-blocked.
  */
 export const transientEnding = (telemetry: Pick<ManagedSyncPassValue['telemetry'], 'outcome' | 'stop_reason'>): boolean =>
-  telemetry.outcome === 'resumable' && telemetry.stop_reason === 'transient';
+  telemetry.outcome === 'resumable' && (telemetry.stop_reason === 'transient' || telemetry.stop_reason === 'terminated');
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 const iso = (value: Date | string) => new Date(value).toISOString();

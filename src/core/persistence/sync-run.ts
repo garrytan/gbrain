@@ -1477,6 +1477,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       if (opts.capacityPreflight && !cursor.done) await preflightSyncCapacity(engine, { root: cursor.root, writer: cursor.authority.writer, entries: cursor.entries.slice(cursor.index) });
       opts.onProgress?.({ phase: 'managed_sync.start', bankedFiles: cursor.index, total: cursor.entries.length });
       while (!cursor.done) {
+        if (engine.kind === 'pglite') await new Promise(resolve => setImmediate(resolve));
         assertActive();
         // #6712 PR 4b: a pass's batch ends at its last entry; its stamp is its own batch or rides the last import (#6926, `folded`).
         if (cursor.passId && (!cursor.stamp || cursor.entries.length > 0) && !cursor.pending && cursor.index >= cursor.entries.length && !cursor.deferred?.length) return cursor;

@@ -70,10 +70,10 @@ describe('private-pages grant output (#8104)', () => {
     expect(privatePagesFromColumn(null)).toBe('none');
   });
 
-  test('auth list --json prints exactly id, name, scopes, created_at, last_used_at, status, private_pages and private_facts: never token_hash', async () => {
+  test('auth list --json prints exactly id, name, scopes, created_at, last_used_at, status, private_pages, private_facts and member_status: never token_hash', async () => {
     const tokens = JSON.parse(await auth(['list', '--json'])) as Array<Record<string, unknown>>;
     for (const t of tokens) {
-      expect(Object.keys(t).sort()).toEqual(['created_at', 'id', 'last_used_at', 'name', 'private_facts', 'private_pages', 'scopes', 'status']);
+      expect(Object.keys(t).sort()).toEqual(['created_at', 'id', 'last_used_at', 'member_status', 'name', 'private_facts', 'private_pages', 'scopes', 'status']);
     }
     expect(JSON.stringify(tokens)).not.toContain('token_hash');
     const byName = Object.fromEntries(tokens.map(t => [t.name as string, [t.status, t.private_pages]]));
