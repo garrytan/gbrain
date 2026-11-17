@@ -901,6 +901,13 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "filing": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "forget": {
         "hasSwitchCase": false,
         "phase": "pre-connect-own-engine",

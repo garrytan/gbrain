@@ -445,6 +445,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'repos', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/repos.ts') },
   { name: 'inbox', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/inbox.ts'), routes_source: true, load: () => import('./commands/inbox.ts') },
   { name: 'nav', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/nav.ts'), routes_source: true, load: () => import('./commands/nav.ts') },
+  { name: 'filing', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/filing.ts'), routes_source: true, load: () => import('./commands/filing.ts') },
 ];
 
 const BY_NAME = new Map<string, CliCommandRecord>();

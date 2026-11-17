@@ -94,6 +94,9 @@
       "files": [
         "./commands/files.ts"
       ],
+      "filing": [
+        "./commands/filing.ts"
+      ],
       "founder": [
         "./commands/founder-scorecard.ts"
       ],

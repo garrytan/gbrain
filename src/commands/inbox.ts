@@ -40,9 +40,7 @@ const USAGE = `Usage: gbrain inbox [status|run] [--once] [--dir <path>] [--sourc
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
-  if (i >= 0 && i + 1 < args.length) return args[i + 1];
-  const eq = args.find(a => a.startsWith(`${name}=`));
-  return eq ? eq.slice(name.length + 1) : undefined;
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined; // the CLI entry splits --flag=value (cli/flag-equals.ts)
 }
 
 /** The capture key: one capture per source and content, the same as a queued job's idempotency key. */

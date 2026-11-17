@@ -47,9 +47,7 @@ type NavFile = keyof typeof FILES;
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
-  if (i >= 0 && i + 1 < args.length) return args[i + 1];
-  const eq = args.find(a => a.startsWith(`${name}=`));
-  return eq ? eq.slice(name.length + 1) : undefined;
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined; // the CLI entry splits --flag=value (cli/flag-equals.ts)
 }
 
 async function sourceRoot(engine: BrainEngine, sourceId: string): Promise<string | null> {
