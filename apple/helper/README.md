@@ -19,7 +19,7 @@ The helper runs on macOS 13 or newer. Building it needs the Xcode Command Line T
 - `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config and source modules.
 - `Sources/gbrain-apple-helper/`: the command-line program.
 - `Bundle/`: `Info.plist`, the background agent's property list and the entitlements for `GBrain Helper.app`.
-- `scripts/signing-probe.sh`: CI check that a self-signed certificate made on the machine signs the app with no dialog.
+- `scripts/signing-probe.sh`: CI probe that asks whether a self-signed certificate made on the machine signs the app with no dialog, or first needs a one-time Always Trust step. Its answer goes to the job summary.
 - `Tests/HelperCoreTests/`: tests against a synthetic Messages database.
 
 ## Routes
@@ -27,9 +27,9 @@ The helper runs on macOS 13 or newer. Building it needs the Xcode Command Line T
 | Route | Token scope | Returns |
 | --- | --- | --- |
 | `GET /health` | none | `ok` and `version`, nothing else |
-| `GET /v1/sources` | any token | each source: on or off, the permission it needs and its state; no messages |
-| `GET /v1/imessage/threads` | `read:imessage` | recent threads; `limit` (1 to 200), `include_last_message` |
-| `GET /v1/imessage/thread` | `read:imessage` | one thread's messages; one of `thread_id`, `chat_rowid` or `chat_guid`, plus `limit` (1 to 500), `since_rowid`, `since_iso`, `include_reactions` |
+| `GET /v1/sources` | any token | each source: on or off, the permission it needs, its state, scope and routes; no messages |
+| `GET /v1/imessage/threads` | `read:imessage` | recent threads; `limit` (1 to 200, default 30), `include_last_message` (default true) |
+| `GET /v1/imessage/thread` | `read:imessage` | one thread's messages; one of `thread_id`, `chat_rowid` or `chat_guid`, plus `limit` (1 to 500, default 50), `since_rowid`, `since_iso`, `include_reactions` (default false) |
 
 Without a cursor a thread page holds the newest messages, oldest first. With `since_rowid` it holds the messages after that row, in row order; `meta.next_since_rowid` is the cursor for the next page.
 
@@ -77,7 +77,7 @@ Errors are RFC 9457 problem responses (`application/problem+json`) with `code`, 
 
 ### bad_param
 
-A query parameter is missing or out of range. The detail names it. A repeated parameter keeps its first value.
+A query parameter is missing or out of range. The detail names it. A repeated parameter keeps its first value. A request that isn't valid HTTP gets this code too.
 
 ### unauthorized
 
@@ -89,7 +89,7 @@ The token is valid but lacks the route's scope, such as `read:imessage`.
 
 ### source_disabled
 
-The source is off in the helper's config. `gbrain apple enable <source>` turns it on.
+The source is off in the helper's config. Set `sources.<source>.enabled` to `true` in the config, then restart `serve`. The response's `fix` names `gbrain apple enable <source>`, a gbrain command that a later release adds.
 
 ### forbidden_source
 
