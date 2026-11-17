@@ -29,6 +29,7 @@ test/access-members-read-lineage.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts
 test/access-owner-default-writes.test.ts
+test/access-owner-fact-ops-gst2951.test.ts
 test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
