@@ -194,7 +194,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
       for (const match of (m.text ?? '').matchAll(MENTION_RE)) ids.add(match[1]!);
     }
     const stale = !state.users_listed_at || runStart - Date.parse(state.users_listed_at) > USERS_MAX_AGE_MS;
-    if (listedUsers || (!stale && [...ids].every(id => state.users[id]))) return;
+    if (listedUsers || (!stale && [...ids].every(id => state.users[id] && state.users[id]!.name !== id))) return;
     const list = await api!.usersList(signal);
     listedUsers = true;
     state.users_listed_at = new Date(runStart).toISOString();
