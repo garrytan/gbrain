@@ -116,7 +116,7 @@ getContentFlagsByPageIds	links	yes	1	no	yes	yes	refuses:pages
 getUnverifiedExtractionPageIds	links	yes	1	no	yes	yes	refuses:pages
 getPageTimestamps	links	yes	1	no	yes	yes	refuses:pages
 getEffectiveDates	links	yes	1	no	yes	yes	refuses:pages
-getSalienceScores	links	yes	1	yes	yes	yes	refuses:salience
+getSalienceScores	links	yes	1	yes	yes	yes	serves
 findOrphanPages	links	yes	1	yes	yes	yes	refuses:graph
 addTag	tags	yes	5	yes	yes	yes	serves
 removeTag	tags	yes	1	no	yes	yes	serves
@@ -224,8 +224,8 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
-batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	refuses:salience
-setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	refuses:salience
-getRecentSalience	salience_enrich	yes	1	yes	yes	yes	refuses:salience
+batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
+setEmotionalWeightBatch	salience_enrich	yes	2	yes	yes	yes	serves
+getRecentSalience	salience_enrich	yes	1	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	1	yes	yes	yes	refuses:health
 findAnomalies	salience_enrich	yes	1	yes	yes	yes	refuses:health
