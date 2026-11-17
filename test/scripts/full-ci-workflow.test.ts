@@ -236,7 +236,7 @@ describe('full CI on pull requests', () => {
   describe('full-ci label lifetime', () => {
     const job = dispatcher.jobs.dispatch!;
     const own = { head: { repo: { full_name: 'acme-example/gbrain' } } };
-    const dispatch = (opts: { refuse?: string; moved?: boolean } = {}) => {
+    const dispatch = (opts: { refuse?: string; moved?: boolean; removal?: number } = {}) => {
       const dir = mkdtempSync(join(tmpdir(), 'gbrain-full-ci-'));
       try {
         const log = join(dir, 'gh.log');
@@ -245,6 +245,7 @@ describe('full CI on pull requests', () => {
           `echo "$*" >> ${log}`,
           `if [ "$1 $2" = "api repos/acme-example/gbrain/commits/heads/feature" ]; then echo ${opts.moved ? 'b'.repeat(40) : 'a'.repeat(40)}; exit 0; fi`,
           `if [ "$1 $2 $3" = "workflow run ${opts.refuse ?? 'none'}" ]; then echo "HTTP 422: refused" >&2; exit 1; fi`,
+          ...(opts.removal ? [`if [ "$1 $2 $3" = "api -X DELETE" ]; then echo "gh: refused (HTTP ${opts.removal})" >&2; exit 1; fi`] : []),
           'exit 0',
         ].join('\n'), { mode: 0o755 });
         const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', job.steps![0]!.run!], { encoding: 'utf8', env: {
@@ -267,6 +268,13 @@ describe('full CI on pull requests', () => {
       const refused = dispatch({ refuse: workflow });
       expect(refused.status).not.toBe(0);
       expect(refused.calls).not.toContain(removal);
+    });
+
+    test('a label already removed (404) leaves the job green; any other removal error fails it', () => {
+      const gone = dispatch({ removal: 404 });
+      expect(gone.status).toBe(0);
+      expect(gone.calls).toContain(removal);
+      expect(dispatch({ removal: 403 }).status).not.toBe(0);
     });
 
     test('a head that moved after the event dispatches nothing and keeps the label for the push that moved it', () => {

@@ -50,5 +50,10 @@ jobs:
           gh workflow run test.yml -R "$REPO" --ref "$BRANCH"
           gh workflow run e2e.yml -R "$REPO" --ref "$BRANCH"
           echo "Dispatched Test and E2E (full profile) on $BRANCH at $HEAD_SHA." >> "$GITHUB_STEP_SUMMARY"
-          gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" --silent
+          if ! removed=$(gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" --silent 2>&1); then
+            case "$removed" in
+              *"(HTTP 404)"*) echo "::notice::The full-ci label was already off this pull request." ;;
+              *) echo "$removed" >&2; exit 1 ;;
+            esac
+          fi
           echo "Removed the full-ci label: add it again at the next head you want gated." >> "$GITHUB_STEP_SUMMARY"
