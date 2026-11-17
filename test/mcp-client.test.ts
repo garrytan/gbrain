@@ -18,6 +18,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import {
   callRemoteTool,
+  forwardRemoteToolCall,
   unpackToolResult,
   RemoteMcpError,
   _clearMcpClientTokenCache,
@@ -29,6 +30,7 @@ import { VERSION } from '../src/version.ts';
 import { pendingReceiptOf, writeErrorExitCode } from '../src/core/persistence/write-wait.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 
 let server: ReturnType<typeof Bun.serve>;
 let port: number;
@@ -317,6 +319,22 @@ describe('callRemoteTool — HTTP authentication boundaries', () => {
     expect(error).toMatchObject({ reason: 'auth_after_refresh', detail: { status: 401, code: 'access_member_disabled' } });
     expect((error as Error).message).toContain('bound to a member who is disabled, removed or missing');
     expect(tokenMintCount).toBe(2);
+    expect(toolExecutions).toBe(0);
+  });
+
+  test('the OAuth host\'s own 401 body (error_description, no code key) is relayed as access_member_disabled', async () => {
+    statusFor = current => current === 'tools/call' ? 401 : undefined;
+    rejectionBody = JSON.stringify(new InvalidTokenError('access_member_disabled: this credential is bound to member "bob-example", which is disabled.').toResponseObject());
+    const error = await callRemoteTool(makeConfig(), 'write_example').then(() => null, (e: unknown) => e);
+    expect(error).toMatchObject({ reason: 'auth_after_refresh', detail: { status: 401, code: 'access_member_disabled' } });
+    expect(toolExecutions).toBe(0);
+  });
+
+  test('forwardRemoteToolCall relays access_member_disabled from the OAuth host\'s 401 body', async () => {
+    statusFor = current => current === 'tools/call' ? 401 : undefined;
+    rejectionBody = JSON.stringify(new InvalidTokenError('access_member_disabled: this credential is bound to member "bob-example", which is disabled.').toResponseObject());
+    const error = await forwardRemoteToolCall(makeConfig(), 'write_example', {}).then(() => null, (e: unknown) => e);
+    expect(error).toMatchObject({ reason: 'auth_after_refresh', detail: { status: 401, code: 'access_member_disabled' } });
     expect(toolExecutions).toBe(0);
   });
 

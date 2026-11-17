@@ -97,10 +97,11 @@ async function loadHttpClientSdk(): Promise<HttpClientSdk> {
 
 /**
  * A second HTTP 401 after a fresh token. GBRA-582 item 9d: when the host's refusal body names access_member_disabled
- * (GBRA-218), the client is fine and its bound member cannot read, so the error says that instead of "revoked".
+ * (GBRA-218), the client is fine and its bound member cannot read, so the error says that instead of "revoked". The OAuth
+ * host's SDK bearer check puts the code at the start of error_description; the bearer-token transport sends a code key.
  */
 function authAfterRefresh(e: StreamableHTTPError, mcpUrl: string, fallback: string): RemoteMcpError {
-  return /"code"\s*:\s*"access_member_disabled"/.test(e.message)
+  return /"(?:code|error_description)"\s*:\s*"access_member_disabled\b/.test(e.message)
     ? new RemoteMcpError('auth_after_refresh', 'The brain host refused this client: its credential is bound to a member who is disabled, removed or missing (access_member_disabled). Ask the brain host\'s operator to enable the member or bind this client to an enabled one.',
       { mcp_url: mcpUrl, status: 401, code: 'access_member_disabled' })
     : new RemoteMcpError('auth_after_refresh', fallback, { mcp_url: mcpUrl, status: 401 });
