@@ -105,6 +105,7 @@ export const RUST_ENGINE_MEMBERS = {
   getTags: 'tags',
   // chunks
   upsertChunks: 'chunks',
+  sealChunks: 'chunks',
   getChunks: 'chunks',
   getChunkPage: 'chunks',
   getChunkWindows: 'chunks',
