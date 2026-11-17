@@ -22,9 +22,11 @@ Differences from PGLite:
 
 - `listEvalCaptureFailures`: Postgres orders by `ts DESC` alone, so equal stamps come in no fixed order.
   The store breaks ties by `id DESC`.
-- `logEvalCandidate` with a `facts/<id>` slug: PGLite keeps the slug while that fact row exists. The store
-  has no fact-exists check yet, so the TypeScript member refuses such a candidate with
-  `engine_capability_missing` instead of dropping the slug.
+
+A `facts/<id>` slug (`^facts/[0-9]{1,18}$`) is kept while fact row `id` exists in one of the candidate's
+sources (any source when `source_ids` is empty), as PGLite does. An expired, superseded or consolidated
+fact, or one whose page is soft-deleted, still counts; only a deleted row is gone
+(`facts::fact_exists`). A `source_ids` list of only nulls matches no fact.
 
 For page_ops: `eval_capture::remove_retrieved_slugs(tx, source_id, slugs) -> u64` is the
 `eval_candidates.retrieved_slugs` scrub of PGLite's `scrubPurgedSlugs`. Call it in the delete's

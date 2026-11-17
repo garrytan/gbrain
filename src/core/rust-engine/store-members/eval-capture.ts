@@ -5,26 +5,11 @@
  */
 import type { EvalCandidate, EvalCandidateInput, EvalCaptureFailure, EvalCaptureFailureReason } from '../../types.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
-/** A facts-arm result (facts-arm.ts) names a fact, not a page; PGLite keeps it while that fact row exists. */
-const FACT_SLUG = /^facts\/[0-9]{1,18}$/;
-
-/** A `Date` argument as the ISO string the store reads; anything else is passed on for the store to judge. */
-function isoArg(value: unknown): unknown {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-/**
- * The store has no fact-exists check, so a candidate carrying a `facts/<id>` slug refuses instead of silently losing
- * the slug PGLite would keep.
- */
-export const logEvalCandidate: StoreMember<[input: EvalCandidateInput], number> = async (brain, input) => {
-  if (input?.retrieved_slugs?.some((slug) => typeof slug === 'string' && FACT_SLUG.test(slug))) {
-    refuseMember('logEvalCandidate', 'a facts/<id> retrieved slug: the store has no facts to check it against');
-  }
-  return storeCall({ member: 'logEvalCandidate' }, () => brain.logEvalCandidate({ ...input, embedding_column: input?.embedding_column ?? null }));
-};
+/** The store keeps a `facts/<id>` slug while that fact row exists, as PGLite does (rust/docs/store/eval_capture.md). */
+export const logEvalCandidate: StoreMember<[input: EvalCandidateInput], number> = (brain, input) =>
+  storeCall({ member: 'logEvalCandidate' }, () => brain.logEvalCandidate({ ...input, embedding_column: input?.embedding_column ?? null }));
 
 export const listEvalCandidates: StoreMember<[filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }], EvalCandidate[]> =
   async (brain, filter) => {
