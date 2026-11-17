@@ -22,7 +22,7 @@ import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
-import type { LayoutOutcome } from './setup-brain-layout.ts';
+import { mintedKeysReadCalls, type LayoutOutcome } from './setup-brain-layout.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
@@ -285,10 +285,15 @@ export function servesOk(o: ServesOutcome | null): boolean {
  * GBRA-585 A: setup labels the people before the layout step adds the company source, so when this run added it, the
  * labelling child runs once more and the keys it minted with a source list gain `company` (it adds, never removes).
  * A dry run says so instead. When the re-run adds the company/ rule (--labelled-only), the layout's call readers become
- * that rule's readers, since the layout step read them before the rule existed.
+ * that rule's readers, since the layout step read them before the rule existed. Otherwise the readers line names the
+ * member keys setup minted only once this run left them reading `company` (callReadersAfterServes).
  */
 export function servesAfterLayout(o: ServesOutcome | null, flags: ServesFlags, launcher: string, plan: ServesPlan, layout: LayoutOutcome | null | undefined): ServesOutcome | null {
-  if (!o || flags.serves !== 'several' || layout?.company?.action !== 'created') return o;
+  if (!o || flags.serves !== 'several') return o;
+  if (layout?.company?.action !== 'created') {
+    callReadersAfterServes(o.receipt, launcher, plan, layout);
+    return o;
+  }
   if (flags.dryRun) return { ...o, note: [o.note, 'the member keys this run mints also read source company once the layout step adds it: every page in it, including the calls it imports, which every member reads whether or not they attended',
     ...(flags.labelledOnly ? ['as the members are labelled-only, a folder rule company/ in source company then names them and the owner as its readers'] : [])].filter(Boolean).join('; ') };
   if (!o.receipt?.applied || o.error) return o;
@@ -299,8 +304,16 @@ export function servesAfterLayout(o: ServesOutcome | null, flags: ServesFlags, l
   if (rule && rule.action !== 'blocked' && layout.transcripts?.readers) {
     const names = rule.readers.map(p => p.replace(/^member:/, ''));
     layout.transcripts.readers = { members: names, serves: 'several', detail: `${names.join(', ')} only (the company/ rule on source company names them, so the labelled-only members read the calls through it)` };
-  }
+  } else callReadersAfterServes(regrant, launcher, plan, layout);
   return { ...o, regrant };
+}
+
+/** GBRA-585 A: the layout read the call readers before the labelling ran; once a member key this run left reads company, they are those keys. */
+function callReadersAfterServes(receipt: ServesReceipt | undefined, launcher: string, plan: ServesPlan, layout: LayoutOutcome | null | undefined): void {
+  const readers = layout?.transcripts?.readers;
+  if (!readers || readers.members !== 'every_source_reader' || readers.serves !== 'several' || !receipt?.applied || !receipt.keys.some(k => k.reads?.includes('company'))) return;
+  const status = parsed<{ enabled_members?: string[] }>(child(launcher, ['access', 'serves', '--json', '--no-open-pages']).stdout);
+  layout!.transcripts!.readers = { members: 'every_source_reader', serves: 'several', detail: mintedKeysReadCalls(status?.enabled_members ?? plan.roster) };
 }
 
 /** GST-2670 (F9): the proof covers the people/ folders only, so it names the open pages that member's key still reads. */
@@ -320,7 +333,8 @@ export function servesLines(o: ServesOutcome, dryRun: boolean): string[] {
       : `  proof      a read bound to ${p.member} sees its own folder (${p.own} page(s)) and no page of another member's folder${openTail(o.receipt, p.member)}`),
     ...(o.owner_from === 'login' && o.receipt?.owner && o.receipt.owner.action !== 'keep' && o.receipt.owner.action !== 'blocked'
       ? [`  owner      ${o.receipt.owner.id} is named from your login name; to name someone else, ${dryRun ? 'pass --owner <id>' : 'add them (gbrain access member add <id>) and run gbrain access owner set <id>'}`] : []),
-    ...(o.regrant ? [...o.regrant.keys.filter(k => k.adds?.length).map(k => `  key        ${k.member}: now also reads ${k.adds!.join(', ')}, which this run added`), ...companyRuleLines(o.regrant), ...readsLines(o.regrant)] : []),
+    ...(o.regrant ? [...o.regrant.keys.filter(k => k.adds?.length).map(k => `  key        ${k.member}: now also reads ${k.adds!.join(', ')}, which this run added`),
+      ...o.regrant.keys.filter(k => k.action === 'skipped').map(k => `  key        ${k.member}: skipped: ${k.detail}`), ...companyRuleLines(o.regrant), ...readsLines(o.regrant)] : []),
     ...(o.stdio ? [`  stdio      ${o.stdio.detail}`] : []),
     ...(o.engine ? [`  engine     ${o.engine}`] : []),
     ...(o.note ? [`  labels     ${o.note}`] : []),

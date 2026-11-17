@@ -20,8 +20,9 @@
  * bound to no member, each with the `gbrain auth rescope … --member <owner>` command that binds it on purpose.
  * GBRA-585 A: a key minted here gets a fixed source list (the federated grant kind): it writes to the run's source and
  * reads that source, `company` when it exists and every source federated at mint time (memberKeyReadSources). A
- * re-run adds sources to a key of this name that already holds a list for this source, and never removes one; any
- * other kept key (today's default or scalar grant) is never changed. The preview names the list and what `company` holds.
+ * re-run adds sources to a key of this name that already holds a list for this source, and never removes one, but only
+ * while that list is still the one setup last gave the key (permissions.setup_reads): a key changed by hand is skipped
+ * and named with the rescope command, and a source archived since is dropped from the list; any other kept key (today's default or scalar grant) is never changed. The preview names the list and what `company` holds.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -39,6 +40,7 @@ import { brainServes, SERVES_KEY, unlabeledPeopleFolders, type PeopleFolder, typ
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { COMPANY_SOURCE_ID, memberKeyReadSources, openPagesLines, readOpenPages, type OpenPagesError, type OpenPagesRead } from '../core/access/open-pages.ts';
 import { rescopeLegacyToken } from '../core/grants/legacy-token.ts';
+import { coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
 import type { OpenPages } from '../core/access/open-pages.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { mintToken } from './auth-mint.ts';
@@ -71,7 +73,7 @@ export interface ServesReceipt {
    */
   company_rule?: { source: string; id: string; prefix: string; readers: string[]; adds?: string[]; action: 'add' | 'keep' | 'blocked'; detail?: string; write?: RuleWrite };
   /** GBRA-585 A: reads = the source list a minted or list key holds once the run is done; adds = what a re-run adds to a kept list key. */
-  keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'blocked'; detail?: string; reads?: string[]; adds?: string[] }>;
+  keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'skipped' | 'blocked'; detail?: string; reads?: string[]; adds?: string[] }>;
   /** GBRA-585 A: what the keys this run mints write and read, and what the company source holds when they read it. */
   reads?: { write: string; sources: string[]; company: { pages: number; calls: number } | null };
   key_dir: string;
@@ -180,7 +182,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
   for (const id of roster) {
     const name = memberKeyName(id);
     const path = join(keyDir, `${id}.key`);
-    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string; source_grant: string | null; source_id: string | null; federated_read: unknown }>('SELECT member_id, token_hash, source_grant, source_id, federated_read FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
+    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string; source_grant: string | null; source_id: string | null; federated_read: unknown; permissions: unknown }>('SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
     if (members.find(m => m.id === id)?.action === 'blocked') keys.push({ member: id, token_name: name, path, action: 'blocked', detail: 'the member is not enabled' });
     else if (!token && existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a key file is already at ${path} but no live key is named ${name} (another brain's key, or one revoked by hand); move or delete the file, then run this again` });
     else if (!token) keys.push({ member: id, token_name: name, path, action: 'mint', reads: desired });
@@ -191,7 +193,13 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     else {
       const held = textList(token.federated_read);
       const adds = desired.filter(s => !held.includes(s));
-      keys.push({ member: id, token_name: name, path, action: 'keep', reads: [...held, ...adds], ...(adds.length ? { adds } : {}) });
+      const active = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [held])).map(r => r.id));
+      const reads = [...held.filter(s => active.has(s)), ...adds];
+      const minted = setupReads(token.permissions);
+      if (adds.length && !(minted && sameSet(minted, held))) {
+        keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
+          detail: `its source list (${held.join(', ')}) is not the one setup gave it${minted ? ` (${minted.join(', ')})` : ''}, so setup leaves it as it is and does not add ${adds.join(', ')}; to add them, run gbrain auth rescope --token ${name} --sources ${reads.join(',')}` });
+      } else keys.push({ member: id, token_name: name, path, action: 'keep', reads: adds.length ? reads : held, ...(adds.length ? { adds } : {}) });
     }
   }
   return { serves: 'several', source_id: sourceId, applied: false, config: { key: SERVES_KEY, value: 'several', action: explicit === 'several' ? 'keep' : 'write' },
@@ -215,6 +223,22 @@ async function planCompanyRule(engine: BrainEngine, members: ServesReceipt['memb
 }
 
 /** A text[] column value as a list (Postgres returns an array, PGLite may return the {a,b} literal). */
+const textList = (v: unknown): string[] => Array.isArray(v) ? v.map(String) : String(v ?? '').replace(/^\{|\}$/g, '').split(',').map(s => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
+
+const sameSet = (a: string[], b: string[]): boolean => a.length === b.length && a.every(s => b.includes(s));
+
+/** GBRA-585 A: the source list setup last gave a member key, kept in its permissions JSON, whose unrelated fields every grant write keeps. */
+const setupReads = (permissions: unknown): string[] | undefined => {
+  const v = coerceLegacyPermissions(permissions)?.setup_reads;
+  return Array.isArray(v) && v.every(s => typeof s === 'string') ? v as string[] : undefined;
+};
+
+async function recordSetupReads(engine: BrainEngine, name: string, reads: string[]): Promise<void> {
+  await engine.executeRaw(
+    "UPDATE access_tokens SET permissions = COALESCE(permissions, '{}'::jsonb) || jsonb_build_object('setup_reads', $2::text[]) WHERE name = $1 AND revoked_at IS NULL AND (permissions IS NULL OR jsonb_typeof(permissions) = 'object')",
+    [name, reads]);
+}
+
 /**
  * GBRA-585 A: live member-bound keys whose fixed read list still holds `sourceId` though it is not their write source,
  * each with the rescope command that drops it. Unfederating never narrows such a list, so `sources unfederate` names them.
@@ -225,7 +249,12 @@ export async function keysStillReading(engine: BrainEngine, sourceId: string): P
   return rows.map(r => ({ token: r.name, member: r.member_id, command: `gbrain auth rescope --token ${r.name} --sources ${textList(r.federated_read).filter(s => s !== sourceId).join(',')}` }));
 }
 
-const textList = (v: unknown): string[] => Array.isArray(v) ? v.map(String) : String(v ?? '').replace(/^\{|\}$/g, '').split(',').map(s => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
+/** `sources unfederate`: names each key keysStillReading finds, through `say`, and returns them for --json. */
+export async function keysStillReadingNotice(engine: BrainEngine, sourceId: string, say: (text: string) => void): Promise<Awaited<ReturnType<typeof keysStillReading>>> {
+  const keys = await keysStillReading(engine, sourceId);
+  if (keys.length) say([`${keys.length} member key${keys.length === 1 ? '' : 's'} still read source ${sourceId}: a key gbrain setup minted keeps the sources it was given, and unfederating does not narrow it. To take ${sourceId} away from a key:`, ...keys.map(k => `  ${k.command}`)].join('\n'));
+  return keys;
+}
 
 /** The live pages in the company source, and how many are imported calls (company/calls/<date>-<title>). */
 async function companyCounts(engine: BrainEngine): Promise<{ pages: number; calls: number }> {
@@ -299,6 +328,7 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
     for (const k of receipt.keys.filter(x => x.action === 'mint')) {
       const minted = await mintToken(engine, k.token_name, { scopes: ['read', 'write'], binding: { member: k.member },
         sources: { kind: 'federated', writeSource: sourceId, readSources: k.reads! } });
+      await recordSetupReads(engine, k.token_name, k.reads!);
       try {
         writeKeyFile(k.path, minted.token);
       } catch (e) {
@@ -309,6 +339,7 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
     }
     for (const k of receipt.keys.filter(x => x.action === 'keep' && x.adds?.length)) {
       await rescopeLegacyToken(engine, { target: { name: k.token_name }, sources: k.reads!, reset: [], refreshOperations: false, allNew: false, dryRun: false, json: true });
+      await recordSetupReads(engine, k.token_name, k.reads!);
     }
     receipt.completed.push('keys');
     if (receipt.config.action === 'write') await engine.setConfig(SERVES_KEY, 'several');
@@ -329,7 +360,7 @@ const ruleWritePending = (r: ServesReceipt): boolean => writePending(r.rule_writ
 const writeLine = (w: RuleWrite) => `             ${w.store} store, revision ${w.revision ?? '-'} ${w.state}${w.git_commit ? `, committed ${w.git_commit.slice(0, 12)}` : ''}`;
 
 export function receiptLines(r: ServesReceipt): string[] {
-  const verb = (a: string) => (r.applied ? { add: 'added', mint: 'minted', write: 'written', keep: 'kept', blocked: 'BLOCKED' } : { add: 'will add', mint: 'will mint', write: 'will write', keep: 'keep', blocked: 'BLOCKED' })[a] ?? a;
+  const verb = (a: string) => (r.applied ? { add: 'added', mint: 'minted', write: 'written', keep: 'kept', skipped: 'skipped', blocked: 'BLOCKED' } : { add: 'will add', mint: 'will mint', write: 'will write', keep: 'keep', skipped: 'will skip', blocked: 'BLOCKED' })[a] ?? a;
   return [
     `Serves several people (source ${r.source_id}):`,
     `  config     ${r.config.key} = ${r.config.value} (${verb(r.config.action)})`,

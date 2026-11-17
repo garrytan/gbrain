@@ -4,6 +4,7 @@
 <!-- behavior-change: auth_create_member_read_write_gbra585 -->
 <!-- behavior-change: setup_member_keys_read_company_gbra585 -->
 <!-- behavior-change: setup_history_choice_gbra585 -->
+<!-- behavior-change: serves_labelled_only_needs_owner_gbra585 -->
 
 ### Changed
 - `gbrain setup <harness> --serves several` names the brain owner when the brain has none: `--owner <id>`, or by default your login name as a member id. The preview shows it first, an owner already set is kept, and the receipt lists each live key or OAuth client bound to no member with the `gbrain auth rescope` command that binds it.

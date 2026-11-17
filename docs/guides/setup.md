@@ -205,7 +205,10 @@ when the key is minted. The preview names the list and how many pages `company` 
 how many of them are imported calls, and that every member reads them all, calls they
 did not attend included. A source federated later reaches these keys only when you run
 setup again: a re-run adds sources to a key setup minted with a list and never removes
-one. Unfederating a source does not take it away from these keys either:
+one, but only while the key's list is still the one setup gave it. A key you changed by
+hand (`gbrain auth rescope`) is skipped: the receipt names it, with `action: skipped` on
+its `keys` row under `--json`, and the rescope command that adds the new sources. A
+source archived since the key was minted is dropped from its list. Unfederating a source does not take it away from these keys either:
 `gbrain sources unfederate <id>` lists each member key that still reads it, with the
 `gbrain auth rescope --token <name> --sources <ids>` command that drops it.
 Keys minted before this (the default grant) are never changed. When the same run
