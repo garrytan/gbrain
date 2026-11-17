@@ -138,7 +138,7 @@ interface ConnectorIntent extends Record<string, unknown> {
   googlePageId?: number;
   noEmbed: boolean;
   noSchemaPack: boolean;
-  /** #9552: the import queues no automatic fact extraction (`--no-extract`, or past the run's limit). Not part of the request identity. */
+  /** #9552: a Slack or meetings import queues no automatic fact extraction (`--no-extract`, or past the run's limit). Not part of the request identity. */
   noExtract?: true;
   checkpointKey: string;
   checkpointBefore: unknown[];
@@ -271,6 +271,11 @@ async function strictPrivateFile(engine: BrainEngine, row: Pick<WriteRequest, 's
   return { file: turning ? await preparePrivateTransition(engine, row, snapshot) : undefined };
 }
 
+/** #9552: the connectors whose imports queue fact extraction, as an unmanaged sync does; never Google mail or GitHub. */
+function factsConnector(connector: ConnectorKind): boolean {
+  return connector === 'slack' || connector === 'meetings';
+}
+
 export async function beginConnectorSync(engine: BrainEngine, sourceId: string, connector: ConnectorKind,
   suppliedConfig: unknown, opts: SyncOpts & { resetCheckpoint?: boolean }, lease?: ConnectorLease): Promise<ManagedConnectorSync | null> {
   if (!await readManagedMode(engine)) return null;
@@ -308,7 +313,7 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
   const canonicalRoot = connectorBindingRoot(engine, sourceId, source, binding);
   const session = new ManagedConnectorSync(engine, sourceId, identity, source, authority, binding, canonicalRoot, opts.noEmbed === true, opts.noSchemaPack === true,
     opts.retryFailed === true, lease, opts.resetCheckpoint === true, opts.githubItem !== undefined, opts.full === true);
-  session.extractFacts = opts.noExtract !== true && (connector === 'slack' || connector === 'meetings');
+  session.extractFacts = opts.noExtract !== true;
   await session.load();
   return session;
 }
@@ -966,7 +971,7 @@ export class ManagedConnectorSync {
       checkpointBefore: kind === 'connector_v2_checkpoint' ? this.checkpointRow : cursorOnly(this.checkpointRow),
       ownerEpoch: this.binding ? String(this.binding.owner_epoch) : null, canonicalRoot: this.canonicalRoot,
       filePath: file?.path ?? null, fileBeforeHash: file?.expectedBeforeHash ?? null, ...extra,
-      ...(kind === 'connector_v2_import' && (!this.extractFacts || this.factsOffered >= CONNECTOR_FACTS_PAGE_LIMIT) ? { noExtract: true as const } : {}) };
+      ...(kind === 'connector_v2_import' && factsConnector(this.connector) && (!this.extractFacts || this.factsOffered >= CONNECTOR_FACTS_PAGE_LIMIT) ? { noExtract: true as const } : {}) };
     const callerIntent = { ...intent, syncAuthority: undefined, newestContentAt: undefined, noExtract: undefined,
       ...(kind === 'connector_v2_checkpoint' ? { receipts: undefined } : {}) };
     const principal = this.authority.writer.principal;
@@ -1076,7 +1081,7 @@ export class ManagedConnectorSync {
     }
     if (admitted) {
       if (page) this.counts.page_admissions++;
-      if (kind === 'connector_v2_import' && !intent.noExtract) this.factsOffered++;
+      if (kind === 'connector_v2_import' && factsConnector(this.connector) && !intent.noExtract) this.factsOffered++;
       if (kind === 'connector_v2_checkpoint') this.counts.checkpoint_admissions++;
     }
     if (kind === 'connector_v2_google_receipts') {
@@ -1236,7 +1241,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     `Page ${row.slug} in ${row.source_id} changed while this connector write was being prepared.`);
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, snapshot, 'preserving');
   // #9552: the publication outbox queues the page's fact extraction, as it does for a page write.
-  const facts = ready.noop || p.noExtract ? undefined
+  const facts = ready.noop || p.noExtract || !factsConnector(p.connector) ? undefined
     : await prepareFactsBackstop(engine, row, ready.parsedPage, snapshot).catch((): FactsBackstopStatus => ({ skipped: 'backstop_error' }));
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
