@@ -1,7 +1,13 @@
-//! What a hard page delete removes beyond the page's own records. `pages::remove_page` deletes the
-//! page's versions, chunks, links and timeline entries itself, then calls `remove_page_rows`, which
-//! asks each family that keeps records under a page to delete them. A family edits only its own
-//! `remove_page_rows`; this list names each such family once and does not change when one is built.
+//! What a delete removes beyond core's own records. Each list below names, once, every family that
+//! keeps records under the deleted thing, and does not change when one is built. A family edits
+//! only its own hook.
+//!
+//! - `remove_page_rows`: a hard page delete. `pages::remove_page` deletes the page's versions,
+//!   chunks, links and timeline entries itself, then calls it.
+//! - `remove_chunk_rows`: chunks that are gone (`ON DELETE CASCADE` of a `content_chunks` id).
+//!   `chunks::clear_chunks` calls it with every chunk of the page; `chunks::replace_chunks` with
+//!   the chunks whose index the new set does not keep (a kept index keeps its id). A hard page
+//!   delete calls it before `remove_page_rows`.
 
 use crate::Result;
 use crate::kv::KvWrite;
@@ -18,4 +24,107 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::vectors::remove_page_rows(tx, page)?;
     crate::embeddings::remove_page_rows(tx, page)?;
     Ok(())
+}
+
+/// `chunk_ids` are sorted and belong to `page_id`; their chunk records are already gone.
+pub(crate) fn remove_chunk_rows(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    chunk_ids: &[u64],
+) -> Result<()> {
+    #[cfg(test)]
+    tests::FIRED.with(|fired| fired.borrow_mut().push((page_id, chunk_ids.to_vec())));
+    crate::code_edges::remove_chunk_rows(tx, page_id, chunk_ids)?;
+    crate::vectors::remove_chunk_rows(tx, page_id, chunk_ids)?;
+    crate::embeddings::remove_chunk_rows(tx, page_id, chunk_ids)?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::chunks::ChunkInput;
+    use crate::pages::{PageInput, PutPageOptions};
+    use std::cell::RefCell;
+
+    thread_local! {
+        /// Every `remove_chunk_rows` call on this test thread: `(page_id, chunk_ids)`.
+        pub(crate) static FIRED: RefCell<Vec<(u64, Vec<u64>)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn fired() -> Vec<(u64, Vec<u64>)> {
+        FIRED.with(|fired| fired.borrow_mut().drain(..).collect())
+    }
+
+    fn chunk(index: u32, text: &str) -> ChunkInput {
+        ChunkInput {
+            chunk_index: index,
+            chunk_text: text.into(),
+            chunk_source: None,
+            modality: None,
+            rest: Default::default(),
+        }
+    }
+
+    fn ids(store: &crate::Store, page_id: u64) -> Vec<u64> {
+        crate::chunks::read_chunks(&*store.read().unwrap(), page_id)
+            .unwrap()
+            .iter()
+            .map(|c| c.id)
+            .collect()
+    }
+
+    #[test]
+    fn the_chunk_hook_gets_exactly_the_chunks_that_are_gone() {
+        use crate::chunks::UpsertChunksOptions;
+        let store = crate::test_support::store();
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("a", &input, &PutPageOptions::default())
+            .unwrap();
+        let page = crate::pages::read_page(&*store.read().unwrap(), "default", "a")
+            .unwrap()
+            .unwrap();
+        let options = UpsertChunksOptions::default();
+        store
+            .upsert_chunks(
+                "a",
+                &[chunk(0, "x"), chunk(1, "y"), chunk(2, "z")],
+                &options,
+            )
+            .unwrap();
+        fired();
+        let three = ids(&store, page.id);
+        assert_eq!(three.len(), 3);
+
+        // Index 1 goes; 0 and 2 keep their ids, so only index 1's id is reported.
+        store
+            .upsert_chunks("a", &[chunk(0, "new"), chunk(2, "z")], &options)
+            .unwrap();
+        assert_eq!(fired(), vec![(page.id, vec![three[1]])]);
+        assert_eq!(ids(&store, page.id), vec![three[0], three[2]]);
+
+        // The same indexes again: nothing is gone, so the hook is not called.
+        store
+            .upsert_chunks("a", &[chunk(0, "x"), chunk(2, "z")], &options)
+            .unwrap();
+        assert_eq!(fired(), vec![]);
+
+        // deleteChunks reports every chunk.
+        store.delete_chunks("a", None).unwrap();
+        assert_eq!(fired(), vec![(page.id, vec![three[0], three[2]])]);
+
+        // A hard page delete reports its chunks too.
+        store
+            .upsert_chunks("a", &[chunk(0, "x")], &options)
+            .unwrap();
+        let last = ids(&store, page.id);
+        fired();
+        store.delete_page("a", None).unwrap();
+        assert_eq!(fired(), vec![(page.id, last)]);
+    }
 }
