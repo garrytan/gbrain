@@ -3697,11 +3697,40 @@ gbrain repair file-drift --source <id> --held --json           # compare every h
 differs reads `prefer_file` or `needs_human` with its `evidence`, one that
 matches reads `release_hold`, and only a page whose file is gone reads
 `no_drift` with `database_only`. Every compared page in `details.pages`
-carries `evidence` (null when nothing was read). The comparison names no
-`--prefer` preview there, because a mirror's previews read every page as
-database-only and resolve nothing: a differing page stays held until the user
-makes the source writable again (`gbrain sources mirror-writable <id>`, which
-lets gbrain write files into its checkout) and picks a side then (GST-2869).
+carries `evidence` (null when nothing was read). The window previews read the
+same way, so `--held --side unknown --prefer file` lists a page whose file is
+newer `prefer_file`; the comparison names the [whole-class](#whole-class)
+preview of the side, which lists every such page under one hash and never
+writes the mirror's checkout.
+
+<a id="whole-class"></a>**Whole class.** `--whole-class` previews every window
+of one side (`--held --side unknown|database|both --prefer file`) as one class:
+one manifest, one hash, one approval. A large read-only mirror can hold
+thousands of pages, and a window preview covers 200.
+
+```bash
+gbrain repair file-drift --source <id> --held --side unknown --prefer file --whole-class          # read-only: writes only a private manifest
+```
+
+The preview writes `repair-previews/file-drift/class-<hash>.json` under the
+gbrain config directory: per page its slug, path, revision, file blob, hold
+code, side, upstream version and lost lines. Its output (and `--json`) carries
+`details.class_manifest` with `path`, `hash`, `complete`, `pages`,
+`lost_lines_total`, `top` (the 50 pages that lose most lines) and `residual`
+(each kept group's count and next command), then the data-loss card: what is
+replaced, how many lines are lost, and how it comes back (`gbrain revert` from
+the page version saved first, and reconcile's private backup). Two groups stay
+held: `kept_newer_page` (edited in gbrain after the file's last commit) and,
+on a read-only mirror, `kept_protected_parts` (the file would need gbrain's
+protected keys, takes or private facts appended). A preview that stops early
+says `complete: false`, prints a resume command and no apply command.
+
+Only the trusted local CLI runs it, and an apply of the manifest is not
+available yet: `--whole-class --apply` refuses. Refusals:
+`whole_class_prefer_unsupported` (`--prefer database` or `--side deleted`; use the
+window preview) and `class_capacity_exceeded` (the backups would pass
+`persistence.limits.brain_recovery_bytes`; raising it is the user's call). A
+brain with no repository has no held pages: the preview says so and exits 0.
 
 <a id="file-drift-kept-newer"></a>`--prefer file` never drops a page edited after its file's last commit in
 bulk. A `--held`, `--all-drifted` or `--request` preview lists such a page
