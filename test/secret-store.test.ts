@@ -18,6 +18,8 @@ import { currentKey, exportKeyEscrow, importKeyEscrow, keyById, keyringDir, keyr
 import { isAllowed, listEntries, reveal, seal } from '../src/core/secret-store/store.ts';
 import { applyRestore, previewRestore } from '../src/core/secret-store/restore.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { resolveGrantProfile } from '../src/core/grants/service.ts';
+import type { ClientGrant } from '../src/core/grants/model.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -156,4 +158,23 @@ describe('secret store on a repo-less brain', () => {
       await expect(op.handler(remoteCtx(engine, ['get_page', 'reveal_secret']), { id: awsId })).rejects.toMatchObject({ code: 'secret_reveal_forbidden' });
     }
   }), 120_000);
+});
+
+describe('reveal_secret stays approved by name in profile grants', () => {
+  const profiles = ['memory-reader', 'memory-writer', 'coding-agent', 'operator', 'delegating-agent', 'full'] as const;
+
+  test('no profile grant names reveal_secret on its own', () => {
+    for (const profile of profiles) {
+      const grant = resolveGrantProfile({ profile, sourceId: 'default', boundTools: ['get_page'], boundSlugPrefixes: ['agents/'] });
+      expect(grant.allowedOperations, profile).not.toContain('reveal_secret');
+      expect(grant.allowedOperations, profile).toContain('get_page');
+    }
+  });
+
+  test('a regrant keeps reveal_secret only when the owner already named it', () => {
+    const named = { allowedOperations: ['get_page', 'reveal_secret'] } as unknown as ClientGrant;
+    const unnamed = { allowedOperations: ['get_page'] } as unknown as ClientGrant;
+    expect(resolveGrantProfile({ profile: 'memory-reader', sourceId: 'default', existing: named }).allowedOperations).toContain('reveal_secret');
+    expect(resolveGrantProfile({ profile: 'memory-reader', sourceId: 'default', existing: unnamed }).allowedOperations).not.toContain('reveal_secret');
+  });
 });
