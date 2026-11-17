@@ -223,11 +223,22 @@ pub(crate) fn read_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRe
     failure.map_or(Ok(out), Err)
 }
 
-/// Removes every chunk of a page and its postings; returns nothing and updates the stats.
+/// Removes every chunk of a page and its postings, updates the stats, and tells the families that
+/// keep records under a chunk (`cascade::remove_chunk_rows`).
 pub(crate) fn clear_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    let removed: Vec<u64> = drop_chunks(tx, page_id)?.iter().map(|c| c.id).collect();
+    if removed.is_empty() {
+        return Ok(());
+    }
+    crate::cascade::remove_chunk_rows(tx, page_id, &removed)
+}
+
+/// Removes every chunk of a page and its postings and updates the stats; returns what it removed.
+/// It does not call the chunk-delete hook: `replace_chunks` keeps some of these ids.
+fn drop_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<Vec<ChunkRecord>> {
     let old = read_chunks(&*tx, page_id)?;
     if old.is_empty() {
-        return Ok(());
+        return Ok(old);
     }
     let mut stats = read_stats(&*tx)?;
     for chunk in &old {
@@ -239,11 +250,12 @@ pub(crate) fn clear_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
         stats.chunks = stats.chunks.saturating_sub(1);
         stats.total_length = stats.total_length.saturating_sub(u64::from(chunk.length));
     }
-    put_json(tx, &keys::meta(STATS), &stats)
+    put_json(tx, &keys::meta(STATS), &stats)?;
+    Ok(old)
 }
 
 /// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
-/// its index keeps its id. When `seal` is set the page's `text_projection_revision` becomes its
+/// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When `seal` is set the page's `text_projection_revision` becomes its
 /// `knowledge_revision`: the chunks now describe the current text.
 pub(crate) fn replace_chunks(
     tx: &mut dyn KvWrite,
@@ -256,11 +268,20 @@ pub(crate) fn replace_chunks(
         .into_iter()
         .map(|c| (c.chunk_index, c))
         .collect();
-    clear_chunks(tx, page.id)?;
+    drop_chunks(tx, page.id)?;
     // The last chunk given for an index wins.
     let mut by_index: BTreeMap<u32, &ChunkInput> = BTreeMap::new();
     for chunk in chunks {
         by_index.insert(chunk.chunk_index, chunk);
+    }
+    let mut removed: Vec<u64> = previous
+        .values()
+        .filter(|old| !by_index.contains_key(&old.chunk_index))
+        .map(|old| old.id)
+        .collect();
+    removed.sort_unstable();
+    if !removed.is_empty() {
+        crate::cascade::remove_chunk_rows(tx, page.id, &removed)?;
     }
     let mut stats = read_stats(&*tx)?;
     for (index, input) in by_index {
