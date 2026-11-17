@@ -105,8 +105,8 @@ interface ProbeResult {
 interface EngineStatusReport {
   schema_version: 1;
   brain_id: string;
-  effective_engine: 'postgres' | 'pglite' | null;
-  config_file_engine: 'postgres' | 'pglite' | null;
+  effective_engine: 'postgres' | 'pglite' | 'rust' | null;
+  config_file_engine: 'postgres' | 'pglite' | 'rust' | null;
   db_url_source: PgDbUrlSource;
   database_url: string | null; // redacted
   database_path: string | null;
@@ -162,7 +162,7 @@ function graduationBlock(dataDir: string | null): GraduationStatusBlock | null {
   };
 }
 
-function fileEngine(fileCfg: GBrainConfig | null): 'postgres' | 'pglite' | null {
+function fileEngine(fileCfg: GBrainConfig | null): 'postgres' | 'pglite' | 'rust' | null {
   if (!fileCfg) return null;
   if (fileCfg.engine) return fileCfg.engine;
   if (fileCfg.database_url) return 'postgres';
@@ -180,7 +180,7 @@ function mountFor(brainId: string): MountEntry | null {
 }
 
 async function runProbe(
-  engineKind: 'postgres' | 'pglite',
+  engineKind: 'postgres' | 'pglite' | 'rust',
   engineConfig: import('../core/types.ts').EngineConfig,
   dataDir: string | null,
 ): Promise<ProbeResult> {
@@ -363,7 +363,7 @@ export async function runEngineStatus(args: string[]): Promise<number> {
 }
 
 async function probeSafely(
-  engineKind: 'postgres' | 'pglite',
+  engineKind: 'postgres' | 'pglite' | 'rust',
   engineConfig: import('../core/types.ts').EngineConfig,
   dataDir: string | null,
   url: string | null,

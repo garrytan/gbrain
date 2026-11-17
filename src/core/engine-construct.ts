@@ -17,9 +17,15 @@ export async function constructEngine(config: EngineConfig): Promise<BrainEngine
       const { PostgresEngine } = await import('./postgres-engine.ts');
       return new PostgresEngine();
     }
+    case 'rust': {
+      // Opt-in. The loader fetches and checks the addon on first use; nobody on another engine reaches it.
+      const { loadRustAddon } = await import('./rust-engine/addon-loader.ts');
+      const { openRustEngine } = await import('./rust-engine/open-rust-engine.ts');
+      return openRustEngine(config, await loadRustAddon());
+    }
     default:
       throw new Error(
-        `Unknown engine type: "${engineType}". Supported engines: postgres, pglite.` +
+        `Unknown engine type: "${engineType}". Supported engines: postgres, pglite, rust.` +
         (engineType === 'sqlite' ? ' SQLite is not supported. Use pglite instead.' : '')
       );
   }
