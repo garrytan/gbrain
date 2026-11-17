@@ -7,8 +7,10 @@ import { CONVERSATION_FACTS_SOURCE_PREFIX } from '../facts/audit-sources.ts';
 
 /**
  * GBRA-574 B2: conversation facts carry a slot on these columns but are never closed in storage (the facts block
- * derives their windows at read time), so every move would read as a conflict. findOntologyConflicts skips them.
+ * derives their windows at read time), so every move would read as a conflict. findOntologyConflicts, mergeOntologyFact
+ * and the ontology-facts repair skip them; a re-key that collides one clears its slot (facts/ontology-rekey.ts).
  */
+export const CONVERSATION_SLOT_SQL = `COALESCE(source, '') LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'`;
 export const NOT_CONVERSATION_SLOT_SQL = `COALESCE(source, '') NOT LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'`;
 
 /**

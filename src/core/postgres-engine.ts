@@ -1969,7 +1969,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT id, value_hash, valid_from FROM facts
        WHERE source_id = ${sourceId} AND entity_slug = ${obs.entitySlug}
          AND dimension = ${dimension} AND expired_at IS NULL AND valid_until IS NULL
-         AND (dim_status IS NULL OR dim_status = 'active')
+         AND (dim_status IS NULL OR dim_status = 'active') AND ${sql.unsafe(NOT_CONVERSATION_SLOT_SQL)}
        ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC
        LIMIT 1`;
     const current = cur[0];
@@ -1980,7 +1980,7 @@ export class PostgresEngine implements BrainEngine {
       const seen = await sql`
         SELECT 1 FROM facts
          WHERE source_id = ${sourceId} AND entity_slug = ${obs.entitySlug} AND dimension = ${dimension}
-           AND value_hash = ${vh} AND source_markdown_slug = ${obs.source}
+           AND value_hash = ${vh} AND source_markdown_slug = ${obs.source} AND ${sql.unsafe(NOT_CONVERSATION_SLOT_SQL)}
            AND COALESCE(valid_from, '-infinity'::timestamptz) >= COALESCE(${current.valid_from}::timestamptz, '-infinity'::timestamptz)
          LIMIT 1`;
       if (seen.length) return { action: 'noop', factId: null, supersededId: null };

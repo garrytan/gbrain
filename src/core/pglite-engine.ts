@@ -2143,7 +2143,7 @@ export class PGLiteEngine implements BrainEngine {
     const cur = await this.db.query(
       `SELECT id, value_hash, valid_from FROM facts
         WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL
-          AND (dim_status IS NULL OR dim_status = 'active')
+          AND (dim_status IS NULL OR dim_status = 'active') AND ${NOT_CONVERSATION_SLOT_SQL}
         ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`,
       [sourceId, obs.entitySlug, dimension],
     );
@@ -2153,7 +2153,7 @@ export class PGLiteEngine implements BrainEngine {
       // This provenance already observed the value during the current stint.
       const seen = await this.db.query(
         `SELECT 1 FROM facts
-          WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5
+          WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5 AND ${NOT_CONVERSATION_SLOT_SQL}
             AND COALESCE(valid_from,'-infinity'::timestamptz) >= COALESCE($6::timestamptz,'-infinity'::timestamptz) LIMIT 1`,
         [sourceId, obs.entitySlug, dimension, vh, obs.source, current.valid_from],
       );

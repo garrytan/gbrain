@@ -9,7 +9,8 @@
  * stint; a stored valid_until wins; ingest order does not change the block; a slot row the caller cannot see (a remote
  * caller and a private fact) or a withdrawn one never ends a window; facts without slots render as before;
  * findOntologyConflicts keeps its output for ontology rows and ignores conversation rows; a retention purge expires the
- * page's slot rows and clears their slots.
+ * page's slot rows and clears their slots; an ontology proposal never corroborates into or closes a conversation slot,
+ * the ontology-facts repair never lists one, and a rename that collides two keeps both facts.
  * PGLite (no git), and Postgres through test/e2e/facts-slot-windows-gbra574-postgres.test.ts.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -20,6 +21,8 @@ import type { ExtractedFact } from '../src/core/facts/extract.ts';
 import { runExtractConversationFactsCore } from '../src/commands/extract-conversation-facts.ts';
 import { valueHash } from '../src/core/chronicle/ontology.ts';
 import { expireGonePageFacts } from '../src/core/facts/gone-page-facts.ts';
+import { dropRekeyDuplicates } from '../src/core/facts/ontology-rekey.ts';
+import { classifyOntologyFacts } from '../src/core/repair/ontology-facts.ts';
 import { conversationRunEstimate } from '../src/core/facts/conversation-budget.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
@@ -302,6 +305,46 @@ for (const backend of testBackends()) {
         expect(line('Alice Example lives with two cats.', rows)).toBe(quoted(header(P1, P1), 'Alice Example lives with two cats.'));
         expect(line('Alice Example moved her desk to the window where she lives.', rows)).toBe(quoted(header(P2, P2), 'Alice Example moved her desk to the window where she lives.'));
         expect(line('Alice Example lives in Lisbon.', rows)).toBe(quoted(header(P1, P1), 'Alice Example lives in Lisbon.'));
+      });
+    });
+
+    describe('ontology paths ignore conversation slots', () => {
+      const PAGE: Page = { slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [LISBON] };
+      const manualRows = () => engine.executeRaw<{ expired_at: Date | null; consolidated_into: number | null }>(
+        `SELECT expired_at, consolidated_into FROM facts WHERE source_id='default' AND entity_slug=$1 AND source='manual'`, [ALICE]);
+      const openSlot = async () => (await engine.executeRaw<{ valid_until: Date | null; superseded_by: number | null }>(
+        `SELECT valid_until, superseded_by FROM facts WHERE source_id='default' AND source LIKE 'cli:extract-conversation-facts%' AND dimension IS NOT NULL AND expired_at IS NULL`))[0];
+
+      test('a proposal with the same value keeps its own row across a forced re-extraction', async () => {
+        await putPages([PAGE]); await extract([PAGE]);
+        await engine.mergeOntologyFact({ entitySlug: ALICE, dimension: 'location', value: 'Lisbon', source: 'manual', validFrom: P2, sourceId: 'default' });
+        await extract([PAGE], { force: true });
+        expect((await manualRows()).map(r => [r.expired_at, r.consolidated_into])).toEqual([[null, null]]);
+      });
+
+      test('a proposal with a new value never closes the conversation fact', async () => {
+        await putPages([PAGE]); await extract([PAGE]);
+        await call('ontology_propose', { entity: ALICE, dimension: 'location', value: 'Porto', valid_from: P2 });
+        expect(await openSlot()).toEqual({ valid_until: null, superseded_by: null });
+      });
+
+      test('the ontology-facts repair and its doctor count list no conversation slot', async () => {
+        await putPages([PAGE]); await extract([PAGE]);
+        expect((await slotRows()).filter(r => r.dimension)).toHaveLength(1);
+        expect(await classifyOntologyFacts(engine, ['default'])).toEqual([]);
+      });
+
+      test('a rename that collides two conversation slots keeps both facts and clears the losing slot', async () => {
+        for (const entity of ['people/bob-old-example', 'people/bob-example']) {
+          await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, source_markdown_slug, row_num, visibility, confidence, valid_from,
+              dimension, value, value_hash, dim_status)
+            VALUES ('default', $1, $2, 'fact', 'cli:extract-conversation-facts', 'meetings/chat-a', $5, 'private', 1, $3::timestamptz, 'location', 'Lisbon', $4, 'active')`,
+            [entity, `${entity} lives in Lisbon.`, `${P1}T00:00:00Z`, valueHash('Lisbon'), entity.length]);
+        }
+        await dropRekeyDuplicates(engine, 'default', { where: 'f.entity_slug = $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: ['people/bob-old-example', 'people/bob-example'] });
+        const rows = await engine.executeRaw<{ entity_slug: string; dimension: string | null }>(
+          `SELECT entity_slug, dimension FROM facts WHERE source_id='default' AND entity_slug LIKE 'people/bob%' ORDER BY entity_slug`);
+        expect(rows).toEqual([{ entity_slug: 'people/bob-example', dimension: 'location' }, { entity_slug: 'people/bob-old-example', dimension: null }]);
       });
     });
 

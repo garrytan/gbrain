@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 
 /**
  * B-10 (#6948 sweep): `idx_facts_ontology_stint_dedup` (v188) is UNIQUE on (source, entity_slug, dimension, value_hash,
@@ -6,7 +7,7 @@ import type { BrainEngine } from '../engine.ts';
  * entity or source slug (a rename, the phantom redirect), this drops the observations the move would duplicate, so the
  * UPDATE cannot raise 23505 and roll the whole write back. Of each set of rows that would share a key, the active one
  * survives, then the row already at the target, then the oldest; supersession links to a dropped row are repointed at
- * the survivor. Runs in the caller's transaction, immediately before its UPDATE.
+ * the survivor. A conversation fact that loses (GBRA-574 B2) keeps its row and gives up its slot. Runs in the caller's transaction, immediately before its UPDATE.
  *
  * `move.where` selects the moving rows of alias `f`; `move.entity` and `move.sms` are the SQL values they take.
  * Both may use `$2` and `$3` (`move.params`); `$1` is the source id. Returns the number of rows dropped.
@@ -36,7 +37,9 @@ export async function dropRekeyDuplicates(
   const keeps = losers.map(l => Number(l.keep));
   await tx.executeRaw(`UPDATE facts f SET superseded_by = CASE WHEN f.id = x.keep THEN NULL ELSE x.keep END
     FROM unnest($1::bigint[], $2::bigint[]) AS x(id, keep) WHERE f.superseded_by = x.id`, [ids, keeps]);
-  await tx.executeRaw('DELETE FROM facts WHERE id = ANY($1::bigint[])', [ids]);
+  await tx.executeRaw(`UPDATE facts SET dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+    WHERE id = ANY($1::bigint[]) AND ${CONVERSATION_SLOT_SQL}`, [ids]);
+  await tx.executeRaw('DELETE FROM facts WHERE id = ANY($1::bigint[]) AND dimension IS NOT NULL', [ids]);
   return ids.length;
 }
 
