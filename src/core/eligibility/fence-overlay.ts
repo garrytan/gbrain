@@ -248,16 +248,6 @@ export interface LoadFenceOverlayOpts {
   hideHeld?: boolean;
 }
 
-/** GST-2891: the claims of a body's world fence cells held from a caller whose fact reads are world-only (heldRowSql). */
-export async function heldFenceClaims(
-  engine: Pick<BrainEngine, 'executeRaw'>,
-  page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null },
-): Promise<string[]> {
-  const held = (await loadFenceChunkOverlay(engine, page, { hideHeld: true }))?.held;
-  if (!held?.size) return [];
-  return [...worldFenceRows(page.compiled_truth), ...worldFenceRows(page.timeline)].filter(row => held.has(row.rowNum)).map(row => row.claim);
-}
-
 /**
  * The overlay for one page's body, one query. No query runs (and the overlay
  * is empty) when the body has no world fence rows. A row with no facts row

@@ -133,15 +133,14 @@ function holdsText(text: string): boolean {
 }
 
 /**
- * GST-2891: for a caller whose fact reads are world-only, removes from each row's text the facts-fence row lines held
- * from it (heldRowSql: a world cell whose fact is stored narrower, a widening the owner has not accepted), whenever the
- * chunk was cut, and drops a row left with nothing to read. One batched lookup; a failed lookup removes every fence row
- * line (fail closed).
+ * GST-2891: per row, the line numbers of the facts-fence row lines of its text held from a caller whose fact reads are
+ * world-only (heldRowSql: a world cell whose fact is stored narrower, a widening the owner has not accepted), whenever
+ * the text was cut. One batched lookup; a failed lookup returns every fence row line (fail closed).
  */
-export async function dropHeldFenceRows<T extends PageRef>(engine: Exec, rows: T[]): Promise<T[]> {
+export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
   const perRow = rows.map(row => typeof row.chunk_text === 'string' ? fenceRowLines(row.chunk_text) : []);
   const keys = rows.flatMap((row, i) => perRow[i]!.map(l => [row.source_id ?? 'default', row.slug, l.rowNum, l.claim, l.partial] as const));
-  if (!keys.length) return rows;
+  if (!keys.length) return perRow.map(() => new Set());
   let held: Set<string> | null;
   try {
     const found = await engine.executeRaw<{ source_id: string; slug: string; row_num: number; claim: string }>(
@@ -150,8 +149,15 @@ export async function dropHeldFenceRows<T extends PageRef>(engine: Exec, rows: T
       [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2]), keys.map(k => k[3]), keys.map(k => (k[4] ? 't' : 'f'))]);
     held = new Set(found.map(f => `${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}\u0000${f.claim}`));
   } catch { held = null; }
+  return rows.map((row, i) => new Set(perRow[i]!
+    .filter(l => !held || held.has(`${row.source_id ?? 'default'}\u0000${row.slug}\u0000${l.rowNum}\u0000${l.claim}`)).map(l => l.line)));
+}
+
+/** GST-2891: removes from each row's text the fence row lines held from the caller (heldFenceLines), and drops a row left with nothing to read. */
+export async function dropHeldFenceRows<T extends PageRef>(engine: Exec, rows: T[]): Promise<T[]> {
+  const drops = await heldFenceLines(engine, rows);
   return rows.filter((row, i) => {
-    const drop = new Set(perRow[i]!.filter(l => !held || held.has(`${row.source_id ?? 'default'}\u0000${row.slug}\u0000${l.rowNum}\u0000${l.claim}`)).map(l => l.line));
+    const drop = drops[i]!;
     if (!drop.size) return true;
     row.chunk_text = (row.chunk_text as string).split('\n').filter((_l, n) => !drop.has(n)).join('\n');
     return holdsText(row.chunk_text);

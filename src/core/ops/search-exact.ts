@@ -11,30 +11,46 @@ import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.t
 import {
   EXACT_DEFAULT_LIMIT, EXACT_DEFAULT_SECONDS, EXACT_MAX_LIMIT, EXACT_MAX_PHRASE_CHARS, EXACT_MAX_SECONDS, phrasePattern, runExactScan,
 } from '../search/exact-scan.ts';
+import type { ExactMatch } from '../search/exact-scan.ts';
 import type { BrainEngine } from '../engine.ts';
-import { heldFenceClaims } from '../eligibility/fence-overlay.ts';
-import { dropHeldFenceRows } from '../eligibility/stamp.ts';
-import { claimTextForms } from '../fence-shared.ts';
-import { pageSnapshotKey } from '../page-snapshot-batch.ts';
+import { heldFenceLines } from '../eligibility/stamp.ts';
+import { chunkVisibleFilter } from '../search/safe-chunks.ts';
 
 const TYPE_NAME = /^[A-Za-z0-9_.:/-]+$/;
 
 /**
- * GST-2891: a caller whose fact reads are world-only gets no snippet holding a fence row held from it (dropHeldFenceRows)
- * or, as a snippet can start inside a row, that row's claim (heldFenceClaims). A snippet that no longer holds the phrase
- * matched held text, so it goes, and a match left without snippets goes too: its presence alone would confirm the phrase.
- * A page that cannot be read again drops its match (fail closed).
+ * GST-2891: a caller whose fact reads are world-only gets no snippet text from a fence row held from it (heldFenceLines,
+ * read on the stored chunk the snippet was cut from, so a snippet that starts or stops inside a row is placed). A snippet
+ * left without the phrase matched held text, so it goes, and a match left without snippets goes too: its presence alone
+ * would confirm the phrase. A snippet whose chunk is no longer found goes (fail closed).
  */
-async function withoutHeldSnippets<M extends { slug: string; source_id: string; matching_chunks: number; snippets: Array<{ text: string }> }>(engine: BrainEngine, matches: M[], phrase: RegExp): Promise<M[]> {
-  if (!matches.length) return matches;
-  const { snapshots } = await engine.readPageSnapshotsBatch(matches.map(m => ({ slug: m.slug, sourceId: m.source_id })));
+async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, matches: M[], holdsPhrase: (text: string) => boolean): Promise<M[]> {
+  const keys = matches.flatMap(m => m.snippets.map(s => ({ m, s })));
+  if (!keys.length) return matches;
+  const found = await engine.executeRaw<{ i: number; chunk_text: string }>(
+    `SELECT k.i, cc.chunk_text FROM unnest($1::int[], $2::int[], $3::text[]) WITH ORDINALITY AS k(page_id, chunk_index, snippet, i)
+      JOIN pages p ON p.id = k.page_id JOIN content_chunks cc ON cc.page_id = k.page_id AND cc.chunk_index = k.chunk_index
+      WHERE ${chunkVisibleFilter('p', 'cc')} AND strpos(cc.chunk_text, k.snippet) > 0`,
+    [keys.map(k => k.m.page_id), keys.map(k => k.s.chunk_index), keys.map(k => k.s.text)]);
+  const chunks = found.map(f => ({ key: keys[Number(f.i) - 1]!, text: f.chunk_text }));
+  const held = await heldFenceLines(engine, chunks.map(c => ({ source_id: c.key.m.source_id, slug: c.key.m.slug, chunk_text: c.text })));
+  const shown = new Map<ExactMatch['snippets'][number], string[]>();
+  chunks.forEach((c, n) => {
+    const ranges: Array<[number, number]> = [];
+    let at = 0;
+    c.text.split('\n').forEach((line, l) => { if (held[n]!.has(l)) ranges.push([at, at + line.length + 1]); at += line.length + 1; });
+    for (let o = c.text.indexOf(c.key.s.text); o !== -1; o = c.text.indexOf(c.key.s.text, o + 1)) {
+      let text = '';
+      for (let x = o; x < o + c.key.s.text.length; x++) if (!ranges.some(([a, b]) => x >= a && x < b)) text += c.text[x];
+      shown.set(c.key.s, [...(shown.get(c.key.s) ?? []), text]);
+    }
+  });
   const out: M[] = [];
   for (const m of matches) {
-    const page = snapshots.get(pageSnapshotKey(m.source_id, m.slug))?.page;
-    if (!page) continue;
-    const forms = claimTextForms(await heldFenceClaims(engine, { sourceId: m.source_id, slug: m.slug, compiled_truth: page.compiled_truth, timeline: page.timeline }));
-    const kept = await dropHeldFenceRows(engine, m.snippets.map(s => ({ snippet: s, source_id: m.source_id, slug: m.slug, chunk_text: s.text })));
-    const snippets = kept.filter(k => phrase.test(k.chunk_text!) && !forms.some(f => k.chunk_text!.toLowerCase().includes(f))).map(k => ({ ...k.snippet, text: k.chunk_text! }));
+    const snippets = m.snippets.flatMap(s => {
+      const texts = shown.get(s) ?? [];
+      return texts.length && texts.every(holdsPhrase) ? [{ ...s, text: texts.reduce((a, b) => (b.length < a.length ? b : a)) }] : [];
+    });
     if (snippets.length) out.push({ ...m, matching_chunks: m.matching_chunks - (m.snippets.length - snippets.length), snippets });
   }
   return out;
@@ -116,8 +132,10 @@ const search_exact: Operation = {
     });
     const { stampPageTrust } = await import('../eligibility/stamp.ts');
     const pattern = phrasePattern(params.phrase);
+    const fold = (t: string) => (params.caseSensitive ? t : t.toLowerCase()).replace(/\s+/g, ' ');
+    const needle = fold(params.phrase.trim());
     const visible = worldOnlyFacts(ctx.remote)
-      ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, new RegExp(pattern.regex.replaceAll('[[:space:]]+', '\\s+'), params.caseSensitive ? '' : 'i')) : []
+      ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, text => fold(text).includes(needle)) : []
       : result.matches;
     const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
     // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).

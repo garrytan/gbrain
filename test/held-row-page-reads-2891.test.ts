@@ -37,6 +37,8 @@ import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { mulberry32 } from './helpers/seeded-random.ts';
+import { importSegmented, pageContent, privacyText } from './helpers/segmented-privacy-fixture.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const DIMS = 1536;
@@ -221,5 +223,36 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
       expect(await call('bob', 'get_page', { slug: KIM.slug, include_content: true })).not.toContain(KIM.canary);
       expect(await call('owner', 'get_page', { slug: KIM.slug, include_content: true })).toContain(turin(KIM));
     }), 300_000);
+  });
+}
+
+/** search_exact on a page stored in segments: no body string to read, so the held row is found from the stored chunk. */
+for (const kind of testBackends()) {
+  describe('GST-2891 search_exact on a segmented page (' + kind + ')', () => {
+    let engine: BrainEngine; let close: () => Promise<void>;
+    const slug = 'notes/segmented-example';
+    beforeAll(async () => {
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+      const facts = '## Facts\n\n' + renderFactsTable([row(1, 'Segment keeps bees capybaraworld'), row(2, 'Segment keeps bees capybaraheld')] as never) + '\n';
+      await importSegmented(engine, slug, pageContent(privacyText(mulberry32(2891), 1_400_000, { keys: false }) + facts));
+      // The private fact the world cell at row 2 restates, stored narrower (held until the owner accepts).
+      await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+        "INSERT INTO facts (source_id, fact, kind, visibility, source, source_markdown_slug, row_num) VALUES ('default', $1, 'fact', 'private', 'fixture', $2, 2)",
+        ['Segment keeps bees capybaraheld', slug]), TEST_WRITE_ATTRIBUTION));
+    }, 300_000);
+    afterAll(async () => { await close(); });
+    const exact = async (remote: boolean, phrase: string) => {
+      __resetPrivateVisibilityCacheForTests();
+      return (await dispatchToolCall(engine, 'search_exact', { phrase }, { remote, sourceId: 'default' })).content.map(c => c.text).join('\n');
+    };
+
+    test('a world-only caller gets the world row and never the held one; the local CLI gets both', async () => {
+      expect(await exact(false, 'capybaraheld')).toContain('capybaraheld');
+      const remote = await exact(true, 'keeps bees capybara');
+      expect(remote).toContain('capybaraworld');
+      expect(remote).not.toContain('capybaraheld');
+      expect(await exact(true, 'capybaraheld')).not.toContain(slug);
+    }, 120_000);
   });
 }
