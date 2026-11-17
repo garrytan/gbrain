@@ -47,8 +47,8 @@ const NEXT_VERSION_ID: &str = "next_version_id";
 /// - As `&str` (through `Deref`) a NULL column reads as `""`, the way PGLite's `rowToStalePage` and chunk paths read
 ///   it: an inline reader such as `auto_chunks` makes no chunks from a shell. Use `is_null` or `as_deref` where NULL
 ///   and empty differ.
-/// - Equality compares the stored value: NULL is not equal to `""`, so moving a page between segmented and inline is a
-///   canonical change.
+/// - Equality compares the stored value: NULL is not equal to `""`, so a writer that moves a page between segmented
+///   and inline sees a change. `putPage` never does: it refuses a shell (`assert_body_inline`, shared item 11).
 /// - `to_page` and the version JSON emit NULL as `null`; the TS codec (`store-codec.ts`) turns it back into PGLite's
 ///   segmented page shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -707,6 +707,21 @@ fn assert_revision(existing: Option<&PageRecord>, options: &PutPageOptions) -> R
     Ok(())
 }
 
+/// The message of PGLite's `pages_body_storage_chk`, the CHECK that keeps a segmented page's body columns NULL.
+pub(crate) const BODY_STORAGE_CHECK: &str =
+    "new row for relation \"pages\" violates check constraint \"pages_body_storage_chk\"";
+
+/// Segmented guard (shared item 11). `putPage` writes the body as one string, and PGLite's `pages_body_storage_chk`
+/// refuses that over a segmented page, live or soft-deleted: its `ON CONFLICT` update sets `compiled_truth` and leaves
+/// `body_storage = 'segmented'`. A NULL body marks the segmented page here. Runs after the empty-overwrite check, as
+/// PGLite's order is; the write stores nothing.
+fn assert_body_inline(existing: Option<&PageRecord>) -> Result<()> {
+    if existing.is_some_and(|page| page.compiled_truth.is_null()) {
+        return Err(StoreError::new(CONSTRAINT_VIOLATION, BODY_STORAGE_CHECK));
+    }
+    Ok(())
+}
+
 /// Inserts or updates a page inside the caller's write transaction. Returns the stored record.
 pub(crate) fn put_page_in(
     tx: &mut dyn KvWrite,
@@ -759,6 +774,7 @@ pub(crate) fn put_page_in(
             ),
         ));
     }
+    assert_body_inline(existing.as_ref())?;
     let now = env.now_micros();
     let effective_date = input
         .effective_date
@@ -1418,22 +1434,26 @@ mod tests {
     }
 
     #[test]
-    fn writing_an_inline_body_over_a_shell_is_a_canonical_change_and_versions_keep_the_nulls() {
+    fn versions_keep_the_nulls_and_put_page_keeps_the_stored_chunker_version() {
         let store = crate::test_support::store();
+        put(&store, "inline");
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, "inline")?.unwrap();
+                page.chunker_version = Some(3);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        let again = put(&store, "inline");
+        assert_eq!(
+            again.chunker_version,
+            Some(3),
+            "put_page keeps the stored chunker_version"
+        );
         put(&store, "big");
         let shell = make_shell(&store, "big");
         let snapshot = store.create_version("big", None).unwrap();
         assert_eq!(snapshot["compiled_truth"], Value::Null);
-        let again = put(&store, "big");
-        assert_ne!(again.knowledge_revision, shell.knowledge_revision);
-        assert_eq!(again.compiled_truth, "body");
-        assert_eq!(again.timeline, "");
-        assert!(again.content_hash.as_deref().is_some_and(|h| !h.is_empty()));
-        assert_eq!(
-            again.chunker_version,
-            Some(0),
-            "put_page keeps the stored chunker_version"
-        );
         let versions = store
             .get_versions("big", &VersionsOptions::default())
             .unwrap();
@@ -1447,7 +1467,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_write_over_a_shell_is_refused_unless_allowed() {
+    fn an_empty_write_over_a_shell_is_refused() {
         let store = crate::test_support::store();
         put(&store, "big");
         make_shell(&store, "big");
@@ -1465,11 +1485,53 @@ mod tests {
             allow_empty_overwrite: true,
             ..PutPageOptions::default()
         };
-        store.put_page("big", &empty, &allowed).unwrap();
+        // Allowed, the write reaches PGLite's body CHECK, which refuses it too (item 11).
+        let checked = store.put_page("big", &empty, &allowed).unwrap_err();
+        assert_eq!(checked.code, CONSTRAINT_VIOLATION);
+        assert_eq!(checked.message, BODY_STORAGE_CHECK);
         let page = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "big")
             .unwrap()
             .unwrap();
-        assert_eq!(page.compiled_truth, "");
+        assert!(page.compiled_truth.is_null());
+    }
+
+    #[test]
+    fn a_body_write_over_a_shell_is_refused_by_the_body_check_and_stores_nothing() {
+        let store = crate::test_support::store();
+        put(&store, "seg");
+        let shell = make_shell(&store, "seg");
+        let body = PageInput {
+            page_type: "note".into(),
+            title: "seg".into(),
+            compiled_truth: "a whole body".into(),
+            ..PageInput::default()
+        };
+        let live = store
+            .put_page("seg", &body, &PutPageOptions::default())
+            .unwrap_err();
+        assert_eq!(live.code, CONSTRAINT_VIOLATION);
+        assert_eq!(live.message, BODY_STORAGE_CHECK);
+        let after = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "seg")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.knowledge_revision, shell.knowledge_revision);
+        assert!(after.compiled_truth.is_null() && after.timeline.is_null());
+        assert_eq!(after.content_hash, None);
+        // A soft-deleted shell refuses too: PGLite's update revives the row and hits the same CHECK.
+        store.soft_delete_page("seg", None).unwrap();
+        let deleted = store
+            .put_page("seg", &body, &PutPageOptions::default())
+            .unwrap_err();
+        assert_eq!(deleted.code, CONSTRAINT_VIOLATION);
+        let still = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "seg")
+            .unwrap()
+            .unwrap();
+        assert!(still.deleted_at_us.is_some() && still.compiled_truth.is_null());
+        // An inline page is unaffected.
+        put(&store, "plain");
+        store
+            .put_page("plain", &body, &PutPageOptions::default())
+            .unwrap();
     }
 
     #[test]

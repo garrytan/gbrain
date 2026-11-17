@@ -182,8 +182,9 @@ file, with an empty body. A family fills in only its own body, and never changes
 that is not on a list and needs the hook asks core for a one-line addition to the list.
 
 All hooks are empty today, so they change no answer: every served member reads and writes exactly as before. The
-page origin rule at the end of this section is not a hook: it is core page behavior that lets `putPage` store
-`source_path`.
+last three parts of this section are not hooks. They are core page behavior: the page origin rule lets `putPage`
+store `source_path`, the nullable page fields let a page record hold a segmented shell, and the segmented guard keeps
+`putPage` off such a page.
 
 #### Page columns (`page_columns.rs`)
 
@@ -449,6 +450,69 @@ store keeps the same rule in `pages.rs`.
   time, so it needs none.
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
+#### Nullable page fields (`PageText` in `pages.rs`)
+
+PGLite lets four `pages` columns hold NULL. The page record holds NULL in the same four. `rust/docs/store/pages.md`
+("Nullable page fields") and the `PageText` and `PageRecord` doc comments carry the full contract.
+
+| Field | Rust type | NULL means | Written as NULL by |
+| --- | --- | --- | --- |
+| `compiled_truth`, `timeline` | `PageText` | a segmented shell page: its body lives in segment texts. PGLite's `pages_body_storage_chk` makes both NULL exactly when `body_storage = 'segmented'`; an inline page holds a string (`''` when empty) | the page_body family (`createSegmentedPageShell`, a generation flip); never `putPage` |
+| `content_hash` | `Option<String>` | a shell page whose body is not published yet, as `createSegmentedPageShell` leaves it | the page_body family; `putPage` always sets a hash |
+| `chunker_version` | `Option<i16>` | the store has not recorded one. `putPage` keeps the stored value and sets none on a new page | the page_body family; not part of the page JSON (PGLite's `rowToPage` leaves it out) |
+
+- **Reading in Rust.** A NULL body reads as `""` through `&str` (`Deref`), so inline readers (`auto_chunks`, sizes,
+  text matching) see an empty body. Use `is_null` or `as_deref` where NULL and `""` differ.
+- **Equality.** NULL is never equal to `""`. A writer that moves a page between segmented and inline sees a change.
+- **Page JSON.** `getPage`, `readPageSnapshot`, `listPages` and version rows send each NULL as `null`. The TypeScript
+  codec (`guardNullBody` in `store-codec.ts`, called by `toGetPage` and `toListPage`) turns a `null` body into
+  PGLite's segmented page: `compiled_truth` and `timeline` read as `''` behind getters that throw
+  `page_body_segmented` (`guardSegmentedBody`, as PGLite's `rowToPage` does). `content_hash` stays `null`.
+  `guardNullBody` reads only whether the body is null, never the text: its row in
+  `scripts/page-body-readers-baseline.tsv` is `META`.
+- **Empty overwrite.** A blank `putPage` over a live shell rejects `empty_overwrite` (`(segmented)` in the message)
+  unless `allowEmptyOverwrite`, as PGLite does.
+- **Versions.** A version snapshot copies the page's NULLs.
+- **Format.** Records written before these fields were nullable hold strings and read unchanged. A record without
+  `chunker_version` reads it as NULL, and the store writes `chunker_version` only when it is set. `FORMAT_VERSION`
+  stays 1.
+
+#### Segmented guard (`putPage` over a segmented page)
+
+PGLite keeps a segmented page's body out of the row with the CHECK `pages_body_storage_chk` (migration v248): an
+inline row holds both body columns, a segmented row holds neither. `putPage` writes the body as one string, so the
+CHECK refuses it over a segmented page. The store does the same in `pages.rs` (`assert_body_inline`). A NULL body
+marks the segmented page in the store (see "Nullable page fields").
+
+- **Blank body, not allowed.** A blank `putPage` over a live segmented page rejects `empty_overwrite` first, as
+  PGLite's data-loss guard does (see "Nullable page fields").
+- **Every other write.** A `putPage` over a segmented page, live or soft-deleted, with a body or with
+  `allowEmptyOverwrite`, rejects `constraint_violation` with PGLite's message:
+  `new row for relation "pages" violates check constraint "pages_body_storage_chk"`. PGLite's `ON CONFLICT` update
+  sets the body, revives the row and keeps `body_storage = 'segmented'`, so the CHECK refuses the row. The store
+  refuses inside the write transaction, after the revision and origin checks, so it stores nothing. The journal path
+  (`submit_page_mutation`) goes through the same function.
+- **Error code.** PGLite throws the raw Postgres error (code `23514`); the store uses `constraint_violation` with the
+  same message. The page_body family's `refreshPageBody` refuses a segmented page the same way.
+- **Reads.** The page JSON sends a segmented body as `null`, and the TypeScript codec gives PGLite's guarded page
+  (see "Nullable page fields"), so reading `compiled_truth` or `timeline` throws `page_body_segmented` on both engines.
+
+**Readers that see a NULL body.** NULL reads as `""` through `&str`, which is right for some readers and wrong for
+others. Each family below must give the PGLite answer for a segmented shell page:
+
+| Family and reader | Member | Today | PGLite for a segmented shell | What the family must do |
+| --- | --- | --- | --- | --- |
+| chunk_queries `chunkless_pages` | `countChunklessPagesWithContent`, `listChunklessPagesWithContent` | excludes the shell (its body reads as empty) | includes a segmented page with `body_bytes > 0` (`engine-sql/chunks.ts`, the chunkless queries) and returns `''` for its body and timeline (`COALESCE`) | test segmented pages by `body_bytes`, not by the body text; output `""`, never `null` |
+| chunk_queries `get_chunk_windows` | `getChunkWindows` | `segmented: false` on every page row | the page row says `segmented: true` and carries no body; chunk rows carry their occurrence and span | report `segmented` from the page's body storage and send no body for a segmented page |
+| extraction `stale_row` | `listStalePagesForExtraction` (and its count) | outputs `null` for the body | lists the shell; `rowToStalePage` returns `''` | keep the shell in the list and output `""` |
+| page_ops `snapshot_json` | `readPageSnapshotsBatch` | outputs `null` for the body and `content_hash` | returns the page through `rowToPage`, so its body getters throw `page_body_segmented`; `content_hash` is `null` | keep the `null` in the JSON and decode each page in TypeScript with `toGetPage`, which applies the guard |
+| page_ops `domain_bank_row` | `listPrefixSampledPages`, `listCorpusSample` | includes the shell with a `null` body | excludes segmented pages (`body_storage = 'inline'` in both queries) | skip pages whose body is NULL |
+| page_ops `revert_to_version` | `revertToVersion` | overwrites the body | refuses a segmented page or a segmented version before it writes (`engine-sql/pages.ts`, `revertToVersion`) | refuse in the same way before any write |
+
+These readers already match PGLite and need no change: page_ops `find_duplicate_in` (a shell has no hash, so it never
+matches), the prior byte sum in `read_page_snapshots_batch` (a shell adds 0), page_body `refresh_page_body` (it
+refuses as above), and core `auto_chunks` (`putPage` never reaches a shell now).
+
 ### Write transactions and the journal
 
 - `Store::read()` returns one consistent snapshot. `Store::write(|tx| ...)` runs one write transaction: one writer at
@@ -480,6 +544,10 @@ store keeps the same rule in `pages.rs`.
   rows live in the family's file.
 - Byte arrays (segment sha256, segment bodies) cross as lowercase hex strings or as napi `Buffer`; vectors cross as
   `Float32Array` (core).
+- **Large integers from JavaScript.** N-API gives serde every JavaScript number above 2^31 as a double, so an
+  argument field typed `i64` or `u64` fails to decode when JavaScript sends a large integer. Send a large integer from
+  TypeScript as a float in milliseconds (an `f64` field) or as a string, and convert it in Rust. This applies to every
+  family.
 
 ### Timestamps
 
@@ -1120,4 +1188,6 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |
 | `putPage` with `source_path`, and the one-live-page-per-origin refusal (`o` key) | built | page_ops (`resolveSlugsByPaths`) |
 | Segment chunks (`chunks.rs`: append, publish, delete by occurrence or generation, `get_chunks` by body generation) | built | page_body (`stageSegmentChunks`, the flip) |
+| Nullable page fields (`PageText`, `content_hash: Option`, `chunker_version: Option<i16>`; codec `guardNullBody`) | built | page_body (shell and flip writes) |
+| Segmented guard (`putPage` refuses a segmented page with PGLite's CHECK message) | built | page_body; chunk_queries, extraction and page_ops match PGLite for a NULL body (see "Segmented guard") |
 | Rename slug list (`cascade::rename_slug_rows`) | built; the aliases family calls it from `updateSlug` | facts (fills in its body), aliases (caller) |

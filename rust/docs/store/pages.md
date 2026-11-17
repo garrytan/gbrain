@@ -62,9 +62,13 @@ PGLite lets four `pages` columns hold NULL, and the page record holds NULL in th
   behind getters that throw `page_body_segmented`. `content_hash` stays `null`.
 - Inside the store, a NULL body reads as `''` through `&str`, so inline readers (`auto_chunks`, sizes, text
   matching) see an empty body. Use `is_null` or `as_deref` where NULL and `''` differ; equality never treats them as
-  the same, so writing an inline body over a shell is a canonical change.
+  the same, so a writer that moves a page between segmented and inline sees a change.
 - A blank `putPage` over a live shell rejects `empty_overwrite` (`(segmented)` in the message) unless
   `allowEmptyOverwrite`, as PGLite does.
+- Any other `putPage` over a shell, live or soft-deleted, rejects `constraint_violation` with PGLite's CHECK message
+  (`new row for relation "pages" violates check constraint "pages_body_storage_chk"`) and stores nothing. PGLite's
+  `ON CONFLICT` update sets the body and keeps `body_storage = 'segmented'`, so its CHECK refuses the row. PGLite
+  throws the raw Postgres error (code `23514`); the store uses `constraint_violation` with the same message.
 - A version snapshot copies the page's NULLs.
 - Format: records written before these fields were nullable hold strings and read unchanged; a record without
   `chunker_version` reads it as NULL, and `chunker_version` is written only when set. `FORMAT_VERSION` stays 1.
