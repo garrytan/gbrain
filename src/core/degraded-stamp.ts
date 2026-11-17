@@ -33,7 +33,7 @@ const KEYWORD_ONLY_MARKERS: ReadonlySet<string> = new Set(['keyword_only_no_embe
 const stageCode = (stage: string): string => (KEYWORD_ONLY_MARKERS.has(stage) ? 'embed_unavailable' : stage);
 /**
  * Keyword-only on purpose (embeddings turned off, `embedding_disabled`) is how the brain was set up, not a degraded
- * result: search, query and recall stamp nothing for it, nor for the keyword arm finding nothing (`keyword_zero`, the
+ * result: search, query, find_experts and recall stamp nothing for it, nor for the keyword arm finding nothing (`keyword_zero`, the
  * only arm that runs), so an empty answer is a true negative. The run stays recorded in `_meta.retrieval` and recall's
  * `search_degraded`. A missing provider (`no_provider`), timeouts and failed arms still stamp.
  */

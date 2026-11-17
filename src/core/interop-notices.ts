@@ -396,7 +396,7 @@ function factsDegradedReason(r: Record<string, unknown>): string | undefined {
 /** Did this call run keyword-only because the brain opted out of embedding (not a missing or failing provider)? */
 export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<string, unknown>): boolean {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
-  if (op === 'search' || op === 'query') {
+  if (op === 'search' || op === 'query' || op === 'find_experts') {
     const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
     return (retrieval?.degraded ?? []).some(d => d.reason === 'embedding_disabled');
   }
@@ -435,7 +435,7 @@ export function recallStagesFor(op: string, result: unknown, meta: Record<string
  * (`keyword_zero`, a true negative there), so a call with no other stage gets no `degraded_recall`. `_meta.retrieval`
  * and recall's `search_degraded` still record that the search was keyword-only.
  */
-const KEYWORD_ONLY_BY_CHOICE_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall']);
+const KEYWORD_ONLY_BY_CHOICE_OPS: ReadonlySet<string> = new Set(['search', 'query', 'find_experts', 'recall']);
 const KEYWORD_ONLY_STAGES: ReadonlySet<string> = new Set(['embed_unavailable', 'keyword_only_no_embedding_provider', 'keyword_zero']);
 
 /**

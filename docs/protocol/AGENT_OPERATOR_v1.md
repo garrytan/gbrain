@@ -935,7 +935,7 @@ provider shows once per session); the stamp never is, so it is on every
 affected call.
 
 **Keyword-only on purpose is not degraded.** With embeddings turned off on
-purpose (`gbrain init --no-embedding`), search, query and recall carry no stamp
+purpose (`gbrain init --no-embedding`), search, query, find_experts and recall carry no stamp
 and no `degraded_recall`, nor for `keyword_zero`. `_meta.retrieval` still
 records `embed_unavailable` with reason `embedding_disabled`, and an empty
 result's `empty_retrieval` info notice says the search was keyword-only: no

@@ -7,6 +7,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Notice } from '../src/core/agent-output.ts';
 import { DEGRADED_STAMP_PREFIX, degradedStampFor, degradedStampLine } from '../src/core/degraded-stamp.ts';
 import { withDegradedStamp } from '../src/cli/op-notices.ts';
+import { recallInteropNotices } from '../src/core/interop-notices.ts';
 
 const reasons = (op: string, result: unknown, meta: Record<string, unknown> | null = null, notices: Notice[] = []) =>
   degradedStampFor(op, result, meta, notices)?.reasons ?? null;
@@ -43,6 +44,16 @@ describe('clean results carry no stamp', () => {
     expect(reasons('recall', { search_degraded: 'keyword_only_embedding_disabled' }, retrieval([{ stage: 'keyword_candidates_incomplete', reason: 'timeout' }])))
       .toEqual(['keyword_candidates_incomplete']);
     expect(reasons('recall', { search_degraded: 'keyword_only_no_embedding_provider' })).toEqual(['embed_unavailable']);
+  });
+
+  test('the stamp and the degraded_recall notice agree on a brain keyless on purpose, find_experts included', () => {
+    for (const op of ['search', 'query', 'find_experts']) {
+      for (const reason of ['embedding_disabled', 'no_provider']) {
+        const meta = retrieval([{ stage: 'embed_unavailable', reason }, { stage: 'keyword_zero' }]);
+        const noticed = recallInteropNotices(op, [], meta, {}, { transport: 'stdio' }).some(n => n.code === 'degraded_recall');
+        expect([op, reason, noticed]).toEqual([op, reason, reasons(op, [], meta) !== null]);
+      }
+    }
   });
 
   test('search_exact paging (the caller\'s limit) is not degradation', () => {
