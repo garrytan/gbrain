@@ -55,7 +55,7 @@ jobs:
   # scripts/check-dynamic-ci.ts guards the wiring.
   dynamic-ci:
     if: github.event_name == 'pull_request'
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -73,7 +73,7 @@ jobs:
           enable-annotation: 'true'
 
   plan:
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -166,7 +166,7 @@ jobs:
       matrix:
         engine: [pglite, postgres]
         pages: ${{ fromJSON(needs.plan.outputs.pages) }}
-    runs-on: ubicloud-standard-8-ubuntu-2404
+    runs-on: ubuntu-latest
     # Backstop only: the harness's out-of-process phase watchdog
     # (scripts/scale/watchdog.ts, 1.5x the phase ceilings: 10k ~30 min,
     # 20k ~60 min) kills a stalled phase first and names it.

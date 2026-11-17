@@ -29,7 +29,7 @@ concurrency:
 jobs:
   gate:
     name: Sync freshness gate (10k, watch, p50 of 10 vs baseline +25%)
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.runs && inputs.runs != '1' && 240 || 60 }}
     steps:
       - id: checkout

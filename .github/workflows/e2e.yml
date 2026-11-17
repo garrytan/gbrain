@@ -53,7 +53,7 @@ jobs:
     name: JSONB parity (#2339 regression guard)
     needs: [prepare-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
@@ -151,7 +151,7 @@ jobs:
   # changed files come from the GitHub API, so the checkout stays shallow; an
   # incomplete list fails closed to the whole corpus.
   prepare-e2e:
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -235,7 +235,7 @@ jobs:
     # 2 vCPUs, up to 14 shards (C1; 14 since GBRA-135 L2): run-e2e.sh runs one bun process at a time,
     # and a 25-file sample took 442s on 2 cores vs 455s on 4.
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
       postgres:
@@ -325,7 +325,7 @@ jobs:
     # (measured September 29, 2026), while every other E2E lane ran as fast.
     needs: [prepare-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 70
     services:
       postgres:
@@ -496,7 +496,7 @@ jobs:
     name: Tier 1 graduation (direct + PgBouncer) ${{ matrix.shard }}/2
     needs: [prepare-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
-    runs-on: ubicloud-standard-8-ubuntu-2404
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -591,7 +591,7 @@ jobs:
     name: Tier 1 backend matrix (direct + PgBouncer) ${{ matrix.shard }}/2
     needs: [prepare-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     # Two weighted shards: the whole matrix took 715s on one 4-vCPU runner
     # (the PR critical path); files run sequentially, so a split halves it.
     strategy:
@@ -699,7 +699,7 @@ jobs:
     name: Postgres 15 compatibility (#7112)
     needs: [prepare-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
@@ -792,7 +792,7 @@ jobs:
     # this job on every repository that never set the variable.
     needs: jsonb-parity
     if: format('{0}', vars.GBRAIN_PAID_LANES) != '0' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
       postgres:
@@ -922,7 +922,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -975,7 +975,7 @@ jobs:
   order-hunt:
     # Named exception: nightly E2E schedule and order_hunt dispatch only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.order_hunt)
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -1046,7 +1046,7 @@ jobs:
   coverage-full-serial:
     # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-8-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - id: checkout
@@ -1090,7 +1090,7 @@ jobs:
   coverage-full-slow:
     # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
       - id: checkout
@@ -1135,7 +1135,7 @@ jobs:
   coverage-full-e2e:
     # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -1251,7 +1251,7 @@ jobs:
     needs: [coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     # actions + checks: the shard classifier reads this run's jobs and their annotations.
     permissions:
       contents: read
@@ -1332,7 +1332,7 @@ jobs:
   executed-receipts:
     needs: [prepare-e2e, jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - id: checkout
@@ -1399,7 +1399,7 @@ jobs:
   e2e-status:
     needs: [jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, postgres15-compat, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       # The job results come in through env so test/paid-lanes-switch-5903.test.ts
@@ -1493,7 +1493,7 @@ jobs:
   e2e-full-suite:
     needs: [prepare-e2e, e2e-status, executed-receipts]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require e2e-status
@@ -1550,7 +1550,7 @@ jobs:
   reused-full-suite:
     needs: [prepare-e2e]
     if: ${{ needs.prepare-e2e.outputs.reuse == 'true' }}
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - env:

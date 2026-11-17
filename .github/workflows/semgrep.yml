@@ -29,7 +29,7 @@ jobs:
     # Named exception (docs/TESTING.md#event-parity): pull requests gate on findings
     # new since the merge base; the weekly full-tree scan below covers the rest.
     if: github.event_name == 'pull_request'
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
       image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
@@ -71,7 +71,7 @@ jobs:
   semgrep-full:
     # Named exception (docs/TESTING.md#event-parity): the weekly schedule and dispatch.
     if: github.event_name != 'pull_request'
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read

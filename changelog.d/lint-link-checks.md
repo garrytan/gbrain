@@ -9,6 +9,7 @@
 - `gbrain inbox` wires up the drop folder (`~/.gbrain/inbox/`): `gbrain inbox` shows what is waiting, `gbrain inbox run --once` turns every waiting text, markdown, HTML or JSON file into an `inbox/` page and moves the original to `.archived/<date>/`, and `gbrain inbox run` keeps watching. PGLite brains write the page right away; Postgres brains queue it for the job worker. The same bytes apply once. A PDF, image, audio or video file stays in the inbox with a note to convert it to text first, and `--once` archives a file only after its capture landed. The inbox source now hashes a binary file's bytes, so the same file dedups wherever it lands.
 
 ### Changed
+- For contributors: CI runs on GitHub-hosted runners. Every job that asked for a Ubicloud runner (`ubicloud-standard-*`) now uses `ubuntu-latest`, and the arm64 lanes `ubuntu-24.04-arm`; `.github/actionlint.yaml` declares no custom labels. The bounded checkout-and-retry pairs stay.
 - For contributors: the product's names (command, MCP server name, home folder, environment-variable prefix) now live in one module, `src/core/brand.ts`. The home folder and the MCP server name already read from it; nothing a user sees changes. A future rename keeps reading an existing install's `GBRAIN_*` variables.
 
 <!-- behavior-change: lint_link_checks_json_strict -->

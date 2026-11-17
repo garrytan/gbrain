@@ -87,7 +87,7 @@ concurrency:
 jobs:
   plan:
     name: plan (resolve candidate and from-versions)
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -157,7 +157,7 @@ jobs:
   cell:
     name: cell (${{ matrix.from }} ${{ matrix.engine }} ${{ matrix.keys }} ${{ matrix.brain }})
     needs: plan
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
       contents: read
@@ -244,7 +244,7 @@ jobs:
     name: upgrade-matrix
     needs: [plan, cell]
     if: always() && needs.plan.result == 'success'
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -291,7 +291,7 @@ jobs:
     # schedule writes the upgrade-break issue; dispatch and pull-request runs
     # report in their summary.
     if: always() && github.event_name == 'schedule' && needs.plan.result == 'success' && needs.summary.result != 'skipped' && needs.summary.result != 'cancelled'
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read

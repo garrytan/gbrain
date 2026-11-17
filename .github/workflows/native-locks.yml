@@ -24,7 +24,7 @@ jobs:
     name: OpenClaw 2026.9.4 native context-engine startup
     # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
     if: ${{ inputs.scope != 'smoke' }}
-    runs-on: ubicloud-standard-4-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
       postgres:
@@ -68,7 +68,7 @@ jobs:
 
   native:
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
-    runs-on: ${{ fromJSON('{"linux-x64-glibc":"ubicloud-standard-4-ubuntu-2404","linux-arm64-glibc":"ubicloud-standard-4-arm-ubuntu-2404","darwin-arm64":"macos-26","darwin-x64":"macos-26-intel","win32-x64":"windows-2022","win32-arm64":"windows-11-arm"}')[matrix.target] }}
+    runs-on: ${{ fromJSON('{"linux-x64-glibc":"ubuntu-latest","linux-arm64-glibc":"ubuntu-24.04-arm","darwin-arm64":"macos-26","darwin-x64":"macos-26-intel","win32-x64":"windows-2022","win32-arm64":"windows-11-arm"}')[matrix.target] }}
     timeout-minutes: 15
     # statuses: the darwin-x64 heartbeat below (one commit status context per cell, diag/native-heartbeat/<target>/<bun>).
     permissions:
@@ -227,7 +227,7 @@ jobs:
     name: darwin-x64 heartbeat finalize
     needs: [native]
     if: ${{ always() && inputs.scope != 'smoke' }}
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     # statuses: the darwin-x64 cells' diag/native-heartbeat/<cell> contexts; actions: read the run's jobs and conclusions.
     permissions:
@@ -337,7 +337,7 @@ jobs:
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
     # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
     if: ${{ inputs.scope != 'smoke' }}
-    runs-on: ${{ fromJSON('{"linux-x64-musl":"ubicloud-standard-4-ubuntu-2404","linux-arm64-musl":"ubicloud-standard-4-arm-ubuntu-2404"}')[matrix.target] }}
+    runs-on: ${{ fromJSON('{"linux-x64-musl":"ubuntu-latest","linux-arm64-musl":"ubuntu-24.04-arm"}')[matrix.target] }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
