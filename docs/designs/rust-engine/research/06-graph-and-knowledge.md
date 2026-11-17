@@ -194,7 +194,7 @@ Concurrency (engine-sql/facts.ts:88-170): when `entity_slug` is set, the insert 
 
 ### 5.3 `recall`
 
-`recall` (src/core/ops/facts.ts:298-330) reads facts by entity, `since`, or `session_id`. `query` also searches pages. Remote callers get world-visibility facts only. Dedupe candidates for a write use `findCandidateDuplicates` (engine-sql/facts.ts:580-636): `k` clamped to `[1, 20]` (default 5), filtered by `source_id`, `entity_slug`, `expired_at IS NULL`, `valid_until` in the future, and `embedding <=> query` when comparable. The keyword arm (`findKeywordCandidates`, engine-sql/facts.ts:638-666) uses `plainto_tsquery`, `to_tsvector @@ q`, and `ts_rank_cd`.
+`recall` (src/core/ops/facts.ts:298-330) reads facts by entity, `since`, or `session_id`. `query` also searches pages. Remote callers get world-visibility facts only, except a caller bound to the brain owner, which also reads private facts (`worldOnlyFacts`); source grants and member access still apply. Dedupe candidates for a write use `findCandidateDuplicates` (engine-sql/facts.ts:580-636): `k` clamped to `[1, 20]` (default 5), filtered by `source_id`, `entity_slug`, `expired_at IS NULL`, `valid_until` in the future, and `embedding <=> query` when comparable. The keyword arm (`findKeywordCandidates`, engine-sql/facts.ts:638-666) uses `plainto_tsquery`, `to_tsvector @@ q`, and `ts_rank_cd`.
 
 
 ### 5.4 `forget`: withdrawal

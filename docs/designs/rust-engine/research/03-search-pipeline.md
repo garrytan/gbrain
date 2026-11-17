@@ -262,7 +262,7 @@ Intent comes from `classifyQuery` (`query-intent.ts:513`), which is regex only a
 
 ### 5.4 Cosine blend (`cosine-rescore.ts:121`)
 
-`blended = 0.7 * (score / maxScore_after_boost) + 0.3 * cosine`. The max is taken after the compiled-truth factor, so the normalized value can exceed 1 before blending. The result is in [0,1]. Rows are re-sorted by blended score. This runs before post-fusion boosts (`rank.ts:156-165`).
+`blended = 0.7 * (score / maxScore_after_boost) + 0.3 * cosine`. The max is taken after the compiled-truth factor over the same nonnegative scores, so the normalized value is in [0,1]. Cosine is not clamped, so the blended score is in [-0.3, 1], not [0, 1]. Rows are re-sorted by blended score. This runs before post-fusion boosts (`rank.ts:156-165`).
 
 ### 5.5 Source-aware factor (inside each arm's SQL)
 

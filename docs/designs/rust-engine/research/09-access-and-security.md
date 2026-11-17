@@ -67,7 +67,7 @@ Legend: **[V]** verified by reading the cited code. **[I]** inferred or only par
 
 ### 4.3 Malformed input fails closed (DB-side today)
 
-- **[V]** `gbrain_access_norm_readers` (`v282-member-read-access.ts:48-57`) lowercases, trims, accepts `member:<id>` and `group:<id>`, drops the rest, and returns `['!nobody']` when nothing valid remains.
+- **[V]** `gbrain_access_norm_readers` (`v282-member-read-access.ts:48-57`) lowercases, trims and accepts `member:<id>` and `group:<id>`. It never drops an invalid entry: if any entry fails to normalize, or nothing remains, the whole list becomes `['!nobody']` (`bool_and(n IS NOT NULL)` at `:50`; the same early return in `src/core/access/principals.ts:44`; mixed valid and invalid case in `test/access-principals.test.ts:86`). Dropping invalid entries instead would widen access.
 - **[V]** `gbrain_access_readers(fm)` (`:59-70`) returns NULL when `readable_by` is absent, and `['!nobody']` for a non-string, non-array value, an array longer than 256, or an array with non-string elements.
 - **[V]** `pages_access_derive_readers` (`:115-116`) is a BEFORE INSERT OR UPDATE OF frontmatter, page_readers trigger.
 - **[V]** `pages_access_mark_restricted` and `access_members_mark_restricted` set `config.access.restrictions_present = '1'` (`:97-106`, `:118-122`). This global flag gates the fast path. The v282 backfill sets it when any restricted page or member exists.
@@ -168,7 +168,7 @@ These have no home in an embedded store: no RLS, no triggers, no policies. Each 
 | I3 | Git-canonical sources refuse writers without the protocol | `schema.sql:2607-2615`, `:2647-2670` | Protocol version on writer identity | Old-protocol writer to git source: refused. |
 | I4 | Tier from writer; no raise above `operator_curated` without promotion; origin stamped | `gbrain_stamp_trust_tier`, `trust/schema.ts:187-236` | Typed `TrustTier`; promotion is explicit | Matrix over (writer tier, old tier, promo, backfill). |
 | I5 | Guest ceiling, writer list, guest-note-only writes, no facts/takes/timeline in guest source | `trust/schema.ts` `guestGuard` | Guest policy before insert | Port `test/guest-notes-scoped-role.test.ts`. |
-| I6 | `readable_by` normalizes; malformed means `!nobody`; `page_readers` derived on every write | v282 functions and trigger | Normalize in writer; store derived column | Fuzz: non-string, >256 entries, uppercase, prefixes, empty. |
+| I6 | `readable_by` normalizes; malformed means `!nobody`; `page_readers` derived on every write | v282 functions and trigger | Normalize in writer; store derived column | Fuzz: non-string, >256 entries, uppercase, prefixes, empty, and a list mixing valid and invalid entries (must read as `!nobody`, never as the valid subset). |
 | I7 | `restrictions_present` set whenever a restriction exists | v282 mark-restricted triggers | Derive, or set in the same transaction | Restricted page read as unbound caller: filtered. |
 | I8 | Folder rule ids and serves recomputed on slug, source or member change | v283 stamp trigger; v309 serves triggers | Recompute in the same transaction | Move page into rule prefix; disable member; assert coverage and serves. |
 | I9 | Purged content never re-saved | `facts/purge-schema.ts:157-186` | Tombstone check in write path; index `(source_id, content_hash)` | Purge then `put` same content: `purged_content`. |

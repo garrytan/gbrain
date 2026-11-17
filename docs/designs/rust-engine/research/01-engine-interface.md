@@ -10,18 +10,18 @@ No tests were run. Nothing in the reference repos was modified.
 
 ## 1. Bottom line
 
-- The seam exists and is well structured: one interface, `BrainEngine` (src/core/engine.ts:830), with 194 callable members, two engine classes, and a SQL-sharing layer `src/core/engine-sql/` for 15 storage domains. [V]
+- The seam exists and is well structured: one interface, `BrainEngine` (src/core/engine.ts:830), with 197 callable members (194 required, 3 optional), two engine classes, and a SQL-sharing layer `src/core/engine-sql/` for 15 storage domains. [V]
 - The seam is not closed. `BrainEngine` exposes `executeRaw(sql: string, params?)` (src/core/engine.ts:2714) and `executeRawDirect` (:2732). About 5,100 raw-SQL call-site lines sit outside the engine files, in about 1,140 files. [C]
 - Therefore the interface is a viable seam for a Rust core only for the typed domain methods. Every raw `executeRaw` caller needs a separate plan: port it to a typed method, or give the Rust core a SQL executor. [I]
 
 ## 2. The BrainEngine interface (src/core/engine.ts:830-2890)
 
-The interface has a `readonly kind: 'postgres' | 'pglite'` discriminator (:832) and one optional member, `holdSchemaMigrationLock?` (:848). The callable members, grouped by the section comments in the file:
+The interface has a `readonly kind: 'postgres' | 'pglite'` discriminator (:832) and three optional members: `holdSchemaMigrationLock?` (:848), `findDuplicatePage?` (:922) and `findDuplicatePages?` (:926). The callable members, grouped by the section comments in the file:
 
 | Family (engine.ts lines) | Count | Representative members (signature, one-line purpose) |
 |---|---|---|
-| Lifecycle (834-859) | 8 | `connect(config)`, `disconnect()`, `reconnect(ctx?)` (recovers with the config captured at last connect, #2034), `initSchema()`, `transaction<T>(fn, opts?)` (:849), `transactionDirect<T>` (:851, control txn on the direct pool), `registerBeforeDisconnect(stop)` (:853, returns unregister), `withReservedConnection<T>(fn, opts?)` (:859) |
-| Pages CRUD (861-1196) | 22 | `getPage(slug, opts?)` (:869), `readPageSnapshot(s)`, `lockPageKeys(keys)`, `putPage(slug, page, opts?)` (:891), `deletePage(s)`, `softDeletePage(s)`, `restorePage`, `purgeDeletedPages`, `listPages`, `findPages`, `countPagesBy`, `resolveSlugs`, `getAllSlugs`, `listAllSources`, `updateSourceConfig`, `listCorpusSample` |
+| Lifecycle (834-859) | 9 | `connect(config)`, `disconnect()`, `reconnect(ctx?)` (recovers with the config captured at last connect, #2034), `initSchema()`, `transaction<T>(fn, opts?)` (:849), `transactionDirect<T>` (:851, control txn on the direct pool), `registerBeforeDisconnect(stop)` (:853, returns unregister), `withReservedConnection<T>(fn, opts?)` (:859) |
+| Pages CRUD (861-1196) | 24 | `getPage(slug, opts?)` (:869), `readPageSnapshot(s)`, `lockPageKeys(keys)`, `putPage(slug, page, opts?)` (:891), `deletePage(s)`, `softDeletePage(s)`, `restorePage`, `purgeDeletedPages`, `listPages`, `findPages`, `countPagesBy`, `resolveSlugs`, `getAllSlugs`, `listAllSources`, `updateSourceConfig`, `listCorpusSample` |
 | Search (1197-1239) | 6 | `searchKeyword(query, opts?)` (:1198), `countKeywordPages`, `searchKeywordPages`, `searchTitles`, `searchVector(embedding: Float32Array, opts?)` (:1224), `getEmbeddingsByChunkIds` |
 | Chunks + embedding state (1240-1423) | 15 | `upsertChunks(slug, chunks, opts?)` (:1269), `getChunks`, `getChunkPage`, `getChunkWindows`, `countStaleChunks`, `sumStaleChunkChars`, `setPageEmbeddingSignature`, `invalidateStaleSignatureEmbeddings`, `invalidateContentDriftEmbeddings`, `listStaleChunks`, `readEmbeddingStateCounts`, `listEmbeddingStateRows`, `deleteChunks` |
 | Extraction watermark (1424-1483) | 7 | `countStalePagesForExtraction`, `listStalePagesForExtraction`, `markPagesExtractedBatch`, `markPagesAttendanceBlocked`, `countStaleFrontmatterKeyPages`, `listStaleFrontmatterKeyPages`, `stripStaleFrontmatterKeys` |
@@ -44,7 +44,7 @@ The interface has a `readonly kind: 'postgres' | 'pglite'` discriminator (:832) 
 | Eval capture (2806-2821) | 5 | `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`, `logEvalCaptureFailure`, `listEvalCaptureFailures` |
 | Salience + enrich (2822-2889) | 5 | `batchLoadEmotionalInputs`, `setEmotionalWeightBatch`, `getRecentSalience`, `listEnrichCandidates`, `findAnomalies` |
 
-Total: 192 members matched by a line regex, plus the two `executeRaw` overloads, which the regex misses because of nested generics. So 194 callable members. [V] (counted by line range)
+Total: 197 callable members, counted by a line regex that accepts optional (`name?(`) and generic (`name<T>(`) members: 194 required and 3 optional. The Lifecycle and Pages CRUD rows include the optional ones. [V] (counted by line range)
 
 Key shape facts [V]:
 - Every method takes slugs, not numeric page IDs (docs/ENGINES.md:24-50 states this as a design choice).

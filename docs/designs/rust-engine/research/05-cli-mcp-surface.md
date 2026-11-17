@@ -14,7 +14,7 @@ Reference: TypeScript gbrain v0.60.733.0 at `garrytan/gbrain` (commit 36bd05806a
 | Scope split: read / write / admin / agent / sources_admin | 92 / 60 / 48 / 2 / 2 | `scope` field |
 | Mutating / idempotent | 90 / 169 | |
 | `localOnly` / `cliOnly` / `verb` | 25 / 18 / 7 | |
-| Ops with a CLI name (`cliHints.name`) | 121 | |
+| Ops with `cliHints` / with a CLI name (`cliHints.name`) | 121 / 115 | |
 | Named params across all ops | 930 | |
 | Area groups | 30 (29 named, plus 5 ops with no area) | `operation-load.ts:30` OP_AREAS |
 | Output redaction | 112 `no_stored_text`, 53 `retrieval`, 39 object form (exempt or `localVerbatim`) | `ops/contract.ts:820` |
@@ -126,7 +126,7 @@ Source of truth: `docs/protocol/MEMORY_VERBS_v1.md` (1,311 lines), `src/core/ver
 
 Every verb response carries `protocol_version: 1` (`verbs.ts:230` and the others). `RESPONSE_SCHEMAS` (`verbs.ts:604`) and `ERROR_SCHEMA` (`verbs.ts:1105`) are the machine-readable shapes. Error envelope: `{error, code, message, suggestion, detail?, protocol_version}`. Frozen codes: `invalid_params`, `provenance_required`, `not_found`, `scope_denied`, `unavailable`, `budget_unsatisfiable` (reserved, never returned), `internal`. Versioning rule: names and semantics are frozen; new optional params and fields are additive; a breaking change means a new document.
 
-Read verbs redact credential-shaped text for remote callers (`ctx.remote !== false`). Remote callers see only `visibility = world` facts. The trusted local CLI sees stored text.
+Read verbs redact credential-shaped text for remote callers (`ctx.remote !== false`). Remote callers see only `visibility = world` facts, except a caller bound to the brain owner, which also reads private facts (`worldOnlyFacts`, `src/core/search/private-visibility.ts`); source grants and member access still apply to both. The trusted local CLI sees stored text.
 
 ## 6. Surface modes
 
@@ -168,7 +168,7 @@ Writes do not go straight to the engine. They are admitted as write-request rows
 
 - Entry: `src/cli.ts` answers `--help`, `--version` and the hook lanes without loading the dispatcher, then loads `src/cli/main.ts` (2,880 lines, `runCli`).
 - Command table: `CLI_COMMANDS` at `src/cli/command-table.ts:148`, 132 records. `CLI_ONLY` (`:459`) is every record name. `THIN_CLIENT_REFUSED_COMMANDS` (`:483`) has 47 entries. Phase tells the dispatcher whether to connect the engine first.
-- Ops reach the CLI through `cliHints.name` (121 ops) via `src/cli/op-manifest.ts`. Hidden ops are excluded from the CLI map.
+- Ops reach the CLI through `cliHints.name` (115 ops; 121 ops carry a `cliHints` object) via `src/cli/op-manifest.ts`. Hidden ops are excluded from the CLI map.
 - `makeContext` (`src/cli/main.ts:1360`) builds the trusted local context: `remote: false`, `admissionOrigin: 'interactive'`.
 - JSON contract: a command with `json: 'document'` writes exactly one document to stdout; everything else goes to stderr (`src/cli/json-guard.ts`). Records with `jsonSubcommands` (eval) use NDJSON. A non-zero exit without a document gets a fallback `{error: "command_failed", code, message, suggestion, exit_code, contract_version: 1}`. A signal writes `error: "interrupted"`.
 - Errors: `writeCliError` (`src/cli/cli-error.ts:53`) and `renderCliError` (`src/core/agent-output.ts:868`). Human form is `Error [code]: message`, then `Fix:`, then `Why:`.
