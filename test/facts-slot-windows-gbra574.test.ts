@@ -186,6 +186,10 @@ for (const backend of testBackends()) {
         await engine.setConfig('facts.extraction_model', 'acme-example:unpriced-model');
         expect((await conversationRunEstimate(engine, 3)).usd).toBeNull();
       });
+
+      test('the output side covers a full segment at the measured rate with slots on (10 facts at about 200 tokens a fact)', async () => {
+        expect((await conversationRunEstimate(engine, 1)).output_tokens).toBeGreaterThanOrEqual(2000);
+      });
     });
 
     describe('retention purge', () => {

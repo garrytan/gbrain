@@ -31,8 +31,8 @@ export async function conversationFactsCostCap(
   return undefined;
 }
 
-/** Output tokens one segment's reply takes in practice: the extractor's 10-fact cap at about 60 tokens a fact. */
-export const OUTPUT_TOKENS_PER_SEGMENT = 600;
+/** Output tokens one segment's reply takes at most in practice: the extractor's 10-fact cap at about 200 tokens a fact (measured with slots on). */
+export const OUTPUT_TOKENS_PER_SEGMENT = 2000;
 
 export interface ConversationRunEstimate { model: string; segments: number; input_tokens: number; output_tokens: number; usd: number | null }
 
