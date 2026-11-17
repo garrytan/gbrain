@@ -52,7 +52,7 @@ token at a terminal on the brain host. `--yes` never confirms.
 - **Flagged items still reach proactive context, labeled**
   (`trust.agent_activation` is `allow`).
 - **A restated private fact stays private.** When a remote `remember`, or
-  a `## Facts` row of a remote page write, repeats the exact claim of a
+  a `## Facts` row of a page write, repeats the exact claim of a
   private fact that a more trusted writer saved about the same entity (on
   that page or on another one), the new fact is stored private and a
   proposal waits in `gbrain trust review`; `gbrain trust confirm tp<N>`

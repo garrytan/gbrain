@@ -153,6 +153,32 @@ describe('GST-2900: think', () => {
   });
 });
 
+describe('GST-2900: a credential with a private-facts grant', () => {
+  each('reads the held row in think, get_page and search, as before GST-2891; a world-only credential does not', async (engine, managed) => {
+    const slug = 'people/lia-example', claim = 'Lia keeps bees wombatheld';
+    const { b } = await heldPut(engine, managed, slug, claim);
+    const granted = { ...b.remote, auth: { ...b.remote.auth!, privateFacts: { mode: 'granted_sources' as const, sources: [b.sourceId] } } };
+    const asGranted = <T>(fn: () => Promise<T>) => withCallerAccess({ privateFactSources: [b.sourceId] }, fn);
+    const prompts: string[] = [];
+    const client = { async create(params: { messages: Array<{ content: unknown }> }) {
+      prompts.push(JSON.stringify(params.messages));
+      return { content: [{ type: 'text', text: '{"answer":"ok","citations":[],"gaps":[]}' }], usage: { input_tokens: 1, output_tokens: 1 } };
+    } };
+    const prompt = async () => {
+      __resetPrivateVisibilityCacheForTests();
+      await runThink(engine, { question: 'Lia keeps bees', client: client as never, remote: true, sourceId: b.sourceId });
+      return prompts.at(-1)!;
+    };
+    const reads = async (read: <T>(fn: () => Promise<T>) => Promise<T>, ctx: OperationContext) => ({
+      think: (await read(prompt)).includes('wombatheld'),
+      get_page: JSON.stringify(await read(() => run(ctx, 'get_page', { slug, include_content: true }))).includes('wombatheld'),
+      search: JSON.stringify(await read(() => run(ctx, 'search', { query: 'wombatheld' }))).includes('wombatheld'),
+    });
+    expect(await reads(asGranted, granted)).toEqual({ think: true, get_page: true, search: true });
+    expect(await reads(fn => fn(), b.remote)).toEqual({ think: false, get_page: false, search: false });
+  });
+});
+
 describe('GST-2900: the reply to a held write', () => {
   each('a held remember reads as a plain save to a world-only writer, on the reply, its copies and get_write_request; an owner-bound caller keeps the ref', async (engine, managed) => {
     const slug = 'people/lia-example', claim = 'Lia keeps bees quokkaheld';

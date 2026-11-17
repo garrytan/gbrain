@@ -33,7 +33,7 @@ import { compareTrust, isTrustTier, minTrust, TRUST_TIERS, type TrustTier } from
 import { compactTrustLabel } from './labels.ts';
 import { activationSuppressedSql } from './sql.ts';
 import { holdFingerprint } from '../write-gate-store.ts';
-import { memberFactAdmitSql } from '../access/member-facts.ts';
+import { grantedPrivateFactSql, memberFactAdmitSql } from '../access/member-facts.ts';
 import { worldOnlyFacts } from '../search/private-visibility.ts';
 
 /** The origin slot of a fence trust marker: the chunk holds facts-fence rows, not page prose. */
@@ -212,13 +212,14 @@ export function fenceRowHoldTexts(row: Pick<ParsedFact, 'claim' | 'context'>): H
  * GST-2891: SQL true when the world fence cell (`rowNum`, `claim`) of page (`sourceId`, `slug`) is held from the current
  * caller: the live facts row at that row number is narrower than world, or the claim is a live narrower fact of the page
  * that no live world fact of the page states (the restatement rule without the tier, so it also holds a restatement whose
- * own row is not stored yet), and the caller's fact reads do not admit that narrower fact (memberFactAdmitSql). For a
+ * own row is not stored yet), and the caller's fact reads do not admit that narrower fact (memberFactAdmitSql, or GST-2900
+ * a private-facts grant, grantedPrivateFactSql). For a
  * caller that reads private facts (worldOnlyFacts false) nothing is held: callers skip the check. `partial` (an SQL
  * boolean) marks a claim cut by a chunk boundary: it then matches a fact that contains it rather than one equal to it.
  */
 export function heldRowSql(sourceId: string, slug: string, rowNum: string, claim: string, partial = 'false'): string {
   const page = (a: string) => `${a}.source_id = ${sourceId} AND ${a}.source_markdown_slug = ${slug} AND ${a}.expired_at IS NULL`;
-  const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)}`;
+  const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)} AND NOT ${grantedPrivateFactSql(a)}`;
   const states = (a: string) => `(CASE WHEN ${partial} THEN strpos(${a}.fact, ${claim}) > 0 ELSE ${a}.fact = ${claim} END)`;
   return `(EXISTS (SELECT 1 FROM facts hr WHERE ${narrower('hr')} AND hr.row_num = ${rowNum})
     OR (EXISTS (SELECT 1 FROM facts hc WHERE ${narrower('hc')} AND ${states('hc')})
