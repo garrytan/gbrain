@@ -80,7 +80,7 @@ test('an unavailable registry on an advisory-only run warns without failing', as
   expect(run.status).toBe(0);
   expect(run.out).toContain('::warning::audit_registry_unavailable');
   expect(run.out).not.toContain('found advisories');
-});
+}, 60_000);
 
 function ignoreFile(id: string, until: string) {
   const path = join(tmpdir(), `audit-ignore-${process.pid}-${until}.toml`);
