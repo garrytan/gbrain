@@ -16,7 +16,7 @@ import { git } from './git-run.ts';
 import { opError } from '../ops/contract.ts';
 import type { ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { isDeclaredDbOnlySlug, storageConfigFromYaml, unresolvedDbOnlyIn, type StorageConfig } from '../storage-config.ts';
-import { isCodeFilePath, isSyncable, resolveSlugForPath } from '../sync.ts';
+import { isCodeFilePath, isImageFilePath, isSyncable, resolveSlugForPath } from '../sync.ts';
 
 /**
  * What the brain says about an untrack: the source's root, the slug root its sync uses (a source rooted in a folder of its
@@ -130,8 +130,8 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
     const resolved = posix.normalize(posix.join(posix.dirname(file.slice(prefix.length)), target));
     return posix.isAbsolute(target) || !resolved.toLowerCase().startsWith(dir.toLowerCase());
   };
-  const pageKind = (path: string) => isSyncable(path, { strategy: 'markdown', includeHidden: ['**'], metafilePage: () => true });
-  const refusals: Record<'undeclared' | 'unignored' | 'link' | 'slug' | 'page' | 'unchecked', string[]> = { undeclared: [], unignored: [], link: [], slug: [], page: [], unchecked: [] };
+  const pageKind = (path: string) => isImageFilePath(path) || isSyncable(path, { strategy: 'markdown', includeHidden: ['**'], metafilePage: () => true });
+  const refusals: Record<'undeclared' | 'unignored' | 'link' | 'slug' | 'page' | 'late' | 'unchecked', string[]> = { undeclared: [], unignored: [], link: [], slug: [], page: [], late: [], unchecked: [] };
   const slugs = new Map<string, string>();
   for (const file of files) {
     if (!source) { refusals.unchecked.push(file); continue; }
@@ -141,7 +141,7 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
     if (escapes(file, dir)) { refusals.link.push(file); continue; }
     if (!ignored.has(file)) { refusals.unignored.push(file); continue; }
     if (isCodeFilePath(path)) {
-      if (!source.checked.has(file)) refusals.unchecked.push(file);
+      if (!source.checked.has(file)) refusals.late.push(file);
       else if (source.live.has(file)) refusals.page.push(file);
       continue;
     }
@@ -164,6 +164,8 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
       `Declare the slug spelling too: add ${slugDirs.join(', ')} under storage.db_only in ${prefix}gbrain.yml and commit it (gbrain git commit-push -m <msg> -- ${prefix}gbrain.yml), then rerun the untrack.`],
     [refusals.page, 'code files that are pages on this source, so untracking them would delete the page at the next sync',
       'These files are pages on this source and untracking them would delete the pages at the next sync: a database-only folder does not make a code file\'s page database-only. Keep them tracked and untrack the folder\'s other files by name.'],
+    [refusals.late, 'code files the last commit gained after the brain was read, so the read did not check them',
+      'These files reached the branch after the brain was read (another writer committed), so nothing was untracked; rerun the untrack.'],
     [refusals.unchecked, `files the brain could not be read to check${pages && 'unreadable' in pages ? ` (${pages.unreadable})` : ''}`,
       'The brain could not be read to check whether these files are pages on this source, so nothing was untracked. If another process holds the brain (on PGLite, a running gbrain serve or a sync), stop it, then rerun the untrack; otherwise retry once the brain is reachable.'],
   ];

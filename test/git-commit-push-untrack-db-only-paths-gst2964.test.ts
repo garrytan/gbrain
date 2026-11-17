@@ -200,7 +200,25 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
     const root = declaredCheckout();
     const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { ...noPages(root), checked: new Set([json]) } as UntrackPageVerdict));
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [ts] });
-    expect(refused.suggestion).toContain('could not be read to check');
+    expect(refused.suggestion).toContain('reached the branch after the brain was read');
+    expect(refused.suggestion).not.toContain('could not be read');
+  });
+
+  test('an image under the declared folder is held to the page-slug rule whatever multimodal is set to here: on a git-root source its slug carries the folder and refuses', async () => {
+    const root = join(scratch('image'), 'work');
+    mkdirSync(root);
+    put(root, 'brain/' + DIR + 'chart-example.png', 'png\n');
+    durableGitRepo(root, ['.']);
+    put(root, 'brain/gbrain.yml', 'storage:\n  db_only:\n    - ' + DIR + '\n');
+    put(root, 'brain/.gitignore', DIR + '\n');
+    git(root, 'add', 'brain/.gitignore', 'brain/gbrain.yml'); git(root, 'commit', '-qm', 'declare');
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: undefined }, async () => {
+      const file = 'brain/' + DIR + 'chart-example.png';
+      const refused = refusalOf(() => untrackAdmitted(root, [file], managedAt(root), { ...noPages(join(root, 'brain')), slugRoot: 'git-root' } as UntrackPageVerdict));
+      expect(refused.code).toBe('untrack_not_db_only');
+      expect(refused.suggestion).toContain('add brain/' + DIR + ' under storage.db_only in brain/gbrain.yml');
+      expect(untrackAdmitted(root, [file], managedAt(root), noPages(join(root, 'brain')))).toEqual([file]);
+    });
   });
 
   test('with no answer from the brain, or an unreadable one, every file refuses (fail closed), Markdown and CSV included', () => {
