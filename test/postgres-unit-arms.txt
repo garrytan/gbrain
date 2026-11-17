@@ -732,6 +732,7 @@ test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
 test/sync-restored-file-purge.test.ts
+test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
 test/sync-status-commits-waiting-gst2515.test.ts

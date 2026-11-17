@@ -3751,7 +3751,8 @@ gbrain repair file-drift --source <id> --held --json           # compare every h
 
 <a id="file-drift-compare-mirror"></a>On a [read-only mirror](multi-source-brains.md#read-only-mirror-sources)
 (GST-2843), the held comparison reads each held page's file too: a page that
-differs reads `prefer_file` or `needs_human` with its `evidence`, one that
+differs reads `prefer_file` or `needs_human` with its `evidence` (a held deleted
+page whose file differs reads `needs_human` and names the same route), one that
 matches reads `release_hold`, and only a page whose file is gone reads
 `no_drift` with `database_only`. Every compared page in `details.pages`
 carries `evidence` (null when nothing was read). The comparison names no
