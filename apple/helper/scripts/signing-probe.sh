@@ -60,10 +60,10 @@ cp "$bin_dir/$program" "$app/Contents/MacOS/$program"
 cp "$here/Bundle/Info.plist" "$app/Contents/Info.plist"
 cp "$here/Bundle/$bundle_id.plist" "$app/Contents/Library/LaunchAgents/$bundle_id.plist"
 
-password="$(/usr/bin/openssl rand -hex 24)"
-security create-keychain -p "$password" "$keychain"
+unlock="$(/usr/bin/openssl rand -hex 24)"
+security create-keychain -p "$unlock" "$keychain"
 security set-keychain-settings -lut 3600 "$keychain"
-security unlock-keychain -p "$password" "$keychain"
+security unlock-keychain -p "$unlock" "$keychain"
 
 cat >"$work/cert.cnf" <<'EOF'
 [req]
@@ -84,12 +84,12 @@ legacy=""
 case "$(/usr/bin/openssl version)" in
   OpenSSL\ 3*) legacy="-legacy" ;;
 esac
-p12_password="$(/usr/bin/openssl rand -hex 16)"
+p12_unlock="$(/usr/bin/openssl rand -hex 16)"
 # shellcheck disable=SC2086
 /usr/bin/openssl pkcs12 -export $legacy -inkey "$work/key.pem" -in "$work/cert.pem" \
-  -name "GBrain Helper Local Signing" -out "$work/identity.p12" -passout "pass:$p12_password"
-security import "$work/identity.p12" -k "$keychain" -P "$p12_password" -T /usr/bin/codesign >/dev/null
-security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+  -name "GBrain Helper Local Signing" -out "$work/identity.p12" -passout "pass:$p12_unlock"
+security import "$work/identity.p12" -k "$keychain" -P "$p12_unlock" -T /usr/bin/codesign >/dev/null
+security set-key-partition-list -S apple-tool:,apple: -s -k "$unlock" "$keychain" >/dev/null
 rm -f "$work/key.pem" "$work/identity.p12"
 
 leaf="$(/usr/bin/openssl x509 -in "$work/cert.pem" -outform der | shasum -a 1 | awk '{print toupper($1)}')"
