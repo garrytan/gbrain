@@ -46,6 +46,7 @@ import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { compileRowNormalizer } from './normalize.ts';
+import { sealPageTextProjection } from '../page-state/text-seal.ts';
 
 /** The engine's page-state guards, run on the same (transaction) engine. */
 export interface ChunkPageGuards {
@@ -1043,6 +1044,35 @@ export async function listEmbeddingStateRows(exec: ScopedRead, column: string,
      ORDER BY r.state, r.source_id, r.slug
      LIMIT ${opts.limit}`);
   return rows.map(row => normalizeStateRow(row));
+}
+
+/** The transaction engine's own steps `sealChunks` runs (its page guard, chunk delete and sealing chunk insert). */
+export interface ChunkSealSteps extends ChunkPageGuards, Pick<BrainEngine, 'executeRaw'> {
+  deleteChunks(slug: string, opts: { sourceId: string }): Promise<void>;
+  upsertChunks(slug: string, chunks: ChunkInput[], opts: { sourceId: string; sealChunkerVersion: number }): Promise<void>;
+}
+
+/**
+ * BrainEngine.sealChunks, run inside the caller's page transaction: replace a page's chunks and seal its text
+ * projection at its current revision, the projection write `installPageProjection` makes with `seal: true`
+ * (page-state/projections.ts) without its embedding-context conflict checks. It refuses a missing or deleted page,
+ * a page in an archived source, a segmented page (its projection is built from its segments) and a stale
+ * `expectedRevision`. The text seal is `sealPageTextProjection` (page-state/text-seal.ts).
+ */
+export async function sealChunks(exec: SqlExecutor, steps: ChunkSealSteps, slug: string, chunks: ChunkInput[],
+  opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+  slug = validateSlug(slug);
+  const sourceId = opts?.sourceId ?? 'default';
+  await steps.lockPageKeys([{ sourceId, slug }]);
+  const current = await steps.readPageSnapshot(slug, { sourceId, requireLiveSource: true });
+  if (!current || current.page.deleted_at) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
+  if (current.page.body_storage === 'segmented') throw new Error(`sealChunks refuses segmented page ${slug} (source=${sourceId}): its projection is built from its segments`);
+  if (opts?.expectedRevision !== undefined) assertPageRevision(current, { expectedRevision: opts.expectedRevision });
+  await steps.deleteChunks(slug, { sourceId });
+  await steps.upsertChunks(slug, chunks, { sourceId, sealChunkerVersion: SAFE_FENCE_CHUNKER_VERSION });
+  await sealPageTextProjection(steps, slug, sourceId, current);
+  await exec.run(sqlFragment`DELETE FROM page_projection_jobs
+    WHERE source_incarnation = ${current.sourceIncarnation}::uuid AND slug = ${slug} AND revision = ${current.revision}::uuid`);
 }
 
 export async function deleteChunks(exec: SqlExecutor, slug: string, opts?: { sourceId?: string }): Promise<void> {
