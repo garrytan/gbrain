@@ -264,7 +264,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
     console.log(`  terminal write failures (last ${t.window_days} d): ${t.active_blockers.length} active blocker(s), ${t.unresolved.rows} unresolved (${t.unresolved.distinct_slugs} page(s), `
       + `${t.unresolved.distinct_intents} intent(s)${oldest}), ${t.historical_rows} historical, ${t.new_last_24h} in the last 24 h${t.defects ? `, ${t.defects} gbrain-defect row(s)` : ''}`);
     for (const b of t.active_blockers) console.log(`    BLOCKING ${b.kind}: request ${b.request_id}${b.slug ? ` (${b.slug})` : ''} [${b.category}]`);
-    if (t.active_blockers.length || t.unresolved.rows) console.log(`    drill down: ${t.drill_down.join(' ')}`);
+    if (t.active_blockers.length || t.unresolved.rows) console.log(`    drill down: ${commandText(t.drill_down)}`);
   }
   const landing = status.landing;
   if (landing?.status === 'ok') {

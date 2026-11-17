@@ -51,6 +51,7 @@ import { cliRenderContext, renderAction, type Action } from '../src/core/agent-o
 import { fenceMessage } from '../src/core/fence-repair/reasons.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { commandText } from '../src/core/brand.ts';
 
 type HoldInput = Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>;
 
@@ -386,14 +387,14 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
       expectRoute(banner, kind, sourceId);
       const report = await buildHoldReport(engine, { sourceId, incarnation: await incarnationOf(engine, sourceId), runId: 'none', remote: false,
         policy: await readSyncHoldPolicy(engine), screened: 0 });
-      expectRoute(`${report.holds_fix!.argv!.join(' ')} ${report.holds_fix!.why}`, kind, sourceId);
+      expectRoute(`${commandText(report.holds_fix!.argv!)} ${report.holds_fix!.why}`, kind, sourceId);
       const remote = await buildHoldReport(engine, { sourceId, incarnation: await incarnationOf(engine, sourceId), runId: 'none', remote: true,
         policy: await readSyncHoldPolicy(engine), screened: 0 });
       expect(remote.holds_fix!.actor).toBe('host_admin');
       expectRoute(remote.holds_fix!.user_message!, kind, sourceId);
       const coverage = await readHeldCoverage(engine, { sourceId });
       const notice = heldFilesNotice(coverage, false)!.fix!;
-      expectRoute(`${notice.argv!.join(' ')} ${notice.why}`, kind, sourceId);
+      expectRoute(`${commandText(notice.argv!)} ${notice.why}`, kind, sourceId);
       expectRoute(heldFilesNotice(coverage, true)!.fix!.user_message!, kind, sourceId);
     }
     expect(heldFileDiagnostic(heldFileMessage('drift', 'invalid_fence'), 'fences-only')!.suggestion).toContain('foresights repair fences --source fences-only');
