@@ -323,6 +323,12 @@ function importFolder(exec: Run, launcher: string, dir: string, source: string |
 }
 
 /** Who can read the call pages, from gbrain access who-can-read on one of them and gbrain access serves; read only. */
+const servesSeveralClause = (enabled: string[]): string => `this brain serves several people: ${enabled.join(', ') || 'none enabled'}`;
+
+/** GBRA-585 A: the call readers once this run's regrant gave the member keys setup minted the company source. */
+export const mintedKeysReadCalls = (enabled: string[]): string =>
+  `every member key gbrain setup minted, and other keys only when their grant names source ${COMPANY_SOURCE} or it is in default search (${servesSeveralClause(enabled)})`;
+
 function readersOf(exec: Run, launcher: string, slug: string): NonNullable<TranscriptsOutcome['readers']> {
   const unknown = { members: null, serves: null, detail: `unknown; run gbrain access who-can-read ${slug} --source ${COMPANY_SOURCE}` };
   let page: { readers: string[] | null; members: 'every_source_reader' | string[] } | undefined;
@@ -330,10 +336,15 @@ function readersOf(exec: Run, launcher: string, slug: string): NonNullable<Trans
   try { page = (JSON.parse(exec([launcher, 'access', 'who-can-read', slug, '--source', COMPANY_SOURCE, '--json'], undefined, null).stdout) as { pages?: Array<NonNullable<typeof page>> }).pages?.[0]; } catch { return unknown; }
   try { serves = JSON.parse(exec([launcher, 'access', 'serves', '--json', '--no-open-pages'], undefined, null).stdout) as typeof serves; } catch { /* the serves clause is left out */ }
   if (!page) return unknown;
-  const who = serves.serves === 'several' ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}`
-    : serves.serves === 'one' ? 'this brain serves one person' : null;
+  const several = serves.serves === 'several';
+  const who = several ? servesSeveralClause(serves.enabled_members ?? []) : serves.serves === 'one' ? 'this brain serves one person' : null;
   const members = page.members;
   const clauses = [...(members === 'every_source_reader' ? [] : [`access rules on source ${COMPANY_SOURCE} cover ${CALLS_PREFIX}/`]), ...(who ? [who] : [])];
+  if (members === 'every_source_reader' && several) {
+    return { members, serves: 'several', detail: `no member key setup minted reads them yet: source ${COMPANY_SOURCE} is not federated and is not on those keys' source lists. `
+      + `Run gbrain setup again with --serves several to give them ${COMPANY_SOURCE}, or gbrain sources federate ${COMPANY_SOURCE} for keys with no source list; either way every member then reads every page in it, every call included; `
+      + `${CALLS_PREFIX}/ pages carry no readers of their own (gbrain access who-can-read ${slug} --source ${COMPANY_SOURCE}) (${who})` };
+  }
   const detail = `${members === 'every_source_reader' ? `everyone who can read source ${COMPANY_SOURCE}` : `${members.join(', ') || 'no member'} only`}${clauses.length ? ` (${clauses.join('; ')})` : ''}`;
   return { members, serves: serves.serves ?? null, detail };
 }
@@ -382,8 +393,9 @@ function archiveState(exec: Run, launcher: string, calls: TranscriptsOutcome | n
   let checks: DoctorChecks = [];
   try { checks = (JSON.parse(out.stdout) as { checks?: DoctorChecks }).checks ?? []; } catch { /* unknown below */ }
   if (calls) calls.egress = callEgress(checks);
-  const details = checks.find(c => c.name === 'transcript_archive_freshness')?.details as { enabled?: boolean; offered?: boolean } | undefined;
+  const details = checks.find(c => c.name === 'transcript_archive_freshness')?.details as { enabled?: boolean; offered?: boolean; serves_several?: boolean; reason?: string } | undefined;
   if (!details) return { state: 'unknown', detail: 'could not be read; gbrain transcripts archive status shows it' };
+  if (details.enabled && details.serves_several && details.reason) return { state: 'on', detail: `${details.reason}. Your agent conversations are kept, redacted, under conversations/; call transcripts are separate (gbrain transcripts archive off turns it off)` };
   if (details.enabled) return { state: 'on', detail: 'on: your agent conversations are kept, redacted, under conversations/; call transcripts are separate (gbrain transcripts archive off turns it off)' };
   if (details.offered) return { state: 'offered', detail: 'offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)' };
   return { state: 'off', detail: 'off (gbrain transcripts archive on turns it on)' };

@@ -4,7 +4,8 @@
  * Refuses a source that is not a guest source. Trusted local CLI only.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { GUEST_WRITER_FORMAT, changeGuestWriters, isGuestWriter, readGuestSource } from '../core/guests/sources.ts';
+import { GUEST_WRITER_FORMAT, changeGuestWriters, isGuestWriter, readGuestSource, unregisteredClientWriters } from '../core/guests/sources.ts';
+import { exitCliError } from '../cli/cli-error.ts';
 
 export const SOURCES_WRITERS_USAGE = `Usage: gbrain sources writers <id> [--add ${GUEST_WRITER_FORMAT}]... [--remove <writer>]... [--clear] [--json]
   Lists the writers of a guest source, or changes them. Only a listed writer can
@@ -32,6 +33,8 @@ export async function runSourcesWriters(engine: BrainEngine, args: string[]): Pr
     console.error(`Not a writer principal: ${malformed.join(', ')}. Name each writer as ${GUEST_WRITER_FORMAT}.`);
     process.exit(2);
   }
+  const unregistered = await unregisteredClientWriters(engine, add);
+  if (unregistered) exitCliError(unregistered, 'sources');
   const [source] = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1', [id]);
   if (!source) {
     console.error(`Source "${id}" not found. List sources with: gbrain sources list`);

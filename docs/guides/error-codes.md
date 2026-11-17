@@ -4986,6 +4986,14 @@ More: [docs/guides/write-refusals.md#settle_mismatch](../../docs/guides/write-re
 
 More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair.md#setup-harness-unsupported)
 
+### setup_history_choice_required
+
+<a id="setup_history_choice_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --serves several would turn a brain that serves one person shared while it holds pages no rule restricts, and nobody chose what happens to them, so setup wrote nothing. | Each member key setup mints reads every page no rule or readable_by restricts, so the owner's journal, DMs, chat, mail and conversation archive would reach every member; only the admin can decide that. | Run setup again with --labelled-only to keep that history private (each member reads only pages labelled for them) or with --open-history to let the members read it. Run: gbrain doctor --only open_shared_pages --json | agent | `repeat the read that failed` | 1 | no |
+
 ### setup_hosted_connection
 
 <a id="setup_hosted_connection"></a>
@@ -5572,7 +5580,7 @@ More: [docs/guides/write-refusals.md#source_writer_restricted](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page search returns (for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
+| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page every reader of that source can read (pages kept to named readers or private do not count; for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages](../../docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages)
 
