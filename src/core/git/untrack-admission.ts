@@ -136,7 +136,7 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
     [refusals.page, 'code files that are pages on this source, whose sync strategy imports code, so untracking them would delete the page at the next sync',
       'These files are pages on this source and untracking them would delete the pages at the next sync: a database-only folder does not make a code file\'s page database-only. Keep them tracked and untrack the folder\'s other files by name.'],
     [refusals.unchecked, `code files the brain could not be read to check${pages && 'unreadable' in pages ? ` (${pages.unreadable})` : ''}`,
-      'The brain could not be read to check whether these files are pages on this source, so nothing was untracked; retry when it is free.'],
+      'The brain could not be read to check whether these files are pages on this source, so nothing was untracked. If another process holds the brain (on PGLite, a running gbrain serve or a sync), stop it, then rerun the untrack; otherwise retry once the brain is reachable.'],
   ];
   const hit = groups.filter(([paths]) => paths.length);
   throw opError('untrack_not_db_only', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}, and ${refused.length} file(s) to untrack cannot leave Git as database-only: ${hit.map(([paths, why]) => `${why}: ${list(paths, p => slugs.has(p) ? `${p} (slug ${slugs.get(p)})` : p)}`).join('; ')}. Nothing was untracked.`,

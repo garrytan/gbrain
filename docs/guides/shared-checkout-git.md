@@ -304,7 +304,8 @@ the declared directory, whatever its extension, with three extra checks:
   not import code or when no live page comes from the file, refuses one that is a page, and refuses (fail closed)
   when the brain cannot be read within 10 seconds, for example while another process holds a PGLite brain. The read
   opens the brain without migrations and reads in one read-only transaction; on PGLite it takes the data
-  directory's one-process lock for the length of the read.
+  directory's one-process lock for the length of the read. When the refusal says the brain could not be read on PGLite,
+  stop the process that holds it (a running `gbrain serve` or a sync), then rerun the untrack.
 - A tracked symbolic link that points out of the declared directory, or a file reached through a symlinked
   directory on disk, is refused, and so is a sibling folder that only shares the name as a prefix
   (`backups-old/` is not under `backups/`).

@@ -189,7 +189,7 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
       const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), pages));
       expect(JSON.parse(refused.detail!)).toEqual({ paths: [json, ts] });
       expect(refused.suggestion).toContain('could not be read to check');
-      expect(refused.suggestion).toContain('retry when it is free');
+      expect(refused.suggestion).toContain('If another process holds the brain (on PGLite, a running gbrain serve or a sync), stop it, then rerun the untrack');
     }
     expect(untrackAdmitted(root, [`${DIR}notes-example.md`, `${DIR}backup-2.csv`], managedAt(root))).toEqual([`${DIR}notes-example.md`, `${DIR}backup-2.csv`]);
   });
