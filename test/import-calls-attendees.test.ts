@@ -367,7 +367,7 @@ describe('call import keeps calls to their attendees (pglite, git-backed)', () =
     const calls = join(fixture, 'calls');
     mkdirSync(brain);
     mkdirSync(calls);
-    for (const args of [['init', '-q', '-b', 'main'], ['-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '-q', '--allow-empty', '-m', 'init']]) spawnSync('git', ['-C', brain, ...args]);
+    for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.name', 'Example'], ['config', 'user.email', 'example@example.invalid'], ['config', 'commit.gpgsign', 'false'], ['commit', '-q', '--allow-empty', '-m', 'init']]) spawnSync('git', ['-C', brain, ...args]);
     writeFileSync(join(calls, '2026-11-12 hiring debrief.md'), CALLS['2026-11-12 hiring debrief.md']!);
     await managed.setConfig('sync.repo_path', brain);
     for (const id of [OWNER, 'carol-example', 'alice-example']) await managed.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
@@ -386,7 +386,10 @@ describe('call import keeps calls to their attendees (pglite, git-backed)', () =
       const show = () => spawnSync('git', ['-C', brain, 'show', `HEAD:${SLUG.debrief}.md`], { encoding: 'utf8' }).stdout;
       expect(readFileSync(join(brain, `${SLUG.debrief}.md`), 'utf8')).toMatch(/\nreadable_by:\n {2}- owner-example\n {2}- carol-example\n/);
       if (doc.pages[0].git_state !== 'committed') expect(await guardedNow()).toBe(0);
-      await runPersistenceEffects(managed, { engine: 'pglite', embedding_disabled: true } as never, { hostId: localHostId() });
+      for (let i = 0; i < 100 && !show(); i++) {
+        await runPersistenceEffects(managed, { engine: 'pglite', embedding_disabled: true } as never, { hostId: localHostId() });
+        if (!show()) await new Promise(r => setTimeout(r, 100));
+      }
       expect(show()).toMatch(/\nreadable_by:\n {2}- owner-example\n {2}- carol-example\n/);
       if (doc.pages[0].git_state !== 'committed') {
         const again: string[] = [];
