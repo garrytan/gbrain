@@ -30,6 +30,7 @@ import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
+import { BASENAME_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -984,7 +985,9 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string, perCandida
 export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
   const entityPolicy = currentCallerAccess().labelledOnly ? withCallerAccess({ labelledOnly: false }, () => privatePagesFilterForCaller('entity_pp')) : privatePagesFilterForCaller('entity_pp');
   const held = `CASE WHEN ${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)} THEN ${factAlias}.source_markdown_slug END`;
-  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})${sharedHeldRuledSql(factAlias)})`;
+  // GBRA-574: a bare name key reads as the page later written at <dir>/<key>, so that page's privacy covers it.
+  const keyed = BASENAME_DIRS.map(dir => `CASE WHEN strpos(${factAlias}.entity_slug, '/') = 0 THEN '${dir}/' || ${factAlias}.entity_slug END`).join(', ');
+  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}, ${keyed}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})${sharedHeldRuledSql(factAlias)})`;
 }
 
 /**

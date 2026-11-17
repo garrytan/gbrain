@@ -2042,6 +2042,7 @@
     "facts.extraction_prompt_appendix",
     "facts.page_write_notability_filter",
     "facts.supersession_thresholds",
+    "facts.unbacked_entity_keys",
     "feedback.alpha",
     "feedback.enabled",
     "feedback.event_retention_days",

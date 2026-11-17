@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 314,
+    "count": 315,
     "gaps": [
       17,
       18,
@@ -105,7 +105,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 319,
+    "latest": 320,
     "records": [
       {
         "handler": {
@@ -2260,8 +2260,8 @@
         "idempotent": true,
         "name": "durable_fact_withdrawals",
         "sql": {
-          "length": 4502,
-          "sha256": "9843f1619915b1e6f507560317c83ea41b6a3f1fe412d3a99bc34d0e37671630"
+          "length": 4734,
+          "sha256": "b6ab10446cb5e62d91ff094fafbcc2204d64cc4f06f402effa4f6d343d227147"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2573,8 +2573,8 @@
         "idempotent": true,
         "name": "fact_withdrawal_subject",
         "sql": {
-          "length": 4474,
-          "sha256": "e519d7a2cfd55833e8a2578d4a86c7104a6614042dc80523c5d5ec35b1fe60c6"
+          "length": 4706,
+          "sha256": "167b227074a4d4fcefae8de158e69df578d42136c190b56ef8fe9f8a51014d29"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2657,8 +2657,8 @@
         "idempotent": true,
         "name": "fact_withdrawal_normalized_fingerprint",
         "sql": {
-          "length": 5218,
-          "sha256": "be030a0bbd1afec71a3055bcdb67d190b26e582e72a6cc256ea9bfbf2a0ca687"
+          "length": 5450,
+          "sha256": "a636a2f93740fadbe5a973e8d604135ccee4bca4226933829ae063c71d8f6aff"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -3497,8 +3497,8 @@
         "idempotent": true,
         "name": "memory_purge",
         "sql": {
-          "length": 10146,
-          "sha256": "8e68069899bf4a92a09dd896b3901ee0c72ade2478d721420a9fe0e61fd45c26"
+          "length": 10378,
+          "sha256": "34888d1763251b12c3308416cffa9e361a6d280fc104c0ab8ef08f629d6354c5"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4238,8 +4238,8 @@
         "idempotent": true,
         "name": "set_based_fact_insert_guards",
         "sql": {
-          "length": 12894,
-          "sha256": "80072441dbeb3a3989bb4471ab7ac624b1aa21c4e9dd9d4e59975700e50abaa3"
+          "length": 13618,
+          "sha256": "c2eaee49e903517edec75030b64d1b6aa7cdab04f0e9d3417b3fc1ce91f2a1fd"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4541,8 +4541,8 @@
         "idempotent": true,
         "name": "outcome_markers_skip_purge_guard",
         "sql": {
-          "length": 6870,
-          "sha256": "30e88e73d6c7c7a7fab54c5884535eb5c2ffa294ade9485801a654afbd1c834d"
+          "length": 7594,
+          "sha256": "4670e2fe30fa5996d144ec3a5c1d565059b4b0d5520d19deb4f47fcd9c2a1c2f"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4988,8 +4988,8 @@
         "idempotent": true,
         "name": "member_page_withdrawal_scope",
         "sql": {
-          "length": 9129,
-          "sha256": "97119f853f23194ed6ac926a0a18e2cb6f3e6289a436f1c2c1bf4d61526d1483"
+          "length": 10085,
+          "sha256": "7577974a7da1cd53ed592e2504bd1ed72323ff56da7bee140c897da3ea673abc"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5216,6 +5216,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 319
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "unbacked_entity_keys_guards",
+        "sql": {
+          "length": 12138,
+          "sha256": "9c3504db27bfee56b0936112564ac66a483d0d4b73135d511aa7d4404a5f803b"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 320
       }
     ],
     "versions": [
@@ -5532,7 +5545,8 @@
       316,
       317,
       318,
-      319
+      319,
+      320
     ]
   },
   "normalizer": "migrations-record-v1"

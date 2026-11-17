@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
 import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
 import { factPagesOpenSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
+import { unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import type { BrainEngine } from '../engine.ts';
 import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders, SCOPE_PAGE_SLUG } from './principals.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
@@ -190,10 +191,11 @@ export function onOwnedMemoryPageSql(alias: string): string {
 /**
  * GST-359 D: the withdrawal-ledger subject of a fact, as SQL. A fact on an owned memory page (a member page, GST-1113 a
  * scope page) is withdrawn for that page alone (its slug), so forgetting it never reaches another copy of the same claim;
- * any other fact keeps its entity ('*' without one).
+ * any other fact keeps its entity ('*' without one, and GBRA-574 '*' for an unbacked entity).
  */
 export function factWithdrawalSubjectSql(alias: string): string {
-  return `CASE WHEN ${onOwnedMemoryPageSql(alias)} THEN ${alias}.source_markdown_slug ELSE COALESCE(${alias}.entity_slug, '*') END`;
+  return `CASE WHEN ${onOwnedMemoryPageSql(alias)} THEN ${alias}.source_markdown_slug WHEN ${unbackedEntitySql(alias)} THEN '*'
+    ELSE COALESCE(${alias}.entity_slug, '*') END`;
 }
 
 /**
@@ -207,9 +209,9 @@ export function withdrawalCoversFactSql(w: string, f: string): string {
     ELSE ${withdrawalReachedFactSql(w, f)} END)`;
 }
 
-/** Whether withdrawal row `w` expired fact `f` when it was made (recordFactWithdrawal's reach), as SQL: every subject ('*'), the fact's entity, or the owned memory page it sits on. */
+/** Whether withdrawal row `w` expired fact `f` when it was made (recordFactWithdrawal's reach), as SQL: every subject ('*'), the fact's entity, any subject for an unbacked entity, or the owned memory page it sits on. */
 export function withdrawalReachedFactSql(w: string, f: string): string {
-  return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${onOwnedMemoryPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
+  return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR ${unbackedEntitySql(f)} OR (${onOwnedMemoryPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
 }
 
 /** The owned memory page a claim is checked on for withdrawals, or null: `slug` when it is one, so a page-scoped withdrawal applies there alone. */

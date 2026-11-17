@@ -202,7 +202,18 @@ the facts block and the temporal fact reserve work out its end
 at read time: the start of the next different value for the same person, when
 that value came from the same conversation or its fact says the value changed
 (moved, joined, left and similar words). Otherwise both values stay open and
-the end reads `unknown`. Nothing is written. The setting
+the end reads `unknown`. Nothing is written. A question that asks for history
+(a history word, "oldest first", "held", or the slot named in the plural, such
+as job titles, employers or cities) about one slot of one named person or
+company, and not for its current value ("now", "currently", "these days"),
+also gets every value that entity has had in that slot that the caller may
+read, oldest first, each with its own window, inside the block's share and
+row count. The entity is the page the question names or, when no page
+matches, the one name tag (a name of two or more words saved with no page)
+whose words the question holds in order; two candidates match none. A page
+written later at `people/<tag>` takes over the tag's facts on this read. If
+that read fails the block keeps its other rows and the response reports the
+degraded stage `facts_history_unavailable`. The setting
 applies to `search`, `query`, `recall`, `think` and `assemble_evidence`.
 
 ### Tail trim
