@@ -27,8 +27,8 @@ refuses.
 | `brain.findDuplicatePage(sourceId, { hash, frontmatterId?, excludeSlug? })` | `{ id, slug, content_hash }` or `null`: a live page with frontmatter `id` equal to `frontmatterId`, else one with `content_hash` equal to `hash`; lowest id wins | `findDuplicatePage` |
 | `brain.findDuplicatePages(sourceId, queries)` | one `findDuplicatePage` answer per query | `findDuplicatePages` |
 | `brain.softDeletePages(slugs, { sourceId? }?)` | slugs that turned deleted now, once each, in page id order. `updated_at` stays; the knowledge revision changes | `softDeletePages` |
-| `brain.deletePages(slugs, { sourceId? }?)` | slugs removed (live or deleted), in page id order | `deletePages` (the TypeScript member still refuses, see below) |
-| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id }]` on a dry run | `purgeDeletedPages` (the TypeScript member still refuses, see below) |
+| `brain.deletePages(slugs, { sourceId? }?)` | slugs removed (live or deleted), in page id order. In the same transaction it drops those slugs from captured eval candidates of the source (`eval_capture::remove_retrieved_slugs`) | `deletePages` |
+| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run | `purgeDeletedPages` (the TypeScript member still refuses, see below) |
 | `brain.resolveSlugsByPaths(paths, { sourceId })` | `[{ slug, source_path, live }]` for every page of the source whose `source_path` is one of `paths`, sorted by path then slug; the TypeScript member keeps one slug per path (`pickCanonicalOrigin`) | `resolveSlugsByPaths` |
 | `brain.findPages({ pattern: { kind, like }, types?, limit, sourceId?, sourceIds?, excludeSlugPrefixes? })` | `{ rows, total }`. `like` is a Postgres `LIKE` pattern (`%`, `_`, `\` escape), case-folded. A `name` pattern matches the title, or the slug when its last segment matches too; `prefix` and `glob` match the slug or `source_path`. Live pages of unarchived sources only. Rows sort by slug, then source; `total` is every match, or 0 when no row is returned | `findPages` |
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
@@ -54,10 +54,10 @@ last_retrieved_at }`.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
   `timestamptz` text).
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
+- After a hard delete PGLite also scrubs retrieval logs, ratings, weights, the volunteer log, the
+  gazetteer and write-gate holds. The store keeps none of those yet, so only eval candidates change.
 
 ## Still refused by the TypeScript engine
 
-- `deletePages`: PGLite scrubs `retrieved_slugs` of eval candidates after a hard delete. The store
-  calls the eval_capture scrub once that family has it; until then the member refuses.
 - `purgeDeletedPages`: PGLite holds back pages that sync identity, atom retirement or derived
   retirement still need. The store does not keep those holds yet, so the member refuses.

@@ -832,3 +832,52 @@ fn marker_reads_under_exclude_private_hide_the_pages_the_policy_hides() {
         read(json!({ "live": true, "sourceId": "other", "excludePrivate": policy })).is_empty()
     );
 }
+
+#[test]
+fn delete_pages_scrubs_the_deleted_slugs_from_captured_eval_candidates() {
+    use gbrain_store::eval_capture::{EvalCandidateInput, ListEvalCandidatesOptions};
+    let dir = TempDir::new("ops-delete-eval");
+    let store = open(&dir);
+    source(&store, "work");
+    put(&store, "notes/a", note("A", "a"));
+    put(&store, "notes/b", note("B", "b"));
+    put(&store, "notes/shared", note("S", "s"));
+    put_in(&store, "work", "notes/shared", note("S", "s"));
+    let log = |sources: Value| {
+        let input: EvalCandidateInput = de(json!({
+            "tool_name": "query", "query": "q",
+            "retrieved_slugs": ["notes/b", "notes/a", "notes/shared", "notes/a"],
+            "retrieved_chunk_ids": [], "source_ids": sources, "expand_enabled": false,
+            "detail": null, "detail_resolved": null, "vector_enabled": false,
+            "expansion_applied": false, "latency_ms": 1, "remote": false,
+            "job_id": null, "subagent_id": null, "embedding_column": "embedding",
+        }));
+        store.log_eval_candidate(&input).unwrap();
+    };
+    log(json!(["default"]));
+    log(json!(["default", "work"]));
+    log(json!([]));
+    let gone = store
+        .delete_pages(
+            &["notes/a".to_string(), "notes/shared".to_string()],
+            &de(json!({ "sourceId": "default" })),
+        )
+        .unwrap();
+    assert_eq!(gone, vec!["notes/a", "notes/shared"]);
+    let opts: ListEvalCandidatesOptions = de(json!({ "limit": 10 }));
+    let rows = store.list_eval_candidates(&opts).unwrap();
+    let by_sources = |want: Value| {
+        rows.iter().find(|r| r["source_ids"] == want).unwrap()["retrieved_slugs"].clone()
+    };
+    assert_eq!(by_sources(json!(["default"])), json!(["notes/b"]));
+    // `work` still holds notes/shared, so the slug stays for a candidate that covers it.
+    assert_eq!(
+        by_sources(json!(["default", "work"])),
+        json!(["notes/b", "notes/shared"])
+    );
+    // No source_ids: PGLite's `$1 = ANY('{}')` is false, so the candidate is not changed.
+    assert_eq!(
+        by_sources(json!([])),
+        json!(["notes/b", "notes/a", "notes/shared", "notes/a"])
+    );
+}
