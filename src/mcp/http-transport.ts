@@ -32,7 +32,7 @@ import { CAPABILITIES_URI } from './capabilities.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
+import { MCP_SERVER_DESCRIPTION, MCP_SERVER_NAME, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { httpInstructionTools } from './initialize-context.ts';
 import { ambientOptsFrom, writebackCaller } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
@@ -472,7 +472,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           {
             result: {
               protocolVersion: '2025-03-26',
-              serverInfo: { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
+              serverInfo: { name: MCP_SERVER_NAME, version: VERSION, description: MCP_SERVER_DESCRIPTION },
               capabilities: { tools: {}, resources: {} },
               // #4748: contract (+ opt-in writeback section) + deployment identity.
               instructions: resolveMcpInstructions(fileConfig, process.env, {

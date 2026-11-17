@@ -9,6 +9,7 @@ import { dotenvValuesForKey } from './env-trust.ts';
 import { REMOTE_PRIVATE_PAGES_KEY } from './search/private-visibility.ts';
 import { RUNTIME_READER_CONFIG_KEYS } from './config-runtime-keys.ts';
 import { mergeServeCliSocket, mergeServeVectorPrewarm } from './published-config.ts';
+import { BRAND, brandEnvName, readBrandEnv } from './brand.ts';
 export { MERGED_CONFIG_BY_ENGINE } from './published-config.ts';
 
 /**
@@ -1976,21 +1977,21 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 
 export function configDir(): string {
   // Allow override for tests, Docker, and multi-tenant deployments.
-  // GBRAIN_HOME is a parent dir; we always append '.gbrain' ourselves so
-  // setting GBRAIN_HOME=/tmp/x yields configDir() === '/tmp/x/.gbrain'.
+  // GBRAIN_HOME (the brand's HOME variable, core/brand.ts) is a parent dir; we always append the brand's home folder
+  // ('.gbrain') ourselves so setting GBRAIN_HOME=/tmp/x yields configDir() === '/tmp/x/.gbrain'.
   // Validates the override: must be absolute, no '..' segments.
-  const override = process.env.GBRAIN_HOME;
+  const override = readBrandEnv(process.env, 'HOME');
   if (override && override.trim()) {
     const trimmed = override.trim();
     if (!isAbsolute(trimmed)) {
-      throw new Error(`GBRAIN_HOME must be an absolute path; got: ${trimmed}`);
+      throw new Error(`${brandEnvName('HOME')} must be an absolute path; got: ${trimmed}`);
     }
     if (trimmed.split(/[\\/]/).includes('..')) {
-      throw new Error(`GBRAIN_HOME must not contain '..' segments; got: ${trimmed}`);
+      throw new Error(`${brandEnvName('HOME')} must not contain '..' segments; got: ${trimmed}`);
     }
-    return join(trimmed, '.gbrain');
+    return join(trimmed, BRAND.homeDirName);
   }
-  return join(homedir(), '.gbrain');
+  return join(homedir(), BRAND.homeDirName);
 }
 
 export function configPath(): string {

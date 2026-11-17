@@ -5,4 +5,7 @@
 - `gbrain lint --json` prints the whole report as one JSON document on stdout (progress stays on stderr), with every issue's rule, line and message and the run's counts.
 - `gbrain lint --strict` exits 1 when any issue is left after the run, for CI.
 
+### Changed
+- For contributors: the product's names (command, MCP server name, home folder, environment-variable prefix) now live in one module, `src/core/brand.ts`. The home folder and the MCP server name already read from it; nothing a user sees changes. A future rename keeps reading an existing install's `GBRAIN_*` variables.
+
 <!-- behavior-change: lint_link_checks_json_strict -->

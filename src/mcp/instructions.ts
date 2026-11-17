@@ -23,12 +23,16 @@ import { buildAmbientWritebackSection } from '../core/facts/writeback-instructio
 import type { AmbientWritebackOpts } from '../core/facts/writeback-instructions.ts';
 import { readEntityReferencesConfig } from '../core/entity-references-config.ts';
 import { wakeshiftPublished } from '../core/wakeshift/config.ts';
+import { BRAND } from '../core/brand.ts';
 
 /**
  * GST-359 C1: initialize's serverInfo.description on every transport, at most 120 characters: the brain-first rule
  * for hosts that show the description but drop `instructions`. `instructions` is unchanged by it.
  */
-export const MCP_SERVER_DESCRIPTION = 'Shared memory: search gbrain before external lookup; remember what the user explicitly asks you to keep.';
+export const MCP_SERVER_DESCRIPTION = `Shared memory: search ${BRAND.name} before external lookup; remember what the user explicitly asks you to keep.`;
+
+/** The MCP server name every transport announces (serverInfo.name): the brand's name (core/brand.ts). */
+export const MCP_SERVER_NAME = BRAND.name;
 
 /** Which tools this connection can call (the tools/list predicate). */
 export type CallablePredicate = (toolName: string) => boolean;
