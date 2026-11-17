@@ -57,7 +57,7 @@ const queuedExtractions = (engine: BrainEngine, sourceId: string) => count(engin
 const openEffects = (engine: BrainEngine, sourceId: string) => count(engine,
   `SELECT count(*)::int AS n FROM persistence_effects WHERE source_id=$1 AND kind='facts-backstop' AND state IN ('queued','running')`, [sourceId]);
 const factRows = (engine: BrainEngine, sourceId: string) => count(engine,
-  'SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND expired_at IS NULL', [sourceId]);
+  "SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND expired_at IS NULL AND fact LIKE '%three-year renewal%'", [sourceId]);
 
 async function captureStderr<T>(run: () => Promise<T>): Promise<string> {
   const original = process.stderr.write.bind(process.stderr);
@@ -134,5 +134,34 @@ test('unmanaged brain: a page whose fact extraction could not be queued is logge
       const logged = await engine.executeRaw<{ summary: string }>(`SELECT summary FROM ingest_log WHERE source_id=$1 AND source_type='facts:absorb'`, ['meet-9552-plain']);
       expect(logged.map(r => r.summary)).toEqual(['pipeline_error: extraction failed (Error)']);
     } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
+  }
+}), 120_000);
+
+test('Slack pages a connector published before the fix get their facts from gbrain extract-conversation-facts', async () => withEnv({ ...env, ...KEYS }, async () => {
+  const { runExtractConversationFacts } = await import('../src/commands/extract-conversation-facts.ts');
+  const day = NOW - DAY;
+  const conversation = (): FakeSlack => ({ teamId: 'TACME00001', users: { UALICE0001: { name: 'Alice Example' }, UBOB000001: { name: 'Bob Example' } }, calls: [], channels: [
+    { id: 'CGENERAL01', name: 'general', messages: [
+      { ts: slackTs(day, 1), user: 'UALICE0001', text: CLAIM },
+      { ts: slackTs(day, 2), user: 'UBOB000001', text: 'Great news. Did Beta Example agree to the pricing terms we proposed last week?' },
+      { ts: slackTs(day, 3), user: 'UALICE0001', text: 'Yes, they accepted the pricing terms and the renewal starts in January.' },
+      { ts: slackTs(day, 4), user: 'UBOB000001', text: 'I will update the account plan and schedule the next review for the spring.' }] }] });
+  for (const engine of engines) {
+    configureGateway({ embedding_disabled: true, env: KEYS } as never);
+    await engine.setConfig('facts.extraction_model', MODEL);
+    await engine.setConfig('embedding_disabled', 'true');
+    const config = { kind: 'slack', s_channels: 'CGENERAL01', s_record: 'database', federated: false };
+    await managedSource(engine, 'slack-9552-before', config);
+    await runSlackSync(engine, 'slack-9552-before', parseSlackSourceConfig(config, ''), options,
+      { api: slackApi({ token: slackTestToken(), userAgent: 'gbrain-test', fetchImpl: slackFetch(conversation()), sleep: async () => {}, minDelayMs: 0 }) });
+    await settleConnectorWrites(engine, 'slack-9552-before');
+    expect(await queuedExtractions(engine, 'slack-9552-before')).toBe(0);
+    expect(await factRows(engine, 'slack-9552-before')).toBe(0);
+    __setChatTransportForTests(async () => ({ text: JSON.stringify({ facts: [{ fact: 'Acme Example signed a three-year renewal with Beta Example', kind: 'fact',
+      entity: 'companies/acme-example', confidence: 0.9, notability: 'high' }] }), blocks: [], stopReason: 'end', model: MODEL, providerId: 'anthropic',
+      usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 } }) as unknown as ChatResult);
+    try { await runExtractConversationFacts(engine, ['--source-id', 'slack-9552-before', '--types', 'slack', '--yes']); }
+    finally { __setChatTransportForTests(null); }
+    expect(await factRows(engine, 'slack-9552-before')).toBeGreaterThan(0);
   }
 }), 120_000);
