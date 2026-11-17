@@ -47,7 +47,7 @@ import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 import { sourceMirrorReadOnly } from '../../../core/persistence/mirror-read-only.ts';
 import { APPROVED_FILE, POLICY_FILE } from '../../../core/access/policy-git.ts';
 import { readCredentialRefusal } from '../../../core/git/commit-push.ts';
-import { describeHelpers, type CredentialRefusalState } from '../../../core/git/push-credential.ts';
+import { CREDENTIAL_HELPER_KEYS_WHY, credentialHelperKeysArgv, describeHelpers, type CredentialRefusalState } from '../../../core/git/push-credential.ts';
 
 export const GIT_CONVERGENCE_WARN_MS = 6 * 3_600_000;
 export const GIT_CONVERGENCE_FAIL_MS = 24 * 3_600_000;
@@ -268,9 +268,9 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
     return { name: 'git_convergence', status, details,
       message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${refused.root}: ${c.url} has refused every push since ${c.since} (${c.attempts} attempt(s), push_credential_refused: ${c.kind === 'not_found' ? '"Repository not found", HTTP 404' : 'HTTP 403'}) for ${who}, so its commits stay on this machine until git uses a credential for an account that can push there. ${describeHelpers(c)}${others ? ` ${others} other checkout(s) are refused the same way, see details.roots (credential_refused).` : ''} This compares with the last fetched upstream and does not fetch.${boundNote}`,
       fix: { actor: 'user', consent: [], requires_exclusive: false,
-        argv: ['git', '-C', refused.root, 'config', '--show-scope', '--show-origin', '--get-regexp', '^credential\\.'],
-        why: 'Read-only: lists every credential helper git consults in this checkout with the scope and file that set it, in the order git reads them.',
-        user_message: `Pushes from ${refused.root} to ${c.url} have been refused since ${c.since} for ${who}, so ${refused.ahead} commit(s) are only on this machine (nothing is lost). ${describeHelpers(c)} Please make git use a credential for an account that can push to this repository, then run gbrain git commit-push --push-only --path ${refused.root}.`,
+        argv: credentialHelperKeysArgv(refused.root),
+        why: CREDENTIAL_HELPER_KEYS_WHY,
+        user_message: `Pushes from ${refused.root} to ${c.url} have been refused since ${c.since} for ${who}, so ${refused.ahead} commit(s) are only on this machine (nothing is lost). ${describeHelpers(c)} Please make git use a credential for an account that can push to this repository: the read-only command in this fix lists each credential helper key (such as credential.helper) with the file that sets it, so change the key in the file whose helper answered, then run gbrain git commit-push --push-only --path ${refused.root}.`,
         verify: doctorVerify('git_convergence') } };
   }
   const stranded = publishable.filter(r => r.stranded);

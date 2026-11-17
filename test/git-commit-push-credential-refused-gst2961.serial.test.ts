@@ -14,7 +14,7 @@ import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_pr
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { credentialRefusal } from '../src/core/git/push-credential.ts';
+import { credentialHelperKeysArgv, credentialRefusal } from '../src/core/git/push-credential.ts';
 import { readCredentialRefusal } from '../src/core/git/commit-push.ts';
 import { getLastPushOutcome } from '../src/core/brain-repo-durability.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -180,6 +180,12 @@ describe('gbrain git commit-push against a host that refuses the credential', ()
     expect(run.doc.code).toBe('push_credential_refused');
     expect(readCredentialRefusal(work)?.helpers[0]).toMatchObject({ helper: '!f() …', scope: 'global', answered: true });
     expect(everythingWritten(work, run)).not.toContain(INLINE_SECRET);
+    const argv = (run.doc.fix as { argv: string[] }).argv;
+    expect(argv).toEqual(credentialHelperKeysArgv(work));
+    const listed = execFileSync(argv[0]!, argv.slice(1), { encoding: 'utf8', env: env({ GIT_CONFIG_GLOBAL: inlineConfig }) });
+    expect(listed).toContain('credential.helper');
+    expect(listed).toContain(inlineConfig);
+    expect(listed).not.toContain(INLINE_SECRET);
   }, 120_000);
 
   test('a dropped connection is still push_unconfirmed (exit 4) and keeps its retry', async () => {
@@ -234,6 +240,15 @@ describe('gbrain git commit-push against a host that refuses the credential', ()
     expect(git(work, ['rev-parse', 'refs/remotes/origin/main'])).toBe(git(work, ['rev-parse', 'HEAD']));
     expect(readCredentialRefusal(work)?.kind).toBe('not_found');
 
+    const split = checkout('brain-split', 'notfound');
+    commitPush(split);
+    git(split, ['remote', 'set-url', '--push', 'origin', 'http://127.0.0.1:' + port + '/notfound/brain-split.git']);
+    git(split, ['remote', 'set-url', 'origin', 'http://127.0.0.1:' + port + '/ok/brain-split.git']);
+    git(split, ['push', '-q', join(dir, 'srv', 'brain-split.git'), 'main']);
+    git(split, ['fetch', '-q', 'origin']);
+    expect(git(split, ['rev-parse', 'refs/remotes/origin/main'])).toBe(git(split, ['rev-parse', 'HEAD']));
+    expect(readCredentialRefusal(split)?.kind).toBe('not_found');
+
     const renamed = checkout('brain-renamed', 'notfound');
     git(renamed, ['branch', '-m', 'main', 'local-work']);
     git(renamed, ['branch', '--set-upstream-to', 'origin/main', 'local-work']);
@@ -260,6 +275,7 @@ describe('gbrain git commit-push against a host that refuses the credential', ()
       expect(check?.message).toContain('user-b');
       expect(check?.message).not.toContain(CANARY);
       expect(check?.fix?.actor).toBe('user');
+      expect(check?.fix?.argv).toContain('--name-only');
 
       setMode(work, 'ok');
       const landed = commitPush(work);

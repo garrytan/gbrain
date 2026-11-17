@@ -144,6 +144,11 @@ export function describeHelpers(cred: Pick<PushCredential, 'helpers' | 'username
     + (answered ? answered.helper + ' (' + (answered.scope ?? 'scope unknown') + ') answered' + (cred.username ? ' with the account login ' + cred.username : '') + '.' : (cred.note ?? ''));
 }
 
+/** Read-only: every credential helper key git consults in `root`, with the scope and file that set it, never the value (an inline helper's body can hold a secret). */
+export const credentialHelperKeysArgv = (root: string): string[] =>
+  ['git', '-C', root, 'config', '--show-scope', '--show-origin', '--name-only', '--get-regexp', '^credential\\..*helper$'];
+export const CREDENTIAL_HELPER_KEYS_WHY = 'Read-only: prints the scope, file and key of every credential helper git consults in this checkout, in the order git reads them, without the value.';
+
 /** The non-retryable error a publish throws when the host refused the push for the credential git used. */
 export function pushCredentialRefusedError(root: string, remote: string, branch: string, kind: CredentialRefusal, commit: string): OperationError {
   const cred = describePushCredential(root, remote);
@@ -157,11 +162,11 @@ export function pushCredentialRefusedError(root: string, remote: string, branch:
   const helpers = describeHelpers(cred);
   const fix: Action = {
     actor: 'user', consent: [], requires_exclusive: false,
-    argv: ['git', '-C', root, 'config', '--show-scope', '--show-origin', '--get-regexp', '^credential\\.'],
-    why: 'Read-only: lists every credential helper git consults in this checkout with the scope and file that set it, in the order git reads them.',
+    argv: credentialHelperKeysArgv(root),
+    why: CREDENTIAL_HELPER_KEYS_WHY,
     user_message: 'Pushes from ' + root + ' to ' + cred.url + ' are refused: the host ' + (kind === 'not_found' ? 'says the repository is not found' : 'denies permission')
       + ' for ' + who + ', so ' + commit.slice(0, 7) + ' and any earlier local commits stay on this machine (nothing is lost). ' + helpers
-      + ' Please make git use a credential for an account that can push to this repository (for example by putting the helper meant for it ahead of a machine-wide one), then run gbrain git commit-push --push-only --path ' + root + '.',
+      + ' Please make git use a credential for an account that can push to this repository: the read-only command in this fix lists each credential helper key (such as credential.helper) with the file that sets it, so change the key in the file whose helper answered (for example by putting the helper meant for this repository ahead of a machine-wide one), then run gbrain git commit-push --push-only --path ' + root + '.',
     verify: { argv: ['gbrain', 'doctor', '--only', 'git_convergence', '--json'] },
     docs: 'docs/guides/shared-checkout-git.md#push_credential_refused',
   };
