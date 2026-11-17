@@ -11,7 +11,7 @@
  *    (`p.updated_at < MAX(timeline_entries.created_at)`).
  * 3. Existing coverage: the CJK keyword arm already shares one builder
  *    (src/core/search/cjk-keyword-sql.ts); this file covers the keyword,
- *    keyword-chunks, title and vector arms.
+ *    keyword-chunks, keyword-pages, title and vector arms.
  * 4. Real seams: importFromContent, the engines' search methods; the page and
  *    timeline timestamps are pinned with SQL so no case depends on the clock.
  */
@@ -87,10 +87,11 @@ for (const kind of backends) {
       await close?.();
     }, 60_000);
 
-    test('keyword, keyword-chunks, title and vector search mark only the page with a newer timeline entry stale', async () => {
+    test('keyword, keyword-chunks, keyword-pages, title and vector search mark only the page with a newer timeline entry stale', async () => {
       const arms = {
         searchKeyword: staleBySlug(await engine.searchKeyword(WORD, { limit: 10 })),
         searchKeywordChunks: staleBySlug(await engine.searchKeywordChunks(WORD, { limit: 10 })),
+        searchKeywordPages: staleBySlug(await engine.searchKeywordPages(WORD, undefined, { limit: 10 })),
         searchTitles: staleBySlug(await engine.searchTitles(WORD, { limit: 10 })),
         searchVector: staleBySlug(await engine.searchVector(basis(), { limit: 10 })),
       };
