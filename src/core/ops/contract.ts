@@ -453,6 +453,13 @@ export interface AuthInfo {
    * private-readable set of each non-mutating call. Undefined = `none`.
    */
   privatePages?: { mode: 'granted_sources'; sources: string[] };
+  /**
+   * GST-2898: the credential's read-shared switch is on, so `allowedSources` already holds its stored list plus every
+   * shared source (grants/read-shared.ts). `readSharedUnresolved`: the shared set could not be read, so it reads its
+   * stored list only and read results carry the `read_shared_unresolved` degraded notice.
+   */
+  readShared?: boolean;
+  readSharedUnresolved?: boolean;
   /** Current transport ceiling applied to this authenticated request. */
   effectiveSurface?: 'verbs' | 'starter' | 'full';
   /**

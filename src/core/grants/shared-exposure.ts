@@ -32,6 +32,8 @@ import { localFederatedSourceIds, resolveSourceWithTier } from '../source-resolv
 import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
+import { expandReadShared } from './read-shared.ts';
+import { sqlQueryForEngine } from '../sql-query.ts';
 import { brainServes } from '../access/serves.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
@@ -66,9 +68,22 @@ export interface ChatCensus { sources: string[]; chat_pages: number; channels: n
  * federated source (serve-http's noGrantFederatedScope); an unscoped OAuth
  * client reads `default`; a scalar grant its source; a federated grant its
  * read set. A credential without read scope reads nothing.
+ *
+ * GST-2898: the one function that turns a grant into a read set. With the
+ * read-shared switch on, a listed grant (and a client with no list) also reads
+ * the shared set for its bound `member` (grants/read-shared.ts); an unscoped
+ * token already reads the floor, and `none` (also every drifted or malformed
+ * grant) reads nothing whatever the switch says. When the shared set cannot be
+ * read the stored list stands, as the verifiers do.
  */
-export async function credentialReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'scopes' | 'sources'>): Promise<string[]> {
+export async function credentialReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'scopes' | 'sources' | 'readShared'>, member: string | null = null): Promise<string[]> {
   if (!hasScope(grant.scopes, 'read')) return [];
+  const stored = await storedReadSources(engine, grant);
+  if (grant.readShared !== true || grant.sources.kind === 'none' || (grant.sources.kind === 'default' && grant.principal.kind === 'legacy_token')) return stored;
+  return (await expandReadShared(sqlQueryForEngine(engine), stored, member)).sources;
+}
+
+async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>): Promise<string[]> {
   switch (grant.sources.kind) {
     case 'default': return grant.principal.kind === 'legacy_token'
       ? await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined) ?? ['default']
