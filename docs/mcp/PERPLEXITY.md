@@ -125,5 +125,6 @@ setup file or a successful server probe does not establish native activation.
   version support remote MCP connectors.
 - The Mac app can also use a local MCP server (`gbrain serve` stdio) if you'd
   rather not expose an HTTP endpoint.
-- A `gbrain auth create` token is a long-lived, full-access secret. Keep it
+- A `gbrain auth create` token is a long-lived secret that carries its grant's
+  scopes (full-access when minted without `--scopes`). Keep it
   private and prefer a scoped token where possible.

@@ -22,7 +22,7 @@ import { readManagedMode } from '../persistence/managed-mode.ts';
 import { maintenanceAttribution, principalAttribution } from '../persistence/attribution.ts';
 import type { Principal } from '../persistence/model.ts';
 import { stepFenceWalk, type FenceWalk } from '../fence-scan.ts';
-import { BODY_LEAD_BYTES, BODY_STAGING_HARD_MS, BODY_STAGING_IDLE_MS, PROJECTION_LOCK_HOLD_BYTES, SEGMENTED_CREATE_SEAL_MAX_BYTES, STAGE_BATCH_BYTES } from './limits.ts';
+import { BODY_LEAD_BYTES, BODY_STAGING_HARD_MS, BODY_STAGING_IDLE_MS, PROJECTION_LOCK_HOLD_BYTES, SEGMENTED_CREATE_SEAL_MAX_BYTES, stageBatchBytes } from './limits.ts';
 import type { BodyRegion, BodyStagingKind, BodyStorage, JsonObject, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedBodyColumns, SegmentTextInput } from './types.ts';
 import { regionTrust, segmentStream, SEGMENTER_VERSION, type StoredRegion } from './segmenter.ts';
@@ -227,7 +227,7 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
     if (same) same.push(row); else byKey.set(key, [row]);
   }
   const writes = await segmentWriteScope(engine, input.sourceId, { kind: input.owner.principalKind as Principal['kind'], id: input.owner.principalId });
-  const batchBytes = STAGE_BATCH_BYTES[engine.kind];
+  const batchBytes = stageBatchBytes(engine.kind);
   const expectedGeneration = input.live?.generation ?? 0;
   const newGeneration = expectedGeneration + 1;
   const pageId = input.live?.id ?? 0;
@@ -391,7 +391,7 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
   /** The page's fence-chunk budget when one page is chunked over several calls (the re-chunk, page-body/rechunk.ts); default a new one. */
   fenceBudget?: FenceChunkBudget }): Promise<{ rows: number; occurrences: number; indexes: number[] }> {
   if (input.chunking.quarantined || !input.occurrences.length) return { rows: 0, occurrences: 0, indexes: [] };
-  const batchBytes = STAGE_BATCH_BYTES[engine.kind];
+  const batchBytes = stageBatchBytes(engine.kind);
   const fenceBudget = input.fenceBudget ?? newFenceChunkBudget();
   let ledger: BodyLedger | undefined;
   let rows = 0, done = 0;
@@ -467,7 +467,7 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
 export async function* readSegmentedBody(engine: BrainEngine, pageId: number, sourceId: string,
   opts: { generation?: number; bodyBytes?: number } = {}): AsyncIterable<{ region: BodyRegion; bytes: Uint8Array }> {
   const { rows } = await readTiledManifest(engine, pageId, opts.generation, opts.bodyBytes);
-  const batchBytes = STAGE_BATCH_BYTES[engine.kind];
+  const batchBytes = stageBatchBytes(engine.kind);
   for (let start = 0; start < rows.length;) {
     let end = start, bytes = 0;
     while (end < rows.length && (end === start || bytes + rows[end]!.byteLen <= batchBytes)) bytes += rows[end++]!.byteLen;

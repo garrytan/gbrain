@@ -59,6 +59,7 @@ on:
       - TLA+ specs
       - Stable daily
       - Upgrade matrix
+      - Rust engine
     types: [completed]
     branches: [master]
   workflow_dispatch:
