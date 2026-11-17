@@ -11,7 +11,9 @@
  * event-time since, escaped grep) inside the SQL. Three arms fill it: keyword
  * (FTS over fact text and entity), cosine (nearest by the question embedding,
  * cast to the facts column type) and the facts of the one entity page the
- * question names, constrained to that page's source.
+ * question names, constrained to that page's source. With `history` (GBRA-574
+ * B1) that last arm also takes the entity's ended facts (ENDED_FACT_SQL),
+ * under the same read policy.
  *
  * Score: cosine + term share + DATED_BONUS when the writer supplied the date.
  * Term share matches words on their stems under the brain's full-text config
@@ -29,10 +31,11 @@
 import type { BrainEngine } from '../engine.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { privateProvenanceFilterUnderPolicy } from './private-visibility.ts';
-import { factVisibilitySql } from '../access/member-facts.ts';
+import { factVisibilitySql, withdrawalCoversFactSql } from '../access/member-facts.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { namedEntity } from './entity-anchor.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
@@ -122,6 +125,8 @@ export interface FactPoolOpts {
   hnswIterativeScan?: HnswIterativeScanMode;
   /** Search a question over MAX_QUERY_TERMS content terms on its last SEARCH_TERMS and score it on those its candidates hold (recall). */
   distinctiveTerms?: boolean;
+  /** GBRA-574 B1: the named-entity arm also pools that entity's ended facts (ENDED_FACT_SQL), the most recent first. */
+  history?: boolean;
 }
 
 export interface FactCandidate {
@@ -164,6 +169,20 @@ async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStem
     return null;
   }
 }
+
+/**
+ * An ended fact a history read may show: superseded by a successor, or closed by a valid_until in the past while still
+ * unexpired. A fact expired with no successor (forgotten or withdrawn) never matches, nor does any fact whose claim the
+ * withdrawal ledger covers, nor one whose page a purge removed: a purge expires only the page's unexpired facts
+ * (gone-page-facts.ts), so a superseded fact filed on or extracted from that page would otherwise come back.
+ */
+const ENDED_FACT_SQL = `(f.superseded_by IS NOT NULL OR (f.expired_at IS NULL AND f.valid_until <= now()))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
+    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')})
+  AND (f.source_markdown_slug IS NULL OR f.dimension IS NOT NULL
+    OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug))
+  AND (f.source_markdown_slug IS NOT NULL OR f.source NOT IN (${PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ')})
+    OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = ${contextHeadSql('f')}))`;
 
 const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to';
 
@@ -286,10 +305,17 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const named = await namedEntity(engine, question, { sourceIds, excludePrivate: scope.excludePrivate });
     if (!named) return [];
     const p = armParams(allSim ? simParams : []);
-    return engine.executeRaw<Row>(
+    const active = await engine.executeRaw<Row>(
       `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2}
        ORDER BY f.valid_from DESC, f.id DESC LIMIT $${p.length + 3}`,
       [...p, named.source_id, named.slug, opts.depth.entity]);
+    if (!opts.history) return active;
+    const ended = poolPredicate(scope, { ...opts.filters, includeExpired: true });
+    const e = [...ended.params, ...(allSim ? simParams : [])];
+    return [...active, ...await engine.executeRaw<Row>(
+      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${ended.where} AND ${ENDED_FACT_SQL} AND f.source_id = $${e.length + 1} AND f.entity_slug = $${e.length + 2}
+       ORDER BY f.valid_from DESC, f.id DESC LIMIT $${e.length + 3}`,
+      [...e, named.source_id, named.slug, opts.depth.entity])];
   };
   // Independent arms run concurrently (separate connections on Postgres); merged in a fixed order.
   const [byKeyword, byCosine, byEntity] = await Promise.all([keyword(), nearest(), entityFacts()]);

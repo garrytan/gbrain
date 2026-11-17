@@ -22,9 +22,13 @@ export async function pendingUpgradeMigrationsNotice(engine: BrainEngine, comman
     const ledger = await import('../core/migration-ledger.ts');
     if (!ledger.upgradeLedgerApplies(engine)) return null;
     const summary = ledger.migrationLedgerSummary(version, await ledger.declinedMigrations(engine));
-    const history = ledger.indexCompletedEntries((await import('../core/preferences.ts')).loadCompletedMigrations());
-    const owed = summary.wedged.filter(v => ledger.hostWorkOwedForVersion(v, history));
-    const wedged = summary.wedged.filter(v => !owed.includes(v));
+    const entries = (await import('../core/preferences.ts')).loadCompletedMigrations();
+    const history = ledger.indexCompletedEntries(entries);
+    // A wedge a newer completed migration ran past is history to apply-migrations, which then exits 0, so commands stay quiet
+    // about it; doctor and apply-migrations --dry-run still report a conflict it left (its host work owed).
+    const live = summary.wedged.filter(v => ledger.forwardProgressPast(v, entries) === null);
+    const owed = live.filter(v => ledger.hostWorkOwedForVersion(v, history));
+    const wedged = live.filter(v => !owed.includes(v));
     if (wedged.length > 0) {
       const { wedgedMigrationFix } = await import('../commands/apply-migrations.ts');
       return { ...migrationsNotice(`Upgrade migration(s) ${wedged.join(', ')} failed several runs in a row and are wedged; the command ran, and apply-migrations --yes will not clear them until the cause is fixed.`), fix: wedgedMigrationFix(wedged) };
