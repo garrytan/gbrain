@@ -44,7 +44,7 @@ The env file sets these:
 |---|---|
 | `PATH` | `~/.gbrain-rust-dev/bin`, `~/.cargo/bin` and `~/.bun/bin` in front, in that order |
 | `BUN_INSTALL`, `CARGO_HOME`, `RUSTUP_HOME` | `~/.bun`, `~/.cargo`, `~/.rustup` |
-| `RUST_ENGINE_DATABASE_URL` | `postgresql://gbrain:gbrain@127.0.0.1:5432/gbrain_test` |
+| `RUST_ENGINE_DATABASE_URL` | A `postgresql://` URL for role `gbrain` (password `gbrain`) on `127.0.0.1:5432`, database `gbrain_test` |
 
 The env file does not set `DATABASE_URL`, on purpose. The tests read
 `DATABASE_URL`, but the test preload
