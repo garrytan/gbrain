@@ -29,6 +29,7 @@ import {
   isClaudeCodeSubagentFile,
   isClaudeCodeWorkflowArtifactFile,
   isClaudeCodeRemoteControlStateFile,
+  isClaudeCodeSessionsIndexFile,
 } from '../core/transcripts/claude-code.ts';
 
 interface RecentOpts {
@@ -309,7 +310,8 @@ export async function expandPaths(specs: string[]): Promise<string[]> {
       !isGrokSessionSidecarStrict(p) &&
       !isClaudeCodeSubagentFile(p) &&
       !isClaudeCodeWorkflowArtifactFile(p) &&
-      !isClaudeCodeRemoteControlStateFile(p),
+      !isClaudeCodeRemoteControlStateFile(p) &&
+      !isClaudeCodeSessionsIndexFile(p),
   );
 }
 

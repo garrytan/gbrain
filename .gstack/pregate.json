@@ -1,5 +1,8 @@
 {
   "dependencies": {
+    "admin/e2e/publish-copy-button.pw.ts": [
+      "test/publish.test.ts"
+    ],
     "test/**/*.serial.test.ts": [
       "test/scripts/serial-files.test.ts"
     ],
