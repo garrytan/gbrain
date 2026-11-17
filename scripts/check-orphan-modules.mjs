@@ -54,8 +54,6 @@ const ALLOWLIST = new Map([
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
-  { path: 'src/core/rust-engine.ts', reason: "held: the Rust engine shell (plan PR 8, docs/designs/RUST_ENGINE.md); the addon loader PR on rust-engine/core wires openRustEngine into engine construction" },
-  { path: 'src/core/rust-engine/members.ts', reason: 'held: the Rust engine shell member table; reached through src/core/rust-engine.ts once the addon loader wires openRustEngine' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/evidence-brief.ts', reason: 'held: eval-only wave 1 brief builder (10x memory advantage plan A3), loaded by path from gbrain-evals eval/runner/pilot; product wiring is plan item A8, conditional on the A5 pilot' },
   { path: 'src/eval/longmemeval/evidence-packet.ts', reason: 'script-reachable' },

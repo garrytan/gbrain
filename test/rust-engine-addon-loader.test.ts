@@ -403,16 +403,37 @@ describe('selecting the rust engine through the real CLI', () => {
     expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
   }, 60_000);
 
-  withAddon('a verified addon reaches the engine shell, which is not built yet, still before the brain is created', async () => {
+  withAddon('a verified addon reaches the engine shell, which refuses engine_capability_missing and writes nothing', async () => {
     const { home, dbPath } = rustHome();
     const { out, code } = await runCli(['list'], { GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT });
     expect(code).toBe(1);
-    expect(out).toContain('the Rust engine is not built yet in this release; switch `engine` back to pglite or postgres');
+    expect(out).toContain('Error [engine_capability_missing]');
+    expect(out).toContain('the raw_sql capability');
+    expect(out).toContain('so nothing ran');
     expect(out).not.toContain('rust_engine_addon_');
     expect(existsSync(dbPath)).toBe(false);
   }, 60_000);
 
-  test('PGLite never loads the loader or creates engines/, through init, put and get', async () => {
+  withAddon('engine status --probe on a rust brain with a real addon reports the shell\'s capability refusal', async () => {
+    const { home, dbPath } = rustHome();
+    const { out, code } = await runCli(['engine', 'status', '--json', '--probe'], { GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT });
+    expect(code).toBe(1);
+    const report = JSON.parse(out.slice(out.indexOf('{')));
+    expect(report.probe).toMatchObject({ ok: false, note: 'engine_capability_missing', refusal: { code: 'engine_capability_missing', reason: 'raw_sql' } });
+    expect(existsSync(dbPath)).toBe(false);
+  }, 60_000);
+
+  withAddon('a spread of commands on a rust brain all stop at a typed refusal and write no brain', async () => {
+    const { home, dbPath } = rustHome();
+    for (const args of [['get', 'x'], ['search', 'x'], ['stats'], ['sources', 'list'], ['config', 'get', 'x'], ['jobs', 'list']]) {
+      const { out, code } = await runCli(args, { GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT });
+      expect({ args, code, refused: out.includes('Error [engine_capability_missing]') }).toEqual({ args, code: 1, refused: true });
+    }
+    expect(existsSync(dbPath)).toBe(false);
+    expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
+  }, 120_000);
+
+  test('PGLite never loads the loader, the shell or its member table, or creates engines/, through init, put and get', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-no-rust-'));
     dirs.push(home);
     const log = join(home, 'rust-engine-loads.log');
@@ -420,7 +441,7 @@ describe('selecting the rust engine through the real CLI', () => {
     writeFileSync(preload, `
       import { appendFileSync } from 'node:fs';
       Bun.plugin({ name: 'trace-rust-engine', setup(b) {
-        b.onResolve({ filter: /rust-engine/ }, (args) => { appendFileSync(${JSON.stringify(log)}, args.path + '\\n'); return undefined; });
+        b.onResolve({ filter: /rust-engine(\\.ts|\\/(addon-|members))/ }, (args) => { appendFileSync(${JSON.stringify(log)}, args.path + '\\n'); return undefined; });
       } });
     `);
     const env = { GBRAIN_HOME: home };
@@ -443,7 +464,7 @@ describe('selecting the rust engine through the real CLI', () => {
     writeFileSync(preload, `
       import { appendFileSync } from 'node:fs';
       Bun.plugin({ name: 'trace-rust-engine', setup(b) {
-        b.onResolve({ filter: /rust-engine/ }, (args) => { appendFileSync(${JSON.stringify(log)}, args.path + '\\n'); return undefined; });
+        b.onResolve({ filter: /rust-engine(\\.ts|\\/(addon-|members))/ }, (args) => { appendFileSync(${JSON.stringify(log)}, args.path + '\\n'); return undefined; });
       } });
     `);
     await runCli(['list'], { GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: join(home, 'missing.node') }, preload);

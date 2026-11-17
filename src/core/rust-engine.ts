@@ -1,9 +1,9 @@
 /**
  * The optional Rust engine shell (docs/designs/RUST_ENGINE.md, plan PR 8).
  *
- * `openRustEngine` is the one seam: the addon loader calls it after it has loaded and verified the native addon, and
- * gets back the engine. It has every BrainEngine member; its `kind` is `'rust'`, which `BrainEngine.kind` admits once
- * the `rust` config value lands with the addon loader. Selecting the engine, loading the addon and refusing a missing or mismatched addon live in
+ * `openRustEngine` is the one seam: `constructEngine` calls it after the addon loader has loaded and verified the
+ * native addon, and gets back the engine. It has every BrainEngine member; its `kind` is `'rust'`, which
+ * `BrainEngine.kind` admits. Selecting the engine, loading the addon and refusing a missing or mismatched addon live in
  * the loader, not here. The shell reports an empty capability set, so every BrainEngine member except the lifecycle
  * ones rejects with a typed `engine_capability_missing` naming the capability it needs (rust-engine/members.ts), before
  * any work. Later Rust PRs replace those refusals with typed methods one capability at a time.
@@ -32,7 +32,7 @@ export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
 // The class implements the lifecycle members; the members it does not implement yet are installed on its prototype
 // below from RUST_ENGINE_MEMBERS, so the interface half of this merge is honest about the full BrainEngine surface.
 export interface RustEngine extends Omit<BrainEngine, 'kind'> {}
-export class RustEngine {
+export class RustEngine implements BrainEngine {
   readonly kind = 'rust' as const;
   /** Empty until the Rust engine implements a capability with parity tests (plan PRs 9 onward). */
   readonly capabilities: EngineCapabilities = new Set();

@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 
@@ -20,8 +21,14 @@ export async function constructEngine(config: EngineConfig): Promise<BrainEngine
     case 'rust': {
       // Opt-in. The loader fetches and checks the addon on first use; nobody on another engine reaches it.
       const { loadRustAddon } = await import('./rust-engine/addon-loader.ts');
-      const { openRustEngine } = await import('./rust-engine/open-rust-engine.ts');
-      return openRustEngine(config, await loadRustAddon());
+      const { openRustEngine } = await import('./rust-engine.ts');
+      const { opError } = await import('./ops/contract.ts');
+      const databasePath = config.database_path;
+      if (!databasePath || !isAbsolute(databasePath)) {
+        throw opError('config_error', 'A rust brain needs an absolute database_path in its config.', 'Set database_path in ~/.gbrain/config.json to the brain\'s store directory.');
+      }
+      const addon = await loadRustAddon();
+      return openRustEngine({ addon, databasePath });
     }
     default:
       throw new Error(
