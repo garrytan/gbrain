@@ -486,11 +486,11 @@ async function runLive(
   const shimDir = join(ctx.runRoot, '.harness-bin');
   mkdirSync(shimDir, { recursive: true });
   // Both command names: briefs and skills say `foresights`, older ones `gbrain`.
-  for (const name of ['gbrain', 'foresights']) {
-    const shimPath = join(shimDir, name);
-    // Single-quoted: validateBinPathEnv rejects quote/metacharacter values, so
-    // the interpolation cannot break out of the quoting.
-    writeFileSync(shimPath, `#!/bin/sh\nexec '${gbrainBin}' "$@"\n`, 'utf-8');
+  // Single-quoted: validateBinPathEnv rejects quote/metacharacter values, so
+  // the interpolation cannot break out of the quoting.
+  const shimBody = `#!/bin/sh\nexec '${gbrainBin}' "$@"\n`;
+  for (const shimPath of [join(shimDir, 'gbrain'), join(shimDir, 'foresights')]) {
+    writeFileSync(shimPath, shimBody, 'utf-8');
     chmodSync(shimPath, 0o755);
   }
 
