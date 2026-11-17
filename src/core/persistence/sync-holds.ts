@@ -154,6 +154,8 @@ export interface GitHoldMeta {
   page_revision?: string;
   /** GST-2843: the pass rewrote this hold because its basis or drift moved, not because a re-screen came due; a later rewrite that is not a move drops it. */
   basis_moved?: true;
+  /** GST-2869: the pass rewrote this hold only because a retry was requested, with no re-screen due and nothing moved; a later rewrite that is not one drops it. */
+  retry_only?: true;
   /** #6712 PR 1 `file_drift`: which side moved since the page's last recorded import (`unknown`: no usable record); `page_revision` is the page's revision when held. */
   sides?: 'database' | 'both' | 'unknown';
   /** GBRA-133 `file_drift`: the drift screen that held it; an unknown-side hold from an older screen is re-screened (#7340). */

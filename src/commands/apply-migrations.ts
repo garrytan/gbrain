@@ -41,7 +41,10 @@ import {
   hostWorkOwedMessage,
   MAX_CONSECUTIVE_PARTIALS,
   wedgedLedgerHint,
+  type OwedConflict,
 } from '../core/migration-ledger.ts';
+import { owedConflicts } from '../core/shared-skills/migration-host-work.ts';
+import type { SharedMigrationReport } from '../core/shared-skills/migration.ts';
 import { clearRepoPathWedge } from './migrations/v0_11_0-install.ts';
 import { shellQuote, type Action, type Effect } from '../core/agent-output.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
@@ -512,6 +515,8 @@ interface RunReport {
   wedgedHostWork?: readonly Migration[];
   /** Every wedged migration with host work owed, past a newer migration or not: the run never says all migrations are up to date while one is listed. */
   hostWorkOwed?: readonly Migration[];
+  /** The sources in conflict now, from the owed migration's read-only preview; null when it was not read. */
+  owedConflicts?: OwedConflict[] | null;
 }
 
 function unknownMigrationError(version: string): OperationError {
@@ -520,12 +525,23 @@ function unknownMigrationError(version: string): OperationError {
     { fix: { argv: ['gbrain', COMMAND, '--list'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists every registered migration and its status.' } });
 }
 
+/** The sources a wedged migration's read-only preview finds in conflict now; null when it has no preview or the preview fails. */
+async function previewOwedConflicts(migration: Migration, cli: ApplyMigrationsArgs): Promise<OwedConflict[] | null> {
+  if (!migration.preview) return null;
+  try { return owedConflicts(await migration.preview({ ...orchestratorOptsFrom(cli), dryRun: true }) as SharedMigrationReport | null); }
+  catch { return null; }
+}
+
 /** A named run of a wedged migration: it runs by name again only after its wedge is cleared; --list and --dry-run still inspect it. */
 function wedgedByNameError(version: string, hostWorkOwed: boolean): OperationError {
+  if (hostWorkOwed) {
+    return usageError(`Migration v${version} is wedged on a source conflict (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs), so it does not run by name.`,
+      `See each source's conflict and the step that settles it (read-only): ${shellQuote(hostWorkInspectArgv(version))}.`,
+      { fix: hostWorkOwedFix([version]) });
+  }
   return usageError(`Migration v${version} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs), so it does not run by name until the wedge is cleared.`,
-    `${hostWorkOwed ? `See each source's conflict first (read-only): ${shellQuote(hostWorkInspectArgv(version))}. ` : `Read ${wedgedLedgerHint()} for the last failure and fix its cause. `}`
-      + `Then clear the wedge with ${shellQuote(forceRetryArgv(version))} and run this command again.`,
-    { fix: hostWorkOwed ? hostWorkOwedFix([version]) : wedgedMigrationFix([version]) });
+    `Read ${wedgedLedgerHint()} for the last failure and fix its cause. Then clear the wedge with ${shellQuote(forceRetryArgv(version))} and run this command again.`,
+    { fix: wedgedMigrationFix([version]) });
 }
 
 /** The same invocation again once the underlying failure is fixed; any approval it needs is asked by the run itself. */
@@ -757,7 +773,8 @@ async function runLockedMigrations(
   report.wedged = plan.wedged;
   report.hostWorkOwed = plan.wedged_host_work;
   report.wedgedHostWork = plan.wedged_host_work.filter(m => forwardProgressPast(m.version, completed) === null);
-  reportWedgedMigrations(plan.wedged, plan.wedged_superseded, plan.wedged_host_work, completed);
+  report.owedConflicts = plan.wedged_host_work.length && !cli.list ? await previewOwedConflicts(plan.wedged_host_work[0]!, cli) : null;
+  reportWedgedMigrations(plan.wedged, plan.wedged_superseded, plan.wedged_host_work, completed, report.owedConflicts);
 
   const namedWedged = plan.wedged.length + plan.wedged_superseded.length + plan.wedged_host_work.length;
   const readOnlyWedged = cli.list || cli.dryRun ? namedWedged : 0;
@@ -1081,9 +1098,9 @@ function failWedged(report: RunReport): number | undefined {
   if (!wedged.length && owed.length) {
     report.doc.status = 'wedged';
     report.doc.wedged = owed.map(m => m.version);
-    report.failure = opError('migrations_pending', hostWorkOwedMessage(owed.map(m => m.version)),
-      'Run the read-only inspect in the fix, show the user each source\'s conflict, and clear the wedge only after they resolve it.',
-      { reason: 'wedged', fix: hostWorkOwedFix(owed.map(m => m.version)) });
+    report.failure = opError('migrations_pending', hostWorkOwedMessage(owed.map(m => m.version), report.owedConflicts ?? null),
+      'Run the read-only inspect in the fix and show the user each source\'s conflict and the step that settles it.',
+      { reason: 'wedged', fix: hostWorkOwedFix(owed.map(m => m.version), report.owedConflicts ?? null) });
     return 1;
   }
   if (!wedged.length) return undefined;
@@ -1107,8 +1124,9 @@ export function wedgedMigrationFix(wedged: readonly string[]): Action {
 }
 
 /** Bug 3 — surface wedged migrations as a loud, actionable error; the run continues (applied/partial/pending are still reported and run). */
-function reportWedgedMigrations(wedged: readonly Migration[], superseded: readonly Migration[], owed: readonly Migration[], completed: readonly CompletedMigrationEntry[]): void {
-  if (owed.length) console.error(`\n${hostWorkOwedMessage(owed.map(m => m.version))}`);
+function reportWedgedMigrations(wedged: readonly Migration[], superseded: readonly Migration[], owed: readonly Migration[], completed: readonly CompletedMigrationEntry[],
+  conflicts: OwedConflict[] | null): void {
+  if (owed.length) console.error(`\n${hostWorkOwedMessage(owed.map(m => m.version), conflicts)}`);
   for (const m of superseded) {
     console.error(`\nMigration v${m.version} has ${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs, but v${forwardProgressPast(m.version, completed)} completed after it, `
       + 'so it is history, not outstanding work. Nothing to do.');
