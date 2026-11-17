@@ -1,0 +1,7 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../../.."
+  },
+  "include": ["./*.ts", "./lib/**/*.ts", "../../scripts/export-corpus.ts"]
+}
