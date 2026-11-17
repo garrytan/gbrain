@@ -17,6 +17,8 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { runAuth } from '../src/commands/auth.ts';
 import { addMember, disableMember, removeMember } from '../src/core/access/members.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { tokenMemberStatuses } from '../src/core/access/token-member-status.ts';
+import type { SqlQuery } from '../src/core/sql-query.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let root: string, home: string, db: string;
@@ -84,5 +86,17 @@ describe('auth list member status (GBRA-582 item 9d)', () => {
     expect(status('bob-key')).toBe('refused');
     expect(status('carol-key')).toBe('refused');
     expect(status('bob-old-key')).toBe('REVOKED');
+  });
+
+  test('tokenMemberStatuses skips the member read when no row is bound and names a dangling binding missing', async () => {
+    let reads = 0;
+    const sql = ((..._args: unknown[]) => { reads++; return Promise.resolve([{ id: 'alice-example', disabled_at: null, tombstoned_at: null }]); }) as unknown as SqlQuery;
+    const unbound = await tokenMemberStatuses(sql, [{ member_id: null }]);
+    expect(unbound({ member_id: null })).toBeNull();
+    expect(reads).toBe(0);
+    const bound = await tokenMemberStatuses(sql, [{ member_id: 'alice-example' }, { member_id: 'ghost-example' }]);
+    expect(reads).toBe(1);
+    expect(bound({ member_id: 'alice-example' })).toBe('enabled');
+    expect(bound({ member_id: 'ghost-example' })).toBe('missing');
   });
 });
