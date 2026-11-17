@@ -11,6 +11,7 @@
  * A taken slug gets -2, -3 ... Changing the mode never moves an existing page.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import {
   DEFAULT_FILING_MODE, FILING_MODES, FILING_MODE_DESCRIPTIONS, isFilingMode, routeNewPage, type FilingMode, type FilingSuggestion,
 } from '../core/filing/modes.ts';
@@ -51,10 +52,8 @@ export async function getFilingMode(engine: BrainEngine, sourceId: string): Prom
 }
 
 export async function setFilingMode(engine: BrainEngine, sourceId: string, mode: FilingMode): Promise<boolean> {
-  const rows = await engine.executeRaw<{ id: string }>(
-    `UPDATE sources SET config = jsonb_set(CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END,
-       '{filing_mode}', to_jsonb($2::text)) WHERE id = $1 RETURNING id`, [sourceId, mode]);
-  return rows.length > 0;
+  // The engine's atomic sources.config merge (engine-sql/sources.ts): other keys survive, old bad shapes are repaired.
+  return engine.updateSourceConfig(sourceId, { filing_mode: mode });
 }
 
 /** The active schema pack's first folder for a type, without the trailing slash: its own name first, then an alias. */
@@ -92,7 +91,7 @@ export async function runFiling(engine: BrainEngine, args: string[]): Promise<vo
   const mode = await getFilingMode(engine, sourceId);
   if (mode === null) {
     console.error(`No source "${sourceId}". See foresights sources list.`);
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
 
@@ -109,7 +108,7 @@ export async function runFiling(engine: BrainEngine, args: string[]): Promise<vo
     const next = pos[1];
     if (!isFilingMode(next)) {
       console.error(`foresights filing set: give one of ${FILING_MODES.join(', ')}.`);
-      process.exitCode = 1;
+      setCliExitVerdict(1);
       return;
     }
     await setFilingMode(engine, sourceId, next);
@@ -123,7 +122,7 @@ export async function runFiling(engine: BrainEngine, args: string[]): Promise<vo
     const title = titleParts.join(' ').trim();
     if (!type || !title) {
       console.error('foresights filing route: give a page type and a title, for example: foresights filing route concept "Flywheel effect"');
-      process.exitCode = 1;
+      setCliExitVerdict(1);
       return;
     }
     const s = await routeForSource(engine, sourceId, mode,
@@ -135,5 +134,5 @@ export async function runFiling(engine: BrainEngine, args: string[]): Promise<vo
   }
 
   console.error(USAGE);
-  process.exitCode = 1;
+  setCliExitVerdict(1);
 }

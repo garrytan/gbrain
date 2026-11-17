@@ -56,7 +56,7 @@ describe('#6317 codes are registered with a full envelope', () => {
     expect(anchorsOf(path!).has(anchor!), `${code}: ${entry!.docs} does not resolve`).toBe(true);
     const row = errorCodeRow(code)!;
     expect(['agent', 'host_admin']).toContain(row.actor);
-    expect(row.verify).toStartWith('foresights ');
+    expect(row.verify).toStartWith('gbrain ');
     expect(row.effects).toEqual([]);
   });
 
@@ -71,7 +71,7 @@ describe('#6317 codes are registered with a full envelope', () => {
       expect(entry.fix!.verify!.argv).toEqual(['gbrain', 'doctor', '--only', code, '--json']);
       const rendered = renderAction(entry.fix!, cliRenderContext());
       expect(rendered.verify?.argv).toEqual(['gbrain', 'doctor', '--only', code, '--json']);
-      expect(rendered.command).toStartWith('foresights ');
+      expect(rendered.command).toStartWith('gbrain ');
     }
   });
 
@@ -118,7 +118,7 @@ describe('drain_stalled: the same-host stop has a cause vocabulary and a filled 
     expect(env.fix?.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'managed_sync_not_moving', '--json']);
     expect(env.docs).toContain('docs/guides/write-refusals.md#drain-stalled');
     expect(env.docs_cmd).toEqual(['gbrain', 'errors', 'drain_stalled']);
-    expect(env.suggestion).toContain('foresights sources writer status --source default --json');
+    expect(env.suggestion).toContain('gbrain sources writer status --source default --json');
   });
 
   test('the write-refusals row and the live-sync outcome table carry the new meaning, not the old one', () => {

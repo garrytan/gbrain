@@ -65,7 +65,7 @@ describe('D1 CLI error rendering', () => {
     const human = await cli(['stats']);
     expect(human.exitCode).toBe(1);
     expect(human.stderr).toContain('Error [no_brain]: No brain configured');
-    expect(human.stderr).toContain('Fix: foresights init --pglite --no-embedding');
+    expect(human.stderr).toContain('Fix: gbrain init --pglite --no-embedding');
     const json = await cli(['stats', '--json']);
     expect(json.exitCode).toBe(1);
     expect(JSON.parse(json.stdout)).toMatchObject({

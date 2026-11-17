@@ -58,9 +58,9 @@ export function readBrandEnv(env: Record<string, string | undefined>, key: strin
 }
 
 /**
- * Copy every `FORESIGHTS_X` into `GBRAIN_X` where `GBRAIN_X` is unset, so a
+ * Copy every `FORESIGHTS_<key>` into its stored name where that is unset, so a
  * setting written with the new name reaches code that reads the stored one. A
- * set `GBRAIN_X` always wins. Returns the keys it set. Run once, first, at each
+ * set stored name always wins. Returns the keys it set. Run once, first, at each
  * process entry; children inherit the result.
  */
 export function adoptAliasEnv(env: Record<string, string | undefined>): string[] {

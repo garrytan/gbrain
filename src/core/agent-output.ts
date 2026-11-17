@@ -410,12 +410,17 @@ function replaceWholeCommand(text: string, bare: string, step: string): string {
 function appendFixToSuggestion(suggestion: string, fix: RenderedAction | undefined, unpinned?: readonly string[]): string {
   if (!fix) return suggestion;
   const step = renderedStep(fix);
-  if (!step || suggestion.includes(step)) return suggestion;
+  if (!step) return suggestion;
+  // Prose names the command `foresights …`; a fix renders from its stored argv (`gbrain …`). Either counts as quoted.
+  const alias = (cmd: string) => cmd.replace(/^gbrain(?= |$)/, 'foresights');
+  if (suggestion.includes(step) || suggestion.includes(alias(step))) return suggestion;
   // Prose that already quotes the fix before its A1 routing pin quotes the pinned command instead (never both).
   const bare = unpinned?.length && !fix.mcp ? shellQuote(unpinned) : undefined;
   if (bare && bare !== step) {
-    const replaced = replaceWholeCommand(suggestion, bare, step);
-    if (replaced !== suggestion) return replaced;
+    for (const [from, to] of [[bare, step], [alias(bare), alias(step)]] as const) {
+      const replaced = replaceWholeCommand(suggestion, from, to);
+      if (replaced !== suggestion) return replaced;
+    }
   }
   const prose = suggestion.trim();
   return prose ? `${prose.replace(/[.\s]*$/, '.')} Next: ${step}` : `Next: ${step}`;

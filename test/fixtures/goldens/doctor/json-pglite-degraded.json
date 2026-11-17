@@ -46,13 +46,13 @@
             "consent": [
               "persistent_install"
             ],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
             "next": "report",
             "requires_exclusive": false,
-            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "user_message": "Which agent app should get foresights memory? The install guide has a one-line command for each.",
+            "why": "For Claude Code or Codex, run `foresights setup claude-code` or `foresights setup codex` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to foresights> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
-          "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
+          "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `foresights serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `foresights integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
           "readiness_state": "not_applicable",
           "severity": "info",
@@ -171,7 +171,7 @@
           },
           "elapsed_ms": "<volatile>",
           "fix_unavailable_reason": "unstructured",
-          "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
+          "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `foresights skillpack sync`.",
           "name": "skill_currency",
           "status": "warn"
         },
@@ -196,7 +196,7 @@
             }
           },
           "elapsed_ms": "<volatile>",
-          "message": "1 skill(s), 0 KB, 0 gbrain invocation(s) (0 with undeclared subcommands, flags checked); no findings",
+          "message": "1 skill(s), 0 KB, 0 foresights invocation(s) (0 with undeclared subcommands, flags checked); no findings",
           "name": "skill_health",
           "status": "ok"
         },
@@ -242,7 +242,7 @@
             "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
           },
           "elapsed_ms": "<volatile>",
-          "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient",
+          "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: foresights config set memory.auto_writeback off). Enable: foresights config set memory.auto_writeback salient",
           "name": "memory_writeback",
           "status": "ok"
         },
@@ -302,9 +302,9 @@
                 "host"
               ]
             },
-            "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
+            "why": "Runs the setup migrations foresights init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
           },
-          "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after gbrain init, not a failed upgrade.",
+          "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after foresights init, not a failed upgrade.",
           "name": "minions_migration",
           "severity": "info",
           "status": "ok"
@@ -326,7 +326,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
+          "message": "disabled (opt-in). Enable with: foresights config set autopilot.nightly_quality_probe.enabled true",
           "name": "nightly_quality_probe_health",
           "status": "ok"
         },
@@ -344,7 +344,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "disabled (opt-in). Enable with: gbrain config set cycle.conversation_facts_backfill.enabled true",
+          "message": "disabled (opt-in). Enable with: foresights config set cycle.conversation_facts_backfill.enabled true",
           "name": "conversation_facts_backlog",
           "status": "ok"
         },
@@ -393,14 +393,14 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `gbrain config set autopilot.conversation_parser_probe.enabled true`",
+          "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `foresights config set autopilot.conversation_parser_probe.enabled true`",
           "name": "conversation_parser_probe_health",
           "status": "ok"
         },
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "gbrain home is outside any enclosing git worktree.",
+          "message": "foresights home is outside any enclosing git worktree.",
           "name": "home_dir_in_worktree",
           "status": "ok"
         },
@@ -424,7 +424,7 @@
             "shadows": []
           },
           "elapsed_ms": "<volatile>",
-          "message": "No embedding key is set here (OPENAI_API_KEY or openai_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
+          "message": "No embedding key is set here (OPENAI_API_KEY or openai_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `foresights doctor` runs in; a daemon (foresights serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
           "name": "embedding_key_source",
           "status": "ok"
         },
@@ -435,7 +435,7 @@
             "provider_env": []
           },
           "elapsed_ms": "<volatile>",
-          "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+          "message": "No foresights setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
           "name": "provider_consent",
           "readiness_state": "not_applicable",
           "severity": "info",
@@ -452,11 +452,11 @@
             "consent": [
               "persistent_install"
             ],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
             "next": "report",
             "requires_exclusive": false,
-            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "user_message": "Which agent app should get foresights memory? The install guide has a one-line command for each.",
+            "why": "For Claude Code or Codex, run `foresights setup claude-code` or `foresights setup codex` (it registers serve behind foresights's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to foresights> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "No agent harness was detected. Wire one when the user picks an agent app.",
           "name": "harness_wiring",
@@ -510,17 +510,17 @@
               "explicit_retention_days": null,
               "over_target": false,
               "target_bytes": 8589934592,
-              "used_bytes": 19163
+              "used_bytes": 19175
             },
             "inspected": 2,
             "outstanding": [],
             "paused_producers": [],
             "resources": [],
             "truncated": false,
-            "verify": "gbrain doctor --only persistence_capacity --json"
+            "verify": "foresights doctor --only persistence_capacity --json"
           },
           "elapsed_ms": "<volatile>",
-          "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 19163 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+          "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 19175 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
           "name": "persistence_capacity",
           "status": "ok"
         },
@@ -863,7 +863,7 @@
             "runbook": "docs/guides/write-refusals.md#managed-guard-page-children"
           },
           "elapsed_ms": "<volatile>",
-          "message": "Guarded tables carry only the columns gbrain creates.",
+          "message": "Guarded tables carry only the columns foresights creates.",
           "name": "managed_guard_schema_drift",
           "status": "ok"
         },
@@ -1136,7 +1136,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
+          "message": "Not applicable: no member is marked as an audience (foresights access member kind <id> audience).",
           "name": "access_audience_members",
           "readiness_state": "not_applicable",
           "severity": "info",
@@ -1154,7 +1154,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
+          "message": "Not applicable: no member is labelled-only (foresights access member labelled-only <id> on).",
           "name": "access_labelled_only_members",
           "readiness_state": "not_applicable",
           "severity": "info",
@@ -1172,7 +1172,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "Not applicable: this brain has no guest source (gbrain guests init).",
+          "message": "Not applicable: this brain has no guest source (foresights guests init).",
           "name": "guest_source",
           "readiness_state": "not_applicable",
           "severity": "info",
@@ -1223,7 +1223,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Every function this gbrain's schema defines has its body",
+          "message": "Every function this foresights's schema defines has its body",
           "name": "schema_function_bodies",
           "status": "ok"
         },
@@ -1309,7 +1309,7 @@
               "paid",
               "egress"
             ],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/eval/decisions/supersession-threshold-dev/README.md",
+            "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/eval/decisions/supersession-threshold-dev/README.md",
             "next": "ask_user",
             "requires_exclusive": false,
             "then": {
@@ -1344,7 +1344,7 @@
                   "host"
                 ]
               },
-              "why": "Registers the measured threshold for this model; the next fact write uses it. Remove it with gbrain config unset facts.supersession_thresholds."
+              "why": "Registers the measured threshold for this model; the next fact write uses it. Remove it with foresights config unset facts.supersession_thresholds."
             },
             "user_message": "Facts saved on this brain never replace a similar older fact automatically, because its embedding model (openai:text-embedding-3-large@3072) has no measured threshold. Measuring one sends about 23K tokens of synthetic test sentences to the embedding provider (about a cent). OK to run it?",
             "why": "Supersession by similarity is off for openai:text-embedding-3-large@3072 until a threshold is measured for it. This embeds the synthetic C2 fixture (1,506 test sentences, about 23K tokens) with openai:text-embedding-3-large, then replays it at thresholds 0.80 to 0.97 on a throwaway in-memory brain (several minutes, no further provider calls) and prints threshold_pick.guarded. No brain content is sent."
@@ -1462,7 +1462,7 @@
             "values_truncated": false
           },
           "elapsed_ms": "<volatile>",
-          "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+          "message": "No page relies on an access or confidentiality value foresights does not recognize.",
           "name": "privacy_label_ignored",
           "status": "ok"
         },
@@ -1511,7 +1511,7 @@
         {
           "category": "ops",
           "details": {
-            "command": "gbrain repair request-indexes --apply",
+            "command": "foresights repair request-indexes --apply",
             "count": 0,
             "docs": "docs/guides/repair.md#request-indexes",
             "indexes": [
@@ -1559,7 +1559,7 @@
             "rows": 1,
             "rows_exact": true,
             "scopes": [],
-            "verify": "gbrain doctor --json (check persistence_request_growth)",
+            "verify": "foresights doctor --json (check persistence_request_growth)",
             "window_days": 7
           },
           "elapsed_ms": "<volatile>",
@@ -1648,7 +1648,7 @@
             "hooks": []
           },
           "elapsed_ms": "<volatile>",
-          "message": "No outdated gbrain frontmatter pre-commit hook is installed.",
+          "message": "No outdated foresights frontmatter pre-commit hook is installed.",
           "name": "frontmatter_hook",
           "status": "ok"
         },
@@ -1822,7 +1822,7 @@
         {
           "category": "ops",
           "details": {
-            "command": "gbrain repair embedding-effects",
+            "command": "foresights repair embedding-effects",
             "count": "exact",
             "docs": "docs/guides/repair.md#stale-queued-embedding-effects",
             "effects": [],
@@ -1847,7 +1847,7 @@
             "sources": []
           },
           "elapsed_ms": "<volatile>",
-          "message": "No group- or world-readable gbrain files under Google source directories outside ~/.gbrain.",
+          "message": "No group- or world-readable foresights files under Google source directories outside ~/.gbrain.",
           "name": "google_file_modes",
           "status": "ok"
         },
@@ -2034,7 +2034,7 @@
             "unclassifiable": 0
           },
           "elapsed_ms": "<volatile>",
-          "message": "No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
+          "message": "No active fact from a foresights self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
           "name": "captured_facts_active",
           "status": "ok"
         },
@@ -2142,7 +2142,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).",
+          "message": "Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (foresights extract-conversation-facts --source-id <id> --dry-run previews it).",
           "name": "extraction_date_grounding",
           "status": "ok"
         },
@@ -2191,7 +2191,7 @@
         {
           "category": "skill",
           "elapsed_ms": "<volatile>",
-          "message": "whoknows eval fixture present (10 queries). Run `gbrain eval whoknows test/fixtures/whoknows-eval.jsonl` to grade.",
+          "message": "whoknows eval fixture present (10 queries). Run `foresights eval whoknows test/fixtures/whoknows-eval.jsonl` to grade.",
           "name": "whoknows_health",
           "status": "ok"
         },
@@ -2281,7 +2281,7 @@
             "unscanned": []
           },
           "elapsed_ms": "<volatile>",
-          "message": "No file has frontmatter gbrain repair frontmatter would fix.",
+          "message": "No file has frontmatter foresights repair frontmatter would fix.",
           "name": "frontmatter_repairable",
           "status": "ok"
         },
@@ -2295,7 +2295,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query \"...\" --top-k 5` to populate.",
+          "message": "No probe runs in the last 7 days. Run `foresights eval suspected-contradictions --query \"...\" --top-k 5` to populate.",
           "name": "contradictions",
           "status": "ok"
         },
@@ -2403,7 +2403,7 @@
             "steps": 0
           },
           "elapsed_ms": "<volatile>",
-          "message": "Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
+          "message": "Free upkeep has not run on this brain yet; foresights maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
           "name": "unattended_maintenance",
           "readiness_state": "not_applicable",
           "severity": "info",
@@ -2464,7 +2464,7 @@
             "stale_days": 2
           },
           "elapsed_ms": "<volatile>",
-          "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (gbrain transcripts archive status names each reader).",
+          "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (foresights transcripts archive status names each reader).",
           "name": "transcript_archive_freshness",
           "readiness_state": "not_applicable",
           "severity": "info",
@@ -2529,7 +2529,7 @@
             "mirror_window_ends": "2026-11-04"
           },
           "elapsed_ms": "<volatile>",
-          "message": "Every active legacy token uses the unified grant columns. The permissions mirror for older gbrain binaries is kept until 2026-11-04.",
+          "message": "Every active legacy token uses the unified grant columns. The permissions mirror for older foresights binaries is kept until 2026-11-04.",
           "name": "legacy_token_grant_shape",
           "status": "ok"
         },
@@ -2665,7 +2665,7 @@
             ],
             "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
             "consent": [],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+            "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/operations/backup-check.md",
             "inputs": [
               {
                 "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
@@ -2687,7 +2687,7 @@
             },
             "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
           },
-          "message": "Not urgent yet: the brain holds 0 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
+          "message": "Not urgent yet: the brain holds 0 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `foresights backup status` for each asset's fix command.",
           "name": "backup_coverage",
           "readiness_state": "degraded",
           "severity": "info",
@@ -2832,7 +2832,7 @@
           "category": "brain",
           "details": {
             "conversation": null,
-            "fix": "preview links: gbrain facts relink --dry-run",
+            "fix": "preview links: foresights facts relink --dry-run",
             "inferred_7d": {
               "mention": 0,
               "page": 0
@@ -3109,7 +3109,7 @@
             "key_source": "none"
           },
           "elapsed_ms": "<volatile>",
-          "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+          "message": "Reporting back through Wakeshift is off (foresights wakeshift enable turns it on).",
           "name": "wakeshift",
           "readiness_state": "disabled_by_choice",
           "severity": "info",
@@ -3154,7 +3154,7 @@
             ],
             "engine": "pglite",
             "expression_indexes_without_statistics": [],
-            "fix": "gbrain repair planner-stats --apply",
+            "fix": "foresights repair planner-stats --apply",
             "missing_search_statistics": [],
             "stale": []
           },
@@ -3180,7 +3180,7 @@
             "weights_off_neutral": 0
           },
           "elapsed_ms": "<volatile>",
-          "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
+          "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: foresights config set feedback.enabled true",
           "name": "retrieval_feedback_health",
           "status": "ok"
         },
@@ -3212,10 +3212,10 @@
             ],
             "command": "gbrain beliefs enable --source default --brain host",
             "consent": [],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check",
+            "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check",
             "next": "ask_user",
             "requires_exclusive": false,
-            "user_message": "Do you want gbrain to keep a belief ledger (a recorded history of facts, takes and links) for this source?",
+            "user_message": "Do you want foresights to keep a belief ledger (a recorded history of facts, takes and links) for this source?",
             "verify": {
               "argv": [
                 "gbrain",
@@ -3379,7 +3379,7 @@
             "pages": 0
           },
           "elapsed_ms": "<volatile>",
-          "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: gbrain config set memory.core.enabled true, then gbrain core init.",
+          "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: foresights config set memory.core.enabled true, then foresights core init.",
           "name": "core_memory",
           "status": "ok"
         },
@@ -3447,7 +3447,7 @@
             "unknown_builds": []
           },
           "elapsed_ms": "<volatile>",
-          "message": "No long-running gbrain process (serve, jobs supervisor, worker) is running on this host.",
+          "message": "No long-running foresights process (serve, jobs supervisor, worker) is running on this host.",
           "name": "runtime_build_skew",
           "status": "ok"
         },
@@ -3656,7 +3656,7 @@
             ],
             "command": "gbrain sources retry-held default --unindexed --brain host",
             "consent": [],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
+            "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
             "next": "run",
             "requires_exclusive": false,
             "then": {
@@ -3672,7 +3672,7 @@
               ],
               "command": "gbrain sync --source default --no-pull --brain host",
               "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
+              "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
               "next": "run",
               "requires_exclusive": false,
               "verify": {
@@ -3686,7 +3686,7 @@
                   "host"
                 ]
               },
-              "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status default lists."
+              "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that foresights sources status default lists."
             },
             "verify": {
               "argv": [
@@ -3701,7 +3701,7 @@
             },
             "why": "Finds the committed files of default with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
           },
-          "message": "Unindexed files are not known for default (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
+          "message": "Unindexed files are not known for default (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run foresights sources retry-held <id> --unindexed.",
           "name": "unindexed_files",
           "readiness_state": "unknown",
           "severity": "info",
@@ -3837,7 +3837,7 @@
             "consent": [
               "destructive"
             ],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
+            "docs": "https://github.com/aimonk2025/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
             "next": "ask_user",
             "requires_exclusive": false,
             "user_message": "Your MCP request log holds 0 row(s) (0.0 MB) and nothing prunes it. Turn on 90-day retention? Request details older than 90 days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.",
@@ -4041,7 +4041,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "no Google accounts connected (gbrain google connect to start)",
+          "message": "no Google accounts connected (foresights google connect to start)",
           "name": "google_oauth",
           "status": "ok"
         },
@@ -4077,7 +4077,7 @@
           "category": "brain",
           "elapsed_ms": "<volatile>",
           "fix_unavailable_reason": "unstructured",
-          "message": "Schema width mismatch: content_chunks.embedding is vector(1024) but gateway resolved embedding_dimensions = 3072.\n\nEmbedding dimension mismatch detected.\n\n  Existing column: vector(1024)\n  Requested:       vector(3072)  (openai:text-embedding-3-large)\n\nSwitching dims re-embeds every chunk and fact;\nPGLite cannot ALTER vector column types in place (pgvector ships as WASM).\n\nKeep this brain's width (no rebuild; pages and facts kept):\n\n  gbrain init --force --embedding-model openai:text-embedding-3-large --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite\n\nChange the width (re-embeds; pages and DB-only facts kept; preview first):\n\n  gbrain migrate embeddings --to openai:text-embedding-3-large --dim 3072 --dry-run\n\nLast resort (moves the datastore aside; DB-only pages and facts are NOT carried over):\n\n  gbrain reinit-pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 3072\n\nFull guide: docs/embedding-migrations.md",
+          "message": "Schema width mismatch: content_chunks.embedding is vector(1024) but gateway resolved embedding_dimensions = 3072.\n\nEmbedding dimension mismatch detected.\n\n  Existing column: vector(1024)\n  Requested:       vector(3072)  (openai:text-embedding-3-large)\n\nSwitching dims re-embeds every chunk and fact;\nPGLite cannot ALTER vector column types in place (pgvector ships as WASM).\n\nKeep this brain's width (no rebuild; pages and facts kept):\n\n  foresights init --force --embedding-model openai:text-embedding-3-large --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite\n\nChange the width (re-embeds; pages and DB-only facts kept; preview first):\n\n  foresights migrate embeddings --to openai:text-embedding-3-large --dim 3072 --dry-run\n\nLast resort (moves the datastore aside; DB-only pages and facts are NOT carried over):\n\n  foresights reinit-pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 3072\n\nFull guide: docs/embedding-migrations.md",
           "name": "embedding_width_consistency",
           "status": "warn"
         },
@@ -4212,7 +4212,7 @@
             ],
             "next": "ask_user",
             "requires_exclusive": false,
-            "user_message": "gbrain can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
+            "user_message": "foresights can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
             "verify": {
               "argv": [
                 "gbrain",
@@ -4270,13 +4270,13 @@
           "tier": "symptom"
         },
         {
-          "fix": "Schema width mismatch: content_chunks.embedding is vector(1024) but gateway resolved embedding_dimensions = 3072.\n\nEmbedding dimension mismatch detected.\n\n  Existing column: vector(1024)\n  Requested:       vector(3072)  (openai:text-embedding-3-large)\n\nSwitching dims re-embeds every chunk and fact;\nPGLite cannot ALTER vector column types in place (pgvector ships as WASM).\n\nKeep this brain's width (no rebuild; pages and facts kept):\n\n  gbrain init --force --embedding-model openai:text-embedding-3-large --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite\n\nChange the width (re-embeds; pages and DB-only facts kept; preview first):\n\n  gbrain migrate embeddings --to openai:text-embedding-3-large --dim 3072 --dry-run\n\nLast resort (moves the datastore aside; DB-only pages and facts are NOT carried over):\n\n  gbrain reinit-pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 3072\n\nFull guide: docs/embedding-migrations.md",
+          "fix": "Schema width mismatch: content_chunks.embedding is vector(1024) but gateway resolved embedding_dimensions = 3072.\n\nEmbedding dimension mismatch detected.\n\n  Existing column: vector(1024)\n  Requested:       vector(3072)  (openai:text-embedding-3-large)\n\nSwitching dims re-embeds every chunk and fact;\nPGLite cannot ALTER vector column types in place (pgvector ships as WASM).\n\nKeep this brain's width (no rebuild; pages and facts kept):\n\n  foresights init --force --embedding-model openai:text-embedding-3-large --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite\n\nChange the width (re-embeds; pages and DB-only facts kept; preview first):\n\n  foresights migrate embeddings --to openai:text-embedding-3-large --dim 3072 --dry-run\n\nLast resort (moves the datastore aside; DB-only pages and facts are NOT carried over):\n\n  foresights reinit-pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 3072\n\nFull guide: docs/embedding-migrations.md",
           "name": "embedding_width_consistency",
           "status": "warn",
           "tier": "symptom"
         },
         {
-          "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
+          "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `foresights skillpack sync`.",
           "name": "skill_currency",
           "status": "warn",
           "tier": "symptom"
@@ -4285,8 +4285,8 @@
       "unknown_sections": []
     },
     "stderr": [
-      "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
-      "[gbrain doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: gbrain config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late."
+      "[foresights] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.",
+      "[foresights doctor] non-interactive run: the check run (not connect or migrations) is capped at 90000 ms (doctor.default_budget_ms); checks past it report health unknown. Off for one run: --budget-ms 0; off for good: foresights config set doctor.default_budget_ms 0. On PGLite a statement already running cannot be stopped, so a check can finish late."
     ],
     "stdout": "<json>"
   },

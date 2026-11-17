@@ -37,6 +37,7 @@ import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
 import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../core/brain-repo-durability.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { loadActivePack } from '../core/schema-pack/load-active.ts';
 import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts';
 import { safeCliToken, sanitizeTypeForDisplay, storedTypeMissesPack, type TypeUsagePack } from '../core/schema-pack/type-usage.ts';
@@ -1036,7 +1037,7 @@ export async function runLint(args: string[]) {
   progress.finish();
   // --strict: what is left after this run (fixes applied for real do not count; a dry run fixes nothing).
   const remaining = result.total_issues - (doFix && !dryRun ? result.total_fixed : 0);
-  if (strict && remaining > 0) process.exitCode = 1;
+  if (strict && remaining > 0) setCliExitVerdict(1);
   if (json) {
     console.log(JSON.stringify({ ...result, links_checked: links && statSync(target).isDirectory(), remaining_issues: remaining,
       pages: reported.map(r => ({ file: r.file, fixed: r.fixed, issues: r.issues.map(i => ({

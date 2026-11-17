@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 import { listInboxFiles } from '../core/ingestion/sources/inbox-folder.ts';
@@ -147,7 +148,7 @@ export async function buildNav(engine: BrainEngine, opts: { sourceId?: string; o
 export async function runNav(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return; }
   const sub = args[0] && !args[0].startsWith('--') ? args[0] : 'build';
-  if (sub !== 'build') { console.error(USAGE); process.exitCode = 1; return; }
+  if (sub !== 'build') { console.error(USAGE); setCliExitVerdict(1); return; }
   const json = args.includes('--json');
   const dryRun = args.includes('--dry-run');
   let result: NavResult;
@@ -155,10 +156,10 @@ export async function runNav(engine: BrainEngine, args: string[]): Promise<void>
     result = await buildNav(engine, { sourceId: flagValue(args, '--source'), out: flagValue(args, '--out'), dryRun });
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
+    setCliExitVerdict(1);
     return;
   }
-  if (result.files.some(f => f.action === 'refuse')) process.exitCode = 1;
+  if (result.files.some(f => f.action === 'refuse')) setCliExitVerdict(1);
   if (json) { console.log(JSON.stringify({ ...result, dry_run: dryRun }, null, 2)); return; }
   const verb = (a: NavMerge['action']) => (dryRun ? { create: 'would create', update: 'would update', unchanged: 'unchanged', refuse: 'left alone' }
     : { create: 'created', update: 'updated', unchanged: 'unchanged', refuse: 'left alone' })[a];

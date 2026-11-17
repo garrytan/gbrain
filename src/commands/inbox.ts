@@ -20,6 +20,7 @@
 import { join, relative } from 'path';
 import { existsSync, readdirSync } from 'fs';
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { gbrainPath } from '../core/config.ts';
 import {
   createInboxFolderSource,
@@ -114,7 +115,7 @@ export async function runInbox(engine: BrainEngine, args: string[]): Promise<voi
     return;
   }
 
-  if (sub !== 'run') { console.error(USAGE); process.exitCode = 1; return; }
+  if (sub !== 'run') { console.error(USAGE); setCliExitVerdict(1); return; }
   const deliver = makeInboxDelivery(engine, sourceId, logger);
   const where = engine.kind === 'pglite' ? 'written as pages' : 'queued for the job worker (foresights jobs work; autopilot runs one)';
 
@@ -123,7 +124,7 @@ export async function runInbox(engine: BrainEngine, args: string[]): Promise<voi
     mkdirSync(inboxDir, { recursive: true });
     const r = await processInboxOnce({ inboxDir, textOnly: true, deliver }, sourceContext(engine, logger, new AbortController().signal));
     const rel = (fs: string[]) => fs.map(f => relative(inboxDir, f));
-    if (r.failed.length) process.exitCode = 1;
+    if (r.failed.length) setCliExitVerdict(1);
     if (json) {
       console.log(JSON.stringify({ inbox: inboxDir, captured: rel(r.emitted), left_unreadable: rel(r.held), failed: rel(r.failed), skipped: rel(r.skipped),
         delivery: engine.kind === 'pglite' ? 'written' : 'queued' }, null, 2));
