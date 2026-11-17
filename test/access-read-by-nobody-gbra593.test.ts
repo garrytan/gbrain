@@ -133,26 +133,29 @@ describe('readByNobodyNote reasons', () => {
 });
 
 describe('member disable when the stranded-page check fails', () => {
-  test('the disable still succeeds and says how to check the pages by hand', async () => {
-    const engine = new PGLiteEngine();
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' } as never);
     await engine.initSchema();
-    try {
-      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-      await fixture(engine, 'source-a');
-      const original = engine.executeRaw.bind(engine);
-      const spy = spyOn(engine, 'executeRaw').mockImplementation(((sql: string, params?: unknown[]) => {
-        if (sql.includes('gbrain_access_readers(frontmatter) @>')) return Promise.reject(new Error('connection dropped'));
-        return original(sql, params as never);
-      }) as never);
-      let out: string;
-      try { out = await access(engine, ['member', 'disable', 'bob-example']); } finally { spy.mockRestore(); }
-      expect(out).toContain('Member disabled: bob-example');
-      expect(out).toContain('Could not check which pages naming it no enabled member reads (connection dropped)');
-      expect(out).toContain('gbrain access who-can-read <slug>');
-      const [row] = await engine.executeRaw<{ disabled: boolean }>("SELECT disabled_at IS NOT NULL AS disabled FROM access_members WHERE id = 'bob-example'");
-      expect(row!.disabled).toBe(true);
-    } finally { await engine.disconnect(); }
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await fixture(engine, 'source-a');
+  }, 120_000);
+  afterAll(async () => { await engine?.disconnect(); });
+
+  test('the disable still succeeds and says how to check the pages by hand', async () => {
+    const original = engine.executeRaw.bind(engine);
+    const spy = spyOn(engine, 'executeRaw').mockImplementation(((sql: string, params?: unknown[]) => {
+      if (sql.includes('gbrain_access_readers(frontmatter) @>')) return Promise.reject(new Error('connection dropped'));
+      return original(sql, params as never);
+    }) as never);
+    let out: string;
+    try { out = await access(engine, ['member', 'disable', 'bob-example']); } finally { spy.mockRestore(); }
+    expect(out).toContain('Member disabled: bob-example');
+    expect(out).toContain('Could not check which pages naming it no enabled member reads (connection dropped)');
+    expect(out).toContain('gbrain access who-can-read <slug>');
+    const [row] = await engine.executeRaw<{ disabled: boolean }>("SELECT disabled_at IS NOT NULL AS disabled FROM access_members WHERE id = 'bob-example'");
+    expect(row!.disabled).toBe(true);
   }, 120_000);
 });
 
