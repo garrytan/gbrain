@@ -70,7 +70,7 @@
       "dropInvalidConcurrentIndex": "6864d844b7dfb2fbecdd0fb9c73e06248473376feb794b3fe58f036c70d2d44c",
       "enableRlsSql": "b7901b3d5231fcfacd3260ce0f59d4701d8c0bee902808ff48b1d8affbd444b6",
       "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
-      "failClosedLedgerGuards": "dadd3ceb13286ca7ab969a911a310c87be313de6ec2c2c8e14d3f95b72901481",
+      "failClosedLedgerGuards": "8a095ef92247a83e7d569c0a721facf0bb4c4213bd2ed5149a81947469bbd5e6",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "d0b537d687ed3f88f61e33b88490c6dcc74b829485b0c2c44d3238d100c4c3a7",
       "hardenFunctionSearchPaths": "ca7bce96a087bfb4644268e5c2ad0ace76532905ceffb4efdc69608e0ef11894",
@@ -5218,12 +5218,18 @@
         "version": 319
       },
       {
-        "handler": "absent",
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "failClosedLedgerGuards"
+          ],
+          "sha256": "dda05e2e1849dbaac55e036330c44c55c6c701a745e6aa2366c81592434ec01d"
+        },
         "idempotent": true,
         "name": "unbacked_entity_keys_guards",
         "sql": {
-          "length": 12386,
-          "sha256": "3a696465c4b22a57846b04b823d1afc66dc1a6a5893100403c9070e986ff73c8"
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -986,8 +986,9 @@ export function privateEntityFilterForCaller(factAlias: string, perCandidate = f
   const entityPolicy = currentCallerAccess().labelledOnly ? withCallerAccess({ labelledOnly: false }, () => privatePagesFilterForCaller('entity_pp')) : privatePagesFilterForCaller('entity_pp');
   const held = `CASE WHEN ${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)} THEN ${factAlias}.source_markdown_slug END`;
   // GBRA-574: a bare name key reads as the page later written at <dir>/<key>, so that page's privacy covers it.
-  const keyed = NAME_KEY_PAGE_DIRS.map(dir => `CASE WHEN strpos(${factAlias}.entity_slug, '/') = 0 THEN '${dir}/' || ${factAlias}.entity_slug END`).join(', ');
-  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}, ${keyed}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})${sharedHeldRuledSql(factAlias)})`;
+  const keyedSlugs = `ARRAY[${NAME_KEY_PAGE_DIRS.map(dir => `'${dir}/' || ${factAlias}.entity_slug`).join(', ')}]`;
+  const keyed = `CASE WHEN strpos(${factAlias}.entity_slug, '/') = 0 THEN NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ANY(${keyedSlugs}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''}) ELSE TRUE END`;
+  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''}) AND ${keyed}${sharedHeldRuledSql(factAlias)})`;
 }
 
 /**
