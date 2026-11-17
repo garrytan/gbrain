@@ -2893,6 +2893,8 @@
     "revision_required": 1,
     "revision_unavailable": 1,
     "runtime_build_skew": 1,
+    "rust_engine_addon_mismatch": 1,
+    "rust_engine_addon_missing": 1,
     "schedule_install_failed": 1,
     "schedule_unsupported": 1,
     "schema_lock_blocked": 1,
