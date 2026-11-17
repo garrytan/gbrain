@@ -16,8 +16,12 @@ bash scripts/dev/rust-engine-bootstrap.sh && . ~/.gbrain-rust-dev.env
 It needs Ubuntu and root or passwordless sudo. It never prompts. Run it again
 at any time: it skips what is already there, and after a machine restart it
 only starts Postgres again. It ends with one line per step and
-`RESULT: PASS` or `RESULT: FAIL`. Each step's full output is in
-`~/.gbrain-rust-dev/logs/<step>.log`.
+`RESULT: PASS` or `RESULT: FAIL`. Each run writes every step's full output to
+a new private folder, `~/.gbrain-rust-dev/logs/run-<time>-<random>/<step>.log`,
+and prints that folder's path first. Old run folders stay until you delete them.
+
+The script ignores `PGHOST`, `PGHOSTADDR` and `PGSERVICE` (it unsets them for
+itself), so it always works on the local `16/main` cluster.
 
 ## What it does
 
@@ -27,7 +31,7 @@ only starts Postgres again. It ends with one line per step and
 | `bun` | Installs the Bun version in `package.json` `engines.bun` (1.4.4 today) into `~/.bun`, and links `bun` and `bunx` into `/usr/local/bin`, so it wins over an older system Bun in every shell. |
 | `postgres` | Installs `postgresql-16` and `postgresql-16-pgvector` from the PostgreSQL apt archive if they are missing. `pg_trgm` and `pgcrypto` come with the server. |
 | `pg-start` | Creates the `16/main` cluster if there is none and starts it. It uses `pg_ctlcluster`, so it works without systemd. |
-| `pg-database` | Creates the role `gbrain` (password `gbrain`, superuser) and the database `gbrain_test`, and enables `vector`, `pg_trgm` and `pgcrypto` in it. |
+| `pg-database` | Creates the role `gbrain` (password `gbrain`, superuser) if it does not exist, and the database `gbrain_test`, and enables `vector`, `pg_trgm` and `pgcrypto` in it. It never changes a role that already exists. If that role cannot log in with the configured password or is not a superuser, the step fails and tells you to set `GBRAIN_DEV_PG_USER` or `GBRAIN_DEV_PG_PASSWORD`. |
 | `rust` | Installs rustup with the stable toolchain, `rustfmt` and `clippy`, and links `cargo`, `rustc`, `rustup`, `rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver` and `rustdoc` into `/usr/local/bin`. |
 | `napi-cli` | Installs the napi-rs CLI (`@napi-rs/cli` 3.x) as a global Bun tool, plus a small `napi` wrapper in `~/.gbrain-rust-dev/bin` that runs it on Bun. Node is not needed: Ubuntu's Node 18 is too old for the CLI. Nothing is added to `package.json`. |
 | `bun-install` | Runs `bun install --frozen-lockfile` in the repository. |
@@ -112,12 +116,11 @@ Postgres 17 s. Rust took 8 s.
 - The script installs the Rust stable toolchain. When the Rust workspace adds
   `rust/rust-toolchain.toml`, cargo will pick that pin up by itself.
 - Ubuntu only. macOS and other Linux distributions are not supported.
-- On a shared machine, keep the log folder private. If you set
-  `GBRAIN_DEV_LOG_DIR`, point it at a folder only you can write to. The script
-  does not tighten the mode of a folder that already exists.
-- Run the script, and the tests, with `PGHOST`, `PGHOSTADDR` and `PGSERVICE`
-  unset. The script does not clear them, so the database step and the test
-  connection could reach a different server.
-- The database step sets the password and superuser flag of the `gbrain` role
-  each time it runs. If the local cluster already has a `gbrain` role that
-  something else uses, pick another name with `GBRAIN_DEV_PG_USER`.
+- If you set `GBRAIN_DEV_LOG_DIR`, it must be a folder you own that no other
+  user can write to. The script stops otherwise.
+- Run the tests with `PGHOSTADDR` and `PGSERVICE` unset. The script clears them
+  only for itself, not in your shell, and either one could send the test
+  connection to a different server.
+- An existing `gbrain` role from other work is kept. If its password is not
+  `gbrain`, set `GBRAIN_DEV_PG_PASSWORD` to its password or pick another name
+  with `GBRAIN_DEV_PG_USER`.

@@ -23,7 +23,13 @@
 #   GBRAIN_DEV_LINK_BINS=0   do not link bun, cargo, rustc and napi into /usr/local/bin
 #   GBRAIN_DEV_SKIP_RUST=1   skip the Rust toolchain and napi-rs CLI
 #   GBRAIN_DEV_BIN           where the napi wrapper goes (default ~/.gbrain-rust-dev/bin)
-#   GBRAIN_DEV_LOG_DIR       step logs (default ~/.gbrain-rust-dev/logs)
+#   GBRAIN_DEV_LOG_DIR       parent of the per-run log folders (default ~/.gbrain-rust-dev/logs)
+#
+# Each run writes its step logs to a new private folder, run-<time>-XXXXXX,
+# under GBRAIN_DEV_LOG_DIR. The script unsets PGHOST, PGHOSTADDR and PGSERVICE
+# for itself, so every Postgres call reaches the local 16/main cluster. It
+# creates the database role only when it is missing and never changes an
+# existing role; when an existing role cannot be used, it stops and says why.
 #
 # The script never exports DATABASE_URL into your shell: the test preload
 # (test/helpers/database-url-guard-preload.ts) refuses every plain `bun test`
@@ -32,7 +38,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LOG_DIR="${GBRAIN_DEV_LOG_DIR:-$HOME/.gbrain-rust-dev/logs}"
+LOG_ROOT="${GBRAIN_DEV_LOG_DIR:-$HOME/.gbrain-rust-dev/logs}"
 ENV_FILE="${GBRAIN_DEV_ENV_FILE:-$HOME/.gbrain-rust-dev.env}"
 PG_MAJOR=16
 PG_USER="${GBRAIN_DEV_PG_USER:-gbrain}"
@@ -47,14 +53,20 @@ export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 DEV_BIN="${GBRAIN_DEV_BIN:-$HOME/.gbrain-rust-dev/bin}"
 export PATH="$DEV_BIN:$BUN_INSTALL/bin:$CARGO_HOME/bin:$PATH"
 export DEBIAN_FRONTEND=noninteractive
+# These would send psql, createdb and pg_isready to another server than the
+# local cluster the script set up. Clear them for this script only.
+unset PGHOST PGHOSTADDR PGSERVICE
 
-# Logs live under the user's home, never a shared directory: a step run as
-# root must not follow a link another user planted there.
-mkdir -p -m 700 "$LOG_DIR" || { echo "cannot create log directory $LOG_DIR" >&2; exit 1; }
-if [ -L "$LOG_DIR" ] || [ ! -O "$LOG_DIR" ]; then
-  echo "log directory $LOG_DIR must be a real directory owned by $(id -un)" >&2
+# Each run logs to a folder that mktemp creates new, mode 700, so no file or
+# link another user put in a shared parent folder can be written through.
+mkdir -p -m 700 "$LOG_ROOT" || { echo "cannot create log directory $LOG_ROOT" >&2; exit 1; }
+# Others could still rename the run folder inside a parent they can write to.
+if [ -L "$LOG_ROOT" ] || [ ! -O "$LOG_ROOT" ] || [ $((8#$(stat -c %a "$LOG_ROOT") & 8#022)) -ne 0 ]; then
+  echo "log directory $LOG_ROOT must be a real directory owned by $(id -un) that only it can write to" >&2
   exit 1
 fi
+LOG_DIR="$(mktemp -d "$LOG_ROOT/run-$(date +%Y%m%dT%H%M%S)-XXXXXX")" ||
+  { echo "cannot create a run log folder under $LOG_ROOT" >&2; exit 1; }
 
 # Role, password and database go into SQL, a URL and the env file, so keep
 # them to characters that need no quoting anywhere.
@@ -232,18 +244,31 @@ create_database() {
   # cd / so `sudo -u postgres` does not warn about an unreadable cwd.
   # The password goes in on stdin, never in argv where `ps` shows it.
   # PG_USER and PG_PASSWORD are already limited to [A-Za-z0-9_].
+  # An existing role is kept as it is: something else may use it.
+  # Superuser: the tests CREATE DATABASE and CREATE EXTENSION vector. Local dev only.
   (cd / && as_postgres psql -p "$PG_PORT" -v ON_ERROR_STOP=1 -q -d postgres) <<SQL || return 1
-SELECT format('CREATE ROLE %I', '$PG_USER')
+SELECT format('CREATE ROLE %I WITH LOGIN SUPERUSER PASSWORD %L', '$PG_USER', '$PG_PASSWORD')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER') \\gexec
--- Superuser: the tests CREATE DATABASE and CREATE EXTENSION vector. Local dev only.
-ALTER ROLE "$PG_USER" WITH LOGIN SUPERUSER PASSWORD '$PG_PASSWORD';
 SQL
+  local flags
+  flags="$(cd / && as_postgres psql -p "$PG_PORT" -tAq -d postgres -c "SELECT rolcanlogin::text || ' ' || rolsuper::text FROM pg_roles WHERE rolname = '$PG_USER'")" || return 1
+  if [ "$flags" != "true true" ]; then
+    echo "Role $PG_USER already exists and is not a login superuser; the script does not change existing roles."
+    echo "Set GBRAIN_DEV_PG_USER to an unused role name and run the script again."
+    return 1
+  fi
   if ! (cd / && as_postgres psql -p "$PG_PORT" -tAq -d postgres -c "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'") | grep -q 1; then
     (cd / && as_postgres createdb -p "$PG_PORT" -O "$PG_USER" "$PG_DB") || return 1
   fi
   local url="postgresql://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT/$PG_DB"
   # Connect with the password in the environment, not on the command line.
   local conn="postgresql://$PG_USER@127.0.0.1:$PG_PORT/$PG_DB"
+  if ! PGPASSWORD="$PG_PASSWORD" psql "$conn" -tAq -c 'SELECT 1' >/dev/null; then
+    echo "Cannot log in as $PG_USER with the configured password. The role existed before and the"
+    echo "script keeps its password. Set GBRAIN_DEV_PG_PASSWORD to that role's password, or set"
+    echo "GBRAIN_DEV_PG_USER to an unused role name, and run the script again."
+    return 1
+  fi
   PGPASSWORD="$PG_PASSWORD" psql "$conn" -v ON_ERROR_STOP=1 -q \
     -c 'CREATE EXTENSION IF NOT EXISTS vector' \
     -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm' \
