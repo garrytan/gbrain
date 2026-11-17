@@ -73,9 +73,10 @@ describe('engine parity: cycle locks', () => {
   });
 
   parityTest('an expired lease is stolen once the steal grace has passed', { methods: ['acquireCycleLock', 'readCycleLocks'] }, async (engine) => {
-    // ttlMinutes -1: the lease is expired the moment it is written.
+    // ttlMinutes -1: the lease is expired the moment it is written. A grace of -1 second: PGLite's clock ticks in
+    // milliseconds, so two statements in the same millisecond see equal NOW() and a zero grace would not yet pass.
     const first = await engine.acquireCycleLock('gbrain-sync:work', lease(201, TOKEN_A, { ttlMinutes: -1 }));
-    const stolen = await engine.acquireCycleLock('gbrain-sync:work', lease(202, TOKEN_B, { stealGraceSeconds: 0 }));
+    const stolen = await engine.acquireCycleLock('gbrain-sync:work', lease(202, TOKEN_B, { stealGraceSeconds: -1 }));
     expect(first).not.toBeNull();
     expect(stolen).not.toBeNull();
     const holder = await holderOf(engine, 'gbrain-sync:work');
