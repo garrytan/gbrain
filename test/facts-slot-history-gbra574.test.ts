@@ -234,6 +234,21 @@ for (const backend of testBackends()) {
         expect((await local(Q)).join('\n')).toContain('line cook');
         expect(await remote(Q)).not.toContain('line cook');
       });
+      test('a private page written later at orgs/<key> keeps the key rows from a remote caller', async () => {
+        const Q = 'In plain words, which job titles has Kai Example held over time?';
+        await fact('k_cook', 'Kai Example started as a line cook.', 'kai-example', '2021-01-01', ['role', 'Cook']);
+        expect(await remote(Q)).toContain('line cook');
+        await putPage(engine, sourceId, 'orgs/kai-example', page('company', 'Kai Example', 'Kai Example is in the address book.', 'visibility: private\n'));
+        expect((await local(Q)).join('\n')).toContain('line cook');
+        expect(await remote(Q)).not.toContain('line cook');
+      });
+      test('a non-Latin name key matches its history question', async () => {
+        await fact('i_cook', 'Иван Петров started as a line cook.', 'иван-петров', '2021-01-01', ['role', 'Cook']);
+        await fact('i_chef', 'Иван Петров became head chef.', 'иван-петров', '2023-01-01', ['role', 'Head Chef']);
+        const text = (await local('In plain words, which job titles has Иван Петров held over time?')).join('\n');
+        expect(text).toContain('started as a line cook');
+        expect(text).toContain('became head chef');
+      });
       test('a member-scoped caller sees a value on its own page; another member sees neither it nor its end', async () => {
         const Q = 'In plain words, which job titles has Gwen Example held over time?';
         const alice = await asMember('alice-example', Q);

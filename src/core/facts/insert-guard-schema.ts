@@ -50,7 +50,7 @@
  */
 import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
 import { FACT_WITHDRAWAL_STAMP_SETTING } from '../persistence/attribution-schema.ts';
-import { unbackedEntitySql } from './withdrawal-schema.ts';
+import { ownedMemorySubjectSql, unbackedEntitySql } from './withdrawal-schema.ts';
 
 export const FACT_INSERT_GUARD_TRIGGER = 'facts_guard_inserted';
 /** Transaction-local; 'on' defers the withdrawal stamp of the following inserts to facts_guard_inserted. */
@@ -72,7 +72,7 @@ const WITHDRAWN_INSERTS_SQL = `WITH n AS MATERIALIZED (
         SELECT n.id, min(w.withdrawn_at) AS withdrawn_at FROM n JOIN fact_withdrawals w
           ON w.source_id = n.source_id AND w.visibility = n.visibility
           AND (CASE WHEN starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') THEN w.subject = n.source_markdown_slug
-            ELSE n.unbacked OR w.subject IN ('*', n.entity_slug) END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
+            ELSE (n.unbacked AND NOT ${ownedMemorySubjectSql('w.subject')}) OR w.subject IN ('*', n.entity_slug) END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
         GROUP BY n.id)`;
 
 /**

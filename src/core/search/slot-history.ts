@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
 import { deriveSlotEnds, SLOT_DIMENSIONS } from '../facts/slots.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
-import { BASENAME_DIRS, slugify } from '../entities/resolve.ts';
+import { BASENAME_DIRS, fallbackSlugify } from '../entities/resolve.ts';
 import { namedEntity } from './entity-anchor.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { poolUnbackedKeys, readSlotRows, type FactCandidate, type FactPoolScope } from './fact-relevance.ts';
@@ -59,7 +59,7 @@ function keyCandidates(query: string): string[] {
   const keys = new Set<string>();
   for (let i = 0; i < words.length; i++) {
     for (let n = 2; n <= MAX_KEY_WORDS && i + n <= words.length; n++) {
-      const key = slugify(words.slice(i, i + n).join(' '));
+      const key = fallbackSlugify(words.slice(i, i + n).join(' ')) ?? '';
       if (key.includes('-')) keys.add(key);
     }
   }

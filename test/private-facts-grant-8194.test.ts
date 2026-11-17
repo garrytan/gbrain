@@ -39,6 +39,7 @@ import { parseAdminGrantRequest } from '../src/commands/serve-http-grants.ts';
 import { runAuth } from '../src/commands/auth.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
+import { v319 } from '../src/core/schema-migrations/v319-principal-private-facts.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -375,7 +376,7 @@ describe('private_facts migration and operator output', () => {
       expect(clientRefusal?.code).toBe('grant_schema_required');
       const tokenRefusal = await rescopeLegacyToken(engine, parseRescopeTokenArgs(['alice-example', '--private-facts', 'granted-sources'])).then(() => null, (e: { code?: string }) => e);
       expect(tokenRefusal?.code).toBe('grant_schema_required');
-      await engine.setConfig('version', String(LATEST_VERSION - 1));
+      await engine.setConfig('version', String(v319.version - 1));
       await runMigrations(engine);
       expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
       const tokens = await engine.executeRaw<{ private_facts: string }>('SELECT private_facts FROM access_tokens');

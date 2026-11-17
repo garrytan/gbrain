@@ -34,6 +34,12 @@ import { operations } from '../src/core/operations.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { addMember, bindCredential } from '../src/core/access/members.ts';
+import { setOwner } from '../src/core/access/owner.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -240,6 +246,55 @@ for (const backend of testBackends()) {
       expect(again.facts_skipped_purged).toBe(2);
       expect((await rows()).filter(r => !r.expired).map(r => r.fact)).toEqual(['Alice Example bikes to work.']);
     }));
+
+    test('a member-page forget never reaches a key row, and a later extraction of the claim on a key stays active', async () => {
+      await extract([fact('Likes sushi.', 'Carol Example')]);
+      await page('memory/members/alice-example', 'note', 'Memory of alice-example', { readable_by: ['alice-example'] });
+      const [member] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, fact, kind, visibility, source, confidence, source_markdown_slug)
+        VALUES ('default', 'Likes sushi.', 'fact', 'world', 'test', 1, 'memory/members/alice-example') RETURNING id`);
+      await recordFactWithdrawal(engine, Number(member!.id), 'default', true, { memberPage: 'memory/members/alice-example' });
+      expect(await engine.executeRaw<{ subject: string }>('SELECT subject FROM fact_withdrawals')).toEqual([{ subject: 'memory/members/alice-example' }]);
+      expect((await active('Likes sushi.')).map(r => r.entity_slug)).toEqual(['carol-example']);
+      await extract([fact('Likes sushi.', 'Carol Example')], { force: true });
+      expect((await active('Likes sushi.')).map(r => r.entity_slug)).toEqual(['carol-example']);
+    });
+
+    test('forgetting a key fact refuses while the same claim is active on a page, and withdraws nothing', async () => {
+      await extract([fact('Prefers email over phone.', 'Carol Example')]);
+      const [row] = await rows();
+      await page('people/bob-example', 'person', 'Bob Example');
+      await engine.executeRaw(`INSERT INTO facts (source_id, fact, kind, entity_slug, visibility, source, confidence)
+        VALUES ('default', 'Prefers email over phone.', 'fact', 'people/bob-example', 'world', 'test', 1)`);
+      const out = await dispatchToolCall(engine, 'forget_fact', { id: Number(row!.id) }, { remote: false, sourceId: 'default' });
+      expect(out.isError).toBe(true);
+      expect(out.content.map(c => (c as { text?: string }).text ?? '').join('\n')).toContain('claim_linked: fact #' + row!.id + ' was saved on the name tag carol-example');
+      expect(await engine.executeRaw('SELECT 1 FROM fact_withdrawals')).toEqual([]);
+      expect(await engine.executeRaw(`SELECT entity_slug FROM facts WHERE fact = 'Prefers email over phone.' AND expired_at IS NULL ORDER BY entity_slug`))
+        .toEqual([{ entity_slug: 'carol-example' }, { entity_slug: 'people/bob-example' }]);
+    });
+
+    test('an owner-bound caller still reads a key fact after a private people/<key> page is written; a member the page does not name loses it', async () => {
+      await extract([fact('Alice Example moved to Lisbon.', 'Alice Example')]);
+      const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: (fn: never) => engine.transaction(tx => (fn as (s: unknown) => Promise<unknown>)(sqlQueryForEngine(tx))) } as never);
+      for (const id of ['bob-example', 'carol-example']) await addMember(engine, id);
+      await setOwner(engine, 'carol-example');
+      const auths: Record<string, unknown> = {};
+      for (const [name, member] of [['owner', 'carol-example'], ['bob', 'bob-example']] as const) {
+        const c = await provider().registerClientManual('t-' + name + '-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'default');
+        await bindCredential(engine, { kind: 'client', id: c.clientId }, { member });
+        auths[name] = await provider().verifyAccessToken((await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token);
+      }
+      const recall = async (who: string) => {
+        __resetPrivateVisibilityCacheForTests();
+        const r = await dispatchToolCall(engine, 'recall', { entity: 'alice-example' }, { remote: true, transport: 'http', sourceId: 'default', auth: auths[who] as never,
+          config: { engine: engine.kind } as never, logger: { info() {}, warn() {}, error() {} } });
+        return r.content.map(c => (c as { text?: string }).text ?? '').join('\n');
+      };
+      expect(await recall('bob')).toContain('moved to Lisbon');
+      await importFromContent(engine, 'people/alice-example', '---\ntype: person\ntitle: Alice Example\nvisibility: private\n---\n# Alice Example\n', { sourceId: 'default' });
+      expect(await recall('owner')).toContain('moved to Lisbon');
+      expect(await recall('bob')).not.toContain('moved to Lisbon');
+    });
 
     test('consolidate reads no bucket whose entity has no page', async () => {
       const old = new Date(Date.now() - 10 * 86_400_000);

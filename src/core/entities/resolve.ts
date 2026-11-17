@@ -128,7 +128,7 @@ export async function resolveEntitySlug(
  * (`slugifySegment`), so `Мария` lands on `мария`, not `''`. Latin names keep
  * the ASCII form (`o-brien`, `soren`). Null when nothing is left.
  */
-function fallbackSlugify(trimmed: string): string | null {
+export function fallbackSlugify(trimmed: string): string | null {
   const slug = trimmed.split('/').map(fallbackSegment).filter(Boolean).join('/');
   return slug || null;
 }
