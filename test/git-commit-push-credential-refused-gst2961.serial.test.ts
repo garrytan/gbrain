@@ -225,6 +225,25 @@ describe('gbrain git commit-push against a host that refuses the credential', ()
     expect((await withEnv({ GBRAIN_HOME: home }, async () => getLastPushOutcome('main', work))).detail ?? '').not.toContain('push_credential_refused since');
   }, 120_000);
 
+  test('a refusal stays while another push URL of the remote still refuses, and put_page reports it for a local branch named apart from its upstream', async () => {
+    const work = checkout('brain-twourls', 'notfound');
+    commitPush(work);
+    git(work, ['remote', 'set-url', '--push', 'origin', 'http://127.0.0.1:' + port + '/ok/brain-twourls.git']);
+    git(work, ['remote', 'set-url', '--add', '--push', 'origin', 'http://127.0.0.1:' + port + '/notfound/brain-twourls.git']);
+    spawnSync('git', ['-C', work, 'push', 'origin', 'main'], { env: env(), stdio: 'ignore' });
+    expect(git(work, ['rev-parse', 'refs/remotes/origin/main'])).toBe(git(work, ['rev-parse', 'HEAD']));
+    expect(readCredentialRefusal(work)?.kind).toBe('not_found');
+
+    const renamed = checkout('brain-renamed', 'notfound');
+    git(renamed, ['branch', '-m', 'main', 'local-work']);
+    git(renamed, ['branch', '--set-upstream-to', 'origin/main', 'local-work']);
+    commitPush(renamed);
+    expect(readCredentialRefusal(renamed)?.branch).toBe('main');
+    const outcome = await withEnv({ GBRAIN_HOME: home }, async () => getLastPushOutcome('local-work', renamed));
+    expect(outcome.status).toBe('needs_attention');
+    expect(outcome.detail).toContain('push_credential_refused since');
+  }, 180_000);
+
   test('doctor git_convergence warns at once, and a push that lands clears the record', async () => {
     const work = checkout('brain-clear', 'notfound');
     commitPush(work);

@@ -1393,12 +1393,13 @@ export function readIntegrateConflict(repo: string): IntegrateConflictState | nu
   }
 }
 
-/** GST-2961: the push refusal for the credential git used, recorded for this checkout until a push lands (by any route: a refused commit already on the remote-tracking ref is past), if any. */
+/** GST-2961: the push refusal for the credential git used, recorded for this checkout until a push lands (by any route: with one push URL, a refused commit already on the remote-tracking ref is past), if any. */
 export function readCredentialRefusal(repo: string): CredentialRefusalState | null {
   try {
     const root = checkoutRoot(repo);
     const state = readCredentialRefusalFile(absGitPath(root, CREDENTIAL_STATE_NAME));
-    if (state?.commit && state.remote && state.branch && isAncestor(root, state.commit, `refs/remotes/${state.remote}/${state.branch}`)) return null;
+    const singlePushUrl = () => git(root, ['remote', 'get-url', '--push', '--all', '--', state!.remote]).stdout.trim().split('\n').length === 1;
+    if (state?.commit && state.remote && state.branch && singlePushUrl() && isAncestor(root, state.commit, `refs/remotes/${state.remote}/${state.branch}`)) return null;
     return state;
   } catch {
     return null;
