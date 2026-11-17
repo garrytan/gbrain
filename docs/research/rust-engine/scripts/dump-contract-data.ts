@@ -31,7 +31,7 @@ for (const s of ['verbs', 'starter', 'full']) {
   const surfaceOps = filterOpsForSurface(httpBase, s);
   w(`tools-list-${s}.json`, JSON.stringify(buildToolDefs(surfaceOps), null, 2));
   w(`tools-list-${s}-strict.json`, JSON.stringify(buildToolDefs(surfaceOps, { strictParams: true }), null, 2));
-  console.log(`tools-list-${s}`, surfaceOps.length);
+  console.log('tools-list-%s', s, surfaceOps.length);
 }
 
 // 3. One row per operation.
