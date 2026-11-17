@@ -22,7 +22,7 @@ Legend: **[V]** verified this session by reading code or running a grep, `ls`, o
 | Item | Value | Source |
 |---|---|---|
 | gbrain-evals HEAD | `9ecc5b20` (v0.40.6.0 snapshot) | `git log` |
-| Declared gbrain dep | `github:garrytan/gbrain#master` (unpinned) | `package.json` |
+| Declared gbrain dep | GitHub dependency on `garrytan/gbrain`, ref `master` (unpinned in this historical snapshot, not an install recommendation) | `package.json` at `9ecc5b20` |
 | Installed gbrain | 0.41.29.0, lock pin `041d89b` | `node_modules/gbrain/package.json`, `bun.lock` |
 | TS gbrain reference | `36bd05806a`, v0.60.733.0 | `ts:package.json` |
 | LongMemEval published numbers | gbrain v0.28.8 | `docs/benchmarks/2026-05-07-longmemeval-s.md:4` |
