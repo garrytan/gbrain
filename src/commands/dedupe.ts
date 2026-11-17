@@ -4,6 +4,7 @@
  * contract gbrain-evals scores (core/entities/duplicates.ts, research/entity-resolution/finder-contract.md).
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { DUPLICATE_KINDS, findDuplicateGroups, type DuplicateEvidence, type DuplicateKind } from '../core/entities/duplicates.ts';
 
 const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-source|conflict|thin] [--source <id>]
@@ -19,7 +20,9 @@ Read-only: nothing is changed.
 `;
 
 function evidenceText(e: DuplicateEvidence): string {
-  return [e.rule, e.key, e.role_address ? 'role address' : '', e.veto ? 'veto' : ''].filter(Boolean).join(' ');
+  const others = e.other_pages_same_name === undefined ? '' : `also on ${e.other_pages_same_name} same-name and ${e.other_pages_other_name} other-name page(s)`;
+  const veto = e.veto ? 'veto (if they are one person, correct the wrong id on one page)' : '';
+  return [e.rule, e.key, e.role_address ? 'role address' : '', others, veto].filter(Boolean).join(' ');
 }
 
 export async function runDedupe(engine: BrainEngine, args: string[]): Promise<void> {
@@ -33,15 +36,15 @@ export async function runDedupe(engine: BrainEngine, args: string[]): Promise<vo
     if (a === '--json') { json = true; continue; }
     if (a === '--kind' || a === '--source') {
       const v = args[++i];
-      if (!v) { console.error(`gbrain dedupe: ${a} needs a value.\n\n${HELP}`); process.exitCode = 2; return; }
+      if (!v) { console.error(`gbrain dedupe: ${a} needs a value.\n\n${HELP}`); setCliExitVerdict(2); return; }
       if (a === '--source') { sourceId = v; continue; }
       const k = v.replace(/-/g, '_').replace(/^conflicts$/, 'conflict') as DuplicateKind;
-      if (!DUPLICATE_KINDS.includes(k)) { console.error(`gbrain dedupe: unknown --kind ${v}; use cross-source, in-source, conflict or thin.`); process.exitCode = 2; return; }
+      if (!DUPLICATE_KINDS.includes(k)) { console.error(`gbrain dedupe: unknown --kind ${v}; use cross-source, in-source, conflict or thin.`); setCliExitVerdict(2); return; }
       kind = k;
       continue;
     }
     console.error(`gbrain dedupe: unknown argument ${a}.\n\n${HELP}`);
-    process.exitCode = 2;
+    setCliExitVerdict(2);
     return;
   }
   const result = await findDuplicateGroups(engine, { kind, sourceId });

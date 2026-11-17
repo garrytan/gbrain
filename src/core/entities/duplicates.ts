@@ -11,8 +11,9 @@
  * conflicts, with leading titles and company suffixes dropped (variant).
  *
  * Matchers propose member sets; the finder merges proposals with the same kind and members, adds the key
- * evidence (every shared key type and every key type two members carry with different values), decides each
- * class in one place (classOf, with the clean rule in isCleanGroup), joins clean groups that share a page and
+ * evidence (every shared key type, with how many other pages carry a shared contact or handle value, and every
+ * key type two members carry with different values), decides each class in one place (classOf, with the clean
+ * rule in isCleanGroup; a cross-source group with no shared exclusive key and a vetoing key is a conflict), joins clean groups that share a page and
  * checks the union, then sorts and ids the groups. Only the built-in matchers can make a group clean.
  */
 import { createHash } from 'node:crypto';
@@ -48,6 +49,10 @@ export interface DuplicateEvidence {
   field?: string;
   key_class?: KeyClass;
   role_address?: boolean;
+  /** On a shared contact or handle key: pages outside the group carrying a shared value, with a strict name a member has. */
+  other_pages_same_name?: number;
+  /** On a shared contact or handle key: pages outside the group carrying a shared value, with any other strict name. */
+  other_pages_other_name?: number;
   veto?: boolean;
 }
 export interface DuplicateMember { source_id: string; slug: string }
@@ -167,7 +172,7 @@ async function sourceTypes(engine: BrainEngine, sourceId: string, override: Find
   return { person, company, declared };
 }
 
-async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promise<{ scan: DuplicateScan; byKey: Map<string, EntityPage>; crowded: number; carriers: Map<string, number> }> {
+async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promise<{ scan: DuplicateScan; byKey: Map<string, EntityPage>; crowded: number; carriers: Map<string, EntityPage[]> }> {
   const sources = await engine.listAllSources();
   const typesBySource = new Map<string, SourceTypes>();
   for (const s of sources) typesBySource.set(s.id, await sourceTypes(engine, s.id, opts.identityKeys));
@@ -239,7 +244,7 @@ async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promi
       });
     },
   };
-  return { scan, byKey, crowded, carriers: new Map([...carriers].map(([cv, list]) => [cv, list.length])) };
+  return { scan, byKey, crowded, carriers };
 }
 
 const groupBy = <T>(items: readonly T[], keyOf: (t: T) => string | null) => {
@@ -361,11 +366,13 @@ interface Draft { kind: DuplicateKind; members: EntityPage[]; evidence: Map<stri
 const RANK: Record<DuplicateClass, number> = { conflict: 0, thin: 0, weak: 1, likely: 2, clean: 3 };
 const evidenceKey = (e: DuplicateEvidence) => [e.matcher, e.rule, e.key ?? '', e.field ?? ''].join('\t');
 
-function keyEvidence(members: EntityPage[], carriers: Map<string, number>): { evidence: DuplicateEvidence[]; input: Pick<CleanRuleInput, 'shared_keys' | 'differing_keys'> } {
+function keyEvidence(members: EntityPage[], carriers: Map<string, EntityPage[]>): { evidence: DuplicateEvidence[]; input: Pick<CleanRuleInput, 'shared_keys' | 'differing_keys'> } {
   const evidence: DuplicateEvidence[] = [];
   const shared_keys: CleanRuleInput['shared_keys'] = [];
   const differing_keys: CleanRuleInput['differing_keys'] = [];
   const ids = [...new Set(members.flatMap(m => [...m.keys.keys()]))].sort();
+  const inGroup = new Set(members.map(pageKey));
+  const names = new Set(members.map(m => m.strict));
   for (const id of ids) {
     const sets = members.map(m => m.keys.get(id));
     const spec = sets.find(Boolean)!;
@@ -374,9 +381,13 @@ function keyEvidence(members: EntityPage[], carriers: Map<string, number>): { ev
       const common = [...sets[0]!.values].filter(v => sets.every(s => s!.values.has(v)));
       if (common.length) {
         const role = spec.key === 'email' ? { role_address: common.some(isRoleAddress) } : {};
-        evidence.push({ matcher: 'shared_key', rule: 'shared_key', ...base, ...role });
+        const carrying = common.map(v => carriers.get(`${id}\n${v}`) ?? []);
+        const others = [...new Map(carrying.flat().filter(p => !inGroup.has(pageKey(p))).map(p => [pageKey(p), p])).values()];
+        const sameName = others.filter(p => names.has(p.strict)).length;
+        const counts = spec.key_class === 'exclusive' ? {} : { other_pages_same_name: sameName, other_pages_other_name: others.length - sameName };
+        evidence.push({ matcher: 'shared_key', rule: 'shared_key', ...base, ...role, ...counts });
         shared_keys.push({ key: spec.key, key_class: spec.key_class, ...role, shared_values: common.length,
-          values_only_in_group: common.filter(v => carriers.get(`${id}\n${v}`) === members.length).length });
+          values_only_in_group: carrying.filter(list => list.length === members.length).length });
       }
     }
     const present = sets.filter((s): s is PageKey => !!s);
@@ -390,7 +401,7 @@ function keyEvidence(members: EntityPage[], carriers: Map<string, number>): { ev
   return { evidence, input: { shared_keys, differing_keys } };
 }
 
-function classOf(d: Draft, carriers: Map<string, number>): { cls: DuplicateClass; evidence: DuplicateEvidence[] } {
+function classOf(d: Draft, carriers: Map<string, EntityPage[]>): { cls: DuplicateClass; evidence: DuplicateEvidence[] } {
   const keys = keyEvidence(d.members, carriers);
   const evidence = [...d.evidence.values(), ...keys.evidence];
   if (d.union?.failed) evidence.push({ matcher: 'key_check', rule: 'union_check_failed' });
@@ -407,7 +418,9 @@ function classOf(d: Draft, carriers: Map<string, number>): { cls: DuplicateClass
   }
   const all = [...plugin, ...(builtin ? [builtin] : [])] as DuplicateClass[];
   const cls = all.reduce<DuplicateClass>((best, c) => (RANK[c] > RANK[best] ? c : best), all[0] ?? 'likely');
-  return { cls: d.kind === 'in_source' && cls !== 'likely' ? 'likely' : cls, evidence };
+  if (d.kind === 'in_source') return { cls: 'likely', evidence };
+  const vetoedWithoutId = cls !== 'clean' && !shared.some(k => k.key_class === 'exclusive') && keys.input.differing_keys.some(k => k.veto);
+  return { cls: vetoedWithoutId ? 'conflict' : cls, evidence };
 }
 
 function groupId(kind: DuplicateKind, members: DuplicateMember[]): string {

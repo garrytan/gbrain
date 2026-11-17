@@ -7,7 +7,9 @@
  * Protects: rule A (owner's choice): a shared exclusive key (LinkedIn, GitHub,
  * declared id) plus the same strict name across sources is "clean", and a group
  * sharing only contact or handle keys (email, phone, X handle, domain) is
- * "likely" with a contact_key_only item; a placeholder (empty, 0, all zeros, a placeholder word) or a key
+ * "likely" with a contact_key_only item, unless an exclusive key differs: a
+ * contact-only or no-key pair with a vetoing key is a conflict, never proposed;
+ * each shared contact or handle key counts the other pages carrying it; a placeholder (empty, 0, all zeros, a placeholder word) or a key
  * value carried by more than five pages is never a key; an id field counts
  * only when the schema pack declares it; a key two different names share
  * goes to the conflict list and nowhere else, so clean groups never chain two
@@ -88,8 +90,8 @@ describe('cross-source groups', () => {
     expect(members(g!)).toEqual(['default:people/alice-example', 'source-b:people/alice-example']);
     expect(g!.class).toBe('likely');
     expect(g!.evidence).toContainEqual({ matcher: 'key_check', rule: 'contact_key_only' });
-    expect(g!.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'email', field: 'email', key_class: 'contact', role_address: false });
-    for (const e of g!.evidence) expect(Object.keys(e).every(k => ['matcher', 'rule', 'key', 'field', 'key_class', 'role_address', 'veto'].includes(k))).toBe(true);
+    expect(g!.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'email', field: 'email', key_class: 'contact', role_address: false, other_pages_same_name: 0, other_pages_other_name: 0 });
+    for (const e of g!.evidence) expect(Object.keys(e).every(k => ['matcher', 'rule', 'key', 'field', 'key_class', 'role_address', 'other_pages_same_name', 'other_pages_other_name', 'veto'].includes(k))).toBe(true);
     expect(JSON.stringify(g)).not.toContain('example.com');
   });
 
@@ -191,7 +193,7 @@ describe('name folds', () => {
 });
 
 describe('evidence lists every key type', () => {
-  test('every shared key type, and every key type the members carry with different values; a different declared id vetoes clean', async () => {
+  test('every shared key type, and every key type the members carry with different values; a different declared id beside only contact keys is a conflict', async () => {
     await page('people/alice-example', 'person', 'Alice Example', { email: 'alice@example.com', x_handle: '@alice_example', external_id: 11 });
     await page('people/alice-example', 'person', 'Alice Example', { emails: ['ALICE@example.com'], twitter: 'https://x.com/Alice_Example', external_id: 12 }, 'source-b');
     const [g] = await groups('cross_source');
@@ -199,10 +201,10 @@ describe('evidence lists every key type', () => {
       { matcher: 'key_check', rule: 'contact_key_only' },
       { matcher: 'key_check', rule: 'key_differs', key: 'declared_id', field: 'external_id', key_class: 'exclusive', veto: true },
       { matcher: 'same_name', rule: 'strict_name' },
-      { matcher: 'shared_key', rule: 'shared_key', key: 'email', field: 'email', key_class: 'contact', role_address: false },
-      { matcher: 'shared_key', rule: 'shared_key', key: 'x_handle', field: 'x_handle', key_class: 'handle' },
+      { matcher: 'shared_key', rule: 'shared_key', key: 'email', field: 'email', key_class: 'contact', role_address: false, other_pages_same_name: 0, other_pages_other_name: 0 },
+      { matcher: 'shared_key', rule: 'shared_key', key: 'x_handle', field: 'x_handle', key_class: 'handle', other_pages_same_name: 0, other_pages_other_name: 0 },
     ]);
-    expect(g!.class).toBe('likely');
+    expect(g!.class).toBe('conflict');
     expect(JSON.stringify(g)).not.toMatch(/example\.com|alice_example|"1[12]"/);
   });
 
@@ -229,9 +231,10 @@ describe('conflicting-key veto', () => {
     expect(g.evidence).not.toContainEqual({ matcher: 'key_check', rule: 'contact_key_only' });
   });
 
-  test('rule A: a shared email with different GitHub logins is likely, with the veto shown', async () => {
+  test('a shared email with different GitHub logins is a conflict, never proposed, with the veto kept', async () => {
     const g = await pair({ email: 'alice@example.com', github: 'alice-one' }, { email: 'alice@example.com', github: 'alice-two' });
-    expect(g.class).toBe('likely');
+    expect(g.kind).toBe('cross_source');
+    expect(g.class).toBe('conflict');
     expect(g.evidence).toContainEqual({ matcher: 'key_check', rule: 'key_differs', key: 'github', field: 'github', key_class: 'exclusive', veto: true });
     expect(g.evidence).toContainEqual({ matcher: 'key_check', rule: 'contact_key_only' });
   });
@@ -242,15 +245,21 @@ describe('conflicting-key veto', () => {
     expect(g.evidence).toContainEqual({ matcher: 'key_check', rule: 'contact_key_only' });
   });
 
-  test('different LinkedIn profiles veto clean even with a shared email', async () => {
+  test('different LinkedIn profiles beside a shared email are a conflict', async () => {
     const g = await pair({ email: 'alice@example.com', linkedin: 'https://www.linkedin.com/in/alice-one/' }, { email: 'alice@example.com', linkedin_url: 'linkedin.com/in/alice-two' });
-    expect(g.class).toBe('likely');
+    expect(g.class).toBe('conflict');
     expect(g.evidence).toContainEqual({ matcher: 'key_check', rule: 'key_differs', key: 'linkedin', field: 'linkedin', key_class: 'exclusive', veto: true });
   });
 
-  test('different GitHub logins veto clean', async () => {
+  test('different GitHub logins veto clean; a shared declared id keeps the pair likely', async () => {
     const g = await pair({ external_id: 5, github: 'alice-one' }, { external_id: 5, github: '@Alice-Two' });
     expect(g.class).toBe('likely');
+  });
+
+  test('the same name with no shared key and different GitHub logins is a conflict, not weak', async () => {
+    const g = await pair({ github: 'alice-one' }, { github: 'alice-two' });
+    expect(g.class).toBe('conflict');
+    expect(g.evidence).toContainEqual({ matcher: 'key_check', rule: 'key_differs', key: 'github', field: 'github', key_class: 'exclusive', veto: true });
   });
 
   test('the same LinkedIn profile written two ways is a shared exclusive key', async () => {
@@ -285,9 +294,24 @@ describe('role and household addresses', () => {
     for (const slug of ['people/alice-example', 'people/bob-example']) {
       expect(byName(slug).class).toBe('likely');
       expect(byName(slug).evidence).toContainEqual({ matcher: 'key_check', rule: 'contact_key_only' });
-      expect(byName(slug).evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'email', field: 'email', key_class: 'contact', role_address: true });
+      expect(byName(slug).evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'email', field: 'email', key_class: 'contact', role_address: true, other_pages_same_name: 0, other_pages_other_name: 0 });
     }
     expect(byName('people/cy-example').class).toBe('weak');
+  });
+});
+
+describe('other pages that carry a shared contact key', () => {
+  test('each shared contact or handle key counts the other pages carrying it, split by same and other name, never naming them', async () => {
+    await page('people/alice-example', 'person', 'Alice Example', { email: 'alice@example.com', linkedin: 'linkedin.com/in/alice-example' });
+    await page('people/alice-example', 'person', 'Alice Example', { email: 'alice@example.com', linkedin: 'linkedin.com/in/alice-example' }, 'source-b');
+    await page('people/bob-example', 'person', 'Bob Example', { email: 'alice@example.com' }, 'source-c');
+    await page('companies/alice-example', 'company', 'Alice Example', { email: 'alice@example.com' });
+    const found = await groups();
+    const pair = found.find(g => g.kind === 'cross_source')!;
+    expect(members(pair)).toEqual(['default:people/alice-example', 'source-b:people/alice-example']);
+    expect(pair.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'email', field: 'email', key_class: 'contact', role_address: false, other_pages_same_name: 1, other_pages_other_name: 1 });
+    expect(pair.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'linkedin', field: 'linkedin', key_class: 'exclusive' });
+    expect(JSON.stringify(pair)).not.toContain('example.com');
   });
 });
 
@@ -298,7 +322,7 @@ describe('phone numbers', () => {
     const [g] = await groups('cross_source');
     expect(g!.class).toBe('likely');
     expect(g!.evidence).toContainEqual({ matcher: 'key_check', rule: 'contact_key_only' });
-    expect(g!.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'phone', field: 'phone', key_class: 'contact' });
+    expect(g!.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'phone', field: 'phone', key_class: 'contact', other_pages_same_name: 0, other_pages_other_name: 0 });
     expect(JSON.stringify(g)).not.toContain('0104477');
   });
 
@@ -328,7 +352,7 @@ describe('company domains', () => {
     const acme = found.find(g => g.members[0]!.slug === 'companies/acme-example')!;
     expect(acme.class).toBe('likely');
     expect(acme.evidence).toContainEqual({ matcher: 'key_check', rule: 'contact_key_only' });
-    expect(acme.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'domain', field: 'domain', key_class: 'contact' });
+    expect(acme.evidence).toContainEqual({ matcher: 'shared_key', rule: 'shared_key', key: 'domain', field: 'domain', key_class: 'contact', other_pages_same_name: 0, other_pages_other_name: 0 });
     expect(found.find(g => g.members[0]!.slug === 'companies/bolt-example')!.class).toBe('weak');
   });
 
@@ -512,6 +536,14 @@ describe('gbrain dedupe --preview --json', () => {
     expect(Object.keys(g.members[0]).sort()).toEqual(['slug', 'source_id']);
     expect(g).toMatchObject({ kind: 'cross_source', class: 'clean' });
     expect(JSON.stringify(doc)).not.toContain('example.com');
+  });
+
+  test('the human list tells the owner how to clear a veto', async () => {
+    await page('people/alice-example', 'person', 'Alice Example', { email: 'alice@example.com', github: 'alice-one' });
+    await page('people/alice-example', 'person', 'Alice Example', { email: 'alice@example.com', github: 'alice-two' }, 'source-b');
+    const text = await run(['--preview']);
+    expect(text).toContain('if they are one person, correct the wrong id on one page');
+    expect(text).not.toContain('alice-one');
   });
 
   test('--kind and --source narrow the groups, and the command writes nothing', async () => {
