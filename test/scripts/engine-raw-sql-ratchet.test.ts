@@ -89,6 +89,22 @@ describe('check-engine-raw-sql-ratchet.ts: what counts', () => {
     expect(c.driver_call).toBe(3);
   });
 
+  // Value: protects=SQL built by concatenation, interpolation, casts or wrapped callees still counts; fails_when=literalText or calleeName stops unwrapping a supported form; why_new=earlier cases use direct literals and plain callees only; seam=none
+  test('concatenated, interpolated and wrapped SQL still counts; non-SQL text does not', () => {
+    const c = countFile([
+      'declare const db: any, e: any, t: string;',
+      'db.query("SELECT id " + "FROM pages WHERE slug = " + t);',
+      'db.query(`SELECT ${t} FROM pages`);',
+      'db.query(("SELECT 1") as string);',
+      '(db.query)("SELECT 1");',
+      'db!.unsafe(t);',
+      '(e!.executeRaw)("SELECT 1");',
+      'db.query("hello " + t);',
+      'db.exec(`say ${t} twice`);',
+    ].join('\n'));
+    expect(c).toEqual({ execute_raw: 1, sql_template: 0, driver_call: 5 });
+  });
+
   test('the engines are out of scope; everything else under src/ is in', () => {
     for (const rel of [
       'src/core/engine.ts', 'src/core/pglite-engine.ts', 'src/core/postgres-engine.ts',
@@ -173,6 +189,17 @@ describe('check-engine-raw-sql-ratchet.ts: shrink-only baseline', () => {
     expect(r.out).toContain('malformed row');
   });
 
+  // Value: protects=a baseline row with a bad count or shape fails instead of loosening the ratchet; fails_when=parseRows accepts zero, negative, fractional or text counts, wrong columns or an empty path; why_new=the malformed case above covers unknown metrics only; seam=none
+  test('rows with a bad count, the wrong column count or an empty path are malformed', () => {
+    for (const row of ['src/core/a.ts\texecute_raw\t0', 'src/core/a.ts\texecute_raw\t-1', 'src/core/a.ts\texecute_raw\t1.5',
+      'src/core/a.ts\texecute_raw\tone', 'src/core/a.ts\texecute_raw', 'src/core/a.ts\texecute_raw\t1\twhy\textra', '\texecute_raw\t1']) {
+      const root = tree(RAW.baseline, { [RAW.baseline]: `# baseline\nsrc/core/a.ts\texecute_raw\t1\n${row}\n`, 'src/core/a.ts': site });
+      const r = run(RAW.guard, root);
+      expect(r.code, row).toBe(1);
+      expect(r.out, row).toContain('malformed row');
+    }
+  });
+
   test('a raised row with a note passes; --prune keeps the note; an empty note is malformed', () => {
     const raised = tree(RAW.baseline, {
       [RAW.baseline]: '# baseline\nsrc/core/a.ts\texecute_raw\t1\tfix #1: needs one read until links move\n',
@@ -224,6 +251,21 @@ describe('check-engine-kind-branches.ts', () => {
     ].join('\n'));
     expect(c.kind_compare).toBe(4);
     expect(c.kind_case).toBe(2);
+  });
+
+  // Value: protects=bracket, backtick and wrapped spellings of an engine-kind branch still count; fails_when=isKindExpr or isKindLiteral stops unwrapping one of these forms; why_new=the case above uses dot access and quoted literals only; seam=none
+  test('bracket access, backtick literals and wrapped subjects count too', () => {
+    const c = countKinds([
+      'declare const e: any, kind: any;',
+      'e["kind"] === "pglite";',
+      'e[`engineKind`] === "postgres";',
+      'kind === `postgres`;',
+      '(e.kind as string) === "pglite";',
+      'e!.engine !== "postgres";',
+      'e["mode"] === "pglite";',
+      'switch ((e.kind)) { case `pglite`: break; }',
+    ].join('\n'));
+    expect(c).toEqual({ kind_compare: 5, kind_case: 1 });
   });
 
   test('an exhaustive switch whose default asserts never does not count; an incomplete one does', () => {

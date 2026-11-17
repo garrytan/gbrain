@@ -51,7 +51,10 @@ function isKindExpr(node: ts.Expression): boolean {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node) || ts.isAsExpression(node)) return isKindExpr(node.expression);
   if (ts.isIdentifier(node)) return KIND_NAMES.has(node.text);
   if (ts.isPropertyAccessExpression(node)) return KIND_NAMES.has(node.name.text);
-  if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)) return KIND_NAMES.has(node.argumentExpression.text);
+  if (ts.isElementAccessExpression(node)) {
+    const key = node.argumentExpression;
+    return (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) && KIND_NAMES.has(key.text);
+  }
   return false;
 }
 
