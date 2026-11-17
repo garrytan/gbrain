@@ -157,10 +157,10 @@ getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
 upsertEventProjection	timeline	yes	4	no	yes	yes	refuses:timeline
-mergeOntologyFact	ontology	yes	4	no	yes	yes	refuses:ontology
-getOntology	ontology	yes	2	no	yes	yes	refuses:ontology
-discoverOntologyDimensions	ontology	yes	1	no	yes	yes	refuses:ontology
-findOntologyConflicts	ontology	yes	1	no	yes	yes	refuses:ontology
+mergeOntologyFact	ontology	yes	4	no	yes	yes	serves
+getOntology	ontology	yes	2	no	yes	yes	serves
+discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
+findOntologyConflicts	ontology	yes	1	no	yes	yes	serves
 putRawData	raw_files	yes	2	yes	yes	yes	refuses:raw_data
 getRawData	raw_files	yes	2	yes	yes	yes	refuses:raw_data
 upsertFile	raw_files	yes	2	no	yes	yes	refuses:files

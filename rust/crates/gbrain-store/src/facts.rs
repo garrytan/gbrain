@@ -59,7 +59,7 @@ const FENCE: u8 = 0x05;
 const REFS: u8 = 0x06;
 const STINT: u8 = 0x07;
 
-const COUNTER: &str = "next_facts_id";
+pub(crate) const COUNTER: &str = "next_facts_id";
 const TABLE: &str = "facts";
 const FENCE_INDEX: &str = "idx_facts_fence_key";
 const STINT_INDEX: &str = "idx_facts_ontology_stint_dedup";
@@ -331,7 +331,7 @@ fn invalid(message: String) -> StoreError {
 }
 
 /// The `CHECK` constraints and the NUL rule of a row about to be written.
-fn check_row(op: &str, r: &FactRecord) -> Result<()> {
+pub(crate) fn check_row(op: &str, r: &FactRecord) -> Result<()> {
     let texts: [(&str, Option<&str>); 18] = [
         ("source_id", Some(&r.source_id)),
         ("entity_slug", r.entity_slug.as_deref()),
@@ -377,6 +377,22 @@ fn check_row(op: &str, r: &FactRecord) -> Result<()> {
         return Err(check_violation("facts_confidence_check"));
     }
     Ok(())
+}
+
+/// The row holding the ontology stint key `(source, entity, dimension, value_hash, page,
+/// valid_from)` of `idx_facts_ontology_stint_dedup`, when one does.
+pub(crate) fn stint_holder(
+    read: &dyn KvRead,
+    source_id: &str,
+    entity: &str,
+    dimension: &str,
+    value_hash: &str,
+    slug: &str,
+    valid_from_us: i64,
+) -> Result<Option<u64>> {
+    let mut key = text_key(STINT, &[source_id, entity, dimension, value_hash, slug]);
+    key.extend_from_slice(&time_bytes(valid_from_us));
+    Ok(read.get(&key)?.as_deref().and_then(keys::be8))
 }
 
 /// Fact row `id`, when it exists.
@@ -452,11 +468,15 @@ fn rows_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<FactRecord>> {
     Ok(out)
 }
 
-fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
+pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
 }
 
-fn entity_rows(read: &dyn KvRead, source_id: &str, entity: &str) -> Result<Vec<FactRecord>> {
+pub(crate) fn entity_rows(
+    read: &dyn KvRead,
+    source_id: &str,
+    entity: &str,
+) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_ENTITY, &[source_id, entity]))
 }
 
@@ -704,7 +724,7 @@ pub(crate) fn fact_fingerprint(text: &str) -> String {
 }
 
 /// A `REAL` read back: the shortest decimal that names the stored `f32`, as an `f64`.
-fn real(value: f32) -> f64 {
+pub(crate) fn real(value: f32) -> f64 {
     format!("{value}").parse().unwrap_or(f64::from(value))
 }
 
@@ -960,7 +980,7 @@ fn new_record(
     Ok(row)
 }
 
-fn require_fact_source(read: &dyn KvRead, source_id: &str) -> Result<()> {
+pub(crate) fn require_fact_source(read: &dyn KvRead, source_id: &str) -> Result<()> {
     match read_source(read, source_id)? {
         Some(_) => Ok(()),
         None => Err(foreign_key("facts_source_id_fkey")),
@@ -1005,7 +1025,7 @@ fn delete_for_page(tx: &mut dyn KvWrite, op: &str, args: &PageDeleteArgs) -> Res
 
 /// `deletedPageProjectionHiddenSql('facts')`: a soft-deleted page in the row's source whose slug
 /// is the row's page or its entity hides the row.
-fn hidden_by_deleted_page(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(crate) fn hidden_by_deleted_page(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     for slug in [&row.source_markdown_slug, &row.entity_slug]
         .into_iter()
         .flatten()
