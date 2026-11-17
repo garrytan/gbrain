@@ -170,6 +170,9 @@ for (const kind of testBackends()) {
       expect(contexts).toContain(PRIV);
       expect(contexts).toContain(HELD);
       for (const canary of [STALE_PRIV, NOTE_PRIV]) expect(contexts).toContain(canary);
+      // The extractor stores a body link with no origin page: each reader's leak case is such a row, read against its from page.
+      const noOrigin = (await engine.executeRaw<{ context: string }>("SELECT context FROM links WHERE origin_page_id IS NULL AND link_source = 'markdown'")).map(r => r.context).join('\n');
+      for (const canary of [PRIV, HELD, STALE_PRIV, CHAIN_PRIV]) expect(noOrigin).toContain(canary);
       expect(NOTE_CONTEXT).toContain('<!--- gbrain:takes:begin -->');
       const stale = await engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE slug = $1', [STALE]);
       expect(stale[0]!.compiled_truth).not.toContain('gbrain:facts');
