@@ -107,6 +107,11 @@ describe('private-pages grant output (#8104)', () => {
   test('a brain without the private_pages column lists its clients with private pages none (the top rung of the fallback ladder)', async () => {
     // Last test of the file: the column is dropped from this throwaway brain.
     const rows = await withBrain(async engine => {
+      // Value: protects=a brain without oauth_clients.private_facts still lists clients with private_pages (second rung); fails_when=private_facts leaves the degrade list or the rung is removed; why_new=only the private_pages rung was driven; seam=none; no_claim=Postgres error codes (PGLite only)
+      await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN private_facts');
+      const facts = (await listClientRows(engine)).find(r => r.client_id === 'client-granted')!;
+      expect(facts.private_pages).toBe('granted_sources');
+      expect((facts as { private_facts?: unknown }).private_facts).toBeUndefined();
       await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN private_pages');
       return listClientRows(engine);
     });
