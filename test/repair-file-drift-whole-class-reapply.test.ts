@@ -1,12 +1,15 @@
 /**
  * Whole-class apply, rerun cases (`gbrain repair file-drift --held --side unknown --prefer file --whole-class --apply --expect <hash> --yes`):
- *   - an apply that finished without applying a page (every pin refused, here mirror_changed) leaves no progress record, so the
+ *   - an apply that finished without applying a page (every pin refused, here changed_since_preview) leaves no progress record, so the
  *     same class previewed again under the same hash applies its pages instead of reporting complete with nothing applied;
  *   - a database error while reading the saved approval surfaces as that error, not class_manifest_stale: the approval stands
- *     and a plain rerun applies it.
+ *     and a plain rerun applies it;
+ *   - a running apply renews its lease, so a second apply is refused class_apply_busy even past the lease's length; one whose
+ *     lease another apply took stops class_apply_busy and leaves that apply's progress record alone;
+ *   - the mirror flag is read for each page: a source made writable during the apply skips its later pages changed_since_preview.
  * PGLite only: the Postgres arm's shards have no room left, and neither case depends on the backend. Synthetic content only.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,7 +22,7 @@ import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/
 import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
-import { applyFileDriftClass, CLASS_PROGRESS_OP, previewFileDriftClass, type ClassSelection } from '../src/core/repair/file-drift-class.ts';
+import { applyFileDriftClass, classLock, CLASS_PROGRESS_OP, classWindow, previewFileDriftClass, type ClassSelection } from '../src/core/repair/file-drift-class.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { connectTemplateBrain } from './helpers/brain-template.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
@@ -38,7 +41,10 @@ const coordinated = (engine: BrainEngine, sql: string, params: unknown[] = []) =
 const sel: ClassSelection = { sourceId: 'default', side: 'unknown', only: [], skip: [] };
 const asCli = <T>(engine: BrainEngine, run: () => Promise<T>) => registerLocalWriter(engine, 'cli').then(writer => withVerifiedLocalRegistration(engine, writer, run));
 const preview = (engine: BrainEngine) => asCli(engine, async () => previewFileDriftClass(engine, await resolveRepairScope(engine, 'default'), sel, { remote: false }));
-const apply = (ctx: OperationContext, hash: string) => asCli(ctx.engine, async () => applyFileDriftClass({ ...ctx, remote: false }, await resolveRepairScope(ctx.engine, 'default'), sel, hash));
+const apply = (ctx: OperationContext, hash: string, opts: Parameters<typeof applyFileDriftClass>[4] = {}) =>
+  asCli(ctx.engine, async () => applyFileDriftClass({ ...ctx, remote: false }, await resolveRepairScope(ctx.engine, 'default'), sel, hash, opts));
+const progressLock = async (engine: BrainEngine, hash: string) => (await engine.executeRaw<{ t: string | null }>(
+  "SELECT completed_keys->0->'lock'->>'token' AS t FROM op_checkpoints WHERE op=$1 AND fingerprint=$2", [CLASS_PROGRESS_OP, hash]))[0];
 const setMirror = (engine: BrainEngine, on: boolean) => engine.executeRaw(`UPDATE sources SET config = config || jsonb_build_object('mirror_read_only', $1::boolean) WHERE id='default'`, [on]);
 const body = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ b: string }>("SELECT compiled_truth AS b FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0]?.b;
 
@@ -59,6 +65,8 @@ async function mirrorHolds(engine: BrainEngine, root: string): Promise<void> {
   }
 }
 
+afterEach(() => { classWindow.pages = 200; classLock.ttlMs = 120_000; });
+
 describe('whole-class apply reruns', () => {
   const pgliteClone = async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-whole-class-reapply-'));
@@ -73,7 +81,7 @@ describe('whole-class apply reruns', () => {
     expect(first.pages).toBe(2);
     await setMirror(engine, false);
     const skipped = await apply(ctx, first.hash);
-    expect([skipped.complete, skipped.applied, skipped.skipped_pages.map(page => page.reason)]).toEqual([true, 0, ['mirror_changed', 'mirror_changed']]);
+    expect([skipped.complete, skipped.applied, skipped.skipped_pages.map(page => page.reason)]).toEqual([true, 0, ['changed_since_preview', 'changed_since_preview']]);
     expect((await engine.executeRaw('SELECT 1 FROM op_checkpoints WHERE op=$1', [CLASS_PROGRESS_OP])).length).toBe(0);
     await setMirror(engine, true);
     const again = (await preview(engine)).class_manifest!;
@@ -98,5 +106,46 @@ describe('whole-class apply reruns', () => {
     expect([failed, (error as { code?: string })?.code, (error as Error)?.message]).toEqual([true, undefined, 'connection terminated unexpectedly']);
     const applied = await apply(ctx, m.hash);
     expect([applied.complete, applied.applied, applied.skipped]).toEqual([true, 2, 0]);
+  }, opts()), 300_000);
+
+  test('a running apply renews its lease: a second apply past the lease length is refused class_apply_busy', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root);
+    const m = (await preview(engine)).class_manifest!;
+    classWindow.pages = 1;
+    classLock.ttlMs = 600;
+    let second: unknown;
+    const first = await apply(ctx, m.hash, { onWindow: async window => {
+      if (window !== 0) return;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      second = await apply(ctx, m.hash).then(result => result, e => e);
+    } });
+    expect((second as { code?: string })?.code).toBe('class_apply_busy');
+    expect([first.complete, first.applied]).toEqual([true, 2]);
+  }, opts()), 300_000);
+
+  test('an apply whose lease another apply took stops class_apply_busy, applies nothing more and leaves that progress record', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root);
+    const m = (await preview(engine)).class_manifest!;
+    classWindow.pages = 1;
+    const foreign = '00000000-0000-4000-8000-000000000001';
+    const first = await apply(ctx, m.hash, { onWindow: async window => {
+      if (window !== 0) return;
+      await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys = jsonb_set(completed_keys, '{0,lock}', jsonb_build_object('token', $3::text, 'pid', 1, 'host', 'other-host', 'expires_at', 9999999999999))
+        WHERE op=$1 AND fingerprint=$2`, [CLASS_PROGRESS_OP, m.hash, foreign]);
+    } });
+    expect([first.complete, first.applied, first.stopped?.code]).toEqual([false, 1, 'class_apply_busy']);
+    expect((await progressLock(engine, m.hash))?.t).toBe(foreign);
+    expect(await body(engine, 'notes/n01')).toBe('An old database body.');
+  }, opts()), 300_000);
+
+  test('a source made writable during the apply skips its later pages changed_since_preview and leaves them held', () => managedBrain(async ({ engine, ctx, root }) => {
+    await mirrorHolds(engine, root);
+    const m = (await preview(engine)).class_manifest!;
+    classWindow.pages = 1;
+    const result = await apply(ctx, m.hash, { onWindow: async window => { if (window === 0) await setMirror(engine, false); } });
+    expect([result.complete, result.applied, result.skipped_pages]).toEqual([true, 1, [{ slug: 'notes/n01', reason: 'changed_since_preview' }]]);
+    expect(await body(engine, 'notes/n01')).toBe('An old database body.');
+    const held = await engine.executeRaw<{ p: string }>("SELECT completed_keys->0->>'path' AS p FROM op_checkpoints WHERE op='sync-hold'");
+    expect(held.map(row => row.p)).toContain('notes/n01.md');
   }, opts()), 300_000);
 });

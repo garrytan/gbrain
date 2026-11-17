@@ -51,9 +51,10 @@ import type { RepairScope } from './core.ts';
 export const CLASS_PROGRESS_OP = 'file-drift-class-progress';
 /** The window a whole-class walk and its apply step by; tests make it small. */
 export const classWindow = { pages: HELD_WINDOW_PAGES };
+/** How long an apply's lease lasts without renewal; a running apply renews it on a timer. Tests make it small. */
+export const classLock = { ttlMs: 120_000 };
 export const CLASS_SIDES = ['unknown', 'database', 'both'] as const;
 const CLASS_TOP = 50;
-const LOCK_TTL_MS = 120_000;
 const RECONCILE_ARTIFACT_VERSION = 1;
 const CURSOR_PREFIX = 'c1.';
 const APPROVAL_PREFIX = 'class:';
@@ -305,27 +306,32 @@ async function acquireLock(engine: BrainEngine, sel: ClassSelection, hash: strin
     if (lockLive(progress.lock)) throw opError('class_apply_busy', `Another apply of whole-class manifest ${hash.slice(0, 12)} is running (process ${progress.lock!.pid} on ${progress.lock!.host}).`,
       `Nothing was written by this run. Wait for that apply to finish; if it was stopped, rerun the same command once its lock expires (${new Date(progress.lock!.expires_at).toISOString()}), and it resumes at the next window: ${shellQuote(classApplyArgv(sel, hash))}`,
       { fix: readFix('Shows the source\'s held pages and sync state, read-only.', { argv: ['gbrain', 'sources', 'status', sel.sourceId, '--json'] }) });
-    const next = { ...progress, lock: { token, pid: process.pid, host: hostname(), expires_at: Date.now() + LOCK_TTL_MS } };
+    const next = { ...progress, lock: { token, pid: process.pid, host: hostname(), expires_at: Date.now() + classLock.ttlMs } };
     await tx.executeRaw('UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now() WHERE op=$1 AND fingerprint=$2', [CLASS_PROGRESS_OP, hash, JSON.stringify([next])]);
     return next;
   });
 }
 
-/** Saves the progress record, but only while this run holds its lock. */
-async function writeProgress(engine: BrainEngine, hash: string, token: string, update: Partial<Progress>): Promise<void> {
-  await engine.transaction(async tx => {
+/** Saves the progress record while this run holds its lock; false when another apply took the lock. */
+async function writeProgress(engine: BrainEngine, hash: string, token: string, update: Partial<Progress>): Promise<boolean> {
+  return engine.transaction(async tx => {
     const [row] = await tx.executeRaw<{ completed_keys: Progress[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR UPDATE', [CLASS_PROGRESS_OP, hash]);
     const progress = row?.completed_keys?.[0];
-    if (!progress || progress.lock?.token !== token) return;
+    if (!progress || progress.lock?.token !== token) return false;
     await tx.executeRaw('UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now() WHERE op=$1 AND fingerprint=$2',
       [CLASS_PROGRESS_OP, hash, JSON.stringify([{ ...progress, ...update }])]);
+    return true;
   });
 }
+
+const lostLock = (sel: ClassSelection, hash: string) => opError('class_apply_busy', `Another apply took over whole-class manifest ${hash.slice(0, 12)} while this one was running.`,
+  `This run stopped and wrote nothing more. Wait for the other apply to finish, then rerun the same command; it resumes where that one stopped: ${shellQuote(classApplyArgv(sel, hash))}`,
+  { fix: readFix('Shows the source\'s held pages and sync state, read-only.', { argv: ['gbrain', 'sources', 'status', sel.sourceId, '--json'] }) });
 
 type PageOutcome = { applied: true } | { applied: false; reason: string };
 
 /** D1: one page re-read and applied only when every pin still holds and its lost lines did not grow. */
-async function applyPage(engine: BrainEngine, sel: ClassSelection, manifest: ClassManifest, hash: string, pin: ClassPin, incarnation: string, mirror: boolean): Promise<PageOutcome> {
+async function applyPage(engine: BrainEngine, sel: ClassSelection, manifest: ClassManifest, hash: string, pin: ClassPin, incarnation: string): Promise<PageOutcome> {
   const requestId = requestIdFor(hash, pin.slug);
   const [prior] = await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
   if (prior?.state === 'committed') return { applied: true };
@@ -333,7 +339,8 @@ async function applyPage(engine: BrainEngine, sel: ClassSelection, manifest: Cla
     throw opError('write_pending', `The apply of ${pin.slug} (request ${requestId}) has not settled yet.`, `Wait for it (gbrain write-request ${requestId}), then rerun the apply; it resumes where it stopped.`);
   }
   if (prior) return { applied: false, reason: `refused_${prior.state}` };
-  if (mirror !== manifest.mirror) return { applied: false, reason: 'mirror_changed' };
+  const mirror = await sourceMirrorReadOnly(engine, sel.sourceId);
+  if (mirror !== manifest.mirror) return { applied: false, reason: 'changed_since_preview' };
   try { await authorizeReconcile(engine, sel.sourceId, pin.slug); }
   catch (error) { if (!(error instanceof OperationError) || error.code !== 'permission_denied') throw error; return { applied: false, reason: 'refused_permission_denied' }; }
   const hold = await readGitHold(engine, sel.sourceId, incarnation, pin.path);
@@ -384,9 +391,12 @@ export async function applyFileDriftClass(ctx: OperationContext, scope: RepairSc
     throw staleManifest(sel, expect, changed ? `${changed} page(s) or their pins differ from the approved set` : 'its versions, mirror flag or kept pages differ from the approved preview');
   }
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sel.sourceId]);
-  const mirror = await sourceMirrorReadOnly(engine, sel.sourceId);
   const token = randomUUID();
   const progress = await acquireLock(engine, sel, expect, token);
+  const renew = () => writeProgress(engine, expect, token, { lock: { token, pid: process.pid, host: hostname(), expires_at: Date.now() + classLock.ttlMs } });
+  let lost = false;
+  const heartbeat = setInterval(() => { renew().then(owned => { if (!owned) lost = true; }, () => { /* the next page's write reports it */ }); }, Math.max(50, Math.floor(classLock.ttlMs / 3)));
+  heartbeat.unref?.();
   const result: ClassApplyResult = { complete: false, applied: progress.applied, skipped: progress.skipped, remaining: 0, skipped_pages: [] };
   const size = Math.max(1, classWindow.pages);
   const windows = Math.ceil(manifest.pages.length / size);
@@ -396,14 +406,14 @@ export async function applyFileDriftClass(ctx: OperationContext, scope: RepairSc
     await asLocalCli(engine, async () => {
       for (; window < windows; window++) {
         for (const pin of manifest.pages.slice(window * size, (window + 1) * size)) {
+          if (lost || !await renew()) throw lostLock(sel, expect);
           if (opts.stop?.aborted) throw opError('interrupted', 'The whole-class apply was stopped by a signal.', 'Rerun the resume command; it continues at the window that was running.');
           if (opts.deadline !== undefined && Date.now() >= opts.deadline) throw opError('interrupted', 'The whole-class apply reached its deadline.', 'Rerun the resume command; it continues at the window that was running.');
-          const outcome = await applyPage(engine, sel, manifest, expect, pin, source!.incarnation, mirror);
+          const outcome = await applyPage(engine, sel, manifest, expect, pin, source!.incarnation);
           if (outcome.applied) result.applied++;
           else { result.skipped++; result.skipped_pages.push({ slug: pin.slug, reason: outcome.reason }); }
-          await writeProgress(engine, expect, token, { lock: { token, pid: process.pid, host: hostname(), expires_at: Date.now() + LOCK_TTL_MS } });
         }
-        await writeProgress(engine, expect, token, { window: window + 1, applied: result.applied, skipped: result.skipped });
+        if (!await writeProgress(engine, expect, token, { window: window + 1, applied: result.applied, skipped: result.skipped })) throw lostLock(sel, expect);
         await opts.onWindow?.(window);
       }
     });
@@ -415,12 +425,18 @@ export async function applyFileDriftClass(ctx: OperationContext, scope: RepairSc
       try { writeFileSync(trace, `${new Date().toISOString()} ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`, { mode: 0o600 }); result.trace = trace; } catch { /* the message still names the error */ }
     }
   } finally {
-    await writeProgress(engine, expect, token, { lock: null, ...(finished ? { complete: true } : { last_error: result.stopped?.message ?? '' }) });
+    clearInterval(heartbeat);
+    if (!finished) await writeProgress(engine, expect, token, { lock: null, last_error: result.stopped?.message ?? '' });
+  }
+  if (finished && !(await engine.executeRaw("DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->'lock'->>'token'=$3 RETURNING 1",
+    [CLASS_PROGRESS_OP, expect, token])).length) {
+    finished = false;
+    const busy = lostLock(sel, expect);
+    result.stopped = { code: busy.code, message: busy.message };
   }
   if (finished) {
     result.complete = true;
     await clearApprovedSet(engine, { command: 'file-drift', hash: APPROVAL_PREFIX + expect });
-    await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CLASS_PROGRESS_OP, expect]);
     removeManifest(expect);
     result.next = `The next gbrain sync --source ${sel.sourceId} re-screens each applied file and releases its hold.`;
     return result;
