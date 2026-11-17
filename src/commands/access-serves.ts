@@ -215,6 +215,16 @@ async function planCompanyRule(engine: BrainEngine, members: ServesReceipt['memb
 }
 
 /** A text[] column value as a list (Postgres returns an array, PGLite may return the {a,b} literal). */
+/**
+ * GBRA-585 A: live member-bound keys whose fixed read list still holds `sourceId` though it is not their write source,
+ * each with the rescope command that drops it. Unfederating never narrows such a list, so `sources unfederate` names them.
+ */
+export async function keysStillReading(engine: BrainEngine, sourceId: string): Promise<Array<{ token: string; member: string; command: string }>> {
+  const rows = await engine.executeRaw<{ name: string; member_id: string; federated_read: unknown }>(
+    "SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name", [sourceId]);
+  return rows.map(r => ({ token: r.name, member: r.member_id, command: `gbrain auth rescope --token ${r.name} --sources ${textList(r.federated_read).filter(s => s !== sourceId).join(',')}` }));
+}
+
 const textList = (v: unknown): string[] => Array.isArray(v) ? v.map(String) : String(v ?? '').replace(/^\{|\}$/g, '').split(',').map(s => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
 
 /** The live pages in the company source, and how many are imported calls (company/calls/<date>-<title>). */

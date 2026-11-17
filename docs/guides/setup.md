@@ -205,7 +205,10 @@ when the key is minted. The preview names the list and how many pages `company` 
 how many of them are imported calls, and that every member reads them all, calls they
 did not attend included. A source federated later reaches these keys only when you run
 setup again: a re-run adds sources to a key setup minted with a list and never removes
-one. Keys minted before this (the default grant) are never changed. When the same run
+one. Unfederating a source does not take it away from these keys either:
+`gbrain sources unfederate <id>` lists each member key that still reads it, with the
+`gbrain auth rescope --token <name> --sources <ids>` command that drops it.
+Keys minted before this (the default grant) are never changed. When the same run
 adds the `company` source (`--shape company`), setup labels the people first and then
 gives their new keys `company`; `company` itself stays out of default search.
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
