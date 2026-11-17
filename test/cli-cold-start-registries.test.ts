@@ -122,6 +122,6 @@ describe('load-time registries under per-op loading', () => {
     };
     const alone = probe('');
     expect(alone).toEqual(probe("await import('./src/core/operations.ts');"));
-    expect(alone).toEqual(['forget', 'lower_page', 'supersede_fact', 'supersede_take']);
+    expect(alone).toEqual(['confirm', 'forget', 'lower_page', 'supersede_fact', 'supersede_take']);
   });
 });

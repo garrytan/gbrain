@@ -17,7 +17,7 @@ import { beliefStreamSlugs, beliefTransaction } from '../belief/writers.ts';
 import {
   applyProposalAction, type PairProposal, type PairProposalStore, type ProposalActionResult,
 } from '../facts/proposal-supersede.ts';
-import { currentWriteTrust, withTrustPromotion, withWriteAttribution } from '../persistence/context.ts';
+import { currentWriteTrust, withCoordinatedWrite, withTrustPromotion, withWriteAttribution } from '../persistence/context.ts';
 import { normalizeDimension, NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { verbError, type OperationError } from '../ops/contract.ts';
 import type { Principal } from '../persistence/model.ts';
@@ -357,31 +357,39 @@ registerTrustProposalHandler('supersede_take', {
   },
 });
 
+type ShareOutcome = { status: 'accepted'; visibility: string } | { status: 'refused' | 'superseded'; reason: string };
+
 /**
  * GST-2897 B: the owner shares a held fact. Its visibility widens when the fence still asks for it (or it has no page);
  * its tier stays as written, so the member it is about can still withdraw it.
  */
 registerTrustProposalHandler('confirm', {
   async accept(engine, proposal, ctx: TrustDecisionContext) {
-    const { maintenanceTransaction } = await import('../persistence/attribution.ts');
-    const outcome = await maintenanceTransaction(engine, async tx => {
-      const row = await getTrustProposal(tx, proposal.id, true);
-      if (row?.status !== 'pending') return { status: 'refused' as const, reason: row?.status ?? 'not_found' };
-      const requested = await requestedVisibility(tx, proposal.id, proposal.target_id);
-      const [fact] = await tx.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id = $1 AND source_id = $2 AND expired_at IS NULL',
-        [proposal.target_id, proposal.source_id]);
-      if (!requested || !fact) {
-        await transitionTrustProposal(tx, proposal.id, 'pending', 'superseded');
-        return { status: 'superseded' as const, reason: 'fact_missing' };
-      }
-      const widen = fact.visibility === requested.from && await fenceAsks(tx, proposal.target_id, requested.to, requested.pageless);
-      if (widen) {
-        await tx.executeRaw('UPDATE facts SET visibility = $3 WHERE id = $1 AND source_id = $2', [proposal.target_id, proposal.source_id, requested.to]);
-        await queueTierProjection(tx, 'facts', proposal.target_id);
-      }
-      const visibility = widen ? requested.to : fact.visibility;
-      await transitionTrustProposal(tx, proposal.id, 'pending', 'accepted', { decidedBy: ctx.decidedBy, after: { visibility } });
-      return { status: 'accepted' as const, visibility };
+    const { maintenanceAttribution, principalAttribution } = await import('../persistence/attribution.ts');
+    const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
+    const attribution = ctx.decidedBy ? principalAttribution(ctx.decidedBy) : await maintenanceAttribution(engine);
+    const managed = await managedPersistenceEnabled(engine);
+    const outcome = await engine.transaction(tx => {
+      const run = async (): Promise<ShareOutcome> => {
+        const row = await getTrustProposal(tx, proposal.id, true);
+        if (row?.status !== 'pending') return { status: 'refused' as const, reason: row?.status ?? 'not_found' };
+        const requested = await requestedVisibility(tx, proposal.id, proposal.target_id);
+        const [fact] = await tx.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id = $1 AND source_id = $2 AND expired_at IS NULL',
+          [proposal.target_id, proposal.source_id]);
+        if (!requested || !fact) {
+          await transitionTrustProposal(tx, proposal.id, 'pending', 'superseded');
+          return { status: 'superseded' as const, reason: 'fact_missing' };
+        }
+        const widen = fact.visibility === requested.from && await fenceAsks(tx, proposal.target_id, requested.to, requested.pageless);
+        if (widen) {
+          await tx.executeRaw('UPDATE facts SET visibility = $3 WHERE id = $1 AND source_id = $2', [proposal.target_id, proposal.source_id, requested.to]);
+          await queueTierProjection(tx, 'facts', proposal.target_id);
+        }
+        const visibility = widen ? requested.to : fact.visibility;
+        await transitionTrustProposal(tx, proposal.id, 'pending', 'accepted', { decidedBy: ctx.decidedBy, after: { visibility } });
+        return { status: 'accepted' as const, visibility };
+      };
+      return managed ? withCoordinatedWrite(tx, [proposal.source_id], run, attribution) : withWriteAttribution(tx, attribution, run);
     });
     return outcome.status === 'accepted'
       ? decisionResult(proposal, 'accept', 'accepted', { detail: { fact_id: String(proposal.target_id), visibility: outcome.visibility } })

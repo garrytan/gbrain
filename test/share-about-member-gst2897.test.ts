@@ -12,10 +12,13 @@
  * 3. Existing coverage: test/remember-share-gst2243.test.ts (share: true), test/member-forget-refusal-9101.test.ts
  *    (member forget refusals), test/remember-restated-private-2875.test.ts (the restatement hold this one extends).
  * 4. Real seams: OAuth client-credentials tokens bound to members and the owner, MCP dispatch as remote callers, a
- *    repo-less brain, PGLite and Postgres.
+ *    repo-less brain, managed and unmanaged, PGLite and Postgres.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -31,6 +34,9 @@ import { getTrustProposal, parseTrustProposalRef } from '../src/core/trust/propo
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 const SRC = 'source-a';
 const ACME = 'companies/acme-example';
@@ -38,10 +44,11 @@ const BOB = 'people/bob-example';
 const ALICE = 'people/alice-example';
 const owner = { confirmation: { via: 'tty' as const } };
 
-for (const kind of testBackends()) {
-  describe('share: true about another member (' + kind + ', repo-less)', () => {
+for (const kind of testBackends()) for (const managed of [false, true]) {
+  describe('share: true about another member (' + kind + (managed ? ', managed' : '') + ', repo-less)', () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-share-held-'));
     const tokens: Record<string, string> = {};
     const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     async function call(who: string, op: string, params: Record<string, unknown>) {
@@ -79,9 +86,13 @@ for (const kind of testBackends()) {
         await bindCredential(engine, { kind: 'client', id: c.clientId }, { member });
         tokens[name] = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
       }
+      if (managed) await withEnv({ GBRAIN_HOME: home }, async () => {
+        await registerLocalWriter(engine, 'cli');
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      });
     }, 120_000);
 
-    afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); });
+    afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await disposePersistenceConsumer(engine); await close?.(); rmSync(home, { recursive: true, force: true }); });
 
     test("a member's share about another member is held private until the owner's accept shares it", async () => {
       const out = await saved('alice', 'Bob example is interviewing elsewhere canaryheldshare', BOB, { share: true });
