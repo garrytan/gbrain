@@ -404,10 +404,11 @@ CREATE POLICY page_segment_derivation_purge_pages_scope_filter ON page_segment_d
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM page_segment_derivation_purges r WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
 
--- A read role that searches and reads pages. The other tables it reads
+-- A read role that searches and reads pages. Search also reads
+-- timeline_entries for each result's `stale` flag. The other tables it reads
 -- (config, timeline_entries, facts, ...) need policies of their own.
 GRANT SELECT ON pages, content_chunks, page_body_manifest, page_segment_texts,
-  page_view_digests, sources TO <reader-role>;
+  page_view_digests, sources, timeline_entries TO <reader-role>;
 
 -- If the runtime role OWNS these tables, as for pages:
 ALTER TABLE page_segment_texts FORCE ROW LEVEL SECURITY;

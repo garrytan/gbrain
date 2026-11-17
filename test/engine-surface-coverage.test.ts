@@ -232,12 +232,16 @@ describe('BrainEngine surface — mechanical enumeration (D9)', () => {
     let corpus = '';
     for (const f of files) corpus += readFileSync(f, 'utf8') + '\n';
 
-    const referenced = (name: string): boolean =>
-      // `.name(` / `.name!(` call sites, `.name?.(` optional-chain calls,
-      // or `name:` stub-property definitions on engine test doubles.
-      new RegExp(`[.]${name}\\s*!?\\s*\\(|[.]${name}\\?\\.\\(|\\b${name}\\s*:`).test(corpus);
+    // One pass over the corpus collects every referenced identifier:
+    // `.name(` / `.name!(` call sites, `.name?.(` optional-chain calls,
+    // or `name:` stub-property definitions on engine test doubles.
+    // One regex per method instead scans the corpus up to that method's first
+    // reference, so its cost depended on readdir order and drifted past the
+    // 5 s default when a checkout reordered test/.
+    const seen = new Set<string>();
+    for (const m of corpus.matchAll(/[.](\w+)(?:\s*!?\s*\(|\?\.\()|\b(\w+)\s*:/g)) seen.add(m[1] ?? m[2]!);
 
-    const unreferenced = INTERFACE_METHODS.filter((n) => !referenced(n));
+    const unreferenced = INTERFACE_METHODS.filter((n) => !seen.has(n));
 
     // Two-direction diff for actionable failure output:
     //  - newlyUncovered: add a real test, or allowlist + smoke it here.
