@@ -29,15 +29,15 @@ Top 10 findings:
 1. **pgrust is a faithful Rust port of Postgres, locks included.** It ports Postgres's lock manager, `SKIP LOCKED`, advisory locks and WAL. It is AGPL-3.0, beta, and its README says not to run it in production. It speaks SQL, so D18 rules it out. Avoid it as a dependency; it would bring back the lock model D20 removes.
 2. **No embedded Rust store gives everything at once.** None has many writers, no busy errors, snapshot readers, proven crash safety, multi-process access and a follower log together. gbrain has to own its transaction layer and put it on top of a small, proven store.
 3. **FoundationDB is the design to copy.** Clients take no locks. At commit, a resolver checks each transaction's read ranges against newer writes. The result is strict serializability, and nightly deterministic simulation stands behind it. Copy optimistic transactions with conflict ranges, and copy simulation testing from the first PR.
-4. **redb is the strongest storage base for the bake-off.** It is stable, its file format is stable, it has checksummed dual commit slots, and its fuzzing injects I/O errors. Its single writer is fine underneath an optimistic layer: callers never hold the redb writer; one commit step applies the write sets that passed validation, in batches.
+4. **redb is the strongest storage base for the bake-off.** It is stable, its file format is stable, it has checksummed dual commit slots (a one-phase commit with a checksum and one fsync by default, two-phase as an option), and its fuzzing injects I/O errors. Its single writer is fine underneath an optimistic layer: callers never hold the redb writer; one ordered commit pipeline validates write sets and applies them in batches.
 5. **Turso's `BEGIN CONCURRENT` is the closest Rust multi-writer engine, but it is not ready.** It gives snapshot isolation, not serializability. A conflict returns `SQLITE_BUSY`. MVCC mode has no multi-process access, and correctness issues are still open. Watch it; do not adopt it.
 6. **Snapshot isolation is not enough for gbrain.** Quotas, caps and single claims break under write skew. Jepsen found anomalies in PostgreSQL 12.3 at `SERIALIZABLE` and lost updates in TiDB 2.1.7. Use serializable validation, or make each invariant a write to one conflict key.
-7. **Every lock and queue call site has a lock-free counterpart in a proven system.** `SKIP LOCKED` claims become claim operations on a ready index with fencing tokens. TTL leases become epoch-fenced leases (SlateDB, FoundationDB). Advisory locks become conflict keys. `LISTEN/NOTIFY` becomes a commit-log subscription (Convex).
+7. **Every lock and queue call site has a counterpart in a proven system that holds no lock while the caller works.** `SKIP LOCKED` claims become claim operations on a ready index with fencing tokens. TTL leases become epoch-fenced leases (SlateDB, FoundationDB). Advisory locks become conflict keys. `LISTEN/NOTIFY` becomes a commit-log subscription (Convex).
 8. **RLS becomes a typed scope capability plus physical partitioning.** Only the authentication boundary can build the scope object, and every method takes it. Indexes are partitioned per source or tenant, and BM25 statistics are kept per tenant. Cedar (Rust, Apache-2.0, proofs in Lean) can make the policy decision. A SpiceDB-style token gives read-your-writes. Avoid Oso (archived) and OpenFGA (no consistency token).
-9. **Search indexes need their own concurrency rules.** tantivy allows one writer per index, so one engine task must own it. Concurrent HNSW insert and search is unsafe by default (usearch #735, a YugabyteDB fix). Use an immutable base, a delta and tombstones, and pin every index to the same version as the records (Lance manifests, ParadeDB's MVCC directory).
+9. **Search indexes need their own concurrency rules.** tantivy allows one writer per index, so one engine task must own it. Concurrent HNSW insert and search is unsafe by default (usearch #735, a YugabyteDB fix). Use an immutable base, a delta that readers never see half-built, and tombstones, and pin every index to the same version as the records (Lance manifests, ParadeDB's MVCC directory).
 10. **Replication can wait, but the format cannot.** Write a commit log now so a follower can read it later. openraft is the best Rust Raft library for M3/M4; avoid raft-rs (its last release was 2023, with open safety issues). Copy Neon's PITR design: a restore point is a log position, not a copy.
 
-**We learned that the bulletproof systems do not lock; they validate at commit and test in simulation.
+**We learned that the bulletproof systems do not hold locks while callers work; they validate at commit and test in simulation.
 You should build gbrain's own optimistic, serializable transaction layer (FoundationDB's design) over a
 proven embedded store (redb is the front-runner), with deterministic simulation from day one.**
 
@@ -45,15 +45,19 @@ proven embedded store (redb is the front-runner), with deterministic simulation 
 
 1. **Concurrency control.** Build optimistic serializable transactions in `gbrain-store`, following
    FoundationDB's design. A transaction reads at a snapshot version and records the keys and key ranges it
-   read and wrote. At commit, a validator checks the read set against writes committed after the snapshot. A
-   transaction with no conflict commits; a transaction with a conflict gets a typed `conflict` result. The
-   engine retries it inside the typed operation, with a bounded budget and backoff, so callers never see a
-   busy error (D20). Writers never wait for other writers' locks. Readers never wait at all.
-2. **Commit pipeline, not a writer lock.** Validated write sets go to one commit step per brain. It batches
-   them into one store transaction (group commit) and makes the batch durable. No caller holds this step
-   while it does its own work. It is an ordered append, the same role the WAL insert plays in every database.
-   The Phase 2 bake-off measures its p99 under 64 writers, as D20 requires. If the step becomes the
-   bottleneck, shard it by source.
+   read and wrote. A transaction with no conflict commits; a transaction with a conflict gets a typed
+   `conflict` result. The engine re-runs it from a new snapshot inside the typed operation, with a bounded
+   budget and backoff, so callers never see a busy error (D20). It never re-applies the old writes. Writers
+   never wait for other writers' locks. Readers never wait at all.
+2. **One ordered commit pipeline, not a writer lock.** Validation and commit order happen in the same place:
+   one commit pipeline per brain. The pipeline takes transactions one at a time in commit order. It checks
+   each read set against every write committed after that transaction's snapshot and against every write
+   already accepted into the current batch. It then gives the transaction its commit version. Without that
+   second check, two transactions could both pass and overwrite each other inside one batch. The pipeline
+   writes each batch as one store transaction (group commit), makes it durable, and only then acknowledges
+   and publishes the new version to readers. No caller holds the pipeline while it does its own work. It
+   plays the role the WAL insert plays in every database. The Phase 2 bake-off measures its p99 under 64
+   writers, as D20 requires. If it becomes the bottleneck, shard it by source.
 3. **Hot keys.** For a key that many writers contend on (a quota counter, a queue head), an optimistic retry
    loop wastes work. Use typed operations that cannot conflict on that key: atomic add, compare-and-set, or
    per-key single flight inside the owner process. This matches the plan's D20 table.
@@ -71,7 +75,8 @@ proven embedded store (redb is the front-runner), with deterministic simulation 
 ## Comparison table
 
 How to read the ratings: **strong** means proven in production or by an outside test; **ok** means present
-but unproven or limited; **weak** means missing or known to be broken; **n/a** means the axis does not apply.
+but unproven or limited; **weak** means missing or known to be broken; **not checked** means no primary
+source was read for that cell; **n/a** means the axis does not apply.
 "Proven correctness" means an outside check (Jepsen, deterministic simulation, formal proofs), not the
 project's own unit tests.
 
@@ -80,36 +85,36 @@ project's own unit tests.
 | pgrust | Postgres MVCC + lock manager (row locks, SSI) | ok: WAL, crash simulator, fsync change not yet tested | ok: ported walsender | ok: RLS ported | ok: ported | strong: server | weak: own claims, no Jepsen, beta | avoid (copy 2 ideas) |
 | Turso (MVCC) | SI, row-level optimistic, `SQLITE_BUSY` on conflict | ok | weak: CDC only | weak | weak | weak: none in MVCC mode | ok: DST, Antithesis, no Jepsen | copy, watch |
 | SQLite | single writer, WAL | strong | weak | weak | ok | strong: WAL + shm | strong: TH3, 100% MC/DC | copy test discipline |
-| redb | single writer, MVCC readers, serializable | strong: checksummed dual slots, 2-phase commit | weak | n/a | weak: savepoints | ok: file range locks | ok: fuzzing with I/O-error injection | adopt as base (bake-off) |
-| Fjall | OCC multi-writer, serializable | ok | weak | n/a | weak | weak: forbidden | weak | bake-off candidate |
-| LMDB / heed | single writer, lock-free readers | strong | weak | n/a | ok: hot copy | strong | ok: long production use | bake-off fallback |
+| redb | single writer, MVCC readers, serializable | strong: checksummed dual slots; 1-phase + checksum by default, 2-phase optional | weak | n/a | weak: savepoints | ok: file range locks | ok: fuzzing with I/O-error injection | adopt as base (bake-off) |
+| Fjall | OCC multi-writer, serializable | ok | weak | n/a | weak | weak: forbidden | weak | adopt candidate (bake-off) |
+| LMDB / heed | single writer, lock-free readers | strong | weak | n/a | ok: hot copy | strong | ok: long production use | adopt candidate (bake-off fallback); copy lock-free readers |
 | RocksDB | pessimistic or optimistic transactions | strong | weak: secondary instances | n/a | ok: checkpoints | weak: one writer process | ok: heavy production use | copy (C++ weight) |
-| FoundationDB | OCC, conflict ranges, strict serializable | strong | strong | n/a | ok: backup agent | strong: cluster | strong: nightly DST, paper | copy (design to follow) |
-| TiKV | Percolator, optimistic + pessimistic, SI | strong | strong: multi-Raft | n/a | ok | strong: cluster | ok: Jepsen found lost updates (2019, fixed) | copy |
-| CockroachDB | serializable, HLC, parallel commits | strong | strong | ok | ok | strong | ok: Jepsen 2017, TLA+ | avoid (license), copy TLA+ |
-| TigerBeetle | single-threaded state machine, strict serializable | strong | strong: VSR | n/a | ok | strong | strong: Jepsen 2025, VOPR DST | copy test discipline |
+| FoundationDB | OCC, conflict ranges, strict serializable | strong | strong | n/a | ok: continuous backup agent (details not checked) | strong: cluster | strong: nightly DST, paper | copy (design to follow) |
+| TiKV | Percolator, optimistic + pessimistic, SI | strong | strong: multi-Raft | n/a | ok: external BR tool (not checked) | strong: cluster | ok: Jepsen found lost updates (2019, fixed) | copy |
+| CockroachDB | serializable, HLC, parallel commits | strong | strong | ok: roles and privileges | ok: BACKUP/RESTORE with PITR (license tier not checked) | strong | ok: Jepsen 2017, TLA+ | avoid (license), copy TLA+ |
+| TigerBeetle | single-threaded state machine, strict serializable | strong | strong: VSR | n/a | not checked | strong | strong: Jepsen 2025, VOPR DST | copy test discipline |
 | openraft | Raft log | n/a | strong: production use | n/a | ok: snapshots | n/a | ok: own DST + Jepsen-style suite | adopt for M3/M4 |
 | SlateDB | single writer with epoch fencing | ok | ok: object store | n/a | not checked | ok: one writer, many readers | ok: project says fencing is formally verified | copy fencing |
 | Neon | Postgres + Paxos WAL quorum | strong | strong | n/a (Postgres) | strong: LSN branches | strong | ok | copy PITR design |
-| Convex | OCC with read sets, reactive queries | ok | ok | ok: functions | ok | strong: server | weak: no outside test | copy subscriptions |
+| Convex | OCC with read sets, reactive queries | not checked | weak: self-host is one machine | ok: functions | not checked | strong: server | weak: no outside test | copy subscriptions |
 | Lance | OCC manifests, per-operation conflict rules | ok | weak | weak | strong: version travel | ok | weak | copy manifest design |
 | tantivy | one writer per index, snapshot readers | strong: atomic `meta.json` | weak | weak | weak | weak: one writer process | ok: production use | adopt for full-text search |
 | Qdrant | per-point last write wins | weak: crash bugs into 2026 | ok | ok: per-collection keys | weak: per node | n/a | weak | avoid (copy 2 ideas) |
 | Cedar | n/a (stateless) | n/a | n/a | strong | n/a | n/a | strong: Lean proofs, differential tests | adopt for policy |
-| SpiceDB | snapshot reads at a revision | n/a | n/a | strong | n/a | n/a | ok | copy consistency token |
+| SpiceDB | snapshot reads at a revision | n/a | n/a | strong | n/a | n/a | not checked: no Jepsen found | copy consistency token |
 
 How the axes rank the designs, best first, for gbrain's case:
 
 - **Concurrency control:** FoundationDB (optimistic, conflict ranges, strict serializable) > CockroachDB
   (serializable) > TigerBeetle (one thread, ordered batches) > TiKV (snapshot isolation plus pessimistic
   locks) > Turso MVCC (snapshot isolation, busy errors) > single-writer stores (redb, LMDB, SQLite).
-- **Crash safety:** SQLite and LMDB (decades of use) > redb (checksummed dual slots, fuzzing with injected I/O
+- **Crash safety:** SQLite and LMDB (decades of use) > redb (checksummed dual commit slots, fuzzing with injected I/O
   errors) > tantivy (atomic `meta.json`) > Lance, Turso > Qdrant (crash bugs into 2026).
 - **Replication:** FoundationDB, TiKV, CockroachDB, TigerBeetle (built in, tested) > openraft (a library,
   used in production) > Neon (Paxos WAL quorum) > raft-rs (stalled) > embedded stores (none).
 - **Access control (RLS replacement):** Cedar (policy proofs) + typed scope > SpiceDB (consistency token) >
   Postgres RLS (pitfalls listed below) > OpenFGA (stale checks) > Oso (archived).
-- **Backup / PITR:** Neon (restore point = log position) > Lance (version travel) > FoundationDB backup >
+- **Backup / PITR:** Neon (restore point = log position) > Lance (version travel) > FoundationDB backup (not checked in detail) >
   per-node snapshots (Qdrant).
 - **Multi-process on one machine:** a server or owner process (FoundationDB, pgrust, gbrain's owner) > LMDB
   and SQLite WAL (shared memory) > redb (file range locks) > Fjall and Turso MVCC (not supported).
@@ -179,9 +184,8 @@ means: read the design, write our own code. Code under AGPL is never copied, onl
   they drop session state: session advisory locks, `SET`, and `LISTEN` break, and transaction-scoped locks
   survive. gbrain already works around this: `db-lock.ts` keeps its long locks as TTL rows in
   `gbrain_cycle_locks` instead of session advisory locks, and other sites use transaction-scoped
-  advisory locks. PgBouncer
-  1.26.1 (2026-10-14) fixed three CVEs, one a SCRAM authentication bypass. Verdict: no change for the Rust
-  engine. The lesson for the M1 server: connection state must belong to the engine's connection object, not
+  advisory locks. PgBouncer 1.26.1 (2026-10-14) fixed three CVEs, one a SCRAM authentication bypass.
+  Verdict: copy the lesson only; nothing to adopt for the Rust engine. The lesson for the M1 server: connection state must belong to the engine's connection object, not
   to a pooled socket, and change notification needs its own channel (PgDog builds its own pub/sub for this).
 
 ### Embedded stores (the bake-off pool)
@@ -202,20 +206,22 @@ means: read the design, write our own code. Code under AGPL is never copied, onl
   D18 rules out its SQL.
 - **redb.** Apache-2.0, v4.6.0 (2026-11-13), about 4,900 stars, marked stable, stable file format. One
   writer at a time; readers use MVCC snapshots and never block; transactions are serializable. Crash design:
-  two commit slots with XXH3-128 checksums and a two-phase commit, so recovery picks the last valid slot and
-  never replays a log. It has a fuzz crate with I/O-error injection. It supports several processes, with one
+  two commit slots with XXH3-128 checksums, so recovery picks the last valid slot and never replays a log.
+  The default durable commit is one-phase with a checksum and a single fsync; two-phase commit is optional
+  in one process and required in multi-process mode. The design notes advise two-phase commit for
+  untrusted input, because XXH3 is not a cryptographic checksum. The bake-off measures both modes. It has a fuzz crate with I/O-error injection. It supports several processes, with one
   or several writer processes, through file range locks, and documents which features multi-process mode
   does not support. Verdict: adopt as the leading base store for the Phase 2 bake-off, under gbrain's own
   optimistic layer. Its single writer is acceptable only because callers never hold it: the commit step
   holds it for one batch. Do not use its multi-process mode; that is a file lock (D20).
 - **Fjall.** Apache-2.0, v3.1.13 (2026-10-25). An LSM store with `OptimisticTxDatabase` (many writers,
   serializable, optimistic) and `SingleWriterTxDatabase`. Its README forbids opening one database from
-  several processes. Verdict: a bake-off candidate as a base store under the owner process, which needs
-  only one process. Copy the idea of choosing single-writer or optimistic mode per database. It has less
+  several processes. Verdict: adopt candidate, conditional on the Phase 2 bake-off, as a base store under the
+  owner process, which needs only one process. Copy the idea of choosing single-writer or optimistic mode per database. It has less
   crash-test evidence than redb.
 - **LMDB through heed.** heed is MIT, v0.23.1. One writer; readers take no locks; many processes share the
   memory map. Stale readers must be cleared (`mdb_reader_check`). heed issue #20 shows a deadlock pattern to
-  avoid. Verdict: bake-off fallback. Copy its lock-free reader design.
+  avoid. Verdict: adopt candidate, conditional on the bake-off (fallback). Copy its lock-free reader design.
 - **RocksDB (rust-rocksdb v0.25.0).** Pessimistic transactions (a lock manager) and optimistic transactions.
   Other processes can open it only read-only or as a "secondary". It is a large C++ dependency. Verdict:
   copy; adopt only if the bake-off shows a write-throughput need nothing else meets (D17).
@@ -258,7 +264,8 @@ means: read the design, write our own code. Code under AGPL is never copied, onl
   by 0.16.45 except indefinite client retries. Jepsen found a bug that four fuzzers had missed. Verdict:
   copy its test discipline (the VOPR simulator plus an outside Jepsen-style test). Its single-threaded
   apply also supports the commit-pipeline idea in the recommendation.
-- **openraft.** Apache-2.0, about 2,100 stars, active (pushed 2026-11-17), v0.8.x, pre-1.0 API. Used in
+- **openraft.** Apache-2.0, about 2,100 stars, active (pushed 2026-11-17). The latest release is 0.10.0
+  (crates.io, 2026-11-10); the API is pre-1.0 and changes between minor versions. Used in
   production by Databend's meta service and others. The project runs turmoil-based simulation in CI and a
   Jepsen-style suite with 8 fault types (self-reported; not on jepsen.io). Verdict: adopt for M3/M4 only,
   under the commit log. Not before then (D19: single machine first).
@@ -297,10 +304,13 @@ means: read the design, write our own code. Code under AGPL is never copied, onl
   an in-process queue, not a lock that fails (D20).
 - **HNSW with concurrent insert and search.** Not safe by default. usearch #735 (open) reports nodes that
   concurrent inserts make unreachable. A YugabyteDB fix (commit ba7507a, 2026-06-18) adds a reader/writer
-  phase lock, because a search could read a neighbor link before the vector it points to is visible. DiskANN
-  and YugabyteDB's vector LSM use an immutable base, a mutable delta and tombstones. Verdict: copy the
-  base-plus-delta-plus-tombstones design. Readers search an immutable base plus a small delta at their
-  snapshot version, and merges publish a new base. No reader waits on an insert.
+  phase lock, because a search could read a neighbor link before the vector it points to is visible.
+  YugabyteDB's vector LSM, and the third-party `diskann-rs` crate (not Microsoft's DiskANN; a secondary
+  source), use an immutable base, a delta and tombstones. Verdict: copy that shape, with one rule the
+  usearch race makes necessary: a reader never searches a graph that is still being changed. New vectors
+  go to a small flat delta that readers scan by brute force at their snapshot version, or to delta
+  segments that are immutable once published. A background build publishes a new graph segment; merges
+  publish a new base. No reader waits on an insert, and no reader sees a half-built graph.
 - **Qdrant** (Apache-2.0). Per-point last-write-wins; the default favors availability over consistency.
   It had crash-consistency bugs from 2023 into 2026; the latest one, PR #9424 (2026-06-11), fixed filter
   updates lost across a restart. Snapshots are per node, not one point in time for the cluster. Verdict:
@@ -333,8 +343,11 @@ means: read the design, write our own code. Code under AGPL is never copied, onl
   typed scope at the server boundary. Do not use tokens as the enforcement point inside the engine.
 - **Postgres RLS pitfalls** (from the PostgreSQL docs and third-party write-ups). The table owner bypasses
   policies unless `FORCE ROW LEVEL SECURITY` is set. A member of the owner role inherits that bypass.
-  A function in a policy that is not `LEAKPROOF` blocks index use. Views run with the owner's rights
-  unless `security_barrier` or `security_invoker` is set. Each pitfall has a Rust equivalent to test for:
+  The planner does not push a user's filter below a policy when the filter uses a function or operator
+  that is not `LEAKPROOF`, so that filter cannot use an index on the protected table. A view checks the
+  underlying tables with the view owner's rights and policies unless `security_invoker` is set.
+  `security_barrier` does not change whose rights apply; it only stops the planner from running a
+  user's filter before the view's own conditions. Each pitfall has a Rust equivalent to test for:
   a maintenance path that skips the scope, a filter applied after the index scan, and a helper that runs
   with more rights than its caller. gbrain today enables RLS on 37+ tables with no `CREATE POLICY`, so it
   denies by default to any role without `BYPASSRLS`. Real isolation lives in application code and in GUC
@@ -354,23 +367,31 @@ the caller works.
 | Stall reapers with `SKIP LOCKED`, 15 s grace | `minions/queue.ts` | `reclaim_stalled_jobs`: a scan at a snapshot, then a conditional write (compare `claim_generation`) per job. A worker that comes back late fails its token check. | Epoch fencing (SlateDB) |
 | Idempotent submit (`ON CONFLICT (idempotency_key)`) | `minions/queue.ts` | `admit_job(spec)`: a unique-key index entry written in the same commit; a second submit with the same key returns the first job. | Unique keys in any OCC store |
 | Admission, quota and max-waiting checks under `pg_advisory_xact_lock` | `minions/queue.ts` (near lines 385, 431, 460-488) | `admit_job` plus `reserve_capacity(key, delta, cap)`: a counter checked against its cap at commit. Counters split per worker or per shard where the cap allows. | FoundationDB atomic add plus a conflict range on the counter |
-| Budget and rate locks (`clientLockKey`, `rateLeaseLockKey`) and `FOR UPDATE` on budget ledgers | budget and rate-limit code | `reserve_budget`, `acquire_rate_lease(key, ttl)`: one conditional write on a ledger row; a conflict means another caller spent first, so read again and decide. | FoundationDB; TigerBeetle (balances by design) |
-| Facts per `source:entity` advisory lock, then a sequence number | `engine-sql/facts.ts` (near lines 122, 151) | `append_fact(entity, fact)`: the commit step assigns the per-entity sequence, so callers never pick a number and never lock. | Commit-time sequence numbers (FoundationDB versionstamps) |
-| `lockPageKeys` (about 76 calling files) and other key-family advisory locks (page body chunks, mention entries, origin, output writer, memory proposals, graduation nonce) | page-state guards and callers | Default: CAS on the row revision, so a stale writer fails at commit and retries on a new snapshot. Where work must not run twice (an LLM call, an embedding call): `single_flight(keys)`, keys sorted, held only inside the owner process until commit or abort, with waiters queued in memory. It never returns a busy error. | Lance conflict matrix; Convex OCC |
+| Budget and rate advisory locks (`clientLockKey`; `hashKey` in `minions/rate-leases.ts`) and `FOR UPDATE` on budget ledgers | budget and rate-limit code | `reserve_budget`, `acquire_rate_lease(key, ttl)`: one conditional write on a ledger row; a conflict means another caller spent first, so read again and decide. | FoundationDB; TigerBeetle (balances by design) |
+| Facts: a per-`source:entity` advisory lock around insert and supersession | `engine-sql/facts.ts` (near lines 122, 151) | `append_fact(entity, fact)`: the commit pipeline orders facts per entity (a new guarantee the Rust engine adds), so supersession checks see every earlier fact and callers never lock. | Commit-time sequence numbers (FoundationDB versionstamps) |
+| `lockPageKeys` (about 76 calling files) and other key-family advisory locks (page body chunks, mention entries, origin, output writer, memory proposals, graduation nonce) | page-state guards and callers | Default: CAS on the row revision, so a stale writer fails at commit and retries on a new snapshot. Where the same work must not run twice at the same time (an LLM call, an embedding call): `single_flight(keys)`, keys sorted, held only inside the owner process until commit or abort, with waiters queued in memory and a bounded wait that ends in a typed `timeout` or `cancelled` result, never a busy error. It stops concurrent duplicates only: after an abort, a crash or an owner handoff the call can run again. Keep paid external calls outside transaction bodies that the engine re-runs, and use the provider's idempotency key or an effect journal where one exists. | Lance conflict matrix; Convex OCC |
 | `FOR UPDATE` read-modify-write (config, OAuth codes) | about 225 sites | A plain transaction: the read goes into the read set, and the commit fails if that row changed. OAuth codes are single-use: a delete-if-present that only one caller can win. | SSI / FoundationDB |
 | `FOR KEY SHARE` on pages while links and timeline rows are written | links and timeline writers | Validate at commit that the parent page still exists at the same revision (a read-set entry). A purge that races a link write fails one of the two. | Foreign-key checks as read sets (Turso #5955 shows the failure when this is missing) |
-| Session advisory lock 42 around init and migrations | `db-lock.ts`, `migrate.ts` | `upgrade_format`: CAS on `format_version` in the store header. One process wins; others reopen at the new version. | Lance manifest commit |
+| Advisory lock 42 around schema init and migrations (transaction-scoped, with a session-lock fallback; a polled `pg_try_advisory_lock` with a deadline) | `postgres-engine/init-schema-lock.ts`, `schema-migration-lock.ts`, `migrate.ts` | `upgrade_format`: CAS on `format_version` in the store header. One process wins; others reopen at the new version. | Lance manifest commit |
 | `gbrain_cycle_locks` TTL lease (`ON CONFLICT ... WHERE ttl < now()`, `acquisition_token`) | cycle and maintenance code | `acquire_lease(id, ttl)` returns a token with an epoch; `renew_lease(token)`; `assert_lease(token)` runs inside every commit the holder makes, so a holder that paused past its TTL cannot write. | SlateDB `WriterInit` epochs; FoundationDB |
-| `LISTEN/NOTIFY` trigger `notify_minion_job_change` (Postgres only); PGLite polls every 1 s, sync wake every 3 s | `schema.sql`, `sync-queue-wake.ts` | Subscriptions on the commit log: a waiter registers a key range and the version it has seen; the commit step wakes it when a later commit touches the range. Across processes, the owner pushes over the client connection. | Convex reactive queries; Turso CDC |
+| `LISTEN/NOTIFY` trigger `notify_minion_job_change` (Postgres only). Without a notification the worker's idle loop polls every 5 s by default; the sync wake polls every 1 s and falls back to polling when a LISTEN probe gets no answer in 3 s; PGLite gets no sync wake | `schema.sql`, `minions/worker.ts`, `minions/sync-queue-wake.ts` | Subscriptions on the commit log: a waiter registers a key range and the version it has seen; the commit step wakes it when a later commit touches the range. Across processes, the owner pushes over the client connection. | Convex reactive queries; Turso CDC |
 | RLS on 37+ tables (no policies) plus GUC write guards `gbrain.write_sources` and `gbrain.write_trust_tier` | `schema.sql`, write paths | A `ReadScope` / `WriteScope` value with a private constructor that every engine method takes; the scope is pushed into index scans, never applied after top-k. Cedar decides who gets which scope. The commit version is the freshness token after a grant changes. The same error is returned for "not found" and "not yours". | Cedar; SpiceDB ZedToken; Qdrant `is_tenant` |
-| BM25 statistics computed across all tenants | full-text search | Keep term statistics per source (or per scope), so one tenant's documents cannot change another tenant's scores or reveal word counts. | Qdrant guidance on `idf` with a tenant filter (an inference, not a documented attack) |
+| Keyword ranking with `ts_rank` / `ts_rank_cd` (no corpus-wide statistics today) | full-text search | A new requirement for the Rust full-text index: if it uses BM25, keep term statistics per source (or per scope), so one tenant's documents cannot change another tenant's scores or reveal word counts. | Qdrant guidance on `idf` with a tenant filter (an inference, not a documented attack) |
 | About 25 plpgsql triggers | `schema.sql` | Explicit steps in the write path, run in the same commit, each with a parity test against the trigger it replaces. | D18 typed methods |
 | PGLite process lock (`pglite-lock.ts`), `pglite_busy` in 11 files | PGLite engine | `open_brain`: the first process becomes the owner; a second process connects as the owner's client, with handoff and retry by request id (plan PR 18). No process ever gets a busy error from opening the brain. | FoundationDB clients; pgrust thread per connection |
 
-Two places keep a lock on purpose, and both are allowed by D20: the filesystem resource locks that protect
-files outside the store, and the store's own commit step. That commit step is short, holds no user work,
-and groups many transactions into one fsync. It must be measured (lock wait, conflict retries, p99 at 1, 4,
-16 and 64 writers) and never reached by a caller directly.
+"No PGLite-style locking" does not mean "no synchronization at all". These places still serialize or wait,
+and D20 allows each of them:
+
+- **The commit pipeline.** It orders and validates commits, holds no user work, and groups many
+  transactions into one fsync. A caller never reaches it directly.
+- **`single_flight` keys.** A caller can wait on a key, but the wait is bounded and ends in a typed
+  `timeout` or `cancelled` result.
+- **The store's own internal latches and its single writer**, held only by the commit pipeline.
+- **Filesystem resource locks** that protect files outside the store, as the plan keeps them.
+
+Conflict retries are a different cost from waiting: the engine re-runs the transaction. The bake-off
+measures both (lock wait, conflict retries, p99 at 1, 4, 16 and 64 writers).
 
 ## How to prove it
 
@@ -423,7 +444,7 @@ as such in the text above.
 - https://turso.tech/blog/concurrent-writes-in-practice
 - https://www.sqlite.org/testing.html ; https://www.sqlite.org/th3.html ;
   https://sqlite.org/src/doc/begin-concurrent/doc/begin_concurrent.md
-- https://github.com/cberner/redb (README, `docs/design.md`, `fuzz/`)
+- https://github.com/cberner/redb (README, `fuzz/`) ; https://github.com/cberner/redb/blob/v4.6.0/docs/design.md
 - https://github.com/fjall-rs/fjall
 - https://github.com/meilisearch/heed ; https://github.com/LMDB/lmdb
 - https://github.com/rust-rocksdb/rust-rocksdb ; https://github.com/facebook/rocksdb
@@ -436,7 +457,7 @@ as such in the text above.
 - https://github.com/cockroachdb/cockroach/blob/master/docs/tla-plus/ParallelCommits/ParallelCommits.tla ;
   https://jepsen.io/analyses/cockroachdb-beta-20160829
 - https://jepsen.io/analyses/tigerbeetle-0.16.11
-- https://github.com/databendlabs/openraft ; https://github.com/tikv/raft-rs (issues #595, #599, #600)
+- https://github.com/databendlabs/openraft ; https://crates.io/crates/openraft/0.10.0 ; https://github.com/tikv/raft-rs (issues #595, #599, #600)
 - https://slatedb.io/ ; https://docs.rs/slatedb/latest/slatedb/wal/trait.WriterInit.html
 - https://docs.convex.dev/database/advanced/occ
 - https://jepsen.io/analyses/postgresql-12.3 ; https://jepsen.io/analyses/nats-2.12.1 ;
@@ -456,4 +477,7 @@ as such in the text above.
 - https://github.com/openfga/openfga/issues/1777
 - https://github.com/osohq/oso
 - https://github.com/eclipse-biscuit/biscuit-rust
-- https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+- https://www.postgresql.org/docs/current/ddl-rowsecurity.html ;
+  https://www.postgresql.org/docs/current/sql-createview.html ;
+  https://www.postgresql.org/docs/current/rules-privileges.html
+- https://docs.rs/diskann-rs/latest/src/diskann_rs/incremental.rs.html (secondary)
