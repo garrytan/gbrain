@@ -3390,7 +3390,7 @@ Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `pr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Doctor warning: a migration stopped three or more runs in a row on a conflict in one or more sources and recorded that host work is still owed (today only v0.53.0), so it is wedged even if a newer migration has completed since. | A newer migration completing does not do the work a wedged migration owes, and nothing reruns a wedged migration by itself, so it does not clear without a person. Each source's conflict needs the user's decision before a forced retry, or the retry stops on the same conflict again. | Run the read-only inspect `gbrain apply-migrations --migration <version> --dry-run --json` on the brain host to see each source's conflict. Once the user has reviewed each one, clear the wedge with `gbrain apply-migrations --force-retry <version>`, then run the command the inspect output names for each source, or `gbrain apply-migrations --yes`. Run: gbrain apply-migrations --list --json | user | `gbrain doctor --json` | 1 | no |
+| Doctor warning: a migration stopped three or more runs in a row on a conflict in one or more sources and recorded that host work is still owed (today only v0.53.0). | Each source in conflict needs the user's decision. The migration's read-only preview names each source, its conflict code and the step that settles it, and doctor stops warning once the preview finds no source in conflict. | Run the read-only inspect `gbrain apply-migrations --migration <version> --dry-run --json` on the brain host to see each source's conflict, its code and its next step, and settle each one with the user. For shared_skills_unmanifested, declare the skills to share in a skillpack.json at the source's root, or keep the source out with `gbrain sources shared-skills <id> off`. Run: gbrain apply-migrations --list --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/shared-brain-skills.md#reviewed-changes-after-inventory](../../docs/guides/shared-brain-skills.md#reviewed-changes-after-inventory)
 
@@ -5031,6 +5031,16 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The shared-skills operation was refused. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+### shared_skills_unmanifested
+
+<a id="shared_skills_unmanifested"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A conflict in the v0.53.0 shared-skills migration: a source's skills/ folder holds skills but the source has no skillpack.json declaring them, so the migration left them as they are. | Adopting skills nobody declared could publish private or half-finished ones, so the migration never adopts them and records the source as a conflict until a person decides. The conflict affects only shared-skills adoption; every other command works. | Review the skills in that source's skills/ folder with the user, then either declare the ones to share in a skillpack.json at the source's root, or keep the source out of shared-skills adoption with `gbrain sources shared-skills <id> off`. Run: gbrain apply-migrations --dry-run --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#migrate-an-existing-brain](../../docs/guides/shared-brain-skills.md#migrate-an-existing-brain)
 
 ### shared_skills_unsupported
 
