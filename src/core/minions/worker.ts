@@ -61,6 +61,7 @@ import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
 import { loadavg, cpus } from 'os';
 import { monitorEventLoopDelay } from 'perf_hooks';
 import { isRetryableConnError } from '../retry-matcher.ts';
+import { isWorkerConnectionError, isWorkerShutdownConnectionError } from './reconnect.ts';
 import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
 
@@ -571,7 +572,7 @@ export class MinionWorker extends EventEmitter {
           this.blockForConfiguration(e);
           return;
         }
-        if (reconnectedThisTick || !isRetryableConnError(e)) return;
+        if (reconnectedThisTick || !isWorkerConnectionError(e)) return;
         reconnectedThisTick = true;
         await this.reconnectAfterConnectionError(site, e);
       };
@@ -820,7 +821,7 @@ export class MinionWorker extends EventEmitter {
           // happened to reconnect or crash. Promotion is a standalone UPDATE
           // from delayed→waiting, so after a connection failure we can safely
           // rebuild the worker-owned pool before continuing to claim work.
-          if (isRetryableConnError(e)) {
+          if (isWorkerConnectionError(e)) {
             await this.reconnectAfterConnectionError('promoteDelayed', e);
           }
         }
@@ -885,7 +886,7 @@ export class MinionWorker extends EventEmitter {
             // job (invisible active job, no renewal, later stall). So instead:
             // reconnect once and let the NEXT poll tick re-claim against a live
             // pool. Non-retryable errors propagate (real bug → PM restart).
-            if (!isRetryableConnError(e)) throw e;
+            if (!isWorkerConnectionError(e)) throw e;
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
             await this.reconnectAfterConnectionError('claim', e);
@@ -1073,6 +1074,8 @@ export class MinionWorker extends EventEmitter {
    * Shared with the inline child drain (#2050) via minions/reconnect.ts.
    */
   private async reconnectAfterConnectionError(site: string, error: unknown): Promise<void> {
+    // A handler can outlive its scheduling slot. Do not close its pool while it settles.
+    if (isWorkerShutdownConnectionError(error) && this.executions.size > 0) return;
     await reconnectEngineAfterConnError(this.engine, site, error);
   }
 
