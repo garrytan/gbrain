@@ -10,8 +10,8 @@
 use crate::chunks::{ChunkInput, auto_chunks, clear_chunks, replace_chunks};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
-    EMPTY_OVERWRITE, INVALID_SLUG, PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result,
-    StoreError,
+    CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_SLUG, ORIGIN_CLAIMED, PAGE_NOT_FOUND,
+    REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
@@ -376,10 +376,124 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
     get_json(read, &key)
 }
 
+/// Stores a page record and its id key, and keeps its origin key (`o`) in step with it.
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    let before = read_page_by_id(&*tx, record.id)?;
     let key = page_key(&record.source_id, &record.slug);
     put_json(tx, &key, record)?;
-    tx.put(&keys::page_id(record.id), &key)
+    tx.put(&keys::page_id(record.id), &key)?;
+    index_origin(tx, before.as_ref(), Some(record))
+}
+
+/// An origin (`source_path`) in the form PGLite compares two of them: as stored, and on Windows
+/// with `\` read as `/` and case folded (`originKey` of `persistence/origin-guard.ts`).
+fn origin_key(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('\\', "/").to_lowercase()
+    } else {
+        path.to_owned()
+    }
+}
+
+/// The origin a page claims: its `source_path` while the page is live and the path is not empty.
+fn claimed_origin(page: &PageRecord) -> Option<String> {
+    match (&page.source_path, page.deleted_at_us) {
+        (Some(path), None) if !path.is_empty() => Some(origin_key(path)),
+        _ => None,
+    }
+}
+
+/// Moves a page's `o` key from what `before` claimed to what `after` claims.
+fn index_origin(
+    tx: &mut dyn KvWrite,
+    before: Option<&PageRecord>,
+    after: Option<&PageRecord>,
+) -> Result<()> {
+    let key = |page: &PageRecord| {
+        claimed_origin(page).map(|origin| keys::page_origin(&page.source_id, &origin, page.id))
+    };
+    let (old, new) = (before.and_then(key), after.and_then(key));
+    if old == new {
+        return Ok(());
+    }
+    if let Some(old) = old {
+        tx.delete(&old)?;
+    }
+    match new {
+        Some(new) => tx.put(&new, &[]),
+        None => Ok(()),
+    }
+}
+
+/// The slugs of the live pages of `source_id`, other than page `except`, that record `origin`.
+fn origin_holders(
+    read: &dyn KvRead,
+    source_id: &str,
+    origin: &str,
+    except: Option<u64>,
+) -> Result<Vec<String>> {
+    let wanted = origin_key(origin);
+    let mut ids = Vec::new();
+    scan_prefix(
+        read,
+        &keys::page_origin_prefix(source_id, &wanted),
+        false,
+        &mut |k, _| {
+            ids.extend(k.len().checked_sub(8).and_then(|at| keys::be8(&k[at..])));
+            true
+        },
+    )?;
+    let mut slugs = Vec::new();
+    for id in ids.into_iter().filter(|id| Some(*id) != except) {
+        if let Some(page) = read_page_by_id(read, id)?
+            && page.source_id == source_id
+            && claimed_origin(&page).as_deref() == Some(wanted.as_str())
+        {
+            slugs.push(page.slug);
+        }
+    }
+    slugs.sort();
+    Ok(slugs)
+}
+
+/// `assertOriginUnclaimed` (`persistence/origin-guard.ts`) for a write that leaves page `slug` of
+/// `source_id` live: `target` is the page as stored (`None` for an insert) and `source_path` the
+/// origin the write records (`None` keeps the stored one). Refuses with `origin_claimed` when
+/// another live page of the source records that origin, unless the target is live and already
+/// records it. An empty origin is never checked.
+fn assert_origin_unclaimed(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+    target: Option<&PageRecord>,
+    source_path: Option<&str>,
+) -> Result<()> {
+    let Some(origin) = source_path
+        .or_else(|| target.and_then(|page| page.source_path.as_deref()))
+        .filter(|origin| !origin.is_empty())
+    else {
+        return Ok(());
+    };
+    if let Some(page) = target
+        && page.deleted_at_us.is_none()
+        && page.source_path.as_deref().map(origin_key) == Some(origin_key(origin))
+    {
+        return Ok(());
+    }
+    let holders = origin_holders(read, source_id, origin, target.map(|page| page.id))?;
+    if holders.is_empty() {
+        return Ok(());
+    }
+    Err(StoreError::new(
+        ORIGIN_CLAIMED,
+        json!({
+            "source_id": source_id,
+            "source_path": origin,
+            "holders": holders,
+            "slug": target.map_or(slug, |page| page.slug.as_str()),
+        })
+        .to_string(),
+    ))
 }
 
 pub(crate) fn next_id(tx: &mut dyn KvWrite, name: &str) -> Result<u64> {
@@ -522,6 +636,22 @@ pub(crate) fn put_page_in(
     if options.expected_revision.is_some() || options.force.is_some() {
         assert_revision(existing.as_ref(), options)?;
     }
+    if input
+        .source_path
+        .as_deref()
+        .is_some_and(|path| path.contains('\0'))
+    {
+        return Err(StoreError::invalid(
+            "putPage: source_path contains a NUL byte",
+        ));
+    }
+    assert_origin_unclaimed(
+        &*tx,
+        &source_id,
+        &slug,
+        existing.as_ref(),
+        input.source_path.as_deref(),
+    )?;
     if blank(&input.compiled_truth)
         && !options.allow_empty_overwrite
         && let Some(prior) = existing.as_ref().filter(|p| p.deleted_at_us.is_none())
@@ -652,6 +782,49 @@ fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Res
     page.knowledge_revision = env.new_uuid();
     page.text_projection_revision = None;
     write_page(tx, page)
+}
+
+/// The page move of `updateSlug`: `UPDATE pages SET slug = new, updated_at = now()`. `page` is
+/// the record as stored. The page keeps its id, so its chunks, links, tags, timeline and versions
+/// follow it with no change. A new slug takes a new `knowledge_revision` and clears
+/// `text_projection_revision`, as the `gbrain_advance_page_revision` trigger does; the same slug
+/// changes only `updated_at`. `new_slug` goes through `validate_slug`. Refuses with
+/// `constraint_violation` when the source already holds a page (live or soft deleted) at the new
+/// slug, and the caller then returns the error so the transaction keeps nothing. The caller
+/// versions the page before, and records the alias after; this moves only the page.
+// aliases (updateSlug) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn rename_page(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &PageRecord,
+    new_slug: &str,
+) -> Result<PageRecord> {
+    let slug = validate_slug(new_slug)?;
+    let mut moved = page.clone();
+    moved.updated_at_us = env.now_micros();
+    let renamed = slug != page.slug;
+    if renamed {
+        if read_page(&*tx, &page.source_id, &slug)?.is_some() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                format!(
+                    "duplicate key value violates unique constraint: page \"{slug}\" already exists (source={})",
+                    page.source_id
+                ),
+            ));
+        }
+        moved.slug = slug;
+        moved.knowledge_revision = env.new_uuid();
+        moved.text_projection_revision = None;
+    }
+    // Write the new key before deleting the old one: the page id key then always points at a
+    // record that exists.
+    write_page(tx, &moved)?;
+    if renamed {
+        tx.delete(&page_key(&page.source_id, &page.slug))?;
+    }
+    Ok(moved)
 }
 
 fn cmp_updated(a: &PageRecord, b: &PageRecord) -> Ordering {
@@ -850,16 +1023,25 @@ impl Store {
         self.write(|tx| {
             let sources = scope_sources(&*tx, &source_id.map(String::from), &None)?;
             let now = self.env.now_micros();
-            let mut restored = false;
+            let mut tombstones = Vec::new();
             for id in sources {
-                if let Some(mut page) = read_page(&*tx, &id, slug)?
+                if let Some(page) = read_page(&*tx, &id, slug)?
                     && page.deleted_at_us.is_some()
                 {
-                    page.deleted_at_us = None;
-                    page.updated_at_us = now;
-                    tag_change(tx, &*self.env, &mut page)?;
-                    restored = true;
+                    tombstones.push(page);
                 }
+            }
+            // `assertRevivalUnclaimed`: every page checked, in source order, before any revives.
+            tombstones.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+            for page in &tombstones {
+                assert_origin_unclaimed(&*tx, &page.source_id, &page.slug, Some(page), None)?;
+            }
+            let mut restored = false;
+            for mut page in tombstones {
+                page.deleted_at_us = None;
+                page.updated_at_us = now;
+                tag_change(tx, &*self.env, &mut page)?;
+                restored = true;
             }
             Ok(restored)
         })
@@ -1008,7 +1190,212 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     clear_chunks(tx, page.id)?;
     crate::links::remove_page_links(tx, page.id)?;
     crate::timeline::remove_page_timeline(tx, page.id)?;
+    crate::timeline_queries::remove_event_projections(tx, page.id)?;
     crate::cascade::remove_page_rows(tx, page)?;
+    let stored = read_page_by_id(&*tx, page.id)?;
+    index_origin(tx, stored.as_ref().or(Some(page)), None)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn put(store: &Store, slug: &str) -> PageRecord {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        read_page(&*store.read().unwrap(), DEFAULT_SOURCE, slug)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn rename_page_moves_the_page_and_keeps_its_id() {
+        let store = crate::test_support::store();
+        put(&store, "old");
+        store.add_tag("old", "t", None).unwrap();
+        let before = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "old")
+            .unwrap()
+            .unwrap();
+        let moved = store
+            .write(|tx| rename_page(tx, &*store.env, &before, "New/Place"))
+            .unwrap();
+        assert_eq!(moved.slug, "new/place");
+        assert_eq!(moved.id, before.id);
+        assert_ne!(moved.knowledge_revision, before.knowledge_revision);
+        assert_eq!(moved.text_projection_revision, None);
+        assert!(moved.updated_at_us >= before.updated_at_us);
+        let read = store.read().unwrap();
+        assert!(read_page(&*read, DEFAULT_SOURCE, "old").unwrap().is_none());
+        let stored = read_page_by_id(&*read, before.id).unwrap().unwrap();
+        assert_eq!(stored.slug, "new/place");
+        assert_eq!(stored.tags, vec!["t".to_string()]);
+        assert_eq!(
+            store.get_tags("new/place", &ReadScope::default()).unwrap(),
+            vec!["t".to_string()]
+        );
+    }
+
+    #[test]
+    fn rename_page_to_the_same_slug_keeps_the_revision() {
+        let store = crate::test_support::store();
+        let before = put(&store, "same");
+        let moved = store
+            .write(|tx| rename_page(tx, &*store.env, &before, "same"))
+            .unwrap();
+        assert_eq!(moved.knowledge_revision, before.knowledge_revision);
+        assert_eq!(
+            moved.text_projection_revision,
+            before.text_projection_revision
+        );
+        assert!(
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "same")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn rename_page_refuses_a_taken_or_bad_slug_and_keeps_nothing() {
+        let store = crate::test_support::store();
+        let a = put(&store, "a");
+        put(&store, "b");
+        let taken = store
+            .write(|tx| rename_page(tx, &*store.env, &a, "b"))
+            .unwrap_err();
+        assert_eq!(taken.code, CONSTRAINT_VIOLATION);
+        let bad = store
+            .write(|tx| rename_page(tx, &*store.env, &a, ""))
+            .unwrap_err();
+        assert_eq!(bad.code, INVALID_SLUG);
+        let read = store.read().unwrap();
+        let stored = read_page(&*read, DEFAULT_SOURCE, "a").unwrap().unwrap();
+        assert_eq!(stored.knowledge_revision, a.knowledge_revision);
+        assert_eq!(
+            read_page(&*read, DEFAULT_SOURCE, "b")
+                .unwrap()
+                .unwrap()
+                .title,
+            "b"
+        );
+    }
+
+    fn put_at(store: &Store, slug: &str, path: Option<&str>, source: Option<&str>) -> Result<()> {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "body".into(),
+            source_path: path.map(String::from),
+            ..PageInput::default()
+        };
+        let options = PutPageOptions {
+            source_id: source.map(String::from),
+            ..PutPageOptions::default()
+        };
+        store.put_page(slug, &input, &options).map(|_| ())
+    }
+
+    fn origin_keys(store: &Store) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        scan_prefix(
+            &*store.read().unwrap(),
+            &[keys::PAGE_ORIGIN],
+            false,
+            &mut |k, _| {
+                out.push(k.to_vec());
+                true
+            },
+        )
+        .unwrap();
+        out
+    }
+
+    fn holders(error: &StoreError) -> Value {
+        assert_eq!(error.code, ORIGIN_CLAIMED);
+        serde_json::from_str(&error.message).unwrap()
+    }
+
+    #[test]
+    fn a_second_live_page_cannot_record_a_page_origin() {
+        let store = crate::test_support::store();
+        put_at(&store, "a", Some("notes/a.md"), None).unwrap();
+        let refused = put_at(&store, "b", Some("notes/a.md"), None).unwrap_err();
+        assert_eq!(
+            holders(&refused),
+            json!({"source_id": "default", "source_path": "notes/a.md", "holders": ["a"], "slug": "b"})
+        );
+        // A refused write stores nothing.
+        assert!(
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "b")
+                .unwrap()
+                .is_none()
+        );
+        // Writing the holder again without a path keeps its path; writing it with its own path
+        // is not a second claim.
+        put_at(&store, "a", None, None).unwrap();
+        put_at(&store, "a", Some("notes/a.md"), None).unwrap();
+        let a = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.source_path.as_deref(), Some("notes/a.md"));
+        // An empty path is never a claim.
+        put_at(&store, "c", Some(""), None).unwrap();
+        put_at(&store, "d", Some(""), None).unwrap();
+        // Another source may record the same path.
+        store
+            .upsert_source(&crate::sources::SourceInput {
+                id: "other".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        put_at(&store, "b", Some("notes/a.md"), Some("other")).unwrap();
+        assert_eq!(origin_keys(&store).len(), 2);
+    }
+
+    #[test]
+    fn a_soft_deleted_page_frees_its_origin_and_cannot_take_it_back() {
+        let store = crate::test_support::store();
+        put_at(&store, "a", Some("notes/a.md"), None).unwrap();
+        store.soft_delete_page("a", None).unwrap();
+        assert!(origin_keys(&store).is_empty());
+        put_at(&store, "b", Some("notes/a.md"), None).unwrap();
+        // Reviving the tombstone, by restore or by a write, would make a second live claimant.
+        let restore = store.restore_page("a", None).unwrap_err();
+        assert_eq!(holders(&restore)["holders"], json!(["b"]));
+        assert_eq!(holders(&restore)["slug"], json!("a"));
+        let revive = put_at(&store, "a", None, None).unwrap_err();
+        assert_eq!(holders(&revive)["source_path"], json!("notes/a.md"));
+        let a = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap();
+        assert!(a.deleted_at_us.is_some());
+        // Once the claimant is gone for good, the tombstone comes back with its origin.
+        store.delete_page("b", None).unwrap();
+        assert!(origin_keys(&store).is_empty());
+        assert!(store.restore_page("a", None).unwrap());
+        assert_eq!(origin_keys(&store).len(), 1);
+    }
+
+    #[test]
+    fn a_renamed_page_keeps_one_origin_key() {
+        let store = crate::test_support::store();
+        put_at(&store, "a", Some("notes/a.md"), None).unwrap();
+        let before = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+            .unwrap()
+            .unwrap();
+        store
+            .write(|tx| rename_page(tx, &*store.env, &before, "z"))
+            .unwrap();
+        assert_eq!(origin_keys(&store).len(), 1);
+        let refused = put_at(&store, "b", Some("notes/a.md"), None).unwrap_err();
+        assert_eq!(holders(&refused)["holders"], json!(["z"]));
+    }
 }

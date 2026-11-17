@@ -346,20 +346,21 @@ fn purge_deleted_pages_respects_the_cutoff_and_excluded_ids() {
 fn resolve_slugs_by_paths_returns_every_claimant_of_the_source() {
     let dir = TempDir::new("ops-paths");
     let store = open(&dir);
-    put(
-        &store,
-        "notes/a",
-        json!({ "type": "note", "title": "A", "compiled_truth": "a", "source_path": "Notes/A File.md" }),
-    );
+    // A second live claimant of one file is refused, so the tombstone claims the path first.
     put(
         &store,
         "notes/a-twin",
         json!({ "type": "note", "title": "T", "compiled_truth": "t", "source_path": "Notes/A File.md" }),
     );
-    put(&store, "notes/b", note("B", "b"));
     store
         .soft_delete_page("notes/a-twin", Some("default"))
         .unwrap();
+    put(
+        &store,
+        "notes/a",
+        json!({ "type": "note", "title": "A", "compiled_truth": "a", "source_path": "Notes/A File.md" }),
+    );
+    put(&store, "notes/b", note("B", "b"));
     let rows = store
         .resolve_slugs_by_paths(
             &["Notes/A File.md".to_string(), "notes/zzz.md".to_string()],

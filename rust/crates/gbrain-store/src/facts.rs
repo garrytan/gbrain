@@ -10,3 +10,12 @@
 //! this file's to define; document them here.
 //!
 //! Open to build now; see docs/designs/RUST_ENGINE_INTERFACES.md.
+
+/// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
+/// Nothing to delete yet. Full paths keep this stub clear of the imports this file will add.
+pub(crate) fn remove_source_rows(
+    _tx: &mut dyn crate::kv::KvWrite,
+    _source_id: &str,
+) -> crate::Result<()> {
+    Ok(())
+}
