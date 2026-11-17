@@ -707,3 +707,56 @@ describe('remote page rewrite keeps hidden private fence rows (Discussion #8194,
     }
   }), 180_000);
 });
+
+/**
+ * Test 18 (second-model review of #9523's code): a fact whose validity has ended is left private under its own reason,
+ * `lapsed`, by the preview and the locked apply alike; and a facts fence that lives below the timeline sentinel is
+ * opened where it lives, leaving the section above it unchanged. Managed and unmanaged, repo-less.
+ */
+describe('test 18: a lapsed fact stays private, and a fence in the timeline opens in place', () => {
+  for (const managed of [false, true]) {
+    test(`a fact past its valid_until is counted lapsed and left private (${managed ? 'managed' : 'unmanaged'})`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      for (const engine of engines) {
+        const b = await brain(engine, managed);
+        const slug = 'companies/lapsed-example';
+        const body = fence([[1, 'Orchardline current row', 'private']]).replace('|  | fixture |  |',
+          '|  | fixture |  |\n| 2 | Orchardline lapsed row | fact | 1.0 | private | medium | 2019-01-01 | 2020-01-01 | fixture |  |');
+        await run(b.local, 'put_page', { slug, content: `---\ntype: company\ntitle: ${slug}\n---\n\n# ${slug}\n\nOrchardline body.\n\n${body}\n` });
+        const lapsedDb = await dbOnly(b, 'Orchardline lapsed database-only fact', slug);
+        await coordinated(b, `UPDATE facts SET valid_until = '2020-01-01' WHERE id = $1`, [lapsedDb]);
+        const [lapsedRow] = await facts(b, 'Orchardline lapsed row');
+        expect(lapsedRow?.visibility).toBe('private');
+
+        const { planned, applied } = await previewAndApply(b);
+        expect(planned.details.excluded).toMatchObject({ lapsed: 2 });
+        expect(planned.listing.map((l: { detail: string }) => l.detail)).toEqual([expect.stringContaining('(fenced row 1)')]);
+        expect(applied!.applied).toBe(1);
+        expect(await visibilityOf(b, lapsedRow!.id)).toBe('private');
+        expect(await visibilityOf(b, lapsedDb)).toBe('private');
+        expect((await fenceCell(b, slug, 2))?.visibility).toBe('private');
+        expect((await facts(b, 'Orchardline current row')).map(f => f.visibility)).toEqual(['world']);
+      }
+    }), 180_000);
+
+    test(`a fence below the timeline sentinel is opened there and the body above is unchanged (${managed ? 'managed' : 'unmanaged'})`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      for (const engine of engines) {
+        const b = await brain(engine, managed);
+        const slug = 'companies/timeline-fence-example';
+        await run(b.local, 'put_page', { slug, content: `---\ntype: company\ntitle: ${slug}\n---\n\n# ${slug}\n\nOrchardline body above the timeline.\n\n<!-- timeline -->\n\n${fence([[1, 'Orchardline timeline row', 'private']])}\n` });
+        const [stored] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>('SELECT compiled_truth, timeline FROM pages WHERE source_id=$1 AND slug=$2', [b.sourceId, slug]);
+        expect(stored!.timeline).toContain('Orchardline timeline row');
+        const [before] = await facts(b, 'Orchardline timeline row');
+        expect(before?.visibility).toBe('private');
+
+        const { applied } = await previewAndApply(b);
+        expect(applied!.applied).toBe(1);
+        expect(applied!.outcomes?.fact_left_private).toBeUndefined();
+        expect((await facts(b, 'Orchardline timeline row')).map(f => [f.id, f.visibility])).toEqual([[before!.id, 'world']]);
+        const [after] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>('SELECT compiled_truth, timeline FROM pages WHERE source_id=$1 AND slug=$2', [b.sourceId, slug]);
+        expect(after!.compiled_truth).toBe(stored!.compiled_truth);
+        expect(parseFactsFence(after!.timeline).facts.find(f => f.rowNum === 1)).toMatchObject({ claim: 'Orchardline timeline row', visibility: 'world' });
+      }
+    }), 180_000);
+  }
+});
+

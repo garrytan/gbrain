@@ -47,13 +47,14 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { importFromContent } from '../import-file.ts';
-import { ownerImportTrust, ownerSourceGateInput } from '../trust/channel.ts';
+import { ownerGateInput, ownerImportTrust, ownerSourceGateInput } from '../trust/channel.ts';
+import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { loadImportSanityConfig, type ContentRefusal, type ImportSanityConfig } from '../import-screen.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { comparableFrontmatter, parseMarkdown, resolveParsedSubtype, type ParseOpts } from '../markdown.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { opError, type OperationContext } from '../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
@@ -201,9 +202,9 @@ export function fileSha256(path: string): string {
   return sha256(readFileSync(path));
 }
 
-/** The canonical page fields a publication stores; what the preview hash binds besides the bytes. */
+/** The canonical page fields a publication stores; what the preview hash binds besides the bytes. The gate's markers are re-derived from the bytes, so they are not bound. */
 export function canonicalRepairFields(page: Pick<ParsedPage, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) {
-  return { type: page.type, title: page.title, body: page.compiled_truth, timeline: page.timeline ?? '', frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
+  return { type: page.type, title: page.title, body: page.compiled_truth, timeline: page.timeline ?? '', frontmatter: comparableFrontmatter(withoutSafetyAssessments(page.frontmatter)), tags: [...new Set(tags)].sort() };
 }
 
 export interface RepairPublicationInput {
@@ -238,11 +239,12 @@ export async function prepareRepairPublication(engine: BrainEngine, input: Repai
   let result;
   try {
     result = await importFromContent(engine, renamed ? input.base!.page.slug : input.slug, content, { sourceId: input.sourceId, noEmbed: true, remote: false, preserveGateMarkers: true,
-      overrideTier: (await ownerSourceGateInput(engine, input.sourceId, parsedInput.frontmatter)).tier,
+      writeGate: await ownerSourceGateInput(engine, input.sourceId, parsedInput.frontmatter, input.sourcePath),
       activePack: input.activePack, filename: basename(input.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: input.sourcePath, allowEmptyOverwrite: true,
       prepare: async value => { prepared = value; return value.result; } });
   } catch (error) {
     if (error instanceof ContentSanityBlockError) return { status: 'refused', refusal: { code: 'content_rejected', message: error.message } };
+    if (error instanceof OperationError && error.code === 'write_gate_rejected') return { status: 'refused', refusal: { code: 'write_gate_rejected', message: error.message } };
     throw error;
   }
   if (!prepared) return { status: 'refused', refusal: result.refusal ?? { code: 'invalid_frontmatter', reason: 'yaml_parse', message: result.error ?? 'The file could not be prepared.' } };
@@ -380,8 +382,8 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const ready = publication.ready;
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, 'file');
   const importContent = p.content.replace(/^\uFEFF/, '');
-  const overrideTier = (await ownerSourceGateInput(engine, row.source_id, parseMarkdown(importContent, `${row.slug}.md`, { activePack: screenConfig.activePack }).frontmatter)).tier;
-  const importOptions = { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, overrideTier, activePack: screenConfig.activePack, filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
+  const writeGate = await ownerGateInput(engine, row, parseMarkdown(importContent, `${row.slug}.md`, { activePack: screenConfig.activePack }).frontmatter, p.sourcePath);
+  const importOptions = { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, writeGate, activePack: screenConfig.activePack, filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   // afterCommit follows the import that published (a page stored in segments chunks what its publication left unsealed).
   let published = ready;
   return { observedRevision: snapshot?.revision ?? null, noop: ready.noop && !fileChanges && !moved, contentUnchanged: ready.noop && !fileChanges && !moved,

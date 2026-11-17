@@ -182,7 +182,7 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
     case 'frontmatter_slug_conflict': return `Remove the slug: line of ${path} (the path decides the slug), or move the file to the path its slug names.`;
     case 'content_rejected': return `Remove the junk the content-sanity gate matched in ${path}, or ask the user whether junk_disposition should stay reject.`;
     case 'purged_content': return `${path} carries purged page content; delete or edit it and commit, or the owner clears the tombstone with gbrain pages unpurge.`;
-    case 'write_gate_rejected': return `The write gate refused ${path} as external instruction-like content; ask the user whether to edit it or whether write_gate.external_mode should stay reject.`;
+    case 'write_gate_rejected': return `The write gate refused ${path} as external instruction-like content; ask the user whether to edit it, to allow it (gbrain trust allow --source ${sourceId} --uri-prefix ${path}), or whether write_gate.external_mode should stay reject.`;
     case 'rename_held': return `Re-run the preview with --include-ambiguous to re-bind the rename of ${path} to the current page, or restore the old file name.`;
     case 'tag_too_long': return `${path} has a frontmatter tag over the tag size limit, which no repair shortens; shorten it or split it into shorter tags and commit.`;
     case 'visibility_noncanonical': return `${path} asks for visibility: private in a spelling page privacy does not read, which no repair rewrites; write visibility: private on its own frontmatter line (lowercase) and commit.`;

@@ -40,7 +40,9 @@ Five kinds of caller read a brain:
 | fact `visibility: private` | reads | reads | hidden | hidden | hidden |
 
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
-links, timelines, versions). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
+links, timelines, versions). Designations govern readers, not processing: restricted pages are embedded
+with the brain's configured embedding provider like any other page. See
+[where text goes](memory-boundaries.md#where-text-goes). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
 reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
 private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
 facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
@@ -204,6 +206,12 @@ before `facts.default_visibility` became `world` stay private until the operator
 database, so a repo-less brain works the same. The owner relaxation applies to a credential bound to that member
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
+
+When `gbrain access owner set`, `gbrain access member add` or `member enable` (a second enabled member), or
+`gbrain config set brain.audience shared` leaves the brain shared, the command also keeps the conversation archive
+pages written while it was personal to the owner before it returns, and says so on stderr. Three cases wait instead
+(the audience turning shared from client usage, a shared brain with no owner, and rules kept in git); see
+[when a personal brain becomes shared](conversation-archive.md#when-a-personal-brain-becomes-shared).
 
 **The owner's writes.** The owner's own credential with write scope, speaking for itself (no audience, not an
 attested call, not a subagent job, no slug fence, checked again when the write is published), may change a private page
