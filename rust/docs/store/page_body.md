@@ -137,7 +137,7 @@ The TypeScript engine refuses these with `engine_capability_missing`:
   same.
 - A flip unseals the page's text projection on both engines, so `getChunks` answers `[]` for a
   segmented page after a flip until a text-projection seal exists. This is parity. The Rust engine
-  cannot seal a segmented page yet: only `replaceChunks` seals, and it drops the segment chunks.
+  cannot seal a segmented page yet: only `upsertChunks` seals, and it replaces the segment chunks.
 - The shell's `content_hash`, `compiled_truth` and `timeline` are `''` in the page record, where
   PGLite stores `NULL`. `getPage` hides the body fields on both engines; `content_hash` reads `''`
   on Rust and `null` on PGLite for a shell that was never flipped.
