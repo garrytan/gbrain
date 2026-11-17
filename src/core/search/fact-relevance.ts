@@ -379,6 +379,8 @@ export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, sl
 const CALLED_OFF = String.raw`rumour|rumor|called off|cancelled|canceled|fell through|not happening|never happened|no longer planned`;
 const CALL_OFF_SQL = String.raw`\m(${RETRACTION}|${CALLED_OFF})\M`;
 const CALL_OFF_WORDS = new RegExp(String.raw`\b(${RETRACTION}|${CALLED_OFF})\b`, 'gi');
+/** A cue a word or two after one of these is negated ("not cancelled", "wasn't called off", "isn't a rumour"). Fixed, never configurable. */
+const NEGATED = /(?:^|[^\p{L}\p{N}'’])(?:not|never|no|[\p{L}]+n['’]t)\s+(?:[\p{L}\p{N}'’-]+\s+)?$/iu;
 /** Cue facts read per entity at most, the newest first. */
 const CALL_OFF_DEPTH = 50;
 
@@ -386,8 +388,10 @@ const CALL_OFF_DEPTH = 50;
  * GBRA-574 B5: for each fact, the later facts that retract it or call it off, oldest first. One read of the cue facts
  * about the facts' entities, the newest CALL_OFF_DEPTH per entity, under exactly the pool's read policy (active rows
  * only, so a withdrawn, forgotten or superseded fact never comes back, nor one the caller cannot read). A cue fact
- * answers a fact when it is about the same entity in the same source, is dated strictly after it, and shares a content
- * term with it other than the entity's name and the cue words, or carries the same slot (dimension and value_hash).
+ * answers a fact when it is about the same entity in the same source, is dated strictly after it, carries a cue no
+ * negation sits a word or two before (NEGATED; a cue that starts with one, "not happening", still counts), and either
+ * carries the same slot (dimension and value_hash) or, on content terms other than the entity's name and the cue words,
+ * has all of its terms (at least one) in the fact or shares at least two with it.
  */
 export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope, facts: readonly FactCandidate[]): Promise<Map<number, FactCandidate[]>> {
   const out = new Map<number, FactCandidate[]>();
@@ -403,15 +407,20 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
      WHERE f.call_off_rank <= $${n + 4}`,
     [...params, CALL_OFF_SQL, pairs.map(f => f.source_id), pairs.map(f => f.entity_slug), CALL_OFF_DEPTH]);
   const time = (v: Date | string) => new Date(v).getTime();
+  const calledOff = (text: string) => [...text.matchAll(CALL_OFF_WORDS)].some(m => !NEGATED.test(text.slice(0, m.index)));
   const terms = (slug: string, text: string) => {
     const name = new Set(slug.toLowerCase().split(/[^\p{L}\p{N}]+/u));
     return new Set(contentTerms(text).flatMap(w => w.replace(/'s$/, '').split('-')).filter(w => w.length >= 3 && !STOPWORDS.has(w) && !neutralWord(w) && !name.has(w)));
   };
   for (const f of keyed) {
     const own = terms(f.entity_slug!, f.fact);
-    const answers = cues.filter(r => r.source_id === f.source_id && r.entity_slug === f.entity_slug && time(r.valid_from) > time(f.valid_from)
-      && ((!!f.dimension && !!f.value_hash && r.dimension === f.dimension && r.value_hash === f.value_hash)
-        || [...terms(f.entity_slug!, r.fact.replace(CALL_OFF_WORDS, ' '))].some(t => own.has(t))))
+    const answers = cues.filter(r => {
+      if (r.source_id !== f.source_id || r.entity_slug !== f.entity_slug || time(r.valid_from) <= time(f.valid_from) || !calledOff(r.fact)) return false;
+      if (f.dimension && f.value_hash && r.dimension === f.dimension && r.value_hash === f.value_hash) return true;
+      const theirs = [...terms(f.entity_slug!, r.fact.replace(CALL_OFF_WORDS, ' '))];
+      const shared = theirs.filter(t => own.has(t)).length;
+      return shared >= 2 || (theirs.length > 0 && shared === theirs.length);
+    })
       .map(r => ({ ...r, id: Number(r.id), entity: false }))
       .sort((a, b) => time(a.valid_from) - time(b.valid_from) || a.id - b.id);
     if (answers.length) out.set(Number(f.id), answers);

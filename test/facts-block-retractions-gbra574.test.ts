@@ -3,9 +3,10 @@
  * answers, with its own date, inside the block's share and row count. Keyless, no network, no model call.
  *
  * Protects: a later cue fact ("fell through", "cancelled", "rumour", the saved-facts retraction words) about the same
- * entity in the same source that shares a non-name content term with the fact, or carries the same slot (dimension and
- * value_hash, a conversation slot included), is placed right after it; a cancellation about another entity, or about
- * the same entity with no shared term and no shared slot, stays where it was; a cue fact dated before the fact never
+ * entity in the same source whose non-name content terms are all in the fact, or that shares two of them with it, or
+ * carries the same slot (dimension and value_hash, a conversation slot included), is placed right after it; a cue a
+ * word or two after not, never, no or an n't contraction never pairs; a cancellation about another entity, or about the
+ * same entity sharing one term and adding its own, or none and no shared slot, stays where it was; a cue fact dated before the fact never
  * attaches; a question with no cue fact gets exactly the block it got before; a retraction a remote caller or another
  * member cannot read (a fact on another member's own page) never appears; a withdrawn fact never appears as the fact or as the retraction.
  * Regression: without the pairing the retraction sits at its own date, after unrelated facts, or nowhere.
@@ -235,9 +236,9 @@ for (const backend of testBackends()) {
         expect(order(rows, ['plans a trip to Tallinn', 'trip to Tallinn in August fell through', 'adopted a ferret'])).toEqual([0, 1, 2]);
         expect(rows.filter(r => r.includes('fell through')).length).toBe(1);
       });
-      test('a retraction that ranks above its fact moves under it, once', async () => {
+      test('a retraction sharing one term and adding its own (Riga, June) stays at its own date, once', async () => {
         const rows = await block('Is Nina Example going to Riga in June?');
-        expect(order(rows, ['Nina Example plans a trip.', 'trip to Riga in June fell through', 'adopted a parrot'])).toEqual([0, 1, 2]);
+        expect(order(rows, ['Nina Example plans a trip.', 'trip to Riga in June fell through', 'adopted a parrot'])).toEqual([0, 2, 1]);
         expect(rows.filter(r => r.includes('fell through')).length).toBe(1);
       });
       test('a retraction never takes a row past the row count', async () => {

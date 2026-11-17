@@ -269,7 +269,8 @@ export function applyTemporalFactReserve(engine: BrainEngine, query: string, res
  * header says whether the fact was told after it (B3); and a fact in a pending
  * supersede proposal ends "(contested by #<id>)" when the caller can read the
  * other fact, as recall labels it (G1). A later fact of the same entity that retracts a shown fact or calls it off (a
- * plain-English cue, sharing a non-name term or the fact's slot; fact-relevance.ts `laterRetractions`) follows it with
+ * plain-English cue not negated just before it, whose non-name terms are all in the fact or share two with it, or
+ * carrying the fact's slot; fact-relevance.ts `laterRetractions`) follows it with
  * its own date, inside the same share and row count (B5). Block rows take the top page's
  * score: they are placed, not ranked against the pages, and never outscore them. The facts add rows
  * (every page row stays) and pages fill the rest of the budget. No match or
