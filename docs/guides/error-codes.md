@@ -3390,7 +3390,7 @@ Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `pr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Doctor warning: a migration stopped three or more runs in a row on a conflict in one or more sources and recorded that host work is still owed (today only v0.53.0), so it is wedged even if a newer migration has completed since. | A newer migration completing does not do the work a wedged migration owes, and nothing reruns a wedged migration by itself, so it does not clear without a person. Each source's conflict needs the user's decision before a forced retry, or the retry stops on the same conflict again. | Run the read-only inspect `gbrain apply-migrations --migration <version> --dry-run --json` on the brain host to see each source's conflict. Once the user has reviewed each one, clear the wedge with `gbrain apply-migrations --force-retry <version>`, then run the command the inspect output names for each source, or `gbrain apply-migrations --yes`. Run: gbrain apply-migrations --list --json | user | `gbrain doctor --json` | 1 | no |
+| Doctor warning: a migration stopped three or more runs in a row on a conflict in one or more sources and recorded that host work is still owed (today only v0.53.0). | Each source in conflict needs the user's decision. The migration's read-only preview names each source, its conflict code and the step that settles it, and doctor stops warning once the preview finds no source in conflict. | Run the read-only inspect `gbrain apply-migrations --migration <version> --dry-run --json` on the brain host to see each source's conflict, its code and its next step, and settle each one with the user. For shared_skills_unmanifested, declare the skills to share in a skillpack.json at the source's root, or keep the source out with `gbrain sources shared-skills <id> off`. Run: gbrain apply-migrations --list --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/shared-brain-skills.md#reviewed-changes-after-inventory](../../docs/guides/shared-brain-skills.md#reviewed-changes-after-inventory)
 
@@ -4986,6 +4986,14 @@ More: [docs/guides/write-refusals.md#settle_mismatch](../../docs/guides/write-re
 
 More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair.md#setup-harness-unsupported)
 
+### setup_history_choice_required
+
+<a id="setup_history_choice_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --serves several would turn a brain that serves one person shared while it holds pages no rule restricts, and nobody chose what happens to them, so setup wrote nothing. | Each member key setup mints reads every page no rule or readable_by restricts, so the owner's journal, DMs, chat, mail and conversation archive would reach every member; only the admin can decide that. | Run setup again with --labelled-only to keep that history private (each member reads only pages labelled for them) or with --open-history to let the members read it. Run: gbrain doctor --only open_shared_pages --json | agent | `repeat the read that failed` | 1 | no |
+
 ### setup_hosted_connection
 
 <a id="setup_hosted_connection"></a>
@@ -5031,6 +5039,16 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The shared-skills operation was refused. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+### shared_skills_unmanifested
+
+<a id="shared_skills_unmanifested"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A conflict in the v0.53.0 shared-skills migration: a source's skills/ folder holds skills but the source has no skillpack.json declaring them, so the migration left them as they are. | Adopting skills nobody declared could publish private or half-finished ones, so the migration never adopts them and records the source as a conflict until a person decides. The conflict affects only shared-skills adoption; every other command works. | Review the skills in that source's skills/ folder with the user, then either declare the ones to share in a skillpack.json at the source's root, or keep the source out of shared-skills adoption with `gbrain sources shared-skills <id> off`. Run: gbrain apply-migrations --dry-run --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#migrate-an-existing-brain](../../docs/guides/shared-brain-skills.md#migrate-an-existing-brain)
 
 ### shared_skills_unsupported
 
@@ -5562,7 +5580,7 @@ More: [docs/guides/write-refusals.md#source_writer_restricted](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page search returns (for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
+| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page every reader of that source can read (pages kept to named readers or private do not count; for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages](../../docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages)
 
@@ -6162,7 +6180,7 @@ More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-r
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that gbrain.yml at HEAD declares, or .gitignore does not ignore it. | The next sync deletes the page of a file that leaves Git outside a declared storage.db_only dir, and a file .gitignore does not ignore can be committed again by any later commit. | Declare the folder under storage.db_only in gbrain.yml and add its <dir>/ line to .gitignore, commit both with gbrain git commit-push -m <msg> -- gbrain.yml .gitignore, then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
+| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that the source's gbrain.yml (in the folder the source is rooted in) declares at HEAD and on disk, .gitignore does not ignore it, it is a symbolic link out of the dir, it is a Markdown page whose slug falls outside the dir, or it is a code-extension file that is a page, or that a code-importing source's sync imports as one, or that the source's last finished sync has not seen at its current version; or the brain, which records the source's folder, could not be read, which refuses every file. | The next sync deletes the page of a file that leaves Git unless sync keeps it as database-only, which it decides by page slug, and a file .gitignore does not ignore can be committed again by any later commit. | Follow the fix the refusal prints for each file: declare the folder under storage.db_only in the gbrain.yml the refusal names and its <dir>/ line in .gitignore (commit both with gbrain git commit-push -m <msg> -- <that gbrain.yml> .gitignore), add the .gitignore line, declare the slug spelling, keep code-file pages tracked, run gbrain sync --source <id> for code files sync has not seen yet, or retry once the brain is free; then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-checkout-git.md#untrack](../../docs/guides/shared-checkout-git.md#untrack)
 

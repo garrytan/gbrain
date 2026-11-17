@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Layering guard (refactor wave 1, EO10; docs/TESTING.md#layering-guard).
+ * Layering guard (refactor wave 1, EO10; docs/ci-guards.md#layering-guard).
  *
  * The wave's new directories sit BELOW the modules that load them, so an
  * import back up would create an ESM cycle that can hit a temporal-dead-zone
@@ -25,7 +25,7 @@ import { dirname, join, normalize, relative } from 'node:path';
 import ts from 'typescript';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
-const ANCHOR = 'docs/TESTING.md#layering-guard';
+const ANCHOR = 'docs/ci-guards.md#layering-guard';
 
 interface Rule {
   dir: string;

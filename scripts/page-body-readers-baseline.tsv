@@ -10,7 +10,7 @@
 # its row (`bun scripts/check-page-body-readers.ts --prune` drops stale rows).
 # A new whole-body reader never gets a row: use the segment reader, a bounded
 # lead (boundedBodyPrefixSql), body_bytes or content_hash instead.
-# docs/TESTING.md#page-body-readers
+# docs/ci-guards.md#page-body-readers
 src/cli/main.ts	formatResult	field	STREAM	renders a get_page result body; segmented bodies stream in PR 2
 src/cli/page-render.ts	asOfExitCode	field	NONE	not the page body: tests whether a get_page as_of reply carries compiled_truth (a wire result, not a Page); a segmented edition replies with window, tested first
 src/cli/page-render.ts	formatGetPage	call:serializeMarkdown	SEGW	
@@ -180,6 +180,8 @@ src/core/cycle/synthesize.ts	writeSummaryPage	field	INLINE
 src/core/cycle/transcript-discovery.ts	discoverConversationPages	field	STREAM	
 src/core/cycle/transcript-discovery.ts	discoverConversationPages	sql	STREAM	
 src/core/eligibility/fence-overlay.ts	loadFenceChunkOverlay	field	STREAM	
+src/core/eligibility/fence-overlay.ts	worldLinkContexts	field	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
+src/core/eligibility/fence-overlay.ts	worldLinkContexts	sql	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/eligibility/scan.ts	SELECT	sql	STREAM	
 src/core/eligibility/scan.ts	assess	field	STREAM	
 src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META	

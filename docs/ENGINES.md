@@ -480,6 +480,12 @@ CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_de
 ```
 <!-- gbrain:ledger-rls-recipe:end -->
 
+A bulk fact insert (the fence import in `src/core/engine-sql/facts.ts`) defers the withdrawal
+stamp to the end of its statement, so when one of its rows matches a withdrawal the guard
+updates that row in `facts`, and the write role then needs a permissive `UPDATE` policy on
+`facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
+same `writer_coordinator_required` error.
+
 **Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
 the role running it owns. A guard owned by another role is left as it was, so it still lets a
 scoped writer without ledger policies through, and v318 only names it in one stderr line
@@ -501,7 +507,10 @@ For a row with `fails_closed = f`, connect as the role in its `owner` column and
 `ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
 `gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
 is missing its check, provided the migrating role owns it. You can also run gbrain once as the
-owning role instead. Run the query again to confirm.
+owning role instead. Run the query again to confirm. On Postgres, `gbrain doctor`
+(`guard_ledger_checks`) runs the same check and names each guard left without its ledger check
+with its owner, and the fix: `gbrain apply-migrations --yes` when the doctor's role may re-create
+it, else the `ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
 
 The segmented storage recipe above already covers the two derivation purge tables for a
 role it applies to. A policy that filters out ledger rows of a source the role writes hides
@@ -804,6 +813,30 @@ version bump changes it.
 to connect: it diagnoses the dir from disk, names the repair command, reports
 retained repair backups, and escalates when repairs keep recurring (that
 means the unclean-shutdown genesis is still active — see the ladder's rung 4).
+
+<a id="pglite-live-serve"></a>
+### PGLite while `gbrain serve` runs (`pglite_busy` reason `live_serve`)
+
+One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
+or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
+`gbrain remember`) go through the running server and work. Commands that need
+the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
+PID, and its fix is two steps: stop that server, then run the command again.
+Never remove the lock of a server that is still running.
+
+On a brain that serves one person this is a short pause: quit the agent
+session (a stdio serve) or stop `gbrain serve --http`, run the command, and
+start it again. On a brain that serves several people over
+`gbrain serve --http`, every member's connection drops while the server is
+stopped, for every admin step. Move such a brain to Postgres, where the server
+and the admin commands run side by side: preview with the read-only
+`gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`,
+then follow [Move a PGLite brain to Postgres](guides/move-to-postgres.md). The
+move carries members, tokens, `readable_by` and facts across.
+`gbrain setup <harness> --serves several` on PGLite says this in its
+`engine` line.
 
 <a id="legacy-pglite-lock"></a>
 ### Legacy PGLite lock (`pglite_busy` reason `legacy_owner_unverified`)

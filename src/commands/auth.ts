@@ -33,6 +33,8 @@ import type { OAuthTransaction } from '../core/oauth-grants.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
 import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
+import { PRIVATE_FACTS_HELP, privateFactsRescopeLines, privateFactsWarning, renderPrivateFacts } from './auth-private-facts.ts';
+import { listClientRows } from './auth-client-rows.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import { credentialCensus, exposureServes, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
@@ -42,6 +44,7 @@ import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-bindin
 import { mintToken } from './auth-mint.ts';
 import { assertCredentialScoped, logReadsUnscopedChange } from '../core/access/requester-scope.ts';
 import { exitCliError } from '../cli/cli-error.ts';
+export { listClientRows, renderPrivateFacts };
 import { OperationError } from '../core/ops/contract.ts';
 
 /**
@@ -77,6 +80,9 @@ async function withConfiguredSql<T>(
   }
 }
 
+/** GBRA-585 E: the scopes a token bound to a member gets when --scopes is not given; an explicit --scopes always wins. */
+export const MEMBER_TOKEN_SCOPES: readonly string[] = ['read', 'write'];
+
 async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null } = {}) {
   if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
@@ -91,12 +97,16 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       process.exit(1);
     }
   }
+  const memberDefault = opts.scopes === undefined && !!opts.binding?.member;
+  if (memberDefault) opts = { ...opts, scopes: [...MEMBER_TOKEN_SCOPES] };
   try {
     await withConfiguredSql(async (_sql, engine) => {
       await assertCredentialScoped(engine, opts.binding ?? null, 'token', name);
       const { token, id, takesHolders, bound } = await mintToken(engine, name, opts);
       if (bound) auditReadsUnscoped(bound, `token ${name}`, false);
-      const scopeLine = opts.scopes !== undefined
+      const scopeLine = memberDefault
+        ? `scopes=${JSON.stringify(opts.scopes)} (the default for a token bound to a member; pass --scopes read,write,admin for admin access)`
+        : opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
       console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}${opts.minTrust ? `, min_trust=${opts.minTrust}` : ''}):\n`);
@@ -165,15 +175,16 @@ export function renderTokenScopes(scopes: unknown): string {
 
 async function list(json: boolean) {
   await withConfiguredSql(async (sql) => {
-    // SELECT * reads every schema generation (private_pages arrives with GBRA-156's migration; absent reads as none).
+    // SELECT * reads every schema generation (private_pages and private_facts arrive with their migrations; absent reads as none).
     const rows = await sql`
       SELECT * FROM access_tokens
       ORDER BY created_at DESC
     `;
+    const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(sql, rows);
     if (json) {
       console.log(JSON.stringify(rows.map(r => ({
         id: String(r.id), name: r.name, scopes: renderTokenScopes(r.scopes), created_at: r.created_at, last_used_at: r.last_used_at ?? null,
-        status: r.revoked_at ? 'revoked' : 'active', private_pages: privatePagesFromColumn(r.private_pages),
+        status: r.revoked_at ? 'revoked' : 'active', private_pages: privatePagesFromColumn(r.private_pages), private_facts: privatePagesFromColumn(r.private_facts), member_status: memberStatus(r),
       })), null, 2));
       return;
     }
@@ -181,16 +192,17 @@ async function list(json: boolean) {
       console.log('No tokens found. Create one: gbrain auth create "my-client"');
       return;
     }
-    console.log('ID                                    Name                  Scopes                 Created              Last Used            Status   Private pages');
-    console.log('─'.repeat(141));
+    console.log('ID                                    Name                  Scopes                 Created              Last Used            Status   Private facts    Private pages');
+    console.log('─'.repeat(158));
     for (const r of rows) {
       const id = String(r.id).padEnd(36);
       const name = (r.name as string).padEnd(20);
       const scopes = renderTokenScopes(r.scopes).padEnd(21);
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
-      const status = (r.revoked_at ? 'REVOKED' : 'active').padEnd(7);
-      console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
+      const status = (r.revoked_at ? 'REVOKED' : (memberStatus(r) ?? 'enabled') !== 'enabled' ? 'refused' : 'active').padEnd(7);
+      const facts = privatePagesFromColumn(r.private_facts) === 'granted_sources' ? 'granted-sources' : 'none';
+      console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${facts.padEnd(15)}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
     }
   });
 }
@@ -941,8 +953,9 @@ function printClientGrantAxes(grant: ClientGrant, before?: ClientGrant) {
   const axes: Array<[string, (g: ClientGrant) => string]> = [['Scopes', g => g.scopes.join(' ') || '<none>'], ['Write source', g => g.sourcesNone ? 'none (every read and write refused)' : String(g.sourceId)],
     ['Federated reads', g => g.federatedRead.join(', ') || '<none>'], ['Operations', g => g.allowedOperations === null ? 'all (no snapshot)' : g.allowedOperations.join(', ') || 'none'],
     ['Slug prefixes', g => g.boundSlugPrefixes?.join(', ') || '<none>'], ['Takes holders', g => g.takesHolders === null ? 'world (default)' : g.takesHolders.join(', ') || 'none (every take hidden)'],
-    ['Private pages', g => renderPrivatePages(g.privatePages)], ['Tool surface', g => g.surface ?? '<server default>'], ['Delegated spending', g => g.budgetUsdPerDay === null ? 'unlimited' : '$' + g.budgetUsdPerDay + '/day']];
+    ['Private pages', g => renderPrivatePages(g.privatePages)], ['Private facts', g => renderPrivateFacts(g.privateFacts)], ['Tool surface', g => g.surface ?? '<server default>'], ['Delegated spending', g => g.budgetUsdPerDay === null ? 'unlimited' : '$' + g.budgetUsdPerDay + '/day']];
   for (const [label, render] of axes) { const after = render(grant), was = before ? render(before) : after; console.log(`  ${label}: ${was === after ? after : `${was} -> ${after}`}`); }
+  if (before) for (const line of privateFactsWarning(before.privateFacts, grant.privateFacts)) console.log(line);
 }
 
 function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: BindingResult) {
@@ -959,6 +972,7 @@ function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: Bi
     const [ppBefore, ppAfter] = [renderPrivatePages(result.before.privatePages), renderPrivatePages(result.after.privatePages)];
     console.log(`  Private pages: ${ppBefore === ppAfter ? ppAfter : `${ppBefore} -> ${ppAfter}`}`);
   }
+  for (const line of privateFactsRescopeLines(result.before.privateFacts, result.after.privateFacts)) console.log(line);
   console.log(`  Grant revision: ${result.revision.before === result.revision.after ? result.revision.after : `${result.revision.before} -> ${result.revision.after}`}`);
   if (bound) console.log(bindingLine(bound, result.dryRun));
   if (result.drift.length && !result.written) {
@@ -1043,6 +1057,8 @@ export interface ClientRow {
   deleted_at?: string | Date | null;
   /** GBRA-156 private-pages axis; absent on schemas without it (reads as none). */
   private_pages?: string | null;
+  /** GBRA-575 private-facts axis; absent on schemas without it (reads as none). */
+  private_facts?: string | null;
 }
 
 /** The operation-snapshot axis of one client, as `auth clients` reports it. */
@@ -1099,64 +1115,6 @@ export function clientOperationsLines(row: ClientRow): string[] {
   return lines;
 }
 
-/**
- * Projection-widened client listing with a degrade ladder for pre-migration
- * brains: full shape (scope + surface + source-scoping columns) → source
- * columns without surface → the bare original triple. Drops the NEWEST
- * columns first; missing columns render as null. Only schema-shape errors
- * (undefined column/table) degrade — anything else (dropped connection,
- * permission) rethrows instead of silently narrowing the listing. One round
- * trip on a current brain (the widen adds columns, not queries). Exported
- * for the unit suite.
- */
-export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> {
-  // The columns each degrade tier drops; any other missing object rethrows.
-  const isSchemaShapeError = (e: unknown): boolean =>
-    isMissingSchemaObject(e, 'table', 'oauth_clients') ||
-    isMissingSchemaObject(e, 'column', ['private_pages', 'allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the private-pages column: it reads as none.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the operation-snapshot columns: operations read `unavailable`.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the surface columns — fall through. Rethrow non-shape errors.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    const mid = await engine.executeRaw<Omit<ClientRow, 'surface' | 'surface_set_by'>>(
-      `SELECT client_id, client_name, scope, source_id, federated_read
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-    return mid.map(r => ({ ...r, surface: null, surface_set_by: null }));
-  } catch (e) {
-    // Brain predates the source-scoping columns — fall through likewise.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  const bare = await engine.executeRaw<Pick<ClientRow, 'client_id' | 'client_name' | 'scope'>>(
-    `SELECT client_id, client_name, scope FROM oauth_clients ORDER BY client_name, client_id`,
-  );
-  return bare.map(r => ({ ...r, surface: null, surface_set_by: null, source_id: null, federated_read: null }));
-}
-
 /** Clients whose stored or outstanding access-token lifetime an upgrade brought inside the 90-day maximum. */
 export async function tokenLifetimeClampedClients(engine: BrainEngine): Promise<Set<string>> {
   try {
@@ -1208,6 +1166,7 @@ async function clientsCmd(args: string[]) {
             source_id: c.source_id,
             federated_read: c.federated_read,
             private_pages: privatePagesFromColumn(c.private_pages),
+            private_facts: privatePagesFromColumn(c.private_facts),
             ...clientOperationsView(c),
             revoked_at: c.deleted_at ?? null,
             token_lifetime_clamped: lifetimeClamped.has(c.client_id),
@@ -1235,6 +1194,7 @@ async function clientsCmd(args: string[]) {
         console.log(`  scopes: ${c.scope ?? '<none>'}    surface: ${surfaceStr}`);
         console.log(`  write source: ${c.source_id ?? '<none>'}    federated reads: ${(c.federated_read ?? []).join(', ') || '<none>'}`);
         console.log(`  private pages: ${renderPrivatePages(privatePagesFromColumn(c.private_pages))}`);
+        console.log(`  private facts: ${renderPrivateFacts(privatePagesFromColumn(c.private_facts))}`);
         for (const line of clientOperationsLines(c)) console.log(line);
         if (lifetimeClamped.has(c.client_id)) console.log('  access-token lifetime: clamped to the 90-day maximum by an upgrade (docs/mcp/ADMIN.md#access-token-lifetime)');
         if (parsed.usage) {
@@ -1326,8 +1286,8 @@ Usage:
                                                           field (default: ["world"]). MCP-bound calls to
                                                           takes_list / takes_search / query filter by this.
                                                           --scopes narrows the token to the listed op scopes
-                                                          (comma or space separated; omit = full access,
-                                                          grandfathered).
+                                                          (comma or space separated; omit = read,write with
+                                                          --member, else full access, grandfathered).
                                                           --min-trust sets the token's read floor: reads never
                                                           return rows below that trust tier (${TRUST_TIERS.join(', ')});
                                                           memory_confirm in --scopes lets the token confirm
@@ -1337,7 +1297,7 @@ Usage:
                                                           page no rule restricts on purpose (credential_scope_required)
   gbrain auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
                                                           or legacy token (id or name). Local CLI only.
-  gbrain auth list [--json]                                List all tokens (id, scopes, usage, private pages)
+  gbrain auth list [--json]                                List all tokens (id, scopes, usage, private facts and pages)
   gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
   gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
   gbrain auth rescope --token <name>|--id <uuid>|--client <client_id>|<name> [options]
@@ -1372,6 +1332,7 @@ Usage:
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source
                                                           or a request's source_ids); 'none' (default) hides them
+${PRIVATE_FACTS_HELP}
      --reset-default <sources,takes-holders,operations>   Token only: restore the auth create default for those axes
      --refresh-operations [--add <op,...>|--all-new]      Token only: preview operations added since the snapshot;
                                                           widen only by the ones --add names (or all with --all-new)

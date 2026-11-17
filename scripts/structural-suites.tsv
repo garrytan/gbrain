@@ -94,6 +94,7 @@ test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync
 test/config.test.ts	config source correctness	1	readFileSync
 test/connection-resilience.test.ts	Eng-review D3 — executeRaw has no per-call retry wrapper	3	readFileSync,source-surface-helper
+test/connector-install-links.test.ts	docs carry the hosted gbrain.io links the helpers build	2	readFileSync
 test/context-audit-skill.test.ts	#4988 context-audit skill token estimate	2	readFileSync
 test/contextual-retrieval-service-pure.test.ts	inline import contextual synopsis containment	1	readFileSync
 test/conversation-facts-type-allowlist-drift.test.ts	(file-level)	18	readFileSync
@@ -278,6 +279,7 @@ test/persistence-request-indexes.test.ts	(file-level)	4	readFileSync
 test/persistence-sync-options.serial.test.ts	(file-level)	1	readFileSync
 test/pg-access-classify.test.ts	marker contract (skill↔binary lockstep, the UPGRADE_AVAILABLE pattern)	3	bun-file
 test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	1	source-surface-helper
+test/pglite-live-serve-setup-gbra585.test.ts	PGLite with a running serve (GBRA-585 item 10)	2	readFileSync
 test/pglite-repair-command.serial.test.ts	gbrain pglite-repair — interactive confirm wiring (#4318 residual)	1	readFileSync
 test/pglite-wal-repair.serial.test.ts	WAL auto-repair — real-brain regression (#223/#1670/#2575)	6	source-surface-helper
 test/physical-root-birth-tolerance-6501.test.ts	physical root birth drift (${kind})	5	readFileSync
@@ -286,6 +288,7 @@ test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	5	readFil
 test/postgres-engine.test.ts	postgres-engine / search date filtering	2	source-surface-helper
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	source-surface-helper
 test/postgres15-sql-compat-7112.test.ts	#7112: shipped SQL parses on every supported Postgres (15+)	2	readFileSync
+test/pregate-allowlist-cache-keys.test.ts	(file-level)	6	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
 test/purge-root-metafile-7613.test.ts	(file-level)	3	readFileSync
 test/q2-typing-package.test.ts	(file-level)	3	readFileSync
@@ -365,7 +368,7 @@ test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFil
 test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
 test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
-test/scripts/regen-all.test.ts	regen:all	6	readFileSync
+test/scripts/regen-all.test.ts	regen:all	7	readFileSync
 test/scripts/release-restamp.test.ts	release-restamp --stamp-only	2	readFileSync
 test/scripts/release-restamp.test.ts	release:restamp end to end	16	readFileSync
 test/scripts/release-restamp.test.ts	release:unstamp and merge: direct	7	readFileSync
@@ -402,7 +405,7 @@ test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
 test/shared-skills-publication-sparse.test.ts	(file-level)	4	readFileSync
 test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.test.ts	shared-skills migration recovery (#5569, #5476, A-NEW-4)	4	readFileSync
-test/shared-skills-setup.test.ts	staged skill migration	7	readFileSync
+test/shared-skills-setup.test.ts	staged skill migration	8	readFileSync
 test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: codex project catalog	2	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: compiled binaries	1	readFileSync
@@ -421,6 +424,7 @@ test/skillpack-flow.test.ts	skillpack flow (E2E)	17	readFileSync
 test/skillpack-harness-bridge.test.ts	review-driven hardening (ship pre-landing findings)	5	readFileSync
 test/skillpack-harvest.test.ts	addToBundleManifest	1	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — happy path	2	readFileSync
+test/skillpack-harvest.test.ts	runHarvest — paired source in a sibling folder that starts with the slug	5	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — privacy linter integration (T7)	2	readFileSync
 test/skillpack-init-brain-pack.test.ts	runInitBrainPack	5	readFileSync
 test/skillpack-init-pack.test.ts	runInitScaffold — cathedral default	6	readFileSync

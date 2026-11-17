@@ -7,7 +7,7 @@
 # (`bun scripts/check-engine-sql-ratchet.ts --prune` drops stale rows). A new
 # SQL-bearing engine member never gets a row: move the SQL, or mark it
 # `// engine-sql-ok: <reason>`.
-# docs/TESTING.md#engine-sql-ratchet
+# docs/ci-guards.md#engine-sql-ratchet
 migrated	chunks
 migrated	cjk-search
 migrated	code-edges

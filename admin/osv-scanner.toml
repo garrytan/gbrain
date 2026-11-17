@@ -1,0 +1,10 @@
+# Advisories ignored for admin/bun.lock only (never the root lockfile).
+# OSV-Scanner reads this file for the lockfile beside it and stops ignoring an
+# entry after its ignoreUntil date; scripts/ci-dependency-audit.sh passes the
+# same ids to the admin bun audit and fails once a date has passed.
+# Each entry needs Garry's approval and an expiry (docs/ci-event-parity.md).
+
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2026-12-17
+reason = "picomatch is a build-time dependency of the admin UI's bundler (vite, through tinyglobby and fdir); its patterns come from our own build config; it is not in the CLI or server; no fixed version exists as of 2026-11-17. Remove when picomatch ships a fix."

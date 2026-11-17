@@ -304,6 +304,35 @@ describe('secret-scan gate', () => {
     writeFileSync(join(work, SCAN_ALLOW_FILENAME), `${r.findings![0]!.fingerprint}\n`);
     expect((await push()).status).toBe('pushed');
   }, T);
+
+  const JWT = ['eyJhbGciOiJIUzI1NiJ9', 'eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNzAwMDAwMDAwfQ', 'c2lnbmF0dXJlLXBsYWNlaG9sZGVyLTAwMDA'].join('.');
+  const MAILER = `<a href="https://mail.example.invalid/unsubscribe?t=${JWT}">Unsubscribe</a>\n`;
+
+  test('GST-2901: a path:<glob> pattern:<rule> line allows that rule in matching files only, and the log names the line', async () => {
+    writeFileSync(join(work, SCAN_ALLOW_FILENAME), 'path:mail/*.html pattern:jwt\n');
+    mkdirSync(join(work, 'mail'));
+    writeFileSync(join(work, 'mail/digest.html'), MAILER);
+    writeFileSync(join(work, 'notes.md'), MAILER);
+    const lines: string[] = [];
+    const r = await push({ logger: (l: string) => lines.push(l) });
+    expect(r.status).toBe('blocked_secrets');
+    expect(r.findings?.map(f => `${f.file}:${f.pattern}`)).toEqual(['notes.md:jwt']);
+    expect(r.allowlistProblems).toBeUndefined();
+    expect(lines).toContain(`mail/digest.html:1 jwt allowed by ${SCAN_ALLOW_FILENAME} line: path:mail/*.html pattern:jwt`);
+    rmSync(join(work, 'notes.md'));
+    expect((await push()).status).toBe('pushed');
+  }, T);
+
+  test('GST-2901: a malformed rule line allows nothing, and the blocked_secrets result names it', async () => {
+    writeFileSync(join(work, SCAN_ALLOW_FILENAME), 'path:mail/*.html pattern:JWT\n');
+    mkdirSync(join(work, 'mail'));
+    writeFileSync(join(work, 'mail/digest.html'), MAILER);
+    const r = await push();
+    expect(r.status).toBe('blocked_secrets');
+    expect(r.findings?.map(f => `${f.file}:${f.pattern}`)).toEqual(['mail/digest.html:jwt']);
+    expect(r.allowlistProblems?.map(p => p.entry)).toEqual(['path:mail/*.html pattern:JWT']);
+    expect(r.allowlistProblems?.[0]?.problem).toMatch(/malformed rule entry, so it allows nothing/);
+  }, T);
 });
 
 describe('secret-scan refusal guidance (DX-3/ENG-11)', () => {

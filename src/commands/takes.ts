@@ -685,14 +685,17 @@ Common flags:
  * lifts gradeable claims into the takes fence.
  *
  * Two-gate consent: requires `takes.bootstrap_enabled=true` in config
- * AND explicit --yes flag for any non-dryRun run. Refuses LLM-bearing
- * extraction without both.
+ * AND explicit --yes flag for any model call. Refuses LLM-bearing
+ * extraction without both. `--dry-run` writes nothing: without --yes it
+ * lists the candidate pages and sends nothing to the model; with --yes it
+ * also classifies them.
  */
 async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
       'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--before <updated_at>,<id>] [--include-covered] [--holder <name>]\n' +
+      '--dry-run writes nothing. Without --yes it lists the candidate pages and sends nothing to the model; --dry-run --yes also classifies them.\n' +
       'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. Pass a run\'s next_before to --before to continue past pages that yielded no claims. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
@@ -737,7 +740,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     }
     process.stderr.write(
       `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to ${modelLabel}.\n` +
-      `Pass --yes to proceed (or --dry-run to preview).\n`,
+      `Pass --yes to proceed, or --dry-run to list the candidate pages without sending anything to the model (--dry-run --yes classifies them and writes nothing).\n`,
     );
     process.exit(1);
   }
@@ -746,6 +749,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const result = await extractTakesFromPages(engine, {
     bootstrapEnabled: true,
     dryRun,
+    yes: skipConfirm,
     sourceIdFilter,
     maxPages,
     before,
@@ -766,6 +770,16 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   }
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  // Quoted: the cursor's timestamp contains a space.
+  const next = result.next_before ? `next: --before '${result.next_before}'\n` : '';
+  if (result.dry_run) {
+    process.stdout.write(
+      `takes extract --from-pages (dry-run): ${result.pages_scanned} candidate page(s); nothing was sent to the model and no claims were classified. Add --yes to classify them without writing.\n` +
+      (result.candidates ?? []).map((c) => `  ${c.slug} (${c.source_id})\n`).join('') +
+      next,
+    );
     return;
   }
   // #4473: takes are markdown-canonical — pages the fence writer refused are
@@ -795,10 +809,8 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   }
   process.stdout.write(
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
-    (dryRun ? ' (dry-run)' : '') + '\n',
+    (dryRun ? ' (dry-run)' : '') + '\n' + next,
   );
-  // Quoted: the cursor's timestamp contains a space.
-  if (result.next_before) process.stdout.write(`next: --before '${result.next_before}'\n`);
 }
 
 const BEFORE_CURSOR_RE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)?),([1-9]\d{0,15})$/;

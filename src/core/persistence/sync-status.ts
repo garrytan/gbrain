@@ -27,7 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import { readManagedSyncFailures, type ManagedSyncFailure } from './sync-failures.ts';
-import { carriedHolds, type CarriedHolds, outOfAttemptsHold, fenceAutoRepairFor, fileDriftSide, gitHoldFix, mirrorDatabaseOnlyHold, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
+import { carriedHolds, type CarriedHolds, outOfAttemptsHold, fenceAutoRepairFor, fileDriftSide, gitHoldFix, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
 import type { FenceAutoRepair } from '../fence-repair/hold-fix.ts';
 import { classifySyncFault, HOLD_ATTEMPTS_NEEDS_HUMAN, PAGE_BODY_FAULT_CODES, type SyncFaultVerdict } from './sync-fault-class.ts';
 import { CONTENT_REPAIR_KINDS, contentHoldDisposition, runContentLane, type ContentHoldDisposition } from '../repair/content-lane.ts';
@@ -251,6 +251,8 @@ export const SYNC_STATUS_REASONS = ['nothing_pending', 'held_by_design', 'held_n
   'pass_abandoned',
   // #7596: the newest pass's process stopped (killed or crashed) without ending it.
   'pass_interrupted',
+  // GST-2869: a termination signal (SIGTERM or SIGHUP) stopped the newest pass, which recorded its stop.
+  'pass_terminated',
   // GST-2515: nothing else is pending, but the checkout's HEAD is past the last synced commit.
   'commits_waiting'] as const;
 export type SyncStatusReason = typeof SYNC_STATUS_REASONS[number];
@@ -318,6 +320,7 @@ export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undef
   if (record.code === 'page_identity_changed') return classifySyncFault({ code: record.code, detail: 'page_identity_decision', ...escalation });
   if (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown') return classifySyncFault({ code: record.code, detail: 'file_drift_unknown', ...escalation });
   if (mirrorDatabaseOnlyHold(record)) return classifySyncFault({ code: record.code, detail: 'file_drift_mirror_database_only' });
+  if (mirrorKeepDeletedHold(record)) return classifySyncFault({ code: record.code, detail: 'mirror_keep_deleted' });
   const bodyFault = record.code === 'page_write_failed' ? record.meta.write_failure?.code : undefined;
   if (bodyFault && PAGE_BODY_FAULT_CODES.has(bodyFault)) return classifySyncFault({ code: record.code, detail: `freeze_${bodyFault}`, ...escalation });
   const disposition = contentHoldDisposition(record, auto);

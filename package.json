@@ -149,6 +149,7 @@
     "check:pg-url-redaction": "bash scripts/check-pg-url-redaction.sh",
     "check:source-scope-onboard": "bash scripts/check-source-scope-onboard.sh",
     "check:getpage-scope": "node scripts/check-getpage-scoped-write.mjs",
+    "check:relative-dotdot": "node scripts/check-relative-dotdot.mjs",
     "check:origin-assignment": "node scripts/check-origin-assignment.mjs",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin",
@@ -262,7 +263,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.734.0",
+  "version": "0.60.737.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

@@ -29,6 +29,8 @@ test/access-members-read-lineage.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts
 test/access-owner-default-writes.test.ts
+test/access-owner-fact-ops-gst2951.test.ts
+test/access-owner-fact-reads-more-gst2951.test.ts
 test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
@@ -45,6 +47,7 @@ test/adopt-local-edit.test.ts
 test/alias-source-cascade-5094.test.ts
 test/atom-retirement-keeps-trust-9456.test.ts
 test/attribution-backfill-history.test.ts
+test/auth-create-member-scopes.test.ts
 test/backlinks-type-exists-gbra449.test.ts
 test/backstop-same-page-shadow-managed-6333.test.ts
 test/behavior-change-notice.test.ts
@@ -63,6 +66,7 @@ test/belief-ledger-trust.test.ts
 test/belief-ledger-w5-time-model.test.ts
 test/belief-ledger-weekly-diff.test.ts
 test/belief-ledger-weekly-probes.test.ts
+test/belief-mention-disable-9548.test.ts
 test/capacity-bounded-read-6803.test.ts
 test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
@@ -91,6 +95,7 @@ test/db-wins-unimported-gst2579.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
+test/delta-beliefs-link-context-2957.test.ts
 test/derived-link-reconciliation.test.ts
 test/derived-origin-carry-managed.test.ts
 test/derived-origin-carry-private.test.ts
@@ -99,6 +104,7 @@ test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
+test/doctor-guard-ledger-checks.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-purged-page-facts-count.test.ts
@@ -166,6 +172,7 @@ test/git-canonical-conversion-progress.test.ts
 test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
 test/git-canonical-indexer-g3.test.ts
+test/git-commit-push-untrack-db-only-paths-gst2964.test.ts
 test/git-commit-push-untrack-gst2519.test.ts
 test/git-door-index-lock-7742.test.ts
 test/git-door-planned-state.test.ts
@@ -189,13 +196,18 @@ test/graduation-target.test.ts
 test/graduation-verify-sync-freshness.test.ts
 test/graduation-verify.test.ts
 test/grandfather-managed.test.ts
+test/guard-ledger-recreate-errors.test.ts
 test/guest-notes-scoped-role.test.ts
 test/harness-skills-epoch.test.ts
 test/harness-verify-member-credential.test.ts
 test/held-bare-name-move-gst2492.test.ts
 test/held-fence-readers-gst2492.test.ts
 test/held-move-plan-gst2497.test.ts
+test/held-private-replies-2900.test.ts
 test/held-read-signals.test.ts
+test/held-row-page-reads-2891.test.ts
+test/held-row-review-2891.test.ts
+test/held-row-writeback-2891.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
 test/holding-page-saves-gst2497.test.ts
@@ -322,6 +334,7 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/link-context-world-rows-2957.test.ts
 test/link-cross-source.test.ts
 test/link-dates-per-row-gst2228.test.ts
 test/link-origin-scope.test.ts
@@ -375,6 +388,7 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
+test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
@@ -563,6 +577,7 @@ test/purge-scrub-followups-9068.test.ts
 test/purge-slug-stores-9146.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/purged-change-reason-8635.test.ts
+test/purged-change-reasons-repair-gst2886.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
@@ -623,6 +638,7 @@ test/repair-unwithdrawn-facts-8819.test.ts
 test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
+test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
@@ -648,6 +664,7 @@ test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
 test/serve-http-memory-proposals.test.ts
+test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
@@ -656,6 +673,7 @@ test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/source-lifecycle-dry-run-physical-root-6849.test.ts
 test/source-purge-stranded-pages-7072.test.ts
+test/source-resolver-null-path.test.ts
 test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-git-reconcile.test.ts
@@ -727,6 +745,7 @@ test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
 test/sync-restored-file-purge.test.ts
+test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
 test/sync-status-commits-waiting-gst2515.test.ts
