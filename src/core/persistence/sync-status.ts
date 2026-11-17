@@ -251,6 +251,8 @@ export const SYNC_STATUS_REASONS = ['nothing_pending', 'held_by_design', 'held_n
   'pass_abandoned',
   // #7596: the newest pass's process stopped (killed or crashed) without ending it.
   'pass_interrupted',
+  // GST-2869: a termination signal (SIGTERM or SIGHUP) stopped the newest pass, which recorded its stop.
+  'pass_terminated',
   // GST-2515: nothing else is pending, but the checkout's HEAD is past the last synced commit.
   'commits_waiting'] as const;
 export type SyncStatusReason = typeof SYNC_STATUS_REASONS[number];
