@@ -166,7 +166,7 @@ export async function maybeDelegateLocalOperation(
 
   // An op that owns `source` (claim or timeline provenance) gets it on the wire, never as routing scope.
   const sourceInParams = options.source === undefined && !(await operationOwnsSource(operation));
-  // GBRA-585: a write's --source-id is its target, so the owner builds the write's grant on that source, as the direct path does.
+  // GBRA-585: a write's source_id is its target, so the owner builds the write's grant on that source, as the direct path does.
   const writeTarget = isPersistenceIpcMutation(operation) && typeof params.source_id === 'string' ? params.source_id : null;
   const explicit = options.source ?? (sourceInParams && typeof params.source === 'string' ? params.source : writeTarget);
   const source = resolveSourceIdEngineFree(explicit, cwd);
