@@ -60,7 +60,7 @@ import {
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
 import { loadavg, cpus } from 'os';
 import { monitorEventLoopDelay } from 'perf_hooks';
-import { isRetryableConnError, isVanishedSocketError } from '../retry-matcher.ts';
+import { isRetryableConnError, isServerRefusingConnections, isVanishedSocketError } from '../retry-matcher.ts';
 import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
 
@@ -885,8 +885,9 @@ export class MinionWorker extends EventEmitter {
             // job (invisible active job, no renewal, later stall). So instead:
             // reconnect once and let the NEXT poll tick re-claim against a live
             // pool. Non-retryable errors propagate (real bug → PM restart). A local
-            // socket removed by a server shutdown is the same lost connection (#9540).
-            if (!isRetryableConnError(e) && !isVanishedSocketError(e)) throw e;
+            // socket removed by a server shutdown, or a server refusing connections while it shuts
+            // down or after it stopped, is the same lost connection (#9540).
+            if (!isRetryableConnError(e) && !isVanishedSocketError(e) && !isServerRefusingConnections(e)) throw e;
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
             await this.reconnectAfterConnectionError('claim', e);
