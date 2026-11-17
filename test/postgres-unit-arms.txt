@@ -100,6 +100,7 @@ test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
+test/doctor-guard-ledger-checks.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-purged-page-facts-count.test.ts
@@ -190,6 +191,7 @@ test/graduation-target.test.ts
 test/graduation-verify-sync-freshness.test.ts
 test/graduation-verify.test.ts
 test/grandfather-managed.test.ts
+test/guard-ledger-recreate-errors.test.ts
 test/guest-notes-scoped-role.test.ts
 test/harness-skills-epoch.test.ts
 test/harness-verify-member-credential.test.ts
@@ -563,6 +565,8 @@ test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
 test/purge-slug-stores-9146.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
+test/purged-change-reason-8635.test.ts
+test/purged-change-reasons-repair-gst2886.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
@@ -612,6 +616,7 @@ test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
 test/repair-lost-fence-rows.test.ts
+test/repair-open-facts-8194.test.ts
 test/repair-private-labels-batch.test.ts
 test/repair-purged-page-facts-8859.test.ts
 test/repair-quoted-markers-8059.test.ts
@@ -655,6 +660,7 @@ test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/source-lifecycle-dry-run-physical-root-6849.test.ts
 test/source-purge-stranded-pages-7072.test.ts
+test/source-resolver-null-path.test.ts
 test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-git-reconcile.test.ts

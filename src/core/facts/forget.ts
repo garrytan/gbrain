@@ -18,7 +18,7 @@ import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { readOnlyCheckout } from '../persistence/mirror-read-only.ts';
-import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
+import { formatFenceDate, parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
 import { locateOutsideCode } from '../fence-scan.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -70,10 +70,13 @@ const FENCE_END = '<!--- gbrain:facts:end -->';
 /**
  * A superseded row is struck like a forgotten one but carries the parser's
  * `superseded by #N` reference instead of the withdrawal marker, so the next
- * reconcile links it and it never becomes a durable withdrawal.
+ * reconcile links it and it never becomes a durable withdrawal. With `until`
+ * (supersede-interval.ts's rule as a fence date) the struck row ends there
+ * instead of today.
  */
-export function supersededFact(fact: ParsedFact, today: string, newRowNum: number | null): ParsedFact {
+export function supersededFact(fact: ParsedFact, today: string, newRowNum: number | null, until?: string): ParsedFact {
   const context = [newRowNum !== null ? `superseded by #${newRowNum}` : 'superseded', fact.context?.trim()].filter(Boolean).join(' | ');
+  if (until !== undefined) return { ...fact, active: false, validUntil: until, context };
   const validUntil = fact.validUntil && /^\d{4}-\d{2}-\d{2}$/.test(fact.validUntil) && fact.validUntil < today ? fact.validUntil : today;
   return { ...fact, active: false, validUntil, context };
 }
@@ -141,7 +144,8 @@ export async function forgetFactInFence(
      * durable withdrawal is recorded, so the old claim can be remembered
      * again and no other page is invalidated.
      */
-    supersededBy?: { rowNum: number | null };
+    /** `validUntil`: where supersede-interval.ts's rule ends the row; absent (no replacement date) it ends at its own earlier end or now. */
+    supersededBy?: { rowNum: number | null; validUntil?: Date };
     /**
      * Retirement, not withdrawal: the source item the fact was extracted from
      * changed or was deleted upstream. Expires and strikes the row with
@@ -155,7 +159,7 @@ export async function forgetFactInFence(
   const today = todayUtc();
   const supersession = opts.supersededBy;
   const strike = (fact: ParsedFact) => supersession
-    ? supersededFact(fact, today, supersession.rowNum)
+    ? supersededFact(fact, today, supersession.rowNum, supersession.validUntil && formatFenceDate(supersession.validUntil))
     : opts.retired !== undefined ? retiredFact(fact, today, opts.retired) : withdrawnFact(fact, today, reason);
 
   const rows = await engine.executeRaw<FactDbRow>(
@@ -185,10 +189,10 @@ export async function forgetFactInFence(
 
   // A stale source file or rebuilt index must not silently restore an exact
   // withdrawn claim. Intent commits independently of filesystem availability.
-  // A supersession or a retirement only expires the row.
+  // A supersession or a retirement only expires the row; a supersession with a date ends it there (supersede-interval.ts).
   if (supersession || opts.retired !== undefined) {
-    await maintenanceTransaction(engine, tx => tx.executeRaw(`UPDATE facts SET valid_until = LEAST(COALESCE(valid_until, now()), now()), expired_at = now()
-      WHERE id = $1 AND expired_at IS NULL`, [factId]));
+    await maintenanceTransaction(engine, tx => tx.executeRaw(`UPDATE facts SET valid_until = COALESCE($2::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), expired_at = now()
+      WHERE id = $1 AND expired_at IS NULL`, [factId, supersession?.validUntil?.toISOString() ?? null]));
   } else {
     // W1 #6783 §5.1: the withdrawal's ledger publication is marked committed once its transaction commits.
     const publicationId = randomUUID();

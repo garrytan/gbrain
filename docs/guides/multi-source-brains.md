@@ -324,6 +324,15 @@ who may read it, before any member's bot connects:
   next request, and `gbrain auth list` shows each token's setting. A harness
   token rotation (`gbrain setup`, `gbrain bootstrap harness`) does not carry
   the grant; it prints the rescope that grants it again.
+- **Let a member's agent read private facts (optional).** Facts saved
+  `private` stay hidden from remote reads by default. `gbrain auth rescope
+  --token bot-alice-example --private-facts granted-sources` (or `--client
+  <client_id>`) lets that one credential read them in the sources its grant
+  names, and no others. It never opens a fact held on, provenanced from or
+  about a private, `readable_by`, folder-ruled, quarantined or member page, a
+  fact with no page to check, or a transcript fact; `context_pack`, `delta`
+  and writes stay world-only. `--private-facts none` turns it off on the next
+  request. Details: [MCP administration](../mcp/ADMIN.md).
 - **On a personal brain, name the owner instead.** `gbrain access owner set
   <member>` lets every credential bound to that member read the private pages
   in all the sources its grant reads. What each designation means for each
