@@ -106,6 +106,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 | `W` | local writers | core (journal) |
 | `L` / `l` / `U` / `O` | links from / to / unique key / origin | core (links) |
 | `E` / `D` / `G` | timeline entries / dedup / latest | core (timeline) |
+| `o` | live page origins: `o <source> 0x00 <source_path> 0x00 <page id>` | core (pages) |
 
 Rules:
 
@@ -180,7 +181,9 @@ file that names every family that needs the hook. Each listed family already has
 file, with an empty body. A family fills in only its own body, and never changes a signature or a list. A family
 that is not on a list and needs the hook asks core for a one-line addition to the list.
 
-All hooks are empty today, so they change no answer: every served member reads and writes exactly as before.
+All hooks are empty today, so they change no answer: every served member reads and writes exactly as before. The
+page origin rule at the end of this section is not a hook: it is core page behavior that lets `putPage` store
+`source_path`.
 
 #### Page columns (`page_columns.rs`)
 
@@ -299,6 +302,33 @@ family's records keyed by source, not by page; records under a page go through t
   (`ingest_log` has no foreign key). A family that is not listed and keys records by source asks core for one line.
 - The stubs in `facts.rs` and `link_queries.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
   import line in a file that has none yet.
+
+#### Page origin (`source_path` on `putPage`)
+
+A page's origin is the file it records (`source_path`). PGLite allows one live page per origin in a source
+(`assertOriginUnclaimed` in `persistence/origin-guard.ts`, the partial unique index `pages_live_origin_key`). The
+store keeps the same rule in `pages.rs`.
+
+- **What is stored.** `putPage` stores `source_path` on the page record. A write without one keeps the stored path
+  (`COALESCE`). `getPage`, `readPageSnapshot` and `listPages` return it; the page `putPage` returns does not, as in
+  PGLite.
+- **The refusal.** A write that leaves a page live refuses when another live page of the same source records the
+  same origin. The origin is the path the write sends, else the path the page already has (so a write that revives a
+  soft-deleted page is checked too). A live page that already records the origin is not checked again, and an empty
+  path is never checked. `restorePage` checks every page it would revive, in source order, before it revives any.
+- **The error.** The store returns `origin_claimed` with a JSON message (`source_id`, `source_path`, `holders`,
+  `slug`). `store-errors.ts` maps it to PGLite's error: `page_identity_changed`, detail `origin_already_claimed`, with
+  the same message, hint and fix. The write transaction returns the error, so a refused write stores nothing.
+- **Comparison.** Paths compare as written. On Windows, `\` reads as `/` and case is folded, as PGLite does.
+- **Index.** Core key `o` holds one entry per live page with a non-empty path. `write_page` reads the page as stored
+  before it writes and moves the entry; `remove_page` deletes it. So a soft delete frees the origin and a rename keeps
+  it. A family that writes a page through `write_page` keeps the index right with no extra step.
+- **Still refused.** A source in source-root slug mode whose directory is below its repository root also matches
+  the older repository-root spelling of a path. Only the files on disk settle that (`sameSyncOrigin`), so
+  `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
+- **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
+  time, so it needs none.
+- **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 ### Write transactions and the journal
 
@@ -968,3 +998,4 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
 | Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |
+| `putPage` with `source_path`, and the one-live-page-per-origin refusal (`o` key) | built | page_ops (`resolveSlugsByPaths`) |
