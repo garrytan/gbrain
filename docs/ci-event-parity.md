@@ -17,7 +17,8 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 
 | Workflow | Condition | Class | Covered by |
 | --- | --- | --- | --- |
-| `test.yml` | `security-regressions` Bun matrix | Parity: every supported Bun version on every OS, every event | — |
+| `test.yml` | `security-regressions` Bun matrix | Parity: every supported Bun version on every OS, every event, except the macOS cell ([below](#macos-runners)) | — |
+| `test.yml` | `security-regressions` macos-26 cell: left out of pull requests and of a master push that reuses a run | Named exception ([below](#macos-runners)) | The full-ci dispatch, every master push that runs in full, the merge queue and the nightly Test schedule |
 | `test.yml` | `changes` native scope (`smoke`/`primary`/`full`) | Named exception | Every push to master and the nightly Test schedule (`full`) |
 | `test.yml` | `gitleaks` commit range by event | Parity: each event scans the range it introduces | — |
 | `test.yml` | `dependency-audit` blocking scope | Named exception with a rule ([below](#dependency-audit-rule)) | Every push to master and the nightly Test schedule (always blocking) |
@@ -36,6 +37,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `persistence-validation.yml` | `SOAK_OPERATIONS` 2,500 vs 10,000 | Named exception | Every push to master and the nightly Test schedule |
 | `persistence-validation.yml` | Crash robot `--robot-scope=pr` (Postgres lease-bound seams skipped, 820 s PGLite and 620 s Postgres ceilings) vs `full` (1200 s PGLite, 880 s Postgres; [ceilings](#crash-robot-ceilings)); the nightly adds that day's exploration seeds | Named exception | The full-ci dispatch, every push to master (same fixed list, so it may reuse that run) and the nightly Test schedule |
 | `native-locks.yml` | `inputs.scope` (OpenClaw, musl, Windows probes, cross-target cells) | Named exception | Every push to master and the nightly Test schedule (`full`) |
+| `native-locks.yml` | darwin-arm64 and darwin-x64 cells and the darwin-x64 heartbeat finalize: never on a pull request | Named exception ([below](#macos-runners)) | The full-ci dispatch, every push to master, the merge queue and the nightly Test schedule |
 | `e2e.yml` | Doc-only merge-queue entry selects no E2E file | Named exception | Every push to master (whole corpus) and the nightly E2E schedule |
 | `e2e.yml` | Full-corpus coverage lanes and their `e2e-status` checks | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch) |
 | `e2e.yml` | Tier 2 (LLM Skills) runs keyed on the nightly only; other events skip it, and `e2e-status` prints "not run: keys withheld" instead of counting it green | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch), keyed; `scripts/require-executed-tests.ts` fails the job when any test skipped or none ran, and each test fails unless the agent called a gbrain MCP tool |
@@ -60,7 +62,8 @@ Every pull-request push runs the cheap tier in Test: `verify`, `typecheck`,
 on changed tests, and the GitHub-only lanes the diff selects. The crash robot
 and convergence run when `scripts/ci-convergence-scope.sh` selects
 persistence or sync paths. The native cells run when
-`scripts/ci-native-scope.sh` selects more than `smoke`. The
+`scripts/ci-native-scope.sh` selects more than `smoke`. No macOS job runs
+([below](#macos-runners)). The
 `cheap-tier (full suite not run)` check aggregates them
 (`scripts/ci-cheap-tier.sh`): a selected lane that skipped fails it, and its
 summary says the full suite did not run. E2E does not run on pull requests.
@@ -81,6 +84,21 @@ skips both and names them `full-suite-not-run`, so a cheap green can never
 produce either one. Each uploads `full-suite-tree` / `e2e-full-suite-tree`,
 a `tree.json` recording the tested tree (`scripts/ci-full-suite-tree.sh`).
 Pushes to master, the merge queue and schedules always run the full profile.
+
+## macOS runners
+
+GitHub's macOS runners are scarce, and in busy hours jobs waited 15 to 35
+minutes for one while the tests themselves took 1.5 to 4 minutes. So a
+pull request's cheap tier starts no macOS job: `security-regressions` runs its
+Linux and Windows cells, and `native-locks` runs every target except
+darwin-arm64 and darwin-x64. A master push that reuses a passed full run of
+its exact tree ([below](#master-push-reuse)) also leaves out the macos-26
+`security-regressions` cell, because the reused run already ran it on the
+same tree. The full-ci dispatch, a master push that runs in full, the merge
+queue and the nightly Test schedule run every macOS cell, so a macOS-only
+break shows up at full-ci before landing instead of on the first push.
+`test/scripts/macos-runner-events.test.ts` evaluates both workflows'
+conditions for each event.
 
 ## Enumeration and census tests
 
@@ -145,7 +163,7 @@ those heads is read, and the newest one decides, as in the
 push runs in full; a cancelled run, or one that skipped its full job, is passed
 over for the next older one. Anything else, an API error or a
 partial, cancelled or diagnostic run included, leaves reuse unset, so the push
-runs in full. A reusing push skips every full lane and both aggregates, records the
+runs in full. A reusing push skips every full lane, the macOS `security-regressions` cell and both aggregates, records the
 reused run in its summary, and runs the `reused-full-suite` job with the
 `reuse.json` artifact. The release gate (`scripts/release-gate.ts`) accepts a
 reusing push only with a readable `reuse.json` naming the same workflow, the
