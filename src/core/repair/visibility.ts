@@ -214,7 +214,7 @@ export async function planVisibilityRepair(engine: BrainEngine, sourceIds: strin
  * session (`put_page:<slug>`, `sync:<slug>`), else the slug a page-write or
  * extract_facts lane records first in `context`.
  */
-function factProvenanceSlugSql(f: string): string {
+export function factProvenanceSlugSql(f: string): string {
   return `regexp_replace(COALESCE(
     CASE WHEN ${f}.source_session ~ '^(put_page|sync):' THEN regexp_replace(${f}.source_session, '^(put_page|sync):', '') END,
     CASE WHEN ${f}.source IN ('mcp:put_page','sync:import','file_upload','code_import','hook:writeback','mcp:extract_facts')
