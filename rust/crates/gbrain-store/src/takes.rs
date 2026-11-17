@@ -18,3 +18,9 @@ use crate::pages::PageRecord;
 pub(crate) fn remove_page_rows(_tx: &mut dyn KvWrite, _page: &PageRecord) -> Result<()> {
     Ok(())
 }
+
+/// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`).
+/// Nothing to delete yet.
+pub(crate) fn remove_source_rows(_tx: &mut dyn KvWrite, _source_id: &str) -> Result<()> {
+    Ok(())
+}
