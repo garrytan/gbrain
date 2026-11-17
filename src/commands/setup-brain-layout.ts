@@ -330,11 +330,12 @@ function readersOf(exec: Run, launcher: string, slug: string): NonNullable<Trans
   try { page = (JSON.parse(exec([launcher, 'access', 'who-can-read', slug, '--source', COMPANY_SOURCE, '--json'], undefined, null).stdout) as { pages?: Array<NonNullable<typeof page>> }).pages?.[0]; } catch { return unknown; }
   try { serves = JSON.parse(exec([launcher, 'access', 'serves', '--json', '--no-open-pages'], undefined, null).stdout) as typeof serves; } catch { /* the serves clause is left out */ }
   if (!page) return unknown;
-  const who = serves.serves === 'several' ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}; the member keys gbrain setup mints read source ${COMPANY_SOURCE}, other keys only when their grant names it or it is in default search`
-    : serves.serves === 'one' ? 'this brain serves one person' : null;
+  const several = serves.serves === 'several';
+  const who = several ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}` : serves.serves === 'one' ? 'this brain serves one person' : null;
+  const everyone = several ? `every member key gbrain setup minted, and other keys only when their grant names source ${COMPANY_SOURCE} or it is in default search` : `everyone who can read source ${COMPANY_SOURCE}`;
   const members = page.members;
   const clauses = [...(members === 'every_source_reader' ? [] : [`access rules on source ${COMPANY_SOURCE} cover ${CALLS_PREFIX}/`]), ...(who ? [who] : [])];
-  const detail = `${members === 'every_source_reader' ? `everyone who can read source ${COMPANY_SOURCE}` : `${members.join(', ') || 'no member'} only`}${clauses.length ? ` (${clauses.join('; ')})` : ''}`;
+  const detail = `${members === 'every_source_reader' ? everyone : `${members.join(', ') || 'no member'} only`}${clauses.length ? ` (${clauses.join('; ')})` : ''}`;
   return { members, serves: serves.serves ?? null, detail };
 }
 

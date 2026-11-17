@@ -22,6 +22,7 @@ import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
+import type { LayoutOutcome } from './setup-brain-layout.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
@@ -264,16 +265,22 @@ export function servesOk(o: ServesOutcome | null): boolean {
 /**
  * GBRA-585 A: setup labels the people before the layout step adds the company source, so when this run added it, the
  * labelling child runs once more and the keys it minted with a source list gain `company` (it adds, never removes).
- * A dry run says so instead.
+ * A dry run says so instead. When the re-run adds the company/ rule (--labelled-only), the layout's call readers become
+ * that rule's readers, since the layout step read them before the rule existed.
  */
-export function servesAfterLayout(o: ServesOutcome | null, flags: ServesFlags, launcher: string, plan: ServesPlan, company: { action: string } | null | undefined): ServesOutcome | null {
-  if (!o || flags.serves !== 'several' || company?.action !== 'created') return o;
+export function servesAfterLayout(o: ServesOutcome | null, flags: ServesFlags, launcher: string, plan: ServesPlan, layout: LayoutOutcome | null | undefined): ServesOutcome | null {
+  if (!o || flags.serves !== 'several' || layout?.company?.action !== 'created') return o;
   if (flags.dryRun) return { ...o, note: [o.note, 'the member keys this run mints also read source company once the layout step adds it: every page in it, including the calls it imports, which every member reads whether or not they attended',
     ...(flags.labelledOnly ? ['as the members are labelled-only, a folder rule company/ in source company then names them and the owner as its readers'] : [])].filter(Boolean).join('; ') };
   if (!o.receipt?.applied || o.error) return o;
   const r = child(launcher, servesArgv(plan.roster, flags, plan.owner, true));
   const regrant = parsed<ServesReceipt>(r.stdout);
   if (!regrant || !('members' in regrant)) return { ...o, error: `giving the member keys source company failed: ${(r.stderr || r.stdout).trim() || 'gbrain access serves several printed nothing'}` };
+  const rule = regrant.company_rule;
+  if (rule && rule.action !== 'blocked' && layout.transcripts?.readers) {
+    const names = rule.readers.map(p => p.replace(/^member:/, ''));
+    layout.transcripts.readers = { members: names, serves: 'several', detail: `${names.join(', ')} only (the company/ rule on source company names them, so the labelled-only members read the calls through it)` };
+  }
   return { ...o, regrant };
 }
 

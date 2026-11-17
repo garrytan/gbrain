@@ -258,7 +258,8 @@ describe('A: gbrain setup --shape company --transcripts gives the members the ca
     const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--transcripts', dir, '--json']);
     expect(r.exitCode).toBe(0);
     expect(r.doc.serves.regrant.keys.map((k: any) => [k.member, k.adds])).toEqual([['alice-example', ['company']], ['bob-example', ['company']]]);
-    expect(r.doc.brain_layout.transcripts.readers.detail).toContain('the member keys gbrain setup mints read source company');
+    expect(r.doc.brain_layout.transcripts.readers.detail).toMatch(/^every member key gbrain setup minted, and other keys only when their grant names source company/);
+    expect(r.doc.brain_layout.transcripts.readers.detail).not.toContain('everyone who can read source company');
     const engine = await openBrainFile(b.home);
     try {
       for (const m of ROSTER) expect(await tokenReads(engine, readFileSync(keyFile(b.home, m), 'utf8').trim(), ['callcanary'])).toEqual(['callcanary']);
@@ -439,6 +440,8 @@ describe('C: gbrain setup --shape company --labelled-only gives labelled-only me
     const r = await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--owner', 'owner-example', '--shape', 'company', '--transcripts', dir, '--labelled-only', '--json']);
     expect(r.exitCode).toBe(0);
     expect(r.doc.serves.regrant.company_rule).toMatchObject({ prefix: 'company/', action: 'add', readers: ['member:alice-example', 'member:bob-example', 'member:owner-example'] });
+    expect(r.doc.brain_layout.transcripts.readers).toMatchObject({ members: ['alice-example', 'bob-example', 'owner-example'], serves: 'several' });
+    expect(r.doc.brain_layout.transcripts.readers.detail).toMatch(/^alice-example, bob-example, owner-example only \(the company\/ rule on source company names them/);
     const engine = await openBrainFile(b.home);
     try {
       for (const m of ROSTER) expect(await tokenReads(engine, readFileSync(keyFile(b.home, m), 'utf8').trim(), ['callcanary'])).toEqual(['callcanary']);
