@@ -195,9 +195,10 @@ starts at the fact's `valid_from`: `remember` sets it from its `valid_from`
 parameter (when the fact was said or became true). A `valid_from` that only
 records the write time (within a minute of `created_at`) reads `unknown`, so a
 header never presents when a fact was written as when it became true. An open
-validity end reads `unknown`. A conversation fact that states where a person
-lives, who employs them or their role carries a slot (`location`, `employer`
-or `role`), and the facts block and the temporal fact reserve work out its end
+validity end reads `unknown`. When a conversation fact carries a slot
+(`location`, `employer` or `role`; extraction does not ask the model for one
+at the moment, so only facts stored with one under 0.60.735.0 have it, until
+the part of the page they came from is extracted again), the facts block and the temporal fact reserve work out its end
 at read time: the start of the next different value for the same person, when
 that value came from the same conversation or its fact says the value changed
 (moved, joined, left and similar words). Otherwise both values stay open and

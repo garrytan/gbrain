@@ -25,7 +25,7 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
   test('upgrade paths carry an entry\'s --stdio-member forward and never add one: post-upgrade rewrites, setup re-runs from the receipt, --no-stdio-member removes it', async () => {
     const b = box();
     await brainWithPages(b);
-    expect((await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--stdio-member', 'alice-example'])).exitCode).toBe(0);
+    expect((await setup(b, ['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--stdio-member', 'alice-example', '--open-history'])).exitCode).toBe(0);
     const refresh = async () => { const lines: string[] = []; await withEnv({ ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home }, () => refreshHookLaunchers((l) => lines.push(l))); return lines; };
     staleEntry(b);
     expect((await refresh()).join('\n')).toContain('now start gbrain from its own directory');

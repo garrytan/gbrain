@@ -39,6 +39,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  for (const id of ['client-a', 'client-b']) await engine.executeRaw('INSERT INTO oauth_clients (client_id, client_name) VALUES ($1, $1)', [id]);
   exitCode = null; out = []; err = [];
   origExit = process.exit;
   (process as unknown as { exit: (n: number) => never }).exit = ((n: number) => {
@@ -48,6 +49,7 @@ beforeEach(async () => {
   spies = [
     spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')); }),
     spyOn(console, 'error').mockImplementation((...a: unknown[]) => { err.push(a.join(' ')); }),
+    spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => { err.push(String(chunk)); return true; }) as never),
   ];
 });
 
@@ -139,6 +141,21 @@ describe('gbrain guests init', () => {
     expect(exitCode).toBe(2);
     expect(await sourceRow('guests')).toBeUndefined();
   });
+
+  test('GBRA-585: refuses an oauth_client writer that names no registered client, or a deleted one, in the preview and with --yes, and writes nothing', async () => {
+    await engine.executeRaw("INSERT INTO oauth_clients (client_id, client_name, deleted_at) VALUES ('client-gone', 'client-gone', now())");
+    for (const id of ['client-missing', 'client-gone']) {
+      for (const yes of [[], ['--yes']]) {
+        exitCode = null; err = []; out = [];
+        await run(() => runGuests(engine, ['init', '--writer', 'oauth_client:client-a', '--writer', `oauth_client:${id}`, ...yes]));
+        expect({ id, yes, exitCode: exitCode as number | null }).toEqual({ id, yes, exitCode: 1 });
+        expect(err.join('\n')).toContain('client_not_found');
+        expect(err.join('\n')).toContain(`oauth_client:${id}`);
+        expect(await sourceRow('guests')).toBeUndefined();
+        expect(await engine.executeRaw('SELECT 1 FROM guest_sources')).toEqual([]);
+      }
+    }
+  });
 });
 
 describe('gbrain sources writers', () => {
@@ -154,6 +171,19 @@ describe('gbrain sources writers', () => {
     await run(() => runSources(engine, ['writers', 'guests', '--clear']));
     expect((await guestRow('guests'))?.writers).toEqual([]);
     expect(exitCode).toBeNull();
+  });
+
+  test('GBRA-585: --add refuses an oauth_client writer that names no registered client and leaves the list unchanged; --remove still takes one', async () => {
+    await run(() => runGuests(engine, ['init', '--writer', 'oauth_client:client-a', '--yes']));
+    await run(() => runSources(engine, ['writers', 'guests', '--add', 'oauth_client:client-missing']));
+    expect(exitCode as number | null).toBe(1);
+    expect(err.join('\n')).toContain('client_not_found');
+    expect((await guestRow('guests'))?.writers).toEqual(['oauth_client:client-a']);
+    exitCode = null;
+    await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-a'");
+    await run(() => runSources(engine, ['writers', 'guests', '--remove', 'oauth_client:client-a']));
+    expect(exitCode).toBeNull();
+    expect((await guestRow('guests'))?.writers).toEqual([]);
   });
 
   test('refuses a source that is not a guest source, and an unknown one', async () => {

@@ -20,10 +20,11 @@ import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
-import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { pageDocument } from '../page-window/document.ts';
 import { DEFAULT_WINDOW_BYTES, MAX_WINDOW_BYTES, decodeCursor, encodeCursor, totalLines, windowFrom, type WindowSlice } from '../page-window/window.ts';
@@ -256,9 +257,10 @@ async function loadEdition(tx: BrainEngine, identity: Identity, row: PickRow): P
  */
 async function editionView(ctx: OperationContext, identity: Identity, e: Edition, asOf: string, offset: number | null, maxBytes: number, quote: boolean): Promise<Record<string, unknown> | 'gone'> {
   const neutralize = quote && ctx.thinClient !== true && isQuotedPageType(e.type);
+  const omitRows = e.segmented ? undefined : await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: identity.source_id, slug: identity.slug, compiled_truth: e.compiled_truth, timeline: e.timeline });
   const clean = (s: string) => {
     if (ctx.remote === false) return s;
-    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
+    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows });
     return neutralize ? neutralizeToolCalls(safe) : safe;
   };
   const fence = (s: string) => quote && s ? fenceTranscriptText(s, identity.slug) : s;
@@ -270,7 +272,7 @@ async function editionView(ctx: OperationContext, identity: Identity, e: Edition
   let total: number, slice: WindowSlice, lines: number | undefined;
   if (e.segmented) {
     try {
-      const body = await openSegmentedBody(ctx.engine, { pageId: identity.id, ...(e.generation !== undefined ? { generation: e.generation } : {}) });
+      const body = await openSegmentedBody(ctx.engine, { pageId: identity.id, ...(e.generation !== undefined ? { generation: e.generation } : {}), hideHeld: worldOnlyFacts(ctx.remote) });
       const seg = await segmentedReadDocument(ctx.engine, body);
       total = seg.total;
       slice = await seg.from(offset ?? 0, maxBytes);

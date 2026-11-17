@@ -747,8 +747,8 @@ export interface FactsHealth {
  *
  * `remote` (D-CDX-1) gates the visibility filter: when true the engine
  * adds `AND visibility = 'world'`, mirroring `recall`'s posture for
- * untrusted callers. Local CLI keeps `remote: false` and sees both
- * private + world facts.
+ * untrusted callers. Callers pass worldOnlyFacts(ctx.remote), so the local
+ * CLI and the brain owner see both private + world facts.
  */
 export interface TrajectoryOpts {
   entitySlug: string;
@@ -1935,7 +1935,7 @@ export interface BrainEngine {
   /** Meta-ontology: which dimensions exist across the brain, and how widely. */
   discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]>;
   /** Dimensions with ≥2 distinct current-open values from ≥2 provenances. */
-  findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts['visibility'] }): Promise<OntologyConflict[]>;
+  findOntologyConflicts(opts?: PageReadScope & Pick<OntologyReadOpts, 'minConfidence' | 'visibility' | 'excludeDiary'>): Promise<OntologyConflict[]>;
 
   // Raw data
   /**
