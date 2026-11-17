@@ -55,6 +55,7 @@ src/commands/engine-status.ts	kind_compare	6
 src/commands/enrich.ts	kind_compare	1
 src/commands/extract-attendance-repair.ts	kind_compare	3
 src/commands/extract-stale-delegate.ts	kind_compare	1
+src/commands/git.ts	kind_compare	1	came from master #9627 (untrack for database-only folders), which landed after this ratchet was cut
 src/commands/import.ts	kind_compare	2
 src/commands/init.ts	kind_compare	1
 src/commands/integrity.ts	kind_compare	1
