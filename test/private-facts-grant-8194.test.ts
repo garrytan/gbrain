@@ -70,7 +70,7 @@ const CLOSED: Record<string, string> = {
   private_page: 'orchardline canary held private page',
   readers_page: 'orchardline canary readers page',
   member_page: 'orchardline canary member page',
-  derivation_private: 'orchardline canary derived private',
+  derived_page: 'orchardline canary derived private',
   quarantined_page: 'orchardline canary quarantined page',
   unpaged: 'orchardline canary unpaged private',
   transcript_lane: 'orchardline canary transcript lane private',
@@ -151,7 +151,7 @@ for (const kind of testBackends()) {
       await dbFact(engine, GRANTED, CLOSED.readers_page, 'private', 'notes/readers-only');
       await dbFact(engine, GRANTED, CLOSED.member_page, 'private', 'memory/members/alice-example');
       await dbFact(engine, GRANTED, CLOSED.quarantined_page, 'private', 'notes/held-back');
-      await dbFact(engine, GRANTED, CLOSED.derivation_private, 'private', ENTITY, { source: 'mcp:put_page', session: 'put_page:notes/private-src' });
+      await dbFact(engine, GRANTED, CLOSED.derived_page, 'private', ENTITY, { source: 'mcp:put_page', session: 'put_page:notes/private-src' });
       await dbFact(engine, GRANTED, CLOSED.unpaged, 'private', null);
       await dbFact(engine, GRANTED, CLOSED.transcript_lane, 'private', ENTITY, { source: 'cli:extract-conversation-facts' });
 
