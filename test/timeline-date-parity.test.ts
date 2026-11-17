@@ -5,6 +5,13 @@
  * changes, dates near midnight and leap days, with the session TimeZone set
  * to UTC and to four other zones.
  *
+ * Rust engine contract: the Rust engine must set TimeZone=UTC on every
+ * session. Three outputs follow the session zone: an event's effective_date
+ * text, the order of a plain row against an event on one day, and the default
+ * "today" of getOnThisDay and getLastSeen. For the Rust comparison, those
+ * cases run with the TypeScript engines pinned to UTC in test setup (the UTC
+ * entries below). The TypeScript engines' own runtime zone is not changed here.
+ *
  * 1. Protects: getTimelineForDate (day + ISO week), getSince, getOnThisDay,
  *    getLastSeen, getEffectiveDates, getPageTimestamps and
  *    addTimelineEntriesBatch give one answer per engine for the same brain and
