@@ -186,8 +186,10 @@ for rules in the database (a repo-less brain) and in `access.yml`.
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
 explicit private `facts.default_visibility`. A remote credential bound to a member saves `private` on its own member
-page (`memory/members/<member>`) unless the call passes `share: true`, and its `visibility: "world"` is refused; it
-withdraws only facts on that page, and the brain host withdraws the rest (`gbrain forget <id>`). The owner's own
+page (`memory/members/<member>`) unless the call passes `share: true`, and its `visibility: "world"` is refused; a
+`share: true` fact about another enabled member is held `private` until the brain owner confirms its proposal
+(`gbrain trust review`, `gbrain trust confirm tp<N>`). It withdraws facts on that page and shared facts about
+itself, and the brain host withdraws the rest (`gbrain forget <id>`). The owner's own
 credential (or a stdio server started with `--stdio-member <owner>`), speaking for itself (no audience, not a
 subagent job, no slug fence), saves like a credential bound to no member: shared on the subject's page, or `private` on its member page when it passes `visibility: "private"` or the
 page or `facts.default_visibility` keeps facts private (the reply names the `page` and `visibility`; an explicit
