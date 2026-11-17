@@ -275,7 +275,7 @@ src/core/access/caller.ts	execute_raw	9
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/labelled-only.ts	execute_raw	4
-src/core/access/member-facts.ts	execute_raw	1
+src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	execute_raw	25
 src/core/access/members.ts	sql_template	1
@@ -821,7 +821,7 @@ src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/managed-sync-orphans.ts	execute_raw	14
 src/core/persistence/manual-links.ts	execute_raw	8
-src/core/persistence/memory-mutations.ts	execute_raw	5
+src/core/persistence/memory-mutations.ts	execute_raw	6	GST-2897 B (#9670, opened before this ratchet): one read of a fact's entity_slug so the member it is about can withdraw it; no typed engine method exists yet
 src/core/persistence/memory-prepare.ts	execute_raw	4
 src/core/persistence/memory-proposals.ts	execute_raw	16
 src/core/persistence/mirror-read-only.ts	execute_raw	4
@@ -1198,7 +1198,7 @@ src/core/trust/provenance-drift.ts	execute_raw	3
 src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	18
-src/core/trust/supersede-handlers.ts	execute_raw	12
+src/core/trust/supersede-handlers.ts	execute_raw	14	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
 src/core/trust/taint.ts	execute_raw	5
 src/core/trust/timeline-projection.ts	execute_raw	2
 src/core/uncommitted-deletions.ts	execute_raw	1
