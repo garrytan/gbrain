@@ -254,6 +254,15 @@ for (const backend of testBackends()) {
         expect(line('Alice Example lives in Lisbon.', await block(LIVE_Q))!.split('\n')[0]).toBe(header(P1, P1, '2099-01-01'));
       });
 
+      test('a successor whose stored valid_until has passed still ends the earlier value', async () => {
+        const pages: Page[] = [{ slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [LISBON] },
+          { slug: 'meetings/chat-b', title: 'Chat B', date: P2, said: [{ fact: 'Alice Example moved to Porto.', valid: P2, slot: ['location', 'Porto'] }] }];
+        await putPages(pages);
+        await extract(pages);
+        await engine.executeRaw(`UPDATE facts SET valid_until = '2025-04-15T00:00:00Z' WHERE source_id='default' AND fact = $1`, ['Alice Example moved to Porto.']);
+        expect(line('Alice Example lives in Lisbon.', await block(LIVE_Q))!.split('\n')[0]).toBe(header(P1, P1, P2));
+      });
+
       test('ingest order does not change the block', async () => {
         const pages: Page[] = [{ slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [LISBON] },
           { slug: 'meetings/chat-b', title: 'Chat B', date: P2, said: [{ fact: 'Alice Example moved to Porto.', valid: P2, slot: ['location', 'Porto'] }] },

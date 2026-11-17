@@ -333,14 +333,15 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
 /**
  * GBRA-574 B2: every active conversation slot row (dim_status active; ontology observations never shape a window) of the given (source, entity, dimension) slots under exactly
  * the pool's read policy, so a row the caller cannot see never shapes a window the caller sees; ordered by valid_from, id.
+ * A row whose stored valid_until has passed still ends the value before it; withdrawn and superseded rows never do.
  */
 export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<SlotRow[]> {
   if (!slots.length) return [];
-  const { where, params } = poolPredicate(scope, undefined);
+  const { where, params } = poolPredicate(scope, { includeExpired: true });
   const n = params.length;
   return engine.executeRaw<SlotRow>(
     `SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.value_hash, f.valid_from, f.source_markdown_slug, f.fact FROM facts f
-     WHERE ${where} AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
+     WHERE ${where} AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
        AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
      ORDER BY f.valid_from, f.id`,
     [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);
