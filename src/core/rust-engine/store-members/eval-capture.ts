@@ -7,6 +7,11 @@ import type { EvalCandidate, EvalCandidateInput, EvalCaptureFailure, EvalCapture
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
+/** A `Date` argument as the ISO string the store reads; anything else is passed on for the store to judge. */
+function isoArg(value: unknown): unknown {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 /** The store keeps a `facts/<id>` slug while that fact row exists, as PGLite does (rust/docs/store/eval_capture.md). */
 export const logEvalCandidate: StoreMember<[input: EvalCandidateInput], number> = (brain, input) =>
   storeCall({ member: 'logEvalCandidate' }, () => brain.logEvalCandidate({ ...input, embedding_column: input?.embedding_column ?? null }));

@@ -635,14 +635,22 @@ mod tests {
             })
             .unwrap();
         let slugs = [
-            "facts/7", "facts/8", "facts/9", "facts/", "facts/07", "facts/x7",
+            "facts/7",
+            "facts/8",
+            "facts/9",
+            "facts/",
+            "facts/07",
+            "facts/x7",
             "facts/1234567890123456789",
         ];
         let any = log(&store, &slugs, &[]);
         let default_only = log(&store, &slugs, &["default"]);
         let other_only = log(&store, &slugs, &["other"]);
         // `facts/07` names fact 7 too (`substr(...)::bigint`); 19 digits is no facts slug.
-        assert_eq!(slugs_of(&store, any), vec!["facts/7", "facts/8", "facts/07"]);
+        assert_eq!(
+            slugs_of(&store, any),
+            vec!["facts/7", "facts/8", "facts/07"]
+        );
         assert_eq!(slugs_of(&store, default_only), vec!["facts/7", "facts/07"]);
         assert_eq!(slugs_of(&store, other_only), vec!["facts/8"]);
         // A source list of only nulls matches no fact.
