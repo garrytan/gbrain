@@ -161,8 +161,8 @@ Reserved tags:
 
 ### Page delete cascade
 
-`pages::remove_page` deletes a page's versions, chunks, postings, links and timeline entries, then the event
-projections that name the page (`timeline_queries::remove_event_projections`, below), then calls
+`pages::remove_page` deletes a page's versions, chunks and postings (the chunk-delete hook below fires for those
+chunks), links and timeline entries, then the event projections that name the page (`timeline_queries::remove_event_projections`, below), then calls
 `cascade::remove_page_rows`, which calls `remove_page_rows(tx, page)` in each family marked "yes" above. Today every
 one of those hooks is empty. A family fills in only its own hook, inside the same write transaction, so the page and
 everything under it go together or not at all. Soft delete never cascades: reads hide rows whose page has
@@ -170,8 +170,8 @@ everything under it go together or not at all. Soft delete never cascades: reads
 hook clears the page reference on file rows instead of deleting them.
 
 Facts are not cascaded on page delete (Postgres keys them by slug, not by page id); facts reads hide facts whose page
-is soft deleted. Source delete is not served by the Rust engine yet; when core serves it, core adds a
-`cascade::remove_source_rows` list the same way.
+is soft deleted. Source delete is not served by the Rust engine yet, but its list, `cascade::remove_source_rows`, is
+built ("Core hooks"), so a family with records keyed by source fills in its hook now.
 
 ### Core hooks
 
@@ -240,6 +240,65 @@ Postgres deletes a timeline entry when the page in its `event_page_id` is delete
 entry can sit on another page. `pages::remove_page` calls this function in the same write transaction, after the
 page's own entries go. Its body is empty. The timeline_queries family fills it in: it finds the entries through its
 own `u 0x01 <event_page_id be8> <date>` index and deletes each one's `E` and `D` keys and its index key.
+
+#### Page rename (`pages::rename_page`)
+
+```rust
+pub(crate) fn rename_page(tx: &mut dyn KvWrite, env: &dyn Env, page: &PageRecord, new_slug: &str) -> Result<PageRecord>;
+```
+
+The page move of `updateSlug` (`UPDATE pages SET slug = new, updated_at = now()`). Pass the page as it is stored;
+it returns the moved record.
+
+- The page keeps its id, so its chunks, links, tags, timeline entries and versions follow it.
+- A new slug takes a new `knowledge_revision` and clears `text_projection_revision`, as the Postgres revision trigger
+  does. The same slug changes only `updated_at`.
+- `new_slug` goes through `validate_slug` (refuses with `invalid_slug`; stores the lowercase form).
+- Refuses with `constraint_violation` when the source already holds a page at the new slug, live or soft deleted.
+  Return the error from the write closure: the transaction then keeps nothing.
+- It moves only the page. The caller versions the page before the move, and records the rename alias after it.
+
+#### Chunk delete (`cascade::remove_chunk_rows`)
+
+```rust
+// In code_edges.rs, vectors.rs and embeddings.rs:
+pub(crate) fn remove_chunk_rows(tx: &mut dyn KvWrite, page_id: u64, chunk_ids: &[u64]) -> Result<()>;
+```
+
+Postgres deletes a row that references a `content_chunks` id when that chunk is deleted (`ON DELETE CASCADE`). Core
+calls this hook, in the same write transaction, with the ids of the chunks that are gone. Their chunk records are
+already deleted when it runs; the ids are sorted and all belong to `page_id`.
+
+- `deleteChunks` and a hard page delete report every chunk of the page. On a page delete the hook fires before
+  `remove_page_rows`.
+- `upsertChunks`, `putPage` and every other chunk rewrite report only the chunks whose index the new set does not
+  keep. A chunk that keeps its index keeps its id, as in Postgres, so its rows stay. The hook is not called when no
+  chunk is gone.
+- **Owners:** code_edges (edges whose from or to chunk is gone). vectors and embeddings are on the list because their
+  records hang off chunk ids in this store, while Postgres keeps them on the chunk row; their hooks stay empty if
+  they key nothing by chunk id.
+
+#### Source delete (`cascade::remove_source_rows`)
+
+```rust
+// In facts.rs, aliases.rs, code_edges.rs, link_queries.rs, raw_files.rs, page_body.rs, takes.rs and extraction.rs:
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()>;
+```
+
+Postgres deletes every row whose `source_id` references a deleted source (`ON DELETE CASCADE`). This hook is for a
+family's records keyed by source, not by page; records under a page go through the page and chunk hooks.
+
+- **No caller yet.** The Rust engine does not serve source delete (TypeScript deletes sources with raw SQL, which the
+  Rust engine refuses). When core serves it, one write transaction removes each page of the source with
+  `pages::remove_page` (so the page and chunk hooks fire), then calls this list, then deletes the source record.
+- **Owners** (the Postgres tables that cascade on `sources.id`): facts (`facts`, `fact_withdrawals`), aliases
+  (`slug_aliases`, `page_aliases`), code_edges (`code_edges_chunk`, `code_edges_symbol`), link_queries
+  (`wanted_links`), raw_files (`files`), page_body (`page_segment_texts`, `page_body_stagings` and the other segment
+  tables), takes (`take_proposals`, `take_nudge_log`), extraction (`extract_atoms_page_state`).
+- **Not on the list:** eval_capture (`eval_candidates.source_ids` is a text array with no foreign key) and stats
+  (`ingest_log` has no foreign key). A family that is not listed and keys records by source asks core for one line.
+- The stubs in `facts.rs` and `link_queries.rs` use full paths (`crate::kv::KvWrite`, `crate::Result`), so they need no
+  import line in a file that has none yet.
 
 ### Write transactions and the journal
 
@@ -415,7 +474,7 @@ Slug renames and page aliases.
 - **Store and binding:** `updateSlug` (`update_slug`), `resolveSlugWithAlias` (`resolve_slug_with_alias`), `resolveSlugWithAliasDetailed` (`resolve_slug_with_alias_detailed`), `resolveAliases` (`resolve_aliases`), `setPageAliases` (`set_page_aliases`), `updatePageContextualRetrievalState` (`update_page_contextual_retrieval_state`).
 - **Postgres tables:** `slug_aliases` (no FK to pages), `pages.slug` (rename), `pages.contextual_retrieval_mode`.
 - **Keys:** `k 0x01 <source> 0x00 <alias slug>` to the target slug and page id; `k 0x02 <page id> 0x00 <alias slug>` to list a page's aliases; `k 0x03 <page id>` for the contextual retrieval state. Removed by `remove_page_rows`. `getPage` returns `contextual_retrieval_mode` from that record through this family's `page_columns` hook (built).
-- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one. That is a core page write: ask core for a `pages::rename_page(tx, page, new_slug)` helper before you start `updateSlug`. Links, chunks, tags, timeline and versions follow the page id and need no change.
+- **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias and moves its own slug bindings. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
 - **Parity cases (6, in `sync-aliases.test.ts`):**
@@ -597,7 +656,7 @@ Code call edges between chunks and symbols.
 - **Store and binding:** `addCodeEdges` (`add_code_edges`), `deleteCodeEdgesForChunks` (`delete_code_edges_for_chunks`), `getCallersOf` (`get_callers_of`), `getCalleesOf` (`get_callees_of`), `getEdgesByChunk` (`get_edges_by_chunk`).
 - **Postgres tables:** `code_edges_chunk`, `code_edges_symbol`.
 - **Keys:** `H 0x01 <edge id>` row; `H 0x02 <from chunk id> <edge id>`; `H 0x03 <to chunk id> <edge id>`; `H 0x04 <source> 0x00 <to symbol> 0x00 <edge id>`.
-- **Depends on:** Core chunk ids. Postgres deletes edges when their chunk is deleted. Page delete reaches this family through `remove_page_rows`; a chunk replace (`upsertChunks`) needs a chunk-delete hook from core. Ask core for it before the case that replaces chunks.
+- **Depends on:** Core chunk ids. Postgres deletes edges when their chunk is deleted. Fill in this family's `remove_chunk_rows` hook (built; "Core hooks"): it gets the ids of every chunk that is gone, on a chunk replace, `deleteChunks` and a hard page delete.
 - **Estimate:** about 1 to 2 days.
 - **Notes:** The chunk and symbol tables share one `LIMIT` in the PGLite union; keep that.
 - **Parity cases (3, in `code-eval-salience.test.ts`):**
@@ -879,10 +938,10 @@ member lands. Within a group, build in the order shown.
 | Group | Families (in order) | Can start now | Estimate | Waits on |
 |---|---|---|---|---|
 | 1. Page reads and deletes | page_ops | yes | about 9 days | nothing to start; `deletePages` calls the eval_capture helper, which group 5 builds first (about half a day) |
-| 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` needs the core rename helper |
+| 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` uses the core rename helper (built) |
 | 3. Page bodies | page_body | yes | about 7 to 8 days | vector input to `stageSegmentChunks` refuses until embeddings; one case needs transactions |
 | 4. Memory records | dream, contradictions, facts, ontology, raw_files, stats | yes | about 9 days | three facts cases need takes (group 5); `getHealth` last |
-| 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges needs the core chunk-delete hook |
+| 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges uses the core chunk-delete hook (built) |
 | 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 9 days | keyword needs the `ts_rank` compatibility ranker; two chunk cases need embeddings |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
@@ -897,8 +956,8 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | Core item | Waits on | Needed by |
 |---|---|---|
 | Page-columns hook (`page_columns.rs`): family values that `getPage` returns (`emotional_weight`, `contextual_retrieval_mode`, segmented-body fields) | built | salience, aliases, page_body; extraction listed, likely unused |
-| `pages::rename_page` helper | nothing | aliases (`updateSlug`) |
-| Chunk-delete hook (`cascade::remove_chunk_rows`) | nothing | code_edges |
+| `pages::rename_page` helper | built | aliases (`updateSlug`) |
+| Chunk-delete hook (`cascade::remove_chunk_rows`) | built | code_edges; vectors and embeddings listed |
 | Timeline entry helpers (`next_entry_id`, `read_entry`, `put_entry`) | built | timeline_queries (`upsertEventProjection`) |
 | Event projection delete (`timeline_queries::remove_event_projections`, called by `remove_page`) | built; the family fills in the body | timeline_queries |
 | Index hooks in `write_page` and `timeline.rs` if a family needs one | a family asking | page_ops, keyword, timeline_queries |
@@ -907,4 +966,5 @@ The estimates are judgments from the size of the PGLite code each member reprodu
 | embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
 | transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction |
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
-| Source delete and its `cascade::remove_source_rows` list | nothing | facts and other source-keyed records |
+| Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |
+| Source delete itself (a store member in place of the raw SQL) | nothing | serving `sources remove` on the Rust engine |

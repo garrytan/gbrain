@@ -10,8 +10,8 @@
 use crate::chunks::{ChunkInput, auto_chunks, clear_chunks, replace_chunks};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
-    EMPTY_OVERWRITE, INVALID_SLUG, PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result,
-    StoreError,
+    CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_SLUG, PAGE_NOT_FOUND, REVISION_CONFLICT,
+    REVISION_REQUIRED, Result, StoreError,
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
@@ -654,6 +654,49 @@ fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Res
     write_page(tx, page)
 }
 
+/// The page move of `updateSlug`: `UPDATE pages SET slug = new, updated_at = now()`. `page` is
+/// the record as stored. The page keeps its id, so its chunks, links, tags, timeline and versions
+/// follow it with no change. A new slug takes a new `knowledge_revision` and clears
+/// `text_projection_revision`, as the `gbrain_advance_page_revision` trigger does; the same slug
+/// changes only `updated_at`. `new_slug` goes through `validate_slug`. Refuses with
+/// `constraint_violation` when the source already holds a page (live or soft deleted) at the new
+/// slug, and the caller then returns the error so the transaction keeps nothing. The caller
+/// versions the page before, and records the alias after; this moves only the page.
+// aliases (updateSlug) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn rename_page(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &PageRecord,
+    new_slug: &str,
+) -> Result<PageRecord> {
+    let slug = validate_slug(new_slug)?;
+    let mut moved = page.clone();
+    moved.updated_at_us = env.now_micros();
+    let renamed = slug != page.slug;
+    if renamed {
+        if read_page(&*tx, &page.source_id, &slug)?.is_some() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                format!(
+                    "duplicate key value violates unique constraint: page \"{slug}\" already exists (source={})",
+                    page.source_id
+                ),
+            ));
+        }
+        moved.slug = slug;
+        moved.knowledge_revision = env.new_uuid();
+        moved.text_projection_revision = None;
+    }
+    // Write the new key before deleting the old one: the page id key then always points at a
+    // record that exists.
+    write_page(tx, &moved)?;
+    if renamed {
+        tx.delete(&page_key(&page.source_id, &page.slug))?;
+    }
+    Ok(moved)
+}
+
 fn cmp_updated(a: &PageRecord, b: &PageRecord) -> Ordering {
     a.updated_at_us
         .cmp(&b.updated_at_us)
@@ -1012,4 +1055,95 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     crate::cascade::remove_page_rows(tx, page)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn put(store: &Store, slug: &str) -> PageRecord {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        read_page(&*store.read().unwrap(), DEFAULT_SOURCE, slug)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn rename_page_moves_the_page_and_keeps_its_id() {
+        let store = crate::test_support::store();
+        put(&store, "old");
+        store.add_tag("old", "t", None).unwrap();
+        let before = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "old")
+            .unwrap()
+            .unwrap();
+        let moved = store
+            .write(|tx| rename_page(tx, &*store.env, &before, "New/Place"))
+            .unwrap();
+        assert_eq!(moved.slug, "new/place");
+        assert_eq!(moved.id, before.id);
+        assert_ne!(moved.knowledge_revision, before.knowledge_revision);
+        assert_eq!(moved.text_projection_revision, None);
+        assert!(moved.updated_at_us >= before.updated_at_us);
+        let read = store.read().unwrap();
+        assert!(read_page(&*read, DEFAULT_SOURCE, "old").unwrap().is_none());
+        let stored = read_page_by_id(&*read, before.id).unwrap().unwrap();
+        assert_eq!(stored.slug, "new/place");
+        assert_eq!(stored.tags, vec!["t".to_string()]);
+        assert_eq!(
+            store.get_tags("new/place", &ReadScope::default()).unwrap(),
+            vec!["t".to_string()]
+        );
+    }
+
+    #[test]
+    fn rename_page_to_the_same_slug_keeps_the_revision() {
+        let store = crate::test_support::store();
+        let before = put(&store, "same");
+        let moved = store
+            .write(|tx| rename_page(tx, &*store.env, &before, "same"))
+            .unwrap();
+        assert_eq!(moved.knowledge_revision, before.knowledge_revision);
+        assert_eq!(
+            moved.text_projection_revision,
+            before.text_projection_revision
+        );
+        assert!(
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "same")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn rename_page_refuses_a_taken_or_bad_slug_and_keeps_nothing() {
+        let store = crate::test_support::store();
+        let a = put(&store, "a");
+        put(&store, "b");
+        let taken = store
+            .write(|tx| rename_page(tx, &*store.env, &a, "b"))
+            .unwrap_err();
+        assert_eq!(taken.code, CONSTRAINT_VIOLATION);
+        let bad = store
+            .write(|tx| rename_page(tx, &*store.env, &a, ""))
+            .unwrap_err();
+        assert_eq!(bad.code, INVALID_SLUG);
+        let read = store.read().unwrap();
+        let stored = read_page(&*read, DEFAULT_SOURCE, "a").unwrap().unwrap();
+        assert_eq!(stored.knowledge_revision, a.knowledge_revision);
+        assert_eq!(
+            read_page(&*read, DEFAULT_SOURCE, "b")
+                .unwrap()
+                .unwrap()
+                .title,
+            "b"
+        );
+    }
 }
