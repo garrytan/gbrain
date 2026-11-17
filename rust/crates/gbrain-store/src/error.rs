@@ -30,6 +30,10 @@ pub const PAGE_NOT_FOUND: &str = "page_not_found";
 /// The write breaks a table constraint that PGLite enforces (a CHECK list or a unique key). The
 /// whole write rolls back.
 pub const CONSTRAINT_VIOLATION: &str = "constraint_violation";
+/// The write would make a page a second live page of its source recording one `source_path`.
+/// The message is a JSON object: `source_id`, `source_path`, `holders` (the live pages that
+/// record it, by slug) and `slug` (the page written). Nothing was written.
+pub const ORIGIN_CLAIMED: &str = "origin_claimed";
 /// The write replaces a non-empty page with an empty one and did not ask for it.
 pub const EMPTY_OVERWRITE: &str = "empty_overwrite";
 /// A request id was used for a different write.
