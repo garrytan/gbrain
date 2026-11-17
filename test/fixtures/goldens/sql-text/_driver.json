@@ -4908,6 +4908,19 @@
           }
         ]
       },
+      "listSourceLocalPaths": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "updateSourceConfig": {
         "default": [
           {

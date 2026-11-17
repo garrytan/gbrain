@@ -51,6 +51,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'registerBeforeDisconnect': OOS.lifecycle,
   'sql': OOS.lifecycle,
   'engineSql': OOS.helper,
+  'directEngineSql': OOS.helper,
   'engineSqlOn': OOS.helper,
   'rlsScopeBindingEnabled': OOS.helper,
   'withScopedReadTransaction': OOS.helper,
