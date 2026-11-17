@@ -22,7 +22,8 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { deleteSourceRow } from '../src/core/source-delete.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
-import { OWNER_ONLY_FLAG, OWNER_ONLY_KINDS } from '../src/core/access/owner-only.ts';
+import { OWNER_ONLY_FLAG, OWNER_ONLY_KINDS, ownerOnlySourcesPresent } from '../src/core/access/owner-only.ts';
+import { runMigrations } from '../src/core/migrate.ts';
 import { v322 } from '../src/core/schema-migrations/v322-owner-only-marks.ts';
 import { ownerOnlyTriggersLeftLine } from '../src/core/access/owner-only-marks.ts';
 import { ownerOnlyMarksTriggersEntry } from '../src/commands/doctor/checks/owner-only-marks-triggers.ts';
@@ -231,6 +232,25 @@ for (const kind of testBackends()) {
       expect(await lineage('facts', String(derivedOpen))).toBe(false);
     }, 120_000);
 
+    test('doctor names an owned missing trigger with the migration fix, a migration run recreates it, and doctor warns while lineage still reads closed', async () => {
+      const doctor = async () => (await ownerOnlyMarksTriggersEntry.run({ engine, progress: { heartbeat() {} } } as never) as Check[])[0]!;
+      expect((await doctor()).status).toBe('ok');
+      await engine.executeRaw('DROP TRIGGER gbrain_owner_only_row_deleted_trg ON timeline_entries');
+      const missing = await doctor();
+      expect({ status: missing.status, names: missing.message.includes('timeline_entries (owner '), argv: (missing.fix as { argv?: string[] } | undefined)?.argv })
+        .toEqual({ status: 'fail', names: true, argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'] });
+      await runMigrations(engine);
+      expect(await engine.ownerOnlyMarkTriggers()).toMatchObject({ missing: [], closed: false });
+      await engine.executeRaw(`INSERT INTO owner_only_marks (row_table, row_id) VALUES ('*', 'unguarded')`);
+      try {
+        const closed = await doctor();
+        expect({ status: closed.status, closed: closed.message.includes('still reads closed') }).toEqual({ status: 'warn', closed: true });
+      } finally {
+        await engine.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
+      }
+      expect((await doctor()).status).toBe('ok');
+    }, 120_000);
+
     test.if(kind === 'postgres')('a trigger on a table another role owns is named with its owner fix by the migration step and doctor, and lineage reads closed', async () => {
       const runner = `gbrain_runner_${randomUUID().replace(/-/g, '').slice(0, 10)}`;
       const admin = (await engine.executeRaw<{ u: string }>('SELECT current_user AS u'))[0]!.u;
@@ -268,3 +288,15 @@ for (const kind of testBackends()) {
     });
   });
 }
+
+describe('the owner-only guard after the last owner-only source is gone', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('a mark alone keeps the guard on; a brain with neither a source nor a mark skips it', async () => {
+    expect(await ownerOnlySourcesPresent(engine)).toBe(false);
+    await engine.executeRaw(`INSERT INTO owner_only_marks (row_table, row_id) VALUES ('pages', '1')`);
+    expect(await ownerOnlySourcesPresent(engine)).toBe(true);
+  });
+});
