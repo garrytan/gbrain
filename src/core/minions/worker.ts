@@ -884,9 +884,8 @@ export class MinionWorker extends EventEmitter {
             // died before the row reached us, a retry would claim a SECOND
             // job (invisible active job, no renewal, later stall). So instead:
             // reconnect once and let the NEXT poll tick re-claim against a live
-            // pool. Non-retryable errors propagate (real bug → PM restart). A local
-            // socket removed by a server shutdown, or a server refusing connections while it shuts
-            // down or after it stopped, is the same lost connection (#9540).
+            // pool. Non-retryable errors propagate (real bug → PM restart). A vanished
+            // local socket or a server refusing connections is the same lost connection (#9540).
             if (!isRetryableConnError(e) && !isVanishedSocketError(e) && !isServerRefusingConnections(e)) throw e;
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
