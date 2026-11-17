@@ -131,7 +131,8 @@ function withPrivacyHoldReplies(op: Operation, handler: Operation['handler']): O
   return async (ctx, params) => {
     const result = await handler(ctx, params);
     if (ctx.remote === false || typeof ctx.engine?.executeRaw !== 'function') return result;
-    return (await import('./trust/privacy-hold-reply.ts')).hidePrivacyHoldRefs(ctx.engine, ctx.remote, result);
+    const grant = op.mutating === true ? ctx.auth?.privateFacts?.sources : undefined;
+    return (await import('./trust/privacy-hold-reply.ts')).hidePrivacyHoldRefs(ctx.engine, ctx.remote, result, grant);
   };
 }
 

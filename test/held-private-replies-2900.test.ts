@@ -186,6 +186,19 @@ describe('GST-2900: the reply to a held write', () => {
     expect(res.write_request?.outcome?.contested?.proposal_ref).toBe('tp' + proposal!.id);
   });
 
+  each('a writer whose credential reads private facts in the source still gets the proposal ref on the write reply', async (engine, managed) => {
+    const slug = 'people/lia-example', claim = 'Lia keeps bees grantedheld';
+    const b = await privateOnPage(engine, managed, slug, claim);
+    const granted = { ...b.remote, auth: { ...b.remote.auth!, privateFacts: { mode: 'granted_sources' as const, sources: [b.sourceId] } } };
+    const res = await run(granted, 'remember', { fact: claim, provenance: 'chat', entity: slug });
+    const [proposal] = await proposalsOf(b);
+    expect(proposal).toBeDefined();
+    expect(res.contested?.proposal_ref).toBe('tp' + proposal!.id);
+    expect(res.write_request?.outcome?.contested?.proposal_ref).toBe('tp' + proposal!.id);
+    const read = await withCallerAccess({ privateFactSources: [b.sourceId] }, () => run(granted, 'get_write_request', { request_id: res.request_id }));
+    expect(read.outcome?.contested?.proposal_ref).toBe('tp' + proposal!.id);
+  });
+
   each('a held put_page reads as a plain save to a world-only writer', async (engine, managed) => {
     const slug = 'people/lia-example', claim = 'Lia keeps bees numbatheld';
     const { b, held } = await heldPut(engine, managed, slug, claim);
