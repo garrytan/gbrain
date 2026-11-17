@@ -26,6 +26,10 @@ import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { importSegmented, pageContent } from './helpers/segmented-privacy-fixture.ts';
+import { checkEnforcedWrite, enforcedRead, ENFORCED_MEMBER_ENV } from '../src/cli/enforced-member.ts';
+import { operationsByName } from '../src/core/operations.ts';
+import { withEnv } from './helpers/with-env.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const OWNER = 'owner-example';
@@ -147,6 +151,44 @@ for (const kind of testBackends()) {
         expect((await facts(h.slug)).filter(f => f.fact === h.claim).map(f => [f.row_num, f.visibility, f.expired])).toEqual([[2, 'private', false], [null, 'private', true]]);
         expect(await accept(h.tp)).toBe('superseded');
       }
+    }, 240_000);
+
+    test('an enforced member (GBRAIN_ENFORCED_MEMBER) reads without the held row, and its put_page and edit_page keep it and leave it out of the diff', async () => {
+      // The held row is the page's only copy of the claim in the fence (a remote put_page restating private row 2 as world), so no private fence row makes the member's write refuse.
+      const h = { slug: 'people/jon-example', title: 'Jon Example', claim: 'Jon keeps bees jonheldcanary', canary: 'jonheldcanary', turin: 'Jon lives in Turin' };
+      await call('local', 'put_page', { slug: h.slug, content: pageText(h.title, [row(1, h.turin), row(2, h.claim, 'private')]), request_id: randomUUID() });
+      for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', ['default', h.slug]))
+        await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier='user_confirmed' WHERE id=$1", [r.id])), TEST_WRITE_ATTRIBUTION));
+      const before = await page('writer', h.slug);
+      const restated = JSON.parse(await put('writer', h.slug, pageText(h.title, [row(1, h.turin), row(2, h.claim)]), before.revision)) as { contested?: { proposal_ref: string } };
+      const tp = parseTrustProposalRef(restated.contested!.proposal_ref)!;
+      expect(await stored(h.slug)).toContain('| 2 | ' + h.claim + ' | fact | 1.0 | world |');
+      const live = async () => (await facts(h.slug)).filter(f => f.fact === h.claim && !f.expired).map(f => f.visibility);
+      const liveBefore = await live();
+      expect(liveBefore.length).toBeGreaterThan(0);
+      await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', ['member-example']);
+      // The CLI runs a checked write through the operation's handler, as main.ts does (never the MCP dispatcher).
+      const cli = async (op: string, params: Record<string, unknown>) => JSON.stringify(await operationsByName[op]!.handler({ engine, config: { engine: engine.kind, embedding_disabled: true },
+        sourceId: 'default', dryRun: false, remote: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext, params));
+      const unwrap = (c: string) => c.includes('```text\n') ? c.slice(c.indexOf('```text\n') + 8, c.lastIndexOf('\n```')) : c;
+      await withEnv({ [ENFORCED_MEMBER_ENV]: 'member-example' }, async () => {
+        __resetPrivateVisibilityCacheForTests();
+        const read = await enforcedRead(engine, 'get', 'get_page', { slug: h.slug, include_content: true }, { sourceId: 'default' }) as { content: string; revision: string };
+        expect(read.content).not.toContain(h.canary);
+        const putParams: Record<string, unknown> = { slug: h.slug, content: unwrap(read.content).replace('Something here.', 'Something else.'), expected_revision: read.revision, request_id: randomUUID() };
+        await checkEnforcedWrite(engine, 'put', 'put_page', putParams, 'default');
+        await cli('put_page', putParams);
+        expect(await stored(h.slug)).toContain('Something else.');
+        const editParams: Record<string, unknown> = { slug: h.slug, expected_revision: (await page('local', h.slug)).revision, edits: [{ old_text: '## Notes', new_text: '## More notes' }], request_id: randomUUID() };
+        await checkEnforcedWrite(engine, 'edit', 'edit_page', editParams, 'default');
+        const edited = await cli('edit_page', editParams);
+        expect(edited).toContain('## More notes');
+        expect(edited).not.toContain(h.canary);
+      });
+      expect(await stored(h.slug)).toContain('| 2 | ' + h.claim + ' | fact | 1.0 | world |');
+      expect(await live()).toEqual(liveBefore);
+      expect(await accept(tp)).toBe('accepted');
+      expect(await live()).toEqual(['world']);
     }, 240_000);
 
     test('edit_page\'s diff leaves the held row out for the writer; the owner and the local CLI still see it', async () => {
