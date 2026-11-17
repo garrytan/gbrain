@@ -2,5 +2,5 @@
 
 ### For contributors
 - `bun run check:engine-raw-sql-ratchet` (in `bun run verify`) counts, per file under `src/` outside the engines, `executeRaw` / `executeRawDirect` / `executeRawJsonb` calls, SQL tagged templates and direct driver calls with SQL text. The baseline is `scripts/engine-raw-sql-baseline.tsv` (5,598 sites in 1,204 files at this commit). A new site fails; call or add a typed engine method instead, with its SQL in `src/core/engine-sql/<domain>.ts`. When a count falls, lower its row (`--prune`).
-- `bun run check:engine-kind-branches` (in `bun run verify`) does the same for two-way `'pglite'` / `'postgres'` comparisons on an engine kind (396 in 222 files), so a third engine never falls silently into one of them. Ask a capability question or switch over every engine kind instead.
+- `bun run check:engine-kind-branches` (in `bun run verify`) does the same for two-way `'pglite'` / `'postgres'` comparisons on an engine kind (397 in 223 files), so a third engine never falls silently into one of them. Ask a capability question or switch over every engine kind instead.
 - Both checks share one runner, `scripts/lib/count-ratchet.ts`. See docs/ci-guards.md, "Engine raw-SQL ratchet" and "Engine-kind branches".
