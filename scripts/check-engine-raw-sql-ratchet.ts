@@ -78,8 +78,18 @@ function literalText(node: ts.Node): string | null {
 function calleeName(expr: ts.Expression): string | null {
   if (ts.isIdentifier(expr)) return expr.text;
   if (ts.isPropertyAccessExpression(expr)) return expr.name.text;
+  if (ts.isElementAccessExpression(expr)) {
+    const key = expr.argumentExpression;
+    return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? key.text : null;
+  }
   if (ts.isNonNullExpression(expr) || ts.isParenthesizedExpression(expr)) return calleeName(expr.expression);
   return null;
+}
+
+/** `db.unsafe(...)` or `db['unsafe'](...)`: a member call, never a bare function named the same. */
+function isMemberCall(expr: ts.Expression): boolean {
+  if (ts.isNonNullExpression(expr) || ts.isParenthesizedExpression(expr)) return isMemberCall(expr.expression);
+  return ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr);
 }
 
 export function countFile(text: string, fileName = 'file.ts'): Record<Metric, number> {
@@ -89,8 +99,8 @@ export function countFile(text: string, fileName = 'file.ts'): Record<Metric, nu
     if (ts.isCallExpression(node)) {
       const name = calleeName(node.expression);
       if (name !== null && EXECUTE_RAW.has(name)) counts.execute_raw++;
-      else if (name === 'unsafe' && ts.isPropertyAccessExpression(node.expression)) counts.driver_call++;
-      else if (name !== null && SQL_ARG_DRIVER.has(name) && ts.isPropertyAccessExpression(node.expression)
+      else if (name === 'unsafe' && isMemberCall(node.expression)) counts.driver_call++;
+      else if (name !== null && SQL_ARG_DRIVER.has(name) && isMemberCall(node.expression)
         && node.arguments.some((a) => { const t = literalText(a); return t !== null && isSqlText(t); })) counts.driver_call++;
     } else if (ts.isTaggedTemplateExpression(node)) {
       const name = calleeName(node.tag);

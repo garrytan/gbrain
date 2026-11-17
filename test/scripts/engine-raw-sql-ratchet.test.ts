@@ -48,6 +48,23 @@ describe('check-engine-raw-sql-ratchet.ts: what counts', () => {
     expect(c.execute_raw).toBe(3);
   });
 
+  test('literal bracket-access calls count like the dot spelling', () => {
+    const c = countFile([
+      'declare const e: any, db: any;',
+      'e["executeRaw"]("SELECT 1");',
+      'e[`executeRawJsonb`]("UPDATE pages SET frontmatter = $1::jsonb", [o]);',
+      'db["unsafe"](text);',
+      'db["query"]("SELECT id FROM pages");',
+      'e[name]("SELECT 1");',
+    ].join('\n'));
+    expect(c.execute_raw).toBe(2);
+    expect(c.driver_call).toBe(2);
+  });
+
+  test('an executeRaw tag counts once, as execute_raw', () => {
+    expect(countFile('declare const e: any;\ne.executeRaw`SELECT id FROM pages`;')).toEqual({ execute_raw: 1, sql_template: 0, driver_call: 0 });
+  });
+
   test('SQL tagged templates count; non-SQL templates and comments do not', () => {
     const c = countFile([
       'declare const sql: any, html: any;',
@@ -137,6 +154,14 @@ describe('check-engine-raw-sql-ratchet.ts: shrink-only baseline', () => {
     expect(run(RAW.guard, root).code).toBe(1);
   });
 
+  test('a missing baseline fails closed', () => {
+    const root = tree(RAW.baseline, { 'src/core/a.ts': site });
+    rmSync(join(root, RAW.baseline));
+    const r = run(RAW.guard, root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('baseline file missing');
+  });
+
   test('duplicate and malformed rows fail', () => {
     const root = tree(RAW.baseline, {
       [RAW.baseline]: '# baseline\nsrc/core/a.ts\texecute_raw\t1\nsrc/core/a.ts\texecute_raw\t1\nsrc/core/b.ts\tnot_a_metric\t1\n',
@@ -170,6 +195,24 @@ describe('check-engine-kind-branches.ts', () => {
     ].join('\n'));
     expect(c.kind_compare).toBe(4);
     expect(c.kind_case).toBe(2);
+  });
+
+  test('an exhaustive switch whose default asserts never does not count; an incomplete one does', () => {
+    const exhaustive = (tail: string) => countKinds([
+      "type Kind = 'pglite' | 'postgres'; declare const kind: Kind; declare function assertNever(x: never): never;",
+      `switch (kind) { case 'pglite': break; case 'postgres': break; default: ${tail} }`,
+    ].join('\n')).kind_case;
+    expect(exhaustive('{ const unreachable: never = kind; throw new Error(String(unreachable)); }')).toBe(0);
+    expect(exhaustive('assertNever(kind);')).toBe(0);
+    expect(exhaustive('throw new Error(String(kind satisfies never));')).toBe(0);
+    expect(exhaustive('throw new Error("unknown engine");')).toBe(2);
+    // A cast or a never check on another value proves nothing.
+    expect(exhaustive('void (kind as never);')).toBe(2);
+    expect(exhaustive('{ declare const other: never; const x: never = other; }')).toBe(2);
+    expect(exhaustive('assertNever(other as never);')).toBe(2);
+    // A switch that leaves a kind out keeps counting even with a never check that does not compile.
+    expect(countKinds("declare const kind: 'pglite' | 'postgres';\nswitch (kind) { case 'pglite': break; default: break; }").kind_case).toBe(1);
+    expect(countKinds("declare const kind: string;\nswitch (kind) { case 'pglite': break; case 'postgres': break; }").kind_case).toBe(2);
   });
 
   test('a new branch outside the engines fails; inside the engines it is ignored', () => {

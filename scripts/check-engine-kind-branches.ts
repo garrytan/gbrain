@@ -11,7 +11,9 @@
  *   kind_compare   `x === 'pglite'`, `x !== 'postgres'` (and `==` / `!=`, either
  *                  side) where x ends in the name kind, engineKind,
  *                  engine_kind or engine (`engine.kind`, `cfg.engine`)
- *   kind_case      `case 'pglite':` / `case 'postgres':` in a switch over such x
+ *   kind_case      `case 'pglite':` / `case 'postgres':` in a switch over such x,
+ *                  unless the switch is exhaustive (its default clause asserts
+ *                  `never`; see isExhaustive)
  *
  * Outside the engines is the same set as the raw-SQL ratchet
  * (scripts/check-engine-raw-sql-ratchet.ts `isEngineFile`).
@@ -52,13 +54,42 @@ function isKindExpr(node: ts.Expression): boolean {
   return false;
 }
 
+/**
+ * An exhaustive switch is the recommended form, so it never counts: its
+ * `default` clause hands the switched value itself to a compile-time `never`
+ * check (`const unreachable: never = kind`, `kind satisfies never` or
+ * `assertNever(kind)`), so a third engine fails typecheck instead of falling
+ * into a branch. A cast (`kind as never`) or a `never` check on some other
+ * value proves nothing and does not exempt the switch.
+ */
+function isExhaustive(node: ts.SwitchStatement): boolean {
+  const def = node.caseBlock.clauses.find(ts.isDefaultClause);
+  if (!def) return false;
+  const subject = unwrap(node.expression).getText();
+  const isSubject = (e: ts.Expression | undefined): boolean => e !== undefined && unwrap(e).getText() === subject;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isVariableDeclaration(n) && n.type?.kind === ts.SyntaxKind.NeverKeyword && isSubject(n.initializer)) found = true;
+    else if (ts.isSatisfiesExpression(n) && n.type.kind === ts.SyntaxKind.NeverKeyword && isSubject(n.expression)) found = true;
+    else if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'assertNever' && isSubject(n.arguments[0])) found = true;
+    else ts.forEachChild(n, visit);
+  };
+  def.statements.forEach(visit);
+  return found;
+}
+
+function unwrap(e: ts.Expression): ts.Expression {
+  return ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e) ? unwrap(e.expression) : e;
+}
+
 export function countFile(text: string, fileName = 'file.ts'): Record<Metric, number> {
   const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const counts: Record<Metric, number> = { kind_compare: 0, kind_case: 0 };
   const visit = (node: ts.Node): void => {
     if (ts.isBinaryExpression(node) && EQUALITY.has(node.operatorToken.kind)) {
       if ((isKindLiteral(node.right) && isKindExpr(node.left)) || (isKindLiteral(node.left) && isKindExpr(node.right))) counts.kind_compare++;
-    } else if (ts.isSwitchStatement(node) && isKindExpr(node.expression)) {
+    } else if (ts.isSwitchStatement(node) && isKindExpr(node.expression) && !isExhaustive(node)) {
       for (const clause of node.caseBlock.clauses) {
         if (ts.isCaseClause(clause) && isKindLiteral(clause.expression)) counts.kind_case++;
       }
@@ -88,7 +119,7 @@ if (import.meta.main) {
     anchor: 'docs/ci-guards.md#engine-kind-branches',
     metrics: METRICS,
     why: 'a third engine must never fall into a two-way pglite/postgres branch; these branches only fall (D6, docs/designs/RUST_ENGINE.md "Engine selection").',
-    riseFix: 'ask a capability question (engine.capabilities) or switch exhaustively over every engine kind instead of comparing with \'pglite\' / \'postgres\'; a moved file carries its row with it in the same PR',
+    riseFix: 'ask a capability question (engine.capabilities) or switch over every engine kind with a default clause that asserts never (`const unreachable: never = kind`; that switch never counts) instead of comparing with \'pglite\' / \'postgres\'; a moved file carries its row with it in the same PR',
     scan: scanTree,
   }, ROOT, process.argv);
 }

@@ -127,7 +127,8 @@ rules"). It parses every `.ts` file under `src/` except the engines
 
 - `execute_raw`: calls named `executeRaw`, `executeRawDirect` or
   `executeRawJsonb`, whatever the receiver (the engine, a transaction, a helper
-  that takes `Pick<BrainEngine, 'executeRaw'>`, an executor);
+  that takes `Pick<BrainEngine, 'executeRaw'>`, an executor), with a dot or a
+  literal bracket (`e['executeRaw'](...)`);
 - `sql_template`: tagged templates whose literal text has SQL structure;
 - `driver_call`: `.unsafe(...)`, and `.query(...)` or `.exec(...)` with an
   argument whose literal text has SQL structure.
@@ -152,7 +153,11 @@ files: `kind_compare` (`x === 'pglite'`, `x !== 'postgres'`, either side,
 where `x` ends in `kind`, `engineKind`, `engine_kind` or `engine`) and
 `kind_case` (`case 'pglite':` in a switch over such `x`). A third engine must
 not fall silently into one of these branches, so new code asks a capability
-question or switches over every engine kind. Baseline
+question or switches over every engine kind with a `default` clause that
+hands the switched value to a `never` check (`const unreachable: never = kind`,
+`kind satisfies never` or `assertNever(kind)`). Such an exhaustive switch never
+counts: a third engine fails typecheck there instead. A cast (`kind as never`)
+does not exempt a switch. Baseline
 `scripts/engine-kind-branches-baseline.tsv`, same rules as above.
 
 ### Page body readers
