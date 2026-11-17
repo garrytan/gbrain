@@ -20,6 +20,8 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
+import { renderTakesFence } from '../src/core/takes-fence.ts';
+import { LINK_CONTEXT_PAGE_BOUND } from '../src/core/eligibility/fence-overlay.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
@@ -53,6 +55,18 @@ const MANUAL = 'quailmanualnote';
 /** A context outside any fence, which every caller keeps. */
 const PROSE = 'otterplainprose';
 const HOPS = [{ link_type: 'works_at', toward: 'object' }];
+/** A private row on a page whose fence a body-only edit later dropped without extracting its links again. */
+const STALE = 'people/stale-example';
+const STALE_PRIV = 'ospreystaleprivcanary';
+/** A takes row inside the first 240 characters of a page, stored as a manual context the way preserve_notes stored it. */
+const NOTE_PRIV = 'grebenoteprivcanary';
+const NOTE_CONTEXT = ('Partner note.\n\n' + renderTakesFence([{ rowNum: 1, claim: 'Deal is risky ' + NOTE_PRIV, kind: 'take', holder: 'brain', weight: 0.5, active: true }] as never)).slice(0, 240);
+/** A page with more backlinks, each from its own page, than one read of origin bodies carries. */
+const HUB = 'notes/hub-example';
+const SPOKES = LINK_CONTEXT_PAGE_BOUND + 5;
+const SPOKE_PROSE = 'spokeprosecontext';
+const LINK_MATCH_SQL = 'AS u(i, fs, fslug, ts, tslug, lt, ctx)';
+const ORIGIN_BODY_SQL = 'SELECT id, source_id, slug, compiled_truth, timeline FROM pages';
 
 for (const kind of testBackends()) {
   describe('GST-2957 stored link context and the core block for world-only callers (' + kind + ')', () => {
@@ -93,6 +107,15 @@ for (const kind of testBackends()) {
         + renderFactsTable([row(1, 'The standup ran long'), row(2, 'Budget raised ' + MEET_PRIV, 'private')] as never) + '\n\n## Attendees\n\n- [[' + KIM + ']]\n');
       await call('local', 'add_link', { from: LIA, to: THIRD, link_type: 'related_to', context: 'Met through a ' + MANUAL, request_id: randomUUID() });
       await put(PLAIN, '---\ntype: note\ntitle: Plain\n---\n# Plain\n\nThe ' + PROSE + ' memo mentions [[' + TARGET + ']] in passing.\n');
+      await put(STALE, page('person', 'Stale Example', [row(1, 'Stale owes [[' + TARGET + ']] rent ' + STALE_PRIV, 'private')]));
+      await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+        "UPDATE pages SET compiled_truth = '# Stale Example\n\nProfile rewritten.\n' WHERE slug = $1", [STALE]), TEST_WRITE_ATTRIBUTION));
+      await call('local', 'add_link', { from: THIRD, to: ACME, link_type: 'related_to', context: NOTE_CONTEXT, request_id: randomUUID() });
+      await put(HUB, '---\ntype: note\ntitle: Hub\n---\n# Hub\n');
+      const spokes = Array.from({ length: SPOKES }, (_, n) => ({ slug: 'notes/spoke-' + String(n).padStart(3, '0'), text: 'Spoke ' + n + ' cites the hub ' + SPOKE_PROSE + '.' }));
+      for (const s of spokes) await engine.putPage(s.slug, { title: s.slug, type: 'note' as never, compiled_truth: s.text, timeline: '', frontmatter: {}, source_path: s.slug + '.md' });
+      await engine.addLinksBatch(spokes.map(s => ({ from_slug: s.slug, to_slug: HUB, link_type: 'mentions', context: s.text,
+        link_source: 'markdown', from_source_id: 'default', to_source_id: 'default' })) as never);
       await put(CORE, page('note', 'Core Example', [row(1, 'Core detail ' + CORE_PRIV, 'private'), row(2, 'Core detail ' + CORE_HELD), row(3, 'Core detail public')], 'always_load: true\n'));
       // Held: a world cell whose stored fact is narrower, the state an unaccepted widening leaves (GST-2891).
       await holdRow(HELD);
@@ -131,6 +154,10 @@ for (const kind of testBackends()) {
       const contexts = (await engine.executeRaw<{ context: string }>('SELECT context FROM links')).map(r => r.context).join('\n');
       expect(contexts).toContain(PRIV);
       expect(contexts).toContain(HELD);
+      for (const canary of [STALE_PRIV, NOTE_PRIV]) expect(contexts).toContain(canary);
+      expect(NOTE_CONTEXT).toContain('<!--- gbrain:takes:begin -->');
+      const stale = await engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE slug = $1', [STALE]);
+      expect(stale[0]!.compiled_truth).not.toContain('gbrain:facts');
       const attendance = await engine.executeRaw<{ context: string }>(
         'SELECT l.context FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages o ON o.id = l.origin_page_id WHERE f.slug = $1 AND o.slug = $2', [KIM, MEET]);
       expect(attendance.map(r => r.context).join('\n')).toContain(MEET_PRIV);
@@ -142,7 +169,7 @@ for (const kind of testBackends()) {
       const leaks: string[] = [];
       for (const who of ['bob', 'unbound']) for (const [label, op, params] of linkReads) {
         const text = await call(who, op, params);
-        for (const canary of [PRIV, HELD, MEET_PRIV]) if (text.includes(canary)) leaks.push(who + ' ' + label + ' ' + canary);
+        for (const canary of [PRIV, HELD, MEET_PRIV, STALE_PRIV, NOTE_PRIV]) if (text.includes(canary)) leaks.push(who + ' ' + label + ' ' + canary);
       }
       expect(leaks).toEqual([]);
     }, 120_000);
@@ -173,11 +200,45 @@ for (const kind of testBackends()) {
         for (const canary of [PRIV, HELD]) expect(links).toContain(canary);
         expect(await call(who, 'entity', { name: LIA })).toContain(PRIV);
         expect(await call(who, 'get_links', { slug: KIM })).toContain(MEET_PRIV);
+        expect(await call(who, 'get_backlinks', { slug: TARGET })).toContain(STALE_PRIV);
+        expect(await call(who, 'get_links', { slug: THIRD })).toContain(NOTE_PRIV);
         const pack = await call(who, 'context_pack', { entities: LIA });
         for (const canary of [PRIV, HELD, CORE_HELD]) expect(pack).toContain(canary);
       }
       const walk = await call('owner', 'traverse_graph', { slug: LIA, depth: 1 });
       for (const canary of [PRIV, HELD]) expect(walk).toContain(canary);
     }, 120_000);
+
+    test('origin bodies are read once for at most LINK_CONTEXT_PAGE_BOUND pages; owner and local reads run no extra query and return contexts as stored', async () => {
+      const sql: string[] = [];
+      const executeRaw = engine.executeRaw;
+      engine.executeRaw = function (this: BrainEngine, q: string, p?: unknown[]) { sql.push(q); return executeRaw.call(this, q, p as never); } as typeof engine.executeRaw;
+      const read = async (who: string, slug: string) => {
+        sql.length = 0;
+        const rows = JSON.parse(await call(who, 'get_backlinks', { slug })) as Array<{ from_slug: string; context: string }>;
+        return { rows, match: sql.filter(q => q.includes(LINK_MATCH_SQL)).length, bodies: sql.filter(q => q.includes(ORIGIN_BODY_SQL)).length };
+      };
+      try {
+        const stored = await executeRaw.call(engine,
+          'SELECT f.slug AS from_slug, l.context FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id WHERE t.slug = $1', [TARGET]) as Array<{ from_slug: string; context: string }>;
+        const pairs = (rows: Array<{ from_slug: string; context: string }>) => rows.map(r => r.from_slug + ' ' + r.context).sort();
+        for (const who of ['owner', 'local']) {
+          const hub = await read(who, HUB);
+          expect({ match: hub.match, bodies: hub.bodies }).toEqual({ match: 0, bodies: 0 });
+          expect(hub.rows.filter(r => r.context.includes(SPOKE_PROSE)).length).toBe(SPOKES);
+          const target = await read(who, TARGET);
+          expect({ match: target.match, bodies: target.bodies }).toEqual({ match: 0, bodies: 0 });
+          expect(pairs(target.rows)).toEqual(pairs(stored));
+        }
+        for (const who of ['bob', 'unbound']) {
+          const hub = await read(who, HUB);
+          expect(hub.rows.length).toBe(SPOKES);
+          expect({ match: hub.match, bodies: hub.bodies }).toEqual({ match: 1, bodies: 1 });
+          expect(hub.rows.filter(r => r.context.includes(SPOKE_PROSE)).length).toBe(LINK_CONTEXT_PAGE_BOUND);
+        }
+      } finally {
+        engine.executeRaw = executeRaw;
+      }
+    }, 300_000);
   });
 }
