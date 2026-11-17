@@ -140,19 +140,21 @@ export function servesOneRefusal(status: ServesStatus | null, harness: string, e
  * labelling preview's open_pages, or a count that could not be read) needs the admin's choice first. A brain this run
  * creates, a brain with no open pages and a brain already shared are not refused.
  */
-export function historyRefusal(status: ServesStatus | null, preview: ServesReceipt | null, flags: ServesFlags, harness: string, roster: string[], owner: ServesOwner | undefined): OperationError | null {
+export function historyRefusal(status: ServesStatus | null, preview: ServesReceipt | null, flags: ServesFlags, harness: string, roster: string[], owner: ServesOwner | undefined, previewError?: string): OperationError | null {
   if (flags.serves !== 'several' || flags.labelledOnly || flags.openHistory || status?.serves !== 'one') return null;
   const counted = preview && 'members' in preview ? preview : null;
   const open = counted?.open_pages;
   if (open && !open.total) return null;
   const parts = open ? [open.sensitive ? `${open.sensitive} of them DMs, chat or mail` : '', open.archive ? `${open.archive} in the conversation archive` : ''].filter(Boolean) : [];
   const holds = open ? `${open.total} page(s) no rule or readable_by restricts${parts.length ? ` (${parts.join(', ')})` : ''}`
-    : `pages setup could not count (${counted ? counted.open_pages_error?.code ?? 'open_pages_failed' : 'the preview failed'})`;
-  const labelled = roster.filter(m => m !== owner?.id);
-  const argvFor = (members: string[]) => ['gbrain', 'setup', harness, '--serves', 'several', '--members', members.join(','), ...(flags.source ? ['--source', flags.source] : []), ...(owner?.from === 'flag' ? ['--owner', owner.id] : [])];
+    : `pages setup could not count (${counted ? counted.open_pages_error?.code ?? 'open_pages_failed' : `the preview failed${previewError ? `: ${previewError}` : ''}`})`;
+  const ownerId = status.owner ?? owner?.id;
+  const labelled = roster.filter(m => m !== ownerId);
+  const pin = owner && (owner.from === 'flag' || (owner.id === ownerId && labelled.length < roster.length)) ? ['--owner', owner.id] : [];
+  const argvFor = (members: string[]) => ['gbrain', 'setup', harness, '--serves', 'several', '--members', members.join(','), ...(flags.source ? ['--source', flags.source] : []), ...pin];
   const keep = [...argvFor(labelled.length ? labelled : roster), '--labelled-only'];
   const share = [...argvFor(roster), '--open-history'];
-  const ownerOut = owner && labelled.length && labelled.length < roster.length ? `; the owner ${owner.id} reads the whole brain, so it is never labelled-only and stays out of that run's --members` : '';
+  const ownerOut = ownerId && labelled.length && labelled.length < roster.length ? `; the owner ${ownerId} reads the whole brain, so it is never labelled-only and stays out of that run's --members` : '';
   return opError('setup_history_choice_required',
     `This brain serves one person and holds ${holds}; turned shared as asked, every member's key would read them. Nothing was written. Run setup again with --labelled-only to keep that history private, or with --open-history to let every member read it.`,
     `Pick one: ${keep.join(' ')} keeps that history private (each member reads only pages labelled for them; with the company shape, setup adds one company/ rule so they read the company pages${ownerOut}), or ${share.join(' ')} lets every member read it.`,
@@ -214,8 +216,11 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
   if (flags.serves === 'several') {
     const owner = servesOwner(flags, harness, roster);
     if (owner instanceof OperationError) return owner;
-    const preview = status?.serves === 'one' && !flags.labelledOnly && !flags.openHistory ? parsed<ServesReceipt>(child(launcher, servesArgv(roster, flags, owner, false)).stdout) : null;
-    return historyRefusal(status, preview, flags, harness, roster, owner) ?? { roster, status, owner };
+    const run = status?.serves === 'one' && !flags.labelledOnly && !flags.openHistory ? child(launcher, servesArgv(roster, flags, owner, false)) : null;
+    const preview = run ? parsed<ServesReceipt>(run.stdout) : null;
+    const said = run ? `${run.stdout}\n${run.stderr}` : '';
+    const previewError = said.match(/"code"\s*:\s*"([a-z0-9_]+)"/)?.[1] ?? run?.stderr.trim().split('\n')[0]?.slice(0, 200);
+    return historyRefusal(status, preview, flags, harness, roster, owner, previewError || undefined) ?? { roster, status, owner };
   }
   if (named && !status?.enabled_members.includes(named)) {
     return opError('invalid_params', `--stdio-member ${named} is not an enabled member of this brain, so the ${harness} sessions would read as nobody; nothing was written.`,

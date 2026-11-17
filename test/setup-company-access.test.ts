@@ -475,3 +475,29 @@ test('C: the --labelled-only choice leaves the owner out of --members, so follow
     expect(refusal.message + refusal.suggestion).toContain('--members alice-example,bob-example');
   }
 });
+
+describe('C: the history refusal names the effective owner and the preview error (review fix-check)', () => {
+  const one = { serves: 'one', from: 'derived', enabled_members: [], since: null, owner: null, stdio_member: null };
+  const preview = { members: [], open_pages: { total: 3, sensitive: 0, archive: 0 } } as never;
+  const flags = { serves: 'several' as const, dryRun: false };
+  const argvOf = (e: unknown) => (e as { fix: { argv: string[] } }).fix.argv;
+  const membersOf = (argv: string[]) => argv[argv.indexOf('--members') + 1];
+
+  test('a configured owner wins over the login owner: it is the one left out of --members and named', () => {
+    const refusal = historyRefusal({ ...one, owner: 'alice-example' } as never, preview, flags, 'claude-code', ROSTER, { id: 'login-example', from: 'login' })!;
+    expect(membersOf(argvOf(refusal))).toBe('bob-example');
+    expect(refusal.suggestion).toContain('the owner alice-example reads the whole brain');
+    expect(refusal.suggestion).not.toContain('login-example');
+  });
+
+  test('a login owner left out of --members is pinned with --owner', () => {
+    const argv = argvOf(historyRefusal(one as never, preview, flags, 'claude-code', ROSTER, { id: 'alice-example', from: 'login' }));
+    expect(membersOf(argv)).toBe('bob-example');
+    expect(argv.slice(argv.indexOf('--owner'), argv.indexOf('--owner') + 2)).toEqual(['--owner', 'alice-example']);
+  });
+
+  test('a failed preview names the error the preview reported', () => {
+    const refusal = historyRefusal(one as never, null, flags, 'claude-code', ROSTER, undefined, 'access_serves_key_dir_in_git')!;
+    expect(refusal.message).toContain('the preview failed: access_serves_key_dir_in_git');
+  });
+});
