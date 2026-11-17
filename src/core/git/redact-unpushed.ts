@@ -46,7 +46,7 @@ import type { Action, Notice } from '../agent-output.ts';
 import { NAMED_SECRET_RULES, SCAN_MAX_FILE_BYTES, scanTextSpans } from '../secret-scan.ts';
 import { pathAllowlisted, ruleAllowEntry, SCAN_ALLOW_FILENAME } from '../secret-scan-allowlist.ts';
 import { markerOf } from '../secret-store/store.ts';
-import { addSpoolOccurrences, allowedLocally, spoolValue } from '../secret-store/spool.ts';
+import { addSpoolOccurrences, allowedLocally, spoolValue, type SpoolOccurrence } from '../secret-store/spool.ts';
 import { acquireNativeLockSync } from '../persistence/native-lock.ts';
 import { heldCommits, ledgerLocation, recordCommit } from './commit-ledger.ts';
 import { acquireCommitLock, assertNoOperationInProgress, PUBLISH_LOCK_NAME } from './commit-push.ts';
@@ -101,7 +101,15 @@ export function spoolSealer(root: string, sourceId: string | null): Sealer {
   return {
     allowed: allowedLocally,
     seal: (rule, value) => { const id = spoolValue({ root, sourceId, rule, value }); ids.add(id); return id; },
-    record: occurrences => { for (const o of occurrences) addSpoolOccurrences(o.id, [{ commit: o.commit, path: o.path, line: o.line, field: `git:${o.path}` }]); },
+    record: occurrences => {
+      const byId = new Map<string, SpoolOccurrence[]>();
+      for (const o of occurrences) {
+        const list = byId.get(o.id) ?? [];
+        list.push({ commit: o.commit, path: o.path, line: o.line, field: `git:${o.path}` });
+        byId.set(o.id, list);
+      }
+      for (const [id, list] of byId) addSpoolOccurrences(id, list);
+    },
     spooled: () => ids.size,
   };
 }
@@ -591,18 +599,24 @@ function rebuild(p: Plan, sealer: Sealer, deadline: number): RedactOutcome {
   if (stray.length) throw new GitFailed(`the rebuilt commits differ from the old ones outside the redacted files (${stray.slice(0, 3).join(', ')})`);
 
   moveBranch(p, newHead, blobMap, ids, deadline);
-  const occurrences: Array<{ id: string; commit: string; path: string; line: number | null }> = [];
-  for (const b of p.blobs.values()) for (const s of b.spans) {
-    occurrences.push({ id: ids.get(s.value)!, commit: map.get(b.first)!, path: b.path, line: b.text.slice(0, s.start).split('\n').length });
-  }
-  for (const [sha, m] of p.messages) for (const s of m.spans) occurrences.push({ id: ids.get(s.value)!, commit: map.get(sha)!, path: MESSAGE_PATH, line: null });
-  sealer.record(occurrences);
-  const sideRefs = sideRefsHolding(p, deadline);
+  // The branch has moved: journal it before anything else can stop this run, so the database half always reconciles.
   const preview = previewOf(p);
   const entry = { t: new Date().toISOString(), root: p.root, top: p.top, branch: branchRef, backup_ref: backupRef, old_head: p.head, new_head: newHead, push_target: tip,
     map: changedMap, paths: [...p.touched], held: [...p.held.keys()], spooled: sealer.spooled(), rules: preview.rules, finished: false };
   const loc = ledgerLocation(p.root);
   if (loc) { mkdirSync(join(loc.common, 'gbrain'), { recursive: true }); appendFileSync(join(loc.common, 'gbrain', REDACTIONS_FILE), `${JSON.stringify(entry)}\n`); }
+  const occurrences: Array<{ id: string; commit: string; path: string; line: number | null }> = [];
+  for (const b of p.blobs.values()) {
+    let line = 1, at = 0;
+    for (const s of [...b.spans].sort((x, y) => x.start - y.start)) {
+      for (let nl = b.text.indexOf('\n', at); nl !== -1 && nl < s.start; nl = b.text.indexOf('\n', nl + 1)) line++;
+      at = s.start;
+      occurrences.push({ id: ids.get(s.value)!, commit: map.get(b.first)!, path: b.path, line });
+    }
+  }
+  for (const [sha, m] of p.messages) for (const s of m.spans) occurrences.push({ id: ids.get(s.value)!, commit: map.get(sha)!, path: MESSAGE_PATH, line: null });
+  sealer.record(occurrences);
+  const sideRefs = sideRefsHolding(p, deadline);
   const outcome: RedactOutcome = { ...preview, redacted: true, old_head: p.head, new_head: newHead, push_target: tip, backup_ref: backupRef, held_commit: heldCommit,
     rebuilt: Object.keys(changedMap).length, values: ids.size, spooled: sealer.spooled(), side_refs: sideRefs, unsigned, map: changedMap, notices: [] };
   outcome.notices = redactionNotices(outcome);

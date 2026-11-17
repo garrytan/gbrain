@@ -174,10 +174,15 @@ export async function countsByRule(engine: BrainEngine, sourceId?: string): Prom
   return Object.fromEntries(rows.map(row => [row.rule, { entries: Number(row.entries), occurrences: Number(row.occurrences) }]));
 }
 
+/** Whether a value is one the owner restored in this source (status allowed): redactors leave it alone. One read for many values. */
+export async function allowedMatcher(engine: BrainEngine, sourceId: string): Promise<(value: string) => boolean> {
+  const rows = await engine.executeRaw<{ key_id: string; value_mac: string }>("SELECT key_id,value_mac FROM secret_store WHERE source_id=$1 AND status='allowed'", [sourceId]);
+  return value => rows.some(row => { const key = keyById(row.key_id); return key !== null && macOf(key, value) === row.value_mac; });
+}
+
 /** True when this value is an entry the owner restored (status allowed): redactors leave it alone. */
 export async function isAllowed(engine: BrainEngine, sourceId: string, value: string): Promise<boolean> {
-  const rows = await engine.executeRaw<{ key_id: string; value_mac: string }>("SELECT key_id,value_mac FROM secret_store WHERE source_id=$1 AND status='allowed'", [sourceId]);
-  return rows.some(row => { const key = keyById(row.key_id); return key !== null && macOf(key, value) === row.value_mac; });
+  return (await allowedMatcher(engine, sourceId))(value);
 }
 
 /** Key ids entries were sealed with, by host, so a host can tell when another host sharing the database uses another key. */

@@ -55,7 +55,7 @@ import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { contentHash } from '../utils.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { redactFields, residualMatches, resolveSecretRules, spanCounts, type FieldRedaction, type SecretRuleSet } from '../secret-spans.ts';
-import { markerOf, recordOccurrence, seal } from '../secret-store/store.ts';
+import { allowedMatcher, markerOf, recordOccurrence, seal } from '../secret-store/store.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#secret-spans';
@@ -166,8 +166,9 @@ async function readFields(engine: BrainEngine, sourceId: string, slug: string): 
 }
 
 /** The page's redaction and the digest the plan hash binds: identity, revision, generation and every field's old text and spans. */
-function planPage(read: Read, rules: SecretRuleSet): Planned {
-  const results = redactFields(read.fields, rules);
+/** `allowed`: values the owner restored in this page's source (store status allowed), which stay as they are. */
+function planPage(read: Read, rules: SecretRuleSet, allowed: (value: string) => boolean): Planned {
+  const results = redactFields(read.fields, rules, allowed);
   const { page } = read;
   return { read, results, digest: digest(['secret-spans-page-v1', page.id, page.revision, page.generation,
     results.map(result => [result.key, result.old_sha256, result.spans_sha256])]) };
@@ -395,8 +396,9 @@ interface Residual { total: number; rules: Record<string, number>; stores: Recor
 /** Matches of the selected rules still stored for the page, by rule and by store (chunks and derivations included). */
 async function residualScan(engine: BrainEngine, sourceId: string, slug: string, rules: SecretRuleSet): Promise<Residual> {
   const out: Residual = { total: 0, rules: {}, stores: {} };
+  const allowed = await allowedMatcher(engine, sourceId);
   const add = (store: string, text: string) => {
-    for (const [rule, n] of Object.entries(residualMatches(text, rules))) {
+    for (const [rule, n] of Object.entries(residualMatches(text, rules, allowed))) {
       out.total += n; out.rules[rule] = (out.rules[rule] ?? 0) + n; out.stores[store] = (out.stores[store] ?? 0) + n;
     }
   };
@@ -457,7 +459,7 @@ export async function redactPageForPublish(engine: BrainEngine, sourceId: string
       await tx.lockPageKeys([{ sourceId, slug }]);
       const read = await readFields(tx, sourceId, slug);
       if (typeof read === 'string') return { outcome: read };
-      const planned = planPage(read, rules);
+      const planned = planPage(read, rules, await allowedMatcher(tx, sourceId));
       if (!changedOf(planned).length) return { outcome: 'clean' };
       const refusal = await planRefusal(tx, planned);
       if (refusal) return { outcome: refusal };
@@ -499,7 +501,7 @@ export const secretSpansRepair: RepairHandler = {
           listing.push({ item: `${sourceId}:${slug}`, class: 'refused', detail: `${read}: ${REFUSAL_TEXT[read]}` });
           continue;
         }
-        const plan = planPage(read, rules);
+        const plan = planPage(read, rules, await allowedMatcher(engine, sourceId));
         const label = `${sourceId}:${slug} (revision ${read.page.revision})`;
         const refusal = await planRefusal(engine, plan);
         if (refusal) {
@@ -537,7 +539,7 @@ export const secretSpansRepair: RepairHandler = {
     for (const page of pages) {
       if (done.has(page.id)) continue;
       const read = await readFields(engine, page.source_id, page.slug);
-      if (typeof read === 'string' || read.page.id !== page.id || planPage(read, rules).digest !== page.digest) throw previewChangedError(expect, command);
+      if (typeof read === 'string' || read.page.id !== page.id || planPage(read, rules, await allowedMatcher(engine, page.source_id)).digest !== page.digest) throw previewChangedError(expect, command);
     }
     return { items: pages.map((page, index) => item(page, expect, selection.rules, index === pages.length - 1)).filter(entry => afterCursor(entry.cursor, after)),
       preview_hash: expect, residuals: {} };
@@ -556,7 +558,7 @@ export const secretSpansRepair: RepairHandler = {
           await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
           const read = await readFields(tx, page.source_id, page.slug);
           if (typeof read === 'string') return { refused: read };
-          const planned = planPage(read, rules);
+          const planned = planPage(read, rules, await allowedMatcher(tx, page.source_id));
           if (read.page.id !== page.id || planned.digest !== page.digest) return { refused: 'changed_since_preview' };
           const refusal = await planRefusal(tx, planned);
           if (refusal) return { refused: refusal };

@@ -144,6 +144,13 @@ describe('secret store on a repo-less brain', () => {
       expect(await isAllowed(engine, 'default', OPENAI)).toBe(true);
       expect(await isAllowed(engine, 'default', AWS)).toBe(false);
 
+      // A restored value stays back: running repair secret-spans again over the page leaves it alone.
+      const again = await (await repairRunner(engine, { apply: false, logger })).run('secret-spans', scope, { explicit: true, sourceFlag: 'default', slugs: [slug] });
+      const rerun = await (await repairRunner(engine, { apply: true, logger })).run('secret-spans', scope, { explicit: true, sourceFlag: 'default', slugs: [slug], expect: again.preview_hash });
+      expect(rerun.outcomes?.redacted ?? 0, name).toBe(0);
+      const [kept] = await engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE slug=$1', [slug]);
+      expect(kept!.compiled_truth, name).toContain(OPENAI);
+
       // reveal_secret: the trusted CLI reads; a remote caller needs reveal_secret named in its grant and a readable page.
       const op = operationsByName.reveal_secret!;
       const awsId = markers.find(m => m[1] === 'aws_access_key')![2]!;

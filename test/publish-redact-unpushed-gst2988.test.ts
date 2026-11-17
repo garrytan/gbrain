@@ -248,6 +248,22 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     expect(readFileSync(join(r.root, 'notes.md'), 'utf8')).toMatch(MARKER);
   }, 60_000);
 
+  test('a file with thousands of hits redacts inside the budget, one occurrence per hit, and the moved branch is journaled', async () => {
+    const r = repo();
+    const keyId = 'AKIA' + 'Q7RZ' + '00' + 'X3M9P2K4W8';
+    const lines = Array.from({ length: 8000 }, (_, n) => `GET /r${n}.pdf?X-Amz-Credential=${keyId}%2F20250101 200`);
+    commit(r.root, 'access.log.md', `${lines.join('\n')}\n`);
+    const started = performance.now();
+    const outcome = await inHome(r, () => redactUnpushed(r.root, { base: r.base, sealer: spoolSealer(r.root, null), budgetMs: 10_000 })) as RedactOutcome;
+    console.log(`[GST-2988 8000-hit file] redaction took ${Math.round(performance.now() - started)} ms`);
+    expect(outcome).toMatchObject({ redacted: true, values: 1, rules: { aws_access_key: { values: 1, hits: 8000, signed_link: 8000, bare: 0 } } });
+    const spooled = await inHome(r, () => readSpool());
+    expect(spooled).toHaveLength(1);
+    expect(spooled[0]!.occurrences.map(o => o.line)).toEqual(lines.map((_, n) => n + 1));
+    const journal = readFileSync(join(r.root, '.git', 'gbrain', 'redactions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(journal).toEqual([expect.objectContaining({ old_head: outcome.old_head, new_head: outcome.new_head })]);
+  }, 120_000);
+
   test('gbrain git redact-unpushed: the CLI previews as JSON and applies with --expect', () => {
     const r = repo();
     commit(r.root, 'notes.md', `token ${token}\n`);
