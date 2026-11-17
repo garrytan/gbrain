@@ -374,7 +374,8 @@ export async function applyFileDriftClass(ctx: OperationContext, scope: RepairSc
   if (manifest.source_id !== sel.sourceId || manifest.side !== sel.side || manifest.brain_id !== scope.brain_id || digest([manifest.only, manifest.skip]) !== digest([sel.only, sel.skip])) {
     throw staleManifest(sel, expect, 'it was previewed for another selection');
   }
-  const approved = await loadApprovedSet<ClassPin>(engine, { command: 'file-drift', hash: APPROVAL_PREFIX + expect, previewCommand: shellQuote(classPreviewArgv(sel)) }).catch(() => null);
+  const approved = await loadApprovedSet<ClassPin>(engine, { command: 'file-drift', hash: APPROVAL_PREFIX + expect, previewCommand: shellQuote(classPreviewArgv(sel)) })
+    .catch(error => { if (error instanceof OperationError && error.code === 'preview_changed') return null; throw error; });
   if (!approved) throw staleManifest(sel, expect, 'no complete preview is saved under that hash (or it is older than 7 days)');
   if (!manifest.complete || !Array.isArray(manifest.pages) || manifestHash(manifest) !== expect) {
     const saved = new Map(approved.items.map(pin => [pin.slug, digest(pin)]));
@@ -419,6 +420,7 @@ export async function applyFileDriftClass(ctx: OperationContext, scope: RepairSc
   if (finished) {
     result.complete = true;
     await clearApprovedSet(engine, { command: 'file-drift', hash: APPROVAL_PREFIX + expect });
+    await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CLASS_PROGRESS_OP, expect]);
     removeManifest(expect);
     result.next = `The next gbrain sync --source ${sel.sourceId} re-screens each applied file and releases its hold.`;
     return result;
