@@ -7,7 +7,9 @@
  * Authoring gate: (1) whether a tracked input is pinned to the commit or left as an unpinned precondition; (2) a
  * startsWith('..') check that is not component-aware treats `..inputs/questions.jsonl` as outside the repository;
  * (3) eval-longmemeval-call-plan.test.ts binds only test/fixtures/longmemeval-mini.jsonl, whose first folder is
- * `test`; (4) no seam: the exported function on a real temporary Git repository.
+ * `test`; (4) seam: `bindInput` is exported for this test. The command boundary binds against the gbrain checkout
+ * that runs it, which has no committed `..inputs` folder, so the boundary cannot reach this case; the test drives the
+ * exported function on a real temporary Git repository instead.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
