@@ -149,10 +149,10 @@ getTags	tags	yes	2	yes	yes	yes	serves
 addTimelineEntry	timeline	yes	6	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	3	yes	yes	yes	serves
-getTimelineForDate	timeline	yes	2	no	yes	yes	refuses:timeline
-getSince	timeline	yes	1	no	yes	yes	refuses:timeline
-getOnThisDay	timeline	yes	1	no	yes	yes	refuses:timeline
-getLastSeen	timeline	yes	1	no	yes	yes	refuses:timeline
+getTimelineForDate	timeline	yes	2	no	yes	yes	serves
+getSince	timeline	yes	1	no	yes	yes	serves
+getOnThisDay	timeline	yes	1	no	yes	yes	serves
+getLastSeen	timeline	yes	1	no	yes	yes	serves
 upsertEventProjection	timeline	yes	4	no	yes	yes	refuses:timeline
 mergeOntologyFact	ontology	yes	4	no	yes	yes	refuses:ontology
 getOntology	ontology	yes	2	no	yes	yes	refuses:ontology
