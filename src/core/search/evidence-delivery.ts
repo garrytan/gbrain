@@ -32,7 +32,7 @@ import { deliveredQuoteText, deliveredQuoteTitle, fenceTranscriptRows, neutraliz
 import { stampPageTrust } from '../eligibility/stamp.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { chunkGenerationFilter, chunkManifestReads, safeChunksFilter, requiresSafeChunks, servedTextProjectionFilter } from './safe-chunks.ts';
-import { resolveExcludePrivatePages } from './private-visibility.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { DEFAULT_INLINE_BODY_BYTES, locateChunksByStoredSpans, projectPageText, TIMELINE_SEPARATOR } from '../page-window/document.ts';
@@ -1721,7 +1721,7 @@ export async function assembleEvidenceForHits(engine: BrainEngine, input: Assemb
   });
   const { rows, unresolved } = await resolveFrozenHits(engine, input.hits, scope);
   // GST-687: a remote reader's rows carry their page trust before the fence and the budget read it (quoteLabel's tier arm).
-  const trusted = <R extends SearchResult>(results: R[]) => (remote ? stampPageTrust(engine, results, input.caller?.minTrust) : Promise.resolve(results));
+  const trusted = <R extends SearchResult>(results: R[]) => (remote ? stampPageTrust(engine, results, input.caller?.minTrust, undefined, worldOnlyFacts(remote)) : Promise.resolve(results));
   if (!plan) {
     const out = redactRetrievalOutput(neutralizeTranscriptRows(await trusted(rows)), {});
     return { results: fenceTranscriptRows(out.results, undefined, remote), delivery: null, unresolved };

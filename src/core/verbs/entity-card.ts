@@ -504,7 +504,7 @@ export async function buildEntityCard(
   if (match) card.match = match;
   if (opts.includeReferences) {
     Object.assign(card, await cardReferences(engine, hitSource, row, opts, scope.excludePrivate, scope.entityTypes),
-      await readCardIdentity(engine, hitSource, row, { excludePrivate: scope.excludePrivate, excludeQuarantined: opts.omitQuarantined === true, surfaceCeiling: opts.surfaceCeiling, aka: card.aka }));
+      await readCardIdentity(engine, hitSource, row, { excludePrivate: scope.excludePrivate, excludeQuarantined: opts.omitQuarantined === true, surfaceCeiling: opts.surfaceCeiling, aka: card.aka, hideHeld: (await import('../search/private-visibility.ts')).worldOnlyFacts(opts.remote) }));
     await attachCardRecords(engine, hitSource, card, opts, scope.excludePrivate);
     if (await nameVariantsEnabled(engine)) {
       const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
