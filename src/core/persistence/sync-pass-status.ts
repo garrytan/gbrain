@@ -88,6 +88,7 @@ const RESCREEN_PAGE = 500;
  * only re-hold a page that keeps moving build the streak too.
  * GST-2869: nor is a rewrite marked `retry_only` (re-checked only because `sync unblock` or `sources retry-held` asked, with
  * nothing due), nor one that brought a transient hold to its attempt cap: both leave the path where it was, waiting on a person.
+ * A `retry_only` rewrite that changed the hold's code or bytes restarted `held_at`, so the first branch still counts it once.
  */
 export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, telemetry: { pass_id: string; started_at: string }): Promise<boolean> {
   const [row] = await engine.executeRaw<{ banked: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_source_bindings b ON b.worktree_id=r.worktree_id
