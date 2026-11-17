@@ -1219,10 +1219,12 @@ export const _refreshScanCacheSizeForTests = () => laggingSyncing.size + unreada
  */
 export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostId?: string } = {}): Promise<number> {
   const host = opts.hostId ?? hostIdFor(engine);
-  const rows = await engine.executeRaw<WorktreeRefreshRow>(`SELECT f.* FROM persistence_worktree_refreshes f
-    JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE w.owner_host_id=$1::uuid AND f.state IN ('draining','fenced','merged','syncing')
-    AND (f.state<>'syncing' OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids) AND (s.last_commit IS NULL OR s.last_commit=f.old_head)))
-    ORDER BY f.state='syncing', f.created_at LIMIT 16`, [host]);
+  const budgetMs = await configuredMs(engine, undefined, 'GBRAIN_REFRESH_SYNC_BUDGET_MS', 'sources.refresh_sync_budget_ms', SYNC_BUDGET_MS).catch(() => SYNC_BUDGET_MS);
+  // #9649: a syncing row that has not moved for a whole sync budget is listed even while its members lag (completeSyncedOrphan).
+  const rows = await engine.executeRaw<WorktreeRefreshRow & { stale: boolean }>(`SELECT f.*,f.updated_at<now()-($2::double precision*interval '1 millisecond') AS stale FROM persistence_worktree_refreshes f
+    JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE w.owner_host_id=$1::uuid AND f.state IN ('draining','fenced','merged','syncing') AND (f.state<>'syncing'
+      OR f.updated_at<now()-($2::double precision*interval '1 millisecond') OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids) AND (s.last_commit IS NULL OR s.last_commit=f.old_head)))
+    ORDER BY f.state='syncing', f.created_at LIMIT 16`, [host, budgetMs]);
   const listed = new Set(rows.map(row => row.id));
   for (const cache of [laggingSyncing, unreadableHeadLogged]) for (const id of cache.keys()) if (!listed.has(id)) cache.delete(id);
   let moved = 0;
@@ -1231,17 +1233,17 @@ export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostI
     if (!root) continue;
     const commits = row.state === 'syncing' ? (await engine.executeRaw<{ last_commit: string | null }>(
       'SELECT last_commit FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [row.source_ids])).map(source => source.last_commit ?? '').join(',') : null;
-    const lagging = commits === null ? undefined : laggingSyncing.get(row.id);
+    const lagging = commits === null || row.stale ? undefined : laggingSyncing.get(row.id);
     if (lagging?.commits === commits && Date.now() - lagging.at < LAGGING_RECHECK_MS) continue;
     try {
       await withGit(async git => {
-        if (commits !== null && !await membersAtTarget(engine, git, row, root)) { laggingSyncing.set(row.id, { commits, at: Date.now() }); return; }
+        if (commits !== null && !row.stale && !await membersAtTarget(engine, git, row, root)) { laggingSyncing.set(row.id, { commits, at: Date.now() }); return; }
         const lock = await tryAcquireNativeLock(refreshLockPath(row.worktree_id));
         if (!lock) return;
         try {
           const after = await withTopologyLocks(engine, row.source_ids[0], async () => {
             const current = await readRefresh(engine, row.id);
-            return current.state === 'syncing' ? completeSyncedOrphan(engine, git, current, root) : recoverOne(engine, git, current, root, true);
+            return current.state === 'syncing' ? completeSyncedOrphan(engine, git, current, root, row.stale ? budgetMs : null) : recoverOne(engine, git, current, root, true);
           }, undefined, 0);
           if (after.state !== row.state) moved++;
           else if (commits !== null) laggingSyncing.set(row.id, { commits, at: Date.now() });
@@ -1271,12 +1273,19 @@ export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostI
  * checkout HEAD is still the target or a descendant of it; otherwise it is left as it is (an unrelated or unreadable HEAD
  * waits for an attended --resume, which names both ways out).
  */
-async function completeSyncedOrphan(engine: BrainEngine, git: Git, row: WorktreeRefreshRow, root: string): Promise<WorktreeRefreshRow> {
+async function completeSyncedOrphan(engine: BrainEngine, git: Git, row: WorktreeRefreshRow, root: string, staleAfterMs: number | null = null): Promise<WorktreeRefreshRow> {
   const synced = await membersAtTarget(engine, git, row, root);
-  if (!synced) return row;
+  if (!synced && staleAfterMs === null) return row;
   const head = await headOf(git, root);
   if (head === null || (head !== row.target_head && !await isAncestor(git, root, row.target_head, head))) return row;
-  await engine.transaction(tx => transition(tx, row, ['syncing'], 'completed', { synced, completed_by: 'owner_recovery' }));
+  // #9649: its process is gone (the caller holds its lock) and the row has not moved for a whole sync budget, so it completes as a run whose
+  // budget ran out with members behind does (#8072): the checkout is at the target and each lagging member's next sync imports it.
+  const members = synced ?? await Promise.all(row.source_ids.map(async source_id => {
+    const last_commit = await lastCommit(engine, source_id);
+    return { source_id, last_commit, status: await reachedTarget(git, root, row, last_commit) ? 'up_to_date' : 'deferred' };
+  }));
+  await engine.transaction(tx => transition(tx, row, ['syncing'], 'completed', synced ? { synced, completed_by: 'owner_recovery' } : { synced: members,
+    sync_deferred: members.filter(member => member.status === 'deferred').map(member => member.source_id), completed_by: 'owner_reclaim', reclaimed: { idle_limit_ms: staleAfterMs } }));
   return readRefresh(engine, row.id);
 }
 
