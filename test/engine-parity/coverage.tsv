@@ -133,11 +133,11 @@ mergeOntologyFact	ontology	yes	4	no	yes	yes	refuses:ontology
 getOntology	ontology	yes	2	no	yes	yes	refuses:ontology
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	refuses:ontology
 findOntologyConflicts	ontology	yes	1	no	yes	yes	refuses:ontology
-putRawData	raw_files	yes	2	yes	yes	yes	refuses:raw_data
-getRawData	raw_files	yes	2	yes	yes	yes	refuses:raw_data
-upsertFile	raw_files	yes	2	no	yes	yes	refuses:files
-getFile	raw_files	yes	2	no	yes	yes	refuses:files
-listFilesForPage	raw_files	yes	1	no	yes	yes	refuses:files
+putRawData	raw_files	yes	2	yes	yes	yes	serves
+getRawData	raw_files	yes	2	yes	yes	yes	serves
+upsertFile	raw_files	yes	2	no	yes	yes	serves
+getFile	raw_files	yes	2	no	yes	yes	serves
+listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 addTakesBatch	takes	yes	19	yes	yes	yes	refuses:takes
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	refuses:takes
 listTakes	takes	yes	11	no	yes	yes	refuses:takes
