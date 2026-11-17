@@ -25,6 +25,7 @@ import { proactiveEligibility } from './eligibility/registry.ts';
 import { activationSuppressedSql, pageEligibleSql } from './eligibility/sql.ts';
 import { compactTrustLabel, needsDataEnvelope, renderTrustedText, trustFields } from './eligibility/labels.ts';
 import { PAGE_MAX_BYTES } from './page-size-policy.ts';
+import { heldRowsForCaller } from './eligibility/fence-overlay.ts';
 
 export const CORE_DEFAULT_MAX_CHARS = 4000;
 export const CORE_MIN_MAX_CHARS = 500;
@@ -115,13 +116,15 @@ export interface CorePageInput {
   /** #5575 A6: the page's trust tier and short write origin; below `operator_curated` the header carries its label. */
   trust_tier?: TrustTier;
   origin?: string;
+  /** GST-2957: fence rows held from the reader (heldRowsForCaller), left out of the rendered text. */
+  omitRows?: ReadonlySet<number>;
 }
 
 export interface CorePage extends CorePageInput { priority: number; rendered: string; chars: number }
 
 /** The rendered unit: title header plus the remote-safe compiled truth. */
 export function renderCorePage(page: CorePageInput): string {
-  const body = sanitizeRemoteBody(page.compiled_truth ?? '').trim();
+  const body = sanitizeRemoteBody(page.compiled_truth ?? '', { omitRows: page.omitRows }).trim();
   const title = (page.title || page.slug).replace(/\s+/g, ' ').trim();
   const label = page.trust_tier && compareTrust(page.trust_tier, OWNER_TIER_FLOOR) < 0
     ? ` ${compactTrustLabel({ trust_tier: page.trust_tier, origin: page.origin ?? 'legacy' })}` : '';
@@ -233,6 +236,8 @@ export interface ListCorePagesOpts {
    * Accounting reads (coreUsage) leave it unset.
    */
   eligibility?: ReadEligibility;
+  /** GST-2957: the reader's OperationContext.remote; a reader whose fact reads are world-only (worldOnlyFacts) gets no held rows. */
+  remote?: boolean;
 }
 
 interface CoreRow { id: number | string; source_id: string; slug: string; title: string | null; compiled_truth: string | null; frontmatter: unknown; withdrawn: boolean;
@@ -282,8 +287,9 @@ export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {})
     } else if (segmented) {
       compiled = (await (await import('./page-body/ingest.ts')).materializeSegmentedBody(exec, Number(r.id), r.source_id)).compiled_truth;
     }
+    const omitRows = opts.remote === undefined ? undefined : await heldRowsForCaller(exec, opts.remote, { sourceId: r.source_id, slug: r.slug, compiled_truth: compiled });
     pages.push(toCorePage({
-      source_id: r.source_id, slug: r.slug, title: r.title ?? r.slug, compiled_truth: compiled,
+      source_id: r.source_id, slug: r.slug, title: r.title ?? r.slug, compiled_truth: compiled, ...(omitRows?.size ? { omitRows } : {}),
       frontmatter: typeof r.frontmatter === 'string' ? JSON.parse(r.frontmatter) : r.frontmatter,
       ...(policy ? trustFields(r.trust_tier, r.write_origin) : {}),
     }));
@@ -307,6 +313,8 @@ export interface LoadCoreBlockOpts {
   settings?: CoreSettings;
   /** #5575: the caller's proactive eligibility (token floor); absent, the `core_delivery` surface policy applies. */
   eligibility?: ReadEligibility;
+  /** GST-2957: the reader's OperationContext.remote; a reader whose fact reads are world-only (worldOnlyFacts) gets no held rows. */
+  remote?: boolean;
 }
 
 /** Credential-like PII withholds the page; contact details and private paths are redacted in place. */
@@ -367,7 +375,7 @@ export async function loadCoreBlock(engine: BrainEngine, opts: LoadCoreBlockOpts
   }
   const sourceIds = sessionCoreSources(opts.sessionSourceId, opts.allowedSources ?? null);
   const eligibility = opts.eligibility ?? await proactiveEligibility({ engine }, 'core_delivery');
-  const all = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true, forCaller: opts.forCaller, eligibility });
+  const all = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true, forCaller: opts.forCaller, eligibility, remote: opts.remote });
   const listed = all.filter(p => !p.suppressed);
   const suppressed = all.filter(p => p.suppressed).map(p => ({ source_id: p.source_id, slug: p.slug, family: 'unconfirmed agent-written instruction (gbrain trust review)' }));
   const { pages, withheld } = await applyCoreSensitivity(listed);

@@ -551,7 +551,7 @@ const recall: Operation = {
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
       const applied = recallDeliveryPlan(effectivePlan(evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
-      searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor);
+      searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor, undefined, worldOnlyFacts(ctx.remote));
     }
 
     // Pack what is delivered: results redacted for all; facts for remote only (localVerbatim).
@@ -797,7 +797,7 @@ const context_pack: Operation = {
     // `default` plus this source, inside the caller's grant; it packs first.
     const { loadCoreBlock } = await import('../core-memory.ts');
     const allowed = named ? [sourceId] : ctx.auth?.allowedSources?.length ? ctx.auth.allowedSources : null;
-    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, forCaller: true, eligibility })
+    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, forCaller: true, eligibility, remote: ctx.remote })
       .catch(() => null);
     const coreText = core?.text ?? '';
     const coreTokens = estimateTokens(coreText);
@@ -1233,7 +1233,7 @@ const delta: Operation = {
     // structured arrays reflect — the assembler's render predates both.
     let text = renderDelta(pages, facts, threads, effectiveSince);
     const diff = p.beliefs === true ? await (await import('../belief/changes.ts')).deltaBeliefs(ctx.engine, { sourceId, since: effectiveSince, until: horizon,
-      remote: !includePrivate, takesHolders: readHolders(ctx), entities: parseEntityList(p.entities) }, budgetTokens !== null ? beliefBudget : null, text, TURN_CONTEXT_ENVELOPE) : null;
+      remote: !includePrivate, worldOnly: (await import('../search/private-visibility.ts')).worldOnlyFacts(ctx.remote), takesHolders: readHolders(ctx), entities: parseEntityList(p.entities) }, budgetTokens !== null ? beliefBudget : null, text, TURN_CONTEXT_ENVELOPE) : null;
     if (diff) text = diff.text;
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 
