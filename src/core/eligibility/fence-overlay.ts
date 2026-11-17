@@ -341,7 +341,8 @@ export async function worldLinkContexts<T extends { context?: string | null; lin
       const shown = sanitizeRemoteBody(compiled, { omitRows }) + '\n' + sanitizeRemoteBody(p.timeline ?? '', { omitRows });
       views.set(key({ sourceId: p.source_id, slug: p.slug }), ensureWellFormed(maskLinksFence(shown)).replace(/\s+/g, ' '));
     }
-    for (const ref of refs) if (!pages.some(p => p.source_id === ref.sourceId && p.slug === ref.slug)) views.set(key(ref), null);
+    const found = new Set(pages.map(p => key({ sourceId: p.source_id, slug: p.slug })));
+    for (const ref of refs) if (!found.has(key(ref))) views.set(key(ref), null);
   } catch {
     views = null;
   }
