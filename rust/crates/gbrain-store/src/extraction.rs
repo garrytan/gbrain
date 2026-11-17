@@ -217,6 +217,8 @@ fn stale_pages(read: &dyn KvRead, options: &StaleOptions) -> Result<Vec<PageReco
 }
 
 /// A `StalePageRow`, `updated_at` and `updated_at_iso` as ISO strings.
+/// One `StalePageRow`. A segmented page's NULL body columns read as `''`, as PGLite's
+/// `rowToStalePage` lists them (`compiled_truth ?? ''`).
 fn stale_row(page: &PageRecord) -> Value {
     json!({
         "id": page.id,
@@ -224,8 +226,8 @@ fn stale_row(page: &PageRecord) -> Value {
         "source_id": page.source_id,
         "type": page.page_type,
         "title": page.title,
-        "compiled_truth": page.compiled_truth,
-        "timeline": page.timeline,
+        "compiled_truth": &*page.compiled_truth,
+        "timeline": &*page.timeline,
         "frontmatter": page.frontmatter,
         "updated_at": iso(page.updated_at_us),
         "updated_at_iso": iso(page.updated_at_us),
@@ -503,5 +505,41 @@ mod source_delete_tests {
                 .is_some()
         );
         assert!(read.get(&record_key(gone)).unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod segmented_tests {
+    use super::*;
+    use crate::pages::{PageInput, PageText, PutPageOptions};
+
+    #[test]
+    fn a_segmented_page_is_listed_stale_with_empty_body_texts() {
+        let store = crate::test_support::store();
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "Shell".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("shell", &input, &PutPageOptions::default())
+            .unwrap();
+        // PGLite's `createSegmentedPageShell` leaves both body columns NULL; the page_body family
+        // will write such pages, so the test writes the record directly.
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "shell")?.unwrap();
+                page.compiled_truth = PageText::null();
+                page.timeline = PageText::null();
+                write_page(tx, &page)
+            })
+            .unwrap();
+        let rows = store
+            .list_stale_pages_for_extraction(&StaleOptions::default())
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["compiled_truth"], json!(""));
+        assert_eq!(rows[0]["timeline"], json!(""));
     }
 }
