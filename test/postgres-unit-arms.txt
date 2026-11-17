@@ -122,6 +122,7 @@ test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
