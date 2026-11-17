@@ -11,9 +11,10 @@
  * never an error of its own. `signal` covers the wait for a free
  * connection (a saturated pool must not hold the bound off); the statement
  * itself ends at the bound or, when `signal` aborts after the connection was
- * reserved, by a cancel request: the call then ends at once and the connection
- * is discarded, so a socket or pooler that stopped answering never keeps it
- * reserved (#8155). With `deadlineAt` the
+ * reserved, by a cancel request: the call then rejects at once with the
+ * signal's reason and the connection is discarded, so a socket or pooler that
+ * stopped answering never keeps it reserved (#8155). A write ended this way may
+ * have committed: its outcome is unknown. With `deadlineAt` the
  * bound is the time left after the connection was reserved (#6696 B1).
  *
  * `jitOff` adds `SET LOCAL jit = off` to the same envelope (see
@@ -61,7 +62,7 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
           discarded = true;
           try { void Promise.resolve((read as { cancel?: () => unknown }).cancel?.()).catch(() => {}); } catch { /* the discard below still retires it */ }
           reserved.discard();
-          reject(new DOMException('aborted', 'AbortError'));
+          reject(opts.signal!.reason ?? new DOMException('aborted', 'AbortError'));
         };
         if (opts.signal!.aborted) onAbort();
         else opts.signal!.addEventListener('abort', onAbort, { once: true });
