@@ -18,11 +18,12 @@ import { historyQuarantine } from './get-page-projection.ts';
 
 import type { Operation, OperationContext } from './contract.ts';
 import { opError } from './contract.ts';
-import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
+import { enforceClientSlugFence, pageNotFoundError, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
 import { memoizedHealth } from '../health-memo.ts';
 import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
+import { worldOnlyFacts } from '../search/private-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
 import { GUEST_MARKER_CAPABILITY } from '../guests/marker.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
@@ -284,9 +285,8 @@ const get_versions: Operation = {
       // GST-687: so does one whose snapshot tier is below the owner's (a version with no snapshot reads as unknown).
       const quote = quotesStored(v.type, snapshotTiers.get(Number(v.id)));
       const live = lives.find(l => Number(l.id) === Number(v.page_id));
-      const sourceId = live?.source_id ?? ctx.sourceId;
-      if (sourceId === undefined) throw new Error(`get_versions: the page of version ${v.id} names no source to look its held rows up in.`);
-      const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId, slug: live?.slug ?? String(p.slug), compiled_truth: v.compiled_truth, timeline: v.timeline });
+      if (!live && worldOnlyFacts(ctx.remote)) throw pageNotFoundError(ctx, String(p.slug), { includeDeleted: true });
+      const omitRows = live ? await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: live.source_id, slug: live.slug, compiled_truth: v.compiled_truth, timeline: v.timeline }) : undefined;
       const body = (text: string) => { const clean = sanitizeRemoteBody(text, { omitRows }); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
       out.push({ ...v, compiled_truth: body(v.compiled_truth), ...reason(v),
         ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });
