@@ -62,13 +62,18 @@ const TOKEN_PREFIX = /^(?:gh[opusr]_|github_pat_|glpat-|glptt-|gldt-|xox[abpr]-)
 const shownLogin = (login: string | null): string | null =>
   login && /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/.test(login) && !TOKEN_PREFIX.test(login) && !/^[A-Za-z0-9_-]{30,}$/.test(login) ? login : null;
 
-/** A helper's program only: arguments after it can hold a token, and an inline `!` helper's body can hold one too. */
+const SHOWN_COMMAND = /^[A-Za-z0-9._/-]{1,64}$/;
+
+/** A helper's command name only, and only when it has the shape of a plain command or path: arguments can hold a token, and
+ *  an inline `!` helper's body or a leading NAME=value assignment can hold one too. Anything else is named generically. */
 function programOf(value: string): string {
   const inline = value.startsWith('!');
-  const body = (inline ? value.slice(1) : value).trim();
-  const first = body.split(/\s+/)[0] ?? '';
-  const shown = (inline ? '!' : '') + (first.length > 60 ? first.slice(0, 60) + '…' : first);
-  return body.length > first.length ? shown + ' …' : shown;
+  const words = (inline ? value.slice(1) : value).trim().split(/\s+/).filter(Boolean);
+  let i = 0;
+  if (inline) while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!)) i++;
+  const command = words[i] ?? '';
+  if (!SHOWN_COMMAND.test(command)) return inline ? 'an inline shell helper' : 'a credential helper';
+  return (inline ? '!' : '') + command + (words.length > i + 1 ? ' …' : '');
 }
 
 /** The command line git runs for a configured helper value (credential.c): `!cmd` as is, an absolute path as is, else `git credential-<value>`. */

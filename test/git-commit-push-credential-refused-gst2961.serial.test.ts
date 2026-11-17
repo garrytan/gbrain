@@ -9,7 +9,7 @@
  * helpers; no network and no real tokens. The machine-wide helper answers first with another account's canary
  * token, the shape of the incident.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,6 +19,8 @@ import { readCredentialRefusal } from '../src/core/git/commit-push.ts';
 import { getLastPushOutcome } from '../src/core/brain-repo-durability.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { gitConvergenceCheck } from '../src/commands/doctor/checks/git-convergence.ts';
+import { runAccessRules } from '../src/commands/access-rules.ts';
+import { policyStatus } from '../src/core/access/policy.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const CANARY = 'CANARY-gst2961-global-not-a-real-token';
@@ -178,7 +180,7 @@ describe('gbrain git commit-push against a host that refuses the credential', ()
     writeFileSync(inlineConfig, '[credential]\n\thelper = "!f() { cat >/dev/null; echo username=user-c; echo password=' + INLINE_SECRET + '; }; f"\n');
     const run = commitPush(work, { GIT_CONFIG_GLOBAL: inlineConfig });
     expect(run.doc.code).toBe('push_credential_refused');
-    expect(readCredentialRefusal(work)?.helpers[0]).toMatchObject({ helper: '!f() …', scope: 'global', answered: true });
+    expect(readCredentialRefusal(work)?.helpers[0]).toMatchObject({ helper: 'an inline shell helper', scope: 'global', answered: true });
     expect(everythingWritten(work, run)).not.toContain(INLINE_SECRET);
     const argv = (run.doc.fix as { argv: string[] }).argv;
     expect(argv).toEqual(credentialHelperKeysArgv(work));
@@ -257,6 +259,69 @@ describe('gbrain git commit-push against a host that refuses the credential', ()
     const outcome = await withEnv({ GBRAIN_HOME: home }, async () => getLastPushOutcome('local-work', renamed));
     expect(outcome.status).toBe('needs_attention');
     expect(outcome.detail).toContain('push_credential_refused since');
+  }, 180_000);
+
+  test('a helper is shown by its command only when it has a command shape, never a token, an inline body or an assignment', async () => {
+    const SHAPE = 'CANARY-gst2961-shape-not-a-real-token';
+    const bin = join(dir, 'bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\n[ "$3" = get ] || exit 0\ncat >/dev/null\necho username=user-c\necho password=' + LOCAL_SECRET + '\n');
+    chmodSync(join(bin, 'gh'), 0o755);
+    const answer = join(dir, 'helper-local.sh');
+    const cases = [
+      { name: 'brain-shape-env', config: '[credential]\n\thelper = "!GH_TOKEN=' + SHAPE + ' gh auth git-credential"\n', shown: ['!gh …'] },
+      { name: 'brain-shape-body', config: '[credential]\n\thelper = "!f() { cat >/dev/null; echo username=user-c; echo password=' + SHAPE + '; }; f"\n', shown: ['an inline shell helper'] },
+      { name: 'brain-shape-quote', config: '[credential]\n\thelper = "!\'Q' + SHAPE + '\' x"\n\thelper = TOKEN=' + SHAPE + '\n\thelper = ' + answer + '\n', shown: ['an inline shell helper', 'a credential helper', answer] },
+    ];
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      for (const c of cases) {
+        const work = checkout(c.name, 'forbidden');
+        git(work, ['config', '--unset', 'credential.helper']);
+        const config = join(dir, c.name + '.gitconfig');
+        writeFileSync(config, c.config);
+        const run = commitPush(work, { GIT_CONFIG_GLOBAL: config, PATH: bin + ':' + String(process.env.PATH) });
+        expect(run.doc.code).toBe('push_credential_refused');
+        const shown = readCredentialRefusal(work)?.helpers.map(h => h.helper) ?? [];
+        expect([shown[0], shown.at(-1)]).toEqual([c.shown[0], c.shown.at(-1)]);
+        for (const h of shown) expect(c.shown).toContain(h);
+        await engine.executeRaw('DELETE FROM sources');
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['brain', work]);
+        const check = await withEnv({ GIT_CONFIG_GLOBAL: config }, async () => gitConvergenceCheck(engine));
+        expect(check?.message).toContain('push_credential_refused');
+        const seen = [everythingWritten(work, run), check?.message ?? '', JSON.stringify(check?.fix ?? {})].join('\n');
+        expect(seen).not.toContain(SHAPE);
+        expect(seen).not.toContain('echo ');
+      }
+    } finally {
+      await engine.disconnect();
+    }
+  }, 240_000);
+
+  test('a narrowing gbrain access rule add on a checkout whose push the host refuses still applies the rule and reports committed_not_pushed', async () => {
+    const work = checkout('brain-access', 'forbidden');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      await engine.executeRaw("INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, '{}')", ['src-a', work]);
+      await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', ['alice-example']);
+      const lines: string[] = [];
+      const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+      try {
+        await withEnv({ GBRAIN_HOME: home, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }, async () =>
+          runAccessRules(engine, 'rule', ['add', '--source', 'src-a', '--prefix', 'partners/alice-example/', '--readers', 'alice-example', '--id', 'alice', '--yes', '--json'], true));
+      } finally { spy.mockRestore(); }
+      const r = JSON.parse(lines.join('\n'));
+      expect({ store: r.store, state: r.state, outcome: r.git.outcome }).toEqual({ store: 'git', state: 'applied', outcome: 'committed_not_pushed' });
+      expect(r.git.commit).toBe(git(work, ['rev-parse', 'HEAD']));
+      expect(r.git.note).toContain('push_credential_refused');
+      expect((await policyStatus(engine, 'src-a')).rules.map(x => x.id)).toEqual(['alice']);
+    } finally {
+      await engine.disconnect();
+    }
   }, 180_000);
 
   test('doctor git_convergence warns at once, and a push that lands clears the record', async () => {
