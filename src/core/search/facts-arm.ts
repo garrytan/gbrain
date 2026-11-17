@@ -20,7 +20,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
-import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, queryTerms, readSlotRows, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { deriveSlotEnds } from '../facts/slots.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { configFlagOn, factDateHeader, factObservationDates } from './evidence-date.ts';
@@ -294,6 +295,10 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const said = (c: FactCandidate) => dates?.get(Number(c.id)) ?? day(c.created_at ?? c.valid_from) ?? '';
     const groups = members.map(g => g.sort((a, b) => said(a).localeCompare(said(b)) || Number(a.id) - Number(b.id)));
     const shown = groups.map(g => g[0]!);
+    // GBRA-574 B2/G4: a slot value's window ends at read time, from the slot's rows the caller may read (facts/slots.ts).
+    const slots = new Map(shown.flatMap(c => c.entity_slug && c.dimension && c.value_hash
+      ? [[[c.source_id, c.entity_slug, c.dimension].join('\u0000'), { source_id: c.source_id, entity_slug: c.entity_slug, dimension: c.dimension }] as const] : []));
+    const ends = slots.size ? await readSlotRows(engine, scope, [...slots.values()]).then(deriveSlotEnds).catch(() => new Map<number, Date>()) : new Map<number, Date>();
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, shown.map(c => Number(c.id)));
     const asked = policy.dated ? questionDate(query) : null;
@@ -310,8 +315,9 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       const c = group[0]!;
       const restated = group.length > 1 ? ` (stated ${group.length} times, last ${said(group[group.length - 1]!)})` : '';
       const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined, fromQuoted.has(Number(c.id)), dates);
+      const window = c.valid_until ? c : { ...c, valid_until: ends.get(Number(group[group.length - 1]!.id)) ?? null };
       const label = contested.has(Number(c.id)) ? ` (contested by #${contested.get(Number(c.id))})` : '';
-      row.chunk_text = `${factDateHeader(c, undefined, dates?.get(Number(c.id)), asked)}\n${c.fact}${restated}${label}`;
+      row.chunk_text = `${factDateHeader(window, undefined, dates?.get(Number(c.id)), asked)}\n${c.fact}${restated}${label}`;
       if (lookup.degraded) row.fact_row = { ...row.fact_row!, contested_unavailable: true };
       const cost = resultTokens(row);
       if (cost > left) continue;

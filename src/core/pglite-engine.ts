@@ -75,7 +75,7 @@ import {
 import {
   valueHash,
   normalizeDimension,
-  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD,
+  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD, NOT_CONVERSATION_SLOT_SQL, CONVERSATION_SLOT_SQL,
 } from './chronicle/ontology.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { supportsHnswIterativeScan } from './vector-index.ts';
@@ -2145,21 +2145,29 @@ export class PGLiteEngine implements BrainEngine {
     const cur = await this.db.query(
       `SELECT id, value_hash, valid_from FROM facts
         WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL
-          AND (dim_status IS NULL OR dim_status = 'active')
+          AND (dim_status IS NULL OR dim_status = 'active') AND ${NOT_CONVERSATION_SLOT_SQL}
         ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`,
       [sourceId, obs.entitySlug, dimension],
     );
     const current = cur.rows[0] as { id: number; value_hash: string; valid_from: string | null } | undefined;
+    // GBRA-574 B2: a conversation fact holding this exact stint key gives up its slot, so the observation is stored.
+    const freeKey = () => validFrom == null ? null : this.db.query(
+      `UPDATE facts SET dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+        WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5
+          AND valid_from = $6::timestamptz AND ${CONVERSATION_SLOT_SQL}`,
+      [sourceId, obs.entitySlug, dimension, vh, obs.source, validFrom],
+    );
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
       // This provenance already observed the value during the current stint.
       const seen = await this.db.query(
         `SELECT 1 FROM facts
-          WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5
+          WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5 AND ${NOT_CONVERSATION_SLOT_SQL}
             AND COALESCE(valid_from,'-infinity'::timestamptz) >= COALESCE($6::timestamptz,'-infinity'::timestamptz) LIMIT 1`,
         [sourceId, obs.entitySlug, dimension, vh, obs.source, current.valid_from],
       );
       if (seen.rows.length) return { action: 'noop', factId: null, supersededId: null };
+      await freeKey();
       const ins = await this.db.query(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                             confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into)
@@ -2173,6 +2181,7 @@ export class PGLiteEngine implements BrainEngine {
         : { action: 'noop', factId: null, supersededId: null };
     }
 
+    await freeKey();
     const ins = await this.db.query(
       `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                           confidence, source, source_markdown_slug, valid_from, valid_until)
@@ -2217,7 +2226,7 @@ export class PGLiteEngine implements BrainEngine {
          source_markdown_slug AS source, valid_from, valid_until AS valid_to,
          COALESCE(dim_status,'active') AS status, id AS fact_id
        FROM facts
-       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope} ${privacy} ${visibility}
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND ${NOT_CONVERSATION_SLOT_SQL} ${scope} ${privacy} ${visibility}
          AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
          AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
          AND confidence >= $3
@@ -2235,7 +2244,7 @@ export class PGLiteEngine implements BrainEngine {
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
     const r = await this.db.query(
       `SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
-       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL ${scope}
+       FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND ${NOT_CONVERSATION_SLOT_SQL} ${scope}
        GROUP BY dimension ORDER BY entities DESC, dimension`,
       params,
     );
@@ -2259,7 +2268,7 @@ export class PGLiteEngine implements BrainEngine {
     const r = await this.db.query(
       `WITH cur AS (
          SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
-         FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
+         FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL AND ${NOT_CONVERSATION_SLOT_SQL}
            AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope} ${privacy} ${visibility}
        )
        SELECT entity_slug, dimension,

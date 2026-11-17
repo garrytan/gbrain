@@ -653,6 +653,8 @@ export interface NewFact {
   event_type?: string | null;
   /** Speaker attribution (migration v215). Undefined/null → NULL (unavailable). */
   attributed_to?: FactAttribution | null;
+  /** GBRA-574 B2: the slot (facts/slots.ts), conversation extractor only; insertFacts adds value_hash and dim_status 'active'. */
+  dimension?: string | null; value?: string | null;
 }
 
 /** Options shared by list-facts methods. */
