@@ -91,6 +91,8 @@ export interface SegmentedConversationCounters {
   failed_pages: Array<{ slug: string; error: string }>;
   /** GBRA-574: windows whose slot-tagging call failed; their facts were kept without slots. */
   slot_tagging_failed?: number;
+  /** GBRA-574: facts kept under a name key with no page (facts.unbacked_entity_keys). */
+  unbacked_keys?: number;
   /** Pages held because no format is detected over them yet some format parses a message (a detection_ambiguous receipt). */
   pages_detection_ambiguous?: number;
   /** --grammar --dry-run: what a run under the chosen format would extract and collect, per page. */
@@ -442,7 +444,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
     });
     throw error;
   } finally {
-    result.fallback_slugify_count += resolution.fallback_slugify_count;
+    result.fallback_slugify_count += resolution.fallback_slugify_count; if (resolution.unbacked_key_count) result.unbacked_keys = (result.unbacked_keys ?? 0) + resolution.unbacked_key_count;
     result.resolution_errors += resolution.resolution_errors;
   }
 

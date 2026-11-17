@@ -352,8 +352,8 @@ export interface ExtractConversationFactsResult {
   facts_inserted: number;
   /** #7438: extracted claims left out because they match a purge tombstone (the rest of the page still publishes). */
   facts_skipped_purged?: number;
-  /** Entity values that reached the shipped deterministic fallback slug path. */
-  fallback_slugify_count: number;
+  /** Entity values that reached the shipped deterministic fallback slug path; GBRA-574 `unbacked_keys` of them kept a name key with no page. */
+  fallback_slugify_count: number; unbacked_keys?: number;
   /** Entity values kept raw after a best-effort resolution failure. */
   resolution_errors: number;
   /** GBRA-574: windows whose slot-tagging call failed; their facts were kept without slots (--force tags them again). */ slot_tagging_failed?: number;
@@ -997,7 +997,7 @@ async function processPage(
     pageRows.push(...window.rows);
     rowNum += window.extracted;
     mergeSaveTimeResolutionCounts(pageResolution, window.resolution);
-    state.result.fallback_slugify_count += window.resolution.fallback_slugify_count;
+    state.result.fallback_slugify_count += window.resolution.fallback_slugify_count; if (window.resolution.unbacked_key_count) state.result.unbacked_keys = (state.result.unbacked_keys ?? 0) + window.resolution.unbacked_key_count;
     state.result.resolution_errors += window.resolution.resolution_errors;
 
     newestEnd = seg.endIso;
@@ -1804,7 +1804,7 @@ export async function runExtractConversationFacts(
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
       aggregate.facts_inserted += perSource.facts_inserted;
-      aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
+      aggregate.fallback_slugify_count += perSource.fallback_slugify_count; if (perSource.unbacked_keys) aggregate.unbacked_keys = (aggregate.unbacked_keys ?? 0) + perSource.unbacked_keys;
       aggregate.resolution_errors += perSource.resolution_errors;
       if (perSource.slot_tagging_failed) aggregate.slot_tagging_failed = (aggregate.slot_tagging_failed ?? 0) + perSource.slot_tagging_failed;
       if (perSource.pages_pending) aggregate.pages_pending = (aggregate.pages_pending ?? 0) + perSource.pages_pending;
@@ -1892,7 +1892,7 @@ export async function runExtractConversationFacts(
       console.log(`  Cleaned ${aggregate.orphan_facts_cleaned} orphan fact(s) from prior partial runs (D11 replay safety).`);
     }
     if (aggregate.fallback_slugify_count > 0) {
-      console.log(`  Preserved ${aggregate.fallback_slugify_count} fact(s) without an entity target after unresolved fallback_slugify.`);
+      console.log(`  Preserved ${aggregate.fallback_slugify_count - (aggregate.unbacked_keys ?? 0)} fact(s) without an entity target after unresolved fallback_slugify${aggregate.unbacked_keys ? `; kept ${aggregate.unbacked_keys} under a name key with no page (facts.unbacked_entity_keys)` : ''}.`);
     }
     if (aggregate.resolution_errors > 0) {
       console.log(`  Preserved ${aggregate.resolution_errors} fact(s) without an entity target after best-effort resolution errors.`);
