@@ -1,7 +1,7 @@
-**A brain set to `engine: rust` now finds, checks and loads the Rust engine addon before it opens, and refuses with a typed error that names the reason when it cannot; PGLite and Postgres brains never load the addon or reach the network for it.**
+**gbrain has a loader that finds, checks and loads the experimental Rust engine addon, refusing with a typed error that names the reason when it cannot; nothing starts it yet, and PGLite and Postgres brains never load the addon or reach the network for it.**
 
 ### Added
-- `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`) loads the addon for the Rust engine shell. It uses `GBRAIN_RUST_ENGINE_ADDON` when you point it at your own build, then an addon already cached in `<gbrain home>/engines/rust/` whose checksum matches this release, and otherwise fetches the release asset once, checks its checksum and build provenance, and caches it.
+- `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`) loads the addon for the Rust engine shell. No config value selects the Rust engine yet, so no command calls it. It uses `GBRAIN_RUST_ENGINE_ADDON` when you point it at your own build, then an addon already cached in `<gbrain home>/engines/rust/` whose checksum matches this release, and otherwise fetches the release asset once, checks its checksum and build provenance, and caches it.
 - Two error codes: `rust_engine_addon_missing` (no addon for this platform, the release or download is unreachable, or another gbrain process holds the cache for too long, reason `cache_busy`) and `rust_engine_addon_mismatch` (checksum, provenance, `engine_abi`, `engine_build` or target differ, or the file does not load). Both refuse before the brain is touched and write nothing. `gbrain errors <code>` explains each one.
 
 ### Fixed
