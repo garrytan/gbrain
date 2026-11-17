@@ -23,6 +23,7 @@ import type { BrainEngine } from '../engine.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { ALIAS_ORIGIN_RANK, declarationsIn, titleName, type AliasOrigin } from '../mentions/aliases.ts';
 import { readIdentitySiblings, SIBLING_GROUP_CAP } from '../mentions/siblings.ts';
 import type { MentionPolicy, PackTypes } from '../mentions/policy.ts';
@@ -165,7 +166,8 @@ async function excerptSource(engine: BrainEngine, snapshot: PageSnapshot): Promi
 /** The card's identity fields for `row`. Fail-soft: a failed read leaves the field out. */
 export async function readCardIdentity(engine: BrainEngine, sourceId: string,
   row: { slug: string; title: string | null; compiled_truth: string | null },
-  opts: { excludePrivate: boolean; excludeQuarantined?: boolean; surfaceCeiling?: 'verbs' | 'starter' | 'full'; aka: string[] }): Promise<CardIdentity> {
+  opts: { excludePrivate: boolean; excludeQuarantined?: boolean; surfaceCeiling?: 'verbs' | 'starter' | 'full'; aka: string[];
+    /** GST-2891: the caller's fact reads are world-only, so the fence rows held from it leave the excerpt. */ hideHeld?: boolean }): Promise<CardIdentity> {
   const { aliasRows, identity_siblings } = await readSiblingIdentity(engine, sourceId, row, { excludePrivate: opts.excludePrivate, excludeQuarantined: opts.excludeQuarantined });
   const siblingPages = identity_siblings?.pages ?? [];
   const slugs = [row.slug, ...siblingPages.map(p => p.slug)];
@@ -189,8 +191,10 @@ export async function readCardIdentity(engine: BrainEngine, sourceId: string,
   for (const slug of slugs) {
     const page = bodies.get(slug);
     if (!page) continue;
-    const lines = excerptLines(sanitizeRemoteBody(page.body), page.title, Math.min(EXCERPT_PAGE_CHARS, EXCERPT_CARD_CHARS - used));
-    const full = excerptLines(sanitizeRemoteBody(page.body), page.title, EXCERPT_PAGE_CHARS);
+    const omitRows = opts.hideHeld ? (await loadFenceChunkOverlay(engine, { sourceId, slug, compiled_truth: page.body }, { hideHeld: true }))?.held : undefined;
+    const safe = sanitizeRemoteBody(page.body, { omitRows });
+    const lines = excerptLines(safe, page.title, Math.min(EXCERPT_PAGE_CHARS, EXCERPT_CARD_CHARS - used));
+    const full = excerptLines(safe, page.title, EXCERPT_PAGE_CHARS);
     if (lines.length < full.length) omitted.push(slug);
     for (const line of lines) { excerpt.push({ slug, line }); used += line.length; }
   }

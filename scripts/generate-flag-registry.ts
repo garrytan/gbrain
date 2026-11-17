@@ -27,6 +27,8 @@
  * Output: src/core/cli-flag-registry.generated.ts (committed; freshness is
  * pinned by test/cli-flag-validation.test.ts the same way build:llms pins the
  * llms bundles). Regenerate: bun run build:flag-registry
+ * Check: bun scripts/generate-flag-registry.ts --check exits 1 when the
+ * committed file differs from a fresh render (what regen:all --check runs).
  *
  * Hand-tuning lane: EXTRA_FLAGS below, for flags that live deeper than the
  * one-level scan (add with a comment naming the deep module).
@@ -553,7 +555,15 @@ ${render(routing)}
 if (import.meta.main) {
   const { registry, routing } = buildFlagArtifacts(ROOT);
   const outPath = join(ROOT, 'src/core/cli-flag-registry.generated.ts');
-  writeFileSync(outPath, renderRegistryModule(registry, routing));
+  const next = renderRegistryModule(registry, routing);
+  if (process.argv.includes('--check')) {
+    if ((existsSync(outPath) ? readFileSync(outPath, 'utf8') : '') !== next) {
+      console.error('src/core/cli-flag-registry.generated.ts is stale: run bun run regen:all');
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+  writeFileSync(outPath, next);
   const n = Object.keys(registry).length;
   const total = Object.values(registry).reduce((a, v) => a + v.length, 0);
   console.log(`wrote ${outPath} (${n} commands, ${total} flag entries)`);

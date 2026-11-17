@@ -161,6 +161,11 @@ member relaxes it for every person the bot serves:
   `--private-pages granted-sources`. With it, every mapped person reads every
   `visibility: private` page in the bot's sources, which on a personal brain are
   your own private pages.
+- **No private-facts grant on the bot.** Leave its token at
+  `--private-facts none`. A DM call that names a person never uses that grant
+  (an asserted audience reads world-only facts), so it adds nothing for the
+  people the bot serves, and any call that reaches the brain without the header
+  would read every fact saved private in the bot's sources.
 - **Host hatches off.** `GBRAIN_REMOTE_PRIVATE_PAGES` and
   `search.remote_private_pages` apply to every remote caller on the host, this
   bot included. Leave both unset while the bot runs.
