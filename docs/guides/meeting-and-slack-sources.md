@@ -5,6 +5,8 @@ provider into brain pages, one page per meeting, on a schedule, with no
 custom script. Fireflies is the first provider; others plug in behind the
 same provider interface. The `slack` source kind imports chosen Slack
 channels, one page per channel per day; see [Slack channels](#slack-channels).
+Messages on a Mac (the `imessage` kind, private and owner-only) are covered in
+[iMessage on a Mac](apple-setup.md).
 
 The feature is opt-in and dormant until you register a meetings source and
 run its first sync yourself.

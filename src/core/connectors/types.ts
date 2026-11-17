@@ -31,8 +31,11 @@ export type TokenProviderName = 'fireflies' | 'slack';
 export const TOKEN_PROVIDER_NAMES: readonly TokenProviderName[] = ['fireflies', 'slack'];
 export function isTokenProviderName(name: string): name is TokenProviderName { return (TOKEN_PROVIDER_NAMES as readonly string[]).includes(name); }
 
+/** A token that a local helper app issues (the GBrain Helper's loopback token for `imessage`): saved by setup, never through `connectors auth`. */
+export type HelperTokenProviderName = 'imessage';
+
 /** Every provider with a slot in the credential store. */
-export type CredentialProviderName = ConnectorProviderName | TokenProviderName;
+export type CredentialProviderName = ConnectorProviderName | TokenProviderName | HelperTokenProviderName;
 
 /**
  * Auth strategy axis. `browser-session` (paste-in cookie) is the PRIMARY lane

@@ -334,6 +334,46 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | append_page text held a links fence marker, so nothing was appended. | A page has one links section, and the rows it lists are the page's authored links: an appended links table would replace that section and delete every link it does not list. | Write each link with add_link (from, to, link_type); it adds the row to the page's links section and keeps the rows already there. | agent | `repeat the read that failed` | 1 | no |
 
+### apple_full_disk_access_pending
+
+<a id="apple_full_disk_access_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper is running but cannot read Messages because Full Disk Access is off for it, so nothing was imported. | macOS lets an app read the Messages database only after the user switches it on in System Settings; only the user can do that, and a grant can be turned off again later. | Ask the user to open System Settings > Privacy & Security > Full Disk Access and switch on GBrain Helper, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_full_disk_access_pending](../../docs/guides/apple-setup.md#apple_full_disk_access_pending)
+
+### apple_helper_not_running
+
+<a id="apple_helper_not_running"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Nothing answered on the GBrain Helper's loopback port (the helper is stopped, the Mac is asleep, or apple.helper.port is not set), so nothing was imported. | An imessage source reads only from the helper on the same Mac over 127.0.0.1; it never opens the Messages database itself. | Start GBrain Helper on this Mac and check gbrain config get apple.helper.port names its port, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_helper_not_running](../../docs/guides/apple-setup.md#apple_helper_not_running)
+
+### apple_helper_unauthorized
+
+<a id="apple_helper_unauthorized"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper refused the token gbrain sent, or gbrain has no helper token, so nothing was imported. | The helper answers only a request that carries one of its own tokens with the read:imessage scope; the token is read from the source's --token-env variable when it names one, else GBRAIN_CONNECTOR_IMESSAGE_TOKEN, else the 0600 file ~/.gbrain/connectors/imessage.json. | Save the helper's current token where GBrain reads it, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_helper_unauthorized](../../docs/guides/apple-setup.md#apple_helper_unauthorized)
+
+### apple_schema_mismatch
+
+<a id="apple_schema_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper does not recognise the layout of the Messages database (macOS may have changed it), so nothing was imported. | The helper reads only the tables and columns it knows; it refuses a changed database rather than guess at it. | Update GBrain and the GBrain Helper to their newest versions, then run gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_schema_mismatch](../../docs/guides/apple-setup.md#apple_schema_mismatch)
+
 ### approval_required
 
 <a id="approval_required"></a>
@@ -4243,6 +4283,18 @@ More: [docs/guides/write-refusals.md#purge_replay_incomplete](../../docs/guides/
 | The content matches a purged fact, take or page in this source, so it was not saved. | A purge leaves a text-free tombstone (the claim fingerprint or the page content hash) so stale files, re-syncs, reverts and re-extraction cannot bring purged content back. | Do not retry the same content. Write it in new words if it is still true, or ask the user to clear the tombstone on the brain host (gbrain pages purges list, then gbrain pages unpurge <slug> for a page). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
+
+### push_credential_refused
+
+<a id="push_credential_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Git host refused the push for the credential git used ("Repository not found", HTTP 404, or HTTP 403); the commit is durable locally and nothing was pushed or retried. | A host answers "Repository not found" to an account that cannot see a private repository, and 403 to one that may not write to it. The same credential is refused on every attempt, so a retry only hides the fault while commits stay on this machine; which credential git uses is the user's configuration, and gbrain never changes it. | Relay the message to the user: it names the credential helpers git asked (with the scope and file that configure each), which one answered and its account login. Once they make git use a credential for an account that can push there, run gbrain git commit-push --push-only. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `not_found`, `forbidden`.
+
+More: [docs/guides/shared-checkout-git.md#push_credential_refused](../../docs/guides/shared-checkout-git.md#push_credential_refused)
 
 ### push_unconfirmed
 
