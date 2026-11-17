@@ -46,6 +46,8 @@ import type { SlackAccount, SlackChannelInfo, SlackMessage, SlackSourceConfig, S
 
 /** The user list is re-read when a message names a user it lacks, or once this old. */
 const USERS_MAX_AGE_MS = 7 * 86_400_000;
+// A user the last listing lacked (cached under its raw id) is looked up again after a day; a Slack Connect user never appears.
+const USERS_MISSING_RETRY_MS = 86_400_000;
 
 export interface SlackChannelState {
   committed_to: string | null;
@@ -193,8 +195,9 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
       if (m.user) ids.add(m.user);
       for (const match of (m.text ?? '').matchAll(MENTION_RE)) ids.add(match[1]!);
     }
-    const stale = !state.users_listed_at || runStart - Date.parse(state.users_listed_at) > USERS_MAX_AGE_MS;
-    if (listedUsers || (!stale && [...ids].every(id => state.users[id]))) return;
+    const age = state.users_listed_at ? runStart - Date.parse(state.users_listed_at) : Infinity;
+    const known = (id: string) => state.users[id] && (state.users[id]!.name !== id || !(age > USERS_MISSING_RETRY_MS));
+    if (listedUsers || (!(age > USERS_MAX_AGE_MS) && [...ids].every(known))) return;
     const list = await api!.usersList(signal);
     listedUsers = true;
     state.users_listed_at = new Date(runStart).toISOString();

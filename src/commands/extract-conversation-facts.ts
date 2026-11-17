@@ -356,6 +356,7 @@ export interface ExtractConversationFactsResult {
   fallback_slugify_count: number;
   /** Entity values kept raw after a best-effort resolution failure. */
   resolution_errors: number;
+  /** GBRA-574: windows whose slot-tagging call failed; their facts were kept without slots (--force tags them again). */ slot_tagging_failed?: number;
   /** Managed brains: pages whose publication was accepted but is still pending (retried next run). */
   pages_pending?: number;
   /** Managed brains: pages whose extraction generation is blocked until the page changes (no model call). */
@@ -1805,6 +1806,7 @@ export async function runExtractConversationFacts(
       aggregate.facts_inserted += perSource.facts_inserted;
       aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
       aggregate.resolution_errors += perSource.resolution_errors;
+      if (perSource.slot_tagging_failed) aggregate.slot_tagging_failed = (aggregate.slot_tagging_failed ?? 0) + perSource.slot_tagging_failed;
       if (perSource.pages_pending) aggregate.pages_pending = (aggregate.pages_pending ?? 0) + perSource.pages_pending;
       if (perSource.pages_blocked) aggregate.pages_blocked = (aggregate.pages_blocked ?? 0) + perSource.pages_blocked;
       if (perSource.pages_detection_ambiguous) aggregate.pages_detection_ambiguous = (aggregate.pages_detection_ambiguous ?? 0) + perSource.pages_detection_ambiguous;
@@ -1895,6 +1897,7 @@ export async function runExtractConversationFacts(
     if (aggregate.resolution_errors > 0) {
       console.log(`  Preserved ${aggregate.resolution_errors} fact(s) without an entity target after best-effort resolution errors.`);
     }
+    if (aggregate.slot_tagging_failed) console.log(`  Kept the facts of ${aggregate.slot_tagging_failed} window(s) without slots after slot tagging failed; --force tags them again.`);
     if (anyBudgetExhausted) {
       console.log(unpricedModels.size > 0
         ? `  no_pricing: ${[...unpricedModels].join(', ')}. Raising --max-cost-usd cannot resolve missing pricing.`

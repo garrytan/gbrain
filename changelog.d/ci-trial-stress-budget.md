@@ -1,1 +1,1 @@
-**The PR stress gate now plans its shards under 12 minutes instead of 25, and plans a test file with no timing history at its lane's p95 instead of p75 (an untimed `.slow.test.ts` file stays at a fixed 120 s), so a slow new test file no longer runs its shard past the job timeout.**
+**The PR stress gate now plans its shards under 12 minutes instead of 25, and plans a test file with no timing history at its lane's p95 instead of p75, so a slow new test file no longer runs its shard past the job timeout.**
