@@ -214,11 +214,11 @@ runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-addCodeEdges	code_edges	yes	3	yes	yes	yes	refuses:code_edges
-deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	refuses:code_edges
-getCallersOf	code_edges	yes	3	no	yes	yes	refuses:code_edges
-getCalleesOf	code_edges	yes	2	yes	yes	yes	refuses:code_edges
-getEdgesByChunk	code_edges	yes	2	no	yes	yes	refuses:code_edges
+addCodeEdges	code_edges	yes	3	yes	yes	yes	serves
+deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
+getCallersOf	code_edges	yes	3	no	yes	yes	serves
+getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
+getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
 logEvalCandidate	eval_capture	yes	2	no	yes	yes	serves
 listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
