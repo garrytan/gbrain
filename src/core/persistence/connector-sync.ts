@@ -308,7 +308,7 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
   const canonicalRoot = connectorBindingRoot(engine, sourceId, source, binding);
   const session = new ManagedConnectorSync(engine, sourceId, identity, source, authority, binding, canonicalRoot, opts.noEmbed === true, opts.noSchemaPack === true,
     opts.retryFailed === true, lease, opts.resetCheckpoint === true, opts.githubItem !== undefined, opts.full === true);
-  session.extractFacts = opts.noExtract !== true;
+  session.extractFacts = opts.noExtract !== true && (connector === 'slack' || connector === 'meetings');
   await session.load();
   return session;
 }

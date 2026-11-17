@@ -6,7 +6,9 @@
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { createConnectorFixture, json, options, settleConnectorWrites } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, json, options, settleConnectorWrites, withGoogleAccount } from './helpers/connector-fixture.ts';
+import { addThread, fakeGmail, gmailFetch } from './helpers/connector-holds-fixture.ts';
+import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
 import { slackFetch, slackTs, type FakeSlack, slackTestToken } from './helpers/slack-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { waitFor } from './helpers/wait-for.ts';
@@ -21,7 +23,7 @@ import { configureGateway, resetGateway, __setChatTransportForTests, type ChatRe
 import { runFactsDrain } from '../src/core/facts/drain.ts';
 import { runPhaseConversationFactsBackfill } from '../src/core/cycle/conversation-facts-backfill.ts';
 
-const { engines, env, setup, teardown } = createConnectorFixture();
+const { engines, env, setup, teardown, source } = createConnectorFixture();
 beforeAll(setup, 120_000);
 afterAll(async () => { __setChatTransportForTests(null); resetGateway(); await teardown(); });
 
@@ -102,6 +104,25 @@ test('managed brain: a Slack page and a meeting page a connector publishes are q
     if (engine.kind === 'pglite') expect({ slack: await factRows(engine, 'slack-9552'), meeting: await factRows(engine, 'meet-9552') }).toEqual({ slack: 1, meeting: 1 });
   }
 }), 180_000);
+
+test('managed brain: a Gmail import queues no fact extraction, as on an unmanaged brain', async () => withEnv({ ...env, ...KEYS }, async () => {
+  for (const engine of engines) {
+    configureGateway({ embedding_disabled: true, env: KEYS } as never);
+    await engine.setConfig('facts.extraction_model', MODEL);
+    const account = 'reader@example.com';
+    const gmailConfig = { kind: 'google', g_account: account, g_services: 'gmail', g_access: 'env', g_token_env: 'CONNECTOR_TEST_TOKEN' };
+    const f = await source(engine, gmailConfig);
+    const fx = fakeGmail(account);
+    addThread(fx, 'a1b2c3d4e5f69552', Date.now() - 3_600_000, `${CLAIM} The renewal closes the account review for the year.`);
+    await runGoogleSync(engine, f.id, parseGoogleSourceConfig(gmailConfig, f.dir), extract, withGoogleAccount(gmailFetch(fx), account));
+    await settleConnectorWrites(engine, f.id);
+    const pages = await engine.executeRaw<{ type: string }>('SELECT type FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [f.id]);
+    expect(pages.map(p => p.type)).toEqual(['email']);
+    await waitFor(async () => (await openEffects(engine, f.id)) === 0, { timeoutMs: 30_000 });
+    expect(await queuedExtractions(engine, f.id)).toBe(0);
+    await disposePersistenceConsumer(engine);
+  }
+}), 120_000);
 
 test('managed brain: a run with --no-extract queues no fact extraction', async () => withEnv({ ...env, ...KEYS }, async () => {
   for (const engine of engines) {
