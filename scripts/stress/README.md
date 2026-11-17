@@ -113,8 +113,9 @@ shards.
   file planned at 41 s an iteration ran 145 s and took its shard past the
   35-minute job timeout (Test run 44139096116).
   GitHub refuses a job matrix over 256 entries, so a plan past 256 shards is
-  re-planned at the old 25-minute budget; `max-parallel: 12` keeps a large PR
-  from starving other jobs. Shard jobs record results and exit 0 on test
+  re-planned at the old 25-minute budget, and a plan still past 256 fails the
+  plan job with a named error; `max-parallel: 12` keeps a large PR from
+  starving other jobs. Shard jobs record results and exit 0 on test
   failures; the result job decides, so a planned iteration without a receipt
   fails the check as incomplete.
 - **Failure.** The result names the file, the failing iteration and the
