@@ -1722,6 +1722,10 @@ export class PostgresEngine implements BrainEngine {
     return this.withScopedReadTransaction(opts.sourceIds, undefined, tx => chunksImpl.listEmbeddingStateRows(scopedRead(this.engineSqlOn(tx)), column, opts));
   }
 
+  async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+    await this.transaction(tx => { const e = tx as PostgresEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
+  }
+
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
