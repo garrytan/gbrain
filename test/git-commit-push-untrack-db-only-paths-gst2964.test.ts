@@ -85,15 +85,15 @@ function declaredCheckout(): string {
 const managedAt = (root: string) => ({ root, evidence: 'test' });
 /** Every file the checkout holding `dir` tracks, by its path from the checkout's top: a brain read that checked them all. */
 const tracked = (dir: string) => new Set(git(dir, 'ls-files', '--full-name', '-z').split('\0').filter(Boolean));
-/** The brain's answer for a source rooted at `sourceRoot` whose sync strategy imports no code: every code-extension file is admitted by path. */
-const noCode = (sourceRoot: string): UntrackPageVerdict => ({ sourceRoot, slugRoot: 'source-root', importsCode: false, checked: tracked(sourceRoot), live: new Set() });
+/** The brain's answer for a source rooted at `sourceRoot` where no named file is a page: every code-extension file is admitted by path. */
+const noPages = (sourceRoot: string): UntrackPageVerdict => ({ sourceRoot, slugRoot: 'source-root', checked: tracked(sourceRoot), live: new Set() });
 
 describe('GST-2964: untrackAdmitted matches a file by its path under the declared folder', () => {
   test('every tracked file under a declared, ignored folder is admitted, whatever its extension', () => {
     const root = declaredCheckout();
-    expect(untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), noCode(root)).sort()).toEqual(INSIDE);
-    expect(untrackAdmitted(root, [`${DIR}backup-1.json`], managedAt(root), noCode(root))).toEqual([`${DIR}backup-1.json`]);
-    expect(untrackAdmitted(root, ['sources/Spaced Example/data.json'], managedAt(root), noCode(root))).toEqual(['sources/Spaced Example/data.json']);
+    expect(untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), noPages(root)).sort()).toEqual(INSIDE);
+    expect(untrackAdmitted(root, [`${DIR}backup-1.json`], managedAt(root), noPages(root))).toEqual([`${DIR}backup-1.json`]);
+    expect(untrackAdmitted(root, ['sources/Spaced Example/data.json'], managedAt(root), noPages(root))).toEqual(['sources/Spaced Example/data.json']);
   });
 
   test('a page root below the checkout reads gbrain.yml and the folder relative to that root', () => {
@@ -106,14 +106,14 @@ describe('GST-2964: untrackAdmitted matches a file by its path under the declare
     put(root, '.gitignore', `${DIR}\nbrain/${DIR}\n`);
     git(root, 'add', '.gitignore', 'brain/gbrain.yml'); git(root, 'commit', '-qm', 'declare');
     const managed = managedAt(root);
-    expect(untrackAdmitted(root, [`brain/${DIR.slice(0, -1)}`], managed, noCode(join(root, 'brain')))).toEqual([`brain/${DIR}backup-1.json`]);
-    expect(refusalOf(() => untrackAdmitted(root, [`${DIR}backup-1.json`], managed, noCode(join(root, 'brain')))).code).toBe('untrack_not_db_only');
+    expect(untrackAdmitted(root, [`brain/${DIR.slice(0, -1)}`], managed, noPages(join(root, 'brain')))).toEqual([`brain/${DIR}backup-1.json`]);
+    expect(refusalOf(() => untrackAdmitted(root, [`${DIR}backup-1.json`], managed, noPages(join(root, 'brain')))).code).toBe('untrack_not_db_only');
   });
 
   test('a file outside every declared folder refuses, and its fix says to declare the folder', () => {
     const root = declaredCheckout();
     for (const path of ['notes/plain.json', 'undeclared/x.json']) {
-      const refused = refusalOf(() => untrackAdmitted(root, [path], managedAt(root), noCode(root)));
+      const refused = refusalOf(() => untrackAdmitted(root, [path], managedAt(root), noPages(root)));
       expect(refused.code).toBe('untrack_not_db_only');
       expect(JSON.parse(refused.detail!)).toEqual({ paths: [path] });
       expect(refused.suggestion).toContain('add it under storage.db_only in gbrain.yml');
@@ -122,7 +122,7 @@ describe('GST-2964: untrackAdmitted matches a file by its path under the declare
 
   test('a declared folder .gitignore does not ignore refuses, and its fix names .gitignore, not the declaration', () => {
     const root = declaredCheckout();
-    const refused = refusalOf(() => untrackAdmitted(root, ['logs/run-example'], managedAt(root), noCode(root)));
+    const refused = refusalOf(() => untrackAdmitted(root, ['logs/run-example'], managedAt(root), noPages(root)));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(JSON.parse(refused.detail!)).toEqual({ paths: ['logs/run-example/a.json'] });
     expect(refused.suggestion).toContain('.gitignore');
@@ -131,15 +131,15 @@ describe('GST-2964: untrackAdmitted matches a file by its path under the declare
 
   test('a sibling folder that shares the declared name as a string prefix refuses', () => {
     const root = declaredCheckout();
-    expect(refusalOf(() => untrackAdmitted(root, ['health/dedupe-backups-old'], managedAt(root), noCode(root))).code).toBe('untrack_not_db_only');
-    const mixed = refusalOf(() => untrackAdmitted(root, [`${DIR}backup-1.json`, 'health/dedupe-backups-old/backup-0.json'], managedAt(root), noCode(root)));
+    expect(refusalOf(() => untrackAdmitted(root, ['health/dedupe-backups-old'], managedAt(root), noPages(root))).code).toBe('untrack_not_db_only');
+    const mixed = refusalOf(() => untrackAdmitted(root, [`${DIR}backup-1.json`, 'health/dedupe-backups-old/backup-0.json'], managedAt(root), noPages(root)));
     expect(JSON.parse(mixed.detail!)).toEqual({ paths: ['health/dedupe-backups-old/backup-0.json'] });
   });
 
   test('a path that climbs out of the folder with .. refuses', () => {
     const root = declaredCheckout();
     for (const path of [`${DIR}../dedupe-backups-old/backup-0.json`, `${DIR}../../notes/plain.json`, `${DIR}..`]) {
-      expect(['untrack_not_db_only', 'commit_paths_invalid']).toContain(refusalOf(() => untrackAdmitted(root, [path], managedAt(root), noCode(root))).code ?? '');
+      expect(['untrack_not_db_only', 'commit_paths_invalid']).toContain(refusalOf(() => untrackAdmitted(root, [path], managedAt(root), noPages(root))).code ?? '');
     }
   });
 
@@ -148,11 +148,11 @@ describe('GST-2964: untrackAdmitted matches a file by its path under the declare
     symlinkSync('../../notes/plain.json', join(root, `${DIR}escape.json`));
     symlinkSync('backup-1.json', join(root, `${DIR}alias.json`));
     git(root, 'add', '-f', `${DIR}escape.json`, `${DIR}alias.json`); git(root, 'commit', '-qm', 'links');
-    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), noCode(root)));
+    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), noPages(root)));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [`${DIR}escape.json`] });
     expect(refused.suggestion).toContain('symbolic link');
-    expect(untrackAdmitted(root, [`${DIR}alias.json`], managedAt(root), noCode(root))).toEqual([`${DIR}alias.json`]);
+    expect(untrackAdmitted(root, [`${DIR}alias.json`], managedAt(root), noPages(root))).toEqual([`${DIR}alias.json`]);
   });
 
   test('a declared folder that is a symlink on disk to a directory outside the checkout refuses', () => {
@@ -160,14 +160,14 @@ describe('GST-2964: untrackAdmitted matches a file by its path under the declare
     const elsewhere = join(scratch('elsewhere'), 'backups');
     renameSync(join(root, DIR), elsewhere);
     symlinkSync(elsewhere, join(root, DIR.slice(0, -1)));
-    const refused = refusalOf(() => untrackAdmitted(root, [`${DIR}backup-1.json`], managedAt(root), noCode(root)));
+    const refused = refusalOf(() => untrackAdmitted(root, [`${DIR}backup-1.json`], managedAt(root), noPages(root)));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(refused.suggestion).toContain('symbolic link');
   });
 
   test('a page file whose slug falls outside the declared spelling still refuses, with a fix about the slug spelling', () => {
     const root = declaredCheckout();
-    const refused = refusalOf(() => untrackAdmitted(root, ['sources/Spaced Example'], managedAt(root), noCode(root)));
+    const refused = refusalOf(() => untrackAdmitted(root, ['sources/Spaced Example'], managedAt(root), noPages(root)));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(JSON.parse(refused.detail!)).toEqual({ paths: ['sources/Spaced Example/one example.md'] });
     expect(refused.suggestion).toContain('sources/spaced-example/');
@@ -187,10 +187,10 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
     expect(untrackPageCandidates(root, ['missing-example'], root)).toEqual([]);
   });
 
-  test('on a source that imports code, a file with no live page is admitted and one with a live page refuses, saying why', () => {
+  test('a code file with no live page is admitted and one with a live page refuses, saying why, whatever the source\'s strategy', () => {
     const root = declaredCheckout();
-    expect(untrackAdmitted(root, [json], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', importsCode: true, checked: tracked(root), live: new Set() })).toEqual([json]);
-    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', importsCode: true, checked: tracked(root), live: new Set([json]) }));
+    expect(untrackAdmitted(root, [json], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', checked: tracked(root), live: new Set() })).toEqual([json]);
+    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { sourceRoot: root, slugRoot: 'source-root', checked: tracked(root), live: new Set([json]) }));
     expect(refused.code).toBe('untrack_not_db_only');
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [json] });
     expect(refused.suggestion).toContain('pages on this source and untracking them would delete the pages at the next sync');
@@ -198,7 +198,7 @@ describe('GST-2964: a code-extension file under the declared folder, decided by 
 
   test('a code-extension file the brain read did not check (named after the read) refuses; the rest are admitted', () => {
     const root = declaredCheckout();
-    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { ...noCode(root), checked: new Set([json]) } as UntrackPageVerdict));
+    const refused = refusalOf(() => untrackAdmitted(root, [DIR.slice(0, -1)], managedAt(root), { ...noPages(root), checked: new Set([json]) } as UntrackPageVerdict));
     expect(JSON.parse(refused.detail!)).toEqual({ paths: [ts] });
     expect(refused.suggestion).toContain('could not be read to check');
   });
@@ -240,7 +240,7 @@ describe('GST-2964: untrackPageVerdict opens the brain only to read', () => {
       expect(await untrackPageVerdict(managed, root, rel)).toEqual({ unreadable: 'no brain is configured on this machine' });
     });
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-      const answer: UntrackPageVerdict = { sourceRoot: root, slugRoot: 'git-root', importsCode: true, checked: new Set(), live: new Set() };
+      const answer: UntrackPageVerdict = { sourceRoot: root, slugRoot: 'git-root', checked: new Set(), live: new Set() };
       expect(await untrackPageVerdict(managed, root, rel)).toEqual(answer);
       expect(await untrackPageVerdict({ ...managed, sourceId: undefined }, root, rel)).toEqual(answer);
       expect(await untrackPageVerdict({ ...managed, sourceId: 'missing-example' }, root, rel)).toEqual({ unreadable: 'source missing-example is not in the brain' });
@@ -454,7 +454,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2964: --untrack
     const head = git(root, 'rev-parse', 'HEAD');
     const paths = [SUB + PAGE + '.md', ...JSON_FILES.map(file => SUB + file)];
     const pages = await readUntrackPageVerdict(engine, managed, root, paths);
-    expect(pages).toMatchObject({ slugRoot: 'git-root', importsCode: true });
+    expect(pages).toMatchObject({ slugRoot: 'git-root' });
     for (const run of [() => previewUntrack(root, paths, { untrackPages: pages }), () => commitAndPush({ repo: root, cwd: root, paths, message: 'm', untrack: true, untrackPages: pages })]) {
       const refused = refusalOf(run);
       expect(refused.code).toBe('untrack_not_db_only');

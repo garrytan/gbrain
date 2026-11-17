@@ -251,7 +251,7 @@ describe('GST-2519: --untrack in a managed canonical worktree, with a page root 
     put(root, 'brain/.gitignore', `${D}\n`);
     put(root, '.gitignore', `${D}\n`);
     const managed = { root: join(root, 'brain'), evidence: 'test' };
-    const answer = { sourceRoot: join(root, 'brain'), slugRoot: 'source-root' as const, importsCode: false, checked: new Set<string>(), live: new Set<string>() };
+    const answer = { sourceRoot: join(root, 'brain'), slugRoot: 'source-root' as const, checked: new Set<string>(), live: new Set<string>() };
     expect(untrackAdmitted(root, [`brain/${D.slice(0, -1)}`], managed, answer)).toEqual([`brain/${A}.md`]);
     expect(refusalOf(() => untrackAdmitted(root, [`${A}.md`], managed, answer)).code).toBe('untrack_not_db_only');
   });
