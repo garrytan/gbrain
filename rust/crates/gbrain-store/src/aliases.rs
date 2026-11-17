@@ -662,6 +662,47 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_keeps_a_row_the_new_slug_already_had_once() {
+        let store = crate::test_support::store();
+        let aliases = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        store
+            .set_page_aliases("a", "default", &aliases(&["ay", "shared"]))
+            .unwrap();
+        store
+            .set_page_aliases("b", "default", &aliases(&["shared", "bee"]))
+            .unwrap();
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        store
+            .put_page("a", &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+        assert_eq!(store.update_slug("a", "b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        assert!(page_alias_rows(&*read, "default", "a").unwrap().is_empty());
+        let mut rows = page_alias_rows(&*read, "default", "b").unwrap();
+        rows.sort();
+        let expected: Vec<(String, String)> = ["ay", "bee", "shared"]
+            .iter()
+            .map(|a| (a.to_string(), FRONTMATTER.to_string()))
+            .collect();
+        assert_eq!(rows, expected);
+        // Both key spaces hold each row once: 3 rows, 2 keys each.
+        let mut count = 0;
+        for sub in [PAGE_ALIAS, PAGE_ALIAS_BY_SLUG] {
+            scan_prefix(&*read, &[keys::ALIAS, sub], false, &mut |_, _| {
+                count += 1;
+                true
+            })
+            .unwrap();
+        }
+        assert_eq!(count, 6);
+    }
+
+    #[test]
     fn origins_rank_frontmatter_first() {
         assert!(origin_rank(FRONTMATTER) < origin_rank("declared"));
         assert!(origin_rank("declared") < origin_rank("subject"));
