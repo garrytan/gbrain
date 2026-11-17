@@ -28,6 +28,7 @@ import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 
 const SRC = 'company';
 const OWNER = 'owner-example';
@@ -109,6 +110,20 @@ for (const kind of testBackends()) {
       await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter || '{\"readable_by\": [\"owner-example\", \"bob-example\"]}'::jsonb WHERE source_id = $1 AND slug = 'company/calls/2026-11-09-acme-renewal'", [SRC]);
       const refused = await repair([...argv(renewal.command).slice(2), '--apply', '--expect', stale.preview_hash, '--json']).then(t => t, e => JSON.stringify({ code: (e as { code?: string }).code }));
       expect(refused).toContain('preview_changed');
+    }, 120_000);
+
+    test('the owner reads a call before and after its proposal is applied; a teammate who was not on it stops reading it', async () => {
+      const slug = 'company/calls/2026-11-11-pricing-review';
+      const text = async (ctx: Record<string, unknown>) => (await dispatchToolCall(engine, 'get_page', { slug }, { sourceId: SRC, ...ctx } as never)).content.map(c => c.text).join('\n');
+      const view = async () => ({ owner_stdio: (await text({ remote: true, transport: 'stdio', stdioMember: OWNER })).includes('annual billing'),
+        owner_local: (await text({ remote: false })).includes('annual billing'),
+        bob: (await text({ remote: true, transport: 'stdio', stdioMember: 'bob-example' })).includes('annual billing'),
+        carol: (await text({ remote: true, transport: 'stdio', stdioMember: 'carol-example' })).includes('annual billing') });
+      expect(await view()).toEqual({ owner_stdio: true, owner_local: true, bob: true, carol: true });
+      const set = (await propose()).sets.find(s => s.readers.join(',') === 'owner-example,alice-example,bob-example')!;
+      const preview = JSON.parse(await repair([...argv(set.command).slice(2), '--json'])).results[0];
+      await repair([...argv(set.command).slice(2), '--apply', '--expect', preview.preview_hash, '--json']);
+      expect(await view()).toEqual({ owner_stdio: true, owner_local: true, bob: true, carol: false });
     }, 120_000);
   });
 }
