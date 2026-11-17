@@ -9470,7 +9470,9 @@ carries `keyword_candidates_incomplete` when that bound applies). For a local
 caller, hybrid search's title step ranks at most 5,000 of the pages whose title
 or timeline matches (the lowest page ids) and reports the same
 `keyword_candidates_incomplete` when it cuts; a remote caller's title step
-matches titles only. A local
+matches titles only. When no page holds every word of the question, a local
+caller's title step retries with any word: it reads titles and timelines while
+at most 5,000 pages match, and titles only past that. A local
 caller's keyword statement usually stops reading matches at the 50,000 bound. A remote MCP
 caller's arm stops there when the call sets no type, frontmatter or date filter
 and no source scope narrower than every live source; with such a filter it
