@@ -318,9 +318,74 @@ async function loadOneshotLedger(engine: BrainEngine, jobId: number): Promise<Le
   );
 }
 
+async function oneshotChatCall(args: OneshotArgs, budgetMs: number, messages: Parameters<typeof gatewayChat>[0]['messages']): Promise<ChatResult | OneshotOutcome> {
+  const { engine, ctx, model } = args;
+  const chat = args._chat ?? gatewayChat;
+  const lease = await acquireLease(engine, args.leaseKey, ctx.id, args.maxConcurrent, {
+    ttlMs: Math.max(args.leaseTtlMs, budgetMs + 30_000),
+  });
+  if (!lease.acquired) {
+    // A full bucket is a scheduling condition, not a model failure — throw
+    // RateLeaseUnavailableError so the worker / inline drain requeue the job
+    // WITHOUT burning an attempt (never fall back: the fallback would hit
+    // the same full bucket sixteen times over).
+    throw new RateLeaseUnavailableError(args.leaseKey, lease.activeCount, lease.maxConcurrent);
+  }
+  const budgetAbort = AbortSignal.timeout(budgetMs);
+  const callSignal = ctx.signal ? AbortSignal.any([ctx.signal, budgetAbort]) : budgetAbort;
+
+  let chatResult: ChatResult;
+  const t0 = Date.now();
+  logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_started', turn_idx: 0, mode: 'oneshot' });
+  try {
+    chatResult = await chat({
+      model,
+      system: ONESHOT_SYSTEM,
+      messages,
+      maxTokens: args.maxOutputTokens,
+      abortSignal: callSignal,
+      timeoutMs: budgetMs,
+      // cacheSystem marks the system block as a cache breakpoint. Note:
+      // ONESHOT_SYSTEM alone is under Anthropic's ~1024-token cache minimum,
+      // so cross-job prefix hits only materialize on providers/models with a
+      // lower floor — harmless no-op otherwise.
+      cacheSystem: true,
+    });
+  } catch (err) {
+    if (budgetAbort.aborted && !(ctx.signal?.aborted) && isAbortShaped(err)) {
+      // The oneshot sub-budget expired — the agentic fallback still has the
+      // rest of the job budget (OV-9). Never charge a slow single call
+      // against the whole job.
+      logSubagentHeartbeat({ job_id: ctx.id, event: 'oneshot_timeout', turn_idx: 0, ms_elapsed: Date.now() - t0 });
+      return { kind: 'fallback', reason: 'oneshot_timeout' };
+    }
+    // Same terminal classification as the gateway-loop path's
+    // runLoopConvertingLeaseLoss (subagent.ts): `chat()` here is the SAME
+    // gateway.chat() entrypoint, so a 400 "prompt is too long" arrives
+    // normalizeAIError()-wrapped the same way — isPromptTooLongError() walks
+    // the `.cause` chain to still match the SDK's inner shape. Without this,
+    // a prompt-too-long condition on the oneshot dispatch path retries like
+    // any other transient failure up to max_stalled, recreating the same
+    // dream-cycle queue-clog class the legacy and gateway-loop paths already
+    // fast-fail on.
+    // Single walk: extractPromptTooLongDetail is non-null exactly when
+    // isPromptTooLongError matches (both wrap the same matcher).
+    const detail = extractPromptTooLongDetail(err);
+    if (detail !== null) {
+      throw new UnrecoverableError(`prompt_too_long: ${detail}`);
+    }
+    // Job-level abort or transport error: the job machinery owns these — a
+    // provider outage would break the fallback identically (don't double-pay).
+    throw err;
+  } finally {
+    await releaseLease(engine, lease.leaseId!).catch(() => { /* best-effort */ });
+  }
+
+  return chatResult;
+}
+
 export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutcome> {
   const { engine, ctx, data, model, putPageTool } = args;
-  const chat = args._chat ?? gatewayChat;
   const submitted = snapshotFromJob(ctx.data);
   const checkCurrentWrite = async (slug?: string): Promise<void> => {
     if (!submitted) return;
@@ -420,69 +485,7 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
   // the call (AbortSignal.timeout below), so ttl = budget + slack. With the
   // bare 120s default TTL a 300s call's lease would be pruned mid-flight and
   // the next acquirer would over-admit past maxConcurrent.
-  const callOnce = async (messages: Parameters<typeof gatewayChat>[0]['messages']): Promise<ChatResult | OneshotOutcome> => {
-    const lease = await acquireLease(engine, args.leaseKey, ctx.id, args.maxConcurrent, {
-      ttlMs: Math.max(args.leaseTtlMs, budgetMs + 30_000),
-    });
-    if (!lease.acquired) {
-      // A full bucket is a scheduling condition, not a model failure — throw
-      // RateLeaseUnavailableError so the worker / inline drain requeue the job
-      // WITHOUT burning an attempt (never fall back: the fallback would hit
-      // the same full bucket sixteen times over).
-      throw new RateLeaseUnavailableError(args.leaseKey, lease.activeCount, lease.maxConcurrent);
-    }
-    const budgetAbort = AbortSignal.timeout(budgetMs);
-    const callSignal = ctx.signal ? AbortSignal.any([ctx.signal, budgetAbort]) : budgetAbort;
-
-    let chatResult: ChatResult;
-    const t0 = Date.now();
-    logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_started', turn_idx: 0, mode: 'oneshot' });
-    try {
-      chatResult = await chat({
-        model,
-        system: ONESHOT_SYSTEM,
-        messages,
-        maxTokens: args.maxOutputTokens,
-        abortSignal: callSignal,
-        timeoutMs: budgetMs,
-        // cacheSystem marks the system block as a cache breakpoint. Note:
-        // ONESHOT_SYSTEM alone is under Anthropic's ~1024-token cache minimum,
-        // so cross-job prefix hits only materialize on providers/models with a
-        // lower floor — harmless no-op otherwise.
-        cacheSystem: true,
-      });
-    } catch (err) {
-      if (budgetAbort.aborted && !(ctx.signal?.aborted) && isAbortShaped(err)) {
-        // The oneshot sub-budget expired — the agentic fallback still has the
-        // rest of the job budget (OV-9). Never charge a slow single call
-        // against the whole job.
-        logSubagentHeartbeat({ job_id: ctx.id, event: 'oneshot_timeout', turn_idx: 0, ms_elapsed: Date.now() - t0 });
-        return { kind: 'fallback', reason: 'oneshot_timeout' };
-      }
-      // Same terminal classification as the gateway-loop path's
-      // runLoopConvertingLeaseLoss (subagent.ts): `chat()` here is the SAME
-      // gateway.chat() entrypoint, so a 400 "prompt is too long" arrives
-      // normalizeAIError()-wrapped the same way — isPromptTooLongError() walks
-      // the `.cause` chain to still match the SDK's inner shape. Without this,
-      // a prompt-too-long condition on the oneshot dispatch path retries like
-      // any other transient failure up to max_stalled, recreating the same
-      // dream-cycle queue-clog class the legacy and gateway-loop paths already
-      // fast-fail on.
-      // Single walk: extractPromptTooLongDetail is non-null exactly when
-      // isPromptTooLongError matches (both wrap the same matcher).
-      const detail = extractPromptTooLongDetail(err);
-      if (detail !== null) {
-        throw new UnrecoverableError(`prompt_too_long: ${detail}`);
-      }
-      // Job-level abort or transport error: the job machinery owns these — a
-      // provider outage would break the fallback identically (don't double-pay).
-      throw err;
-    } finally {
-      await releaseLease(engine, lease.leaseId!).catch(() => { /* best-effort */ });
-    }
-
-    return chatResult;
-  };
+  const callOnce = (messages: Parameters<typeof gatewayChat>[0]['messages']) => oneshotChatCall(args, budgetMs, messages);
   const first = await callOnce([{ role: 'user', content: data.prompt }]);
   if ('kind' in first) return first;
   let chatResult: ChatResult = first;
