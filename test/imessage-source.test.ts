@@ -174,28 +174,32 @@ for (const kind of testBackends()) describe(`repo-less brain (${kind})`, () => {
     expect((await pages(id)).find(r => r.slug === daySlug(ALICE, 20))!.body).toContain('An old note from three weeks ago.');
   });
 
-  test('a last_message_at the helper leaves out or sends in another shape stops the run as shape drift; no page is deleted', async () => {
+  test('a last_message_at the helper sends in another shape stops the run as shape drift; no page is deleted', async () => {
     const fake = mac();
     const { id, cfg } = await imessageSource();
     await run(id, cfg, fake);
     const before = (await pages(id)).map(r => r.slug);
     expect(before.length).toBe(4);
-    for (const threadRow of [({ last_message_at: _, ...row }: Record<string, unknown>) => row,
-      (row: Record<string, unknown>) => ({ ...row, last_message_at: 802_000_000 }),
+    for (const threadRow of [(row: Record<string, unknown>) => ({ ...row, last_message_at: 802_000_000 }),
+      (row: Record<string, unknown>) => ({ ...row, last_message_at: '' }),
+      (row: Record<string, unknown>) => ({ ...row, last_message_at: false }),
       (row: Record<string, unknown>) => ({ ...row, last_message_at: 'yesterday' })]) {
       await expect(run(id, cfg, { ...fake, threadRow }, { now: NOW + 3_600_000 })).rejects.toMatchObject({ code: 'connector_shape_drift' });
       expect((await pages(id)).map(r => r.slug)).toEqual(before);
     }
   });
 
-  test('a chat the helper lists with a null last_message_at is still read, so its days are kept', async () => {
+  test('a chat the helper lists with no last_message_at (null, or left out as the helper encodes nil) is still read, so its days are kept', async () => {
     const fake = mac();
     const { id, cfg } = await imessageSource();
     await run(id, cfg, fake);
     const before = (await pages(id)).map(r => r.slug);
-    const result = await run(id, cfg, { ...fake, threadRow: row => ({ ...row, last_message_at: null }) }, { now: NOW + 3_600_000 });
-    expect(result.deleted).toBe(0);
-    expect((await pages(id)).map(r => r.slug)).toEqual(before);
+    for (const threadRow of [(row: Record<string, unknown>) => ({ ...row, last_message_at: null }),
+      ({ last_message_at: _, ...row }: Record<string, unknown>) => row]) {
+      const result = await run(id, cfg, { ...fake, threadRow }, { now: NOW + 3_600_000 });
+      expect(result.deleted).toBe(0);
+      expect((await pages(id)).map(r => r.slug)).toEqual(before);
+    }
   });
 
   for (const [problem, code] of [['no_access', 'apple_full_disk_access_pending'], ['schema_mismatch', 'apple_schema_mismatch'],

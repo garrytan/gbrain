@@ -101,7 +101,7 @@ export function imessageHelper(opts: IMessageHelperOpts): IMessageHelper {
       return body.data.map((raw: Record<string, unknown>) => {
         const threadId = str(raw?.thread_id);
         if (!threadId) throw new IMessageShapeDriftError('threads.data[].thread_id');
-        const lastMessageAt = raw.last_message_at;
+        const lastMessageAt = raw.last_message_at ?? null;
         if (lastMessageAt !== null && !(typeof lastMessageAt === 'string' && Number.isFinite(Date.parse(lastMessageAt)))) {
           throw new IMessageShapeDriftError('threads.data[].last_message_at');
         }

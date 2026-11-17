@@ -64,7 +64,7 @@ export function helperFetch(fake: FakeHelper) {
       const last = (c: FakeChat) => Math.max(0, ...c.messages.map(m => m.at));
       const data = [...fake.chats].sort((a, b) => last(b) - last(a)).slice(0, limit).map(c => ({
         thread_id: c.threadId, chat_rowids: [1], chat_guids: [`chat-${c.threadId}`], display_name: c.displayName, participant_count: c.participants.length,
-        participants: c.participants, is_group: !!c.isGroup, service: 'iMessage', last_message_at: c.messages.length ? iso(last(c)) : null, last_message: null })).map(row => fake.threadRow?.(row) ?? row);
+        participants: c.participants, is_group: !!c.isGroup, service: 'iMessage', ...(c.messages.length ? { last_message_at: iso(last(c)) } : {}) })).map(row => fake.threadRow?.(row) ?? row);
       return json({ data, meta: { count: data.length, undecodable: 0 } });
     }
     if (u.pathname === '/v1/imessage/thread') {
