@@ -20,7 +20,7 @@ import {
   resolveEntitiesToPointers,
   type PointerBlock,
 } from '../../../core/context/retrieval-reflex.ts';
-import type { PGLiteEngine } from '../../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import type { HarnessTurnResult, PublicTurn } from '../types.ts';
 
 export interface ReflexPipelineCfg {
@@ -42,7 +42,7 @@ export function estimateTokens(text: string | null): number {
 }
 
 export async function runReflexPipeline(
-  engine: PGLiteEngine,
+  engine: BrainEngine,
   sourceId: string,
   turn: PublicTurn,
   priorContextText: string,
