@@ -66,7 +66,7 @@ import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatch
 import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
-import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit, type TransactionOptions } from './engine.ts';
+import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit, type CycleLockFilter, type TransactionOptions } from './engine.ts';
 import { transactionAborted, withTransactionAbort, type Discardable } from './postgres-engine/transaction-abort.ts';
 import { readWriteTransactions, retryReadOnlyAutocommit } from './postgres-engine/read-write-transactions.ts';
 import { searchLimitCap } from './search/eval-pool-depth.ts';
@@ -151,6 +151,8 @@ import * as tagsImpl from './engine-sql/tags.ts';
 import * as linksImpl from './engine-sql/links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
+import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
+import { noteDirectPoolLease } from './direct-pool-profile.ts';
 import * as filesImpl from './engine-sql/files.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
@@ -1030,6 +1032,10 @@ export class PostgresEngine implements BrainEngine {
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
     return sourcesImpl.updateSourceConfig(this.engineSql, sourceId, patch);
+  }
+
+  async listSourceLocalPaths(): Promise<string[]> {
+    return sourcesImpl.listSourceLocalPaths(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the filesystem lock read it through executeRaw)'));
   }
 
   // v0.37.0 — domain-bank engine methods (D14 + D5 + D10).
@@ -3066,6 +3072,23 @@ export class PostgresEngine implements BrainEngine {
       this.checkoutGauge.release('direct');
     }
   }
+
+  // Cycle-lock SQL lives once in ./engine-sql/cycle-locks.ts. Acquire / release / delete ran as autocommit tagged
+  // templates under retryReadOnlyAutocommit on the pool; the renewal runs on the direct session pool (#1794).
+  /** Executor whose `query` is `executeRawDirect`: the lease renewal's transport (direct pool, signal-cancellable). */
+  private get directEngineSql(): SqlExecutor {
+    return { ...this.engineSql, query: async (sql, params, opts) => ({ rows: await this.executeRawDirect(sql, params as unknown[] | undefined, opts), affectedRows: 0 }) };
+  }
+  async acquireCycleLock(lockId: string, opts: Parameters<BrainEngine['acquireCycleLock']>[1]) {
+    const held = await retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.acquireCycleLock(this.engineSqlOn(c), lockId, opts));
+    if (held) noteDirectPoolLease();
+    return held;
+  }
+  async refreshCycleLock(lockId: string, opts: Parameters<BrainEngine['refreshCycleLock']>[1], queryOpts?: { signal?: AbortSignal }) { return cycleLocksImpl.refreshCycleLock(this.directEngineSql, lockId, opts, queryOpts); }
+  async releaseCycleLock(lockId: string, opts: Parameters<BrainEngine['releaseCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.releaseCycleLock(this.engineSqlOn(c), lockId, opts)); }
+  async readCycleLocks(filter: CycleLockFilter) { return cycleLocksImpl.readCycleLocks(unscopedExecutor(this.engineSql, 'cycle locks: unscoped on master (db-lock selectLockRows)'), filter); }
+  async deleteCycleLock(lockId: string, opts: Parameters<BrainEngine['deleteCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLock(this.engineSqlOn(c), lockId, opts)); }
+  async deleteCycleLockIfStale(lockId: string, opts: Parameters<BrainEngine['deleteCycleLockIfStale']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLockIfStale(this.engineSqlOn(c), lockId, opts)); }
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)

@@ -3,9 +3,9 @@
 # legacy_e2e = called by the Postgres-gated test/e2e/engine-parity*.test.ts suite (informational).
 # pglite/postgres/rust = what each arm must do: yes (runs, compared), same (Rust must match once its arm exists),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 198/198
+# covered: 205/205
 # lifecycle: 9/9
-# pages: 24/24
+# pages: 25/25
 # search: 7/7
 # chunks: 17/17
 # extraction: 7/7
@@ -23,6 +23,7 @@
 # stats_ingest: 4/4
 # sync_aliases: 9/9
 # config: 5/5
+# cycle_locks: 6/6
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
@@ -59,6 +60,7 @@ getAllSlugs	pages	yes	4	no	yes	yes	same
 listAllPageRefs	pages	yes	1	yes	yes	yes	same
 listAllSources	pages	yes	2	no	yes	yes	same
 updateSourceConfig	pages	yes	1	no	yes	yes	same
+listSourceLocalPaths	pages	yes	1	no	yes	yes	same
 listPrefixSampledPages	pages	yes	1	no	yes	yes	same
 listCorpusSample	pages	yes	1	no	yes	yes	same
 searchKeyword	search	yes	8	yes	yes	yes	same
@@ -207,6 +209,12 @@ setConfig	config	yes	7	no	yes	yes	same
 unsetConfig	config	yes	2	no	yes	yes	same
 listConfigKeys	config	yes	2	no	yes	yes	same
 getAllConfig	config	yes	1	no	yes	yes	same
+acquireCycleLock	cycle_locks	yes	8	no	yes	yes	same
+refreshCycleLock	cycle_locks	yes	1	no	yes	yes	same
+releaseCycleLock	cycle_locks	yes	1	no	yes	yes	same
+readCycleLocks	cycle_locks	yes	8	no	yes	yes	same
+deleteCycleLock	cycle_locks	yes	1	no	yes	yes	same
+deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	same
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql

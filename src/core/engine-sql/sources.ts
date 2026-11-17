@@ -79,3 +79,12 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     `);
     return affectedRows > 0;
   }
+
+/**
+ * Local paths of every source that has one, unscoped on master (`withSourceFilesystemLock` read it through
+ * `executeRaw`). Empty strings are dropped as well as NULLs.
+ */
+export async function listSourceLocalPaths(exec: LegacyUnscopedRead): Promise<string[]> {
+  const { rows } = await exec.query<{ local_path: string }>(`SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''`);
+  return rows.map(r => r.local_path);
+}

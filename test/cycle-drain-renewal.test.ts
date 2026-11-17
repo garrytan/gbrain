@@ -51,8 +51,14 @@ describe('db-lock heartbeat wiring (structural — issue #6 cancellation)', () =
   test('withRefreshingLock aborts a per-tick signal into handle.refresh and guards re-entrancy', () => {
     expect(src).toContain('handle.refresh({ signal: abort.signal })');
     expect(src).toContain('if (stopping || lost || activeRefresh) return;');
-    // refresh() forwards the opts to executeRawDirect as the trailing arg.
-    expect(src).toMatch(/executeRawDirect<\{ id: string \}>\([\s\S]*?refreshOpts,\s*\)/);
+    // refresh() forwards the opts to the typed engine renewal as the trailing arg.
+    expect(src).toMatch(/engine\.refreshCycleLock\(lockId, [^)]*\}, refreshOpts\)/);
+    // The Postgres renewal runs on the direct pool (executeRawDirect) and hands the signal down to it.
+    const pg = readFileSync(new URL('../src/core/postgres-engine.ts', import.meta.url), 'utf-8');
+    expect(pg).toMatch(/directEngineSql[\s\S]{0,200}query: async \(sql, params, opts\) => \(\{ rows: await this\.executeRawDirect\(sql, params as unknown\[\] \| undefined, opts\)/);
+    expect(pg).toMatch(/async refreshCycleLock\([^)]*queryOpts\?: \{ signal\?: AbortSignal \}\) \{ return cycleLocksImpl\.refreshCycleLock\(this\.directEngineSql, lockId, opts, queryOpts\)/);
+    const sql = readFileSync(new URL('../src/core/engine-sql/cycle-locks.ts', import.meta.url), 'utf-8');
+    expect(sql).toMatch(/REFRESH_SQL, \[[\s\S]*?\], queryOpts\)/);
   });
 });
 

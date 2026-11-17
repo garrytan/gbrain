@@ -142,13 +142,13 @@ async function resetArm(arm: ParityArm): Promise<void> {
  * method). Harness-only SQL behind the backend switch; a Rust arm supplies its
  * own path here. Cases call this instead of executeRaw.
  */
-export async function createSource(engine: BrainEngine, backend: TestBackend, id: string, config: Record<string, unknown> = {}): Promise<void> {
+export async function createSource(engine: BrainEngine, backend: TestBackend, id: string, config: Record<string, unknown> = {}, localPath?: string): Promise<void> {
   switch (backend) {
     case 'pglite':
     case 'postgres':
       await engine.executeRaw(
-        `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb) ON CONFLICT (id) DO NOTHING`,
-        [id, JSON.stringify(config)],
+        `INSERT INTO sources (id, name, config, local_path) VALUES ($1, $1, $2::text::jsonb, $3) ON CONFLICT (id) DO NOTHING`,
+        [id, JSON.stringify(config), localPath ?? null],
       );
       return;
     default:
