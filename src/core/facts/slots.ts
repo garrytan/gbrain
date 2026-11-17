@@ -40,7 +40,9 @@ export function deriveSlotEnds(rows: readonly SlotRow[]): Map<number, Date> {
   const groups = new Map<string, SlotRow[]>();
   for (const r of rows) {
     const key = [r.source_id, r.entity_slug, r.dimension].join('\u0000');
-    groups.set(key, [...groups.get(key) ?? [], r]);
+    const group = groups.get(key);
+    if (group) group.push(r);
+    else groups.set(key, [r]);
   }
   const time = (r: SlotRow) => new Date(r.valid_from).getTime();
   for (const group of groups.values()) {

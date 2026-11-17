@@ -87,7 +87,7 @@ import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
 import { sourceWindowKey, type SourceWindow } from '../page-body/derivations.ts';
 import { findCaptureDuplicate } from './capture-dedup.ts';
 import { normalizeSlot } from './slots.ts';
-import { valueHash } from '../chronicle/ontology.ts';
+import { CONVERSATION_SLOT_SQL, valueHash } from '../chronicle/ontology.ts';
 
 export const CONVERSATION_FACTS_INTENT = 'managed_maintenance_conversation_facts';
 export const CONVERSATION_FACTS_PROTOCOL = 1;
@@ -501,7 +501,9 @@ async function stampSourceWindows(tx: BrainEngine, ids: readonly number[], windo
  * the prior ones, and a partial run's facts are not published over them.
  * #7043: a fact an active row of the source already states is not stored
  * again (the capture lane's fingerprint, entity and visibility rule with no
- * time bound); the page's own rows a replacement clears do not count.
+ * time bound); the page's own rows a replacement clears do not count. A slot
+ * fact whose value differs from the slot's latest value at its date is a
+ * change (GBRA-574 B2: a return to an earlier value) and is stored.
  */
 export async function publishConversationFacts(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[],
   opts: { scope: ConversationScope; requestId?: string; segments?: ConversationSegmentsPublication }): Promise<{ deleted: number; facts_inserted: number; duplicates_skipped: number; purged_skipped: number }> {
@@ -521,7 +523,10 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
   let duplicates = 0;
   for (const entry of retire || opts.scope === 'window' || segments ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
     const { row } = entry;
-    if (OUTCOME_SOURCES.has(row.source) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
+    const [prior] = row.dimension && row.value && row.entity_slug && row.valid_from != null ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
+      WHERE source_id=$1 AND entity_slug=$2 AND dimension=$3 AND value_hash IS NOT NULL AND expired_at IS NULL AND superseded_by IS NULL AND ${CONVERSATION_SLOT_SQL}
+        AND valid_from <= $4::timestamptz ORDER BY valid_from DESC, id DESC LIMIT 1`, [sourceId, row.entity_slug, row.dimension, new Date(row.valid_from).toISOString()]) : [];
+    if (OUTCOME_SOURCES.has(row.source) || (prior && prior.value_hash !== valueHash(row.value!)) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
       visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
     else duplicates++;
   }

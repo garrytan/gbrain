@@ -417,6 +417,19 @@ for (const backend of testBackends()) {
         expect(lisbon?.split('\n')[0]).toBe(header(P1, P1));
       });
 
+      test('a return to an earlier value said again in the same words is published, so the earlier value reopens', async () => {
+        const pages: Page[] = [
+          { slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [LISBON] },
+          { slug: 'meetings/chat-b', title: 'Chat B', date: P2, said: [{ fact: 'Alice Example moved to Porto.', valid: P2, slot: ['location', 'Porto'] }] },
+          { slug: 'meetings/chat-c', title: 'Chat C', date: P3, said: [{ ...LISBON, valid: P3 }] },
+          { slug: 'meetings/chat-d', title: 'Chat D', date: P3, said: [{ ...LISBON, valid: P3 }] },
+        ];
+        await putPages(pages); await extract(pages);
+        expect((await slotRows()).map(r => [r.source_markdown_slug, r.value])).toEqual([['meetings/chat-a', 'Lisbon'], ['meetings/chat-b', 'Porto'], ['meetings/chat-c', 'Lisbon']]);
+        const lisbon = (await block(LIVE_Q)).find(r => r.includes('Alice Example lives in Lisbon.'));
+        expect(lisbon?.split('\n')[0]).toBe(header(P1, P1));
+      });
+
       test('an ontology observation never ends a conversation window', async () => {
         await putPages([PAGE]); await extract([PAGE]);
         await engine.mergeOntologyFact({ entitySlug: ALICE, dimension: 'location', value: 'Porto', source: PAGE.slug, validFrom: P2, sourceId: 'default' });

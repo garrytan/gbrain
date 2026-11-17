@@ -37,6 +37,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { runSetTrust } from '../src/commands/sources-trust.ts';
+import { valueHash } from '../src/core/chronicle/ontology.ts';
 
 const engines: BrainEngine[] = [];
 const home = mkdtempSync(join(tmpdir(), 'gbrain-trust-channel-'));
@@ -498,6 +499,21 @@ describe('guarded ontology supersession (mergeOntologyFact, both engines)', () =
       const fourth = await run(b.remote, 'ontology_propose', { entity: 'people/hank-example', dimension: 'role', value: 'manager', visibility: 'world', valid_from: '2030-01-01' });
       expect(fourth.supersededId).toBe(Number(third.factId));
       expect(fourth.contested).toBeUndefined();
+    }
+  }), 90_000);
+
+  test('a newer conversation fact slot in the same dimension never takes the confirmed stint\'s place in the contest (GBRA-574 B2)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const b = await brain(engine);
+      await run(b.local, 'put_page', { slug: 'people/ivy-example', content: page('Ivy', 'Ivy.') });
+      const first = await run(b.local, 'ontology_propose', { entity: 'people/ivy-example', dimension: 'role', value: 'founder', visibility: 'world' });
+      await confirmFact(b, Number(first.factId));
+      await engine.transaction(tx => withCoordinatedWrite(tx, [b.sourceId], () => tx.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, source_markdown_slug, row_num, visibility, confidence, valid_from, dimension, value, value_hash, dim_status)
+        VALUES ($1, 'people/ivy-example', 'Ivy Example is now the CTO.', 'fact', 'cli:extract-conversation-facts:v1', 'meetings/chat-a', 0, 'world', 1, '2029-06-01T00:00:00Z', 'role', 'cto', $2, 'active')`,
+        [b.sourceId, valueHash('cto')]), TEST_WRITE_ATTRIBUTION));
+      const second = await run(b.remote, 'ontology_propose', { entity: 'people/ivy-example', dimension: 'role', value: 'advisor', visibility: 'world', valid_from: '2030-01-01' });
+      expect(second.action).toBe('inserted');
+      expect(second.contested?.proposal_ref).toMatch(/^tp\d+$/);
     }
   }), 90_000);
 });

@@ -178,12 +178,13 @@ async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStem
  * An ended fact a history read may show: superseded by a successor, or closed by a valid_until in the past while still
  * unexpired. A fact expired with no successor (forgotten or withdrawn) never matches, nor does any fact whose claim the
  * withdrawal ledger covers, nor one whose page a purge removed: a purge expires only the page's unexpired facts
- * (gone-page-facts.ts), so a superseded fact filed on or extracted from that page would otherwise come back.
+ * (gone-page-facts.ts), so a superseded fact filed on or extracted from that page would otherwise come back. Only an
+ * ontology observation's page is provenance; a conversation fact's slot (GBRA-574 B2) is filed on its page.
  */
 const ENDED_FACT_SQL = `(f.superseded_by IS NOT NULL OR (f.expired_at IS NULL AND f.valid_until <= now()))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
     AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')})
-  AND (f.source_markdown_slug IS NULL OR f.dimension IS NOT NULL
+  AND (f.source_markdown_slug IS NULL OR (f.dimension IS NOT NULL AND NOT ${CONVERSATION_SLOT_SQL})
     OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug))
   AND (f.source_markdown_slug IS NOT NULL OR f.source NOT IN (${PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ')})
     OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = ${contextHeadSql('f')}))`;
