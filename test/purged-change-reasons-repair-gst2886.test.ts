@@ -302,7 +302,7 @@ for (const backend of ['pglite', 'postgres'] as const) {
       const previous = process.exitCode;
       const unconsented = await cli('--apply', '--expect', planned.preview_hash);
       const exitCode = process.exitCode;
-      process.exitCode = previous;
+      process.exitCode = previous ?? 0;
       expect(unconsented.error?.message).toBeUndefined();
       expect(exitCode).toBe(3);
       expect(await reasonOf(engine, leaked.id)).toBe(leakedText(leak.claim));
