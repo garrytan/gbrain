@@ -7,8 +7,8 @@
  *   - The apply binds pins, never timestamps (a sync that rewrote the holds keeps the approval), imports database-only on a mirror
  *     (a page version first, revert restores it, the checkout byte-identical), resumes after a kill without applying a page twice,
  *     refuses a concurrent apply (class_apply_busy), an edited manifest (class_manifest_stale) and a remote caller.
- *   - The preview refuses an output path inside a checkout before writing, authorizes each page like the window preview, and a
- *     resumed walk stops at its deadline after one window.
+ *   - The preview and the apply refuse an output path inside a checkout before writing, both authorize each page like the
+ *     window preview, and a resumed walk stops at its deadline after one window.
  * PGLite always; Postgres when DATABASE_URL is set. Synthetic content only.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
@@ -209,18 +209,27 @@ describe.each(testBackends())('whole-class file-drift on a read-only mirror (%s)
     expect(existsSync(dir) ? readdirSync(dir).filter(name => name.startsWith('class-')) : []).toEqual([]);
   }, { ...db(), setup: setup(3) }), 300_000);
 
-  test('the preview refuses an output path inside a checkout before writing, and leaves a page outside the CLI grant out of the class', () => managedBrain(async ({ engine, root }) => {
+  test('the preview and the apply refuse an output path inside a checkout before writing, and leave a page outside the CLI grant held', () => managedBrain(async ({ engine, root }) => {
     await mirrorHolds(engine, root, ['notes/n00', 'other/o00']);
+    const before = checkout(root);
     const writer = await registerLocalWriter(engine, 'cli');
     const scope = await resolveRepairScope(engine, 'default');
-    const inside = await withEnv({ GBRAIN_HOME: root }, () => withVerifiedLocalRegistration(engine, writer, () =>
-      previewFileDriftClass(engine, scope, sel(), { remote: false })).then(() => null, e => e));
-    expect((inside as any)?.code).toBe('permission_denied');
+    const ctx = { engine, config: { engine: engine.kind, embedding_disabled: true }, sourceId: 'default', remote: false, dryRun: false, logger } as OperationContext;
+    const inside = <T>(run: () => Promise<T>) => withEnv({ GBRAIN_HOME: root }, () => withVerifiedLocalRegistration(engine, writer, run).then(() => null, e => e));
+    expect(((await inside(() => previewFileDriftClass(engine, scope, sel(), { remote: false }))) as any)?.code).toBe('permission_denied');
+    const m = (await preview(engine)).class_manifest!;
+    expect(m.pages).toBe(2);
+    expect(((await inside(() => applyFileDriftClass(ctx, scope, sel(), m.hash))) as any)?.code).toBe('permission_denied');
     expect(existsSync(join(root, '.gbrain'))).toBe(false);
     const narrow = await registerLocalWriter(engine, 'cli', { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: ['notes/'] }, true);
-    const result = await withVerifiedLocalRegistration(engine, narrow, async () => previewFileDriftClass(engine, await resolveRepairScope(engine, 'default'), sel(), { remote: false }));
+    const asNarrow = <T>(run: () => Promise<T>) => withVerifiedLocalRegistration(engine, narrow, run);
+    const result = await asNarrow(() => previewFileDriftClass(engine, scope, sel(), { remote: false }));
     expect(result.class_manifest!.top.map(page => page.slug)).toEqual(['notes/n00']);
     expect(result.other).toEqual({ refused_permission_denied: 1 });
+    const applied = await asNarrow(() => applyFileDriftClass(ctx, scope, sel(), m.hash));
+    expect([applied.complete, applied.applied, applied.skipped_pages]).toEqual([true, 1, [{ slug: 'other/o00', reason: 'refused_permission_denied' }]]);
+    expect(await body(engine, 'other/o00')).toBe('An old database body.');
+    expect(checkout(root)).toBe(before);
   }, { ...db(), setup: setup(1, ['other/o00']) }), 300_000);
 
   test('kept_protected_parts: the apply leaves the page held and its protected parts as stored through two syncs, and the checkout byte-identical', () => managedBrain(async ({ engine, ctx, root }) => {

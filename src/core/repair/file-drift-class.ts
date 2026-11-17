@@ -334,6 +334,8 @@ async function applyPage(engine: BrainEngine, sel: ClassSelection, manifest: Cla
   }
   if (prior) return { applied: false, reason: `refused_${prior.state}` };
   if (mirror !== manifest.mirror) return { applied: false, reason: 'mirror_changed' };
+  try { await authorizeReconcile(engine, sel.sourceId, pin.slug); }
+  catch (error) { if (!(error instanceof OperationError) || error.code !== 'permission_denied') throw error; return { applied: false, reason: 'refused_permission_denied' }; }
   const hold = await readGitHold(engine, sel.sourceId, incarnation, pin.path);
   if (!hold || hold.code !== pin.hold_code || (fileDriftSide(hold.meta) ?? '') !== pin.side || (hold.upstream_version ?? null) !== pin.upstream_version || hold.slug !== pin.slug) {
     return { applied: false, reason: 'hold_changed' };
@@ -366,6 +368,7 @@ export async function applyFileDriftClass(ctx: OperationContext, scope: RepairSc
   if (ctx.remote !== false) throw trustedCliRequired('gbrain repair file-drift --whole-class --apply runs only for the trusted local CLI on the brain host.');
   const engine = ctx.engine;
   assertWholeClassSelection({ held: true, side: sel.side, prefer: 'file', sourceId: sel.sourceId });
+  await assertReconcileOutputPath(engine, sel.sourceId, artifactDirectory());
   const manifest = /^[0-9a-f]{64}$/.test(expect) ? readManifest(expect) : null;
   if (!manifest) throw staleManifest(sel, expect, 'no manifest file with that hash is left in the preview directory');
   if (manifest.source_id !== sel.sourceId || manifest.side !== sel.side || manifest.brain_id !== scope.brain_id || digest([manifest.only, manifest.skip]) !== digest([sel.only, sel.skip])) {
