@@ -48,7 +48,7 @@ putPage	pages	yes	88	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	2	yes	yes	yes	serves
-deletePages	pages	yes	1	yes	yes	yes	refuses:pages
+deletePages	pages	yes	1	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	16	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves

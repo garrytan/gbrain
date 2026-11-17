@@ -1,14 +1,14 @@
 /**
  * Batch page reads and writes over the store's page_ops family (rust/docs/store/page_ops.md).
  *
- * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, resolveSlugsByPaths, softDeletePages,
- * findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
+ * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, resolveSlugsByPaths,
+ * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
+ * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  *
- * Still refused (`engine_capability_missing`): deletePages and purgeDeletedPages. PGLite scrubs rows that name a
- * purged slug outside any foreign key (the eval candidates' retrieved slugs) in the same transaction; the store's
- * scrub arrives with the eval_capture family. purgeDeletedPages also waits on the purge holds (identity downgrades,
- * retirement holds) the store does not keep yet.
+ * Still refused (`engine_capability_missing`): purgeDeletedPages. PGLite holds back pages that a sync identity
+ * downgrade or an atom or derived retirement still needs (op_checkpoints and the retirement holds); the store does
+ * not keep those holds yet.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -88,6 +88,15 @@ export const findDuplicatePages: StoreMember<[sourceId: string, inputs: Readonly
   const queries = inputs.map((input) => takeOptions('findDuplicatePages', input, ['hash', 'frontmatterId', 'excludeSlug']));
   const rows: Array<{ slug: string; id: number } | null> = await storeCall({ member: 'findDuplicatePages' }, () => brain.findDuplicatePages(sourceId, queries));
   return rows.map(toDuplicate);
+};
+
+export const deletePages: StoreMember<[slugs: string[], opts: { sourceId: string }], string[]> = async (brain, slugs, opts) => {
+  if (slugs.length === 0) return [];
+  checkBatch('deletePages', slugs.length);
+  const options = takeOptions('deletePages', opts, ['sourceId']);
+  // PGLite matches `source_id = $sourceId`; an absent or empty id names no source.
+  if (typeof options.sourceId !== 'string' || options.sourceId === '') return [];
+  return storeCall({ member: 'deletePages' }, () => brain.deletePages(slugs, options));
 };
 
 export const softDeletePages: StoreMember<[slugs: string[], opts: { sourceId: string }], string[]> = async (brain, slugs, opts) => {

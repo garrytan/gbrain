@@ -371,7 +371,7 @@ fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let mut tags = page.tags.clone();
     tags.sort();
     Ok(json!({
-        "page": page.to_page(),
+        "page": page.to_page_with_columns(read)?,
         "tags": tags,
         "revision": page.knowledge_revision,
         "sourceIncarnation": incarnation,
@@ -388,10 +388,11 @@ fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> 
 }
 
 /// The rows PGLite scrubs after a hard delete that name a page outside any foreign key
-/// (`scrubPurgedSlugs` and friends). The store keeps none of those rows yet: the eval candidates'
-/// `retrieved_slugs` arrive with the eval_capture family, whose
-/// `remove_retrieved_slugs(tx, source_id, slugs)` this calls once it exists.
-fn scrub_purged_slugs(_tx: &mut dyn KvWrite, _source_id: &str, _slugs: &[String]) -> Result<()> {
+/// (`scrubPurgedSlugs` and friends), run in the delete's transaction after the pages are gone.
+/// Of those stores the store keeps only the eval candidates' `retrieved_slugs`; retrieval logs,
+/// ratings, the volunteer log, the gazetteer and write-gate holds do not exist here yet.
+fn scrub_purged_slugs(tx: &mut dyn KvWrite, source_id: &str, slugs: &[String]) -> Result<()> {
+    crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
     Ok(())
 }
 
