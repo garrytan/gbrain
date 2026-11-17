@@ -13,6 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
+import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -38,6 +39,9 @@ export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote
 export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, page: string): Promise<void> {
   if (!authority.remote) return;
   const slug = authorizedSlug(authority, page);
+  // An owner-only source (access/owner-only.ts) takes remote writes only from the owner speaking for itself, so no
+  // other credential plants, rewrites or probes a page there; the refusal reads like any page it may not see.
+  if (await sourceIsOwnerOnly(engine, authority.sourceId) && !await storedOwnerSpeaksForItself(engine, authority)) throw pageNotVisibleError();
   // GBRA-108 design 1: a labelled-only writer reads only pages that name it, so the empty-identity shortcut (a page every
   // caller reads) does not apply to it.
   // The grant probe rides on the empty-identity read, so a write on a brain with no labelled-only member costs no extra
@@ -91,7 +95,9 @@ export async function writerReadPolicySql(engine: SqlEngine, authority: WriteAut
   restricted ??= (await readRemotePolicyNow(engine)).restricted;
   const identities = restricted ? await writerIdentities(engine, authority) : [[]];
   const folder = restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
-  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
+  const owner = await ownerOnlySourcesPresent(engine) && await storedOwnerSpeaksForItself(engine, authority);
+  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage, ...(owner ? { owner: true } : {}) },
+    () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
   if (!restricted || !await anyLabelledOnlyMember(engine) || !await writerLabelledOnly(engine, authority, identities)) return fragment;
   return `(${fragment} AND ${labelledOnlyForSql(pageAlias, identities, folder.satisfiedRuleIds)})`;
 }

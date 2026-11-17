@@ -334,6 +334,46 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | append_page text held a links fence marker, so nothing was appended. | A page has one links section, and the rows it lists are the page's authored links: an appended links table would replace that section and delete every link it does not list. | Write each link with add_link (from, to, link_type); it adds the row to the page's links section and keeps the rows already there. | agent | `repeat the read that failed` | 1 | no |
 
+### apple_full_disk_access_pending
+
+<a id="apple_full_disk_access_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper is running but cannot read Messages because Full Disk Access is off for it, so nothing was imported. | macOS lets an app read the Messages database only after the user switches it on in System Settings; only the user can do that, and a grant can be turned off again later. | Ask the user to open System Settings > Privacy & Security > Full Disk Access and switch on GBrain Helper, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_full_disk_access_pending](../../docs/guides/apple-setup.md#apple_full_disk_access_pending)
+
+### apple_helper_not_running
+
+<a id="apple_helper_not_running"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Nothing answered on the GBrain Helper's loopback port (the helper is stopped, the Mac is asleep, or apple.helper.port is not set), so nothing was imported. | An imessage source reads only from the helper on the same Mac over 127.0.0.1; it never opens the Messages database itself. | Start GBrain Helper on this Mac and check gbrain config get apple.helper.port names its port, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_helper_not_running](../../docs/guides/apple-setup.md#apple_helper_not_running)
+
+### apple_helper_unauthorized
+
+<a id="apple_helper_unauthorized"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper refused the token gbrain sent, or gbrain has no helper token, so nothing was imported. | The helper answers only a request that carries one of its own tokens with the read:imessage scope; the token is read from the source's --token-env variable when it names one, else GBRAIN_CONNECTOR_IMESSAGE_TOKEN, else the 0600 file ~/.gbrain/connectors/imessage.json. | Save the helper's current token where gbrain reads it, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_helper_unauthorized](../../docs/guides/apple-setup.md#apple_helper_unauthorized)
+
+### apple_schema_mismatch
+
+<a id="apple_schema_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper does not recognise the layout of the Messages database (macOS may have changed it), so nothing was imported. | The helper reads only the tables and columns it knows; it refuses a changed database rather than guess at it. | Update gbrain and GBrain Helper to their newest versions, then run gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_schema_mismatch](../../docs/guides/apple-setup.md#apple_schema_mismatch)
+
 ### approval_required
 
 <a id="approval_required"></a>

@@ -229,6 +229,8 @@ export interface AddSourceOpts {
    * `tokenEnv`; no secret lands in sources.config. See src/core/slack/.
    */
   slack?: import('./slack/source-add.ts').AddSourceSlackOpts;
+  /** Register an imessage-kind source (the GBrain Helper on this Mac); always database-recorded and owner-only. See src/core/imessage/. */
+  imessage?: import('./imessage/source-add.ts').AddSourceIMessageOpts;
 }
 
 export interface RemoveSourceOpts {
@@ -521,7 +523,7 @@ export async function addSource(
     !!opts.localPath &&
     !opts.remoteUrl &&
     !opts.github &&
-    !opts.google && !opts.meetings && !opts.slack;
+    !opts.google && !opts.meetings && !opts.slack && !opts.imessage;
   if (existing.length > 0 && !attachPath) {
     const pathNote = existing[0]!.local_path
       ? ` with local_path ${existing[0]!.local_path}`
@@ -699,6 +701,10 @@ export async function addSource(
     );
   } else if (opts.meetings || opts.slack) {
     await insertApiSource(engine, opts, opts.slack ? 'slack' : 'meetings');
+  } else if (opts.imessage) {
+    const { imessageSourceConfig } = await import('./imessage/source-add.ts');
+    await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, NULL, $3::text::jsonb)',
+      [opts.id, opts.name ?? opts.id, JSON.stringify(imessageSourceConfig(opts.imessage, opts.federated))]);
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created

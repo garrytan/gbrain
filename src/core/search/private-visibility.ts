@@ -31,6 +31,7 @@ import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, reade
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
+import { OWNER_ONLY_KINDS, ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -114,9 +115,19 @@ export function accessAllowedSql(pageAlias: string, identity: readonly string[],
  * the origin of what was derived from it (a fact's provenance page): raw-only rules (covers_derived false) do not count.
  */
 export function accessAllowedForAllSql(pageAlias: string, identities: readonly (readonly string[])[], satisfied: readonly string[], derived = false): string {
-  if (!currentCallerAccess().restricted) return `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
+  const ownerOnly = ownerOnlyAllowedSql(pageAlias, currentCallerAccess());
+  if (!currentCallerAccess().restricted) return `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL${ownerOnly})`;
   const readers = (identities.length ? identities : [[]]).map(identity => readersAllowedSql(pageAlias, identity)).join(' AND ');
-  return `(${readers} AND ${folderRulesAllowedSql(pageAlias, satisfied, derived)} AND ${originAllowedSql(pageAlias)})`;
+  return `(${readers} AND ${folderRulesAllowedSql(pageAlias, satisfied, derived)} AND ${originAllowedSql(pageAlias)}${ownerOnly})`;
+}
+
+/**
+ * Owner-only sources (access/owner-only.ts): a page in one, or derived from one, passes only for an owner read
+ * (CallerAccess.owner, never an audience of others or an attested call). Part of the member-access predicate, so no
+ * grant, hatch, lineage setting or owner opt-in relaxes it; empty for the owner.
+ */
+function ownerOnlyAllowedSql(pageAlias: string, access: Pick<CallerAccess, 'owner'>): string {
+  return access.owner ? '' : ` AND NOT ${ownerOnlyPageSql(pageAlias)}`;
 }
 
 /**
@@ -255,14 +266,15 @@ function lineageOriginAllowedSql(p: string, access: CallerAccess, ownPage: strin
 function lineageAccessSql(pageAlias: string, access: CallerAccess, ownPage: string, derived = false): string {
   const audience = audiencePages(access);
   const notOther = notOtherMemberPageSql(pageAlias, ownPage, audience);
+  const ownerOnly = ownerOnlyAllowedSql(pageAlias, access);
   if (!access.restricted) {
     const unrestricted = `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
-    return access.ownerReadsRestricted ? `(${unrestricted} OR ${notOther})` : unrestricted;
+    return `(${access.ownerReadsRestricted ? `(${unrestricted} OR ${notOther})` : unrestricted}${ownerOnly})`;
   }
   const readers = audience.length ? `(${readersAllowedSql(pageAlias, access.identity)} OR ${audiencePageSql(pageAlias, audience)})` : readersAllowedSql(pageAlias, access.identity);
   const listed = `(${readers} AND ${folderRulesAllowedSql(pageAlias, access.satisfiedRuleIds, derived)})`;
   const page = access.ownerReadsRestricted ? `(${listed} OR (${notOther}${coverageSql(pageAlias)}))` : listed;
-  return `(${page} AND ${lineageOriginAllowedSql(pageAlias, access, ownPage)})`;
+  return `(${page} AND ${lineageOriginAllowedSql(pageAlias, access, ownPage)}${ownerOnly})`;
 }
 
 /**
@@ -271,7 +283,7 @@ function lineageAccessSql(pageAlias: string, access: CallerAccess, ownPage: stri
  * access.owner_reads_restricted and audience members never apply here: a page kept to other members stays closed.
  */
 export function ownerReadPolicyFragment(pageAlias: string, identity: readonly string[], satisfied: readonly string[]): string {
-  const access: CallerAccess = { ...currentCallerAccess(), identity, satisfiedRuleIds: satisfied, lineage: true, ownerReadsRestricted: false, audienceKindMembers: [], restricted: true };
+  const access: CallerAccess = { ...currentCallerAccess(), identity, satisfiedRuleIds: satisfied, owner: true, lineage: true, ownerReadsRestricted: false, audienceKindMembers: [], restricted: true };
   const ownPage = lineageReadPage(access);
   return ownPage ? `(${lineageAccessSql(pageAlias, access, ownPage)} AND ${privacyPartSql(pageAlias)})` : 'FALSE';
 }
@@ -670,6 +682,7 @@ function privacyPartFastSql(pageAlias: string): string {
  */
 export function isPrivatePageForCaller(page: { type?: string | null; frontmatter?: unknown; source_id?: string | null; slug?: string | null }): boolean {
   const access = currentCallerAccess();
+  if (!access.owner && typeof page.type === 'string' && OWNER_ONLY_KINDS.includes(page.type)) return true;
   if (!callerReadersAllow(page.frontmatter, page.slug ?? undefined)) return true;
   if (!access.hidePrivate || !isPrivacyPrivatePage(page)) return false;
   if (typeof page.frontmatter === 'object' && page.frontmatter !== null && (page.frontmatter as Record<string, unknown>).pinned_question != null) return true;
@@ -969,7 +982,7 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds, true)} ELSE ${otherwise} END`
     : otherwise;
-  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)}${labelledOnlyFactSql(factAlias)})`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)}${labelledOnlyFactSql(factAlias)}${ownerOnlyFactAllowedSql(factAlias)})`;
 }
 
 /**
@@ -1019,8 +1032,13 @@ export function callerRelaxesPrivacy(): boolean {
 }
 
 export function privateProvenanceFilterFragment(factAlias: string): string {
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
-    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp', true)}))`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
+    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp', true)}))${ownerOnlyFactAllowedSql(factAlias)})`;
+}
+
+/** A fact held in or derived from an owner-only source (access/owner-only.ts) passes only for an owner read; empty for the owner. */
+function ownerOnlyFactAllowedSql(factAlias: string): string {
+  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyFactSql(factAlias)}`;
 }
 
 /**
@@ -1265,5 +1283,5 @@ export async function resolveExcludePrivatePages(
   if (!await remotePrivacyRelaxed(engine)) return true;
   const access = currentCallerAccess();
   if (access.audience?.length && access.hidePrivate) return true;
-  return accessRestrictionsPresent(engine);
+  return await accessRestrictionsPresent(engine) || (!access.owner && await ownerOnlySourcesPresent(engine));
 }
