@@ -1,7 +1,7 @@
 {
   "golden": {
     "counts": {
-      "chunks": 17,
+      "chunks": 18,
       "cjk-search": 2,
       "code-edges": 5,
       "facts": 19,
@@ -206,6 +206,7 @@
       "runMigration": "out-of-scope:lifecycle (connection, pool, transaction, raw seams)",
       "runUnsafe": "out-of-scope:internal-helper (private; exercised through public callers)",
       "runVectorAttempt": "out-of-scope:internal-helper (private; exercised through public callers)",
+      "sealChunks": "chunks",
       "searchKeyword": "cjk-search",
       "searchKeywordChunks": "cjk-search",
       "searchKeywordPages": "out-of-scope:search (FTS/vector hot paths, dialect-specific, not a W1 domain)",
