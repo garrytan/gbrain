@@ -798,7 +798,7 @@ src/core/persistence/head-blocker.ts	execute_raw	2
 src/core/persistence/held-reads.ts	execute_raw	3
 src/core/persistence/hosted-repo.ts	execute_raw	4
 src/core/persistence/housekeeping-turn.ts	execute_raw	2
-src/core/persistence/identity.ts	execute_raw	8
+src/core/persistence/identity.ts	execute_raw	4
 src/core/persistence/import-deferral.ts	execute_raw	1
 src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1

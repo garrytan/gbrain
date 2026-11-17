@@ -16,8 +16,7 @@ import { embeddedSettings, hostIdFor, openEngine, type EngineSettings } from '..
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
-import { localHostId, registerLocalWriterValue, revokeLocalWriter } from '../../src/core/persistence/identity.ts';
-import type { SqlEngine } from '../../src/core/persistence/model.ts';
+import { localHostId, registerLocalWriterValue, revokeLocalWriter, type LocalWriterEngine } from '../../src/core/persistence/identity.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
 import { sharedParameterTypes, type SharedParameterTypes } from '../../src/core/pg-type-cache.ts';
@@ -145,12 +144,13 @@ describeE2E('openEngine on Postgres', () => {
       await engine.initSchema();
       const writer = writerValue();
       await registerLocalWriterValue(engine, writer);
-      const raced = (): SqlEngine => {
+      const raced = (): LocalWriterEngine => {
         let hidden = false;
-        return { executeRaw: (<T>(sql: string, params?: unknown[]) => {
-          if (!hidden && sql.startsWith('SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers')) { hidden = true; return Promise.resolve([] as T[]); }
-          return engine.executeRaw<T>(sql, params);
-        }) as SqlEngine['executeRaw'] };
+        return {
+          readPersistenceBrainId: () => engine.readPersistenceBrainId(),
+          readLocalWriterRow: (id, opts) => { if (!hidden) { hidden = true; return Promise.resolve(undefined); } return engine.readLocalWriterRow(id, opts); },
+          insertLocalWriterRow: row => engine.insertLocalWriterRow(row),
+        };
       };
       const rows = (id: string) => engine.executeRaw<{ lane: string; revoked: boolean }>('SELECT lane, revoked_at IS NOT NULL AS revoked FROM persistence_local_writers WHERE id=$1::uuid', [id]);
       expect(await codeOf(registerLocalWriterValue(raced(), writer))).toBe('resolved');
