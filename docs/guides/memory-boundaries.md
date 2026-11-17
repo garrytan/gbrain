@@ -409,8 +409,13 @@ removed). GBrain cannot tell a local endpoint from a remote one, because a
 recipe's base URL can point anywhere. A self-hosted embedding provider (and
 synopsis model) on hardware you control keeps restricted text in house for
 embedding and contextual retrieval only. Every other enabled provider, such as
-a reranker, a chat model or a decision provider, can still receive restricted
-text, so self-host or turn off each one that must not.
+a reranker or a chat model, can still receive restricted text, so self-host or
+turn off each one that must not. The decision provider is stricter by default:
+while `decide.egress.private` is `deny` (the default), System One calls to
+TypeSafe withhold restricted pages, private facts and conversation text, except
+for the reranking slot and the fact and conversation items of a slot turned on
+by the key-aware default. An `llm:` decision provider, or setting
+`decide.egress.private allow`, removes that guard.
 
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
 job's, write request's or cron's id, status and times (and a removed member's
