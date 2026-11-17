@@ -326,7 +326,7 @@ A small typed, non-SQL interface on every engine: `readRelation(name, { equals, 
 
 ## Dec 1 schedule
 
-Decision D21 sets the first goal: 1x parity on the maintainer's brain by 2026-12-01, with the workstreams below running in parallel.
+Decision D21 sets the first goal: 1x parity on the maintainer's brain by 2026-12-01, with the workstreams below running in parallel. Work collects on the integration branches `rust-engine/core` and `rust-engine/typed-methods` and reaches master in up to 3 combined PRs a day.
 
 | Workstream | Work |
 |---|---|
@@ -742,6 +742,7 @@ Each yes is quoted in the body of the PR that needs it.
   - The Phase 2 store bake-off shrinks to 2 days. It picks the simplest store that matches Postgres and PGLite on the maintainer's workload and stays server-ready in design. The concurrent-writer or MVCC store option moves from required to after parity. The D20 principle stays, so there are no busy errors and no process-wide lock on the read path.
   - Track 2 SQL removal starts now, in parallel, not after Checkpoint C1. The hot paths the maintainer's brain uses come first, by subsystem, each in separate files so parallel PRs do not conflict.
   - Not by Dec 1: the multi-user server (design note only), the D17 every-axis numbers, Rust as the default, and full removal of all 5,324 raw-SQL lines (hot paths only by Dec 1).
+  - Delivery: work collects on two integration branches, `rust-engine/core` for the Rust engine and `rust-engine/typed-methods` for Track 2, and reaches master in up to 3 combined PRs a day. Engine code lives in its own directory (`rust/`), with its own CI workflow filtered to that path.
   - Where earlier text in this plan differs, D21 wins until the Dec 1 goal is met or the maintainer changes it. Build sessions start now on the workstreams that do not need this plan text on master, and link this plan's PR until it lands.
   - Files to read: the research PR https://github.com/garrytan/gbrain/pull/9619 (`docs/research/rust-engine/multi-user-prior-art.md`), on how proven databases serve many users without whole-database locks.
   - Sections changed: Recommendation, Dec 1 schedule (new), Phases (Track 2 start), Phase 2 and the approval record.
