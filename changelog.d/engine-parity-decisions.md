@@ -5,4 +5,4 @@
 
 ### Tests
 - The parity suite now covers every BrainEngine method (198 of 198). Raw-SQL methods (`executeRaw`, `executeRawDirect`, `runMigration`, `keywordBoundedRead`) run on the SQL engines and are marked `refuses:raw_sql` for the planned Rust engine; `holdSchemaMigrationLock` runs on Postgres only. A case declares the capability it needs with `requires`, and `test/engine-parity/arm-capabilities.ts` says which engine has it.
-- The eval-capture and anomaly cases no longer depend on fixed sleeps or on the JS clock's date, so they do not fail near UTC midnight or on a slow machine.
+- The eval-capture cutoff cases derive their cutoff from stored timestamps and wait for the wall clock to pass it; the anomaly case uses the date stored by the database rather than the JS clock date.
