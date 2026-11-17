@@ -41,7 +41,12 @@ import { cliRenderContext } from '../core/agent-output.ts';
 import { TERMINAL_STATES } from '../core/persistence/model.ts';
 import type { WriteReceipt } from '../core/persistence/types.ts';
 import { callReadersFor, parseCallAttendees, type CallAttendee } from '../core/meetings/attendees.ts';
-import { callScopeGate, callScopeStdio, type CallScopeGate, type CallsNotScopedReason, type UnboundStdio } from '../core/access/call-scope.ts';
+import { callScopeGate, type CallScopeGate, type CallsNotScopedReason, type UnboundStdio } from '../core/access/call-scope.ts';
+import { claudeUserMcpConfigPath, codexConfigPath } from '../core/bootstrap/host-specs.ts';
+import { readCodexTomlTable } from '../core/bootstrap/codex-toml.ts';
+import { localSetupRecords } from '../core/setup/local-receipts.ts';
+import { sharedStdioHarness } from './setup-serves.ts';
+import { registeredStdioMember } from '../core/stdio-member-flag.ts';
 import { normalizeReaders } from '../core/access/principals.ts';
 import { raisePageLabelGuard } from '../core/trust/page-write.ts';
 import { maintenanceTransaction } from '../core/persistence/attribution.ts';
@@ -91,6 +96,31 @@ export interface CallFileResult {
   readers_from?: 'computed' | 'stored' | 'pending';
   matched_by?: Record<string, 'email' | 'id' | 'name'>;
   unmatched?: string[];
+}
+
+/**
+ * The local stdio connections on this machine bound to nobody: each claude-code or codex entry `gbrain setup` installed
+ * for this brain home without --stdio-member (a plugin-served entry counts as unbound), and a harness several people talk
+ * to (OpenClaw, Hermes), which no --stdio-member can bind. An entry that cannot be read counts as unbound.
+ */
+export function callScopeStdio(): UnboundStdio[] {
+  const out: UnboundStdio[] = [];
+  for (const record of localSetupRecords().filter(r => r.status === 'installed')) {
+    let entry: unknown;
+    try {
+      if (record.harness === 'claude-code') {
+        const cfg = JSON.parse(readFileSync(claudeUserMcpConfigPath(), 'utf8')) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> };
+        entry = (record.scope === 'project' && record.projectDir ? cfg.projects?.[record.projectDir]?.mcpServers : cfg.mcpServers)?.[record.name];
+      } else if (record.harness === 'codex') entry = readCodexTomlTable(codexConfigPath(), ['mcp_servers', record.name]);
+      else continue;
+    } catch { entry = undefined; }
+    if (registeredStdioMember(entry) !== undefined) continue;
+    out.push({ harness: record.harness, name: record.name,
+      argv: ['gbrain', 'setup', record.harness, ...(record.name === 'gbrain' ? [] : ['--name', record.name]), ...(record.scope === 'project' ? ['--scope', 'project'] : [])] });
+  }
+  const shared = sharedStdioHarness();
+  if (shared) out.push({ harness: shared, argv: null });
+  return out;
 }
 
 /** .txt and .md files under `dir`, sorted; dot entries and symlinks are skipped. */

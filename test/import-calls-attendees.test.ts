@@ -224,6 +224,7 @@ for (const kind of testBackends()) {
     const ids: Record<string, string> = {};
     const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     let n = 0;
+    let one: PGLiteEngine;
     const fresh = () => { const d = temp('gbrain-calls-gate-'); writeCalls(d, ['2026-11-12 hiring debrief.md']); return d; };
     const prefixOf = () => `company/calls`;
     async function importOnce(extra: string[] = [], unboundStdio = NO_STDIO): Promise<any> {
@@ -249,8 +250,10 @@ for (const kind of testBackends()) {
       }
       await bindCredential(engine, { kind: 'token', id: ids.alice! }, { member: 'alice-example' });
       await setOwner(engine, OWNER);
+      one = new PGLiteEngine();
+      await one.connect({ engine: 'pglite' } as never); await one.initSchema();
     }, 240_000);
-    afterAll(async () => { await close?.(); }, 60_000);
+    afterAll(async () => { await one?.disconnect(); await close?.(); }, 60_000);
     beforeEach(async () => {
       await engine.executeRaw("DELETE FROM config WHERE key IN ('access.requester_scope_enforce', 'mcp.stdio_member')");
       await engine.executeRaw('UPDATE access_tokens SET reads_unscoped = NULL WHERE id::text = $1', [ids['legacy-bot']]);
@@ -298,7 +301,7 @@ for (const kind of testBackends()) {
 
     test('an unbound stdio connection in grace keeps the import open and still reads; bound by config it does not block', async () => {
       await setServesSince(new Date(Date.now() - 3600_000).toISOString());
-      const unbound = (): UnboundStdio[] => [{ harness: 'claude-code', name: 'gbrain', argv: ['gbrain', 'setup', 'claude-code', '--stdio-member', '<MEMBER>'] }];
+      const unbound = (): UnboundStdio[] => [{ harness: 'claude-code', name: 'gbrain', argv: ['gbrain', 'setup', 'claude-code'] }];
       const doc = await importOnce([], unbound);
       open(doc, 'stdio_unbound');
       expect(doc.notices[0].fix.command).toBe('gbrain setup claude-code --stdio-member owner-example');
@@ -333,9 +336,7 @@ for (const kind of testBackends()) {
     }, 120_000);
 
     test('a one-person brain, and an owner with group-chat audiences, import exactly as before', async () => {
-      const one = new PGLiteEngine();
-      await one.connect({ engine: 'pglite' } as never); await one.initSchema();
-      try {
+      {
         await one.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', [SRC]);
         const before = await importJson(one, fresh());
         await one.executeRaw("INSERT INTO access_members (id, kind) VALUES ($1, 'person'), ('room-a-example', 'audience'), ('room-b-example', 'audience')", [OWNER]);
@@ -349,7 +350,7 @@ for (const kind of testBackends()) {
         }
         const [row] = await one.executeRaw<{ frontmatter: Record<string, unknown> }>('SELECT frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [SRC, SLUG.debrief]);
         expect(row!.frontmatter.readable_by).toBeUndefined();
-      } finally { await one.disconnect(); }
+      }
       expect(n).toBeGreaterThan(0);
       expect(prefixOf()).toBe('company/calls');
     }, 240_000);
@@ -357,6 +358,9 @@ for (const kind of testBackends()) {
 }
 
 describe('call import keeps calls to their attendees (pglite, git-backed)', () => {
+  let managed: PGLiteEngine;
+  beforeAll(async () => { managed = new PGLiteEngine(); await managed.connect({}); await managed.initSchema(); }, 120_000);
+  afterAll(async () => { await managed?.disconnect(); });
   test('the page file carries readable_by in the committed tree, and the guard is raised once it is committed', async () => {
     const fixture = temp('gbrain-calls-repo-');
     const brain = join(fixture, 'brain');
@@ -365,9 +369,6 @@ describe('call import keeps calls to their attendees (pglite, git-backed)', () =
     mkdirSync(calls);
     for (const args of [['init', '-q', '-b', 'main'], ['-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '-q', '--allow-empty', '-m', 'init']]) spawnSync('git', ['-C', brain, ...args]);
     writeFileSync(join(calls, '2026-11-12 hiring debrief.md'), CALLS['2026-11-12 hiring debrief.md']!);
-    const managed = new PGLiteEngine();
-    await managed.connect({});
-    await managed.initSchema();
     await managed.setConfig('sync.repo_path', brain);
     for (const id of [OWNER, 'carol-example', 'alice-example']) await managed.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
     await setOwner(managed, OWNER);
@@ -394,6 +395,6 @@ describe('call import keeps calls to their attendees (pglite, git-backed)', () =
         expect(JSON.parse(again.join('')).pages[0]).toMatchObject({ status: 'unchanged', readers: [OWNER, 'carol-example'], readers_from: 'stored' });
       }
       expect(await guardedNow()).toBe(1);
-    }).finally(async () => { await disposePersistenceConsumer(managed); await managed.disconnect(); });
+    }).finally(async () => { await disposePersistenceConsumer(managed); });
   }, 120_000);
 });

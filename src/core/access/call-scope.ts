@@ -21,12 +21,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import { readServesPolicy, SERVES_KEY } from '../search/private-visibility.ts';
-import { readFileSync } from 'node:fs';
-import { claudeUserMcpConfigPath, codexConfigPath } from '../bootstrap/host-specs.ts';
-import { readCodexTomlTable } from '../bootstrap/codex-toml.ts';
-import { localSetupRecords } from '../setup/local-receipts.ts';
-import { sharedStdioHarness } from '../../commands/setup-serves.ts';
-import { registeredStdioMember } from '../stdio-member-flag.ts';
 import { listMembers, type MemberRecord } from './members.ts';
 import { ownerView } from './owner.ts';
 import { REQUESTER_SCOPE_GRACE_DAYS, unscopedConnections } from './requester-scope.ts';
@@ -37,7 +31,7 @@ export const CALLS_NOT_SCOPED = 'calls_not_scoped';
 export type CallsNotScopedReason = 'owner_unset' | 'owner_inactive' | 'unbound_readers' | 'stdio_unbound';
 export const CALLS_NOT_SCOPED_REASONS: readonly CallsNotScopedReason[] = ['owner_unset', 'owner_inactive', 'unbound_readers', 'stdio_unbound'];
 
-/** A local stdio connection bound to nobody: the harness, and the setup command that binds it (null for a shared harness). */
+/** A local stdio connection bound to nobody: the harness, and the setup command that binds it without its member (null for a shared harness). */
 export interface UnboundStdio { harness: string; name?: string; argv: string[] | null }
 
 export type CallScopeGate =
@@ -56,7 +50,7 @@ const userFix = (argv: string[], why: string, verify: string[], inputs?: Action[
 
 /**
  * Whether new calls in this brain are kept to their attendees. `unboundStdio` lists the local stdio connections bound
- * to nobody (callScopeStdio reads them from this machine; tests pass their own).
+ * to nobody (the import reads them from this machine's harness entries; tests pass their own).
  */
 export async function callScopeGate(engine: BrainEngine, unboundStdio: () => UnboundStdio[], nowMs = Date.now()): Promise<CallScopeGate> {
   const serves = await readServesPolicy(engine);
@@ -94,7 +88,7 @@ export async function callScopeGate(engine: BrainEngine, unboundStdio: () => Unb
     const unbound = unboundStdio();
     if (unbound.length) {
       const first = unbound[0]!;
-      const argv = (first.argv ?? stdioBindRoute(owner).argv).map(a => a === '<MEMBER>' ? owner : a === '<HARNESS>' ? first.harness : a);
+      const argv = first.argv ? [...first.argv, '--stdio-member', owner] : stdioBindRoute(owner).argv.map(a => a === '<MEMBER>' ? owner : a === '<HARNESS>' ? first.harness : a);
       const how = first.argv ? `Tie it to the owner ${owner} with ${argv.join(' ')}. ` : stdioBindRoute(owner).text;
       return { applies: true, scoped: false, reason: 'stdio_unbound', notice: notice(
         `New calls were imported open to everyone who reads their source, as before: the ${unbound.map(u => u.harness).join(', ')} stdio connection on this machine is bound to nobody and still reads this brain, and it might be the owner's own assistant. ${how}The next import then keeps new calls to their attendees.`,
@@ -104,27 +98,3 @@ export async function callScopeGate(engine: BrainEngine, unboundStdio: () => Unb
   return { applies: true, scoped: true, owner, members };
 }
 
-/**
- * The local stdio connections on this machine bound to nobody: each claude-code or codex entry `gbrain setup` installed
- * for this brain home without --stdio-member (a plugin-served entry counts as unbound), and a harness several people talk
- * to (OpenClaw, Hermes), which no --stdio-member can bind. An entry that cannot be read counts as unbound.
- */
-export function callScopeStdio(): UnboundStdio[] {
-  const out: UnboundStdio[] = [];
-  for (const record of localSetupRecords().filter(r => r.status === 'installed')) {
-    let entry: unknown;
-    try {
-      if (record.harness === 'claude-code') {
-        const cfg = JSON.parse(readFileSync(claudeUserMcpConfigPath(), 'utf8')) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> };
-        entry = (record.scope === 'project' && record.projectDir ? cfg.projects?.[record.projectDir]?.mcpServers : cfg.mcpServers)?.[record.name];
-      } else if (record.harness === 'codex') entry = readCodexTomlTable(codexConfigPath(), ['mcp_servers', record.name]);
-      else continue;
-    } catch { entry = undefined; }
-    if (registeredStdioMember(entry) !== undefined) continue;
-    out.push({ harness: record.harness, name: record.name,
-      argv: ['gbrain', 'setup', record.harness, ...(record.name === 'gbrain' ? [] : ['--name', record.name]), ...(record.scope === 'project' ? ['--scope', 'project'] : []), '--stdio-member', '<MEMBER>'] });
-  }
-  const shared = sharedStdioHarness();
-  if (shared) out.push({ harness: shared, argv: null });
-  return out;
-}
