@@ -13,7 +13,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { opError } from '../core/ops/contract.ts';
 import { readStdinBounded } from '../core/interaction.ts';
 import { exportKeyEscrow, importKeyEscrow, keyringStatus, type KeyEscrow } from '../core/secret-store/keyring.ts';
-import { keysInUse, listEntries, reveal } from '../core/secret-store/store.ts';
+import { countsByRule, keysInUse, listEntries, reveal } from '../core/secret-store/store.ts';
 import { applyRestore, previewRestore } from '../core/secret-store/restore.ts';
 
 const HELP = `Usage: gbrain secrets <command>
@@ -55,9 +55,15 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
     const entries = await listEntries(engine, { sourceId: flag(rest, '--source'), slug: flag(rest, '--slug') });
     const spooled = (await import('../core/secret-store/spool.ts')).undrainedCount();
     const spoolLine = spooled ? [`${spooled} original(s) a publish redacted wait in this machine's spool for the store; maintenance or the next push moves them (gbrain secrets reveal reads them meanwhile).`] : [];
-    print(json, { entries, spooled }, [...(entries.length
+    const by_rule = await countsByRule(engine, flag(rest, '--source'));
+    const publish_redactions = await (await import('../core/git/redact-finish.ts')).publishRedactionCounts(engine, flag(rest, '--source'));
+    const ruleLines = [
+      ...Object.entries(by_rule).map(([rule, c]) => `${rule}: ${c.entries} entr${c.entries === 1 ? 'y' : 'ies'}, ${c.occurrences} occurrence(s)`),
+      ...Object.entries(publish_redactions.rules).map(([rule, c]) => `publish redactions on this machine, ${rule}: ${c.hits} hit(s) of ${c.values} value(s), ${c.signed_link} in a signed-link credential parameter (X-Amz-Credential=), ${c.bare} bare`),
+    ];
+    print(json, { entries, spooled, by_rule, publish_redactions }, [...(entries.length
       ? entries.map(e => `${e.id}  ${e.rule}  ${e.status}  ${e.source_id}  ${e.occurrences} occurrence(s)  ${e.slugs.join(', ') || '-'}${e.readable ? '' : '  (key ' + e.key_id + ' not on this host)'}`)
-      : ['No secret store entries.']), ...spoolLine].join('\n'));
+      : ['No secret store entries.']), ...ruleLines, ...spoolLine].join('\n'));
     return;
   }
   if (sub === 'reveal') {

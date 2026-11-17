@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { redactUnpushed, spoolSealer, type RedactOutcome, type RedactPreview } from '../src/core/git/redact-unpushed.ts';
-import { allowedLocally, drainSpool, openSpooled, readSpool, refreshAllowedCache, undrainedCount } from '../src/core/secret-store/spool.ts';
+import { allowedLocally, drainSpool, openSpooled, readSpool, refreshAllowedCache, spoolValue, undrainedCount } from '../src/core/secret-store/spool.ts';
 import { currentKey, macKeyOf } from '../src/core/secret-store/keyring.ts';
 import { backgroundPublish } from '../src/core/git/background-publish.ts';
 import { runSecrets } from '../src/commands/secrets.ts';
@@ -32,7 +32,7 @@ import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { secretPublishMaintenance } from '../src/core/git/redact-finish.ts';
+import { finishRedactions, secretPublishMaintenance, settlePublishRedactions } from '../src/core/git/redact-finish.ts';
 import { reveal, seal } from '../src/core/secret-store/store.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -496,7 +496,7 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
     });
   }, 300_000);
 
-  test('a background publish that runs past its 4x budget again for the same commit holds the pushes as publish_scan_unreadable', async () => {
+  test('a background publish past its 4x budget again holds the pushes as publish_scan_unreadable, new commits or not, until the remote branch moves', async () => {
     const c = managedCheckout();
     const before = git(c.remote, 'rev-parse', 'refs/heads/main');
     const log = overBudgetChild(c, true);
@@ -504,13 +504,136 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_secret_rebuild_unbounded' });
       await backgroundDone(c.root);
+      // A page write lands meanwhile: HEAD moves, and the hold must not turn into a fresh background run.
+      commit(c.root, 'notes/later.md', 'later\n');
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_scan_unreadable' });
-      for (let i = 0; i < 8 && (await w.effect()).state !== 'failed'; i++) await w.runEffects();
-      expect(await w.effect()).toMatchObject({ state: 'failed', error_code: 'targets_parked' });
+      await w.runEffects();
       expect(readFileSync(log, 'utf8').split('\n').filter(line => line.includes('--scan-timeout 1200'))).toHaveLength(1);
       expect(git(c.remote, 'rev-parse', 'refs/heads/main')).toBe(before);
       managedRemoteClean(c);
+
+      // The fix the hold names: a publish by hand with a longer budget moves the remote branch, and the backups go on.
+      const manual = spawnSync(process.execPath, [resolve(import.meta.dir, '../src/cli.ts'), 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets',
+        '--scan-timeout', '1200', '--path', c.root, '--json'], { encoding: 'utf8', env: process.env, timeout: 120_000 });
+      expect(JSON.parse(manual.stdout.trim().split('\n').pop()!)).toMatchObject({ outcome: 'pushed' });
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(backgroundPublish(c.root).state).toBe('none');
+      expect(git(c.remote, 'rev-parse', 'refs/heads/main')).toBe(git(c.root, 'rev-parse', 'HEAD'));
+      managedRemoteClean(c);
+    });
+  }, 300_000);
+
+  test('a page redaction that fails leaves the journal entry pending, and the next pass redacts the page', async () => {
+    const c = managedCheckout();
+    await managedWrite(c, databaseUrl, async w => {
+      expect(commitAndPush({ repo: c.root, cwd: c.root, paths: [], pushOnly: true, keepCheckout: true }).outcome).toBe('pushed');
+      await drainSpool(w.engine);
+      const failing = new Proxy(w.engine, { get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (prop === 'transaction') return () => Promise.reject(Object.assign(new Error('connection lost'), { code: 'pg_connection_lost' }));
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      expect(await finishRedactions(failing, c.root)).toMatchObject({ redactions: 0, pages: { pg_connection_lost: 1 } });
+      expect((await w.engine.getPage('notes/beta-example', { sourceId: w.sourceId }))!.compiled_truth).toContain(token);
+      expect(await finishRedactions(w.engine, c.root)).toMatchObject({ redactions: 1, pages: { redacted: 1 } });
+      const marker = MARKER.exec(readFileSync(join(c.root, 'notes/beta-example.md'), 'utf8'))!;
+      const page = (await w.engine.getPage('notes/beta-example', { sourceId: w.sourceId }))!;
+      expect(page.compiled_truth).not.toContain(token);
+      expect(page.compiled_truth).toContain(marker[0]);
+      expect(await finishRedactions(w.engine, c.root)).toMatchObject({ redactions: 0 });
+    });
+  }, 300_000);
+
+  /** A plain checkout (no managed worktree) whose sources live in a fresh brain at this arm. */
+  const withBrain = (home: string, run: (engine: BrainEngine) => Promise<void>) =>
+    withEnv({ GBRAIN_HOME: home, GBRAIN_SECRETS_ON_PUSH: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined }, async () => {
+      const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
+      try { await run(engine); } finally { await close(); }
+    });
+  const note = (body: string) => ({ type: 'note' as const, title: 'Example', compiled_truth: body, timeline: '', frontmatter: {} });
+
+  test('a spooled original the store already holds under another id stays spooled as a duplicate, and reveal still reads it', async () => {
+    const r = repo();
+    await withBrain(r.home, async engine => {
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['source-a', r.root]);
+      const sealed = await seal(engine, { sourceId: 'source-a', rule: 'github_token', value: token });
+      const id = spoolValue({ root: r.root, sourceId: 'source-a', rule: 'github_token', value: token });
+      expect(id).not.toBe(sealed.id);
+      expect(await drainSpool(engine)).toMatchObject({ moved: 0, remaining: 0 });
+      expect(readSpool().find(entry => entry.id === id)?.duplicate_of).toBe(sealed.id);
+      expect(undrainedCount()).toBe(0);
+      expect((await reveal(engine, id, 'test')).value).toBe(token);
+      expect(await engine.executeRaw('SELECT id FROM secret_store')).toEqual([{ id: sealed.id }]);
+    });
+  }, 120_000);
+
+  test('in a checkout that backs two sources, a spooled original goes to the source holding its file, so file and page carry the same marker', async () => {
+    const r = repo();
+    mkdirSync(join(r.root, 'sub'));
+    commit(r.root, 'sub/notes.md', `Deploy token ${token}\n`);
+    await withBrain(r.home, async engine => {
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2),($3,$3,$4)', ['source-a', r.root, 'source-b', join(r.root, 'sub')]);
+      await engine.putPage('notes', note(`Deploy token ${token}\n`), { sourceId: 'source-b' });
+      expect(commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true }).outcome).toBe('pushed');
+      await settlePublishRedactions(engine, r.root);
+      const marker = MARKER.exec(readFileSync(join(r.root, 'sub/notes.md'), 'utf8'))!;
+      expect((await engine.getPage('notes', { sourceId: 'source-b' }))!.compiled_truth).toContain(marker[0]);
+      expect(await engine.executeRaw('SELECT id, source_id FROM secret_store')).toEqual([{ id: marker[2], source_id: 'source-b' }]);
+      expectRemoteClean(r);
+    });
+  }, 180_000);
+
+  test('a folder of emails with presigned links: only each key id becomes a marker, one entry per value, one occurrence per hit, counted by rule', async () => {
+    const r = repo();
+    const keyIds = Array.from({ length: 6 }, (_, i) => 'AKIA' + 'Q7RZ' + String(i).padStart(2, '0') + 'X3M9P2K4W8');
+    const signature = 'a1b2c3d4'.repeat(8);
+    const link = (id: string, n: number) => `https://files-example.s3.amazonaws.com/reports/r${n}.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=${id}%2F20250101%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250101T000000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=${signature}`;
+    const emails = Array.from({ length: 20 }, (_, n): [string, string] => [`mail/msg-${String(n).padStart(2, '0')}.md`,
+      [`From: sender@example.invalid`, `Subject: Your report ${n}`, '', 'Download it here (the link expires in an hour):',
+        link(keyIds[n % 6]!, n), ...(n < 5 ? [link(keyIds[(n + 1) % 6]!, n + 100)] : []), ...(n === 19 ? [`The old key id was ${keyIds[0]} until rotation.`] : []), ''].join('\n')]);
+    mkdirSync(join(r.root, 'mail'));
+    for (const [file, body] of emails) writeFileSync(join(r.root, file), body);
+    git(r.root, 'add', 'mail'); git(r.root, 'commit', '-qm', 'import mail');
+    await withBrain(r.home, async engine => {
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['source-a', r.root]);
+      for (const [file, body] of emails) await engine.putPage(file.replace(/\.md$/, ''), note(body), { sourceId: 'source-a' });
+      const started = performance.now();
+      const result = commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true });
+      const wallMs = Math.round(performance.now() - started);
+      console.log(`[GST-2988 presigned-link fixture] 20 files, 26 hits, 6 values: publish with redaction took ${wallMs} ms`);
+      expect(wallMs).toBeLessThan(30_000);
+      expect(result.outcome).toBe('pushed');
+      const counts = { values: 6, hits: 26, signed_link: 25, bare: 1 };
+      expect(result.redaction).toMatchObject({ values: 6, rules: { aws_access_key: counts } });
+      expect(result.notices?.find(n => n.code === 'publish_secret_redacted')?.why)
+        .toContain('aws_access_key: 26 hit(s) of 6 value(s), 25 in a signed-link credential parameter (X-Amz-Credential=), 1 bare');
+      for (const id of keyIds) {
+        expect(git(r.remote, 'log', '--all', '--oneline', '-S', id)).toBe('');
+        expect(remoteObjects(r)).not.toContain(id);
+      }
+      for (const [file, body] of emails) {
+        const redacted = readFileSync(join(r.root, file), 'utf8');
+        expect(redacted).toContain('X-Amz-Credential=<REDACTED:aws_access_key:ss_');
+        expect(redacted).toContain(`%2F20250101%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250101T000000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=${signature}`);
+        expect(redacted.replace(new RegExp(MARKER.source, 'g'), (_, _rule, id) => openSpooled(id)!.value)).toBe(body);
+      }
+      expect(readSpool()).toHaveLength(6);
+      expect(readSpool().reduce((n, entry) => n + entry.occurrences.length, 0)).toBe(26);
+
+      await settlePublishRedactions(engine, r.root);
+      expect(undrainedCount()).toBe(0);
+      expect(await engine.executeRaw('SELECT count(*)::int AS n FROM secret_store')).toEqual([{ n: 6 }]);
+      expect(await engine.executeRaw('SELECT count(*)::int AS n FROM secret_store_occurrence WHERE commit_sha IS NOT NULL')).toEqual([{ n: 26 }]);
+      const listed = JSON.parse(await secretsOutput(engine, ['list', '--json']));
+      expect(listed.by_rule.aws_access_key.entries).toBe(6);
+      expect(listed.publish_redactions).toEqual({ redactions: 1, rules: { aws_access_key: counts } });
+      const human = await secretsOutput(engine, ['list']);
+      expect(human).toContain('aws_access_key: 6 entries');
+      expect(human).toContain('publish redactions on this machine, aws_access_key: 26 hit(s) of 6 value(s), 25 in a signed-link credential parameter (X-Amz-Credential=), 1 bare');
+      const marker = MARKER.exec(readFileSync(join(r.root, 'mail/msg-00.md'), 'utf8'))!;
+      expect((await engine.getPage('mail/msg-00', { sourceId: 'source-a' }))!.compiled_truth).toContain(marker[0]);
     });
   }, 300_000);
 });

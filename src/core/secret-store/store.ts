@@ -165,6 +165,15 @@ export async function listEntries(engine: BrainEngine, filter: { sourceId?: stri
   return rows.map(row => ({ ...row, occurrences: Number(row.occurrences), slugs: (row.slugs ?? []).filter(Boolean).sort(), readable: keyById(row.key_id) !== null }));
 }
 
+/** Entries and occurrences per rule, never a value. */
+export async function countsByRule(engine: BrainEngine, sourceId?: string): Promise<Record<string, { entries: number; occurrences: number }>> {
+  const rows = await engine.executeRaw<{ rule: string; entries: number | string; occurrences: number | string }>(
+    `SELECT s.rule, count(DISTINCT s.id) AS entries, count(o.entry_id) AS occurrences
+     FROM secret_store s LEFT JOIN secret_store_occurrence o ON o.entry_id=s.id
+     WHERE ($1::text IS NULL OR s.source_id=$1) GROUP BY s.rule ORDER BY s.rule`, [sourceId ?? null]);
+  return Object.fromEntries(rows.map(row => [row.rule, { entries: Number(row.entries), occurrences: Number(row.occurrences) }]));
+}
+
 /** True when this value is an entry the owner restored (status allowed): redactors leave it alone. */
 export async function isAllowed(engine: BrainEngine, sourceId: string, value: string): Promise<boolean> {
   const rows = await engine.executeRaw<{ key_id: string; value_mac: string }>("SELECT key_id,value_mac FROM secret_store WHERE source_id=$1 AND status='allowed'", [sourceId]);

@@ -82,6 +82,9 @@ publish. The details, and what is held back instead, are in
 [shared-checkout-git.md](shared-checkout-git.md#publish_secret_redacted).
 
 - Only the scanner's named rules redact. A value you restored with `gbrain secrets restore` is left alone.
+- A reader of the remote sees `<REDACTED:<rule>:ss_<12 hex>>` in place of each value, in a file and in a commit message
+  alike. Only the value is replaced: an AWS key id inside a presigned link becomes the marker and the rest of the URL
+  stays, so the link stays readable (it no longer works, and an expired one did not anyway).
 - A commit any remote-tracking ref already has is never rewritten; a value there still refuses the push.
 - The old commits stay on this machine for 7 days under `refs/gbrain/backup/redact-<time>-<sha>`.
 - To keep the old refusal instead: `gbrain config set secrets.on_push refuse`; `gbrain config set secrets.on_push redact`
@@ -100,7 +103,9 @@ publish. The details, and what is held back instead, are in
 spool on this machine, `~/.gbrain/secret-store/spool/` (directory 0700, one 0600 file per entry, the same key). The
 owner moves spooled entries into the store right after its push, and maintenance (the `bookkeeping_gc` phase) moves
 any that are left. `gbrain secrets reveal <id>` reads a spooled entry meanwhile, and `gbrain secrets list` (field `spooled` with
-`--json`) shows how many wait. An entry leaves the spool only once its store row reads back to the same original, so a
+`--json`) shows how many wait. `gbrain secrets list` also counts entries and occurrences by rule (`by_rule`), and what
+the publish redactions on this machine replaced by rule (`publish_redactions`): spans, values, and how many sat in a
+presigned link's `X-Amz-Credential=` parameter as opposed to bare. An entry leaves the spool only once its store row reads back to the same original, so a
 process that stops between its push and the move loses nothing: the next owner push or maintenance pass moves it. When
 neither the store nor the spool can be written, the push is held with `secret_store_unwritable`.
 

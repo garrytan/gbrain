@@ -130,13 +130,13 @@ export async function drainSpool(engine: BrainEngine): Promise<{ moved: number; 
   if (!entries.length) return { moved: 0, remaining: 0 };
   await refreshAllowedCache(engine).catch(() => undefined);
   const { sealWithId, recordOccurrence, entryRow, openEntry } = await import('./store.ts');
-  const { sourcesForRoot } = await import('../git/redact-finish.ts');
+  const { sourceForPath } = await import('../git/redact-finish.ts');
   let moved = 0;
   for (const entry of entries) {
     let opened: ReturnType<typeof openSpooled>;
     try { opened = openSpooled(entry.id); } catch { continue; }
     if (!opened) continue;
-    const sourceId = entry.source_id ?? (await sourcesForRoot(engine, entry.root))[0] ?? null;
+    const sourceId = entry.source_id ?? await sourceForPath(engine, entry.root, entry.occurrences.find(o => o.line !== null)?.path ?? null);
     if (!sourceId) continue;
     const outcome = await sealWithId(engine, { id: entry.id, sourceId, rule: entry.rule, value: opened.value });
     if (outcome.kind === 'duplicate') { writeEntry({ ...entry, duplicate_of: outcome.existing }); continue; }

@@ -9,5 +9,5 @@
 
 ### Added
 - `gbrain git redact-unpushed --source <id>`: preview what a publish would redact, then `--apply --expect <hash>`.
-- `gbrain secrets list` shows how many redacted originals still wait in this machine's spool (`spooled` with `--json`).
+- `gbrain secrets list` shows how many redacted originals still wait in this machine's spool (`spooled` with `--json`), entries and occurrences by rule (`by_rule`), and what publish redactions replaced by rule, including how many AWS key ids sat in a presigned link's `X-Amz-Credential=` parameter as opposed to bare (`publish_redactions`). The `publish_secret_redacted` notice carries the same counts.
 - Notices `publish_secret_redacted`, `publish_secret_held_back`, `publish_secret_side_refs`, `publish_secret_unsigned`, `secret_store_spooled`; codes `publish_secret_rebuild_race`, `publish_secret_rebuild_unbounded`.

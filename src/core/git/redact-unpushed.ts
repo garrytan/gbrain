@@ -77,6 +77,8 @@ export const BACKUP_KEEP_DAYS = 7;
 export const HELD_TRAILER = 'Gbrain-Redact-Held';
 export const REDACTIONS_FILE = 'redactions.jsonl';
 export const DEFAULT_REBUILD_BUDGET_MS = 300_000;
+/** A value right after this is a presigned link's key id (`X-Amz-Credential=`, also `=3D` in quoted-printable mail and `%3D` URL-encoded). */
+export const SIGNED_LINK_CREDENTIAL = /X-Amz-Credential(?:=|=3D|%3D)$/i;
 /** A history no remote-tracking ref bounds is rebuilt only up to this many commits. */
 const UNBOUNDED_COMMITS = 20_000;
 const MAX_ATTEMPTS = 3;
@@ -108,6 +110,8 @@ export interface RedactPreview {
   root: string; branch: string; head: string; base: string; commits: number; hash: string;
   findings: Array<{ commit: string; path: string; line: number; pattern: string; fingerprint: string }>;
   paths: Array<{ path: string; spans: number }>; messages: string[]; held: Array<{ path: string; reason: HeldReason }>; signed: string[];
+  /** Per rule: distinct values, replaced spans, and how many of those sat right after a signed link's credential parameter. */
+  rules: Record<string, { values: number; hits: number; signed_link: number; bare: number }>;
 }
 export interface RedactOutcome extends RedactPreview {
   redacted: true; old_head: string; new_head: string; push_target: string; backup_ref: string; held_commit: string | null;
@@ -354,11 +358,21 @@ function entryAt(trees: Map<string, Entry[]>, tree: string | null, path: string)
 function previewOf(p: Plan): RedactPreview {
   const spans = new Map<string, number>();
   for (const b of p.blobs.values()) spans.set(b.path, (spans.get(b.path) ?? 0) + b.spans.length);
+  const rules: RedactPreview['rules'] = {};
+  const counts = (rule: string) => rules[rule] ??= { values: 0, hits: 0, signed_link: 0, bare: 0 };
+  for (const rule of p.values.values()) counts(rule).values++;
+  for (const { text, spans: own } of [...p.blobs.values(), ...p.messages.values()]) {
+    for (const s of own) {
+      const c = counts(s.rule);
+      c.hits++;
+      if (SIGNED_LINK_CREDENTIAL.test(text.slice(Math.max(0, s.start - 24), s.start))) c.signed_link++; else c.bare++;
+    }
+  }
   return { root: p.root, branch: p.branch.replace(/^refs\/heads\//, ''), head: p.head, base: p.base, commits: p.commits.length, hash: p.hash,
     findings: p.scan.findings.map(f => ({ commit: f.commit, path: f.path, line: f.line, pattern: f.pattern, fingerprint: f.fingerprint })),
     paths: [...spans].map(([path, n]) => ({ path, spans: n })).sort((a, b) => a.path.localeCompare(b.path)),
     messages: [...p.messages.keys()], held: [...p.held].map(([path, reason]) => ({ path, reason })).sort((a, b) => a.path.localeCompare(b.path)),
-    signed: p.commits.filter(c => c.signed).map(c => c.sha) };
+    signed: p.commits.filter(c => c.signed).map(c => c.sha), rules };
 }
 
 export interface RedactOptions {
@@ -578,15 +592,15 @@ function rebuild(p: Plan, sealer: Sealer, deadline: number): RedactOutcome {
 
   moveBranch(p, newHead, blobMap, ids, deadline);
   const occurrences: Array<{ id: string; commit: string; path: string; line: number | null }> = [];
-  for (const b of p.blobs.values()) for (const value of new Set(b.spans.map(s => s.value))) {
-    occurrences.push({ id: ids.get(value)!, commit: map.get(b.first)!, path: b.path, line: b.text.slice(0, b.text.indexOf(value)).split('\n').length });
+  for (const b of p.blobs.values()) for (const s of b.spans) {
+    occurrences.push({ id: ids.get(s.value)!, commit: map.get(b.first)!, path: b.path, line: b.text.slice(0, s.start).split('\n').length });
   }
-  for (const [sha, m] of p.messages) for (const value of new Set(m.spans.map(s => s.value))) occurrences.push({ id: ids.get(value)!, commit: map.get(sha)!, path: MESSAGE_PATH, line: null });
+  for (const [sha, m] of p.messages) for (const s of m.spans) occurrences.push({ id: ids.get(s.value)!, commit: map.get(sha)!, path: MESSAGE_PATH, line: null });
   sealer.record(occurrences);
   const sideRefs = sideRefsHolding(p, deadline);
   const preview = previewOf(p);
   const entry = { t: new Date().toISOString(), root: p.root, top: p.top, branch: branchRef, backup_ref: backupRef, old_head: p.head, new_head: newHead, push_target: tip,
-    map: changedMap, paths: [...p.touched], held: [...p.held.keys()], spooled: sealer.spooled(), finished: false };
+    map: changedMap, paths: [...p.touched], held: [...p.held.keys()], spooled: sealer.spooled(), rules: preview.rules, finished: false };
   const loc = ledgerLocation(p.root);
   if (loc) { mkdirSync(join(loc.common, 'gbrain'), { recursive: true }); appendFileSync(join(loc.common, 'gbrain', REDACTIONS_FILE), `${JSON.stringify(entry)}\n`); }
   const outcome: RedactOutcome = { ...preview, redacted: true, old_head: p.head, new_head: newHead, push_target: tip, backup_ref: backupRef, held_commit: heldCommit,
@@ -682,7 +696,7 @@ function sideRefsHolding(p: Plan, deadline: number): string[] {
 function redactionNotices(o: RedactOutcome): Notice[] {
   const notices: Notice[] = [];
   const readOnly = (argv: string[], why: string, docs: string): Action => ({ argv, consent: [], actor: 'agent', requires_exclusive: false, why, docs });
-  if (o.values) notices.push({ code: 'publish_secret_redacted', kind: 'info', why: `${o.values} value(s) that look like secrets in ${o.paths.length} file(s)${o.messages.length ? ` and ${o.messages.length} commit message(s)` : ''} of ${o.rebuilt} unpushed commit(s) were replaced by secret store markers before the push. The originals are in the secret store; ${o.backup_ref} keeps the old commits on this machine for ${BACKUP_KEEP_DAYS} days. A real credential still needs rotating by its owner.`,
+  if (o.values) notices.push({ code: 'publish_secret_redacted', kind: 'info', why: `${o.values} value(s) that look like secrets in ${o.paths.length} file(s)${o.messages.length ? ` and ${o.messages.length} commit message(s)` : ''} of ${o.rebuilt} unpushed commit(s) were replaced by secret store markers before the push (${Object.entries(o.rules).map(([rule, c]) => `${rule}: ${c.hits} hit(s) of ${c.values} value(s), ${c.signed_link} in a signed-link credential parameter (X-Amz-Credential=), ${c.bare} bare`).join('; ')}). The originals are in the secret store; ${o.backup_ref} keeps the old commits on this machine for ${BACKUP_KEEP_DAYS} days. A real credential still needs rotating by its owner.`,
     fix: readOnly(['gbrain', 'secrets', 'list', '--json'], 'Lists the store entries and where their markers are, never a value.', `${DOCS}#publish_secret_redacted`) });
   if (o.held.length) notices.push({ code: 'publish_secret_held_back', kind: 'degraded', why: `${o.held.length} file(s) were held back from the push and stay only on this machine: ${o.held.map(h => `${h.path} (${h.reason})`).join(', ')}. The pushed commits keep the remote's version of them; local commit ${o.held_commit?.slice(0, 12)} on top of the branch keeps yours.`,
     user_message: `Some files were not pushed because the secret scan cannot vouch for them (${o.held.map(h => h.path).slice(0, 3).join(', ')}). Review them and push them yourself if they are safe?`,

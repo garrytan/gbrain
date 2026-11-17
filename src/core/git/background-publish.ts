@@ -5,7 +5,8 @@
  * detached child with BACKGROUND_BUDGET_FACTOR times the budget (gbrain git commit-push --scan-timeout, which bounds
  * the scan and the redaction) and moves on: the root's Git effects retry as a dependency wait while it runs, and
  * effects of other roots are not held. The child's JSON result is kept beside the commit ledger; the next attempt
- * reads it. A run that fails again for the same commit is final: its error holds the effects as before.
+ * reads it. A run that ends over budget again, or racing new commits (publish_secret_rebuild_race), is final: the
+ * effects are held as publish_scan_unreadable until the remote branch moves (a publish by hand), whatever HEAD does.
  */
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,11 +21,11 @@ export const BACKGROUND_BUDGET_MS = BACKGROUND_BUDGET_FACTOR * DEFAULT_SCAN_TIME
 /** A background run older than this is treated as gone (fetches, pushes and both budgets fit well inside it). */
 const MAX_AGE_MS = 2 * BACKGROUND_BUDGET_MS + 600_000;
 
-interface State { pid: number; head: string; budget_ms: number; started_at: string; out: string }
+interface State { pid: number; head: string; remote_tip: string; budget_ms: number; started_at: string; out: string }
 export type BackgroundPublish =
   | { state: 'none' }
   | { state: 'running'; head: string; started_at: string }
-  | { state: 'done'; head: string; doc: Record<string, unknown> | null };
+  | { state: 'done'; head: string; remote_tip: string; doc: Record<string, unknown> | null };
 
 function paths(root: string): { dir: string; state: string } | null {
   const loc = ledgerLocation(root);
@@ -50,7 +51,7 @@ export function backgroundPublish(root: string, now = Date.now()): BackgroundPub
   if (isPidAlive(state.pid) && now - Date.parse(state.started_at) < MAX_AGE_MS) return { state: 'running', head: state.head, started_at: state.started_at };
   let doc: Record<string, unknown> | null = null;
   try { doc = JSON.parse(readFileSync(state.out, 'utf8').trim().split('\n').filter(Boolean).pop() ?? '') as Record<string, unknown>; } catch { /* no result */ }
-  return { state: 'done', head: state.head, doc };
+  return { state: 'done', head: state.head, remote_tip: state.remote_tip ?? '', doc };
 }
 
 /** Forgets the recorded background run (its result has been read). */
@@ -61,8 +62,8 @@ export function clearBackgroundPublish(root: string): void {
   rmSync(p.state, { force: true });
 }
 
-/** Starts the detached publish of root with the longer budget; head is the commit it was started for. */
-export function startBackgroundPublish(root: string, head: string, cli: { cmd: string; argsPrefix: string[] }): void {
+/** Starts the detached publish of root with the longer budget; head is the commit it was started for, remoteTip the remote branch then. */
+export function startBackgroundPublish(root: string, head: string, remoteTip: string, cli: { cmd: string; argsPrefix: string[] }): void {
   const p = paths(root);
   if (!p) return;
   mkdirSync(p.dir, { recursive: true });
@@ -73,7 +74,7 @@ export function startBackgroundPublish(root: string, head: string, cli: { cmd: s
       '--scan-timeout', String(Math.round(BACKGROUND_BUDGET_MS / 1000)), '--path', root, '--json'],
     { detached: true, stdio: ['ignore', fd, 'ignore'], env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '600', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '600' } });
     child.unref();
-    const state: State = { pid: child.pid ?? 0, head, budget_ms: BACKGROUND_BUDGET_MS, started_at: new Date().toISOString(), out };
+    const state: State = { pid: child.pid ?? 0, head, remote_tip: remoteTip, budget_ms: BACKGROUND_BUDGET_MS, started_at: new Date().toISOString(), out };
     const tmp = `${p.state}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
     renameSync(tmp, p.state);

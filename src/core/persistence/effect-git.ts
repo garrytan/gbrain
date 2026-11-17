@@ -676,13 +676,15 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
     const head = await git(session, ['rev-parse', '--verify', 'HEAD']);
     if (head.code !== 0) throw gitFailure('Cannot read the canonical checkout\'s HEAD.', 'git rev-parse HEAD failed, so nothing was scanned or pushed.');
     const sha = pushableHead(root, head.stdout.trim()), short = merge.stdout.trim().replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
-    if (onPushMode() === 'redact') fromBackground = settleBackground(root, sha);
+    const redact = onPushMode() === 'redact';
+    if (redact && backgroundPublish(root).state === 'running') throw backgroundRunning(root);
     const unavailable = () => opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
       `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
       { fix: effectStatusFix });
     const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
     if (listed.code !== 0) throw unavailable();
     const tip = listed.stdout.split('\n').map(line => line.split('\t')).find(([, name]) => name === ref)?.[0] ?? '';
+    if (redact) fromBackground = settleBackground(root, tip);
     if (!tip || (await git(session, ['merge-base', '--is-ancestor', tip, sha])).code === 0) {
       const scan = scanRange(root, tip, sha, scanBudgetMs);
       if (!scan.timed_out) {
@@ -704,28 +706,30 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
           docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } }));
     }
     signal?.throwIfAborted();
-    return publishKeepingCheckout(root, signal, sha);
+    return publishKeepingCheckout(root, signal, sha, tip);
   });
   return fromBackground && result.push === 'committed' && !('redaction' in result && result.redaction) ? { ...result, redaction: fromBackground } : result;
 }
 
 /**
  * GST-2988: the background publish this root started, if any. Running: this root's effects wait (a dependency retry).
- * Failed again over budget for this very commit: final, held as publish_scan_unreadable. Otherwise its record is
- * cleared and the push goes on; a redaction it made is returned so the caller settles it in the database.
+ * Ended over budget again, or racing new commits: final, held as publish_scan_unreadable while the remote branch is
+ * where it was when the run started (`remoteTip`; new local commits do not lift it, a publish by hand does).
+ * Otherwise its record is cleared and the push goes on; a redaction it made is returned so the caller settles it.
  */
-function settleBackground(root: string, sha: string): PushRedaction | undefined {
+function settleBackground(root: string, remoteTip: string): PushRedaction | undefined {
   const background = backgroundPublish(root);
   if (background.state === 'none') return undefined;
   if (background.state === 'running') throw backgroundRunning(root);
   const doc = background.doc;
-  if (doc && typeof doc.code === 'string' && overBudget(doc.code, typeof doc.detail === 'string' ? doc.detail : null) && background.head === sha) {
-    throw heldSecret(root, opError('publish_scan_unreadable', `Publishing ${root} ran past its budget again in the background, with ${BACKGROUND_BUDGET_FACTOR} times the budget (${String(doc.message ?? doc.code).slice(0, 300)}). Nothing was pushed.`,
+  const detail = typeof doc?.detail === 'string' ? doc.detail : null;
+  if (doc && typeof doc.code === 'string' && (overBudget(doc.code, detail) || doc.code === 'publish_secret_rebuild_race') && background.remote_tip === remoteTip) {
+    throw heldSecret(root, opError('publish_scan_unreadable', `Publishing ${root} did not finish in the background either, with ${BACKGROUND_BUDGET_FACTOR} times the budget (${String(doc.message ?? doc.code).slice(0, 300)}). Nothing was pushed, and the pushes stay held until the remote branch moves.`,
       `Run gbrain git commit-push --push-only --keep-checkout --scan-secrets --scan-timeout <seconds> --path ${root} by hand with a longer budget, or fetch the remote so a remote-tracking ref bounds the unpushed range.`,
-      { detail: typeof doc.detail === 'string' ? doc.detail : undefined, fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+      { ...(detail ? { detail } : {}), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['gbrain', 'git', 'redact-unpushed', '--path', root],
         why: 'Read-only: shows how many commits and values the publish covers.',
-        user_message: `Publishing ${root} keeps running past its time budget, even with ${BACKGROUND_BUDGET_FACTOR} times the budget in the background, so nothing was pushed. Run it by hand with a longer --scan-timeout?`,
+        user_message: `Publishing ${root} keeps running past its time budget (or racing new commits), even with ${BACKGROUND_BUDGET_FACTOR} times the budget in the background, so nothing was pushed. Run it by hand with a longer --scan-timeout? The held pushes go on once the remote branch moves.`,
         docs: 'docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded' } }));
   }
   clearBackgroundPublish(root);
@@ -747,7 +751,7 @@ const KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS = 600_000;
  * would stall lease renewals. The child is this process's own executable, never a `gbrain` found on PATH (an older
  * install would not know the flag); a busy publish lock fails at once and the effect retries.
  */
-async function publishKeepingCheckout(root: string, signal?: AbortSignal, head?: string): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction }> {
+async function publishKeepingCheckout(root: string, signal?: AbortSignal, head?: string, remoteTip = ''): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction }> {
   const { CHILD_ENV, resolveChildCliInvocation } = await import('../minions/job-isolation.ts');
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
@@ -764,7 +768,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal, head?:
     ...(doc.redaction && typeof doc.redaction === 'object' ? { redaction: { ...(doc.redaction as PushRedaction), ...(Array.isArray(doc.notices) ? { notices: doc.notices } : {}) } } : {}) };
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     if (head && onPushMode() === 'redact' && overBudget(doc.code, typeof doc.detail === 'string' ? doc.detail : null)) {
-      startBackgroundPublish(root, head, cli);
+      startBackgroundPublish(root, head, remoteTip, cli);
       throw backgroundRunning(root);
     }
     const error = opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',

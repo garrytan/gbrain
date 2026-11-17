@@ -41,6 +41,39 @@ async function sourceRoots(engine: BrainEngine, root: string): Promise<Array<{ i
   }
   return [...out].map(([id, path]) => ({ id, path })).sort((a, b) => Number(b.path === target) - Number(a.path === target) || a.id.localeCompare(b.id));
 }
+/** The source whose checkout holds `path` (relative to `root`) most closely, else the first source of `root`. */
+export async function sourceForPath(engine: BrainEngine, root: string, path: string | null): Promise<string | null> {
+  const sources = await sourceRoots(engine, root);
+  const target = path ? join(canonical(root), path) : null;
+  const holding = target ? sources.filter(s => inside(target, s.path)).sort((a, b) => b.path.length - a.path.length) : [];
+  return (holding[0] ?? sources[0])?.id ?? null;
+}
+
+export type RuleCounts = Record<string, { values: number; hits: number; signed_link: number; bare: number }>;
+/** What the publish redactions journaled beside the checkouts of these sources counted, by rule (summed over redactions). */
+export async function publishRedactionCounts(engine: BrainEngine, sourceId?: string): Promise<{ redactions: number; rules: RuleCounts }> {
+  const out = { redactions: 0, rules: {} as RuleCounts };
+  const rows = await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE AND ($1::text IS NULL OR id=$1)', [sourceId ?? null]);
+  const seen = new Set<string>();
+  for (const { local_path } of rows) {
+    const loc = ledgerLocation(local_path);
+    if (!loc || seen.has(loc.common)) continue;
+    seen.add(loc.common);
+    let lines: string[] = [];
+    try { lines = readFileSync(join(loc.common, 'gbrain', REDACTIONS_FILE), 'utf8').split('\n').filter(Boolean); } catch { continue; }
+    for (const line of lines) {
+      let entry: { old_head?: string; rules?: RuleCounts };
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (!entry.old_head) continue;
+      out.redactions++;
+      for (const [rule, c] of Object.entries(entry.rules ?? {})) {
+        const sum = out.rules[rule] ??= { values: 0, hits: 0, signed_link: 0, bare: 0 };
+        sum.values += c.values; sum.hits += c.hits; sum.signed_link += c.signed_link; sum.bare += c.bare;
+      }
+    }
+  }
+  return out;
+}
 export async function sourcesForRoot(engine: BrainEngine, root: string): Promise<string[]> {
   return (await sourceRoots(engine, root)).map(s => s.id);
 }
@@ -83,6 +116,7 @@ export async function finishRedactions(engine: BrainEngine, root: string): Promi
   if (!found?.pending.length) return out;
   const { redactPageForPublish } = await import('../repair/secret-spans.ts');
   for (const entry of found.pending) {
+    let failed = false;
     for (const source of await sourceRoots(engine, entry.top)) {
       const [row] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [source.id]);
       const next = row?.last_commit ? entry.map[row.last_commit] : undefined;
@@ -95,10 +129,12 @@ export async function finishRedactions(engine: BrainEngine, root: string): Promi
         if (!rel || relativeEscapesRoot(rel)) continue;
         let outcome: string;
         try { outcome = await redactPageForPublish(engine, source.id, resolveSlugForPath(rel.split(sep).join('/'))); }
-        catch (error) { outcome = (error as { code?: string }).code ?? 'failed'; }
+        catch (error) { outcome = (error as { code?: string }).code ?? 'failed'; failed = true; }
         out.pages[outcome] = (out.pages[outcome] ?? 0) + 1;
       }
     }
+    // A page redaction that threw leaves the entry pending, so a later pass redacts that page too.
+    if (failed) continue;
     appendFileSync(found.file, `${JSON.stringify({ t: new Date().toISOString(), done: `${entry.old_head}>${entry.new_head}` })}\n`);
     out.redactions++;
   }
