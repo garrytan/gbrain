@@ -496,7 +496,7 @@
         "kind": "variable",
         "name": "DEGRADED_STAGES",
         "signature": [
-          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\"]"
+          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\", \"contested_unavailable\"]"
         ]
       },
       {
@@ -510,14 +510,14 @@
         "kind": "type",
         "name": "DegradedStage",
         "signature": [
-          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\""
+          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\""
         ]
       },
       {
         "kind": "interface",
         "members": [
           "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"timeout\" | \"provider_error\" | \"no_provider\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"rate_limited\" | \"unreachable\" | \"auth\" | \"egress_denied\" | \"embedding_disabled\" | \"skipped_after_timeout\" | undefined",
-          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\""
+          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\""
         ],
         "name": "DegradedStageEntry"
       },
@@ -1325,7 +1325,7 @@
         "kind": "variable",
         "name": "RANKING_ONLY_DEGRADED_STAGES",
         "signature": [
-          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\">"
+          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\">"
         ]
       },
       {
@@ -1525,7 +1525,7 @@
           "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
-          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; } | undefined",
+          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; } | undefined",
           "feedback_boost?: number | undefined",
           "follow_up?: { op: \"recall\"; args: Record<string, string>; } | undefined",
           "fused_score?: number | undefined",
@@ -4057,6 +4057,7 @@
           "claim_value?: number | null | undefined",
           "confidence?: number | undefined",
           "context?: string | null | undefined",
+          "dimension?: string | null | undefined",
           "embedding?: Float32Array<ArrayBufferLike> | null | undefined",
           "embedding_model?: string | null | undefined",
           "entity_slug?: string | null | undefined",
@@ -4069,6 +4070,7 @@
           "source_session?: string | null | undefined",
           "valid_from?: Date | undefined",
           "valid_until?: Date | null | undefined",
+          "value?: string | null | undefined",
           "visibility?: FactVisibility | undefined"
         ],
         "name": "NewFact"
@@ -6750,6 +6752,7 @@
           "member?: { id: string; groups: string[]; } | null | undefined",
           "minTrust?: \"user_confirmed\" | \"operator_curated\" | \"tool_observed\" | \"agent_written\" | \"unknown\" | \"external_untrusted\" | undefined",
           "principal?: { kind: \"oauth_client\" | \"legacy_token\"; id: string; } | undefined",
+          "privateFacts?: { mode: \"granted_sources\"; sources: string[]; } | undefined",
           "privatePages?: { mode: \"granted_sources\"; sources: string[]; } | undefined",
           "readsUnscoped?: boolean | undefined",
           "scopes: string[]",
@@ -9606,7 +9609,7 @@
         "kind": "variable",
         "name": "DEGRADED_STAGES",
         "signature": [
-          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\"]"
+          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\", \"contested_unavailable\"]"
         ]
       },
       {
@@ -9620,14 +9623,14 @@
         "kind": "type",
         "name": "DegradedStage",
         "signature": [
-          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\""
+          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\""
         ]
       },
       {
         "kind": "interface",
         "members": [
           "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"timeout\" | \"provider_error\" | \"no_provider\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"rate_limited\" | \"unreachable\" | \"auth\" | \"egress_denied\" | \"embedding_disabled\" | \"skipped_after_timeout\" | undefined",
-          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\""
+          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\""
         ],
         "name": "DegradedStageEntry"
       },
@@ -10179,7 +10182,7 @@
         "kind": "variable",
         "name": "RANKING_ONLY_DEGRADED_STAGES",
         "signature": [
-          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\">"
+          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\">"
         ]
       },
       {
@@ -10379,7 +10382,7 @@
           "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
-          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; } | undefined",
+          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; } | undefined",
           "feedback_boost?: number | undefined",
           "follow_up?: { op: \"recall\"; args: Record<string, string>; } | undefined",
           "fused_score?: number | undefined",

@@ -184,6 +184,15 @@ async function writeStatus(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: st
       patch.fingerprint ?? null, patch.fingerprint !== undefined]);
 }
 
+/**
+ * #9548: a disable (exclusive) and each reconcile batch reading the source's generation (shared) take this first, before page
+ * keys or status rows: a journaled disable locks its origin pages, which a cross-source batch holding the status row links to.
+ */
+async function lockMentionSources(tx: Pick<BrainEngine, 'executeRaw'>, sourceIds: string[], shared: boolean): Promise<void> {
+  await tx.executeRaw(`SELECT count(${shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock'}(hashtext('gbrain:mention-publish:' || s)::bigint))
+    FROM (SELECT DISTINCT s FROM unnest($1::text[]) AS x(s) ORDER BY s) k`, [sourceIds]);
+}
+
 /** Run `fn` in a transaction; on a managed brain, as a coordinated write for `sourceId` (page_aliases is guarded). */
 async function aliasWrite<T>(engine: BrainEngine, managed: boolean, sourceId: string, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
   if (!managed) return engine.transaction(fn);
@@ -235,18 +244,26 @@ export async function writePageAliases(tx: BrainEngine, slug: string, sourceId: 
 
 /** Turn the index off for one source: plain mention links, derived aliases, entries and page state go; typed_ner rows stay. */
 async function disableSource(engine: BrainEngine, managed: boolean, sourceId: string): Promise<number> {
-  let removed = 0;
-  await aliasWrite(engine, managed, sourceId, async tx => {
-    const rows = await tx.executeRaw<{ id: number }>(
+  let beliefs = null as ReturnType<typeof unmanagedBeliefPoint> | null;
+  const removed = await aliasWrite(engine, managed, sourceId, async tx => {
+    await lockMentionSources(tx, [sourceId], false);
+    // #9548: on a belief-covered source the removed links are journaled like the reconcile's; only origins whose page keys are held are swept.
+    const origins = (await beliefCoveredSources(tx, [sourceId])).has(sourceId) ? (await tx.executeRaw<{ slug: string }>(
+      `SELECT DISTINCT f.slug FROM links l JOIN pages f ON f.id = l.from_page_id
+        WHERE f.source_id = $1 AND l.link_source = 'mentions' AND (l.link_kind IS NULL OR l.link_kind = 'plain')`, [sourceId])).map(r => r.slug) : null;
+    const unlink = async () => (await tx.executeRaw<{ id: number }>(
       `DELETE FROM links l USING pages f
         WHERE f.id = l.from_page_id AND f.source_id = $1 AND l.link_source = 'mentions'
-          AND (l.link_kind IS NULL OR l.link_kind = 'plain') RETURNING l.id`, [sourceId]);
-    removed = rows.length;
+          AND (l.link_kind IS NULL OR l.link_kind = 'plain') AND ($2::text[] IS NULL OR f.slug = ANY($2::text[])) RETURNING l.id`, [sourceId, origins])).length;
+    if (origins?.length) beliefs = unmanagedBeliefPoint(sourceId, origins, 'mention_pass');
+    const unlinked = beliefs ? await beliefs.run(tx, unlink) : await unlink();
     await tx.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND origin IN ('declared','subject')`, [sourceId]);
     await tx.executeRaw('DELETE FROM mention_gazetteer_entries WHERE source_id = $1', [sourceId]);
     await tx.executeRaw('DELETE FROM page_mention_state WHERE source_id = $1', [sourceId]);
     await writeStatus(tx, sourceId, { state: 'disabled', pending: 0, error: null, bumpGeneration: true, fingerprint: null });
+    return unlinked;
   });
+  await beliefs?.commit(engine);
   return removed;
 }
 
@@ -555,6 +572,7 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
     // page keys are locked first, as every publisher locks them before the page rows.
     let beliefs = null as ReturnType<typeof unmanagedBeliefPoint> | null;
     const outcome = await engine.transaction(async tx => {
+      await lockMentionSources(tx, genSources, true);
       const journaled = (await beliefCoveredSources(tx, [sourceId])).has(sourceId);
       if (journaled) await tx.lockPageKeys(readable.map(p => ({ sourceId: p.source_id, slug: p.slug })));
       if (!sameGenerations(generations, await readGenerations(tx, genSources, true))) return null;
