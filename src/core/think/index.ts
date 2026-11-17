@@ -686,8 +686,7 @@ export async function runThink(
   // legitimately-empty one for MCP/remote callers.
   for (const w of gather.warnings) warnings.push(w);
   if (gather.diagnostics.window?.dropped) warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
-  // #5575 A6: every page and take reaches the prompt with its trust tier. GST-2900: a caller whose fact reads are
-  // world-only gets no fence row held from it (GST-2891), in the prompt or in the extractive answer.
+  // #5575 A6: every page and take reaches the prompt with its trust tier; GST-2900 drops held fence rows for world-only callers.
   gather.pages = await stampPageTrust(engine, gather.pages, undefined, undefined, worldOnlyFacts(opts.remote));
   gather.takes = await stampRowTrust(engine, 'takes', gather.takes, t => ('take_id' in t ? t.take_id : (t as { id: number }).id));
 
