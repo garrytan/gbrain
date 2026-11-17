@@ -830,7 +830,7 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   const moved = state === 'file_gone' ? `If the file moved, the preview lists the page moved_to <slug> and names ${shellQuote(movedPagesPreviewArgv(source, record.slug))}, which folds it into the moved page. ` : '';
   const readOnly = record.read_only_checkout === true;
   const keepOnMirror = readOnly && state === 'tombstone_edited';
-  const options = keepOnMirror ? `The source is a read-only mirror, so gbrain never writes its files: this preview (writes nothing) shows --prefer database, which keeps the deletion and records it on the hold (mirror_keep_deleted; no file is removed, and a new upstream edit asks again); ${preview('file').join(' ')} previews --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
+  const options = keepOnMirror ? `The source is a read-only mirror, so its files are never written: this preview (writes nothing) shows --prefer database, which keeps the deletion and records it on the hold (mirror_keep_deleted; no file is removed, and a new upstream edit asks again); ${preview('file').join(' ')} previews --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
     : readOnly ? `${moved}The source is a read-only mirror, so gbrain never rewrites its files and keeping the database copy needs no repair; this preview (writes nothing) shows --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
     : `${moved}This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
     + `${fileDriftActionVerb('deleted', state, 'file')}. `;
