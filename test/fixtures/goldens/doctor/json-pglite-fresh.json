@@ -3832,6 +3832,32 @@
         {
           "category": "brain",
           "details": {
+            "counts": {
+              "by_class": {
+                "clean": 0,
+                "conflict": 0,
+                "likely": 0,
+                "thin": 0,
+                "weak": 0
+              },
+              "by_kind": {
+                "conflict": 0,
+                "cross_source": 0,
+                "in_source": 0,
+                "thin": 0
+              },
+              "crowded_key_values": 0
+            },
+            "groups": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No likely duplicate person or company pages.",
+          "name": "entity_duplicates",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#file_database_drift",
             "sources": []
           },

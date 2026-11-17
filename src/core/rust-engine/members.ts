@@ -51,6 +51,7 @@ export const RUST_ENGINE_MEMBERS = {
   resolveSlugs: 'pages',
   getAllSlugs: 'pages',
   listAllPageRefs: 'pages',
+  listEntityKeyRows: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
   getPageTimestamps: 'pages',

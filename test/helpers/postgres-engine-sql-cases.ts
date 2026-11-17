@@ -91,7 +91,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
   'findPages': 'pages', 'countPagesBy': 'pages',
-  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
+  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listEntityKeyRows': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
   'resolveSlugs': 'pages', 'findByTitleFuzzy': 'pages', 'getPageTimestamps': 'pages',
   'createVersion': 'pages', 'getVersions': 'pages', 'revertToVersion': 'pages', 'updateSlug': 'pages',
   'resolveSlugWithAlias': 'pages', 'resolveSlugWithAliasDetailed': 'pages', 'setPageAliases': 'pages',
@@ -354,6 +354,10 @@ export const SQL_CASES: SqlCase[] = [
     ['sourceId', (e) => e.getAllSlugs({ sourceId: SRC })],
   ]),
   ...variants('listAllPageRefs', [['default', (e) => e.listAllPageRefs()]]),
+  ...variants('listEntityKeyRows', [
+    ['default', (e) => e.listEntityKeyRows({ types: ['person', 'company'], keys: ['email'], limit: 10 })],
+    ['after', (e) => e.listEntityKeyRows({ types: ['person'], keys: ['email', 'external_id'], after: { source_id: SRC, slug: 'people/alice-example' }, limit: 10 })],
+  ]),
   ...variants('listPrefixSampledPages', [
     ['default', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'] })],
     ['sourceIds', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'], sourceIds: SRCS, staleBias: true })],
