@@ -2,7 +2,8 @@
  * The pages a private fact is judged on, shared by `gbrain repair open-facts` (repair/open-facts.ts, which opens such a
  * fact) and the GBRA-575 private-facts grant (access/member-facts.ts factVisibilitySql, which lets one credential read
  * it): its holding page, its provenance page and its entity page. A fact stays private when any of them is a member page,
- * derivation-private in any row with the slug (deleted or not), missing or quarantined. Pure SQL text, no imports beyond
+ * derivation-private in any row with the slug (deleted or not), missing or quarantined, and a fact with no page to
+ * check (unpagedFactSql) never opens through the grant. Pure SQL text, no imports beyond
  * the predicates it reuses, so both sides load it without a cycle.
  */
 import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
@@ -20,6 +21,13 @@ export function factProvenanceSlugSql(f: string): string {
     CASE WHEN ${f}.source IN ('mcp:put_page','sync:import','file_upload','code_import','hook:writeback','mcp:extract_facts')
       THEN NULLIF(split_part(btrim(COALESCE(${f}.context,'')), ' ', 1), '') END), '\\.md$', '')`;
 }
+
+/** The transcript lanes: conversation extraction, capture hooks, the corpus sweep, transcripts and connectors. */
+const transcriptLanesSql = (f: string) => `(${f}.source LIKE 'cli:extract-conversation-facts%' OR ${f}.source IN ('hook:writeback', 'hook:compact', 'sweep:corpus')
+  OR ${f}.source LIKE 'transcript:%' OR ${f}.source LIKE 'connector:%')`;
+
+/** A fact with no page to check: no holding page, or from a transcript lane (open-facts' unpaged:<lane> class; NULL reads as paged). */
+export const unpagedFactSql = (f: string) => `(${f}.source_markdown_slug IS NULL OR ${transcriptLanesSql(f)})`;
 
 /** Whether fact `f` is held on, provenanced from or about a member page (memory/members/<id>); NULL when no slug is set. */
 export function factOnMemberPageSql(f: string): string {

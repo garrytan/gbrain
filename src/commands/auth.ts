@@ -32,7 +32,9 @@ import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import type { OAuthTransaction } from '../core/oauth-grants.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
-import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivateFactsGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
+import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
+import { PRIVATE_FACTS_HELP, privateFactsRescopeLines, privateFactsWarning, renderPrivateFacts } from './auth-private-facts.ts';
+import { listClientRows } from './auth-client-rows.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import { credentialCensus, exposureServes, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
@@ -42,6 +44,7 @@ import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-bindin
 import { mintToken } from './auth-mint.ts';
 import { assertCredentialScoped, logReadsUnscopedChange } from '../core/access/requester-scope.ts';
 import { exitCliError } from '../cli/cli-error.ts';
+export { listClientRows, renderPrivateFacts };
 import { OperationError } from '../core/ops/contract.ts';
 
 /**
@@ -154,11 +157,6 @@ async function permissions(name: string, action: string, value: string | undefin
 /** GBRA-156: the private-pages axis as `auth list`, `auth clients` and `auth rescope` print it. */
 export function renderPrivatePages(mode: PrivatePagesGrant | undefined): string {
   return mode === 'granted_sources' ? 'granted-sources (private pages in the sources this grant names)' : 'none';
-}
-
-/** GBRA-575: the private-facts axis as `auth clients` and `auth rescope` print it (`auth list` prints the mode alone). */
-export function renderPrivateFacts(mode: PrivateFactsGrant | undefined): string {
-  return mode === 'granted_sources' ? 'granted-sources (private facts in the sources this grant names)' : 'none';
 }
 
 export function renderTokenScopes(scopes: unknown): string {
@@ -949,6 +947,7 @@ function printClientGrantAxes(grant: ClientGrant, before?: ClientGrant) {
     ['Slug prefixes', g => g.boundSlugPrefixes?.join(', ') || '<none>'], ['Takes holders', g => g.takesHolders === null ? 'world (default)' : g.takesHolders.join(', ') || 'none (every take hidden)'],
     ['Private pages', g => renderPrivatePages(g.privatePages)], ['Private facts', g => renderPrivateFacts(g.privateFacts)], ['Tool surface', g => g.surface ?? '<server default>'], ['Delegated spending', g => g.budgetUsdPerDay === null ? 'unlimited' : '$' + g.budgetUsdPerDay + '/day']];
   for (const [label, render] of axes) { const after = render(grant), was = before ? render(before) : after; console.log(`  ${label}: ${was === after ? after : `${was} -> ${after}`}`); }
+  if (before) for (const line of privateFactsWarning(before.privateFacts, grant.privateFacts)) console.log(line);
 }
 
 function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: BindingResult) {
@@ -965,10 +964,7 @@ function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: Bi
     const [ppBefore, ppAfter] = [renderPrivatePages(result.before.privatePages), renderPrivatePages(result.after.privatePages)];
     console.log(`  Private pages: ${ppBefore === ppAfter ? ppAfter : `${ppBefore} -> ${ppAfter}`}`);
   }
-  if (result.before.privateFacts || result.after.privateFacts) {
-    const [pfBefore, pfAfter] = [renderPrivateFacts(result.before.privateFacts), renderPrivateFacts(result.after.privateFacts)];
-    console.log(`  Private facts: ${pfBefore === pfAfter ? pfAfter : `${pfBefore} -> ${pfAfter}`}`);
-  }
+  for (const line of privateFactsRescopeLines(result.before.privateFacts, result.after.privateFacts)) console.log(line);
   console.log(`  Grant revision: ${result.revision.before === result.revision.after ? result.revision.after : `${result.revision.before} -> ${result.revision.after}`}`);
   if (bound) console.log(bindingLine(bound, result.dryRun));
   if (result.drift.length && !result.written) {
@@ -1109,73 +1105,6 @@ export function clientOperationsLines(row: ClientRow): string[] {
     if (view.fix) lines.push(`    re-pin: gbrain auth rescope --client ${row.client_id} --operations <op,...>  (or --profile <profile>)`);
   }
   return lines;
-}
-
-/**
- * Projection-widened client listing with a degrade ladder for pre-migration
- * brains: full shape (scope + surface + source-scoping columns) → source
- * columns without surface → the bare original triple. Drops the NEWEST
- * columns first; missing columns render as null. Only schema-shape errors
- * (undefined column/table) degrade — anything else (dropped connection,
- * permission) rethrows instead of silently narrowing the listing. One round
- * trip on a current brain (the widen adds columns, not queries). Exported
- * for the unit suite.
- */
-export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> {
-  // The columns each degrade tier drops; any other missing object rethrows.
-  const isSchemaShapeError = (e: unknown): boolean =>
-    isMissingSchemaObject(e, 'table', 'oauth_clients') ||
-    isMissingSchemaObject(e, 'column', ['private_facts', 'private_pages', 'allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages, private_facts
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the private-facts column: it reads as none.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the private-pages column: it reads as none.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the operation-snapshot columns: operations read `unavailable`.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    return await engine.executeRaw<ClientRow>(
-      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-  } catch (e) {
-    // Brain predates the surface columns — fall through. Rethrow non-shape errors.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  try {
-    const mid = await engine.executeRaw<Omit<ClientRow, 'surface' | 'surface_set_by'>>(
-      `SELECT client_id, client_name, scope, source_id, federated_read
-         FROM oauth_clients ORDER BY client_name, client_id`,
-    );
-    return mid.map(r => ({ ...r, surface: null, surface_set_by: null }));
-  } catch (e) {
-    // Brain predates the source-scoping columns — fall through likewise.
-    if (!isSchemaShapeError(e)) throw e;
-  }
-  const bare = await engine.executeRaw<Pick<ClientRow, 'client_id' | 'client_name' | 'scope'>>(
-    `SELECT client_id, client_name, scope FROM oauth_clients ORDER BY client_name, client_id`,
-  );
-  return bare.map(r => ({ ...r, surface: null, surface_set_by: null, source_id: null, federated_read: null }));
 }
 
 /** Clients whose stored or outstanding access-token lifetime an upgrade brought inside the 90-day maximum. */
@@ -1395,10 +1324,7 @@ Usage:
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source
                                                           or a request's source_ids); 'none' (default) hides them
-     --private-facts <granted-sources|none>               Remote reads see facts stamped private in the sources this
-                                                          grant names explicitly, never on a private, readable_by,
-                                                          folder-ruled, quarantined or member page; no fact is
-                                                          rewritten; 'none' (default) hides them
+${PRIVATE_FACTS_HELP}
      --reset-default <sources,takes-holders,operations>   Token only: restore the auth create default for those axes
      --refresh-operations [--add <op,...>|--all-new]      Token only: preview operations added since the snapshot;
                                                           widen only by the ones --add names (or all with --all-new)

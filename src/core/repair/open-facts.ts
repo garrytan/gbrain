@@ -37,7 +37,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
-import { factOnMemberPageSql, factPageReasons, factProvenanceSlugSql } from '../facts/private-fact-pages.ts';
+import { factOnMemberPageSql, factPageReasons, factProvenanceSlugSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -78,11 +78,8 @@ interface Group { mode: 'open' | 'close'; source_id: string; slug: string; fence
 interface OpenItem extends RepairItem { group: Group; hash: string; ledger: OpenFactsLedger; brain_id: string }
 interface PlannedRow extends FactRef { cls: string; fence: boolean }
 
-const TRANSCRIPT_LANES = (f: string) => `(${f}.source LIKE 'cli:extract-conversation-facts%' OR ${f}.source IN ('hook:writeback', 'hook:compact', 'sweep:corpus')
-  OR ${f}.source LIKE 'transcript:%' OR ${f}.source LIKE 'connector:%')`;
-
 /** A fact's class: unpaged:<lane> (no holding page, or a transcript lane), fenced, or unfenced. */
-export const openFactClassSql = (f: string) => `(CASE WHEN ${f}.source_markdown_slug IS NULL OR ${TRANSCRIPT_LANES(f)} THEN 'unpaged:' || COALESCE(NULLIF(${f}.source, ''), 'unknown')
+export const openFactClassSql = (f: string) => `(CASE WHEN ${unpagedFactSql(f)} THEN 'unpaged:' || COALESCE(NULLIF(${f}.source, ''), 'unknown')
   WHEN ${f}.row_num IS NOT NULL THEN 'fenced' ELSE 'unfenced' END)`;
 
 /**

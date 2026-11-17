@@ -2527,11 +2527,15 @@ facts without opening them to anyone else.
 
 On a shared brain with several clients and no owner, `gbrain auth rescope
 --token <name> --private-facts granted-sources` (or `--client <id>`) is the
-per-credential alternative to opening facts: that one credential reads the
-private facts in the sources its grant names, nobody else does, no fact
-changes, and `--private-facts none` switches it off on the next request. It
-never reads a fact on a page this repair would refuse to open
-([MCP administration](../mcp/ADMIN.md)).
+per-credential alternative to opening facts: that one credential reads every
+private fact in the sources its grant lists by id, including facts saved
+private on purpose, nobody else does, no fact changes, and `--private-facts
+none` switches it off on the next request. A source the credential only
+reaches (federated, now or later, or through a future "read every shared
+source" switch) never opens. It never reads a fact on a page this repair
+would refuse to open, nor an `unpaged:<lane>` fact (no holding page, or a
+transcript lane such as the conversation archive), which this repair opens
+only by class ([MCP administration](../mcp/ADMIN.md)).
 
 ### Lost fence rows
 
