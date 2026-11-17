@@ -1974,7 +1974,8 @@
           "20 attest_ops ARRAY/_text NULL",
           "21 attest_sources ARRAY/_text NULL",
           "22 attest_read text/text NULL",
-          "23 reads_unscoped timestamp with time zone/timestamptz NULL"
+          "23 reads_unscoped timestamp with time zone/timestamptz NULL",
+          "24 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3298,7 +3299,8 @@
           "37 attest_ops ARRAY/_text NULL",
           "38 attest_sources ARRAY/_text NULL",
           "39 attest_read text/text NULL",
-          "40 reads_unscoped timestamp with time zone/timestamptz NULL"
+          "40 reads_unscoped timestamp with time zone/timestamptz NULL",
+          "41 read_shared_revision integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
