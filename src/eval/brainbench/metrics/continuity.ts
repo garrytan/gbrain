@@ -13,7 +13,7 @@
  * continuity_rate per harness = mean over pairs where that harness READ.
  */
 
-import type { PGLiteEngine } from '../../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import type { ContinuityDecisionGold, TurnRow } from '../types.ts';
 
 export interface ContinuityPairScore {
@@ -25,7 +25,7 @@ export interface ContinuityPairScore {
 }
 
 export async function scoreContinuityPair(
-  engine: PGLiteEngine,
+  engine: BrainEngine,
   activeSource: string,
   pairId: string,
   readerRows: TurnRow[],
@@ -55,7 +55,7 @@ export async function scoreContinuityPair(
 
 /** True when an active (non-expired) fact in the source contains every keyword. */
 export async function factKeywordProbe(
-  engine: PGLiteEngine,
+  engine: BrainEngine,
   sourceId: string,
   keywords: string[],
 ): Promise<boolean> {

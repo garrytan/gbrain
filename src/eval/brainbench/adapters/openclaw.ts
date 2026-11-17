@@ -14,7 +14,7 @@
  * gate, heartbeat, timeout — stay deliberately ungraded, see BRAINBENCH.md).
  */
 
-import type { PGLiteEngine } from '../../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import { DEFAULT_MAX_POINTERS } from '../../../core/context/retrieval-reflex.ts';
 import { volunteerContext, VOLUNTEER_DEFAULT_MAX_PAGES } from '../../../core/context/volunteer.ts';
 import { DEFAULT_WINDOW_TURNS, renderReflexAddition } from '../../../core/context/reflex.ts';
@@ -31,11 +31,11 @@ export class OpenClawAdapter implements HarnessAdapter {
   readonly name = 'openclaw' as const;
   readonly seam = 'production' as const;
 
-  private engine: PGLiteEngine | null = null;
+  private engine: BrainEngine | null = null;
   private sourceId = 'default';
   private window: WindowTurn[] = [];
 
-  async beginConversation(engine: PGLiteEngine, fixture: AdapterFixtureView): Promise<void> {
+  async beginConversation(engine: BrainEngine, fixture: AdapterFixtureView): Promise<void> {
     this.engine = engine;
     this.sourceId = fixture.active_source;
     this.window = [];

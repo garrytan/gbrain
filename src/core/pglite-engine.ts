@@ -1,4 +1,5 @@
 import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
+import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
@@ -737,6 +738,7 @@ export class PGLiteEngine implements BrainEngine {
   private _chunkWritesInTransaction = false;
   private _checkpointGuard: PgliteCheckpointGuard | undefined;
   readonly kind = 'pglite' as const;
+  readonly capabilities: EngineCapabilities = capabilitiesForEngineKind('pglite');
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
   /** Graduation custody: a kernel lock this process already holds, adopted by the next open instead of acquired. */
@@ -1899,6 +1901,10 @@ export class PGLiteEngine implements BrainEngine {
   async listEmbeddingStateRows(opts: { sourceIds?: string[]; slugs?: string[]; states: readonly EmbeddingState[]; limit: number; purgeWindowHours: number }): Promise<EmbeddingStateRow[]> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return chunksImpl.listEmbeddingStateRows(scopedRead(this.engineSql), column, opts);
+  }
+
+  async sealChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }): Promise<void> {
+    await this.transaction(tx => { const e = tx as PGLiteEngine; return chunksImpl.sealChunks(e.engineSql, e, slug, chunks, opts); });
   }
 
   async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {

@@ -16,7 +16,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGLiteEngine } from '../../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import { codexAdapter as codexTranscriptAdapter } from '../../../core/transcripts/codex.ts';
 import type {
   AdapterFixtureView,
@@ -34,7 +34,7 @@ export class CodexAdapter implements HarnessAdapter {
   readonly name = 'codex' as const;
   readonly seam = 'contract' as const;
 
-  private engine: PGLiteEngine | null = null;
+  private engine: BrainEngine | null = null;
   private sourceId = 'default';
   private preamble = '';
   private firstTurn = true;
@@ -57,7 +57,7 @@ export class CodexAdapter implements HarnessAdapter {
     }
   }
 
-  async beginConversation(engine: PGLiteEngine, fixture: AdapterFixtureView): Promise<void> {
+  async beginConversation(engine: BrainEngine, fixture: AdapterFixtureView): Promise<void> {
     if (!this.tmpDir) await this.setupRun();
     this.engine = engine;
     this.sourceId = fixture.active_source;
