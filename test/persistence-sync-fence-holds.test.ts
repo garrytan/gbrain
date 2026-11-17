@@ -487,3 +487,37 @@ test('E33: a completed sync run always has its trend row; a failed trend write f
   expect(recorded).toHaveLength(1);
   expect(recorded[0]!.record).toMatchObject({ count: 2, by_class: { kind_map: 2, holder_alias: 2 } });
 }), 180_000);
+
+test('#9646: a pass stamp on a source with no recorded watermark reads only requests newer than its publication\'s preparation inside the publication', () => each(async engine => {
+  const s = await source(engine, { 'notes/fix-a.md': fixable('A') });
+  expect(await s.sync()).toMatchObject({ fences_normalized: { count: 1 } });
+  // A source whose converged watermark was never recorded: the stamp's trend range starts at 0, the whole request history.
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged}',(completed_keys->0->'obligations'->'converged')-'request_hwm')
+    WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1`, [s.id]);
+  const [{ newest }] = await engine.executeRaw<{ newest: string }>('SELECT max(sequence)::text AS newest FROM persistence_requests');
+  const trendRows = () => engine.executeRaw<{ fingerprint: string; count: number }>(`SELECT fingerprint, (completed_keys->0->>'count')::int AS count FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'source_id'=$2`,
+    [FENCE_TREND_OP, s.id]);
+  const before = new Set((await trendRows()).map(row => row.fingerprint));
+  s.write('notes/fix-b.md', fixable('B'));
+  commit(s.root, 'another fixable file');
+  const original = engine.executeRaw;
+  const inPublication: string[] = [];
+  (engine as unknown as { executeRaw: typeof original }).executeRaw = function (this: typeof engine, sql: string, params?: unknown[]) {
+    if (sql.includes('AS fences') && (this as unknown as { _pageTransaction?: boolean })._pageTransaction === true) inPublication.push(String(params?.[2]));
+    return original.call(this, sql, params) as never;
+  } as typeof original;
+  let result: SyncResult;
+  try { result = await s.sync(); } finally { (engine as unknown as { executeRaw: typeof original }).executeRaw = original; }
+  expect(result).toMatchObject({ status: 'synced', fences_normalized: { count: 1 } });
+  // The stamp landed and its trend scan inside the 5 s publication started past everything committed before this sync.
+  expect(inPublication.length).toBeGreaterThan(0);
+  for (const after of inPublication) expect(BigInt(after)).toBeGreaterThanOrEqual(BigInt(newest));
+  const [pass] = await engine.executeRaw<{ hwm: string | null }>(`SELECT completed_keys->0->'obligations'->'converged'->>'request_hwm' AS hwm FROM op_checkpoints
+    WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1`, [s.id]);
+  expect(pass!.hwm).not.toBeNull();
+  // The stamp recorded this pass's trend row in its own transaction, as before; its count was tallied mostly outside the publication.
+  const added = (await trendRows()).filter(row => !before.has(row.fingerprint));
+  expect(added).toHaveLength(1);
+  expect(added[0]!.count).toBeGreaterThanOrEqual(1);
+}), 180_000);
+
