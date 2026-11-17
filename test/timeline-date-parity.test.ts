@@ -108,6 +108,15 @@ async function insertEntry(engine: BrainEngine, pageId: number, date: string, su
   );
 }
 
+
+/**
+ * The latest earlier date with the same month and day as `day` (a SQL date expression): one year back, or four
+ * from a Feb 29, so the current-date anniversary fixture holds on a leap day too.
+ */
+function anniversarySql(day: string): string {
+  return `(CASE WHEN to_char(${day}, 'MM-DD') = '02-29' THEN ${day} - interval '4 years' ELSE ${day} - interval '1 year' END)::date`;
+}
+
 async function seed(engine: BrainEngine): Promise<void> {
   await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('other', 'Other') ON CONFLICT (id) DO NOTHING`);
   const meeting = await insertPage(engine, { slug: MEETING, type: 'meeting' });
@@ -150,13 +159,13 @@ async function seed(engine: BrainEngine): Promise<void> {
   for (const d of ['2020-02-29', '2023-03-01', '2024-02-29', '2025-02-28', '2025-03-01', '2028-02-29']) {
     await insertEntry(engine, alice, d, `Alice on ${d}`);
   }
-  // `today` and `today one year ago` in the zone furthest ahead of UTC.
+  // `today` and its latest earlier anniversary in the zone furthest ahead of UTC.
   // Pacific/Pago_Pago is 25 hours behind it, so its `current_date` is always
-  // at least one day earlier. (Not stable on a Feb 29.)
+  // at least one day earlier.
   await engine.executeRaw(
     `INSERT INTO timeline_entries (page_id, date, source, summary, detail) VALUES
        ($1, (now() AT TIME ZONE 'Pacific/Kiritimati')::date, 'parity', 'Bob today in Kiritimati', ''),
-       ($1, ((now() AT TIME ZONE 'Pacific/Kiritimati')::date - interval '1 year')::date, 'parity', 'Bob a year ago in Kiritimati', '')`,
+       ($1, ${anniversarySql("(now() AT TIME ZONE 'Pacific/Kiritimati')::date")}, 'parity', 'Bob a year ago in Kiritimati', '')`,
     [bob],
   );
   // getEffectiveDates / getPageTimestamps fixtures.
@@ -368,6 +377,12 @@ for (const kind of backends) {
       expect(behind.lastSeen.last_date === null || behind.lastSeen.last_date < today).toBe(true);
       expect(behind.onThisDay).toEqual([]);
       record(kind, 'currentDateDefault', { ahead: { ...ahead, lastSeen: { ...ahead.lastSeen, last_date: 'today' } }, behind: { ...behind, lastSeen: { ...behind.lastSeen, last_date: behind.lastSeen.last_date ? 'earlier' : null } } });
+    });
+
+    test('the anniversary fixture keeps the same month and day on a leap day and on an ordinary day', async () => {
+      const [row] = await engine.executeRaw<{ leap: string; plain: string }>(
+        `SELECT ${anniversarySql("'2028-02-29'::date")}::text AS leap, ${anniversarySql("'2026-11-17'::date")}::text AS plain`);
+      expect(row).toEqual({ leap: '2024-02-29', plain: '2025-11-17' });
     });
 
     test('getEffectiveDates and getPageTimestamps return the same instants in every zone, at millisecond precision', async () => {
