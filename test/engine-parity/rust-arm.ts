@@ -7,10 +7,10 @@
  *
  * What the Rust arm owes each case:
  *  - A case that only calls members the store serves must return what PGLite returns, unless its row in
- *    `test/rust-expected-divergence.tsv` says why it cannot (an expected failure: when the case starts to match, the
- *    row must go).
- *  - A case that calls a member the Rust engine still refuses must stop on the typed `engine_capability_missing`
- *    refusal naming that member's capability, having run nothing past it.
+ *    `test/rust-expected-divergence.tsv` names how it differs: Rust must still return a value, both answers must be equal
+ *    after the row's normaliser, and the raw answers must still differ (when the case starts to match, the row must go).
+ *  - A case that reaches a member or an option the Rust engine refuses must END on the typed `engine_capability_missing`
+ *    refusal naming that capability. A refusal the case caught on the way to another outcome does not count.
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -84,33 +84,36 @@ export async function createRustSource(engine: unknown, id: string, config: Reco
   await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config });
 }
 
-export interface DivergenceRow { file: string; name: string; reason: string }
+export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
+
+/**
+ * What a divergence row may set aside, by name. The Rust arm accepts a differing answer only when both sides are equal
+ * after the row's normaliser, so a row states exactly how the engines differ and nothing else.
+ */
+export const DIVERGENCE_NORMALIZERS: Record<string, (value: unknown) => unknown> = {
+  // Keyword ranking is BM25 (design D5): scores differ and ties order differently. Set aside the score and the order
+  // of the rows; the same pages must still be found.
+  'ranking-order-and-score': (value) => {
+    if (Array.isArray(value)) {
+      const items = value.map((item) => DIVERGENCE_NORMALIZERS['ranking-order-and-score']!(item));
+      return items.every((item) => item !== null && typeof item === 'object' && 'slug' in (item as object))
+        ? [...items].sort((a, b) => String((a as { slug: unknown }).slug).localeCompare(String((b as { slug: unknown }).slug)))
+        : items;
+    }
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'score').map(([key, item]) => [key, DIVERGENCE_NORMALIZERS['ranking-order-and-score']!(item)]));
+    }
+    return value;
+  },
+};
 
 const DIVERGENCE_FILE = join(import.meta.dir, '..', 'rust-expected-divergence.tsv');
 
-/** The rows of test/rust-expected-divergence.tsv: `file<TAB>case name<TAB>reason`; `#` starts a comment. */
+/** The rows of test/rust-expected-divergence.tsv: `file<TAB>case name<TAB>normaliser<TAB>reason`; `#` starts a comment. */
 export function readDivergences(path = DIVERGENCE_FILE): DivergenceRow[] {
   return readFileSync(path, 'utf8').split('\n').filter((l) => l.trim() !== '' && !l.startsWith('#')).map((line) => {
-    const [file, name, reason] = line.split('\t');
-    if (!file || !name || !reason) throw new Error(`${path}: a row needs file, case name and reason, tab separated: ${line}`);
-    return { file, name, reason };
-  });
-}
-
-/**
- * The engine a Rust-arm case runs on. The store keeps no chunk vectors, so `upsertChunks` and `sealChunks` refuse a chunk that
- * carries one. A case that declares `searchKeyword` reads text only, so its fixtures lose the vectors they seed (a keyword
- * search never reads them); every other case is untouched, and one that seeds a vector still stops on the refusal.
- */
-export function rustFixtureEngine<E extends object>(engine: E, methods: readonly string[]): E {
-  if (!methods.includes('searchKeyword')) return engine;
-  return new Proxy(engine, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if ((prop !== 'upsertChunks' && prop !== 'sealChunks') || typeof value !== 'function') return value;
-      return (slug: string, chunks: Array<Record<string, unknown>>, ...rest: unknown[]) =>
-        (value as (...a: unknown[]) => unknown).call(target, slug,
-          chunks.map(({ embedding: _e, embedding_image: _i, ...text }) => text), ...rest);
-    },
+    const [file, name, normalizer, reason] = line.split('\t');
+    if (!file || !name || !normalizer || !reason) throw new Error(`${path}: a row needs file, case name, normaliser and reason, tab separated: ${line}`);
+    return { file, name, normalizer, reason };
   });
 }

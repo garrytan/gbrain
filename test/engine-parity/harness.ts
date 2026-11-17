@@ -37,7 +37,7 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import {
-  createRustSource, newRustBrain, openRustBrain, readDivergences, removeBrainDir, rustArmRequested, rustFixtureEngine, rustMemberCapability, rustRefusal, type DivergenceRow,
+  createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -285,7 +285,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         if (arm.backend === 'rust') {
           const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
           try {
-            await checkRustArm({ name, opts, run: () => scenario(recordingEngine(rustFixtureEngine(arm.engine, opts.methods), calls, refusals), arm.backend, ctx), calls, refusals,
+            await checkRustArm({ name, opts, run: () => scenario(recordingEngine(arm.engine, calls, refusals), arm.backend, ctx), calls, refusals,
               reference: results[0], divergence }, tally);
           } finally {
             for (const engine of extra) await engine.disconnect().catch(() => undefined);
@@ -330,9 +330,9 @@ function callerTestFile(stack: string | undefined): string {
 }
 
 /** What the Rust arm did with each case of one file, printed when the file finishes. */
-interface RustTally { compared: number; refused: number; diverged: number }
+export interface RustTally { compared: number; refused: number; diverged: number }
 
-interface RustCase<T> {
+export interface RustCase<T> {
   name: string;
   opts: ParityCaseOpts;
   run: () => Promise<T>;
@@ -345,11 +345,17 @@ interface RustCase<T> {
 }
 
 /**
- * The Rust arm's check for one case (rust-arm.ts): a case that reaches a member Rust still refuses must stop on the typed
- * refusal naming that member's capability; any other case must return what the reference arm returned, unless its
- * row in test/rust-expected-divergence.tsv says it cannot (then it must still differ, so a stale row fails).
+ * The Rust arm's check for one case (rust-arm.ts). A case has exactly three acceptable outcomes on Rust:
+ *  - it ends on the typed refusal of a capability it reaches (a member Rust does not serve, or an option a served
+ *    member declines): counted as refused;
+ *  - it returns the value the reference arm returned: counted as equal;
+ *  - it returns a value that differs from the reference in exactly the way its row in test/rust-expected-divergence.tsv
+ *    names (a named normaliser maps both sides to one value, and the raw values must still differ so a stale row
+ *    fails): counted as diverged.
+ * Anything else fails: a refusal the case caught on its way to some other failure, or to a value, does not make it pass,
+ * and a divergence row never excuses a thrown error.
  */
-async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise<void> {
+export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise<void> {
   let outcome: { value: T } | { error: unknown };
   try {
     outcome = { value: await c.run() };
@@ -362,36 +368,50 @@ async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise<void> 
   // does not store (its capability is still the member's own); `requires` adds the capability a case needs.
   const capabilities = new Set(reached.map((m) => rustMemberCapability(m)).filter((x): x is string => x !== null));
   if (c.opts.requires !== undefined && !armHas('rust', c.opts.requires)) capabilities.add(c.opts.requires);
-  const error = 'error' in outcome ? outcome.error : null;
   const refusedBy = (e: unknown) => [...capabilities].some((capability) => isCapabilityRefusal(e, capability as EngineCapability));
-  const refused = refusedBy(error) || c.refusals.some(refusedBy);
-  if (refused || (refusing.length > 0 && capabilities.size > 0)) {
-    // The case reaches something Rust refuses: it must have stopped on that refusal and nothing else.
-    const stoppedOn = error === null ? 'it returned' : error instanceof Error ? error.message : String(error);
-    expect({ backend: 'rust', case: c.name, refused, refusing, stoppedOn: refused ? '' : stoppedOn })
-      .toEqual({ backend: 'rust', case: c.name, refused: true, refusing, stoppedOn: '' });
+  const caught = c.refusals.filter(refusedBy).length;
+
+  if ('error' in outcome) {
+    // Only the terminal outcome counts: a refusal caught earlier does not excuse a different failure.
+    if (!refusedBy(outcome.error)) {
+      if (outcome.error instanceof Error) {
+        outcome.error.message = `[rust] ${outcome.error.message}${caught > 0 ? ` (the case had caught ${caught} typed refusal(s) before this)` : ''}`;
+      }
+      throw outcome.error;
+    }
+    if (c.divergence) {
+      throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence.tsv (${c.divergence.reason}) but now stops on a typed refusal; remove the row`);
+    }
     tally.refused++;
     return;
   }
-  if ('error' in outcome) {
-    if (c.divergence) { tally.diverged++; return; } // an expected failure: the row says why
-    if (outcome.error instanceof Error) outcome.error.message = `[rust] ${outcome.error.message}`;
-    throw outcome.error;
-  }
+
+  // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened.
+  expect({ backend: 'rust', case: c.name, reachesRefusingMember: refusing.length > 0 && capabilities.size > 0, caughtRefusals: caught })
+    .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0 });
   const missing = c.opts.methods.filter((m) => !c.calls.has(m));
   expect({ backend: 'rust', declaredButNotCalled: missing }).toEqual({ backend: 'rust', declaredButNotCalled: [] });
+  const reference = c.reference!;
   let same = true;
   try {
-    expect({ backend: 'rust', value: outcome.value }).toEqual({ backend: 'rust', value: c.reference!.value });
+    expect({ backend: 'rust', value: outcome.value }).toEqual({ backend: 'rust', value: reference.value });
   } catch (error) {
     if (!c.divergence) throw error;
     same = false;
-    tally.diverged++;
   }
-  if (same) tally.compared++;
-  if (c.divergence && same) {
-    throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence.tsv (${c.divergence.reason}) but now matches ${c.reference!.backend}; remove the row`);
+  if (!c.divergence) {
+    tally.compared++;
+    return;
   }
+  if (same) {
+    throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence.tsv (${c.divergence.reason}) but now matches ${reference.backend}; remove the row`);
+  }
+  const normalize = DIVERGENCE_NORMALIZERS[c.divergence.normalizer];
+  if (normalize === undefined) throw new Error(`[rust] "${c.name}": the divergence row names the normaliser "${c.divergence.normalizer}", which does not exist`);
+  // Different, but only in what the row names: both sides must agree once that is set aside.
+  expect({ backend: 'rust', case: c.name, normalizedBy: c.divergence.normalizer, value: normalize(outcome.value) })
+    .toEqual({ backend: 'rust', case: c.name, normalizedBy: c.divergence.normalizer, value: normalize(reference.value) });
+  tally.diverged++;
 }
 
 /** Sorted copy, for order-free comparisons. */
