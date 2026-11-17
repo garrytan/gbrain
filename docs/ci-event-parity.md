@@ -93,7 +93,9 @@ macOS job waited a median of 4 to 9 minutes for one, and up to 35, while the
 tests themselves took 1.5 to 4 minutes. So a
 pull request's cheap tier starts no macOS job: `security-regressions` runs its
 Linux and Windows cells, and `native-locks` runs every target except
-darwin-arm64 and darwin-x64. A master push that reuses a passed full run of
+darwin-arm64 and darwin-x64. The one exception is the path-gated `Apple helper`
+workflow (`apple-helper.yml`), which runs a macos-26 job only when files under
+`apple/` change and is not a required check. A master push that reuses a passed full run of
 its exact tree ([below](#master-push-reuse)) also leaves out the macos-26
 `security-regressions` cell, because the reused run already ran it on the
 same tree. The full-ci dispatch, a master push that runs in full, the merge
