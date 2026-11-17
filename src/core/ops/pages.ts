@@ -53,7 +53,7 @@ import {
   normalizeSlugPrefix,
   parseSourceIdParam,
   readPolicyOpts,
-  validatePageSlug, pageNotFoundError,
+  validatePageSlug, pageNotFoundError, assertIncludeDeletedAllowed,
 } from './context.ts';
 
 /** The write path (journal, persistence service, sync), loaded by the mutating handlers only: a cold `gbrain get` never needs it (#7147). */
@@ -118,7 +118,7 @@ const get_page: Operation = {
     as_of: AS_OF_PARAM,
   },
   handler: async (ctx, p) => {
-    if (p.as_of !== undefined) return getPageAsOf(ctx, p);
+    assertIncludeDeletedAllowed(ctx, 'get_page', p); if (p.as_of !== undefined) return getPageAsOf(ctx, p);
     if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
@@ -556,7 +556,7 @@ const list_pages: Operation = {
     // Whitelist the sort enum at the handler before passing to the engine.
     // Engines also whitelist via PAGE_SORT_SQL but defending here keeps
     // unsupported strings from reaching the SQL layer.
-    const rawSort = p.sort as string | undefined;
+    assertIncludeDeletedAllowed(ctx, 'list_pages', p); const rawSort = p.sort as string | undefined;
     let sort = rawSort && (LIST_PAGES_SORT_VALUES as readonly string[]).includes(rawSort)
       ? (rawSort as ListPagesSort)
       : undefined;

@@ -62,6 +62,18 @@ export function withFix(fix: Action | undefined): { fix?: Action } {
   return fix ? { fix } : {};
 }
 
+/** A remote client pinned to the starter or verbs surface may not read soft-deleted rows (`include_deleted`). */
+export function includeDeletedAllowed(ctx: { remote?: boolean; auth?: Pick<NonNullable<OperationContext['auth']>, 'effectiveSurface'> }): boolean {
+  return ctx.remote === false || (ctx.auth?.effectiveSurface ?? 'full') === 'full';
+}
+
+/** Refuses `include_deleted: true` from a caller whose surface excludes it; no-op otherwise. */
+export function assertIncludeDeletedAllowed(ctx: Pick<OperationContext, 'remote' | 'auth' | 'transport'>, tool: string, p: Record<string, unknown>): void {
+  if (p.include_deleted === true && !includeDeletedAllowed(ctx)) {
+    throw invalidParam(ctx, tool, 'include_deleted', 'include_deleted is not available on this connection\'s tool surface.');
+  }
+}
+
 /**
  * get_page's miss (#4516): where the slug lives when a trusted local probe
  * found it in another source, otherwise the soft-delete / fuzzy check, as
@@ -81,10 +93,14 @@ export function pageNotFoundError(
   const retry = opts.includeDeleted ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify`;
   const where = opts.elsewhereSource;
   const explicit = opts.sourceIdParam !== ALL_SOURCES ? opts.sourceIdParam : undefined;
+  // A caller whose surface refuses include_deleted is never pointed at it.
+  const canSeeDeleted = includeDeletedAllowed(ctx);
+  const hint = canSeeDeleted ? retry : `Check the slug or use ${paramUse(ctx, 'fuzzy')}`;
   return opError('page_not_found', `Page not found: ${slug}`,
-    where !== undefined ? `Page exists in source '${where}' — pass ${paramUse(ctx, 'source', where)}. ${retry}` : retry,
+    where !== undefined ? `Page exists in source '${where}' — pass ${paramUse(ctx, 'source', where)}. ${hint}` : hint,
     withFix(where !== undefined
       ? getPageFix(slug, `Reads the page from source ${where}, where it exists.`, { sourceId: where })
+      : !canSeeDeleted && !opts.includeDeleted ? undefined
       : getPageFix(slug, opts.includeDeleted ? 'Fuzzy-matches the slug.' : 'Shows the page if it is soft-deleted (deleted_at set).',
         { sourceId: explicit, ...(opts.includeDeleted ? { fuzzy: true } : { includeDeleted: true }) })));
 }
