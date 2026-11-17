@@ -8,7 +8,7 @@ import { resolveBrainId } from '../brain-resolver.ts';
 import { getCliOptions } from '../cli-options.ts';
 import { loadMounts, type MountEntry } from '../brain-registry.ts';
 import { inspectLockHolder, type LockHolderInfo } from '../pglite-lock.ts';
-import { inspectRustOwner } from '../rust-engine/owner-ipc/client.ts';
+import { inspectRustOwner, rustOwnerServesPersistence } from '../rust-engine/owner-ipc/client.ts';
 import { resolveSourceIdEngineFree } from '../source-resolver.ts';
 import { opError, opOwnsSource, OperationError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -159,14 +159,16 @@ export async function maybeDelegateLocalOperation(
   const cwd = options.cwd ?? process.cwd();
   const brainId = resolveBrainId(options.brain, cwd);
   const config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts());
-  // A Rust brain's owner answers whole operations only when it is a `gbrain serve`; another owner (a one-shot command)
-  // leaves the call to the engine path, which reaches the owner as its client (rust-engine/owner-ipc/).
+  // A Rust brain's owner answers whole operations only when it is a `gbrain serve` whose engine reports
+  // `persistence_journal` (the persistence provider runs SQL, and the Rust engine has none yet). Any other owner leaves
+  // the call to the engine path, which reaches the owner as its client and refuses typed where a capability is missing
+  // (rust-engine/owner-ipc/).
   const rust = (config?.engine as string | undefined) === 'rust';
   if (config?.engine !== 'pglite' && !rust || !config?.database_path || config.database_url) return { handled: false };
   const databasePath = config.database_path;
   const inspect = () => rust ? inspectRustOwner(databasePath) : inspectLockHolder(databasePath);
   const holder = await inspect();
-  if (!holder.held || rust && holder.serve !== true) return { handled: false };
+  if (!holder.held || rust && (holder.serve !== true || !rustOwnerServesPersistence((holder as { capabilities?: string[] }).capabilities))) return { handled: false };
   const socketPath = persistenceSocketPathForConfig(config);
   if (!socketPath) throw noDiscoveryPath('The selected PGLite owner has no persistence discovery path.', holder, brainId);
 

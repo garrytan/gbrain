@@ -10,6 +10,11 @@
  *   `engine_capability_missing` and nothing runs. A whole operation that needs a transaction is forwarded instead
  *   (owner-ipc/whole-op.ts) and runs its transaction inside the owner.
  *
+ * Before any of these, a client whose owner is a Rust engine (hello `kind: 'rust'`) checks the member's capability
+ * class against the capabilities in the hello. A member the owner lacks (executeRaw without raw_sql, getPage without
+ * pages, transaction without transactions) rejects at the client with the same `engine_capability_missing` error the
+ * in-process RustEngine gives, byte for byte, and nothing crosses the socket (client.ts, missingOnRustOwner).
+ *
  * The table is derived from RUST_ENGINE_MEMBERS, which the compiler checks against BrainEngine, so a new member is
  * forwarded by default; a forwarded call whose arguments carry a function the client cannot send refuses the same way.
  */
