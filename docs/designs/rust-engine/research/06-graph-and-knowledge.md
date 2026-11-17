@@ -188,7 +188,7 @@ Implementation (src/core/facts/write-single.ts:1-20):
 
 Thresholds (src/core/facts/supersession-threshold.ts:14-30): cosine supersession applies only to calibrated `provider:model@dims`. The one entry is `voyage:voyage-4@1024 = 0.95`. Uncalibrated models insert without superseding, and conflict review handles the pair. Operators can set `facts.supersession_thresholds`, or `off`.
 
-The fingerprint (withdrawal-schema.ts:27-40): `gbrain_fact_fingerprint` = sha256 hex of a normalized claim (lowercased, punctuation translated to spaces, whitespace collapsed, trimmed). A v1 variant collapses only whitespace. The fingerprint is stored in `fact_withdrawals` and `fact_purges`, so it must match byte-for-byte.
+The fingerprint (withdrawal-schema.ts:27-40): `gbrain_fact_fingerprint` = sha256 hex of a normalized claim (lowercased, punctuation translated to spaces, whitespace collapsed, trimmed). `gbrain_fact_fingerprint_v1` trims, lowercases with the host's `lower()`, collapses whitespace and hashes; it does no punctuation folding. The fingerprint is stored in `fact_withdrawals` and `fact_purges`, so it must match byte-for-byte.
 
 Concurrency (engine-sql/facts.ts:88-170): when `entity_slug` is set, the insert takes `pg_advisory_xact_lock(hashtextextended(source_id || ':' || entity_slug, 0))`. The supersede path also updates the old row inside the same transaction. The comment in write-single.ts:14-17 says dedupe is sequential, so two identical submissions racing can both insert.
 

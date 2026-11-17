@@ -18,7 +18,9 @@ approximate to within a few lines where a function spans a block.
   row trigger, partial unique indexes, JSONB (`data->>'__param_hash'`), `pg_advisory_xact_lock`
   (admission, quota, rate leases, budget), row locks on parents, and `now()` interval math.
   The cycle lock is deliberately a row table, not an advisory lock (`src/core/db-lock.ts:8`,
-  because advisory locks are session-scoped and break under PgBouncer transaction pooling).
+  because the cycle lease must outlive any one transaction: a session advisory lock would
+  break under PgBouncer transaction pooling, and a transaction-scoped `pg_advisory_xact_lock`
+  ends at commit).
 - The worker learns about new work from LISTEN/NOTIFY only for `sync` jobs and only on a
   direct (non-pooler) Postgres session. Everywhere else it polls. A general job waits up to
   5 s (`pollInterval` default, `src/core/minions/worker.ts:310`); the sync-wake poll is 1 s.
