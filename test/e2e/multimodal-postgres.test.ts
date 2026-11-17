@@ -312,6 +312,9 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
       expect(pgliteFile!.mime_type).toBe(pgFile!.mime_type);
       // Both engines return size_bytes as a number.
       expect(pgFile!.size_bytes).toBe(pgliteFile!.size_bytes);
+      const pgListed = await pg.listFilesForPage(pgPage.id);
+      expect(pgListed.map(f => f.size_bytes)).toEqual([999]);
+      expect(typeof pgListed[0]!.size_bytes).toBe('number');
       expect(pgliteFile!.content_hash).toBe(pgFile!.content_hash);
       expect(pgliteFile!.source_id).toBe(pgFile!.source_id);
 
