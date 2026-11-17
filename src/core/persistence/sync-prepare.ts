@@ -626,14 +626,19 @@ function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktr
 /**
  * #9646: a stamp's publication runs under a 5 s statement bound, and its trend range starts at the previous watermark, or at 0
  * for a source that never recorded one, which on a large brain is the whole request table. Read before the publication, outside
- * it, in statements of FENCE_TREND_PAGE sequences each, this tallies the range up to the newest request now; the publication
+ * it, in statements of FENCE_TREND_PAGE sequences each, this tallies the range up to the newest request now, or to just below
+ * the first import still open; the publication
  * then reads only what committed after that (`recordPassFenceTrend`), so the stamp lands in bounded time and records its trend
  * row in the same transaction, as before.
  */
 export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; incarnation: string }): Promise<FenceTrendPrefix> {
   const since = (await readPassRow(engine, scope.sourceId, scope.incarnation))?.value.obligations.converged?.request_hwm ?? null;
   const [newest] = await engine.executeRaw<{ through: string | null }>('SELECT max(sequence)::text AS through FROM persistence_requests');
-  const through = BigInt(newest?.through ?? '0');
+  // An import still open now commits after this read, so the prefix stops below it and the publication reads it.
+  const [open] = await engine.executeRaw<{ first: string | null }>(`SELECT min(sequence)::text AS first FROM persistence_requests WHERE worktree_id=$1::uuid AND source_id=$2
+    AND sequence > $3::bigint AND state IN ('queued','deferred','running','recovering') AND intent->>'kind'='managed_sync_import'`, [scope.worktreeId, scope.sourceId, since ?? '0']);
+  const newestSequence = BigInt(newest?.through ?? '0');
+  const through = open?.first != null && BigInt(open.first) - 1n < newestSequence ? BigInt(open.first) - 1n : newestSequence;
   let tally: FencesTally | undefined;
   for (let low = BigInt(since ?? '0'); low < through; low += BigInt(FENCE_TREND_PAGE)) {
     const high = low + BigInt(FENCE_TREND_PAGE) < through ? low + BigInt(FENCE_TREND_PAGE) : through;
