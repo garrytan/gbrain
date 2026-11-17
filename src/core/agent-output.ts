@@ -10,6 +10,7 @@
  * interpolated ids that pass through `inertText()`: newlines and marker
  * tokens are neutralised so a page title can never forge an instruction.
  */
+import { BRAND, LEGACY } from './brand.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { VERSION } from '../version.ts';
@@ -171,9 +172,17 @@ export function inertText(value: string, max: number = MAX_INLINE): string {
 
 const SAFE_SHELL = /^[A-Za-z0-9_@%+=:,./-]+$/;
 
-/** POSIX shell quoting; the only way a human `command` string is built. */
+/**
+ * POSIX shell quoting; the only way a human `command` string is built. A fix
+ * argv keeps the stored command word `gbrain` (it runs on every install, and
+ * receipts and comparisons read it); the text shown to people and agents names
+ * the product's command instead (core/brand.ts), so `['gbrain', 'sync']`
+ * renders `foresights sync`. Only that exact bare word changes: a path to a
+ * binary, or any later argument, is quoted as it is.
+ */
 export function shellQuote(argv: readonly string[]): string {
-  return argv.map(arg => {
+  return argv.map((arg, i) => {
+    if (i === 0 && arg === LEGACY.name) return BRAND.name;
     if (arg === '') return "''";
     if (SAFE_SHELL.test(arg)) return arg;
     return `'${inertText(arg).replace(/'/g, `'\\''`)}'`;
