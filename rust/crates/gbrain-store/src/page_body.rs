@@ -711,15 +711,67 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     })?;
     for (index_key, id) in stagings {
         if let Some(staging) = get_json::<StagingRecord>(&*tx, &staging_key(&id))? {
-            tx.delete(&client_key(
-                &staging.principal_kind,
-                &staging.principal_id,
-                &staging.client_request_id,
-            ))?;
-            tx.delete(&staging_key(&id))?;
+            delete_staging(tx, &staging)?;
         }
         delete_prefix(tx, &staging_text_prefix(&id))?;
         tx.delete(&index_key)?;
+    }
+    Ok(())
+}
+
+/// Deletes a staging with its client key, recorded texts and page index entry.
+fn delete_staging(tx: &mut dyn KvWrite, staging: &StagingRecord) -> Result<()> {
+    tx.delete(&client_key(
+        &staging.principal_kind,
+        &staging.principal_id,
+        &staging.client_request_id,
+    ))?;
+    tx.delete(&staging_key(&staging.id))?;
+    delete_prefix(tx, &staging_text_prefix(&staging.id))?;
+    if let Some(page_id) = staging.page_id {
+        let mut key = staging_by_page_prefix(page_id);
+        key.extend_from_slice(staging.id.as_bytes());
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
+/// Deletes this family's records of a source that is deleted (`cascade::remove_source_rows`), as
+/// the Postgres `ON DELETE CASCADE` of `sources.id` does: the source's segment texts and its
+/// stagings (with their client keys and recorded texts). Core removes the source's pages first,
+/// so their manifests, derivations and body columns are gone already. A manifest row of another
+/// source's page that still names one of these texts refuses the delete, as the manifest's
+/// `NO ACTION` foreign key to `page_segment_texts` does in Postgres.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let mut referenced = None;
+    let mut failure = None;
+    scan_prefix(&*tx, &kind_key(MANIFEST), false, &mut |_, v| {
+        match serde_json::from_slice::<ManifestRow>(v) {
+            Ok(row) if row.source_id == source_id => referenced = Some(row.page_id),
+            Ok(_) => {}
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        referenced.is_none() && failure.is_none()
+    })?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    if let Some(page_id) = referenced {
+        return Err(violation(format!(
+            "update or delete on table \"page_segment_texts\" violates foreign key constraint on table \"page_body_manifest\" (page {page_id} still names a text of source \"{source_id}\")"
+        )));
+    }
+    let mut texts = kind_key(TEXT);
+    texts.extend_from_slice(source_id.as_bytes());
+    texts.push(0);
+    delete_prefix(tx, &texts)?;
+    let stagings: Vec<StagingRecord> = collect::<StagingRecord>(&*tx, &kind_key(STAGING))?
+        .into_iter()
+        .map(|(_, s)| s)
+        .filter(|s| s.source_id == source_id)
+        .collect();
+    for staging in &stagings {
+        delete_staging(tx, staging)?;
     }
     Ok(())
 }
@@ -1808,6 +1860,146 @@ mod tests {
         assert_eq!(
             store
                 .read_segment_texts("default", &[one.sha256])
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    fn staging_input(
+        id: &str,
+        source: &str,
+        page_id: Option<i64>,
+        client: &str,
+    ) -> BodyStagingInput {
+        serde_json::from_value(json!({
+            "id": id, "kind": "put", "principalKind": "local", "principalId": "cli",
+            "clientRequestId": client, "sourceId": source,
+            "sourceIncarnation": "33333333-3333-4333-8333-333333333333", "slug": "notes/a",
+            "pageId": page_id, "mode": "replace", "declaredBytes": 1, "reservedBytes": 1,
+            "idleExpiresAt": "2099-01-01T00:00:00Z", "hardExpiresAt": "2099-01-02T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    fn count(store: &Store, prefix: &[u8]) -> usize {
+        let read = store.read().unwrap();
+        let mut n = 0;
+        scan_prefix(&*read, prefix, false, &mut |_, _| {
+            n += 1;
+            true
+        })
+        .unwrap();
+        n
+    }
+
+    fn other_source(store: &Store) {
+        store
+            .upsert_source(
+                &serde_json::from_value(json!({"id": "other", "name": "other"})).unwrap(),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn deleting_a_source_removes_its_texts_and_stagings_only() {
+        let store = crate::test_support::store();
+        other_source(&store);
+        let other_page = store
+            .create_segmented_page_shell(
+                "notes/o",
+                &meta("O"),
+                &ShellOptions {
+                    source_id: Some("other".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let gone = "11111111-1111-4111-8111-111111111111";
+        let kept = "22222222-2222-4222-8222-222222222222";
+        let gone_client = "44444444-4444-4444-8444-444444444444";
+        store
+            .open_body_staging(&staging_input(gone, "default", None, gone_client))
+            .unwrap();
+        store
+            .open_body_staging(&staging_input(
+                kept,
+                "other",
+                Some(other_page),
+                "55555555-5555-4555-8555-555555555555",
+            ))
+            .unwrap();
+        let in_staging = StageTextsOptions {
+            staging_id: Some(gone.into()),
+        };
+        store
+            .stage_segment_texts("default", &[text("one\n"), text("two\n")], &in_staging)
+            .unwrap();
+        store
+            .stage_segment_texts("other", &[text("one\n")], &StageTextsOptions::default())
+            .unwrap();
+
+        store.write(|tx| remove_source_rows(tx, "default")).unwrap();
+
+        assert!(
+            store
+                .read_segment_texts("default", &[sha("one\n"), sha("two\n")])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .read_segment_texts("other", &[sha("one\n")])
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(count(&store, &staging_key(gone)), 0);
+        assert_eq!(count(&store, &staging_text_prefix(gone)), 0);
+        assert_eq!(count(&store, &client_key("local", "cli", gone_client)), 0);
+        assert_eq!(count(&store, &staging_key(kept)), 1);
+        assert_eq!(count(&store, &staging_by_page_prefix(other_page as u64)), 1);
+        // The id and client request are free again.
+        store
+            .open_body_staging(&staging_input(gone, "default", None, gone_client))
+            .unwrap();
+    }
+
+    #[test]
+    fn deleting_a_source_refuses_while_another_page_names_its_text() {
+        let store = crate::test_support::store();
+        other_source(&store);
+        let page = store
+            .create_segmented_page_shell(
+                "notes/o",
+                &meta("O"),
+                &ShellOptions {
+                    source_id: Some("other".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        store
+            .stage_segment_texts("default", &[text("one\n")], &StageTextsOptions::default())
+            .unwrap();
+        let row: ManifestRow = serde_json::from_value(json!({
+            "pageId": page, "occurrenceId": 1, "genFrom": 1, "seq": 0, "region": "truth",
+            "sourceId": "default", "sha256": sha("one\n"), "byteStart": 0, "byteLen": 4,
+            "lineStart": 0, "lineCount": 1, "cutKind": "eof", "entryState": {},
+            "protectedRegions": [], "factsSlots": [], "staticProjBytes": 4, "staticProjLines": 1,
+            "outline": [], "hashState": sha("s"),
+        }))
+        .unwrap();
+        store.stage_manifest_rows(&[row]).unwrap();
+        let err = store
+            .write(|tx| remove_source_rows(tx, "default"))
+            .unwrap_err();
+        assert_eq!(err.code, CONSTRAINT_VIOLATION);
+        assert_eq!(
+            store
+                .read_segment_texts("default", &[sha("one\n")])
                 .unwrap()
                 .len(),
             1
