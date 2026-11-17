@@ -77,7 +77,7 @@ export function physicalCopyFix(): Action {
 export const POSTGRES_BACKUP_DOCS = 'docs/guides/memory-boundaries.md#full-backup';
 
 const POSTGRES_DUMP_STEPS = 'This brain lives in Postgres, so back it up with a database dump of its database: ' +
-  '`pg_dump --format=custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token). ' +
+  '`pg_dump --format=custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token); `pg_restore --list <DUMP_FILE>` reads it back. ' +
   'Restore it into a new, empty database with `pg_restore --no-owner --dbname <NEW_DATABASE_URL> <DUMP_FILE>`, then run ' +
   '`gbrain init --url <NEW_DATABASE_URL>` under a separate GBRAIN_HOME, which opens the restored brain. ' +
   '`gbrain export` is not a backup: an import of it puts every page in one source and keeps no members, tokens or facts.';
@@ -93,7 +93,6 @@ export function postgresDumpFix(): Action {
       { name: 'DUMP_FILE', how: 'A new file outside the brain, in a directory only the user can read.' },
       { name: 'DATABASE_URL', how: 'The brain\'s Postgres connection, preferably service=<name> from a pg_service file so no password lands in the command line.' },
     ],
-    verify: { argv: ['pg_restore', '--list', '<DUMP_FILE>'] },
   };
 }
 

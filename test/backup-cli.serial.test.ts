@@ -566,7 +566,8 @@ describe('runBackupCli create — failure diagnostic for message-less errors (#5
         expect(doc.message).toContain('pg_restore');
         expect(doc.fix).toMatchObject({ next: 'tell_user_to_run', actor: 'host_admin' });
         expect(doc.fix.argv[0]).toBe('pg_dump');
-        expect(doc.fix.verify).toEqual({ argv: ['pg_restore', '--list', '<DUMP_FILE>'] });
+        expect(doc.fix.verify).toBeUndefined();
+        expect(doc.message).toContain('`pg_restore --list <DUMP_FILE>` reads it back');
       } else {
         expect(r.stderr).toContain('pg_dump');
         expect(r.stderr).not.toContain('gbrain doctor --json');

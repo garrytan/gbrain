@@ -12,21 +12,18 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sharedContentMigration } from '../src/commands/migrations/shared-content.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-notice-'));
-const saved = process.env.GBRAIN_HOME;
 
 beforeAll(() => {
   const init = Bun.spawnSync(['bun', 'run', join(import.meta.dir, '..', 'src', 'cli.ts'), 'init', '--pglite', '--no-embedding', '--non-interactive'], {
     env: { ...process.env, GBRAIN_HOME: home, GBRAIN_NO_AUTOPILOT_INSTALL: '1' }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
   });
   if (init.exitCode !== 0) throw new Error(`gbrain init failed: ${init.stderr.toString()}`);
-  process.env.GBRAIN_HOME = home;
 }, 180_000);
 
 afterAll(() => {
-  if (saved === undefined) delete process.env.GBRAIN_HOME;
-  else process.env.GBRAIN_HOME = saved;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -35,7 +32,7 @@ async function runOrchestrator(): Promise<{ lines: string[]; result: Awaited<Ret
   const original = console.error;
   console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
   try {
-    const result = await sharedContentMigration.orchestrator({ yes: true, dryRun: false, noAutopilotInstall: true });
+    const result = await withEnv({ GBRAIN_HOME: home }, () => sharedContentMigration.orchestrator({ yes: true, dryRun: false, noAutopilotInstall: true }));
     return { lines: lines.filter(line => line.startsWith('[shared-skills]')), result };
   } finally { console.error = original; }
 }

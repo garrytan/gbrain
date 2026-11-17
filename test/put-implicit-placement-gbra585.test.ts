@@ -21,13 +21,14 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { resolveSourceWithTier } from '../src/core/source-resolver.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { withImplicitPlacement } from '../src/core/access/implicit-placement.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const note = (title: string) => ['---', 'type: note', 'title: ' + title, '---', '# ' + title, '', 'Board prep ' + randomUUID()].join('\n');
 
 describe('a local put that names no source says where its page went (company brain, PGLite)', () => {
   let engine: BrainEngine;
   let dir: string;
-  const env = process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE;
+  const quiet = <T>(fn: () => Promise<T>) => withEnv({ GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE: '1' }, fn);
 
   async function put(slug: string, opts: { sourceId: string; implicit?: boolean }) {
     const out = await dispatchToolCall(engine, 'put_page', { slug, content: note(slug), request_id: randomUUID() },
@@ -37,7 +38,6 @@ describe('a local put that names no source says where its page went (company bra
   }
 
   beforeAll(async () => {
-    process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE = '1';
     dir = mkdtempSync(join(tmpdir(), 'gbra585-placement-'));
     mkdirSync(join(dir, 'company'));
     engine = new PGLiteEngine();
@@ -51,10 +51,9 @@ describe('a local put that names no source says where its page went (company bra
   afterAll(async () => {
     await engine?.disconnect();
     rmSync(dir, { recursive: true, force: true });
-    if (env === undefined) delete process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE; else process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE = env;
   }, 60_000);
 
-  test('the first unsourced put routes to company as before, and says so and who reads it', async () => {
+  test('the first unsourced put routes to company as before, and says so and who reads it', () => quiet(async () => {
     const routed = await resolveSourceWithTier(engine, null, dir);
     expect(routed).toMatchObject({ source_id: 'company', tier: 'sole_non_default' });
     const out = await put('notes/owner-board-prep', { sourceId: routed.source_id, implicit: true });
@@ -64,38 +63,38 @@ describe('a local put that names no source says where its page went (company bra
     expect(out.placement!.note).toContain('gbrain sources federate company');
     expect(out.placement!.note).toContain('--source <id>');
     expect(out.placement!.note).toContain('readable_by');
-  }, 120_000);
+  }), 120_000);
 
-  test('a put that named its source, and a remote put, carry no placement', async () => {
+  test('a put that named its source, and a remote put, carry no placement', () => quiet(async () => {
     expect((await put('notes/named-source', { sourceId: 'company' })).placement).toBeUndefined();
     const written = { status: 'created_or_updated', slug: 'notes/named-source', source_id: 'company' };
     expect(await withImplicitPlacement({ engine, remote: true, localSourceImplicit: true }, 'company', { slug: 'notes/named-source' }, written)).toBe(written);
-  }, 120_000);
+  }), 120_000);
 
-  test("once 'default' holds a page, an unsourced put goes to default and says every member reads it", async () => {
+  test("once 'default' holds a page, an unsourced put goes to default and says every member reads it", () => quiet(async () => {
     await put('notes/team-roadmap', { sourceId: 'default' });
     const routed = await resolveSourceWithTier(engine, null, dir);
     expect(routed).toMatchObject({ source_id: 'default', tier: 'seed_default' });
     const out = await put('notes/owner-later', { sourceId: routed.source_id, implicit: true });
     expect(out.placement).toMatchObject({ source_id: 'default', picked_by: 'seed_default', readers: 'every_source_reader' });
     expect(out.placement!.note).toContain('a member key with no source grant does');
-  }, 120_000);
+  }), 120_000);
 
-  test('a page that names its readers lists them', async () => {
+  test('a page that names its readers lists them', () => quiet(async () => {
     const out = await dispatchToolCall(engine, 'put_page', { slug: 'notes/for-alice', request_id: randomUUID(),
       content: ['---', 'type: note', 'title: For alice', 'readable_by: [alice-example]', '---', '# For alice'].join('\n') },
       { remote: false, sourceId: 'default', localSourceImplicit: true, takesHoldersAllowList: ['world'] });
     const doc = JSON.parse(out.content.map(c => c.text).join('\n')) as { placement?: { readers: unknown; note: string } };
     expect(doc.placement?.readers).toEqual(['alice-example']);
     expect(doc.placement?.note).toContain('Members who may read it: alice-example.');
-  }, 120_000);
+  }), 120_000);
 
-  test('a brain that serves one person gets no placement', async () => {
+  test('a brain that serves one person gets no placement', () => quiet(async () => {
     await engine.setConfig('access.serves', 'one');
     try {
       expect((await put('notes/personal', { sourceId: 'default', implicit: true })).placement).toBeUndefined();
     } finally {
       await engine.setConfig('access.serves', 'several');
     }
-  }, 120_000);
+  }), 120_000);
 });
