@@ -184,6 +184,8 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('retrieval_feedback', 'user_data', 'Ratings and citation signals with the weight change each applied.'),
     carry('retrieval_weights', 'user_data', 'Learned retrieval feedback weights per page and edge.'),
     carry('search_telemetry', 'operational', 'Search telemetry rollups.'),
+    carry('secret_store', 'user_data', 'Encrypted originals of redacted secrets; without them a marker can never be revealed or restored.'),
+    carry('secret_store_occurrence', 'user_data', 'Where each secret store entry was redacted; restore splices the original back at these places.'),
     carry('session_context_state', 'operational', 'Ambient recall session state.'),
     carry('shared_skill_delivery_batches', 'operational', 'Shared-skill delivery batches and acknowledgments.'),
     carry('shared_skill_heads', 'user_data', 'Shared-skill heads.'),

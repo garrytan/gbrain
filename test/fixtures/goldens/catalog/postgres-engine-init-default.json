@@ -466,6 +466,7 @@
       "secret_store.secret_store_key_id_check": "c CHECK ((key_id ~ '^[0-9a-f]{16}$'::text))",
       "secret_store.secret_store_pkey": "p PRIMARY KEY (id)",
       "secret_store.secret_store_rule_check": "c CHECK ((rule ~ '^[a-z0-9_]{1,64}$'::text))",
+      "secret_store.secret_store_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "secret_store.secret_store_source_id_value_mac_key": "u UNIQUE (source_id, value_mac)",
       "secret_store.secret_store_status_check": "c CHECK ((status = ANY (ARRAY['active'::text, 'allowed'::text])))",
       "secret_store.secret_store_value_mac_check": "c CHECK ((value_mac ~ '^[0-9a-f]{64}$'::text))",

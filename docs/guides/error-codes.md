@@ -4966,7 +4966,7 @@ More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
 |---|---|---|---|---|---|---|
 | The secret store could not keep an original value, so nothing that would have lost it was written. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
-More: [docs/guides/secret-store.md](../../docs/guides/secret-store.md)
+More: [docs/guides/secret-store.md#when-an-original-cannot-be-kept](../../docs/guides/secret-store.md#when-an-original-cannot-be-kept)
 
 ### segmented_mirror_writer_gate
 
