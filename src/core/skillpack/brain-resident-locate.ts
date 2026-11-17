@@ -27,6 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError, type OperationContext } from '../operations.ts';
 import { sourceScopeOpts } from '../operations.ts';
 import { hostFix, readFix } from '../ops/op-fix.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 
 export interface ResidentPackSkill {
   /** Skill name, as get_skill takes it. Never `slug`: page slugs and skill
@@ -253,7 +254,7 @@ export async function getResidentSkillDetail(
       `Pack ${manifest.name} lists skill ${name}, but its SKILL.md is missing on the brain host. Tell the user the pack is incomplete so its maintainer can add the file.`);
   }
   const rel = relative(realRoot, realFile);
-  if (rel.startsWith('..') || resolve(realRoot, rel) !== realFile) {
+  if (relativeEscapesRoot(rel) || resolve(realRoot, rel) !== realFile) { // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- rel comes from relative() of two realpaths; resolve only re-joins it to confirm containment, no file is opened here
     throw opError('storage_error', 'Skill path escaped the pack root.',
       `Skill ${name} in source ${sourceId} resolves outside its pack root (a symlink or '..'), so it was refused. Do not retry; tell the user so the pack's maintainer replaces it with a regular file inside the pack.`);
   }

@@ -1013,6 +1013,15 @@ export function privateFactFilterForCaller(factAlias: string, perCandidate = fal
   return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)}${labelledOnlyFactSql(factAlias)})`;
 }
 
+/**
+ * GST-2951: the page gate for a fact read whose visibility follows worldOnlyFacts. The brain owner's read is judged by
+ * the policy recall and find_trajectory use (privateProvenanceFilterUnderPolicy), so the owner keeps facts taken from a
+ * private page it reads, while member access still applies; every other caller keeps privateFactFilterForCaller.
+ */
+export function privateFactFilterForReader(factAlias: string): string {
+  return callerIsOwner() ? privateProvenanceFilterUnderPolicy(factAlias) : privateFactFilterForCaller(factAlias);
+}
+
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
 export function callerRelaxesPrivacy(): boolean {
   return callerAccessStore.getStore()?.hidePrivate === false;
