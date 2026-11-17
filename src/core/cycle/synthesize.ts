@@ -3081,6 +3081,14 @@ async function writeSummaryPage(
   expectedRevision?: string | null,
 ): Promise<string | undefined> {
   throwIfAborted(signal, '[dream] synthesize summary');
+  // The summary is per date and synthesize can run several times a day: keep the links an earlier run wrote
+  // (live pages only, never the summary itself) instead of rebuilding from this run's pages alone.
+  const priorLinks = [...((await engine.getPage(summarySlug, { sourceId }))?.compiled_truth ?? '').matchAll(/^- \[\[([^\]|#]+)\]\]\s*$/gm)].map(m => m[1]!);
+  const merged = new Set(writtenSlugs);
+  for (const slug of priorLinks) {
+    if (slug !== summarySlug && !merged.has(slug) && await engine.getPage(slug, { sourceId })) merged.add(slug);
+  }
+  writtenSlugs = [...merged];
   const revision = expectedRevision !== undefined || maintenance ? expectedRevision ?? null
     : (await engine.readPageSnapshot(summarySlug, { sourceId, includeDeleted: true }))?.revision ?? null;
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
