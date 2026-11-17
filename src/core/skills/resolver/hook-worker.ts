@@ -33,7 +33,8 @@ if (stall === 'exit') await new Promise(() => {});
 if (stall === 'late') await new Promise(r => setTimeout(r, 300));
 
 try {
-  const r = await resolveSkills(input, { home, catalogs, deadlineMs, failOpen: true, excludeNamespaces });
+  const turnOpts = { home, catalogs, deadlineMs, failOpen: true, excludeNamespaces };
+  const r = await resolveSkills(input, turnOpts);
   parentPort!.postMessage({ output: r.output, pending: r.pending ?? null });
 } catch (e) {
   const code = (e as { code?: unknown }).code;
