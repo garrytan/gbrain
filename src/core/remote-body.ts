@@ -15,7 +15,7 @@ export const PROTECTED_PAIRS: readonly FencePair[] = [
  * #5567 materialized-timeline marker lines are dropped unless the caller
  * round-trips the body (`keepMaterializedMarkers`).
  */
-export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean; keepMaterializedMarkers?: boolean } = {}): string {
+export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean; keepMaterializedMarkers?: boolean; omitRows?: ReadonlySet<number> } = {}): string {
   if (typeof body !== 'string') return '';
   // Parse the same free-text bytes storage accepts. Removing NUL after fence
   // detection could turn an unrecognized marker into a protected stored fence.
@@ -28,17 +28,17 @@ export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: bool
   for (const region of regions) {
     output.push(body.slice(cursor, region.start));
     cursor = region.end;
-    if (region.pair === 0) output.push(renderFactsRegion(body.slice(region.start, region.end), opts.includeWithdrawn));
+    if (region.pair === 0) output.push(renderFactsRegion(body.slice(region.start, region.end), opts.includeWithdrawn, opts.omitRows));
   }
   output.push(truncatedAt === -1 ? body.slice(cursor) : body.slice(cursor, truncatedAt));
   return output.join('');
 }
 
-/** What sanitizeRemoteBody puts in place of one protected facts region: its world rows rendered, or nothing. */
-export function renderFactsRegion(region: string, includeWithdrawn = false): string {
+/** What sanitizeRemoteBody puts in place of one protected facts region: its world rows rendered (less `omitRows`), or nothing. */
+export function renderFactsRegion(region: string, includeWithdrawn = false, omitRows?: ReadonlySet<number>): string {
   try {
     const parsed = parseFactsFenceFor(region, { reader: true });
-    if (parsed.warnings.length === 0) return renderFactsTable(parsed.facts.filter(row => row.visibility === 'world' && (includeWithdrawn || !row.forgotten)));
+    if (parsed.warnings.length === 0) return renderFactsTable(parsed.facts.filter(row => row.visibility === 'world' && (includeWithdrawn || !row.forgotten) && !omitRows?.has(row.rowNum)));
   } catch {
     // A protected block that cannot be parsed is omitted, never echoed.
   }
