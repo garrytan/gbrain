@@ -11,6 +11,7 @@ import type { Check } from '../../doctor.ts';
 import { getBackupStatus } from '../../../core/backup/coverage.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
+import { postgresDumpFix } from '../../../core/backup/preflight.ts';
 import {
   BACKUP_COACH_MIN_AGE_DAYS,
   BACKUP_COACH_MIN_ITEMS,
@@ -59,7 +60,7 @@ function assetCoverageWording(s: BackupStatus): string {
     parts.push('A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials.');
   }
   if (kinds.has('db_only') || kinds.has('db_content')) {
-    parts.push('DB-only pages and facts live only in the database: an export or database backup is their only copy.');
+    parts.push('DB-only pages and facts live only in the database: a full database backup is their only complete copy.');
   }
   return parts.length ? parts.join(' ') : 'Git evidence covers committed repository files only, not the full database.';
 }
@@ -67,13 +68,23 @@ function assetCoverageWording(s: BackupStatus): string {
 /**
  * The first blocking asset's fix as an Action. `not_a_git_repo` sources (for
  * example gbrain's own content directory) have no git remote to add, so their
- * fix is an export to a directory the user picks; db_only/db_content assets use
- * their own fix argv. `bootstrap repo` and pushes carry {credentials, egress}.
+ * fix is the engine's full backup: `gbrain backup create` on PGLite, a pg_dump
+ * on Postgres. Never `gbrain export`: an import of it drops sources, members,
+ * tokens and facts. db_only/db_content assets use their own fix argv.
+ * `bootstrap repo` and pushes carry {credentials, egress}.
  */
-function backupAssetFix(s: BackupStatus): Action | undefined {
+function backupAssetFix(s: BackupStatus, engineKind: BrainEngine['kind']): Action | undefined {
   for (const a of s.assets.filter(assetBlocksRecovery)) {
-    const argv = a.fix_argv ?? (a.kind === 'source_repo' && a.detail === 'not_a_git_repo'
-      ? ['gbrain', 'export', '--source', a.id, '--dir', `<BACKUP_DIR>/${a.id}`] : null);
+    if (!a.fix_argv && a.kind === 'source_repo' && a.detail === 'not_a_git_repo') {
+      if (engineKind === 'postgres') return postgresDumpFix();
+      return {
+        argv: ['gbrain', 'backup', 'create', '--output', '<BACKUP_FILE>'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Writes a full snapshot of this PGLite brain (every source, page, fact, member, token and rule) to one archive outside the brain.',
+        inputs: [{ name: 'BACKUP_FILE', how: 'Ask the user for an absolute path to a new archive file, in an existing private directory outside the brain (ideally another disk).' }],
+        verify: doctorVerify('backup_coverage'), docs: 'docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database',
+      };
+    }
+    const argv = a.fix_argv;
     if (!argv) continue;
     const filled = argv.map((x) => x.replace(/^BACKUP_DIR\//, '<BACKUP_DIR>/'));
     const egress = argv[1] === 'bootstrap' || (argv[1] === 'sources' && argv[2] === 'push');
@@ -91,7 +102,7 @@ function backupAssetFix(s: BackupStatus): Action | undefined {
   return undefined;
 }
 
-function toCheck(s: BackupStatus, now?: number): Check {
+function toCheck(s: BackupStatus, engineKind: BrainEngine['kind'], now?: number): Check {
   const details = {
     totals: s.totals,
     checked_at: s.checked_at,
@@ -105,7 +116,7 @@ function toCheck(s: BackupStatus, now?: number): Check {
     const listed = unverified.slice(0, LISTED_ASSET_CAP).map((a) => `${a.id} (${a.reason})`).join(', ');
     const more = unverified.length > LISTED_ASSET_CAP ? `, and ${unverified.length - LISTED_ASSET_CAP} more` : '';
     const assetClause = unverified.length > 0 ? `${unverified.length} knowledge asset(s) lack verified recovery: ${listed}${more}.` : null;
-    const fix = backupAssetFix(s);
+    const fix = backupAssetFix(s, engineKind);
     const message =
       `${warnLead(assetClause, verdictCaveats(s, now))} ${assetCoverageWording(s)} ` +
       'Run `gbrain backup status` for each asset\'s fix command.';
@@ -202,7 +213,7 @@ export async function checkBackupCoverage(
       computedBy: 'doctor',
       ...(opts.now ? { now: opts.now } : {}),
     });
-    return toCheck(s, opts.now?.getTime());
+    return toCheck(s, engine.kind, opts.now?.getTime());
   } catch (e) {
     return checkError('backup_coverage', 'read backup coverage', e);
   }

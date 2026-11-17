@@ -1752,6 +1752,18 @@ Reasons: `command_not_allowed`, `member_not_usable`, `target_not_readable`, `lab
 
 More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member.md#refused)
 
+### engine_capability_missing
+
+<a id="engine_capability_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain's engine does not implement the capability this call needs (reason names it), so the call was refused before any work and nothing was written. | The Rust engine preview grows one capability at a time. A call that needs a capability it does not report is refused up front instead of running part of the way; detail names the member, the capability and whether anything was written (written=nothing unless the outcome is partial or unknown). | Run the call on a pglite or postgres brain, or wait for a gbrain release whose Rust engine reports the capability. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `raw_sql`, `persistence_journal`, `minion_queue`, `access_control`, `belief_ledger`, `single_owner`, `postgres_admin`, `schema`, `transactions`, `sources`, `config`, `pages`, `page_versions`, `page_body`, `tags`, `chunks`, `embeddings`, `keyword_search`, `vector_search`, `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `health`, `raw_data`, `eval_capture`, `ingest_log`, `dream_verdicts`, `contradictions`, `ontology`.
+
+More: [docs/ENGINES.md#the-rust-engine-shell](../../docs/ENGINES.md#the-rust-engine-shell)
+
 ### engine_closed
 
 <a id="engine_closed"></a>
@@ -4800,6 +4812,26 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/troubleshooting.md#runtime-build-skew)
 
+### rust_engine_addon_mismatch
+
+<a id="rust_engine_addon_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
+
+### rust_engine_addon_missing
+
+<a id="rust_engine_addon_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
+
+Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
+
 ### schedule_install_failed
 
 <a id="schedule_install_failed"></a>
@@ -4985,6 +5017,14 @@ More: [docs/guides/write-refusals.md#settle_mismatch](../../docs/guides/write-re
 | gbrain setup does not wire this harness yet; its guide has the manual connection steps. | Only harnesses with a supported row in the setup capability table are wired automatically, so setup never guesses another host's config format. | Correct the request using the message above, then retry. Run: gbrain setup --help | agent | `repeat the read that failed` | 2 | no |
 
 More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair.md#setup-harness-unsupported)
+
+### setup_history_choice_required
+
+<a id="setup_history_choice_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --serves several would turn a brain that serves one person shared while it holds pages no rule restricts, and nobody chose what happens to them, so setup wrote nothing. | Each member key setup mints reads every page no rule or readable_by restricts, so the owner's journal, DMs, chat, mail and conversation archive would reach every member; only the admin can decide that. | Run setup again with --labelled-only to keep that history private (each member reads only pages labelled for them) or with --open-history to let the members read it. Run: gbrain doctor --only open_shared_pages --json | agent | `repeat the read that failed` | 1 | no |
 
 ### setup_hosted_connection
 
@@ -5572,7 +5612,7 @@ More: [docs/guides/write-refusals.md#source_writer_restricted](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page search returns (for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
+| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page every reader of that source can read (pages kept to named readers or private do not count; for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages](../../docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages)
 
@@ -6172,7 +6212,7 @@ More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-r
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that gbrain.yml at HEAD declares, or .gitignore does not ignore it. | The next sync deletes the page of a file that leaves Git outside a declared storage.db_only dir, and a file .gitignore does not ignore can be committed again by any later commit. | Declare the folder under storage.db_only in gbrain.yml and add its <dir>/ line to .gitignore, commit both with gbrain git commit-push -m <msg> -- gbrain.yml .gitignore, then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
+| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that the source's gbrain.yml (in the folder the source is rooted in) declares at HEAD and on disk, .gitignore does not ignore it, it is a symbolic link out of the dir, it is a Markdown page whose slug falls outside the dir, or it is a code-extension file that is a page, or that a code-importing source's sync imports as one, or that the source's last finished sync has not seen at its current version; or the brain, which records the source's folder, could not be read, which refuses every file. | The next sync deletes the page of a file that leaves Git unless sync keeps it as database-only, which it decides by page slug, and a file .gitignore does not ignore can be committed again by any later commit. | Follow the fix the refusal prints for each file: declare the folder under storage.db_only in the gbrain.yml the refusal names and its <dir>/ line in .gitignore (commit both with gbrain git commit-push -m <msg> -- <that gbrain.yml> .gitignore), add the .gitignore line, declare the slug spelling, keep code-file pages tracked, run gbrain sync --source <id> for code files sync has not seen yet, or retry once the brain is free; then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-checkout-git.md#untrack](../../docs/guides/shared-checkout-git.md#untrack)
 

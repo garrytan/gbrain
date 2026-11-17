@@ -85,6 +85,17 @@ describe('sources add federation warning', () => {
     expect(out.notices[0]).toMatchObject({ code: 'source_not_in_default_search', kind: 'info', fix: { argv: ['gbrain', 'sources', 'federate', 'source-n'] } });
   });
 
+  // GBRA-585: a personal source (private-<member>) on a team brain was met with "next: ask_user: gbrain sources federate".
+  test('the notice asks whether the source should be shared, and says a private source needs nothing', async () => {
+    const { stdout, stderr } = await add(['private-alice-example', '--json']);
+    const notice = JSON.parse(stdout).notices[0];
+    expect(notice.fix.next).toBe('ask_user');
+    expect(notice.user_message).toContain('Should the source "private-alice-example" be shared');
+    expect(notice.user_message).toContain('leave it as it is');
+    expect(notice.why).toContain('A source meant to stay private needs nothing');
+    expect(stderr).not.toContain('Run `gbrain sources federate private-alice-example` to add it');
+  });
+
   test('--federated adds without the warning', async () => {
     const { stderr } = await add(['source-b', '--federated']);
     expect(stderr).not.toContain('is not federated');

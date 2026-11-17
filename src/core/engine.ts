@@ -1,4 +1,5 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
 import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
 import type { LinkReadScope } from './link-validity.ts';
@@ -746,8 +747,8 @@ export interface FactsHealth {
  *
  * `remote` (D-CDX-1) gates the visibility filter: when true the engine
  * adds `AND visibility = 'world'`, mirroring `recall`'s posture for
- * untrusted callers. Local CLI keeps `remote: false` and sees both
- * private + world facts.
+ * untrusted callers. Callers pass worldOnlyFacts(ctx.remote), so the local
+ * CLI and the brain owner see both private + world facts.
  */
 export interface TrajectoryOpts {
   entitySlug: string;
@@ -832,6 +833,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
+  readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
 
   // Lifecycle
   connect(config: EngineConfig): Promise<void>;
@@ -1939,7 +1941,7 @@ export interface BrainEngine {
   /** Meta-ontology: which dimensions exist across the brain, and how widely. */
   discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]>;
   /** Dimensions with ≥2 distinct current-open values from ≥2 provenances. */
-  findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts['visibility'] }): Promise<OntologyConflict[]>;
+  findOntologyConflicts(opts?: PageReadScope & Pick<OntologyReadOpts, 'minConfidence' | 'visibility' | 'excludeDiary'>): Promise<OntologyConflict[]>;
 
   // Raw data
   /**

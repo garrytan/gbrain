@@ -33,8 +33,11 @@ import { compareTrust, isTrustTier, minTrust, TRUST_TIERS, type TrustTier } from
 import { compactTrustLabel } from './labels.ts';
 import { activationSuppressedSql } from './sql.ts';
 import { holdFingerprint } from '../write-gate-store.ts';
-import { memberFactAdmitSql } from '../access/member-facts.ts';
+import { grantedPrivateFactSql, memberFactAdmitSql } from '../access/member-facts.ts';
 import { worldOnlyFacts } from '../search/private-visibility.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
+import { MANAGED_LINK_SOURCES, maskLinksFence } from '../links-fence.ts';
+import { ensureWellFormed } from '../text-safe.ts';
 
 /** The origin slot of a fence trust marker: the chunk holds facts-fence rows, not page prose. */
 export const FENCE_TRUST_ORIGIN = 'facts-fence';
@@ -212,13 +215,19 @@ export function fenceRowHoldTexts(row: Pick<ParsedFact, 'claim' | 'context'>): H
  * GST-2891: SQL true when the world fence cell (`rowNum`, `claim`) of page (`sourceId`, `slug`) is held from the current
  * caller: the live facts row at that row number is narrower than world, or the claim is a live narrower fact of the page
  * that no live world fact of the page states (the restatement rule without the tier, so it also holds a restatement whose
- * own row is not stored yet), and the caller's fact reads do not admit that narrower fact (memberFactAdmitSql). For a
+ * own row is not stored yet), and the caller's fact reads do not admit that narrower fact (memberFactAdmitSql, or GST-2900
+ * a private-facts grant, grantedPrivateFactSql, when the grant also reads every private copy a visibility proposal names
+ * for that fact, so a restatement of a copy kept on a page the grant cannot read stays held). For a
  * caller that reads private facts (worldOnlyFacts false) nothing is held: callers skip the check. `partial` (an SQL
  * boolean) marks a claim cut by a chunk boundary: it then matches a fact that contains it rather than one equal to it.
  */
 export function heldRowSql(sourceId: string, slug: string, rowNum: string, claim: string, partial = 'false'): string {
   const page = (a: string) => `${a}.source_id = ${sourceId} AND ${a}.source_markdown_slug = ${slug} AND ${a}.expired_at IS NULL`;
-  const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)}`;
+  const granted = (a: string) => `(${grantedPrivateFactSql(a)} AND NOT EXISTS (SELECT 1 FROM trust_proposals hgp
+    LEFT JOIN facts hgc ON hgp.target_table = 'facts' AND hgc.id = hgp.target_id
+    WHERE hgp.related_table = 'facts' AND hgp.related_id = ${a}.id AND hgp.action = 'supersede_fact' AND hgp.before_state->'visibility' IS NOT NULL
+      AND (hgc.id IS NULL OR NOT (${memberFactAdmitSql('hgc')} OR ${grantedPrivateFactSql('hgc')}))))`;
+  const narrower = (a: string) => `${page(a)} AND ${a}.visibility <> 'world' AND NOT ${memberFactAdmitSql(a)} AND NOT ${granted(a)}`;
   const states = (a: string) => `(CASE WHEN ${partial} THEN strpos(${a}.fact, ${claim}) > 0 ELSE ${a}.fact = ${claim} END)`;
   return `(EXISTS (SELECT 1 FROM facts hr WHERE ${narrower('hr')} AND hr.row_num = ${rowNum})
     OR (EXISTS (SELECT 1 FROM facts hc WHERE ${narrower('hc')} AND ${states('hc')})
@@ -296,4 +305,74 @@ export async function loadFenceChunkOverlay(
 export async function heldRowsForCaller(engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined,
   page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null }): Promise<ReadonlySet<number> | undefined> {
   return worldOnlyFacts(remote) ? (await loadFenceChunkOverlay(engine, page, { hideHeld: true }))?.held : undefined;
+}
+
+/** Link producers whose context is an excerpt of a page body (link-extraction.ts); a null source is a legacy row. */
+const BODY_EXCERPT_LINK_SOURCES: readonly string[] = MANAGED_LINK_SOURCES.filter(s => s !== 'frontmatter');
+
+/** The most origin pages whose bodies one worldLinkContexts call reads; contexts from pages past it come back empty. */
+export const LINK_CONTEXT_PAGE_BOUND = 200;
+
+/** Text holding a facts or takes fence marker, whole or near-miss: every fence row follows its opening marker. */
+const holdsFenceMarker = (text: string): boolean => text.includes('gbrain:facts') || text.includes('gbrain:takes');
+
+/** A returned edge's stored identity: its two pages and its type. */
+export interface StoredEdgeRef { from: { sourceId: string; slug: string }; to: { sourceId: string; slug: string }; linkType: string }
+
+/** The stored identity of a returned link or graph edge. */
+export function storedEdge(e: { from_source_id: string; from_slug: string; to_source_id: string; to_slug: string; link_type: string }): StoredEdgeRef {
+  return { from: { sourceId: e.from_source_id, slug: e.from_slug }, to: { sourceId: e.to_source_id, slug: e.to_slug }, linkType: e.link_type };
+}
+
+/**
+ * GST-2957: stored link contexts as a caller whose fact reads are world-only (worldOnlyFacts) may read them. A context
+ * written by a body producer is an excerpt of the body of the link's origin page (its from page when it has none), so a
+ * reference in or near a facts or takes fence carries fence row text, private and held rows included, and a body edit
+ * can drop the fence while the link keeps the old excerpt. Each returned context is matched to its stored link rows
+ * (`edge(row)`, the same text or a read's truncation of it); the caller keeps it when one of them was supplied by a writer
+ * (add_link provenances, frontmatter fields) and holds no fence marker (unify-types' preserve_notes stores a page's
+ * opening as a manual context), or reads, whitespace-collapsed as the extractor collapses it, inside its origin page as
+ * it is now and as get_page shows it to the caller (sanitizeRemoteBody less heldRowsForCaller). The origin bodies are
+ * read in one query, for at most LINK_CONTEXT_PAGE_BOUND pages in result order. Otherwise it is emptied, as it is when
+ * no stored row matches, the page is past the bound, stored in segments or gone, or a lookup fails (fail closed).
+ * Every other caller reads contexts as stored and costs no query.
+ */
+export async function worldLinkContexts<T extends { context?: string | null }>(
+  engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined, rows: T[], edge: (row: T) => StoredEdgeRef,
+): Promise<T[]> {
+  if (!worldOnlyFacts(remote)) return rows;
+  const asked = rows.flatMap((row, i) => (row.context ? [{ i, ref: edge(row), context: row.context }] : []));
+  if (asked.length === 0) return rows;
+  const kept = new Set<number>();
+  try {
+    const matches = await engine.executeRaw<{ i: number; link_source: string | null; context: string; page_id: number | null }>(
+      `SELECT u.i, l.link_source, l.context, e.id AS page_id
+       FROM unnest($1::int[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[]) AS u(i, fs, fslug, ts, tslug, lt, ctx)
+       JOIN pages f ON f.source_id = u.fs AND f.slug = u.fslug
+       JOIN pages t ON t.source_id = u.ts AND t.slug = u.tslug
+       JOIN links l ON l.from_page_id = f.id AND l.to_page_id = t.id AND l.link_type = u.lt
+         AND (l.context = u.ctx OR (right(u.ctx, 1) = '…' AND left(l.context, char_length(u.ctx) - 1) = left(u.ctx, char_length(u.ctx) - 1)))
+       LEFT JOIN pages e ON e.id = COALESCE(l.origin_page_id, l.from_page_id) AND e.deleted_at IS NULL`,
+      [asked.map(a => a.i), asked.map(a => a.ref.from.sourceId), asked.map(a => a.ref.from.slug), asked.map(a => a.ref.to.sourceId),
+        asked.map(a => a.ref.to.slug), asked.map(a => a.ref.linkType), asked.map(a => a.context)]);
+    const excerpted = matches.filter(m => m.link_source == null || BODY_EXCERPT_LINK_SOURCES.includes(m.link_source)).sort((a, b) => Number(a.i) - Number(b.i));
+    for (const m of matches) if (!excerpted.includes(m) && !holdsFenceMarker(m.context)) kept.add(Number(m.i));
+    const pageIds = [...new Set(excerpted.flatMap(m => (m.page_id == null ? [] : [Number(m.page_id)])))].slice(0, LINK_CONTEXT_PAGE_BOUND);
+    const pages = pageIds.length ? await engine.executeRaw<{ id: number; source_id: string; slug: string; compiled_truth: string | null; timeline: string | null }>(
+      `SELECT id, source_id, slug, compiled_truth, timeline FROM pages
+       WHERE id = ANY($1::bigint[]) AND body_storage IS DISTINCT FROM 'segmented'`, [pageIds]) : [];
+    const views = new Map<number, string>();
+    for (const p of pages) {
+      const compiled = p.compiled_truth ?? '';
+      const omitRows = holdsFenceMarker(compiled + (p.timeline ?? ''))
+        ? await heldRowsForCaller(engine, remote, { sourceId: p.source_id, slug: p.slug, compiled_truth: compiled, timeline: p.timeline })
+        : undefined;
+      const shown = sanitizeRemoteBody(compiled, { omitRows }) + '\n' + sanitizeRemoteBody(p.timeline ?? '', { omitRows });
+      views.set(Number(p.id), ensureWellFormed(maskLinksFence(shown)).replace(/\s+/g, ' '));
+    }
+    for (const m of excerpted) if (m.page_id != null && views.get(Number(m.page_id))?.includes(m.context)) kept.add(Number(m.i));
+  } catch {
+    kept.clear();
+  }
+  return rows.map((row, i) => (!row.context || kept.has(i) ? row : { ...row, context: '' }));
 }

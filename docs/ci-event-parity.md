@@ -43,6 +43,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `heavy-tests.yml` | `grok-door` (label or input only) | Recorded decision: no scheduled run until the `XAI_API_KEY` secret exists | None yet, by decision |
 | `heavy-tests.yml` | `opencode-door-canary` | Named exception: schedule-only, non-gating canary | Itself |
 | `macos-validation.yml` | Label-gated on pull requests | Named exception | Nightly macOS validation schedule |
+| `apple-helper.yml` | Pull requests and master pushes that touch `apple/**` or the workflow; not a required check | Named exception: the Swift helper is inert files to every other workflow | Every push to master that touches those paths |
 | `scale-tier.yml` | Path- or label-gated 10k on pull requests | Named exception | Nightly Scale tier schedule (10k-50k) |
 | `upgrade-matrix.yml` | Pull requests run N-1 and N-50, keyless repo-less cells only, against the head; the full matrix (N-1, N-10, N-50, 30 days, stable × both engines × keys × brain shapes) is schedule and dispatch only, and those refuse any ref but master ([docs](ci-upgrade-matrix.md)) | Named exception | Nightly Upgrade matrix schedule |
 | `semgrep.yml` | PR diff scan vs full-tree scan | Named exception | Weekly Semgrep schedule |
@@ -287,6 +288,14 @@ a push-to-master red opens the Test `master-red` issue, a scheduled red the
 `nightly-red` issue. The repair PR bumps, overrides, patches or removes the
 dependency. When no fix exists, an ignore entry needs Garry's approval and an
 expiry date.
+
+Ignore entries live in `admin/osv-scanner.toml` and apply to `admin/bun.lock`
+only; the root lockfile has none. OSV-Scanner reads the file for that lockfile
+and stops ignoring an entry after its `ignoreUntil` date, and
+`scripts/ci-dependency-audit.sh` passes each id to the admin `bun audit` until
+that date, then reports `audit_ignore_expired`, which blocks like an advisory.
+Current entry: GHSA-fc5q-39xc-vjpf (picomatch, a build-time dependency of the
+admin UI's bundler, with no fixed version), until 2026-12-17.
 
 ## Crash robot ceilings
 

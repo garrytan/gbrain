@@ -23,7 +23,7 @@ import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { runGather, renderPagesBlockDetailed, pagesBlockExcerptLen, takesHitToTakeForPrompt, selectRelevantExcerpt } from './gather.ts';
 import { readThinkPagesBudget } from './pages-budget.ts';
-import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
+import { dropHeldFenceRows, stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
 import { fenceTranscriptText, neutralizeToolCalls, quoteLabel } from '../search/transcript-quote.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
@@ -590,10 +590,12 @@ async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: 
     excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
     requireSafeChunks: opts.remote !== false,
   });
+  // GST-2900: delivery re-reads page text from the database, so the held fence rows are dropped again (GST-2891).
+  const results = worldOnlyFacts(opts.remote) ? await dropHeldFenceRows(engine, delivered.results) : delivered.results;
   const rendered = applied.unit === 'auto'
-    ? renderPagesBlockDetailed(delivered.results, excerptLen, opts.question,
+    ? renderPagesBlockDetailed(results, excerptLen, opts.question,
       { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP, timeZone, titles })
-    : renderPagesBlockDetailed(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true, timeZone, titles });
+    : renderPagesBlockDetailed(results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true, timeZone, titles });
   return { pagesBlock: rendered.text, evidenceTruncated: rendered.truncated, evidenceDelivery: delivered.delivery };
 }
 
@@ -684,8 +686,8 @@ export async function runThink(
   // legitimately-empty one for MCP/remote callers.
   for (const w of gather.warnings) warnings.push(w);
   if (gather.diagnostics.window?.dropped) warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
-  // #5575 A6: every page and take reaches the prompt with its trust tier.
-  await stampPageTrust(engine, gather.pages);
+  // #5575 A6: every page and take reaches the prompt with its trust tier; GST-2900 drops held fence rows for world-only callers.
+  gather.pages = await stampPageTrust(engine, gather.pages, undefined, undefined, worldOnlyFacts(opts.remote));
   gather.takes = await stampRowTrust(engine, 'takes', gather.takes, t => ('take_id' in t ? t.take_id : (t as { id: number }).id));
 
   // Render evidence blocks for the prompt. #4510: the per-page excerpt is

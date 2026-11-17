@@ -1,0 +1,329 @@
+name: Rust engine
+
+# Checks for the optional Rust engine under rust/. Rust is never required to build or run
+# gbrain: the last job proves that by removing Rust from PATH and building the normal binary.
+#
+# Jobs:
+#   checks     formatting, clippy, unit tests, and cargo-deny (licenses, sources, advisories).
+#              The advisory check downloads the RustSec database, so it needs network access.
+#   addon      builds the addon (`bun run rust:build`) and runs the Bun smoke test
+#              (rust/smoke/run.ts, including a `bun build --compile` executable) on Linux x64 and
+#              macOS arm64, then uploads the .node file.
+#   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
+#   scope      reads a pull request's changed files and picks the advisory check and addon cells.
+#
+# Runs only when something the Rust engine depends on changes (the path list below). The two
+# rust-unit-arms entries start with `**/` because those files arrive in a later change and the
+# repo's doc-path check rejects a plain path to a file that does not exist yet; the pattern still
+# matches the same files.
+#
+# Event parity (docs/TESTING.md#event-parity), named exceptions:
+#   - The macOS addon cell runs on pushes to master, on workflow_dispatch, and on pull requests
+#     that change rust/** or the loader files (src/core/rust-engine.ts, src/core/rust-engine/**).
+#     macOS runners are the landing line's bottleneck. Covered by every push to master.
+#   - The cargo-deny advisory check runs on a pull request only when it changes rust/** (which
+#     holds rust/Cargo.lock), so a new RustSec advisory cannot turn an unrelated pull request red.
+#     Covered by every push to master and the daily Rust engine schedule, which runs only `checks`.
+
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+      - 'src/core/rust-engine**'
+      - 'src/core/sql-engine-kind.ts'
+      - 'src/core/engine.ts'
+      - 'src/core/engine-*.ts'
+      - 'src/core/engine-sql/**'
+      - 'src/schema.sql'
+      - 'src/core/migrate.ts'
+      - 'src/core/schema-migrations/**'
+      - 'src/core/persistence/graduation-*.ts'
+      - 'test/helpers/test-backends.ts'
+      - '**/test/rust-unit-arms.txt'
+      - '**/scripts/rust-unit-arms.ts'
+      - '.github/workflows/rust-engine.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'rust/**'
+      - 'src/core/rust-engine**'
+      - 'src/core/sql-engine-kind.ts'
+      - 'src/core/engine.ts'
+      - 'src/core/engine-*.ts'
+      - 'src/core/engine-sql/**'
+      - 'src/schema.sql'
+      - 'src/core/migrate.ts'
+      - 'src/core/schema-migrations/**'
+      - 'src/core/persistence/graduation-*.ts'
+      - 'test/helpers/test-backends.ts'
+      - '**/test/rust-unit-arms.txt'
+      - '**/scripts/rust-unit-arms.ts'
+      - '.github/workflows/rust-engine.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 7 * * *'  # daily 07:17 UTC: cargo-deny advisories on master (checks job only)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  # Event parity (docs/TESTING.md#event-parity): see the named exceptions in the header. Off a
+  # pull request every output is the full set. On a pull request whose file list cannot be read
+  # (the API stops at 3000 files, or the call fails), everything runs.
+  scope:
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      targets: ${{ steps.scope.outputs.targets }}
+    steps:
+      - id: scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          rust=true
+          macos=true
+          if [ "$EVENT" = pull_request ]; then
+            if [[ "$CHANGED_FILES" =~ ^[0-9]{1,4}$ ]] && [ "$CHANGED_FILES" -lt 3000 ] \
+              && files=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename'); then
+              grep -Eq '^rust/' <<< "$files" || rust=false
+              grep -Eq '^(rust/|src/core/rust-engine(\.ts$|/))' <<< "$files" || macos=false
+            fi
+          fi
+          linux='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404"}'
+          # Unverified before the first CI run: the dylib name (libgbrain_napi.dylib) and Bun
+          # loading an unsigned .node with process.dlopen.
+          darwin='{"target":"darwin-arm64","runner":"macos-26"}'
+          if [ "$macos" = true ]; then targets="[$linux,$darwin]"; else targets="[$linux]"; fi
+          echo "scope: event=$EVENT rust=$rust macos=$macos"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Format, clippy, unit tests, cargo-deny
+    needs: scope
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 25
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component clippy --component rustfmt
+          rustup default "$channel"
+          rustc --version
+          cargo --version
+      # The cache name is built in a step so the cache key line holds no long literal value.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-checks-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-checks-${{ runner.os }}-${{ runner.arch }}-
+      - name: Format
+        working-directory: rust
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit tests
+        working-directory: rust
+        run: cargo test --locked
+      # A pinned prebuilt binary, checked against its SHA-256, so CI does not compile cargo-deny
+      # and does not depend on a third-party action.
+      - name: Install cargo-deny 0.21.0
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          archive=cargo-deny-0.21.0-x86_64-unknown-linux-musl.tar.gz
+          curl -fsSL --retry 3 -o "$archive" "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.21.0/$archive"
+          echo "a2170b854ff697e79e39c4c538981c9c1bdd803addbae6719a4cb66b4585a903  $archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/cargo-deny-bin"
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP/cargo-deny-bin" cargo-deny-0.21.0-x86_64-unknown-linux-musl/cargo-deny
+          echo "$RUNNER_TEMP/cargo-deny-bin" >> "$GITHUB_PATH"
+      - name: cargo-deny (licenses, bans, sources)
+        working-directory: rust
+        run: cargo deny --locked check licenses bans sources
+      # Event parity (docs/TESTING.md#event-parity): named exception, see the header.
+      - name: cargo-deny (advisories)
+        if: needs.scope.outputs.rust == 'true'
+        working-directory: rust
+        run: cargo deny --locked check advisories
+
+  # Event parity (docs/TESTING.md#event-parity): the scope job picks the cells (named exception in
+  # the header); the schedule runs only `checks`. macOS minutes cost more than Linux.
+  addon:
+    name: Addon and Bun smoke / ${{ matrix.target }}
+    needs: scope
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.scope.outputs.targets) }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component clippy --component rustfmt
+          rustup default "$channel"
+          rustc --version
+          cargo --version
+      # The cache name is built in a step so the cache key line holds no long literal value.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-addon-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the addon
+        run: bun run rust:build
+      - name: Smoke test under Bun (in-process cases, process.exit, compiled executable)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
+          test -f "$GBRAIN_RUST_ENGINE_ADDON"
+          bun rust/smoke/run.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: gbrain-engine-addon-${{ matrix.target }}
+          path: rust/target/addon/gbrain_engine.${{ matrix.target }}.node
+          if-no-files-found: error
+          retention-days: 7
+
+  # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.
+  without-rust:
+    name: Builds and runs with no Rust installed
+    if: github.event_name != 'schedule'
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      - name: Remove Rust from PATH, then build and run gbrain
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Drop every PATH directory that holds cargo, rustc or rustup. System directories are kept;
+          # if Rust lives in one, the check below fails loudly instead of breaking the shell.
+          filtered=""
+          IFS=: read -r -a dirs <<< "$PATH"
+          for dir in "${dirs[@]}"; do
+            case "$dir" in
+              /usr/bin|/bin|/usr/local/bin|/usr/sbin|/sbin)
+                filtered="${filtered:+$filtered:}$dir"
+                continue
+                ;;
+            esac
+            if [ -e "$dir/cargo" ] || [ -e "$dir/rustc" ] || [ -e "$dir/rustup" ]; then
+              echo "removing from PATH: $dir"
+              continue
+            fi
+            filtered="${filtered:+$filtered:}$dir"
+          done
+          export PATH="$filtered"
+          for tool in cargo rustc rustup; do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is still on PATH: $(command -v "$tool")"
+              exit 1
+            fi
+          done
+          bun run build
+          ./bin/gbrain --version
+          # The Rust build script must refuse politely, not half-build.
+          if bun run rust:build > rust-build.log 2>&1; then
+            echo "::error::rust:build succeeded without cargo"
+            exit 1
+          fi
+          grep -q 'cargo was not found' rust-build.log
