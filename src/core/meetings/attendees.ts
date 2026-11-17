@@ -13,7 +13,8 @@
  * Disabled members and audience members never match. The literal `owner` is covered by the owner, who reads every
  * scoped call. Anything else stays unmatched and is listed, never guessed.
  */
-import { FAILSAFE_SCHEMA, load } from 'js-yaml';
+import { FAILSAFE_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml } from '../data-frontmatter.ts';
 import type { MemberRecord } from '../access/members.ts';
 
 const HEADER_LINES = 15;
@@ -37,7 +38,7 @@ const splitList = (text: string): CallAttendee[] => text.split(/[,;]/).map(atten
 
 function inlineAttendees(value: string): CallAttendee[] {
   let parsed: unknown;
-  try { parsed = load(value, { schema: FAILSAFE_SCHEMA }); } catch { return splitList(value.replace(/^\[|\]$/g, '').replace(/["']/g, '')); }
+  try { parsed = loadBoundedYaml(value, { schema: FAILSAFE_SCHEMA }); } catch { return splitList(value.replace(/^\[|\]$/g, '').replace(/["']/g, '')); }
   if (typeof parsed === 'string') return splitList(parsed);
   if (!Array.isArray(parsed)) return [];
   return (parsed.flat(Infinity) as unknown[]).flatMap(item => typeof item === 'string' ? [attendeeOf(item)] : []).filter((a): a is CallAttendee => a !== null);
